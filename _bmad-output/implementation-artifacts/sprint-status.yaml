@@ -1,5 +1,5 @@
 # generated: 2026-04-03
-# last_updated: 2026-04-03 (story 1.1 contexted)
+# last_updated: 2026-04-03 (story 2.1 in-progress)
 # project: super-schema
 # project_key: NOKEY
 # tracking_system: file-system
@@ -42,19 +42,20 @@ tracking_system: file-system
 story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
-  # Epic 1: Project Bootstrap & Authentication (5 stories)
+  # Epic 1: Project Bootstrap & Authentication (6 stories)
   epic-1: in-progress
-  1-1-project-scaffolding: in-progress  # started 2026-04-03
-  1-2-design-system-foundation: ready-for-dev
-  1-3-application-shell-ide-layout: ready-for-dev
-  1-4-local-user-authentication: ready-for-dev
-  1-5-google-sso-authentication: ready-for-dev
+  1-1-project-scaffolding: done
+  1-2-design-system-foundation: done
+  1-3-application-shell-ide-layout: done
+  1-4-local-user-authentication: done
+  1-5-google-sso-authentication: done
+  1-6-enterprise-sso-integration: ready-for-dev
   epic-1-retrospective: optional
 
   # Epic 2: Schema Authoring & Management (12 stories)
-  epic-2: backlog
-  2-1-database-schema-zod-utilities: ready-for-dev
-  2-1b-entity-domain-service-layer: ready-for-dev
+  epic-2: in-progress
+  2-1-database-schema-zod-utilities: review
+  2-1b-entity-domain-service-layer: review
   2-1c-field-service-layer: ready-for-dev
   2-2-entity-browsing-sidebar-navigation: ready-for-dev
   2-3-schema-field-editor: ready-for-dev

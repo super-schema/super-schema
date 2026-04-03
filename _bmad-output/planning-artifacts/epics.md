@@ -216,7 +216,7 @@ FR38: Epic 1 - Deploy via container images
 FR39: Epic 1 - Configure authentication (local, Google, SSO)
 FR40: Epic 8 - Define user roles and permissions
 FR41: Epic 8 - Enable/disable emitter targets and type mapping policies
-FR42: Epic 8 - Create and manage domain workspaces
+FR42: Epic 2 (Story 2.1d) + Epic 8 (Story 8.2) - Domain selection UI (user-facing) + domain workspace admin management
 FR43: Epic 8 - Monitor system health and metrics
 FR44: Epic 8 - Zero-downtime configuration changes
 FR45a: Epic 8 - Custom classification taxonomy
@@ -249,9 +249,9 @@ The application is deployable on-premise and users can register, log in (local/G
 **UX-DRs:** UX-DR1-4, UX-DR25-29, UX-DR33, UX-DR34
 **Additional:** create-next-app (Next.js 16.2) + Prisma + oRPC + Auth.js + Shadcn/ui + Docker, design system foundation
 
-### Epic 2: Schema Authoring & Management (10 stories)
-Data modelers can create, edit, and browse entities with full field metadata across all 8 decorator categories. Autocomplete suggests field names, types, and classifications. Complex types, relationships, aliases, field lifecycle, and lineage visualization are supported.
-**FRs covered:** FR1, FR2, FR3, FR4, FR5, FR6, FR7, FR8, FR9
+### Epic 2: Schema Authoring & Management (11 stories)
+Users land on a domain selection screen after login, choosing or creating a domain before managing entities. Data modelers can then create, edit, and browse entities within the selected domain with full field metadata across all 8 decorator categories. Autocomplete suggests field names, types, and classifications. Complex types, relationships, aliases, field lifecycle, and lineage visualization are supported.
+**FRs covered:** FR1, FR2, FR3, FR4, FR5, FR6, FR7, FR8, FR9, FR42
 **UX-DRs:** UX-DR5, UX-DR7, UX-DR8, UX-DR9, UX-DR10, UX-DR13-17, UX-DR19-24, UX-DR30, UX-DR31, UX-DR32
 
 ### Epic 3: Schema Emission, Validation & API
@@ -434,7 +434,7 @@ So that I can use my existing identity without creating a separate password.
 
 ## Epic 2: Schema Authoring & Management
 
-Data modelers can create, edit, and browse entities with full field metadata across all 8 decorator categories. Autocomplete suggests field names, types, and classifications. Complex types, relationships, aliases, and field lifecycle management are supported.
+Users land on a domain selection screen after login, choosing or creating a domain before managing entities. Data modelers can then create, edit, and browse entities within the selected domain with full field metadata across all 8 decorator categories. Autocomplete suggests field names, types, and classifications. Complex types, relationships, aliases, and field lifecycle management are supported.
 
 ### Story 2.1: Database Schema, Zod Validation & Core Utilities
 
@@ -451,7 +451,9 @@ So that all schema authoring features have a solid data foundation.
 **And** `entities` table: `id` (cuid), `name` (string), `domainId` (FK to domains), `version` (int, default 1), `status` (enum: DRAFT, ACTIVE, DEPRECATED, RETIRED), `ownerId` (FK to users), `description` (text), `metadata` (JSONB), `createdAt`, `updatedAt` — with unique constraint on `(name, domainId)`
 **And** `fields` table: `id` (cuid), `entityId` (FK to entities), `name` (string), `type` (string), `precision` (int, nullable), `scale` (int, nullable), `nullable` (boolean, default true), `isKey` (boolean, default false), `fieldNumber` (int, nullable), `description` (text), `aliases` (text[]), `classification` (string, nullable), `sortOrder` (int), `decorators` (JSONB), `createdAt`, `updatedAt` — with unique constraint on `(entityId, name)`
 **And** `audit_log` table: `id` (cuid), `action` (string), `entityType` (string), `entityId` (string), `userId` (FK to users), `timestamp` (datetime, default now), `beforeState` (JSONB, nullable), `afterState` (JSONB, nullable) — append-only with a PostgreSQL trigger that prevents UPDATE and DELETE operations on this table
+**And** `domains` table includes an `isSystem` (boolean, default false) column to mark system-seeded domains that cannot be deleted by users
 **And** Prisma migration runs successfully and creates all tables
+**And** a database seed script (`prisma/seed.ts`) creates two default system domains: **"Public"** (description: "Shared domain for general-purpose entities accessible to all users", isSystem: true) and **"Playground"** (description: "Sandbox domain for developers to experiment with entity creation", isSystem: true) — these domains are created idempotently (skip if already exist)
 **And** a Zod schema (`DecoratorSchema`) is defined in `src/types/schemas/decorator.schema.ts` matching the Architecture document's decorator structure (structure, semantics, classification, policy, quality, lineage, operationalHints, evolution) — all categories optional with `.partial()`
 **And** a Zod schema (`EntityMetadataSchema`) is defined for entity metadata JSONB validation
 **And** a `withAudit()` utility function exists in `src/lib/audit.ts` that wraps any Prisma write operation and inserts a corresponding row into `audit_log` with before/after state — every write must go through this
@@ -501,30 +503,75 @@ So that the UI can manage fields within entities.
 
 ---
 
-### Story 2.2: Entity Browsing with Sidebar Navigation & Tile/List Views
+### Story 2.1d: Domain Selection & Management UI
 
-As a **data modeler**,
-I want to browse and search entities organized by domain in the sidebar with tile and list view options,
-So that I can quickly find and navigate to any entity in the system.
+As an **administrator**,
+I want a domain management landing page with a card grid where I can view, create, and select domains,
+So that logical entities are always organized under a domain and users start their workflow by choosing a domain context.
 
 **Acceptance Criteria:**
 
-**Given** the entity data model and service layer exist (Stories 2.1-2.1c complete)
+**Given** the domain service layer and database schema exist (Stories 2.1–2.1c complete)
+**When** the domain management UI is implemented
+**Then** navigating to `/schemas` (the main entry point after login) renders a **Domain Selection page** showing all domains as a responsive card grid in the center panel
+**And** each domain card displays: domain name (heading), description (truncated to 2 lines), logical entity count badge, created date, and a status indicator — system domains show a "System" badge; custom domains show the creator's name
+**And** the two seeded system domains (**Public** and **Playground**) always appear first in the grid, visually distinguished with a subtle border accent (e.g., primary color border for Public, secondary for Playground)
+**And** the **Playground** domain card includes a tagline: "Experiment freely — create test entities without affecting production domains"
+**And** only users with **Admin** role see a **"+ Create Domain"** button in the page header — clicking it opens a dialog/modal with: name (required, unique, validated on blur), description (textarea), and a "Create" button
+**And** domain creation validates: name is unique (checked against the server), name is non-empty, name follows a slug-friendly format (alphanumeric, hyphens, spaces allowed, max 64 chars)
+**And** the **Left Sidebar** displays an **explorer-style tree hierarchy** (like VS Code's file explorer) showing all domains as top-level collapsible folders with their logical entities as child items underneath:
+```
+▾ Public (3)
+    Customer
+    Order
+    Product
+▾ Playground (1)
+    TestEntity
+▸ Payment (0)
+```
+**And** each domain node in the tree shows: folder icon, domain name, entity count badge; clicking a domain in the tree navigates to `/schemas/{domain-slug}` and expands/collapses the domain's entity list
+**And** each logical entity node in the tree shows: entity name (monospace), colored dot for status (green=ACTIVE, amber=DRAFT, gray=DEPRECATED); clicking an entity navigates to `/schemas/{domain-slug}/{entityId}`
+**And** right-clicking a domain node in the tree shows a context menu with: "New Entity" (opens inline input or popover to create a logical entity in that domain), and for Admin users: "Edit Domain", "Delete Domain" (disabled if domain has entities or is a system domain)
+**And** a **"+ New Entity"** action is available via: (1) right-click context menu on a domain in the sidebar tree, (2) a "+" icon button on hover of a domain node — both create a new logical entity within that domain
+**And** a **search input** at the top of the sidebar filters domains and entities by name across the entire tree in real-time (< 200ms) — matching text is highlighted, non-matching branches are hidden
+**And** clicking a domain card in the center panel navigates to `/schemas/{domain-slug}` — the domain slug is derived from the domain name (lowercased, spaces to hyphens)
+**And** the `/schemas/{domain-slug}` route renders the entity workspace scoped to the selected domain — the center panel shows entity list/tile views; the sidebar tree auto-expands the selected domain
+**And** the **TopBar** or a breadcrumb bar shows the current domain context: "Domains" (link to `/schemas`) → "{Domain Name}" — providing navigation context and a quick way back to the domain grid
+**And** the **StatusBar** domain indicator (already present) reflects the currently selected domain name
+**And** system domains (isSystem: true) cannot be deleted — the delete option is hidden for system domains
+**And** admin users can delete custom (non-system) domains only if they contain **zero logical entities** — attempting to delete a domain with entities shows: "Cannot delete — {count} entities exist in this domain. Move or delete them first."
+**And** the domain selection page includes a **search/filter bar** at the top of the center panel card grid to filter domains by name as the user types
+**And** if there are only the default domains (e.g., fresh install with Public and Playground), the page still shows the card grid — no auto-redirect
+**And** the page uses the project's existing design system: `surface-glass` cards, `text-heading-2` for names, `text-body-small` for descriptions, `badge` component for entity counts, and `animate-auth-fade-up` for entrance animation
+**And** unit tests verify: domain cards render with correct data, sidebar tree renders domain→entity hierarchy, search filter works across tree, create domain dialog validates inputs, admin-only create button visibility, right-click context menu actions
+**And** a Playwright E2E test verifies: user logs in → sees domain grid + sidebar tree → clicks a domain card → navigates to `/schemas/{slug}` → sidebar auto-expands domain → clicks breadcrumb → returns to domain grid; admin creates a new domain via header button → it appears in grid and tree; user right-clicks domain in tree → creates a new logical entity
+
+---
+
+### Story 2.2: Entity Browsing within Domain — Tile/List Views & Implemented Schemas
+
+As a **data modeler**,
+I want to browse and search logical entities within the selected domain with tile and list view options, and see implemented schemas when viewing an entity,
+So that I can quickly find any logical entity and understand its implementation state across targets.
+
+**Acceptance Criteria:**
+
+**Given** the domain selection UI and sidebar explorer tree exist (Story 2.1d complete)
 **When** the entity browsing UI is implemented
-**Then** the **Left Sidebar** displays a tree view of domains and their entities — domains as collapsible groups, entities as items within each domain
-**And** each entity item in the sidebar shows: entity name (monospace), field count badge, and a colored dot indicating status (green=ACTIVE, amber=DRAFT, gray=DEPRECATED)
-**And** a **search input** at the top of the sidebar filters entities by name across all domains in real-time (< 200ms) — matching text is highlighted
-**And** clicking an entity in the sidebar navigates to the entity editor view (`/schemas/[id]`) and highlights the active entity in the sidebar
-**And** the **Center Panel** shows an entity list view with a **tile/list toggle** button in the top-right
-**And** **Tile view** displays EntityCard components in a responsive grid — each card shows: entity name, field count, domain name, classification summary badges (count of PII/SENSITIVE/INTERNAL/PUBLIC fields), status badge, version number, last modified date
-**And** **List view** displays a DataTable with sortable columns: Name, Domain, Version, Status, Fields, Last Modified — clicking a column header sorts ascending/descending with sort indicator
+**Then** navigating to `/schemas/{domain-slug}` renders the **center panel** with a list of logical entities in the selected domain, with a **tile/list toggle** button in the top-right
+**And** **Tile view** displays EntityCard components in a responsive grid — each card shows: logical entity name, field count, classification summary badges (count of PII/SENSITIVE/INTERNAL/PUBLIC fields), status badge, version number, last modified date
+**And** **List view** displays a DataTable with sortable columns: Name, Version, Status, Fields, Last Modified — clicking a column header sorts ascending/descending with sort indicator
 **And** the tile/list toggle state persists to localStorage and restores on reload
-**And** a "**+ New Entity**" button exists in the sidebar header — clicking opens a popover with: domain selector (searchable dropdown), entity name input, and "Create" primary button
-**And** creating an entity via the popover navigates to the new entity's editor view
-**And** an **empty state** is displayed when no entities exist: illustration, "Create your first entity" heading, "Get started by creating your first entity definition" description, and a primary "Create Entity" button
-**And** when a domain has no entities, it shows an inline empty state: "No entities in this domain — click + to add one"
-**And** the entity list fetches data via oRPC using TanStack Query with stale-while-revalidate caching
-**And** a Playwright E2E test verifies: sidebar shows domains and entities, search filters correctly, tile/list toggle works and persists, clicking an entity navigates to editor, new entity creation flow works end-to-end, empty state displays when no entities exist
+**And** clicking a logical entity (in tile/list view or in the sidebar tree) navigates to `/schemas/{domain-slug}/{entityId}` — the **logical entity detail page**
+**And** the logical entity detail page shows the entity editor (fields, decorators, metadata) in the center panel
+**And** the logical entity detail page includes an **"Implemented Schemas"** section (below or as a tab alongside the field editor) that lists all emitted/registered implementation schemas for this logical entity — showing: target format (Avro, BigQuery, OpenAPI, etc.), emitted version, validation status (pass/fail badge), last emitted date, and a link to view the emitted output
+**And** if no implemented schemas exist for the entity, the section shows: "No implementations yet — emit this entity to generate target schemas" with an "Emit" action button
+**And** a **breadcrumb bar** is displayed above the center panel: "Domains" (link to `/schemas`) → "{Domain Name}" (link to `/schemas/{domain-slug}`) → "{Entity Name}" (when viewing an entity)
+**And** the sidebar tree highlights the currently selected domain and entity — the selected domain is auto-expanded
+**And** creating a new logical entity (via sidebar context menu, "+" hover button, or a "New Entity" button in the center panel empty state) navigates to the new entity's editor within the current domain
+**And** an **empty state** is displayed when the domain has no logical entities: illustration, "Create your first logical entity" heading, "Get started by defining your first logical entity in {domain name}" description, and a primary "Create Entity" button
+**And** the entity list fetches data via oRPC using TanStack Query with stale-while-revalidate caching, filtered by the current domain ID from the URL
+**And** a Playwright E2E test verifies: user selects domain → center panel shows entities, sidebar tree shows entities under domain → tile/list toggle works and persists → clicking an entity navigates to entity detail → "Implemented Schemas" section is visible → breadcrumb navigates back → empty state displays when domain has no entities → creating entity from sidebar and from empty state both work
 
 ---
 

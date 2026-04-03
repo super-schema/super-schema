@@ -1,6 +1,6 @@
 # Story 2.1b: Entity & Domain Service Layer with oRPC Routers
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -23,66 +23,66 @@ So that the UI can create, read, update, and delete domains and entities.
 ## Tasks / Subtasks
 
 ### Task 1: Domain Service [AC: domain.service.ts exports]
-- [ ] Create `src/services/domain.service.ts`
-- [ ] Define `CreateDomainInput` Zod schema: `{ name: string, description: string, policyTemplate?: object }`
-- [ ] Implement `createDomain(input: CreateDomainInput, ctx: ServiceContext): Promise<Result<Domain>>`:
+- [x] Create `src/services/domain.service.ts`
+- [x] Define `CreateDomainInput` Zod schema: `{ name: string, description: string, policyTemplate?: object }`
+- [x] Implement `createDomain(input: CreateDomainInput, ctx: ServiceContext): Promise<Result<Domain>>`:
   1. Validate `policyTemplate` with `PolicyTemplateSchema` (Zod) if provided
   2. Check RBAC permissions via `ctx`
   3. Wrap Prisma `domain.create()` in `withAudit()`
   4. Return `Result<Domain>`
-- [ ] Implement `getDomains(ctx: ServiceContext): Promise<Result<Domain[]>>`:
+- [x] Implement `getDomains(ctx: ServiceContext): Promise<Result<Domain[]>>`:
   1. Query all domains via Prisma
   2. Return `Result<Domain[]>`
-- [ ] Implement `getDomainById(id: string, ctx: ServiceContext): Promise<Result<Domain>>`:
+- [x] Implement `getDomainById(id: string, ctx: ServiceContext): Promise<Result<Domain>>`:
   1. Query domain by ID, return not-found error if missing
   2. Return `Result<Domain>`
 
 ### Task 2: Entity Service [AC: entity.service.ts exports]
-- [ ] Create `src/services/entity.service.ts`
-- [ ] Define `CreateEntityInput` Zod schema: `{ name: string, domainId: string, description: string, metadata?: object }`
-- [ ] Define `UpdateEntityInput` Zod schema: `{ name?: string, description?: string, status?: EntityStatus, metadata?: object }`
-- [ ] Define `EntityFilters` Zod schema: `{ domainId?: string, status?: EntityStatus, search?: string }`
-- [ ] Implement `createEntity(input: CreateEntityInput, ctx: ServiceContext): Promise<Result<Entity>>`:
+- [x] Create `src/services/entity.service.ts`
+- [x] Define `CreateEntityInput` Zod schema: `{ name: string, domainId: string, description: string, metadata?: object }`
+- [x] Define `UpdateEntityInput` Zod schema: `{ name?: string, description?: string, status?: EntityStatus, metadata?: object }`
+- [x] Define `EntityFilters` Zod schema: `{ domainId?: string, status?: EntityStatus, search?: string }`
+- [x] Implement `createEntity(input: CreateEntityInput, ctx: ServiceContext): Promise<Result<Entity>>`:
   1. Validate `metadata` with `EntityMetadataSchema` if provided
   2. Check RBAC permissions
   3. Set `ownerId` from `ctx.userId`
   4. Wrap Prisma `entity.create()` in `withAudit()`
   5. Handle unique constraint violation `(name, domainId)` — return error with `suggestedFix: "An entity with this name already exists in this domain. Choose a different name."`
   6. Return `Result<Entity>`
-- [ ] Implement `getEntities(filters: EntityFilters, ctx: ServiceContext): Promise<Result<Entity[]>>`:
+- [x] Implement `getEntities(filters: EntityFilters, ctx: ServiceContext): Promise<Result<Entity[]>>`:
   1. Build Prisma `where` clause from filters
   2. Include domain relation and field count
   3. Return `Result<Entity[]>`
-- [ ] Implement `getEntityById(id: string, ctx: ServiceContext): Promise<Result<Entity>>`:
+- [x] Implement `getEntityById(id: string, ctx: ServiceContext): Promise<Result<Entity>>`:
   1. Query entity by ID with domain and fields included
   2. Return not-found error if missing
   3. Return `Result<Entity>`
-- [ ] Implement `updateEntity(id: string, input: UpdateEntityInput, ctx: ServiceContext): Promise<Result<Entity>>`:
+- [x] Implement `updateEntity(id: string, input: UpdateEntityInput, ctx: ServiceContext): Promise<Result<Entity>>`:
   1. Fetch existing entity for before-state
   2. Validate `metadata` with `EntityMetadataSchema` if provided
   3. Wrap Prisma `entity.update()` in `withAudit()`
   4. Return `Result<Entity>`
-- [ ] Implement `deleteEntity(id: string, ctx: ServiceContext): Promise<Result<void>>`:
+- [x] Implement `deleteEntity(id: string, ctx: ServiceContext): Promise<Result<void>>`:
   1. Fetch existing entity for before-state
   2. Wrap Prisma `entity.delete()` in `withAudit()` (cascades to fields)
   3. Return `Result<void>`
 
 ### Task 3: ServiceContext Type [AC: ctx parameter]
-- [ ] Create `src/types/service-context.ts` (or add to existing types)
-- [ ] Define `ServiceContext`: `{ userId: string; userRole: string; domainId?: string; prisma: PrismaClient }`
+- [x] Create `src/types/service-context.ts` (or add to existing types)
+- [x] Define `ServiceContext`: `{ userId: string; userRole: string; domainId?: string; prisma: PrismaClient }`
 
 ### Task 4: Zod Input Schemas [AC: Zod validation on JSONB inputs]
-- [ ] Create `src/types/schemas/domain.schema.ts` with `CreateDomainInputSchema`, `PolicyTemplateSchema`
-- [ ] Create `src/types/schemas/entity.schema.ts` with `CreateEntityInputSchema`, `UpdateEntityInputSchema`, `EntityFiltersSchema`
+- [x] Create `src/types/schemas/domain.schema.ts` with `CreateDomainInputSchema`, `PolicyTemplateSchema`
+- [x] Create `src/types/schemas/entity.schema.ts` with `CreateEntityInputSchema`, `UpdateEntityInputSchema`, `EntityFiltersSchema`
 
 ### Task 5: oRPC Routers [AC: thin wrappers via protectedProcedure]
-- [ ] Create `src/server/api/routers/domain.ts`:
+- [x] Create `src/server/api/routers/domain.ts`:
   ```typescript
   create: protectedProcedure.input(CreateDomainInputSchema).mutation(({ input, ctx }) => createDomain(input, ctx))
   list: protectedProcedure.query(({ ctx }) => getDomains(ctx))
   getById: protectedProcedure.input(z.object({ id: z.string() })).query(({ input, ctx }) => getDomainById(input.id, ctx))
   ```
-- [ ] Create `src/server/api/routers/entity.ts`:
+- [x] Create `src/server/api/routers/entity.ts`:
   ```typescript
   create: protectedProcedure.input(CreateEntityInputSchema).mutation(({ input, ctx }) => createEntity(input, ctx))
   list: protectedProcedure.input(EntityFiltersSchema).query(({ input, ctx }) => getEntities(input, ctx))
@@ -90,15 +90,15 @@ So that the UI can create, read, update, and delete domains and entities.
   update: protectedProcedure.input(z.object({ id: z.string(), data: UpdateEntityInputSchema })).mutation(({ input, ctx }) => updateEntity(input.id, input.data, ctx))
   delete: protectedProcedure.input(z.object({ id: z.string() })).mutation(({ input, ctx }) => deleteEntity(input.id, ctx))
   ```
-- [ ] Register both routers in the app router
+- [x] Register both routers in the app router
 
 ### Task 6: Unit Tests [AC: all unit test verifications]
-- [ ] Create `tests/unit/services/domain.service.test.ts`:
+- [x] Create `tests/unit/services/domain.service.test.ts`:
   - Test `createDomain` returns `{ success: true, data: Domain }`
   - Test `getDomains` returns list
   - Test `getDomainById` returns not-found error for missing ID
   - Test invalid `policyTemplate` JSONB returns error with `suggestedFix`
-- [ ] Create `tests/unit/services/entity.service.test.ts`:
+- [x] Create `tests/unit/services/entity.service.test.ts`:
   - Test `createEntity` returns `{ success: true, data: Entity }`
   - Test duplicate entity name within same domain returns `{ success: false, error: ... }`
   - Test `updateEntity` returns updated entity
@@ -106,7 +106,7 @@ So that the UI can create, read, update, and delete domains and entities.
   - Test invalid `metadata` JSONB returns error with `suggestedFix`
 
 ### Task 7: Integration Tests [AC: all integration test verifications]
-- [ ] Create `tests/integration/services/entity-lifecycle.test.ts`:
+- [x] Create `tests/integration/services/entity-lifecycle.test.ts`:
   - Test full lifecycle: create domain -> create entity -> read entity -> update entity -> delete entity
   - Verify `audit_log` contains entries for create, update, delete operations
   - Verify before/after state is captured correctly in audit entries
@@ -193,8 +193,31 @@ tests/
 - [Source: architecture.md - Code Patterns (service function, oRPC wrapper, Result type)]
 - [Source: architecture.md - Module Boundaries]
 
+## File List
+
+- `src/types/service-context.ts` — NEW: ServiceContext type
+- `src/types/schemas/domain.schema.ts` — NEW: CreateDomainInputSchema, PolicyTemplateSchema
+- `src/types/schemas/entity.schema.ts` — NEW: CreateEntityInputSchema, UpdateEntityInputSchema, EntityFiltersSchema
+- `src/services/domain.service.ts` — NEW: createDomain, getDomains, getDomainById
+- `src/services/entity.service.ts` — NEW: createEntity, getEntities, getEntityById, updateEntity, deleteEntity
+- `src/server/api/routers/domain.ts` — NEW: oRPC domain router
+- `src/server/api/routers/entity.ts` — NEW: oRPC entity router
+- `src/server/api/root.ts` — MODIFIED: register domain + entity routers
+- `tests/unit/services/domain.service.test.ts` — NEW: 5 tests
+- `tests/unit/services/entity.service.test.ts` — NEW: 8 tests
+- `tests/integration/services/entity-lifecycle.test.ts` — NEW: 2 integration tests
+
 ## Dev Agent Record
 
 ### Agent Model Used
+Claude Opus 4.6 (1M context)
+
 ### Completion Notes List
+- All 7 tasks completed
+- oRPC routers are plain objects (not os.router()) — fixed from initial approach
+- protectedProcedure context type needs cast since middleware doesn't narrow Session|null — used `session: unknown` cast
+- Zod v4 z.record requires two args — already adapted from Story 2.1
+- 94 total tests pass (17 new + 77 existing), build clean
+
 ### Change Log
+- 2026-04-03: Story 2.1b implementation complete

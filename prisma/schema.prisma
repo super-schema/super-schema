@@ -1,0 +1,151 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String     @id @default(cuid())
+  name          String?
+  email         String     @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  accounts      Account[]
+  sessions      Session[]
+  entities      Entity[]
+  auditLogs     AuditLog[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================
+// Schema Authoring Models
+// ============================================================
+
+enum EntityStatus {
+  DRAFT
+  ACTIVE
+  DEPRECATED
+  RETIRED
+}
+
+model Domain {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  description    String   @default("")
+  policyTemplate Json?
+  isSystem       Boolean  @default(false)
+  entities       Entity[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("domains")
+}
+
+model Entity {
+  id          String       @id @default(cuid())
+  name        String
+  domainId    String
+  version     Int          @default(1)
+  status      EntityStatus @default(DRAFT)
+  ownerId     String
+  description String       @default("")
+  metadata    Json?
+  fields      Field[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  owner  User   @relation(fields: [ownerId], references: [id])
+
+  @@unique([name, domainId])
+  @@map("entities")
+}
+
+model Field {
+  id             String   @id @default(cuid())
+  entityId       String
+  name           String
+  type           String
+  precision      Int?
+  scale          Int?
+  nullable       Boolean  @default(true)
+  isKey          Boolean  @default(false)
+  fieldNumber    Int?
+  description    String   @default("")
+  aliases        String[]
+  classification String?
+  sortOrder      Int
+  decorators     Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([entityId, name])
+  @@map("fields")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  entityType  String
+  entityId    String
+  userId      String
+  timestamp   DateTime @default(now())
+  beforeState Json?
+  afterState  Json?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("audit_log")
+}
