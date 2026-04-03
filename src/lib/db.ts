@@ -15,12 +15,8 @@ function createPrismaClient() {
   return new PrismaClient({ adapter });
 }
 
-// Lazy initialization - only create client when first accessed
-export const prisma = new Proxy({} as PrismaClient, {
-  get(target, prop) {
-    if (!globalForPrisma.prisma) {
-      globalForPrisma.prisma = createPrismaClient();
-    }
-    return Reflect.get(globalForPrisma.prisma, prop);
-  },
-});
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
