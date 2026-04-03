@@ -6,6 +6,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightPanel } from "@/components/layout/RightPanel";
 import { StatusBar } from "@/components/layout/StatusBar";
+import { CommandPalette } from "@/components/custom/CommandPalette/CommandPalette";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 
@@ -83,6 +84,7 @@ export default function DashboardLayout({
       </div>
 
       <StatusBar />
+      <CommandPalette />
     </div>
     </SessionProvider>
   );
