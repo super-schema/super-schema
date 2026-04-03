@@ -1,10 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, GripVertical, Trash2, Copy } from "lucide-react";
+import { Plus, GripVertical, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { ValidationIndicator } from "@/components/custom/ValidationIndicator";
+import {
+  getFieldCompleteness,
+  getEntityCompleteness,
+} from "@/lib/validation/field-completeness";
 
 interface FieldData {
   id: string;
@@ -55,12 +59,35 @@ export function FieldEditor({
     setIsAdding(false);
   }
 
+  const completeness = getEntityCompleteness(fields);
+
   return (
     <div>
+      {/* Progress bar */}
+      {fields.length > 0 && (
+        <div className="mb-space-4">
+          <div className="flex items-center justify-between mb-space-1">
+            <span className="text-caption text-muted-foreground">
+              {completeness.complete} of {completeness.total} fields complete
+            </span>
+            <span className="text-caption text-muted-foreground">
+              {completeness.percentage}%
+            </span>
+          </div>
+          <div className="h-1 bg-muted rounded-full overflow-hidden">
+            <div
+              className="h-full bg-success rounded-full transition-all duration-300"
+              style={{ width: `${completeness.percentage}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Field grid */}
       <div className="surface-glass rounded-xl border border-border overflow-hidden">
         {/* Header row */}
-        <div className="grid grid-cols-[32px_1fr_120px_80px_80px_100px_48px] gap-0 border-b border-border text-caption text-muted-foreground font-medium">
+        <div className="grid grid-cols-[24px_32px_1fr_120px_80px_80px_100px_48px] gap-0 border-b border-border text-caption text-muted-foreground font-medium">
+          <div className="px-1 py-space-3" />
           <div className="px-2 py-space-3" />
           <div className="px-space-3 py-space-3">Name</div>
           <div className="px-space-3 py-space-3">Type</div>
@@ -71,13 +98,27 @@ export function FieldEditor({
         </div>
 
         {/* Field rows */}
-        {fields.map((field) => (
+        {fields.map((field) => {
+          const fc = getFieldCompleteness(field);
+          const tooltipContent =
+            fc.status === "complete"
+              ? "Field complete"
+              : fc.status === "error"
+                ? `Missing: ${fc.missing.join(", ")}`
+                : `Suggestions: ${fc.suggestions.join(", ")}`;
+
+          return (
           <div
             key={field.id}
-            className="grid grid-cols-[32px_1fr_120px_80px_80px_100px_48px] gap-0 border-b border-border/50 hover:bg-accent/20 transition-colors group"
+            className="grid grid-cols-[24px_32px_1fr_120px_80px_80px_100px_48px] gap-0 border-b border-border/50 hover:bg-accent/20 transition-colors group"
             onMouseEnter={() => setHoveredField(field.id)}
             onMouseLeave={() => setHoveredField(null)}
           >
+            {/* Validation indicator */}
+            <div className="flex items-center justify-center">
+              <ValidationIndicator status={fc.status} tooltipContent={tooltipContent} />
+            </div>
+
             {/* Drag handle */}
             <div className="flex items-center justify-center text-muted-foreground/30 group-hover:text-muted-foreground cursor-grab">
               <GripVertical className="w-4 h-4" />
@@ -168,10 +209,11 @@ export function FieldEditor({
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {/* Add field row */}
-        <div className="grid grid-cols-[32px_1fr_120px_auto] gap-0 p-space-2">
+        <div className="grid grid-cols-[56px_1fr_120px_auto] gap-0 p-space-2">
           <div />
           <div className="px-space-1">
             <Input
