@@ -1,12 +1,30 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { hashSync } from "bcryptjs";
 
 async function main() {
   const adapter = new PrismaPg({
     connectionString: process.env.DATABASE_URL!,
   });
   const prisma = new PrismaClient({ adapter });
+
+  // Seed test admin user (idempotent)
+  const testUser = await prisma.user.findUnique({
+    where: { email: "admin@admin.com" },
+  });
+  if (!testUser) {
+    await prisma.user.create({
+      data: {
+        email: "admin@admin.com",
+        name: "Admin",
+        password: hashSync("admin", 12),
+      },
+    });
+    console.log("Created test user: admin@admin.com / admin");
+  } else {
+    console.log("Test user already exists: admin@admin.com");
+  }
 
   // Seed system domains (idempotent)
   const systemDomains = [
