@@ -5,6 +5,7 @@ import { Plus, GripVertical, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ValidationIndicator } from "@/components/custom/ValidationIndicator";
+import { TypePicker } from "@/components/custom/TypePicker";
 import {
   getFieldCompleteness,
   getEntityCompleteness,
@@ -32,11 +33,6 @@ interface FieldEditorProps {
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDeleteField: (id: string) => Promise<void>;
 }
-
-const FIELD_TYPES = [
-  "string", "integer", "decimal", "boolean", "timestamp", "date", "time",
-  "uuid", "text", "binary", "json", "enum", "array", "map", "reference",
-];
 
 export function FieldEditor({
   fields,
@@ -154,15 +150,11 @@ export function FieldEditor({
 
             {/* Type */}
             <div className="px-space-3 py-space-2 flex items-center">
-              <select
+              <TypePicker
                 value={field.type}
-                onChange={(e) => onUpdateField(field.id, { type: e.target.value })}
-                className="bg-transparent text-body-small text-muted-foreground outline-none cursor-pointer hover:text-foreground"
-              >
-                {FIELD_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+                onChange={(t) => onUpdateField(field.id, { type: t })}
+                compact
+              />
             </div>
 
             {/* Nullable */}
@@ -227,15 +219,10 @@ export function FieldEditor({
             />
           </div>
           <div className="px-space-1">
-            <select
+            <TypePicker
               value={newFieldType}
-              onChange={(e) => setNewFieldType(e.target.value)}
-              className="h-7 bg-muted rounded px-2 text-body-small text-muted-foreground outline-none w-full"
-            >
-              {FIELD_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
+              onChange={setNewFieldType}
+            />
           </div>
           <div className="px-space-1">
             <Button

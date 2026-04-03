@@ -30,20 +30,7 @@ export function isReadOnly(status: EntityStatus): boolean {
   return status === "RETIRED";
 }
 
-export const FIELD_TYPES = {
-  primitives: [
-    "string", "integer", "decimal", "boolean", "text", "binary", "uuid",
-  ],
-  temporal: ["timestamp", "date", "time"],
-  structured: ["json", "enum"],
-  complex: ["array", "map", "object"],
-  special: ["reference"],
-} as const;
-
-export const ALL_FIELD_TYPES = [
-  ...FIELD_TYPES.primitives,
-  ...FIELD_TYPES.temporal,
-  ...FIELD_TYPES.structured,
-  ...FIELD_TYPES.complex,
-  ...FIELD_TYPES.special,
-];
+export {
+  DATA_TYPE_HIERARCHY as FIELD_TYPES,
+  ALL_DATA_TYPES as ALL_FIELD_TYPES,
+} from "./data-types";

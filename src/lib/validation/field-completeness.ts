@@ -30,7 +30,7 @@ export function getFieldCompleteness(field: FieldInput): FieldCompleteness {
   }
 
   // Type-specific requirements
-  if (field.type === "decimal") {
+  if (field.type === "decimal" || field.type === "decimal128") {
     if (field.precision == null) missing.push("precision");
     if (field.scale == null) missing.push("scale");
   }

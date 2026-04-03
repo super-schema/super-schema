@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import {
   ChevronRight,
@@ -11,11 +11,13 @@ import {
   GitBranch,
   ShieldCheck,
   ClipboardCheck,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EntityCard } from "@/components/custom/EntityCard";
-import { createEntityAction } from "./actions";
+import { TypePicker } from "@/components/custom/TypePicker";
+import { createEntityAction, createEntityWithFieldsAction, type CreateFieldInput } from "./actions";
 
 const domainTabs = [
   { icon: Database, label: "Entities", id: "entities" },
@@ -43,6 +45,19 @@ interface DomainWorkspaceProps {
   entities: EntityData[];
 }
 
+interface InlineField {
+  tempId: string;
+  name: string;
+  type: string;
+  nullable: boolean;
+  isKey: boolean;
+}
+
+let nextTempId = 0;
+function makeTempId() {
+  return `temp-${++nextTempId}`;
+}
+
 export function DomainWorkspace({
   domainId,
   domainName,
@@ -61,6 +76,13 @@ export function DomainWorkspace({
   const [isCreating, setIsCreating] = useState(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  // Inline field creation state
+  const [createName, setCreateName] = useState("");
+  const [createDescription, setCreateDescription] = useState("");
+  const [inlineFields, setInlineFields] = useState<InlineField[]>([]);
+  const [newFieldName, setNewFieldName] = useState("");
+  const [newFieldType, setNewFieldType] = useState("string");
 
   function toggleView(mode: "tile" | "list") {
     setViewMode(mode);
@@ -85,7 +107,79 @@ export function DomainWorkspace({
     });
   }, [entities, sortField, sortDir]);
 
-  async function handleCreate(formData: FormData) {
+  function addInlineField() {
+    if (!newFieldName.trim()) return;
+    setInlineFields((prev) => [
+      ...prev,
+      {
+        tempId: makeTempId(),
+        name: newFieldName.trim(),
+        type: newFieldType,
+        nullable: true,
+        isKey: false,
+      },
+    ]);
+    setNewFieldName("");
+    setNewFieldType("string");
+  }
+
+  function removeInlineField(tempId: string) {
+    setInlineFields((prev) => prev.filter((f) => f.tempId !== tempId));
+  }
+
+  function updateInlineField(tempId: string, updates: Partial<InlineField>) {
+    setInlineFields((prev) =>
+      prev.map((f) => (f.tempId === tempId ? { ...f, ...updates } : f))
+    );
+  }
+
+  function resetCreateForm() {
+    setShowCreate(false);
+    setCreateError(null);
+    setCreateName("");
+    setCreateDescription("");
+    setInlineFields([]);
+    setNewFieldName("");
+    setNewFieldType("string");
+  }
+
+  async function handleCreate() {
+    if (!createName.trim()) {
+      setCreateError("Entity name is required");
+      return;
+    }
+
+    setCreateError(null);
+    setIsCreating(true);
+
+    const fields: CreateFieldInput[] = inlineFields.map((f) => ({
+      name: f.name,
+      type: f.type,
+      nullable: f.nullable,
+      isKey: f.isKey,
+      description: "",
+      classification: null,
+      precision: null,
+      scale: null,
+    }));
+
+    const result = await createEntityWithFieldsAction(domainId, {
+      name: createName.trim(),
+      description: createDescription,
+      fields,
+    });
+
+    setIsCreating(false);
+
+    if (result?.error) {
+      setCreateError(result.error);
+    } else {
+      resetCreateForm();
+    }
+  }
+
+  // Legacy formData handler kept for compatibility
+  async function handleCreateLegacy(formData: FormData) {
     setCreateError(null);
     setIsCreating(true);
     const result = await createEntityAction(domainId, formData);
@@ -162,13 +256,16 @@ export function DomainWorkspace({
       {showCreate && (
         <div className="surface-glass rounded-xl border border-primary/20 p-space-6 mb-space-6">
           <h3 className="text-heading-2 text-foreground mb-space-4">Create New Entity</h3>
-          <form action={handleCreate} className="space-y-space-4">
+
+          {/* Entity info */}
+          <div className="space-y-space-4 mb-space-6">
             <div>
               <label className="text-body-small text-foreground mb-space-1 block font-medium">
                 Entity Name
               </label>
               <Input
-                name="name"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
                 placeholder="e.g., Customer, Order, Transaction"
                 required
                 maxLength={128}
@@ -180,18 +277,122 @@ export function DomainWorkspace({
               <label className="text-body-small text-foreground mb-space-1 block font-medium">
                 Description
               </label>
-              <Input name="description" placeholder="Brief description" className="h-9" />
+              <Input
+                value={createDescription}
+                onChange={(e) => setCreateDescription(e.target.value)}
+                placeholder="Brief description"
+                className="h-9"
+              />
             </div>
-            {createError && <p className="text-body-small text-destructive">{createError}</p>}
-            <div className="flex gap-space-2">
-              <Button type="submit" disabled={isCreating}>
-                {isCreating ? "Creating..." : "Create"}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => { setShowCreate(false); setCreateError(null); }}>
-                Cancel
-              </Button>
+          </div>
+
+          {/* Inline field grid */}
+          <div className="mb-space-4">
+            <label className="text-body-small text-foreground mb-space-2 block font-medium">
+              Fields
+              <span className="text-muted-foreground font-normal ml-1">(optional — add fields now or later)</span>
+            </label>
+
+            <div className="surface-glass rounded-lg border border-border overflow-hidden">
+              {/* Field header */}
+              {inlineFields.length > 0 && (
+                <div className="grid grid-cols-[1fr_140px_64px_64px_40px] gap-0 border-b border-border text-caption text-muted-foreground font-medium">
+                  <div className="px-space-3 py-space-2">Name</div>
+                  <div className="px-space-3 py-space-2">Type</div>
+                  <div className="px-space-3 py-space-2 text-center">Null</div>
+                  <div className="px-space-3 py-space-2 text-center">Key</div>
+                  <div className="px-space-2 py-space-2" />
+                </div>
+              )}
+
+              {/* Existing inline fields */}
+              {inlineFields.map((field) => (
+                <div
+                  key={field.tempId}
+                  className="grid grid-cols-[1fr_140px_64px_64px_40px] gap-0 border-b border-border/50 hover:bg-accent/20 transition-colors group"
+                >
+                  <div className="px-space-3 py-space-2 flex items-center">
+                    <span className="font-mono text-body-small text-foreground">{field.name}</span>
+                  </div>
+                  <div className="px-space-3 py-space-2 flex items-center">
+                    <TypePicker
+                      value={field.type}
+                      onChange={(t) => updateInlineField(field.tempId, { type: t })}
+                      compact
+                    />
+                  </div>
+                  <div className="px-space-3 py-space-2 flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={field.nullable}
+                      onChange={(e) => updateInlineField(field.tempId, { nullable: e.target.checked })}
+                      className="accent-primary"
+                    />
+                  </div>
+                  <div className="px-space-3 py-space-2 flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={field.isKey}
+                      onChange={(e) => updateInlineField(field.tempId, { isKey: e.target.checked })}
+                      className="accent-primary"
+                    />
+                  </div>
+                  <div className="px-space-1 py-space-2 flex items-center justify-center">
+                    <button
+                      onClick={() => removeInlineField(field.tempId)}
+                      className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded opacity-0 group-hover:opacity-100"
+                      title="Remove field"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Add field row */}
+              <div className="grid grid-cols-[1fr_140px_auto] gap-0 p-space-2">
+                <div className="px-space-1">
+                  <Input
+                    value={newFieldName}
+                    onChange={(e) => setNewFieldName(e.target.value)}
+                    placeholder="New field name..."
+                    className="h-7 font-mono text-body-small"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") addInlineField();
+                    }}
+                  />
+                </div>
+                <div className="px-space-1">
+                  <TypePicker
+                    value={newFieldType}
+                    onChange={setNewFieldType}
+                  />
+                </div>
+                <div className="px-space-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={addInlineField}
+                    disabled={!newFieldName.trim()}
+                    className="h-7 gap-1 text-caption"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add
+                  </Button>
+                </div>
+              </div>
             </div>
-          </form>
+          </div>
+
+          {createError && <p className="text-body-small text-destructive mb-space-4">{createError}</p>}
+          <div className="flex gap-space-2">
+            <Button onClick={handleCreate} disabled={isCreating}>
+              {isCreating ? "Creating..." : "Create Entity"}
+            </Button>
+            <Button type="button" variant="outline" onClick={resetCreateForm}>
+              Cancel
+            </Button>
+          </div>
         </div>
       )}
 

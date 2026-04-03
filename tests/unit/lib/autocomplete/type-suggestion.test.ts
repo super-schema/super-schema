@@ -21,14 +21,19 @@ describe("suggestType", () => {
     expect(suggestType("can_edit")).toBe("boolean");
   });
 
-  it("suggests timestamp for _at suffixed fields", () => {
-    expect(suggestType("created_at")).toBe("timestamp");
-    expect(suggestType("updated_at")).toBe("timestamp");
+  it("suggests utcDateTime for _at suffixed fields", () => {
+    expect(suggestType("created_at")).toBe("utcDateTime");
+    expect(suggestType("updated_at")).toBe("utcDateTime");
   });
 
-  it("suggests date for _date suffixed fields", () => {
-    expect(suggestType("birth_date")).toBe("date");
-    expect(suggestType("start_date")).toBe("date");
+  it("suggests plainDate for _date suffixed fields", () => {
+    expect(suggestType("birth_date")).toBe("plainDate");
+    expect(suggestType("start_date")).toBe("plainDate");
+  });
+
+  it("suggests plainTime for _time suffixed fields", () => {
+    expect(suggestType("start_time")).toBe("plainTime");
+    expect(suggestType("end_time")).toBe("plainTime");
   });
 
   it("suggests enum for status/type fields", () => {
@@ -37,9 +42,21 @@ describe("suggestType", () => {
     expect(suggestType("category")).toBe("enum");
   });
 
-  it("suggests uuid for id fields", () => {
-    expect(suggestType("id")).toBe("uuid");
-    expect(suggestType("uuid")).toBe("uuid");
+  it("suggests string for id fields", () => {
+    expect(suggestType("id")).toBe("string");
+    expect(suggestType("uuid")).toBe("string");
+  });
+
+  it("suggests bytes for binary fields", () => {
+    expect(suggestType("image")).toBe("bytes");
+    expect(suggestType("file")).toBe("bytes");
+    expect(suggestType("attachment")).toBe("bytes");
+  });
+
+  it("suggests object for structured data fields", () => {
+    expect(suggestType("data")).toBe("object");
+    expect(suggestType("metadata")).toBe("object");
+    expect(suggestType("config")).toBe("object");
   });
 
   it("returns null for unrecognized names", () => {
