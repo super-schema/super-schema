@@ -1,0 +1,462 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "UserProfile.json",
+    "type": "object",
+    "properties": {
+        "account_number": {
+            "type": "string",
+            "examples": [
+                12345678
+            ],
+            "minimum": 1,
+            "description": "Primary key - unique user identifier",
+            "title": "Account Number"
+        },
+        "user_time_created": {
+            "type": "string",
+            "description": "Account creation timestamp",
+            "title": "Created At",
+            "x-format": "unix-timestamp"
+        },
+        "first_name": {
+            "type": "string",
+            "examples": [
+                "John"
+            ],
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z\\s'-]+$",
+            "description": "User's first name",
+            "title": "First Name"
+        },
+        "last_name": {
+            "type": "string",
+            "examples": [
+                "Doe"
+            ],
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-zA-Z\\s'-]+$",
+            "description": "User's last name",
+            "title": "Last Name"
+        },
+        "user_flags": {
+            "type": "string",
+            "description": "System flags bitfield - deprecated, use decomposed flags instead",
+            "title": "User Flags (Legacy)"
+        },
+        "user_last_web_access": {
+            "type": "string",
+            "description": "Last web login time",
+            "title": "Last Web Access",
+            "x-format": "unix-timestamp"
+        },
+        "day_phone": {
+            "type": "string",
+            "examples": [
+                "+14155552671"
+            ],
+            "maxLength": 40,
+            "pattern": "^\\+?[1-9]\\d{1,14}$",
+            "description": "Daytime phone number in E.164 format",
+            "title": "Day Phone"
+        },
+        "night_phone": {
+            "type": "string",
+            "examples": [
+                "+14155552672"
+            ],
+            "maxLength": 40,
+            "pattern": "^\\+?[1-9]\\d{1,14}$",
+            "description": "Evening phone number in E.164 format",
+            "title": "Night Phone"
+        },
+        "address_id": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Reference to primary address",
+            "title": "Primary Address ID"
+        },
+        "cycle_number": {
+            "type": "string",
+            "examples": [
+                15
+            ],
+            "minimum": 1,
+            "maximum": 31,
+            "description": "Billing cycle number (day of month)",
+            "title": "Billing Cycle"
+        },
+        "server_current_transaction": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Active transaction ID",
+            "title": "Current Transaction"
+        },
+        "credit_charged_cents": {
+            "type": "string",
+            "examples": [
+                12550
+            ],
+            "minimum": 0,
+            "description": "Credit charges amount in cents (USD). Divide by 100 for dollar value.",
+            "title": "Credit Charged (cents)"
+        },
+        "cycle_last_updated": {
+            "type": "string",
+            "description": "Last cycle update time",
+            "title": "Cycle Updated",
+            "x-format": "unix-timestamp"
+        },
+        "confirm_error_count": {
+            "type": "string",
+            "examples": [
+                0
+            ],
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "Confirmation error count",
+            "title": "Confirmation Errors"
+        },
+        "transaction_limit_cents": {
+            "type": "string",
+            "examples": [
+                500000
+            ],
+            "minimum": 0,
+            "description": "Transaction limit amount in cents (USD). Divide by 100 for dollar value.",
+            "title": "Transaction Limit (cents)"
+        },
+        "default_cc": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Default credit card ID reference",
+            "title": "Default Credit Card"
+        },
+        "default_ach": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Default ACH account ID reference",
+            "title": "Default ACH"
+        },
+        "user_group": {
+            "type": "string",
+            "examples": [
+                100
+            ],
+            "minimum": 1,
+            "maximum": 999,
+            "description": "User group classification identifier (1-999)",
+            "title": "User Group"
+        },
+        "primary_email": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Primary email ID reference",
+            "title": "Email ID"
+        },
+        "total_amount_sent_cents": {
+            "type": "string",
+            "examples": [
+                1543275
+            ],
+            "minimum": 0,
+            "description": "Lifetime sent amount in cents (USD). Divide by 100 for dollar value.",
+            "title": "Total Sent (cents)"
+        },
+        "authentications": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Total authentication attempts count",
+            "title": "Auth Count"
+        },
+        "receiving_prefs": {
+            "type": "string",
+            "description": "Receiving preferences bitfield",
+            "title": "Receiving Preferences"
+        },
+        "cc_amount_received_cents": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Credit card receipts amount in cents (USD). Divide by 100 for dollar value.",
+            "title": "CC Received (cents)"
+        },
+        "user_last_login_ip": {
+            "type": "string",
+            "examples": [
+                "192.168.1.1"
+            ],
+            "maxLength": 45,
+            "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$",
+            "description": "Last login IP address (IPv4 or IPv6)",
+            "title": "Last Login IP"
+        },
+        "citizenship": {
+            "type": "string",
+            "examples": [
+                "USA"
+            ],
+            "maxLength": 64,
+            "description": "Citizenship information",
+            "title": "Citizenship"
+        },
+        "fraud_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "examples": [
+                4275
+            ],
+            "description": "Risk assessment score. Scaled ×100 (0-10000 represents 0.00-100.00)",
+            "title": "Fraud Score (scaled ×100)"
+        },
+        "lifetime_revenue_cents": {
+            "type": "string",
+            "examples": [
+                2543210
+            ],
+            "minimum": 0,
+            "description": "Total revenue generated in cents (USD). Divide by 100 for dollar value.",
+            "title": "Lifetime Revenue (cents)"
+        },
+        "subprime": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "description": "Subprime risk indicator. Scaled ×100 (0-10000 represents 0.00-100.00)",
+            "title": "Subprime Score (scaled ×100)"
+        },
+        "flags2": {
+            "type": "string",
+            "description": "Additional system flags bitfield",
+            "title": "Flags 2"
+        },
+        "autosweep_target": {
+            "type": "string",
+            "maxLength": 30,
+            "description": "Autosweep target account identifier",
+            "title": "Autosweep Target"
+        },
+        "time_closed": {
+            "type": "string",
+            "description": "Account closure timestamp",
+            "title": "Closed At",
+            "x-format": "unix-timestamp"
+        },
+        "withdraw_balance_cents": {
+            "type": "string",
+            "examples": [
+                154325
+            ],
+            "description": "Withdrawable balance in cents (USD, can be negative for overdraft). Divide by 100 for dollar value.",
+            "title": "Withdraw Balance (cents)"
+        },
+        "primary_email_name": {
+            "type": "string",
+            "examples": [
+                "user@example.com"
+            ],
+            "minLength": 5,
+            "maxLength": 127,
+            "pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+            "format": "email",
+            "description": "Primary email address for communications",
+            "title": "Email Address"
+        },
+        "afs_type": {
+            "type": "string",
+            "description": "AFS classification type",
+            "title": "AFS Type"
+        },
+        "afs_id": {
+            "type": "string",
+            "minimum": 0,
+            "description": "AFS identifier",
+            "title": "AFS ID"
+        },
+        "aac_error_count": {
+            "type": "string",
+            "minimum": 0,
+            "description": "AAC error count",
+            "title": "AAC Errors"
+        },
+        "flags3": {
+            "type": "string",
+            "description": "Extended system flags bitfield",
+            "title": "Flags 3"
+        },
+        "volume_completed_cents": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Completed transaction volume in cents (USD). Divide by 100 for dollar value.",
+            "title": "Volume Completed (cents)"
+        },
+        "volume_completed_plus_pending_cents": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Completed plus pending volume in cents (USD). Divide by 100 for dollar value.",
+            "title": "Volume Completed + Pending (cents)"
+        },
+        "language": {
+            "type": "string",
+            "examples": [
+                "en-US"
+            ],
+            "minLength": 2,
+            "maxLength": 5,
+            "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+            "description": "Preferred language code (ISO 639)",
+            "title": "Language"
+        },
+        "primary_residence": {
+            "type": "string",
+            "examples": [
+                "US"
+            ],
+            "minLength": 2,
+            "maxLength": 2,
+            "pattern": "^[A-Z]{2}$",
+            "description": "Primary residence country code (ISO 3166-1 alpha-2)",
+            "title": "Country"
+        },
+        "validation_tries": {
+            "type": "string",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Account validation attempts count",
+            "title": "Validation Tries"
+        },
+        "flags4": {
+            "type": "string",
+            "description": "Latest system flags bitfield",
+            "title": "Flags 4"
+        },
+        "amount_ach_deposited_cents": {
+            "type": "string",
+            "minimum": 0,
+            "description": "ACH deposit amounts in cents (USD). Divide by 100 for dollar value.",
+            "title": "ACH Deposited (cents)"
+        },
+        "contact_score_override": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "description": "Manual risk score override. Scaled ×100 (0-10000 represents 0.00-100.00)",
+            "title": "Contact Score Override (scaled ×100)"
+        },
+        "clone_state": {
+            "type": "string",
+            "description": "Account cloning state identifier",
+            "title": "Clone State"
+        },
+        "ccrisk_cutoff_group": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Credit card risk group identifier",
+            "title": "CC Risk Group"
+        },
+        "amount_sent_from_balance_cents": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Amount sent from balance in cents (USD). Divide by 100 for dollar value.",
+            "title": "Sent from Balance (cents)"
+        },
+        "amount_sent_from_unconfirmed_cents": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Amount sent from unconfirmed funds in cents (USD). Divide by 100 for dollar value.",
+            "title": "Sent from Unconfirmed (cents)"
+        },
+        "timezone": {
+            "type": "string",
+            "examples": [
+                "America/New_York"
+            ],
+            "maxLength": 32,
+            "pattern": "^[A-Za-z_]+/[A-Za-z_]+$",
+            "description": "User's timezone (IANA timezone identifier)",
+            "title": "Timezone"
+        },
+        "risk_stats_pypl_time_touched": {
+            "type": "string",
+            "description": "Last risk statistics update time",
+            "title": "Risk Stats Updated",
+            "x-format": "unix-timestamp"
+        },
+        "risk_stats_last_web_access": {
+            "type": "string",
+            "description": "Last web access from risk tracking system",
+            "title": "Risk Last Web Access",
+            "x-format": "unix-timestamp"
+        },
+        "risk_stats_last_login_ip": {
+            "type": "string",
+            "examples": [
+                "192.168.1.1"
+            ],
+            "maxLength": 45,
+            "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$",
+            "description": "Last login IP from risk tracking (IPv4 or IPv6)",
+            "title": "Risk Last Login IP"
+        },
+        "last_login_id": {
+            "type": "string",
+            "minimum": 0,
+            "description": "Last login session ID",
+            "title": "Last Login Session"
+        },
+        "wuser_flag_locked": {
+            "type": "boolean",
+            "examples": [
+                false
+            ],
+            "description": "Account locked status flag (extracted from FLAGS bitfield)",
+            "title": "Is Locked"
+        },
+        "wuser_flag_address_confirmed": {
+            "type": "boolean",
+            "examples": [
+                true
+            ],
+            "description": "Address confirmed status flag (extracted from FLAGS bitfield)",
+            "title": "Address Confirmed"
+        },
+        "wuser_flag_closed": {
+            "type": "boolean",
+            "examples": [
+                false
+            ],
+            "description": "Account closed status flag (extracted from FLAGS bitfield)",
+            "title": "Is Closed"
+        },
+        "user_profile_id": {
+            "type": "string",
+            "examples": [
+                "550e8400-e29b-41d4-a716-446655440000"
+            ],
+            "minLength": 36,
+            "maxLength": 36,
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "format": "uuid",
+            "description": "UUID for external references",
+            "title": "Profile UUID"
+        },
+        "row_created_time": {
+            "type": "string",
+            "description": "Record creation timestamp",
+            "title": "Row Created",
+            "x-format": "unix-timestamp"
+        },
+        "row_updated_time": {
+            "type": "string",
+            "description": "Record last modification timestamp",
+            "title": "Row Updated",
+            "x-format": "unix-timestamp"
+        }
+    },
+    "required": [
+        "account_number"
+    ],
+    "description": "Complete user profile entity combining user, address, and risk information",
+    "title": "User Profile - Atomic Business Entity"
+}

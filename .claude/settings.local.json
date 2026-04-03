@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(do:*)",
+      "Bash(python3:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.prisma.io)",
+      "WebFetch(domain:authjs.dev)",
+      "WebFetch(domain:ui.shadcn.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:vitest.dev)",
+      "WebFetch(domain:playwright.dev)",
+      "WebFetch(domain:microsoft.github.io)",
+      "WebFetch(domain:typespec.io)",
+      "Bash(npx create-next-app@latest:*)"
+    ]
+  }
+}
