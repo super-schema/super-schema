@@ -36,28 +36,28 @@ export function DomainCard({
             : "border-border"
       }`}
     >
-      {/* Header */}
-      <div className="flex items-start justify-between mb-space-3">
-        <div className="flex items-center gap-space-2">
-          {isPlayground ? (
-            <FlaskConical className="w-5 h-5 text-secondary shrink-0" />
-          ) : (
-            <Database className="w-5 h-5 text-primary shrink-0" />
-          )}
-          <h3 className="text-heading-2 text-foreground group-hover:text-primary transition-colors">
-            {name}
-          </h3>
-        </div>
-        <div className="flex items-center gap-space-2">
-          {isSystem && (
-            <Badge variant="outline" className="text-caption">
-              System
-            </Badge>
-          )}
-          <Badge variant="secondary" className="text-caption">
-            {entityCount} {entityCount === 1 ? "entity" : "entities"}
+      {/* Title */}
+      <div className="flex items-center gap-space-2 mb-space-2">
+        {isPlayground ? (
+          <FlaskConical className="w-5 h-5 text-secondary shrink-0" />
+        ) : (
+          <Database className="w-5 h-5 text-primary shrink-0" />
+        )}
+        <h3 className="text-heading-2 text-foreground group-hover:text-primary transition-colors">
+          {name}
+        </h3>
+      </div>
+
+      {/* Badges */}
+      <div className="flex items-center gap-space-2 justify-end mb-space-3">
+        {isSystem && (
+          <Badge variant="outline" className="text-caption">
+            System
           </Badge>
-        </div>
+        )}
+        <Badge variant="secondary" className="text-caption">
+          {entityCount} {entityCount === 1 ? "entity" : "entities"}
+        </Badge>
       </div>
 
       {/* Description */}
