@@ -1,9 +1,43 @@
-// Placeholder seed file for Super Schema
-// Add seed data for development and testing here
-// Run with: npx prisma db seed
+import "dotenv/config";
+import { PrismaClient } from "../src/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 
 async function main() {
-  console.log("Seed script placeholder - add seed data here");
+  const adapter = new PrismaPg({
+    connectionString: process.env.DATABASE_URL!,
+  });
+  const prisma = new PrismaClient({ adapter });
+
+  // Seed system domains (idempotent)
+  const systemDomains = [
+    {
+      name: "Public",
+      description:
+        "Shared domain for general-purpose entities accessible to all users",
+      isSystem: true,
+    },
+    {
+      name: "Playground",
+      description:
+        "Sandbox domain for developers to experiment with entity creation",
+      isSystem: true,
+    },
+  ];
+
+  for (const domain of systemDomains) {
+    const existing = await prisma.domain.findUnique({
+      where: { name: domain.name },
+    });
+    if (!existing) {
+      await prisma.domain.create({ data: domain });
+      console.log(`Created system domain: ${domain.name}`);
+    } else {
+      console.log(`System domain already exists: ${domain.name}`);
+    }
+  }
+
+  await prisma.$disconnect();
+  console.log("Seed complete.");
 }
 
 main().catch((e) => {
