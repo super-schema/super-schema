@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { SessionProvider } from "next-auth/react";
 import { TopBar } from "@/components/layout/TopBar";
-import { ActivityBar } from "@/components/layout/ActivityBar";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightPanel } from "@/components/layout/RightPanel";
 import { StatusBar } from "@/components/layout/StatusBar";
@@ -62,8 +61,6 @@ export default function DashboardLayout({
           onMouseDown={sidebar.handleMouseDown}
           onDoubleClick={sidebar.handleDoubleClick}
         />
-        <ActivityBar />
-
         <main
           data-testid="center-panel"
           className="flex-1 surface-base p-space-6 overflow-auto"

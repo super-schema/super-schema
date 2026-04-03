@@ -2,9 +2,23 @@ import { prisma } from "@/lib/db";
 import { fromSlug } from "@/lib/domain-utils";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ChevronRight, Plus } from "lucide-react";
+import {
+  ChevronRight,
+  Plus,
+  Database,
+  GitBranch,
+  ShieldCheck,
+  ClipboardCheck,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+
+const domainTabs = [
+  { icon: Database, label: "Entities", id: "entities" },
+  { icon: GitBranch, label: "Lineage", id: "lineage" },
+  { icon: ShieldCheck, label: "Governance", id: "governance" },
+  { icon: ClipboardCheck, label: "Compliance", id: "compliance" },
+];
 
 interface Props {
   params: Promise<{ domainSlug: string }>;
@@ -14,7 +28,6 @@ export default async function DomainEntitiesPage({ params }: Props) {
   const { domainSlug } = await params;
   const domainName = fromSlug(domainSlug);
 
-  // Find domain by name (case-insensitive)
   const domain = await prisma.domain.findFirst({
     where: { name: { equals: domainName, mode: "insensitive" } },
     include: {
@@ -34,7 +47,7 @@ export default async function DomainEntitiesPage({ params }: Props) {
   return (
     <div className="animate-auth-fade-up">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-6">
+      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
         <Link
           href="/schemas"
           className="hover:text-foreground transition-colors"
@@ -46,7 +59,7 @@ export default async function DomainEntitiesPage({ params }: Props) {
       </nav>
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-space-6">
+      <div className="flex items-center justify-between mb-space-4">
         <div>
           <h1 className="text-display text-foreground">{domain.name}</h1>
           {domain.description && (
@@ -59,6 +72,23 @@ export default async function DomainEntitiesPage({ params }: Props) {
           <Plus className="w-4 h-4" />
           New Entity
         </Button>
+      </div>
+
+      {/* Domain tabs */}
+      <div className="flex items-center gap-space-1 border-b border-border mb-space-6">
+        {domainTabs.map((tab) => (
+          <button
+            key={tab.id}
+            className={`flex items-center gap-space-2 px-space-4 py-space-2 text-body-small transition-colors border-b-2 ${
+              tab.id === "entities"
+                ? "border-primary text-primary font-medium"
+                : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
+            }`}
+          >
+            <tab.icon className="w-4 h-4" />
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Entity list or empty state */}
