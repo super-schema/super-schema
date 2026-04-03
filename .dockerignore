@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.env
+.env.local
+.env.*.local
+*.md
+tests
+coverage
+.docker
+_bmad
+_bmad-output
+.claude
+.agents
+.gemini
+.idea
+.DS_Store

@@ -1,0 +1,35 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .docker/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://superschema:password@db:5432/superschema
+      NEXTAUTH_SECRET: dev-secret-change-in-production
+      NEXTAUTH_URL: http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: superschema
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: superschema
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superschema -d superschema"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
