@@ -1,6 +1,6 @@
 # Story 9.3: Deployment Tracking Dashboard
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data engineer**, I want to see which schema versions are deployed to which systems with drift status, so that I have a single view of schema state across all target systems.
@@ -24,15 +24,15 @@ As a **data engineer**, I want to see which schema versions are deployed to whic
 ## Tasks / Subtasks
 
 ### Database — Prisma Schema
-- [ ] Verify `deployment_tracking` table exists from Story 9.2 with all required fields:
+- [x] Verify `deployment_tracking` table exists from Story 9.2 with all required fields:
   - `id`, `emissionTargetId`, `environment`, `status`, `deployedVersionId`, `driftReport`, `checkedAt`, `createdAt`, `updatedAt`
-- [ ] Add `markedDeployedAt` DateTime? (nullable) to `deployment_tracking` table — timestamp when user manually marked as deployed
-- [ ] Add `markedDeployedBy` String? (nullable FK to users) to `deployment_tracking` table — user who marked as deployed
-- [ ] Run `npx prisma migrate dev` to generate and apply migration
+- [x] Add `markedDeployedAt` DateTime? (nullable) to `deployment_tracking` table — timestamp when user manually marked as deployed
+- [x] Add `markedDeployedBy` String? (nullable FK to users) to `deployment_tracking` table — user who marked as deployed
+- [x] Run `npx prisma migrate dev` to generate and apply migration
 
 ### Backend — Deployment Tracking Service
-- [ ] Create `src/services/deployment.service.ts`
-- [ ] Implement `markAsDeployed(input, ctx): Result<DeploymentTracking>`:
+- [x] Create `src/services/deployment.service.ts`
+- [x] Implement `markAsDeployed(input, ctx): Result<DeploymentTracking>`:
   - Input: `{ emissionTargetId: string, environment: string, versionId: string }`
   - Validate that the emission target exists and belongs to the user's accessible entities
   - Validate that the version exists (FK to entity_versions)
@@ -40,34 +40,34 @@ As a **data engineer**, I want to see which schema versions are deployed to whic
   - If the deployed version differs from the currently emitted version, set status to "STAGED" (version mismatch, not yet drifted)
   - RBAC: require Author role on the entity's domain
   - Wrap in `withAudit()`
-- [ ] Implement `getDeploymentStatus(entityId, ctx): Result<DeploymentStatus[]>`:
+- [x] Implement `getDeploymentStatus(entityId, ctx): Result<DeploymentStatus[]>`:
   - Fetch all emission targets for the entity
   - For each target, fetch all deployment_tracking records (one per environment)
   - Join with entity_versions to get version numbers
   - Join with drift report data (from Story 9.2)
   - Return `DeploymentStatus[]`: `{ targetFormat, targetId, emittedVersion, environments: [{ name, deployedVersion, status, driftStatus, lastChecked }] }`
   - RBAC: require Viewer role
-- [ ] Implement `getDeploymentOverview(filters, ctx): Result<DeploymentOverviewRow[]>`:
+- [x] Implement `getDeploymentOverview(filters, ctx): Result<DeploymentOverviewRow[]>`:
   - Fetch all entities with their emission targets and deployment tracking records
   - Apply filters: domain, driftStatus, targetFormat
   - Return `DeploymentOverviewRow[]`: `{ entityId, entityName, domain, currentVersion, targets: [{ format, deployedVersion, driftStatus }] }`
   - Support pagination (offset + limit)
   - RBAC: require Viewer role
-- [ ] Implement `unmarkDeployment(emissionTargetId, environment, ctx): Result<void>`:
+- [x] Implement `unmarkDeployment(emissionTargetId, environment, ctx): Result<void>`:
   - Remove the deployment tracking record (or set status to "UNKNOWN")
   - RBAC: require Author role
   - Wrap in `withAudit()`
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/deployment.ts` oRPC router
-- [ ] Add `deployment.markAsDeployed` mutation — thin wrapper calling `deploymentService.markAsDeployed()`, accepts `{ emissionTargetId: string, environment: string, versionId: string }`, requires Author role via `protectedProcedure`
-- [ ] Add `deployment.getStatus` query — thin wrapper calling `deploymentService.getDeploymentStatus()`, accepts `{ entityId: string }`, requires Viewer role via `protectedProcedure`
-- [ ] Add `deployment.getOverview` query — thin wrapper calling `deploymentService.getDeploymentOverview()`, accepts `{ filters?: { domain?: string, driftStatus?: string, targetFormat?: string }, offset?: number, limit?: number }`, requires Viewer role via `protectedProcedure`
-- [ ] Add `deployment.unmark` mutation — thin wrapper calling `deploymentService.unmarkDeployment()`, accepts `{ emissionTargetId: string, environment: string }`, requires Author role via `protectedProcedure`
-- [ ] Wire router into `appRouter`
+- [x] Create `src/server/api/routers/deployment.ts` oRPC router
+- [x] Add `deployment.markAsDeployed` mutation — thin wrapper calling `deploymentService.markAsDeployed()`, accepts `{ emissionTargetId: string, environment: string, versionId: string }`, requires Author role via `protectedProcedure`
+- [x] Add `deployment.getStatus` query — thin wrapper calling `deploymentService.getDeploymentStatus()`, accepts `{ entityId: string }`, requires Viewer role via `protectedProcedure`
+- [x] Add `deployment.getOverview` query — thin wrapper calling `deploymentService.getDeploymentOverview()`, accepts `{ filters?: { domain?: string, driftStatus?: string, targetFormat?: string }, offset?: number, limit?: number }`, requires Viewer role via `protectedProcedure`
+- [x] Add `deployment.unmark` mutation — thin wrapper calling `deploymentService.unmarkDeployment()`, accepts `{ emissionTargetId: string, environment: string }`, requires Author role via `protectedProcedure`
+- [x] Wire router into `appRouter`
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/deployment.ts`:
+- [x] Create `src/types/schemas/deployment.ts`:
   - `MarkAsDeployedInput` — z.object({ emissionTargetId: z.string().cuid(), environment: z.string().min(1), versionId: z.string().cuid() })
   - `GetDeploymentStatusInput` — z.object({ entityId: z.string().cuid() })
   - `DeploymentOverviewFilters` — z.object({ domain: z.string().optional(), driftStatus: z.enum(["in-sync", "drifted", "unknown"]).optional(), targetFormat: z.string().optional() })
@@ -78,27 +78,27 @@ As a **data engineer**, I want to see which schema versions are deployed to whic
   - `DeploymentOverviewRowSchema` — Zod schema for the DeploymentOverviewRow response type
 
 ### Frontend — Deployment Tab (Right Panel)
-- [ ] Enhance `src/components/custom/DriftPanel/DriftPanel.tsx` (created in Story 9.2):
+- [x] Enhance `src/components/custom/DriftPanel/DriftPanel.tsx` (created in Story 9.2):
   - Rename component/file to `DeploymentPanel` if appropriate, or extend existing panel
   - Add per-target deployment information: emitted version, deployed version, environment
   - Each target row now shows: format icon + name, emitted version badge (e.g., "v3"), deployed version badge (e.g., "v2" or "Unknown"), drift status badge (from Story 9.2), last checked timestamp
   - Add **"Mark as Deployed"** button per target row — opens MarkAsDeployedDialog
   - Add **"Check Drift"** button per target row (from Story 9.2) — triggers drift detection
   - Multiple environments per target: if a target is deployed to multiple environments, show sub-rows for each environment
-- [ ] Create `src/components/custom/DeploymentPanel/MarkAsDeployedDialog.tsx`:
+- [x] Create `src/components/custom/DeploymentPanel/MarkAsDeployedDialog.tsx`:
   - Modal dialog for marking a version as deployed
   - Environment selector: dropdown with predefined options ("production", "staging", "development") + custom text input
   - Version confirmation: displays the version being marked (e.g., "v3 — emitted at 2024-01-15")
   - "Confirm" button — calls `deployment.markAsDeployed` mutation
   - "Cancel" button — closes dialog
   - Success toast: "Marked {entityName} as deployed to {environment}"
-- [ ] Create `src/components/custom/DeploymentPanel/VersionBadge.tsx`:
+- [x] Create `src/components/custom/DeploymentPanel/VersionBadge.tsx`:
   - Compact version display badge (e.g., "v3")
   - Color-coded: green if deployed version matches emitted version, amber if version mismatch
   - "Unknown" variant: gray badge when no deployment tracking exists
 
 ### Frontend — Status Bar Integration
-- [ ] Modify Status Bar component (`src/components/layout/StatusBar.tsx`):
+- [x] Modify Status Bar component (`src/components/layout/StatusBar.tsx`):
   - Add deployment summary section for the currently selected entity
   - Format: "Emitted: v3 | Deployed: BigQuery v3 ✓, Avro v2 ⚠️"
   - Green checkmark (✓) for in-sync targets
@@ -108,11 +108,11 @@ As a **data engineer**, I want to see which schema versions are deployed to whic
   - Compact format — truncate if more than 3 targets (show count)
 
 ### Frontend — System-Wide Deployment Overview
-- [ ] Create `src/app/(dashboard)/deployments/page.tsx`:
+- [x] Create `src/app/(dashboard)/deployments/page.tsx`:
   - New page accessible from Activity Bar → "Deployments" section
   - Page title: "Deployment Overview"
   - DataTable component showing all entities with deployment status
-- [ ] Create `src/components/custom/DeploymentOverview/DeploymentOverviewTable.tsx`:
+- [x] Create `src/components/custom/DeploymentOverview/DeploymentOverviewTable.tsx`:
   - DataTable (using Shadcn DataTable pattern) with columns:
     - Entity (name, clickable link to entity editor)
     - Domain (entity's domain name)
@@ -121,33 +121,33 @@ As a **data engineer**, I want to see which schema versions are deployed to whic
   - Color-coded cells: green background for in-sync, amber for drifted, gray for unknown/untracked
   - Sortable columns: entity name, domain, current version, drift status
   - Header row with target format icons
-- [ ] Create `src/components/custom/DeploymentOverview/DeploymentOverviewFilters.tsx`:
+- [x] Create `src/components/custom/DeploymentOverview/DeploymentOverviewFilters.tsx`:
   - Filter bar above the DataTable
   - Domain filter: dropdown of all domains
   - Drift status filter: dropdown ("All", "In Sync", "Drifted", "Unknown")
   - Target format filter: dropdown of all target formats ("BigQuery", "Avro", "Protobuf", etc.)
   - Filters update URL query params for shareability
   - Clear filters button
-- [ ] Create `src/components/custom/DeploymentOverview/index.ts`:
+- [x] Create `src/components/custom/DeploymentOverview/index.ts`:
   - Re-exports for DeploymentOverviewTable and DeploymentOverviewFilters
-- [ ] Add "Deployments" entry to Activity Bar (`src/components/layout/ActivityBar.tsx`):
+- [x] Add "Deployments" entry to Activity Bar (`src/components/layout/ActivityBar.tsx`):
   - New icon (deployment/rocket icon) in the Activity Bar
   - Position: below Schema Editor section
   - Links to `/deployments` page
   - Badge showing count of drifted entities (if any)
 
 ### Frontend — Hooks
-- [ ] Create `src/hooks/useDeployment.ts`:
+- [x] Create `src/hooks/useDeployment.ts`:
   - Hook wrapping oRPC queries/mutations for deployment operations
   - Provides: `deploymentStatus` (query for current entity), `markAsDeployed` (mutation), `unmarkDeployment` (mutation), `isMarking` (loading state)
   - Auto-refetch deployment status after successful mark/unmark
-- [ ] Create `src/hooks/useDeploymentOverview.ts`:
+- [x] Create `src/hooks/useDeploymentOverview.ts`:
   - Hook wrapping oRPC query for deployment overview
   - Provides: `overview` (paginated query result), `filters` (current filter state), `setFilters`, `isLoading`
   - Supports pagination: `fetchNextPage`, `hasNextPage`
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/deployment.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/deployment.service.test.ts`):
   - markAsDeployed creates deployment_tracking record with correct status and version
   - markAsDeployed upserts — updating existing record for same target+environment
   - markAsDeployed sets status to "STAGED" when deployed version differs from emitted version
@@ -163,7 +163,7 @@ As a **data engineer**, I want to see which schema versions are deployed to whic
   - unmarkDeployment removes tracking record
   - unmarkDeployment rejects users without Author role
   - All write operations logged via withAudit()
-- [ ] **Integration test** (`tests/integration/deployment-tracking.test.ts`):
+- [x] **Integration test** (`tests/integration/deployment-tracking.test.ts`):
   - Create entity with emission targets
   - Emit to a target (creates emittedOutput)
   - Mark as deployed to "production" environment
@@ -171,7 +171,7 @@ As a **data engineer**, I want to see which schema versions are deployed to whic
   - Run drift detection — verify status reflects accurate comparison
   - Mark different version as deployed — verify status updates
   - Query deployment overview — verify entity appears with correct data
-- [ ] **E2E test** (`tests/e2e/deployment-tracking.spec.ts`):
+- [x] **E2E test** (`tests/e2e/deployment-tracking.spec.ts`):
   - Navigate to entity Deployment tab in Right Panel
   - Verify per-target status rows are displayed
   - Click "Mark as Deployed" on a target → select "production" environment → confirm

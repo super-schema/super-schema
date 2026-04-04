@@ -1,6 +1,6 @@
 # Story 8.4: System Health Monitoring Dashboard
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As an **administrator**, I want to monitor system health, active users, schema counts, and emission metrics, so that I can ensure the platform is operating correctly and understand usage patterns.
@@ -24,7 +24,7 @@ As an **administrator**, I want to monitor system health, active users, schema c
 ## Tasks / Subtasks
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/health.ts`:
+- [x] Create `src/types/schemas/health.ts`:
   - `ComponentStatus` schema: z.object({ name: z.string(), status: z.enum(['healthy', 'degraded', 'unhealthy']), message: z.string().optional(), latencyMs: z.number().optional() })
   - `HealthCheckResponse` schema: z.object({ status: z.enum(['healthy', 'degraded', 'unhealthy']), components: z.object({ database: ComponentStatus, compiler: ComponentStatus, emitters: ComponentStatus }), timestamp: z.string() })
   - `UsageMetrics` schema: z.object({ totalEntities: z.number(), totalFields: z.number(), totalDomains: z.number(), totalUsers: z.number(), totalEmissions: z.number() })
@@ -32,25 +32,25 @@ As an **administrator**, I want to monitor system health, active users, schema c
   - `ErrorSummary` schema: z.object({ compilationErrors24h: z.number(), emissionValidationFailures24h: z.number(), apiErrors24h: z.number() })
 
 ### Backend — Health Service
-- [ ] Create `src/services/health.service.ts`
-- [ ] Implement `checkDatabase(ctx): Promise<ComponentStatus>`:
+- [x] Create `src/services/health.service.ts`
+- [x] Implement `checkDatabase(ctx): Promise<ComponentStatus>`:
   - Execute a simple query (`SELECT 1`) via Prisma
   - Measure latency
   - Return healthy (< 100ms), degraded (100-500ms), or unhealthy (> 500ms or error)
   - On error: return unhealthy with error message
-- [ ] Implement `checkCompiler(ctx): Promise<ComponentStatus>`:
+- [x] Implement `checkCompiler(ctx): Promise<ComponentStatus>`:
   - Compile a trivial TypeSpec model using ICompilerService: `model HealthCheck { id: string; }`
   - Measure compilation time
   - Return healthy (success), unhealthy (compilation failed) with error details
-- [ ] Implement `checkEmitters(ctx): Promise<ComponentStatus>`:
+- [x] Implement `checkEmitters(ctx): Promise<ComponentStatus>`:
   - For each enabled emitter: attempt to emit a sample entity and validate
   - Return healthy (all pass), degraded (some pass), unhealthy (all fail)
   - Include per-emitter status in message
-- [ ] Implement `runHealthCheck(ctx): Result<HealthCheckResponse>`:
+- [x] Implement `runHealthCheck(ctx): Result<HealthCheckResponse>`:
   - Call all three check functions in parallel
   - Compute overall status: healthy (all components healthy), degraded (any component degraded), unhealthy (any component unhealthy)
   - Return full HealthCheckResponse with timestamp
-- [ ] Implement `getUsageMetrics(ctx): Result<UsageMetrics>`:
+- [x] Implement `getUsageMetrics(ctx): Result<UsageMetrics>`:
   - Query counts from database:
     - `SELECT COUNT(*) FROM entities`
     - `SELECT COUNT(*) FROM fields`
@@ -59,24 +59,24 @@ As an **administrator**, I want to monitor system health, active users, schema c
     - `SELECT COUNT(*) FROM emission_targets`
   - All queries via Prisma count operations
   - RBAC: require Admin role
-- [ ] Implement `getActivityMetrics(ctx): Result<ActivityMetrics>`:
+- [x] Implement `getActivityMetrics(ctx): Result<ActivityMetrics>`:
   - Active Users (last 24h): count distinct `userId` from `audit_log` where `timestamp > now - 24h`
   - Emissions Today: count `emission_targets` where `lastEmittedAt > start of today`
   - Schema Changes Today: count `audit_log` where `action LIKE 'entity.%' OR action LIKE 'field.%'` and `timestamp > start of today`
   - Governance Requests Pending: count `governance_requests` where `status = 'PENDING'`
   - RBAC: require Admin role
-- [ ] Implement `getErrorSummary(ctx): Result<ErrorSummary>`:
+- [x] Implement `getErrorSummary(ctx): Result<ErrorSummary>`:
   - Compilation Errors (last 24h): count `audit_log` where `action = 'compilation.error'` and `timestamp > now - 24h`
   - Emission Validation Failures (last 24h): count `audit_log` where `action = 'emission.validation.failure'` and `timestamp > now - 24h`
   - API Errors (last 24h): count `audit_log` where `action LIKE '%.error'` and `timestamp > now - 24h`
   - RBAC: require Admin role
-- [ ] Implement `getErrorDetails(errorType, ctx): Result<AuditLogEntry[]>`:
+- [x] Implement `getErrorDetails(errorType, ctx): Result<AuditLogEntry[]>`:
   - Fetch audit_log entries matching the error type filter for last 24h
   - Return with pagination (limit 50)
   - RBAC: require Admin role
 
 ### Backend — REST Health Endpoint
-- [ ] Create `src/app/api/v1/health/route.ts`:
+- [x] Create `src/app/api/v1/health/route.ts`:
   - GET `/api/v1/health` — no authentication required (for monitoring tools)
   - Call `healthService.runHealthCheck()` with system context (no user session)
   - Return JSON response matching HealthCheckResponse schema
@@ -84,47 +84,47 @@ As an **administrator**, I want to monitor system health, active users, schema c
   - Include `Cache-Control: no-cache` header
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/admin/health.ts` oRPC router
-- [ ] Add `health.runCheck` query — thin wrapper calling `healthService.runHealthCheck()`, Admin-only via `adminProcedure`
-- [ ] Add `health.usageMetrics` query — thin wrapper calling `healthService.getUsageMetrics()`, Admin-only
-- [ ] Add `health.activityMetrics` query — thin wrapper calling `healthService.getActivityMetrics()`, Admin-only
-- [ ] Add `health.errorSummary` query — thin wrapper calling `healthService.getErrorSummary()`, Admin-only
-- [ ] Add `health.errorDetails` query — thin wrapper calling `healthService.getErrorDetails()`, Admin-only
-- [ ] Wire router into `appRouter` under `admin.health` namespace
+- [x] Create `src/server/api/routers/admin/health.ts` oRPC router
+- [x] Add `health.runCheck` query — thin wrapper calling `healthService.runHealthCheck()`, Admin-only via `adminProcedure`
+- [x] Add `health.usageMetrics` query — thin wrapper calling `healthService.getUsageMetrics()`, Admin-only
+- [x] Add `health.activityMetrics` query — thin wrapper calling `healthService.getActivityMetrics()`, Admin-only
+- [x] Add `health.errorSummary` query — thin wrapper calling `healthService.getErrorSummary()`, Admin-only
+- [x] Add `health.errorDetails` query — thin wrapper calling `healthService.getErrorDetails()`, Admin-only
+- [x] Wire router into `appRouter` under `admin.health` namespace
 
 ### Frontend — Health Tab UI Components
-- [ ] Create `src/components/custom/admin/HealthDashboard.tsx`:
+- [x] Create `src/components/custom/admin/HealthDashboard.tsx`:
   - Main dashboard layout organizing all sections
   - "Refresh" button in top-right corner
   - Fetches all metrics on mount and on refresh
-- [ ] Create `src/components/custom/admin/ServiceStatusCards.tsx`:
+- [x] Create `src/components/custom/admin/ServiceStatusCards.tsx`:
   - Three status cards side-by-side: Application, Database, TypeSpec Compiler
   - Each card shows: component name, status indicator (green circle / red circle / amber circle), status text, latency or uptime info
   - "Run Health Check" button triggers active health check and updates all cards
   - Loading state while health check runs (spinner on each card)
-- [ ] Create `src/components/custom/admin/UsageMetricsCards.tsx`:
+- [x] Create `src/components/custom/admin/UsageMetricsCards.tsx`:
   - Row of metric cards: Total Entities, Total Fields, Total Domains, Total Users, Total Emissions
   - Each card shows: metric name, large number value, icon
   - Simple numeric display — no charts for MVP
-- [ ] Create `src/components/custom/admin/ActivityMetricsCards.tsx`:
+- [x] Create `src/components/custom/admin/ActivityMetricsCards.tsx`:
   - Row of metric cards: Active Users (24h), Emissions Today, Schema Changes Today, Governance Requests Pending
   - Each card shows: metric name, number, contextual icon
   - Governance Requests Pending highlighted in amber if > 0
-- [ ] Create `src/components/custom/admin/ErrorSummaryCards.tsx`:
+- [x] Create `src/components/custom/admin/ErrorSummaryCards.tsx`:
   - Row of error count cards: Compilation Errors (24h), Emission Failures (24h), API Errors (24h)
   - Each card shows: error type, count (red if > 0, green if 0)
   - Cards are clickable — click opens error detail panel/modal
-- [ ] Create `src/components/custom/admin/ErrorDetailDialog.tsx`:
+- [x] Create `src/components/custom/admin/ErrorDetailDialog.tsx`:
   - Modal showing audit trail entries for the selected error type
   - DataTable: timestamp, action, entity, user, error details
   - Paginated (50 per page)
-- [ ] Create `src/hooks/useAdminHealth.ts`:
+- [x] Create `src/hooks/useAdminHealth.ts`:
   - oRPC query hooks for health check, usage metrics, activity metrics, error summary, error details
   - Manual refresh via `refetch()` — no auto-polling
   - All queries enabled only when Health tab is active
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/health.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/health.service.test.ts`):
   - checkDatabase returns healthy on successful query
   - checkDatabase returns unhealthy on query failure
   - checkCompiler returns healthy when trivial model compiles
@@ -136,19 +136,19 @@ As an **administrator**, I want to monitor system health, active users, schema c
   - getErrorSummary returns correct error counts from audit_log
   - getErrorDetails returns filtered audit entries
   - Usage/activity/error metrics require Admin role
-- [ ] **Unit tests** (`tests/unit/api/health-endpoint.test.ts`):
+- [x] **Unit tests** (`tests/unit/api/health-endpoint.test.ts`):
   - GET /api/v1/health returns 200 with healthy status
   - GET /api/v1/health returns 503 when database is unreachable
   - Response matches HealthCheckResponse schema
   - Endpoint does not require authentication
   - Response includes Cache-Control: no-cache header
-- [ ] **Integration test** (`tests/integration/health-dashboard.test.ts`):
+- [x] **Integration test** (`tests/integration/health-dashboard.test.ts`):
   - Run health check via oRPC → all components report healthy
   - Create entities/users → usage metrics reflect correct counts
   - Trigger actions → activity metrics update correctly
   - Trigger compilation error → error summary count increases
   - GET /api/v1/health → returns correct response
-- [ ] **Playwright E2E test** (`tests/e2e/admin-health.spec.ts`):
+- [x] **Playwright E2E test** (`tests/e2e/admin-health.spec.ts`):
   - Admin navigates to Admin Panel → Health tab
   - Service Status cards display (all green in healthy system)
   - Usage Metrics show non-zero counts (entities, users exist from test setup)

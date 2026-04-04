@@ -1,0 +1,118 @@
+[
+  {
+    "standardName": "schema.org",
+    "entityName": "Person",
+    "description": "A person (alive, dead, undead, or fictional)",
+    "fields": [
+      { "name": "givenName", "type": "string", "classification": "PII", "description": "Given/first name" },
+      { "name": "familyName", "type": "string", "classification": "PII", "description": "Family/last name" },
+      { "name": "email", "type": "string", "classification": "PII", "description": "Email address" },
+      { "name": "telephone", "type": "string", "classification": "PII", "description": "Phone number" },
+      { "name": "birthDate", "type": "date", "classification": "PII", "description": "Date of birth" },
+      { "name": "address", "type": "string", "classification": "PII", "description": "Physical address" },
+      { "name": "gender", "type": "string", "classification": "PII", "description": "Gender identity" },
+      { "name": "nationality", "type": "string", "description": "Nationality" },
+      { "name": "jobTitle", "type": "string", "description": "Job title or role" },
+      { "name": "worksFor", "type": "reference", "description": "Organization the person works for" },
+      { "name": "url", "type": "string", "description": "Personal website URL" },
+      { "name": "image", "type": "string", "description": "Profile image URL" }
+    ],
+    "source": "schema.org",
+    "version": "26.0"
+  },
+  {
+    "standardName": "schema.org",
+    "entityName": "Organization",
+    "description": "An organization such as a school, NGO, corporation, club, etc.",
+    "fields": [
+      { "name": "name", "type": "string", "description": "Organization name" },
+      { "name": "legalName", "type": "string", "description": "Official legal name" },
+      { "name": "url", "type": "string", "description": "Organization website" },
+      { "name": "email", "type": "string", "classification": "INTERNAL", "description": "Contact email" },
+      { "name": "telephone", "type": "string", "classification": "INTERNAL", "description": "Contact phone" },
+      { "name": "address", "type": "string", "description": "Headquarters address" },
+      { "name": "foundingDate", "type": "date", "description": "Date founded" },
+      { "name": "description", "type": "string", "description": "Organization description" },
+      { "name": "logo", "type": "string", "description": "Logo image URL" },
+      { "name": "numberOfEmployees", "type": "integer", "description": "Number of employees" },
+      { "name": "taxID", "type": "string", "classification": "SENSITIVE", "description": "Tax identification number" }
+    ],
+    "source": "schema.org",
+    "version": "26.0"
+  },
+  {
+    "standardName": "schema.org",
+    "entityName": "Product",
+    "description": "Any offered product or service",
+    "fields": [
+      { "name": "name", "type": "string", "description": "Product name" },
+      { "name": "description", "type": "string", "description": "Product description" },
+      { "name": "sku", "type": "string", "description": "Stock keeping unit identifier" },
+      { "name": "price", "type": "decimal", "description": "Product price" },
+      { "name": "priceCurrency", "type": "string", "description": "Currency (ISO 4217)" },
+      { "name": "brand", "type": "string", "description": "Brand name" },
+      { "name": "category", "type": "string", "description": "Product category" },
+      { "name": "color", "type": "string", "description": "Product color" },
+      { "name": "weight", "type": "decimal", "description": "Product weight" },
+      { "name": "image", "type": "string", "description": "Product image URL" },
+      { "name": "url", "type": "string", "description": "Product page URL" },
+      { "name": "availability", "type": "enum", "description": "Availability status" }
+    ],
+    "source": "schema.org",
+    "version": "26.0"
+  },
+  {
+    "standardName": "schema.org",
+    "entityName": "Event",
+    "description": "An event happening at a certain time and location",
+    "fields": [
+      { "name": "name", "type": "string", "description": "Event name" },
+      { "name": "description", "type": "string", "description": "Event description" },
+      { "name": "startDate", "type": "timestamp", "description": "Event start date/time" },
+      { "name": "endDate", "type": "timestamp", "description": "Event end date/time" },
+      { "name": "location", "type": "string", "description": "Event location" },
+      { "name": "organizer", "type": "reference", "description": "Event organizer" },
+      { "name": "url", "type": "string", "description": "Event page URL" },
+      { "name": "image", "type": "string", "description": "Event image URL" },
+      { "name": "status", "type": "enum", "description": "Event status (scheduled, cancelled, etc.)" },
+      { "name": "maxAttendees", "type": "integer", "description": "Maximum number of attendees" }
+    ],
+    "source": "schema.org",
+    "version": "26.0"
+  },
+  {
+    "standardName": "schema.org",
+    "entityName": "Place",
+    "description": "Entities that have a somewhat fixed, physical extension",
+    "fields": [
+      { "name": "name", "type": "string", "description": "Place name" },
+      { "name": "address", "type": "string", "description": "Street address" },
+      { "name": "latitude", "type": "decimal", "description": "Latitude coordinate" },
+      { "name": "longitude", "type": "decimal", "description": "Longitude coordinate" },
+      { "name": "telephone", "type": "string", "description": "Contact phone" },
+      { "name": "url", "type": "string", "description": "Place website" },
+      { "name": "description", "type": "string", "description": "Place description" },
+      { "name": "image", "type": "string", "description": "Place image URL" }
+    ],
+    "source": "schema.org",
+    "version": "26.0"
+  },
+  {
+    "standardName": "schema.org",
+    "entityName": "CreativeWork",
+    "description": "The most generic kind of creative work, including books, movies, photographs, software programs, etc.",
+    "fields": [
+      { "name": "name", "type": "string", "description": "Title of the work" },
+      { "name": "author", "type": "reference", "description": "Author of the work" },
+      { "name": "datePublished", "type": "date", "description": "Date of first publication" },
+      { "name": "description", "type": "string", "description": "Description of the work" },
+      { "name": "url", "type": "string", "description": "URL of the work" },
+      { "name": "genre", "type": "string", "description": "Genre of the work" },
+      { "name": "inLanguage", "type": "string", "description": "Language of the content" },
+      { "name": "license", "type": "string", "description": "License under which the work is distributed" },
+      { "name": "keywords", "type": "string", "description": "Keywords or tags" }
+    ],
+    "source": "schema.org",
+    "version": "26.0"
+  }
+]

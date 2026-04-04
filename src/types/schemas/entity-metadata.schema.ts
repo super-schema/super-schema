@@ -18,6 +18,14 @@ export const RelationshipSchema = z.object({
 
 export type Relationship = z.infer<typeof RelationshipSchema>;
 
+export const ImportedFromSchema = z.object({
+  format: z.string(),
+  originalContent: z.string(),
+  importedAt: z.string().or(z.date()),
+});
+
+export type ImportedFrom = z.infer<typeof ImportedFromSchema>;
+
 export const EntityMetadataSchema = z
   .object({
     tags: z.array(z.string()),
@@ -33,6 +41,7 @@ export const EntityMetadataSchema = z
       })
       .optional(),
     custom: z.record(z.string(), z.unknown()).optional(),
+    importedFrom: ImportedFromSchema.optional(),
   })
   .partial();
 

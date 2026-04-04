@@ -1,0 +1,167 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { Download, X, Search } from "lucide-react";
+import type { AuditTrailFilter } from "@/types/schemas/compliance";
+
+const ACTION_TYPES = [
+  "CREATE",
+  "UPDATE",
+  "DELETE",
+  "REORDER",
+  "annotation.create",
+  "annotation.resolve",
+  "compliance.query",
+  "compliance.export",
+];
+
+const ENTITY_TYPES = [
+  "Entity",
+  "Field",
+  "Domain",
+  "Annotation",
+];
+
+interface AuditTrailFilterBarProps {
+  filters: AuditTrailFilter;
+  onFilterChange: (filters: AuditTrailFilter) => void;
+  onExport: () => void;
+}
+
+export function AuditTrailFilterBar({
+  filters,
+  onFilterChange,
+  onExport,
+}: AuditTrailFilterBarProps) {
+  const [entityName, setEntityName] = useState(filters.entityName || "");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (entityName !== (filters.entityName || "")) {
+        onFilterChange({ ...filters, entityName: entityName || undefined });
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [entityName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div
+      className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border flex-wrap"
+      data-testid="audit-trail-filter-bar"
+    >
+      {/* Action type filter */}
+      <select
+        value={filters.actionTypes?.[0] || ""}
+        onChange={(e) =>
+          onFilterChange({
+            ...filters,
+            actionTypes: e.target.value ? [e.target.value] : [],
+          })
+        }
+        className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
+      >
+        <option value="">All Actions</option>
+        {ACTION_TYPES.map((a) => (
+          <option key={a} value={a}>
+            {a}
+          </option>
+        ))}
+      </select>
+
+      {/* Entity type filter */}
+      <select
+        value={filters.entityType || ""}
+        onChange={(e) =>
+          onFilterChange({
+            ...filters,
+            entityType: e.target.value || undefined,
+          })
+        }
+        className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
+      >
+        <option value="">All Types</option>
+        {ENTITY_TYPES.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+
+      {/* Entity name search */}
+      <div className="flex items-center gap-space-1 bg-muted rounded-lg px-space-3 py-1.5 border border-border">
+        <Search className="w-3 h-3 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder="Entity name..."
+          value={entityName}
+          onChange={(e) => setEntityName(e.target.value)}
+          className="bg-transparent text-body-small text-foreground placeholder:text-muted-foreground outline-none w-32"
+        />
+      </div>
+
+      {/* Date range (simplified) */}
+      <input
+        type="date"
+        value={
+          filters.dateRange?.from
+            ? filters.dateRange.from.toISOString().split("T")[0]
+            : ""
+        }
+        onChange={(e) => {
+          const from = e.target.value ? new Date(e.target.value) : undefined;
+          onFilterChange({
+            ...filters,
+            dateRange: from
+              ? { from, to: filters.dateRange?.to || new Date() }
+              : undefined,
+          });
+        }}
+        className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
+        placeholder="From"
+      />
+      <input
+        type="date"
+        value={
+          filters.dateRange?.to
+            ? filters.dateRange.to.toISOString().split("T")[0]
+            : ""
+        }
+        onChange={(e) => {
+          const to = e.target.value ? new Date(e.target.value) : undefined;
+          onFilterChange({
+            ...filters,
+            dateRange: to
+              ? { from: filters.dateRange?.from || new Date(0), to }
+              : undefined,
+          });
+        }}
+        className="bg-muted text-foreground text-body-small rounded-lg px-space-3 py-1.5 border border-border outline-none"
+        placeholder="To"
+      />
+
+      {/* Clear */}
+      <button
+        onClick={() => {
+          setEntityName("");
+          onFilterChange({});
+        }}
+        className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <X className="w-3 h-3" />
+        Clear
+      </button>
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Export */}
+      <button
+        onClick={onExport}
+        className="flex items-center gap-space-2 px-space-3 py-1.5 text-body-small border border-border rounded-lg hover:bg-accent/50 transition-colors"
+      >
+        <Download className="w-4 h-4" />
+        Export Audit Trail
+      </button>
+    </div>
+  );
+}

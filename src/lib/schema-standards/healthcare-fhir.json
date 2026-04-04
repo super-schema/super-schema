@@ -1,0 +1,94 @@
+[
+  {
+    "standardName": "healthcare-fhir",
+    "entityName": "Patient",
+    "description": "Demographics and administrative information about a patient (HL7 FHIR R4)",
+    "fields": [
+      { "name": "identifier", "type": "string", "classification": "PII", "description": "Patient identifier (MRN, SSN, etc.)" },
+      { "name": "givenName", "type": "string", "classification": "PII", "description": "Patient first/given name" },
+      { "name": "familyName", "type": "string", "classification": "PII", "description": "Patient family/last name" },
+      { "name": "birthDate", "type": "date", "classification": "PII", "description": "Patient date of birth" },
+      { "name": "gender", "type": "enum", "classification": "PII", "description": "Administrative gender (male, female, other, unknown)" },
+      { "name": "address", "type": "string", "classification": "PII", "description": "Patient address" },
+      { "name": "telecom", "type": "string", "classification": "PII", "description": "Contact phone/email" },
+      { "name": "maritalStatus", "type": "enum", "description": "Marital status code" },
+      { "name": "multipleBirth", "type": "boolean", "description": "Whether part of a multiple birth" },
+      { "name": "deceasedDate", "type": "date", "classification": "PII", "description": "Date of death if applicable" },
+      { "name": "active", "type": "boolean", "description": "Whether this patient record is active" }
+    ],
+    "source": "healthcare-fhir",
+    "version": "R4"
+  },
+  {
+    "standardName": "healthcare-fhir",
+    "entityName": "Practitioner",
+    "description": "A person who is directly or indirectly involved in the provisioning of healthcare (HL7 FHIR R4)",
+    "fields": [
+      { "name": "identifier", "type": "string", "classification": "PII", "description": "Practitioner identifier (NPI, license number)" },
+      { "name": "givenName", "type": "string", "classification": "PII", "description": "Practitioner first/given name" },
+      { "name": "familyName", "type": "string", "classification": "PII", "description": "Practitioner family/last name" },
+      { "name": "qualification", "type": "string", "description": "Professional qualifications" },
+      { "name": "telecom", "type": "string", "classification": "PII", "description": "Contact information" },
+      { "name": "address", "type": "string", "classification": "PII", "description": "Practitioner address" },
+      { "name": "specialty", "type": "string", "description": "Medical specialty" },
+      { "name": "active", "type": "boolean", "description": "Whether this practitioner record is active" },
+      { "name": "gender", "type": "enum", "description": "Administrative gender" }
+    ],
+    "source": "healthcare-fhir",
+    "version": "R4"
+  },
+  {
+    "standardName": "healthcare-fhir",
+    "entityName": "Observation",
+    "description": "Measurements and simple assertions about a patient (HL7 FHIR R4)",
+    "fields": [
+      { "name": "identifier", "type": "string", "description": "Observation identifier" },
+      { "name": "status", "type": "enum", "description": "Observation status (registered, preliminary, final, amended)" },
+      { "name": "code", "type": "string", "description": "Observation type code (LOINC, SNOMED)" },
+      { "name": "subject", "type": "reference", "classification": "PII", "description": "Patient reference" },
+      { "name": "effectiveDateTime", "type": "timestamp", "description": "Clinically relevant time" },
+      { "name": "valueQuantity", "type": "decimal", "description": "Observation numeric value" },
+      { "name": "valueUnit", "type": "string", "description": "Unit of measurement" },
+      { "name": "valueString", "type": "string", "description": "Observation text value" },
+      { "name": "interpretation", "type": "enum", "description": "Interpretation (normal, abnormal, critical)" },
+      { "name": "performer", "type": "reference", "description": "Practitioner who performed the observation" }
+    ],
+    "source": "healthcare-fhir",
+    "version": "R4"
+  },
+  {
+    "standardName": "healthcare-fhir",
+    "entityName": "Condition",
+    "description": "A clinical condition, problem, diagnosis, or other event (HL7 FHIR R4)",
+    "fields": [
+      { "name": "identifier", "type": "string", "description": "Condition identifier" },
+      { "name": "clinicalStatus", "type": "enum", "description": "Clinical status (active, recurrence, relapse, inactive, remission, resolved)" },
+      { "name": "verificationStatus", "type": "enum", "description": "Verification status (unconfirmed, provisional, differential, confirmed)" },
+      { "name": "code", "type": "string", "description": "Condition code (ICD-10, SNOMED)" },
+      { "name": "subject", "type": "reference", "classification": "PII", "description": "Patient reference" },
+      { "name": "onsetDateTime", "type": "timestamp", "description": "Estimated or actual date of onset" },
+      { "name": "abatementDateTime", "type": "timestamp", "description": "Date of resolution or remission" },
+      { "name": "severity", "type": "enum", "description": "Severity (mild, moderate, severe)" },
+      { "name": "recorder", "type": "reference", "description": "Who recorded the condition" }
+    ],
+    "source": "healthcare-fhir",
+    "version": "R4"
+  },
+  {
+    "standardName": "healthcare-fhir",
+    "entityName": "Medication",
+    "description": "A medication definition (HL7 FHIR R4)",
+    "fields": [
+      { "name": "identifier", "type": "string", "description": "Medication identifier (NDC, RxNorm)" },
+      { "name": "code", "type": "string", "description": "Medication code" },
+      { "name": "form", "type": "enum", "description": "Dose form (tablet, capsule, injection, etc.)" },
+      { "name": "amount", "type": "decimal", "description": "Amount of drug in package" },
+      { "name": "ingredient", "type": "string", "description": "Active ingredient(s)" },
+      { "name": "manufacturer", "type": "reference", "description": "Drug manufacturer" },
+      { "name": "status", "type": "enum", "description": "Medication status (active, inactive, entered-in-error)" },
+      { "name": "isBrand", "type": "boolean", "description": "Whether this is a brand name medication" }
+    ],
+    "source": "healthcare-fhir",
+    "version": "R4"
+  }
+]

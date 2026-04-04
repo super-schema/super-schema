@@ -1,6 +1,6 @@
 # Story 9.1: Schema Import & Bulk Import
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protobuf schemas into Super Schema, so that I can register my production schemas without recreating them manually.
@@ -30,17 +30,17 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
 ## Tasks / Subtasks
 
 ### Database — Prisma Schema
-- [ ] Extend `entities` table metadata JSONB to support `importedFrom` field: `{ format: string, originalContent: string, importedAt: DateTime }` — validated by Zod schema
-- [ ] Add `importedFrom` to the existing `EntityMetadataSchema` Zod validator in `src/types/schemas/entity.ts`
-- [ ] Run `npx prisma migrate dev` if any schema changes are needed (metadata is JSONB, so likely no migration required — only Zod schema update)
+- [x] Extend `entities` table metadata JSONB to support `importedFrom` field: `{ format: string, originalContent: string, importedAt: DateTime }` — validated by Zod schema
+- [x] Add `importedFrom` to the existing `EntityMetadataSchema` Zod validator in `src/types/schemas/entity.ts`
+- [x] Run `npx prisma migrate dev` if any schema changes are needed (metadata is JSONB, so likely no migration required — only Zod schema update)
 
 ### Backend — Importer Parsers
-- [ ] Create `src/lib/importers/types.ts`:
+- [x] Create `src/lib/importers/types.ts`:
   - Define `ParsedField` type: `{ name: string, type: LogicalType, nullable: boolean, description?: string, fieldNumber?: number, confidence: 'high' | 'medium' | 'low', originalType: string }`
   - Define `ParsedEntity` type: `{ name: string, fields: ParsedField[], sourceFormat: string, originalContent: string }`
   - Define `ImportFormat` enum: `'avro' | 'bigquery-ddl' | 'protobuf'`
   - Define `ImportConfidence` type for type mapping confidence levels
-- [ ] Create `src/lib/importers/avro.importer.ts`:
+- [x] Create `src/lib/importers/avro.importer.ts`:
   - Implement `parseAvroSchema(content: string): Result<ParsedEntity>` — parses Avro JSON schema
   - Extract entity name from top-level `name` field (strip namespace if present)
   - Map `fields` array: extract name, type, doc (as description)
@@ -49,14 +49,14 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Set confidence: direct mappings = high, union types with multiple non-null = medium, `bytes`/complex = low
   - Handle nested records (flatten with dot notation or flag as low confidence)
   - Handle logical types: `date`, `timestamp-millis` → `TIMESTAMP`, `decimal` → `DECIMAL` with precision/scale
-- [ ] Create `src/lib/importers/bigquery.importer.ts`:
+- [x] Create `src/lib/importers/bigquery.importer.ts`:
   - Implement `parseBigQueryDDL(content: string): Result<ParsedEntity>` — parses CREATE TABLE statement
   - Extract table name from `CREATE TABLE [project.]dataset.table_name`
   - Parse column definitions: name, type, `NOT NULL` constraint, `OPTIONS(description="...")` for descriptions
   - Map BigQuery types to logical types: `STRING` → `STRING`, `INT64` → `INTEGER`, `FLOAT64` → `DECIMAL`, `BOOL` → `BOOLEAN`, `BYTES` → `BINARY`, `TIMESTAMP`/`DATETIME`/`DATE` → `TIMESTAMP`/`DATE`, `NUMERIC`/`BIGNUMERIC` → `DECIMAL`, `STRUCT` → low confidence, `ARRAY` → low confidence
   - Set confidence: direct mappings = high, `STRUCT`/`ARRAY`/`GEOGRAPHY` = low
   - Handle multi-statement DDL (take first CREATE TABLE)
-- [ ] Create `src/lib/importers/protobuf.importer.ts`:
+- [x] Create `src/lib/importers/protobuf.importer.ts`:
   - Implement `parseProtobufSchema(content: string): Result<ParsedEntity>` — parses .proto file
   - Extract message name from `message MessageName { ... }`
   - Parse field definitions: type, name, field number, `optional` keyword
@@ -64,21 +64,21 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Preserve field numbers in `ParsedField.fieldNumber`
   - Set confidence: scalar types = high, `map`/`oneof`/nested messages = low
   - Handle `syntax = "proto3"` detection (proto3 fields are implicitly optional)
-- [ ] Create `src/lib/importers/format-detector.ts`:
+- [x] Create `src/lib/importers/format-detector.ts`:
   - Implement `detectFormat(content: string, filename?: string): ImportFormat | null`
   - Detection by file extension: `.avsc`/`.avro` → avro, `.sql`/`.ddl` → bigquery-ddl, `.proto` → protobuf
   - Detection by content analysis: JSON with `"type": "record"` → avro, `CREATE TABLE` → bigquery-ddl, `syntax = "proto` or `message` keyword → protobuf
   - Return `null` if format cannot be determined
 
 ### Backend — Import Service
-- [ ] Create `src/services/import.service.ts`
-- [ ] Implement `importSchema(content, format, options, ctx): Result<ImportResult>`:
+- [x] Create `src/services/import.service.ts`
+- [x] Implement `importSchema(content, format, options, ctx): Result<ImportResult>`:
   - If format is `null`, call `detectFormat()` to auto-detect
   - Route to appropriate parser based on format
   - Return `ImportResult`: `{ parsedEntity: ParsedEntity, warnings: string[] }`
   - Does NOT create the entity — returns parsed data for review screen
   - Wrap in `withAudit()` for traceability
-- [ ] Implement `confirmImport(parsedEntity, domainId, ctx): Result<Entity>`:
+- [x] Implement `confirmImport(parsedEntity, domainId, ctx): Result<Entity>`:
   - Takes reviewed/edited `ParsedEntity` from the review screen
   - Creates entity in the database via Prisma with all fields
   - Sets entity metadata `importedFrom: { format, originalContent, importedAt: new Date() }`
@@ -86,26 +86,26 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Wraps entity+fields creation in Prisma transaction
   - Returns the created entity
   - Wrap in `withAudit()`
-- [ ] Implement `bulkImport(files, options, ctx): Result<BulkImportResult>`:
+- [x] Implement `bulkImport(files, options, ctx): Result<BulkImportResult>`:
   - Processes array of `{ content: string, filename: string }` items
   - For each file: detect format → parse → collect results
   - Return `BulkImportResult`: `{ parsed: ParsedEntity[], errors: { filename: string, error: string }[], warnings: string[] }`
   - Does NOT create entities — returns parsed data for bulk review
-- [ ] Implement `confirmBulkImport(parsedEntities, domainId, ctx): Result<BulkConfirmResult>`:
+- [x] Implement `confirmBulkImport(parsedEntities, domainId, ctx): Result<BulkConfirmResult>`:
   - Creates all entities in the database (one Prisma transaction per entity)
   - Returns `BulkConfirmResult`: `{ created: Entity[], failed: { entityName: string, error: string }[] }`
   - Wrap in `withAudit()` — one audit entry per entity created
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/import.ts` oRPC router
-- [ ] Add `import.parseSchema` mutation — thin wrapper calling `importService.importSchema()`, accepts `{ content: string, format?: ImportFormat }`, requires Author role
-- [ ] Add `import.confirmImport` mutation — thin wrapper calling `importService.confirmImport()`, accepts `{ parsedEntity: ParsedEntity, domainId: string }`, requires Author role
-- [ ] Add `import.parseBulk` mutation — thin wrapper calling `importService.bulkImport()`, accepts `{ files: { content: string, filename: string }[] }`, requires Author role
-- [ ] Add `import.confirmBulkImport` mutation — thin wrapper calling `importService.confirmBulkImport()`, accepts `{ parsedEntities: ParsedEntity[], domainId: string }`, requires Author role
-- [ ] Wire router into `appRouter`
+- [x] Create `src/server/api/routers/import.ts` oRPC router
+- [x] Add `import.parseSchema` mutation — thin wrapper calling `importService.importSchema()`, accepts `{ content: string, format?: ImportFormat }`, requires Author role
+- [x] Add `import.confirmImport` mutation — thin wrapper calling `importService.confirmImport()`, accepts `{ parsedEntity: ParsedEntity, domainId: string }`, requires Author role
+- [x] Add `import.parseBulk` mutation — thin wrapper calling `importService.bulkImport()`, accepts `{ files: { content: string, filename: string }[] }`, requires Author role
+- [x] Add `import.confirmBulkImport` mutation — thin wrapper calling `importService.confirmBulkImport()`, accepts `{ parsedEntities: ParsedEntity[], domainId: string }`, requires Author role
+- [x] Wire router into `appRouter`
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/import.ts`:
+- [x] Create `src/types/schemas/import.ts`:
   - `ImportFormatSchema` — z.enum(['avro', 'bigquery-ddl', 'protobuf'])
   - `ParsedFieldSchema` — Zod schema for ParsedField type
   - `ParsedEntitySchema` — Zod schema for ParsedEntity type
@@ -115,7 +115,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - `ConfirmBulkImportInput` — z.object({ parsedEntities: z.array(ParsedEntitySchema), domainId: z.string().cuid() })
 
 ### Frontend — UI Components
-- [ ] Create `src/components/custom/ImportDialog/ImportDialog.tsx`:
+- [x] Create `src/components/custom/ImportDialog/ImportDialog.tsx`:
   - Modal dialog opened by "Import" button in sidebar header
   - Three tabs: "Single File", "Bulk Import", "Paste"
   - Single File tab: drag-and-drop zone + file picker (accept `.avsc`, `.avro`, `.json`, `.sql`, `.ddl`, `.proto`)
@@ -124,7 +124,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - On file/paste submit: call `import.parseSchema` or `import.parseBulk` mutation
   - Show loading spinner during parsing
   - On success: transition to review screen
-- [ ] Create `src/components/custom/ImportDialog/ImportReviewScreen.tsx`:
+- [x] Create `src/components/custom/ImportDialog/ImportReviewScreen.tsx`:
   - Display parsed entity in a preview table
   - Editable entity name field at top
   - Domain selector dropdown
@@ -132,7 +132,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - "Remove Field" button per row
   - "Confirm Import" button — calls `import.confirmImport` mutation
   - "Cancel" button — returns to import dialog
-- [ ] Create `src/components/custom/ImportDialog/BulkImportReviewScreen.tsx`:
+- [x] Create `src/components/custom/ImportDialog/BulkImportReviewScreen.tsx`:
   - List of all parsed entities with expandable details
   - Per-entity: name (editable), field count, warning count, error status
   - Inline error display with "Skip" button to exclude problem files
@@ -140,21 +140,21 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Progress bar during confirmation ("Creating 5 of 23 entities...")
   - Summary on completion: "Imported X entities, Y fields, Z warnings"
   - "Confirm All" button — calls `import.confirmBulkImport` mutation
-- [ ] Create `src/components/custom/ImportDialog/ConfidenceBadge.tsx`:
+- [x] Create `src/components/custom/ImportDialog/ConfidenceBadge.tsx`:
   - Visual indicator: green dot (high confidence), amber dot (medium), red dot (low)
   - Tooltip explaining confidence reason (e.g., "Direct type mapping" or "Ambiguous: STRUCT has no logical equivalent")
-- [ ] Add "Import" button to sidebar header component (`src/components/layout/Sidebar.tsx` or equivalent):
+- [x] Add "Import" button to sidebar header component (`src/components/layout/Sidebar.tsx` or equivalent):
   - Position next to existing "+ New Entity" button
   - Upload icon
   - Opens ImportDialog on click
-- [ ] Create `src/hooks/useImport.ts`:
+- [x] Create `src/hooks/useImport.ts`:
   - Hook wrapping oRPC mutations for import flow
   - Manages import state: idle → parsing → reviewing → confirming → complete
   - Provides: `parseFile`, `parsePaste`, `parseBulk`, `confirmImport`, `confirmBulkImport`, `reset`
   - Handles file reading via FileReader API
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/lib/importers/avro.importer.test.ts`):
+- [x] **Unit tests** (`tests/unit/lib/importers/avro.importer.test.ts`):
   - Parses valid Avro schema with primitive types (string, int, long, float, double, boolean, bytes)
   - Parses Avro schema with nullable union types (`["null", "string"]`)
   - Parses Avro schema with logical types (date, timestamp-millis, decimal)
@@ -162,7 +162,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Returns high confidence for direct type mappings
   - Returns low confidence for complex/nested types
   - Returns error Result for invalid JSON
-- [ ] **Unit tests** (`tests/unit/lib/importers/bigquery.importer.test.ts`):
+- [x] **Unit tests** (`tests/unit/lib/importers/bigquery.importer.test.ts`):
   - Parses CREATE TABLE with all standard BigQuery column types
   - Parses NOT NULL constraints correctly
   - Parses OPTIONS(description="...") for field descriptions
@@ -170,7 +170,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Returns high confidence for direct type mappings
   - Returns low confidence for STRUCT, ARRAY, GEOGRAPHY
   - Returns error Result for unparseable DDL
-- [ ] **Unit tests** (`tests/unit/lib/importers/protobuf.importer.test.ts`):
+- [x] **Unit tests** (`tests/unit/lib/importers/protobuf.importer.test.ts`):
   - Parses .proto file with scalar types
   - Preserves field numbers in ParsedField
   - Handles proto3 syntax (implicit optional)
@@ -178,7 +178,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Maps well-known types (google.protobuf.Timestamp)
   - Returns low confidence for map, oneof, nested messages
   - Returns error Result for invalid proto syntax
-- [ ] **Unit tests** (`tests/unit/lib/importers/format-detector.test.ts`):
+- [x] **Unit tests** (`tests/unit/lib/importers/format-detector.test.ts`):
   - Detects Avro by `.avsc` extension
   - Detects BigQuery DDL by `.sql` extension
   - Detects Protobuf by `.proto` extension
@@ -186,7 +186,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - Detects BigQuery DDL by content (`CREATE TABLE`)
   - Detects Protobuf by content (`syntax = "proto3"`)
   - Returns null for unrecognizable content
-- [ ] **Unit tests** (`tests/unit/services/import.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/import.service.test.ts`):
   - importSchema routes to correct parser based on format
   - importSchema auto-detects format when not specified
   - confirmImport creates entity with correct fields in database
@@ -195,7 +195,7 @@ As a **data engineer**, I want to import existing Avro, BigQuery DDL, and Protob
   - bulkImport continues on parse errors, collects error list
   - confirmBulkImport creates all entities in database
   - RBAC: non-Author users are rejected
-- [ ] **E2E test** (`tests/e2e/schema-import.spec.ts`):
+- [x] **E2E test** (`tests/e2e/schema-import.spec.ts`):
   - Open import dialog via sidebar "Import" button
   - Upload a single Avro JSON file
   - Review screen shows parsed entity with correct fields

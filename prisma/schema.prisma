@@ -11,9 +11,9 @@ datasource db {
 }
 
 model User {
-  id            String     @id @default(cuid())
+  id            String      @id @default(cuid())
   name          String?
-  email         String     @unique
+  email         String      @unique
   emailVerified DateTime?
   image         String?
   password      String?
@@ -21,8 +21,9 @@ model User {
   sessions      Session[]
   entities      Entity[]
   auditLogs     AuditLog[]
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  gitConfigs    GitConfig[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   @@map("users")
 }
@@ -92,17 +93,18 @@ model Domain {
 }
 
 model Entity {
-  id          String       @id @default(cuid())
-  name        String
-  domainId    String
-  version     Int          @default(1)
-  status      EntityStatus @default(DRAFT)
-  ownerId     String
-  description String       @default("")
-  metadata    Json?
-  fields      Field[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id             String           @id @default(cuid())
+  name           String
+  domainId       String
+  version        Int              @default(1)
+  status         EntityStatus     @default(DRAFT)
+  ownerId        String
+  description    String           @default("")
+  metadata       Json?
+  fields         Field[]
+  pullRequests   GitPullRequest[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
   owner  User   @relation(fields: [ownerId], references: [id])
@@ -148,4 +150,68 @@ model AuditLog {
   user User @relation(fields: [userId], references: [id])
 
   @@map("audit_log")
+}
+
+// ============================================================
+// Git Integration Models (Epic 10)
+// ============================================================
+
+enum GitAuthMethod {
+  SSH_KEY
+  PERSONAL_ACCESS_TOKEN
+  GITHUB_APP
+}
+
+enum GitSyncStatus {
+  SUCCESS
+  FAILED
+  PENDING
+}
+
+enum PrReviewMode {
+  ALWAYS
+  BREAKING_ONLY
+  NEVER
+}
+
+enum GitPrStatus {
+  OPEN
+  MERGED
+  CLOSED
+}
+
+model GitConfig {
+  id             String         @id @default(cuid())
+  repositoryUrl  String
+  branch         String         @default("main")
+  basePath       String         @default("schemas/")
+  authMethod     GitAuthMethod
+  authCredential String
+  prReviewMode   PrReviewMode   @default(BREAKING_ONLY)
+  enabled        Boolean        @default(false)
+  lastSyncAt     DateTime?
+  lastSyncStatus GitSyncStatus?
+  createdBy      String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  creator User @relation(fields: [createdBy], references: [id])
+
+  @@map("git_config")
+}
+
+model GitPullRequest {
+  id         String      @id @default(cuid())
+  entityId   String
+  versionId  String
+  prUrl      String
+  prNumber   Int
+  branchName String
+  status     GitPrStatus @default(OPEN)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@map("git_pull_requests")
 }

@@ -1,6 +1,6 @@
 # Story 8.2: Domain Workspace Management & Policy Templates
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As an **administrator**, I want to create domain workspaces with policy templates that entities inherit, so that teams have consistent default policies without manual configuration per entity.
@@ -28,13 +28,13 @@ As an **administrator**, I want to create domain workspaces with policy template
 ## Tasks / Subtasks
 
 ### Database — Prisma Schema
-- [ ] Ensure `domains` table has `policyTemplate` Json? field in `prisma/schema.prisma` (add if not already present):
+- [x] Ensure `domains` table has `policyTemplate` Json? field in `prisma/schema.prisma` (add if not already present):
   - `policyTemplate` Json? (nullable JSONB — null means no template configured)
-- [ ] Add `inheritedFrom` tracking to `fields.decorators` JSONB — extend the decorator schema to include an `_inherited` metadata object tracking which values came from domain template
-- [ ] Run `npx prisma migrate dev` if schema changes are needed
+- [x] Add `inheritedFrom` tracking to `fields.decorators` JSONB — extend the decorator schema to include an `_inherited` metadata object tracking which values came from domain template
+- [x] Run `npx prisma migrate dev` if schema changes are needed
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/domain-policy.ts`:
+- [x] Create `src/types/schemas/domain-policy.ts`:
   - `PolicyTemplateSchema` Zod schema:
     - `classification` z.enum(['PII', 'SENSITIVE', 'INTERNAL', 'PUBLIC']).optional()
     - `retention` z.string().optional() (matches retention period options)
@@ -44,91 +44,91 @@ As an **administrator**, I want to create domain workspaces with policy template
   - `UpdateDomainInput` schema: id (z.string()), name (z.string().optional()), description (z.string().optional()), policyTemplate (PolicyTemplateSchema.optional())
 
 ### Backend — Domain Management Service
-- [ ] Create `src/services/domain.service.ts` (or extend existing domain service)
-- [ ] Implement `createDomain(input, ctx): Result<Domain>`:
+- [x] Create `src/services/domain.service.ts` (or extend existing domain service)
+- [x] Implement `createDomain(input, ctx): Result<Domain>`:
   - Validate input via Zod (CreateDomainInput)
   - Enforce unique domain name (case-insensitive check)
   - Validate policyTemplate JSONB via PolicyTemplateSchema if provided
   - RBAC: require Admin role
   - Wrap in `withAudit()` — log domain creation
-- [ ] Implement `updateDomain(id, input, ctx): Result<Domain>`:
+- [x] Implement `updateDomain(id, input, ctx): Result<Domain>`:
   - Validate input via Zod (UpdateDomainInput)
   - If name changed, enforce uniqueness
   - Validate policyTemplate JSONB via PolicyTemplateSchema if provided
   - RBAC: require Admin role
   - Wrap in `withAudit()` — log domain update
   - Note: template changes do NOT retroactively update existing entities
-- [ ] Implement `getDomains(ctx): Result<DomainWithStats[]>`:
+- [x] Implement `getDomains(ctx): Result<DomainWithStats[]>`:
   - Fetch all domains with entity count (aggregation query)
   - Include policy template status ("Configured" if policyTemplate is not null)
   - RBAC: require Admin role for full admin view
-- [ ] Implement `getDomainById(id, ctx): Result<Domain>`:
+- [x] Implement `getDomainById(id, ctx): Result<Domain>`:
   - Fetch single domain with full details
-- [ ] Implement `deleteDomain(id, ctx): Result<void>`:
+- [x] Implement `deleteDomain(id, ctx): Result<void>`:
   - Prevent deletion if domain has entities — return error "Cannot delete domain with {count} entities. Reassign or delete entities first."
   - RBAC: require Admin role
   - Wrap in `withAudit()`
 
 ### Backend — Policy Template Inheritance Logic
-- [ ] Implement `applyPolicyTemplate(domainId, fieldDecorators, ctx): DecoratorSet` in domain service:
+- [x] Implement `applyPolicyTemplate(domainId, fieldDecorators, ctx): DecoratorSet` in domain service:
   - Fetch domain's policyTemplate
   - If template exists, merge template values into field decorators as defaults
   - Set `_inherited` metadata object tracking which decorator keys came from domain template: `{ domainId, domainName, keys: ['classification', 'retention', ...] }`
   - Only apply template values where field decorator does not already have a value (template = defaults, not overrides)
-- [ ] Integrate with schema service — when a new field is created in an entity belonging to a domain with a policy template:
+- [x] Integrate with schema service — when a new field is created in an entity belonging to a domain with a policy template:
   - Call `applyPolicyTemplate()` to populate decorator defaults
   - Store flattened decorators directly in field (FR45c — no runtime lookup needed)
-- [ ] Implement `removeInheritance(fieldId, decoratorKey, ctx)`:
+- [x] Implement `removeInheritance(fieldId, decoratorKey, ctx)`:
   - When a user edits an inherited value, remove that key from `_inherited.keys`
   - If `_inherited.keys` is empty, remove `_inherited` metadata entirely
   - The edited value becomes field-owned
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/admin/domains.ts` oRPC router
-- [ ] Add `domains.getAll` query — thin wrapper calling `domainService.getDomains()`, Admin-only via `adminProcedure`
-- [ ] Add `domains.getById` query — thin wrapper calling `domainService.getDomainById()`, Admin-only
-- [ ] Add `domains.create` mutation — thin wrapper calling `domainService.createDomain()`, Admin-only
-- [ ] Add `domains.update` mutation — thin wrapper calling `domainService.updateDomain()`, Admin-only
-- [ ] Add `domains.delete` mutation — thin wrapper calling `domainService.deleteDomain()`, Admin-only
-- [ ] Wire router into `appRouter` under `admin.domains` namespace
+- [x] Create `src/server/api/routers/admin/domains.ts` oRPC router
+- [x] Add `domains.getAll` query — thin wrapper calling `domainService.getDomains()`, Admin-only via `adminProcedure`
+- [x] Add `domains.getById` query — thin wrapper calling `domainService.getDomainById()`, Admin-only
+- [x] Add `domains.create` mutation — thin wrapper calling `domainService.createDomain()`, Admin-only
+- [x] Add `domains.update` mutation — thin wrapper calling `domainService.updateDomain()`, Admin-only
+- [x] Add `domains.delete` mutation — thin wrapper calling `domainService.deleteDomain()`, Admin-only
+- [x] Wire router into `appRouter` under `admin.domains` namespace
 
 ### Frontend — Domains Tab UI Components
-- [ ] Create `src/components/custom/admin/DomainDataTable.tsx`:
+- [x] Create `src/components/custom/admin/DomainDataTable.tsx`:
   - DataTable with columns: name, description, entity count, policy template status badge ("Configured" green / "No template" gray), created date
   - Row click opens domain detail panel
   - Search/filter by domain name
   - "+ Create Domain" button in table header
-- [ ] Create `src/components/custom/admin/DomainDetailPanel.tsx`:
+- [x] Create `src/components/custom/admin/DomainDetailPanel.tsx`:
   - Slide-over or right panel showing domain details
   - Domain info section: editable name, editable description with save button
   - Policy template section (see PolicyTemplateEditor below)
   - Delete domain button with confirmation dialog
-- [ ] Create `src/components/custom/admin/DomainCreateDialog.tsx`:
+- [x] Create `src/components/custom/admin/DomainCreateDialog.tsx`:
   - Modal dialog with form: name (required), description (optional), initial policy template (optional — expandable section)
   - Name uniqueness validation (client-side check on blur)
-- [ ] Create `src/components/custom/admin/PolicyTemplateEditor.tsx`:
+- [x] Create `src/components/custom/admin/PolicyTemplateEditor.tsx`:
   - Structured form matching policy template schema:
     - Classification dropdown (PII, SENSITIVE, INTERNAL, PUBLIC, None)
     - Retention period dropdown (matching existing Policy tab options)
     - Quality rules list editor (add/remove rules — reuse existing quality rule editor component)
     - Naming conventions text input
   - Save button with confirmation dialog: "Template changes apply to future entities only. Existing entities are not affected."
-- [ ] Create `src/components/custom/admin/InheritedBadge.tsx`:
+- [x] Create `src/components/custom/admin/InheritedBadge.tsx`:
   - Small badge component: "↳ Inherited from {DomainName}"
   - Displayed next to field decorator values that came from domain policy template
   - Disappears when user edits the inherited value
-- [ ] Create `src/hooks/useAdminDomains.ts`:
+- [x] Create `src/hooks/useAdminDomains.ts`:
   - oRPC query hooks for domain list, domain detail
   - oRPC mutation hooks for create, update, delete domain
   - Invalidation on mutations
 
 ### Frontend — Schema Editor Integration
-- [ ] Modify field editor components to detect `_inherited` metadata in decorator JSONB
-- [ ] Display `InheritedBadge` next to classification, retention, quality rules when `_inherited.keys` includes those decorator keys
-- [ ] On field decorator edit: if editing an inherited value, call `removeInheritance()` to clear the inheritance indicator for that key
+- [x] Modify field editor components to detect `_inherited` metadata in decorator JSONB
+- [x] Display `InheritedBadge` next to classification, retention, quality rules when `_inherited.keys` includes those decorator keys
+- [x] On field decorator edit: if editing an inherited value, call `removeInheritance()` to clear the inheritance indicator for that key
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/domain.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/domain.service.test.ts`):
   - createDomain stores domain with policyTemplate JSONB
   - createDomain rejects duplicate domain name (case-insensitive)
   - createDomain rejects non-Admin users
@@ -141,13 +141,13 @@ As an **administrator**, I want to create domain workspaces with policy template
   - applyPolicyTemplate does not override existing field values
   - removeInheritance clears _inherited key
   - Zod validation rejects invalid policyTemplate JSONB
-- [ ] **Integration test** (`tests/integration/domain-policy.test.ts`):
+- [x] **Integration test** (`tests/integration/domain-policy.test.ts`):
   - Create domain with policy template via oRPC
   - Create entity in that domain → verify new fields have inherited decorator values
   - Edit an inherited field value → verify _inherited metadata is updated
   - Change domain template → verify existing entity fields are NOT changed
   - Create new entity after template change → verify new template values applied
-- [ ] **Playwright E2E test** (`tests/e2e/admin-domains.spec.ts`):
+- [x] **Playwright E2E test** (`tests/e2e/admin-domains.spec.ts`):
   - Admin navigates to Admin Panel → Domains tab
   - Click "+ Create Domain" → fill form with policy template → save
   - Domain appears in table with "Configured" badge

@@ -1,0 +1,91 @@
+[
+  {
+    "standardName": "financial",
+    "entityName": "Transaction",
+    "description": "A financial transaction record",
+    "fields": [
+      { "name": "transactionId", "type": "string", "classification": "INTERNAL", "description": "Unique transaction identifier" },
+      { "name": "amount", "type": "decimal", "classification": "SENSITIVE", "description": "Transaction amount" },
+      { "name": "currency", "type": "string", "description": "ISO 4217 currency code" },
+      { "name": "timestamp", "type": "timestamp", "description": "Transaction date/time" },
+      { "name": "status", "type": "enum", "description": "Transaction status (pending, completed, failed, reversed)" },
+      { "name": "description", "type": "string", "description": "Transaction description or memo" },
+      { "name": "merchantName", "type": "string", "description": "Merchant or counterparty name" },
+      { "name": "merchantCategory", "type": "string", "description": "Merchant category code (MCC)" },
+      { "name": "accountId", "type": "reference", "classification": "INTERNAL", "description": "Source account reference" },
+      { "name": "type", "type": "enum", "description": "Transaction type (debit, credit, transfer)" }
+    ],
+    "source": "financial",
+    "version": "1.0"
+  },
+  {
+    "standardName": "financial",
+    "entityName": "Account",
+    "description": "A financial account (bank account, investment account, etc.)",
+    "fields": [
+      { "name": "accountId", "type": "string", "classification": "INTERNAL", "description": "Unique account identifier" },
+      { "name": "accountNumber", "type": "string", "classification": "PII", "description": "External account number" },
+      { "name": "accountType", "type": "enum", "description": "Account type (checking, savings, investment, credit)" },
+      { "name": "balance", "type": "decimal", "classification": "SENSITIVE", "description": "Current account balance" },
+      { "name": "currency", "type": "string", "description": "Account currency (ISO 4217)" },
+      { "name": "ownerId", "type": "reference", "classification": "INTERNAL", "description": "Account owner reference" },
+      { "name": "openDate", "type": "date", "description": "Date account was opened" },
+      { "name": "status", "type": "enum", "description": "Account status (active, frozen, closed)" },
+      { "name": "routingNumber", "type": "string", "classification": "SENSITIVE", "description": "Bank routing number" },
+      { "name": "institution", "type": "string", "description": "Financial institution name" }
+    ],
+    "source": "financial",
+    "version": "1.0"
+  },
+  {
+    "standardName": "financial",
+    "entityName": "Payment",
+    "description": "A payment between parties",
+    "fields": [
+      { "name": "paymentId", "type": "string", "classification": "INTERNAL", "description": "Unique payment identifier" },
+      { "name": "amount", "type": "decimal", "classification": "SENSITIVE", "description": "Payment amount" },
+      { "name": "currency", "type": "string", "description": "Payment currency (ISO 4217)" },
+      { "name": "payerId", "type": "reference", "classification": "INTERNAL", "description": "Payer reference" },
+      { "name": "payeeId", "type": "reference", "classification": "INTERNAL", "description": "Payee reference" },
+      { "name": "method", "type": "enum", "description": "Payment method (card, bank_transfer, wallet, cash)" },
+      { "name": "status", "type": "enum", "description": "Payment status (initiated, processing, completed, failed)" },
+      { "name": "processedAt", "type": "timestamp", "description": "Processing timestamp" },
+      { "name": "reference", "type": "string", "description": "External payment reference" }
+    ],
+    "source": "financial",
+    "version": "1.0"
+  },
+  {
+    "standardName": "financial",
+    "entityName": "Invoice",
+    "description": "A commercial invoice for goods or services",
+    "fields": [
+      { "name": "invoiceNumber", "type": "string", "description": "Unique invoice number" },
+      { "name": "issueDate", "type": "date", "description": "Date invoice was issued" },
+      { "name": "dueDate", "type": "date", "description": "Payment due date" },
+      { "name": "totalAmount", "type": "decimal", "classification": "SENSITIVE", "description": "Total invoice amount" },
+      { "name": "currency", "type": "string", "description": "Invoice currency (ISO 4217)" },
+      { "name": "lineItems", "type": "array", "description": "Invoice line items" },
+      { "name": "status", "type": "enum", "description": "Invoice status (draft, sent, paid, overdue, cancelled)" },
+      { "name": "customerId", "type": "reference", "classification": "INTERNAL", "description": "Customer reference" },
+      { "name": "taxAmount", "type": "decimal", "description": "Tax amount" },
+      { "name": "notes", "type": "string", "description": "Invoice notes" }
+    ],
+    "source": "financial",
+    "version": "1.0"
+  },
+  {
+    "standardName": "financial",
+    "entityName": "Currency",
+    "description": "A currency definition (ISO 4217)",
+    "fields": [
+      { "name": "code", "type": "string", "description": "ISO 4217 currency code (e.g., USD, EUR)" },
+      { "name": "name", "type": "string", "description": "Currency name (e.g., US Dollar)" },
+      { "name": "symbol", "type": "string", "description": "Currency symbol (e.g., $, EUR)" },
+      { "name": "decimalPlaces", "type": "integer", "description": "Number of decimal places" },
+      { "name": "isActive", "type": "boolean", "description": "Whether currency is actively traded" }
+    ],
+    "source": "financial",
+    "version": "1.0"
+  }
+]

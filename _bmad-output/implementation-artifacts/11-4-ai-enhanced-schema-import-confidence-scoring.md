@@ -1,6 +1,6 @@
 # Story 11.4: AI-Enhanced Schema Import with Confidence Scoring
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data engineer**, I want AI-assisted field matching during schema import with confidence scores, so that ambiguous type mappings and field matches are resolved intelligently rather than manually.
@@ -21,8 +21,8 @@ As a **data engineer**, I want AI-assisted field matching during schema import w
 ## Tasks / Subtasks
 
 ### Backend — AI Import Enhancement Service
-- [ ] Create `src/services/ai-import.service.ts`
-- [ ] Implement `enhanceImportWithAi(parsedFields, sourceContent, domainContext, ctx): Result<EnhancedImportResult>`:
+- [x] Create `src/services/ai-import.service.ts`
+- [x] Implement `enhanceImportWithAi(parsedFields, sourceContent, domainContext, ctx): Result<EnhancedImportResult>`:
   - Input: `parsedFields` (from deterministic parser — Story 9.1), `sourceContent` (raw schema text), `domainContext` (existing entities in target domain)
   - Build LLM prompt with: source schema content, parsed fields with deterministic type mappings, target type system, classification taxonomy, domain context
   - Call AI service to analyze and enhance the field mappings
@@ -30,7 +30,7 @@ As a **data engineer**, I want AI-assisted field matching during schema import w
   - Merge AI suggestions with parser output: for each field, compare AI suggestion with deterministic mapping and assign final confidence
   - Return `EnhancedImportResult`: `{ fields: EnhancedFieldMapping[], overallQualityScore: number }`
   - `EnhancedFieldMapping`: `{ name, deterministicType, aiSuggestedType, finalType, confidence, classification, aiReasoning?, source: "deterministic" | "ai-enhanced" }`
-- [ ] Implement `buildImportPrompt(sourceContent, parsedFields, domainContext): string`:
+- [x] Implement `buildImportPrompt(sourceContent, parsedFields, domainContext): string`:
   - System prompt: "You are a schema analysis assistant. Analyze the source schema and suggest optimal type mappings for the target type system."
   - Include source schema content
   - Include deterministic parser results (field names + initial type mappings)
@@ -38,13 +38,13 @@ As a **data engineer**, I want AI-assisted field matching during schema import w
   - Include classification taxonomy (PII, SENSITIVE, INTERNAL, PUBLIC)
   - Include domain context: existing entity names and their field patterns
   - Request structured JSON output: per-field analysis with suggested type, confidence, classification, and reasoning
-- [ ] Implement `mergeAiWithDeterministic(parsedFields, aiSuggestions): EnhancedFieldMapping[]`:
+- [x] Implement `mergeAiWithDeterministic(parsedFields, aiSuggestions): EnhancedFieldMapping[]`:
   - For each parsed field, find matching AI suggestion by field name
   - If AI agrees with deterministic type: confidence = max(deterministic confidence, AI confidence)
   - If AI disagrees with deterministic type: use AI type, confidence = AI confidence, mark source as "ai-enhanced"
   - If no AI suggestion for a field: keep deterministic mapping, confidence = deterministic confidence
   - Fields where AI disagrees are flagged for user review
-- [ ] Implement `calculateOverallQualityScore(fields: EnhancedFieldMapping[]): number`:
+- [x] Implement `calculateOverallQualityScore(fields: EnhancedFieldMapping[]): number`:
   - Weighted average of all field confidence scores
   - Weight: high confidence fields (> 0.8) weight 1.0, medium (0.5-0.8) weight 0.7, low (< 0.5) weight 0.3
   - Returns 0.0-1.0 score for the overall import quality
@@ -63,7 +63,7 @@ As a **data engineer**, I want AI-assisted field matching during schema import w
 - [ ] Modify existing `import.importSchema` mutation to include AI enhancement when available — add `withAiEnhancement?: boolean` to input schema (defaults to true)
 
 ### Backend — Zod Schemas
-- [ ] Add to `src/types/schemas/import.ts` (or create `src/types/schemas/ai-import.ts`):
+- [x] Add to `src/types/schemas/import.ts` (or create `src/types/schemas/ai-import.ts`):
   - `EnhancedFieldMappingSchema` — z.object({ name: z.string(), deterministicType: z.string(), aiSuggestedType: z.string().optional(), finalType: z.string(), confidence: z.number().min(0).max(1), classification: z.enum(["PII", "SENSITIVE", "INTERNAL", "PUBLIC"]).optional(), aiReasoning: z.string().optional(), source: z.enum(["deterministic", "ai-enhanced"]) })
   - `EnhancedImportResultSchema` — z.object({ fields: z.array(EnhancedFieldMappingSchema), overallQualityScore: z.number().min(0).max(1) })
   - `EnhanceImportInput` — z.object({ parsedFields: z.array(ParsedFieldSchema), sourceContent: z.string(), domainId: z.string().cuid() })
@@ -109,7 +109,7 @@ As a **data engineer**, I want AI-assisted field matching during schema import w
   - Supports per-field type toggle (track user overrides of AI suggestions)
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/ai-import.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/ai-import.service.test.ts`):
   - `buildImportPrompt` includes source content, parsed fields, type system, and domain context
   - `mergeAiWithDeterministic` — AI agrees with parser: confidence increases
   - `mergeAiWithDeterministic` — AI disagrees with parser: AI type used, source marked "ai-enhanced"

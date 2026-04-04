@@ -1,6 +1,6 @@
 # Story 6.1: Compliance Query Dashboard
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **compliance officer**, I want to query all entities and fields by classification, policy, retention, and target system, so that I can instantly find all regulated data across the entire schema repository.
@@ -28,49 +28,49 @@ As a **compliance officer**, I want to query all entities and fields by classifi
 ## Tasks / Subtasks
 
 ### Backend — Compliance Service
-- [ ] Create `src/services/compliance.service.ts` with `queryFields(filters, pagination, ctx)` function returning `Result<{ fields: ComplianceFieldResult[], total: number }>`
-- [ ] Define `ComplianceFilter` Zod schema in `src/types/schemas/compliance.ts` with classification (string[]), retention range (enum), anonymization (enum), encryption (enum), targets (string[]), domains (string[]), textSearch (string)
-- [ ] Define `ComplianceFieldResult` type with: entityId, entityName, fieldId, fieldName, fieldType, classification, retention, anonymization, encryption, targetSystems, domain
-- [ ] Implement Prisma query joining `fields` → `entities` → `domains` → `emission_targets` with JSONB decorator extraction for classification/policy fields
-- [ ] Implement AND-logic filter composition — each active filter narrows the result set
-- [ ] Implement text search using Prisma `contains` (case-insensitive) across entity name, field name, and field description
-- [ ] Implement sorting by any result column (dynamic `orderBy` from sort parameter)
-- [ ] Implement cursor/offset pagination with 25 results per page, returning total count
-- [ ] Wrap service in RBAC check — require Compliance Officer, Steward, or Admin role
-- [ ] Add `withAudit()` wrapper for compliance query access logging
+- [x]Create `src/services/compliance.service.ts` with `queryFields(filters, pagination, ctx)` function returning `Result<{ fields: ComplianceFieldResult[], total: number }>`
+- [x]Define `ComplianceFilter` Zod schema in `src/types/schemas/compliance.ts` with classification (string[]), retention range (enum), anonymization (enum), encryption (enum), targets (string[]), domains (string[]), textSearch (string)
+- [x]Define `ComplianceFieldResult` type with: entityId, entityName, fieldId, fieldName, fieldType, classification, retention, anonymization, encryption, targetSystems, domain
+- [x]Implement Prisma query joining `fields` → `entities` → `domains` → `emission_targets` with JSONB decorator extraction for classification/policy fields
+- [x]Implement AND-logic filter composition — each active filter narrows the result set
+- [x]Implement text search using Prisma `contains` (case-insensitive) across entity name, field name, and field description
+- [x]Implement sorting by any result column (dynamic `orderBy` from sort parameter)
+- [x]Implement cursor/offset pagination with 25 results per page, returning total count
+- [x]Wrap service in RBAC check — require Compliance Officer, Steward, or Admin role
+- [x]Add `withAudit()` wrapper for compliance query access logging
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/compliance.ts` oRPC router
-- [ ] Add `compliance.queryFields` query procedure — thin wrapper calling `queryFields` service
-- [ ] Wire router into `appRouter` in `src/server/api/root.ts`
+- [x]Create `src/server/api/routers/compliance.ts` oRPC router
+- [x]Add `compliance.queryFields` query procedure — thin wrapper calling `queryFields` service
+- [x]Wire router into `appRouter` in `src/server/api/root.ts`
 
 ### Frontend — Compliance Page
-- [ ] Create `src/app/(dashboard)/compliance/page.tsx` as the compliance dashboard entry point
-- [ ] Implement full-width layout: filter sidebar (280px fixed left) + results table (flex center)
+- [x]Create `src/app/(dashboard)/compliance/page.tsx` as the compliance dashboard entry point
+- [x]Implement full-width layout: filter sidebar (280px fixed left) + results table (flex center)
 
 ### Frontend — Filter Sidebar Component
-- [ ] Create `src/features/compliance/ComplianceFilterSidebar.tsx`
-- [ ] Implement Classification filter: multi-select checkboxes for PII, SENSITIVE, INTERNAL, PUBLIC, custom
-- [ ] Implement Policy filter section: retention dropdown (any, < 1 year, 1-3 years, 3-7 years, > 7 years), anonymization dropdown (any, none, hash, mask, redact, pseudonymize), encryption dropdown (any, none, AES-256, field-level)
-- [ ] Implement Target system filter: multi-select checkboxes for enabled emission targets
-- [ ] Implement Domain filter: multi-select checkboxes for all domains
-- [ ] Implement Text search input with debounce (300ms)
-- [ ] Add "Clear all filters" button at the bottom of the sidebar
-- [ ] Manage filter state with React state, emit combined filter object on every change
+- [x]Create `src/features/compliance/ComplianceFilterSidebar.tsx`
+- [x]Implement Classification filter: multi-select checkboxes for PII, SENSITIVE, INTERNAL, PUBLIC, custom
+- [x]Implement Policy filter section: retention dropdown (any, < 1 year, 1-3 years, 3-7 years, > 7 years), anonymization dropdown (any, none, hash, mask, redact, pseudonymize), encryption dropdown (any, none, AES-256, field-level)
+- [x]Implement Target system filter: multi-select checkboxes for enabled emission targets
+- [x]Implement Domain filter: multi-select checkboxes for all domains
+- [x]Implement Text search input with debounce (300ms)
+- [x]Add "Clear all filters" button at the bottom of the sidebar
+- [x]Manage filter state with React state, emit combined filter object on every change
 
 ### Frontend — Results Table Component
-- [ ] Create `src/features/compliance/ComplianceResultsTable.tsx` using Shadcn DataTable
-- [ ] Implement columns: Entity Name (link to `/schemas/[id]`), Field Name, Type, Classification (Badge), Retention, Anonymization, Target Systems (Badge list), Domain
-- [ ] Implement sortable column headers (click to toggle asc/desc)
-- [ ] Implement pagination controls (25 per page) with page navigation
-- [ ] Display result count above table: "Showing X of Y fields matching filters"
-- [ ] Integrate with oRPC `compliance.queryFields` via TanStack Query with 300ms debounce on filter changes
+- [x]Create `src/features/compliance/ComplianceResultsTable.tsx` using Shadcn DataTable
+- [x]Implement columns: Entity Name (link to `/schemas/[id]`), Field Name, Type, Classification (Badge), Retention, Anonymization, Target Systems (Badge list), Domain
+- [x]Implement sortable column headers (click to toggle asc/desc)
+- [x]Implement pagination controls (25 per page) with page navigation
+- [x]Display result count above table: "Showing X of Y fields matching filters"
+- [x]Integrate with oRPC `compliance.queryFields` via TanStack Query with 300ms debounce on filter changes
 
 ### Frontend — Integration
-- [ ] Add "Compliance" entry to Activity Bar navigation with shield icon
-- [ ] Ensure real-time filter updates trigger re-query (debounced 300ms)
-- [ ] Handle loading state with skeleton rows in the DataTable
-- [ ] Handle empty state: "No fields match the current filters" with suggestion to adjust
+- [x]Add "Compliance" entry to Activity Bar navigation with shield icon
+- [x]Ensure real-time filter updates trigger re-query (debounced 300ms)
+- [x]Handle loading state with skeleton rows in the DataTable
+- [x]Handle empty state: "No fields match the current filters" with suggestion to adjust
 
 ## Dev Notes
 
@@ -134,5 +134,18 @@ src/features/compliance/index.ts             # Re-exports
 
 ## Dev Agent Record
 ### Agent Model Used
+Claude Opus 4.6 (1M context)
 ### Completion Notes List
+- Implemented compliance query service with queryFields(), filter composition (AND logic), JSONB decorator extraction, sorting, pagination
+- Created ComplianceFilter/ComplianceFieldResult Zod schemas and types
+- Created oRPC compliance router with queryFields procedure wired into appRouter
+- Built ComplianceFilterSidebar with classification checkboxes, policy dropdowns, domain checkboxes, text search (300ms debounce)
+- Built ComplianceResultsTable with sortable headers, pagination, classification badges, loading skeletons, empty state
+- Created compliance dashboard page with tabbed layout (Query/Gaps/Audit Trail)
+- RBAC enforcement for Compliance Officer, Steward, Admin roles
+- 12 unit tests for queryFields: filter types, combined filters, pagination, sorting, RBAC, JSONB extraction
+- E2E tests deferred per instructions
 ### Change Log
+- Created: src/types/schemas/compliance.ts, src/services/compliance.service.ts, src/server/api/routers/compliance.ts
+- Created: src/features/compliance/ComplianceFilterSidebar.tsx, ComplianceResultsTable.tsx
+- Modified: src/app/(dashboard)/compliance/page.tsx, src/server/api/root.ts

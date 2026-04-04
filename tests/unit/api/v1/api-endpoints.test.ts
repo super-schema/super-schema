@@ -172,10 +172,9 @@ describe("API v1", () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body.success).toBe(true);
-      expect(body.data.status).toBe("healthy");
-      expect(body.data.version).toBe("1.0.0");
-      expect(body.data.timestamp).toBeTruthy();
+      expect(body.status).toBe("healthy");
+      expect(body.components).toBeTruthy();
+      expect(body.timestamp).toBeTruthy();
     });
   });
 

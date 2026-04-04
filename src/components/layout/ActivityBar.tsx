@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   ClipboardCheck,
   Settings,
+  Rocket,
 } from "lucide-react";
 import {
   Tooltip,
@@ -21,6 +22,7 @@ const navItems = [
   { icon: GitBranch, label: "Lineage Graph", href: "/lineage" },
   { icon: ShieldCheck, label: "Governance", href: "/governance" },
   { icon: ClipboardCheck, label: "Compliance", href: "/compliance" },
+  { icon: Rocket, label: "Deployments", href: "/deployments" },
   { icon: Settings, label: "Admin", href: "/admin" },
 ];
 

@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-03
-last_updated: 2026-04-03 # stories 2-6 through 2-10 implemented, 320 tests passing
+last_updated: 2026-04-04 # Epic 6 all 5 stories implemented, 74 new tests, 1241 total passing
 project: super-schema
 project_key: NOKEY
 tracking_system: file-system
@@ -94,55 +94,55 @@ development_status:
   epic-4-retrospective: optional
 
   # Epic 5: Governance & Change Workflows (4 stories)
-  epic-5: backlog
-  5-1-change-classification-engine: ready-for-dev
-  5-2-governance-workflow-and-approval-routing: ready-for-dev
-  5-3-change-impact-reports: ready-for-dev
-  5-4-per-target-staged-emission: ready-for-dev
+  epic-5: in-progress
+  5-1-change-classification-engine: review
+  5-2-governance-workflow-and-approval-routing: review
+  5-3-change-impact-reports: review
+  5-4-per-target-staged-emission: review
   epic-5-retrospective: optional
 
   # Epic 6: Compliance & Audit (5 stories)
-  epic-6: backlog
-  6-1-compliance-query-dashboard: ready-for-dev
-  6-2-gap-detection-compliance-alerts: ready-for-dev
-  6-3-compliance-report-export: ready-for-dev
-  6-4-inline-annotations-user-tagging: ready-for-dev
-  6-5-immutable-audit-trail-viewer: ready-for-dev
+  epic-6: in-progress
+  6-1-compliance-query-dashboard: review
+  6-2-gap-detection-compliance-alerts: review
+  6-3-compliance-report-export: review
+  6-4-inline-annotations-user-tagging: review
+  6-5-immutable-audit-trail-viewer: review
   epic-6-retrospective: optional
 
   # Epic 7: Notifications & Webhooks (3 stories)
-  epic-7: backlog
-  7-1-in-app-notification-system: ready-for-dev
-  7-2-notification-center-ui: ready-for-dev
-  7-3-webhook-infrastructure-external-integrations: ready-for-dev
+  epic-7: in-progress
+  7-1-in-app-notification-system: review
+  7-2-notification-center-ui: review
+  7-3-webhook-infrastructure-external-integrations: review
   epic-7-retrospective: optional
 
   # Epic 8: Administration & Platform Management (5 stories)
-  epic-8: backlog
-  8-1-user-role-management-rbac: ready-for-dev
-  8-2-domain-workspace-management-policy-templates: ready-for-dev
-  8-3-emitter-configuration-type-mapping-administration: ready-for-dev
-  8-4-system-health-monitoring-dashboard: ready-for-dev
-  8-5-custom-classification-taxonomy: ready-for-dev
+  epic-8: in-progress
+  8-1-user-role-management-rbac: review
+  8-2-domain-workspace-management-policy-templates: review
+  8-3-emitter-configuration-type-mapping-administration: review
+  8-4-system-health-monitoring-dashboard: review
+  8-5-custom-classification-taxonomy: review
   epic-8-retrospective: optional
 
   # Epic 9: Schema Registration & Deployment Tracking (3 stories)
-  epic-9: backlog
-  9-1-schema-import-bulk-import: ready-for-dev
-  9-2-drift-detection-engine: ready-for-dev
-  9-3-deployment-tracking-dashboard: ready-for-dev
+  epic-9: in-progress
+  9-1-schema-import-bulk-import: review
+  9-2-drift-detection-engine: review
+  9-3-deployment-tracking-dashboard: review
   epic-9-retrospective: optional
 
   # Epic 10: Git-Native Workflow (2 stories)
-  epic-10: backlog
-  10-1-git-export-service-configuration: ready-for-dev
-  10-2-pr-based-change-review-compatibility-reports: ready-for-dev
+  epic-10: in-progress
+  10-1-git-export-service-configuration: review
+  10-2-pr-based-change-review-compatibility-reports: review
   epic-10-retrospective: optional
 
   # Epic 11: AI-Assisted Authoring - Phase 3 (4 stories)
-  epic-11: backlog
-  11-1-natural-language-entity-creation: ready-for-dev
-  11-2-schema-standard-reference-library: ready-for-dev
-  11-3-ai-assisted-field-suggestions-domain-context: ready-for-dev
-  11-4-ai-enhanced-schema-import-confidence-scoring: ready-for-dev
+  epic-11: in-progress
+  11-1-natural-language-entity-creation: review
+  11-2-schema-standard-reference-library: review
+  11-3-ai-assisted-field-suggestions-domain-context: review
+  11-4-ai-enhanced-schema-import-confidence-scoring: review
   epic-11-retrospective: optional

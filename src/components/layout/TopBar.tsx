@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Search, User, LogOut, Settings } from "lucide-react";
+import { Search, User, LogOut, Settings } from "lucide-react";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
 import { modKey } from "@/lib/platform";
+import { NotificationCenter } from "@/components/custom/NotificationCenter";
 
 export function TopBar() {
   const { data: session } = useSession();
@@ -49,14 +50,7 @@ export function TopBar() {
 
       {/* Right: Bell + User */}
       <div className="flex items-center gap-space-3">
-        <button className="relative p-1.5 rounded-lg hover:bg-accent animate-field-hover">
-          <Bell className="w-5 h-5 text-muted-foreground" />
-          <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-primary rounded-full flex items-center justify-center">
-            <span className="text-[10px] text-primary-foreground font-medium">
-              0
-            </span>
-          </span>
-        </button>
+        <NotificationCenter />
 
         <Link
           href="/admin"

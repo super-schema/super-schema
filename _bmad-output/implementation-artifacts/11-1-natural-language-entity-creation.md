@@ -1,6 +1,6 @@
 # Story 11.1: Natural Language Entity Creation
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data modeler**, I want to create entity schemas by describing them in natural language, so that I can quickly scaffold schemas without manually adding each field.
@@ -24,15 +24,15 @@ As a **data modeler**, I want to create entity schemas by describing them in nat
 ## Tasks / Subtasks
 
 ### Backend — AI Service
-- [ ] Create `src/services/ai.service.ts`
-- [ ] Implement AI client abstraction with configurable backend:
+- [x] Create `src/services/ai.service.ts`
+- [x] Implement AI client abstraction with configurable backend:
   - Read `AI_PROVIDER` env var (e.g., "ollama", "vllm") and `AI_BASE_URL` env var (e.g., "http://localhost:11434")
   - Create `AiClient` interface: `{ complete(prompt: string, options?: AiOptions): Promise<Result<string>> }`
   - Implement `OllamaClient` — HTTP POST to `{AI_BASE_URL}/api/generate` with model from `AI_MODEL` env var
   - Implement `VllmClient` — HTTP POST to `{AI_BASE_URL}/v1/completions` with OpenAI-compatible API
   - Factory function `createAiClient(): AiClient | null` — returns null if `AI_PROVIDER` is not set
-- [ ] Implement `isAiConfigured(): boolean` — checks if `AI_PROVIDER` and `AI_BASE_URL` are set
-- [ ] Implement `generateEntityFromDescription(description, domainContext, ctx): Result<EntitySuggestion>`:
+- [x] Implement `isAiConfigured(): boolean` — checks if `AI_PROVIDER` and `AI_BASE_URL` are set
+- [x] Implement `generateEntityFromDescription(description, domainContext, ctx): Result<EntitySuggestion>`:
   - Build LLM prompt with: user description, domain context (domain name, existing entity names), available type system, classification options
   - Prompt format: structured system prompt requesting JSON output matching `EntitySuggestion` schema
   - Call AI client with prompt
@@ -40,14 +40,14 @@ As a **data modeler**, I want to create entity schemas by describing them in nat
   - Validate parsed response against `EntitySuggestionSchema` (Zod)
   - Assign confidence scores to each field based on LLM output
   - Return `Result<EntitySuggestion>`
-- [ ] Implement prompt builder `buildEntityPrompt(description, domainContext): string`:
+- [x] Implement prompt builder `buildEntityPrompt(description, domainContext): string`:
   - System prompt: "You are a data modeling assistant. Generate entity schemas in JSON format."
   - Include type system reference: string, integer, decimal, boolean, enum, array, map, reference, date, timestamp
   - Include classification options: PII, SENSITIVE, INTERNAL, PUBLIC
   - Include domain context: domain name, list of existing entity names for naming consistency
   - Include user description
   - Request structured JSON output with entity name, description, and fields array
-- [ ] Implement response parser `parseEntitySuggestion(raw: string): Result<EntitySuggestion>`:
+- [x] Implement response parser `parseEntitySuggestion(raw: string): Result<EntitySuggestion>`:
   - Extract JSON from LLM response (handle markdown code blocks, leading/trailing text)
   - Parse JSON
   - Validate against Zod schema
@@ -62,7 +62,7 @@ As a **data modeler**, I want to create entity schemas by describing them in nat
 - [ ] Wire router into `appRouter`
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/ai.ts`:
+- [x] Create `src/types/schemas/ai.ts`:
   - `FieldSuggestionSchema` — z.object({ name: z.string(), type: z.string(), classification: z.enum(["PII", "SENSITIVE", "INTERNAL", "PUBLIC"]).optional(), description: z.string().optional(), confidence: z.number().min(0).max(1) })
   - `EntitySuggestionSchema` — z.object({ entityName: z.string(), description: z.string().optional(), fields: z.array(FieldSuggestionSchema) })
   - `GenerateEntityInput` — z.object({ description: z.string().min(10).max(2000), domainId: z.string().cuid() })
@@ -104,7 +104,7 @@ As a **data modeler**, I want to create entity schemas by describing them in nat
   - Local state management for editing suggestions before creation
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/ai.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/ai.service.test.ts`):
   - `buildEntityPrompt` includes description, domain context, type system, and classification options
   - `parseEntitySuggestion` handles well-formed JSON response
   - `parseEntitySuggestion` handles malformed JSON (returns error Result)

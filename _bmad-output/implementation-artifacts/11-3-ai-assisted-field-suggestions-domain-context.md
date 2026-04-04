@@ -1,6 +1,6 @@
 # Story 11.3: AI-Assisted Field Suggestions from Domain Context
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data modeler**, I want the system to suggest fields, types, and decorators based on entity name and domain context, so that I get intelligent recommendations as I build out my schemas.
@@ -25,8 +25,8 @@ As a **data modeler**, I want the system to suggest fields, types, and decorator
 ## Tasks / Subtasks
 
 ### Backend — Field Suggestion Service
-- [ ] Create `src/services/field-suggestion.service.ts`
-- [ ] Implement `getFieldSuggestions(entityName, domainId, description?, ctx): Result<RankedFieldSuggestion[]>`:
+- [x] Create `src/services/field-suggestion.service.ts`
+- [x] Implement `getFieldSuggestions(entityName, domainId, description?, ctx): Result<RankedFieldSuggestion[]>`:
   - Orchestrates all suggestion sources and merges results
   - Step 1: Query standards library — call `standardsService.suggestFieldsFromStandard(entityName, [])` to get standard field matches
   - Step 2: Query AI service (if configured) — call `aiService.generateFieldSuggestions(entityName, domainContext, description)` to get AI-generated suggestions
@@ -36,12 +36,12 @@ As a **data modeler**, I want the system to suggest fields, types, and decorator
   - Tag each suggestion with source: "standard", "ai", "pattern"
   - Return sorted by confidence descending
   - RBAC: require Author role
-- [ ] Implement `generateFieldSuggestions(entityName, domainContext, description?, ctx): Result<FieldSuggestion[]>` in `src/services/ai.service.ts`:
+- [x] Implement `generateFieldSuggestions(entityName, domainContext, description?, ctx): Result<FieldSuggestion[]>` in `src/services/ai.service.ts`:
   - Build prompt with: entity name, domain context (existing entities and their fields), optional description
   - Prompt requests field suggestions (not full entity) — name, type, classification, confidence
   - Parse and validate LLM response
   - Return field suggestions with AI-assigned confidence scores
-- [ ] Implement `getPatternBasedSuggestions(entityName): FieldSuggestion[]`:
+- [x] Implement `getPatternBasedSuggestions(entityName): FieldSuggestion[]`:
   - Rule-based suggestions from common patterns:
     - Universal: `id` (string), `createdAt` (timestamp), `updatedAt` (timestamp)
     - Contains "User"/"Customer"/"Person": `email` (string, PII), `firstName` (string, PII), `lastName` (string, PII), `phone` (string, PII)
@@ -56,7 +56,7 @@ As a **data modeler**, I want the system to suggest fields, types, and decorator
 - [ ] Wire into existing `ai` router
 
 ### Backend — Zod Schemas
-- [ ] Add to `src/types/schemas/ai.ts`:
+- [x] Add to `src/types/schemas/ai.ts`:
   - `RankedFieldSuggestionSchema` — extends FieldSuggestionSchema with `source: z.enum(["standard", "ai", "pattern"])` and `rank: z.number()`
   - `SuggestFieldsInput` — z.object({ entityName: z.string().min(1), domainId: z.string().cuid(), description: z.string().optional() })
 
@@ -103,7 +103,7 @@ As a **data modeler**, I want the system to suggest fields, types, and decorator
   - Debounced trigger on entity name change (500ms)
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/field-suggestion.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/field-suggestion.service.test.ts`):
   - Standard library match: "Customer" entity returns schema.org Person/Customer fields
   - Standard library match: case-insensitive matching works
   - Standard library match: fuzzy matching (e.g., "Customers" matches "Customer")
@@ -114,11 +114,11 @@ As a **data modeler**, I want the system to suggest fields, types, and decorator
   - Deduplication: same field from multiple sources keeps highest-confidence version
   - Ranking: standard suggestions ranked above AI, AI above pattern
   - All suggestions have valid types from supported type system
-- [ ] **Unit tests** (`tests/unit/services/ai.service.test.ts` — additions):
+- [x] **Unit tests** (`tests/unit/services/ai.service.test.ts` — additions):
   - `generateFieldSuggestions` builds correct prompt with entity name and domain context
   - `generateFieldSuggestions` parses field-level suggestions correctly
   - `generateFieldSuggestions` handles empty/malformed responses
-- [ ] **Unit tests** (`tests/unit/services/field-suggestion.service.test.ts` — pattern tests):
+- [x] **Unit tests** (`tests/unit/services/field-suggestion.service.test.ts` — pattern tests):
   - `getPatternBasedSuggestions` returns universal fields for any entity name
   - `getPatternBasedSuggestions` returns person-related fields for "User", "Customer", "Person"
   - `getPatternBasedSuggestions` returns financial fields for "Order", "Transaction"

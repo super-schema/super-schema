@@ -1,6 +1,6 @@
 # Story 8.5: Custom Classification Taxonomy
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As an **administrator**, I want to define custom classification levels beyond the system defaults, so that my organization can use its own data classification scheme.
@@ -23,7 +23,7 @@ As an **administrator**, I want to define custom classification levels beyond th
 ## Tasks / Subtasks
 
 ### Database — Prisma Schema
-- [ ] Add `classification_levels` table to `prisma/schema.prisma`:
+- [x] Add `classification_levels` table to `prisma/schema.prisma`:
   - `id` String @id @default(cuid())
   - `name` String @unique (uppercase, e.g., "CONFIDENTIAL", "RESTRICTED")
   - `displayColor` String (hex color, e.g., "#FF0000")
@@ -34,36 +34,36 @@ As an **administrator**, I want to define custom classification levels beyond th
   - `isSystem` Boolean @default(false) (true for PII, SENSITIVE, INTERNAL, PUBLIC)
   - `createdAt` DateTime @default(now())
   - `updatedAt` DateTime @updatedAt
-- [ ] Run `npx prisma migrate dev` to generate and apply migration
-- [ ] Add seed data in `prisma/seed.ts` — create the four system default classifications:
+- [x] Run `npx prisma migrate dev` to generate and apply migration
+- [x] Add seed data in `prisma/seed.ts` — create the four system default classifications:
   - PII: sortOrder=1, displayColor from UX spec, isSystem=true
   - SENSITIVE: sortOrder=2, displayColor from UX spec, isSystem=true
   - INTERNAL: sortOrder=3, displayColor from UX spec, isSystem=true
   - PUBLIC: sortOrder=4, displayColor from UX spec, isSystem=true
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/classification.ts`:
+- [x] Create `src/types/schemas/classification.ts`:
   - `ClassificationLevelSchema` Zod schema: id, name, displayColor, bgColor, textColor, description, sortOrder, isSystem
   - `CreateClassificationInput` schema: name (z.string().min(1).transform(s => s.toUpperCase())), displayColor (z.string().regex(/^#[0-9A-Fa-f]{6}$/)), bgColor (z.string()), textColor (z.string()), description (z.string().optional()), sortOrder (z.number().int())
   - `UpdateClassificationInput` schema: id (z.string()), displayColor (z.string().optional()), bgColor (z.string().optional()), textColor (z.string().optional()), description (z.string().optional()), sortOrder (z.number().int().optional())
   - Note: `name` is not updatable after creation to prevent breaking existing field references
 
 ### Backend — Classification Service
-- [ ] Create `src/services/classification.service.ts`
-- [ ] Implement `getClassificationLevels(ctx): Result<ClassificationLevel[]>`:
+- [x] Create `src/services/classification.service.ts`
+- [x] Implement `getClassificationLevels(ctx): Result<ClassificationLevel[]>`:
   - Fetch all classification_levels ordered by sortOrder ascending
   - No RBAC restriction — all users need classification levels for dropdowns
-- [ ] Implement `createClassification(input, ctx): Result<ClassificationLevel>`:
+- [x] Implement `createClassification(input, ctx): Result<ClassificationLevel>`:
   - Validate input via Zod (CreateClassificationInput)
   - Enforce unique name (case-insensitive — names are stored uppercase)
   - RBAC: require Admin role
   - Wrap in `withAudit()` — log classification creation
-- [ ] Implement `updateClassification(id, input, ctx): Result<ClassificationLevel>`:
+- [x] Implement `updateClassification(id, input, ctx): Result<ClassificationLevel>`:
   - Allow updating displayColor, bgColor, textColor, description, sortOrder
   - Allow color updates on system defaults (isSystem=true) — only deletion is blocked
   - RBAC: require Admin role
   - Wrap in `withAudit()` — log classification update
-- [ ] Implement `deleteClassification(id, ctx): Result<void>`:
+- [x] Implement `deleteClassification(id, ctx): Result<void>`:
   - Block deletion of system defaults: if isSystem=true, return error "Cannot delete system default classification"
   - Check if any fields use this classification: query fields where `decorators->'classification'->>'level' = name` or `decorators->'classification'->>'customLevel' = name`
   - If in use: return error "Cannot delete — {count} fields use this classification. Reassign them first."
@@ -72,64 +72,64 @@ As an **administrator**, I want to define custom classification levels beyond th
   - Wrap in `withAudit()` — log classification deletion
 
 ### Backend — Classification Integration
-- [ ] Modify field decorator validation in `src/types/schemas/` to accept custom classification levels:
+- [x] Modify field decorator validation in `src/types/schemas/` to accept custom classification levels:
   - Update the classification `level` field in DecoratorSchema from `z.enum(['PII', 'SENSITIVE', 'INTERNAL', 'PUBLIC'])` to dynamically validate against available classification_levels
   - Option A: Use `z.string()` with runtime validation against DB
   - Option B: Keep enum for system defaults + `customLevel` field for custom (existing pattern in architecture doc)
   - Recommended: Use `customLevel` field — system enum stays stable, custom levels use `customLevel` string validated at runtime
-- [ ] Ensure compliance query filters include custom classification levels:
+- [x] Ensure compliance query filters include custom classification levels:
   - Modify compliance service to query classification_levels for filter dropdown options
-- [ ] Ensure autocomplete suggestions include custom classifications:
+- [x] Ensure autocomplete suggestions include custom classifications:
   - Modify field editor classification selector to fetch from classification_levels
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/admin/classifications.ts` oRPC router
-- [ ] Add `classifications.getAll` query — thin wrapper calling `classificationService.getClassificationLevels()`, uses `protectedProcedure` (all users need classification data for dropdowns)
-- [ ] Add `classifications.create` mutation — thin wrapper calling `classificationService.createClassification()`, Admin-only via `adminProcedure`
-- [ ] Add `classifications.update` mutation — thin wrapper calling `classificationService.updateClassification()`, Admin-only
-- [ ] Add `classifications.delete` mutation — thin wrapper calling `classificationService.deleteClassification()`, Admin-only
-- [ ] Wire router into `appRouter` under `admin.classifications` namespace (but `getAll` accessible to all authenticated users)
+- [x] Create `src/server/api/routers/admin/classifications.ts` oRPC router
+- [x] Add `classifications.getAll` query — thin wrapper calling `classificationService.getClassificationLevels()`, uses `protectedProcedure` (all users need classification data for dropdowns)
+- [x] Add `classifications.create` mutation — thin wrapper calling `classificationService.createClassification()`, Admin-only via `adminProcedure`
+- [x] Add `classifications.update` mutation — thin wrapper calling `classificationService.updateClassification()`, Admin-only
+- [x] Add `classifications.delete` mutation — thin wrapper calling `classificationService.deleteClassification()`, Admin-only
+- [x] Wire router into `appRouter` under `admin.classifications` namespace (but `getAll` accessible to all authenticated users)
 
 ### Frontend — Classifications Tab UI Components
-- [ ] Create `src/components/custom/admin/ClassificationList.tsx`:
+- [x] Create `src/components/custom/admin/ClassificationList.tsx`:
   - Ordered list/table of classification levels (sorted by sortOrder)
   - System defaults displayed first with "System" badge — cannot be deleted
   - Each row shows: color swatch (displayColor), name, description, sort order, isSystem badge
   - Edit button on each row (opens inline editor or detail panel)
   - Delete button on custom classifications only (disabled for system defaults)
   - "+ Add Classification" button at top
-- [ ] Create `src/components/custom/admin/ClassificationCreateDialog.tsx`:
+- [x] Create `src/components/custom/admin/ClassificationCreateDialog.tsx`:
   - Modal form: name (text input, auto-uppercased), display color (color picker or hex input), background color, text color, description (textarea), sort order (number input)
   - Color preview: live badge preview showing how the classification will look
   - Name uniqueness validation on blur
-- [ ] Create `src/components/custom/admin/ClassificationEditForm.tsx`:
+- [x] Create `src/components/custom/admin/ClassificationEditForm.tsx`:
   - Inline or panel form for editing classification properties
   - For system defaults: only colors are editable (name, isSystem read-only)
   - For custom: colors, description, sort order editable (name read-only after creation)
   - Live badge preview with updated colors
-- [ ] Create `src/components/custom/admin/ClassificationBadgePreview.tsx`:
+- [x] Create `src/components/custom/admin/ClassificationBadgePreview.tsx`:
   - Preview component showing how the badge will render with given colors
   - Used in create and edit forms for real-time feedback
-- [ ] Create `src/hooks/useAdminClassifications.ts`:
+- [x] Create `src/hooks/useAdminClassifications.ts`:
   - oRPC query hook for classification levels
   - oRPC mutation hooks for create, update, delete
   - Invalidation on mutations (also invalidate classification dropdowns app-wide)
 
 ### Frontend — Application-Wide Integration
-- [ ] Modify `src/components/custom/` field editor classification selector:
+- [x] Modify `src/components/custom/` field editor classification selector:
   - Fetch classification levels from `classifications.getAll` query
   - Display all levels (system + custom) in dropdown, ordered by sortOrder
   - Show color swatch next to each option
-- [ ] Modify classification badge component (`src/components/custom/ClassificationBadge.tsx` or similar):
+- [x] Modify classification badge component (`src/components/custom/ClassificationBadge.tsx` or similar):
   - Look up badge colors from classification_levels data instead of hardcoded color map
   - Support both system defaults and custom levels
   - Fallback: if classification level not found in DB (edge case), render with default gray
-- [ ] Modify compliance query filter UI:
+- [x] Modify compliance query filter UI:
   - Fetch classification levels for filter dropdown options
   - Include custom classifications alongside system defaults
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/classification.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/classification.service.test.ts`):
   - getClassificationLevels returns all levels ordered by sortOrder
   - createClassification stores new custom level with correct properties
   - createClassification rejects duplicate name (case-insensitive)
@@ -141,18 +141,18 @@ As an **administrator**, I want to define custom classification levels beyond th
   - deleteClassification blocks deletion of system default (isSystem=true)
   - deleteClassification blocks deletion when fields use the classification (returns count)
   - Sort order determines dropdown position
-- [ ] **Unit tests** (`tests/unit/components/classification-badge.test.ts`):
+- [x] **Unit tests** (`tests/unit/components/classification-badge.test.ts`):
   - ClassificationBadge renders with correct colors from classification_levels
   - ClassificationBadge handles custom classification colors
   - ClassificationBadge falls back to default gray for unknown levels
-- [ ] **Integration test** (`tests/integration/classification-taxonomy.test.ts`):
+- [x] **Integration test** (`tests/integration/classification-taxonomy.test.ts`):
   - Create custom classification via oRPC
   - Verify it appears in classification levels query
   - Create a field with the custom classification → verify decorator stores correctly
   - Attempt to delete classification while field uses it → verify blocked with count
   - Remove classification from field → verify deletion now succeeds
   - Verify system defaults cannot be deleted
-- [ ] **Playwright E2E test** (`tests/e2e/admin-classifications.spec.ts`):
+- [x] **Playwright E2E test** (`tests/e2e/admin-classifications.spec.ts`):
   - Admin navigates to Admin Panel → Classifications tab
   - System defaults (PII, SENSITIVE, INTERNAL, PUBLIC) are displayed with "System" badges
   - Click "+ Add Classification" → fill form → save

@@ -1,6 +1,6 @@
 # Story 8.1: User & Role Management (RBAC)
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As an **administrator**, I want to manage users and assign roles with domain-scoped permissions, so that I can control who can author, approve, and administer schemas.
@@ -30,8 +30,8 @@ As an **administrator**, I want to manage users and assign roles with domain-sco
 ## Tasks / Subtasks
 
 ### Database — Prisma Schema
-- [ ] Add `Role` enum to `prisma/schema.prisma`: `VIEWER`, `AUTHOR`, `STEWARD`, `COMPLIANCE_OFFICER`, `ADMIN`
-- [ ] Add `user_roles` table to `prisma/schema.prisma`:
+- [x] Add `Role` enum to `prisma/schema.prisma`: `VIEWER`, `AUTHOR`, `STEWARD`, `COMPLIANCE_OFFICER`, `ADMIN`
+- [x] Add `user_roles` table to `prisma/schema.prisma`:
   - `id` String @id @default(cuid())
   - `userId` String (FK to users)
   - `role` Role (enum)
@@ -40,113 +40,113 @@ As an **administrator**, I want to manage users and assign roles with domain-sco
   - Relation: user (User), domain (Domain?)
   - Unique constraint on (userId, role, domainId) to prevent duplicate role assignments
   - Index on (userId) for fast role lookups
-- [ ] Run `npx prisma migrate dev` to generate and apply migration
-- [ ] Add seed data in `prisma/seed.ts`: bootstrap logic — if no users exist with ADMIN role, assign ADMIN to the first user
+- [x] Run `npx prisma migrate dev` to generate and apply migration
+- [x] Add seed data in `prisma/seed.ts`: bootstrap logic — if no users exist with ADMIN role, assign ADMIN to the first user
 
 ### Backend — RBAC Service
-- [ ] Create `src/services/rbac.service.ts`
-- [ ] Implement `getUserRoles(userId, ctx): Result<UserRole[]>`:
+- [x] Create `src/services/rbac.service.ts`
+- [x] Implement `getUserRoles(userId, ctx): Result<UserRole[]>`:
   - Fetch all roles for a user from `user_roles` table
   - Return array of `{ role, domainId, domainName }` objects
-- [ ] Implement `assignRole(input, ctx): Result<UserRole>`:
+- [x] Implement `assignRole(input, ctx): Result<UserRole>`:
   - Validate input via Zod: userId (string), role (Role enum), domainId (string, optional)
   - Enforce: COMPLIANCE_OFFICER and ADMIN must be system-level (domainId = null)
   - Enforce: VIEWER, AUTHOR, STEWARD require domainId
   - Prevent duplicate role assignments (same user + role + domain)
   - RBAC: require Admin role
   - Wrap in `withAudit()` — log role assignment to audit trail
-- [ ] Implement `removeRole(id, ctx): Result<void>`:
+- [x] Implement `removeRole(id, ctx): Result<void>`:
   - Safety check: if removing Admin role, verify the user is not the current user (admin cannot self-remove)
   - Safety check: ensure at least one Admin remains in the system
   - RBAC: require Admin role
   - Wrap in `withAudit()` — log role removal to audit trail
-- [ ] Implement `getEffectiveRole(userId, domainId, ctx): Result<Role>`:
+- [x] Implement `getEffectiveRole(userId, domainId, ctx): Result<Role>`:
   - Fetch all roles for user
   - Filter to roles applicable to the given domain (domain-specific + system-level)
   - Return the most permissive role (ADMIN > COMPLIANCE_OFFICER > STEWARD > AUTHOR > VIEWER)
   - If no roles found, return null (no access)
-- [ ] Implement `hasPermission(userId, requiredRole, domainId, ctx): Result<boolean>`:
+- [x] Implement `hasPermission(userId, requiredRole, domainId, ctx): Result<boolean>`:
   - Get effective role for user + domain
   - Compare against required role using permission hierarchy
   - Return true if effective role is >= required role
-- [ ] Implement `bootstrapFirstAdmin(userId, ctx): Result<void>`:
+- [x] Implement `bootstrapFirstAdmin(userId, ctx): Result<void>`:
   - Check if any user_roles with role=ADMIN exist
   - If not, assign ADMIN to the given userId
   - Called during user registration flow
 
 ### Backend — User Management Service
-- [ ] Create `src/services/user.service.ts` (or extend existing)
-- [ ] Implement `getUsers(ctx): Result<UserWithRoles[]>`:
+- [x] Create `src/services/user.service.ts` (or extend existing)
+- [x] Implement `getUsers(ctx): Result<UserWithRoles[]>`:
   - Fetch all users with their roles (include user_roles with domain relation)
   - RBAC: require Admin role
-- [ ] Implement `getUserById(id, ctx): Result<UserWithRoles>`:
+- [x] Implement `getUserById(id, ctx): Result<UserWithRoles>`:
   - Fetch single user with roles
   - RBAC: require Admin role
-- [ ] Implement `updateUser(id, input, ctx): Result<User>`:
+- [x] Implement `updateUser(id, input, ctx): Result<User>`:
   - Allow updating name
   - RBAC: require Admin role
   - Wrap in `withAudit()`
 
 ### Backend — oRPC Middleware & Base Procedures
-- [ ] Update `src/server/api/orpc.ts` (oRPC middleware setup):
+- [x] Update `src/server/api/orpc.ts` (oRPC middleware setup):
   - `protectedProcedure`: checks valid session (existing)
   - Add `authorProcedure`: extends protectedProcedure, checks Author role (or higher) for the relevant domain
   - Add `stewardProcedure`: extends protectedProcedure, checks Steward role (or higher) for the relevant domain
   - Add `complianceProcedure`: extends protectedProcedure, checks Compliance Officer role (or higher, system-level)
   - Add `adminProcedure`: extends protectedProcedure, checks Admin role (system-level)
   - On role check failure: throw `ORPCError('FORBIDDEN')` with `{ message: "Requires {role} role", suggestedFix: "Contact your administrator" }`
-- [ ] Domain-scoped procedures extract `domainId` from input or context and pass to `hasPermission()`
+- [x] Domain-scoped procedures extract `domainId` from input or context and pass to `hasPermission()`
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/admin/users.ts` oRPC router
-- [ ] Add `users.getAll` query — thin wrapper calling `userService.getUsers()`, Admin-only
-- [ ] Add `users.getById` query — thin wrapper calling `userService.getUserById()`, Admin-only
-- [ ] Add `users.update` mutation — thin wrapper calling `userService.updateUser()`, Admin-only
-- [ ] Add `users.getRoles` query — thin wrapper calling `rbacService.getUserRoles()`, Admin-only
-- [ ] Add `users.assignRole` mutation — thin wrapper calling `rbacService.assignRole()`, Admin-only
-- [ ] Add `users.removeRole` mutation — thin wrapper calling `rbacService.removeRole()`, Admin-only
-- [ ] Wire router into `appRouter` under `admin.users` namespace
+- [x] Create `src/server/api/routers/admin/users.ts` oRPC router
+- [x] Add `users.getAll` query — thin wrapper calling `userService.getUsers()`, Admin-only
+- [x] Add `users.getById` query — thin wrapper calling `userService.getUserById()`, Admin-only
+- [x] Add `users.update` mutation — thin wrapper calling `userService.updateUser()`, Admin-only
+- [x] Add `users.getRoles` query — thin wrapper calling `rbacService.getUserRoles()`, Admin-only
+- [x] Add `users.assignRole` mutation — thin wrapper calling `rbacService.assignRole()`, Admin-only
+- [x] Add `users.removeRole` mutation — thin wrapper calling `rbacService.removeRole()`, Admin-only
+- [x] Wire router into `appRouter` under `admin.users` namespace
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/rbac.ts`:
+- [x] Create `src/types/schemas/rbac.ts`:
   - `RoleEnum` Zod schema (z.enum(['VIEWER', 'AUTHOR', 'STEWARD', 'COMPLIANCE_OFFICER', 'ADMIN']))
   - `AssignRoleInput` schema: userId (z.string()), role (RoleEnum), domainId (z.string().optional())
   - `RemoveRoleInput` schema: id (z.string())
   - `UserWithRoles` schema: user fields + roles array
-- [ ] Create `src/types/schemas/user.ts`:
+- [x] Create `src/types/schemas/user.ts`:
   - `UpdateUserInput` schema: id (z.string()), name (z.string().optional())
 
 ### Frontend — Admin Panel Layout
-- [ ] Create `src/app/(dashboard)/admin/page.tsx` — Admin panel entry page
-- [ ] Create `src/app/(dashboard)/admin/layout.tsx` — Admin layout with tab navigation (Users, Domains, Emitters, Health, Classifications)
-- [ ] Implement Admin route protection: redirect non-admin users to dashboard with toast "Requires Admin role"
-- [ ] Update Activity Bar component: gray out Admin icon for non-admin users with tooltip "Requires Admin role"
+- [x] Create `src/app/(dashboard)/admin/page.tsx` — Admin panel entry page
+- [x] Create `src/app/(dashboard)/admin/layout.tsx` — Admin layout with tab navigation (Users, Domains, Emitters, Health, Classifications)
+- [x] Implement Admin route protection: redirect non-admin users to dashboard with toast "Requires Admin role"
+- [x] Update Activity Bar component: gray out Admin icon for non-admin users with tooltip "Requires Admin role"
 
 ### Frontend — Users Tab UI Components
-- [ ] Create `src/components/custom/admin/UserDataTable.tsx`:
+- [x] Create `src/components/custom/admin/UserDataTable.tsx`:
   - DataTable using Shadcn DataTable pattern
   - Columns: email, name, roles (rendered as badges per domain), last login, status
   - Row click opens user detail panel
   - Search/filter by name or email
-- [ ] Create `src/components/custom/admin/UserDetailPanel.tsx`:
+- [x] Create `src/components/custom/admin/UserDetailPanel.tsx`:
   - Slide-over or right panel showing user details
   - Editable name field with save button
   - Auth providers list (read-only)
   - Roles editor section (see below)
-- [ ] Create `src/components/custom/admin/RolesEditor.tsx`:
+- [x] Create `src/components/custom/admin/RolesEditor.tsx`:
   - List of current roles: each row shows role name + domain badge (or "System" badge) + "Remove" button
   - "Add Role" button opens inline form
   - Role dropdown: VIEWER, AUTHOR, STEWARD, COMPLIANCE_OFFICER, ADMIN
   - Domain dropdown (filtered from available domains) — disabled when COMPLIANCE_OFFICER or ADMIN selected, replaced with "System-level" indicator
   - Confirmation dialog on remove
   - Error display: "Cannot remove your own admin role" if applicable
-- [ ] Create `src/hooks/useAdminUsers.ts`:
+- [x] Create `src/hooks/useAdminUsers.ts`:
   - oRPC query hooks for user list, user detail, roles
   - oRPC mutation hooks for assignRole, removeRole, updateUser
   - Optimistic updates for role changes
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/rbac.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/rbac.service.test.ts`):
   - Viewer can only read entities, view emissions, browse compliance
   - Author can do Viewer + create/edit entities in their domain, emit, view governance
   - Steward can do Author + approve/reject governance, manage overrides in their domain
@@ -159,19 +159,19 @@ As an **administrator**, I want to manage users and assign roles with domain-sco
   - Admin cannot remove their own Admin role
   - Duplicate role assignment is rejected
   - At least one Admin must remain in the system
-- [ ] **Unit tests** (`tests/unit/services/user.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/user.service.test.ts`):
   - getUsers returns all users with roles (Admin only)
   - getUserById returns single user with roles
   - updateUser updates name and logs to audit
   - Non-admin access is rejected
-- [ ] **Integration test** (`tests/integration/rbac.test.ts`):
+- [x] **Integration test** (`tests/integration/rbac.test.ts`):
   - Create users with different roles via oRPC
   - Verify Author can create entity in assigned domain but not another domain
   - Verify Steward can approve governance in assigned domain
   - Verify Viewer cannot create entities
   - Verify Admin can access all admin procedures
   - Verify non-admin gets FORBIDDEN error on admin procedures
-- [ ] **Playwright E2E test** (`tests/e2e/admin-users.spec.ts`):
+- [x] **Playwright E2E test** (`tests/e2e/admin-users.spec.ts`):
   - Admin navigates to Admin Panel → Users tab
   - User list displays with correct columns
   - Click user → detail panel opens

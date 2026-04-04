@@ -1,6 +1,6 @@
 # Story 11.2: Schema Standard Reference Library
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data modeler**, I want to reference industry schema standards (schema.org, HL7/FHIR, financial standards) when creating entities, so that my schemas align with established conventions and I don't miss standard fields.
@@ -26,12 +26,12 @@ As a **data modeler**, I want to reference industry schema standards (schema.org
 ## Tasks / Subtasks
 
 ### Backend — Schema Standards Library
-- [ ] Create `src/lib/schema-standards/` directory structure
-- [ ] Create `src/lib/schema-standards/types.ts`:
+- [x] Create `src/lib/schema-standards/` directory structure
+- [x] Create `src/lib/schema-standards/types.ts`:
   - `StandardField` type: `{ name, type, classification?, description?, qualityRules?: { rule, params }[] }`
   - `StandardTemplate` type: `{ standardName, entityName, description, fields: StandardField[], source, version }`
   - `StandardSource` enum: `"schema.org" | "financial" | "healthcare-fhir"`
-- [ ] Create `src/lib/schema-standards/schema-org.json`:
+- [x] Create `src/lib/schema-standards/schema-org.json`:
   - Person: name, email, telephone, birthDate, address, familyName, givenName, etc. with PII classifications
   - Organization: name, url, email, telephone, address, legalName, foundingDate, etc.
   - Product: name, description, sku, price, brand, category, etc.
@@ -39,21 +39,21 @@ As a **data modeler**, I want to reference industry schema standards (schema.org
   - Place: name, address, geo (latitude, longitude), telephone, etc.
   - CreativeWork: name, author, datePublished, description, url, etc.
   - Map all types to Super Schema type system (string, integer, decimal, date, timestamp, etc.)
-- [ ] Create `src/lib/schema-standards/financial.json`:
+- [x] Create `src/lib/schema-standards/financial.json`:
   - Transaction: transactionId, amount (decimal), currency, timestamp, status, description, merchantName, etc.
   - Account: accountId, accountNumber (PII), accountType, balance (decimal), currency, ownerId (reference), openDate, status, etc.
   - Payment: paymentId, amount (decimal), currency, payerId (reference), payeeId (reference), method, status, processedAt, etc.
   - Invoice: invoiceNumber, issueDate, dueDate, totalAmount (decimal), currency, lineItems (array), status, etc.
   - Currency: code, name, symbol, decimalPlaces (integer), etc.
   - Include appropriate PII/SENSITIVE classifications for financial fields
-- [ ] Create `src/lib/schema-standards/healthcare-fhir.json`:
+- [x] Create `src/lib/schema-standards/healthcare-fhir.json`:
   - Patient: identifier (PII), name (PII), birthDate (PII), gender, address (PII), telecom (PII), maritalStatus, etc.
   - Practitioner: identifier, name, qualification, telecom, address, speciality, etc.
   - Observation: identifier, status, code, subject (reference), effectiveDateTime, value, interpretation, etc.
   - Condition: identifier, clinicalStatus, verificationStatus, code, subject (reference), onsetDateTime, etc.
   - Medication: identifier, code, form, amount, ingredient, manufacturer, etc.
   - Include PII classifications aligned with HIPAA requirements
-- [ ] Create `src/lib/schema-standards/index.ts`:
+- [x] Create `src/lib/schema-standards/index.ts`:
   - Import and export all standard datasets
   - `getAllStandards(): StandardTemplate[]` — returns all bundled standards
   - `getStandardsBySource(source: StandardSource): StandardTemplate[]` — filters by source
@@ -61,23 +61,23 @@ As a **data modeler**, I want to reference industry schema standards (schema.org
   - `searchStandards(query: string): StandardTemplate[]` — fuzzy search across entity names and descriptions
 
 ### Backend — Standards Service
-- [ ] Create `src/services/standards.service.ts`
-- [ ] Implement `getStandardTemplates(filters?, ctx): Result<StandardTemplate[]>`:
+- [x] Create `src/services/standards.service.ts`
+- [x] Implement `getStandardTemplates(filters?, ctx): Result<StandardTemplate[]>`:
   - Load all bundled standards
   - Apply optional filters: source, search query
   - Return sorted by source group, then entity name
   - RBAC: require Viewer role
-- [ ] Implement `getStandardTemplate(standardName, entityName, ctx): Result<StandardTemplate>`:
+- [x] Implement `getStandardTemplate(standardName, entityName, ctx): Result<StandardTemplate>`:
   - Look up specific standard template
   - Return error if not found
   - RBAC: require Viewer role
-- [ ] Implement `reviewAgainstStandard(entityId, standardName, entityName, ctx): Result<StandardReview>`:
+- [x] Implement `reviewAgainstStandard(entityId, standardName, entityName, ctx): Result<StandardReview>`:
   - Fetch entity fields from database
   - Fetch standard template fields
   - Compare field-by-field: matching fields (name + type match), missing fields (in standard but not entity), extra fields (in entity but not standard)
   - Return `StandardReview`: `{ matching: FieldComparison[], missing: StandardField[], extra: EntityField[], matchPercentage: number }`
   - RBAC: require Viewer role
-- [ ] Implement `suggestFieldsFromStandard(entityName, existingFieldNames, ctx): Result<StandardField[]>`:
+- [x] Implement `suggestFieldsFromStandard(entityName, existingFieldNames, ctx): Result<StandardField[]>`:
   - Find matching standard template for entity name (exact and fuzzy match)
   - Filter out fields that already exist on the entity
   - Return remaining standard fields as suggestions
@@ -93,7 +93,7 @@ As a **data modeler**, I want to reference industry schema standards (schema.org
 - [ ] Wire router into `appRouter`
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/standards.ts`:
+- [x] Create `src/types/schemas/standards.ts`:
   - `StandardFieldSchema` — z.object matching StandardField type
   - `StandardTemplateSchema` — z.object matching StandardTemplate type
   - `GetStandardsInput` — z.object({ source: z.enum(["schema.org", "financial", "healthcare-fhir"]).optional(), query: z.string().optional() })
@@ -140,7 +140,7 @@ As a **data modeler**, I want to reference industry schema standards (schema.org
   - Caches standard templates (they are static bundled data)
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/lib/schema-standards.test.ts`):
+- [x] **Unit tests** (`tests/unit/lib/schema-standards.test.ts`):
   - All JSON standard files are valid and parse correctly
   - Each standard template has required fields: standardName, entityName, description, fields, source, version
   - Each field in every template has valid type (from supported type system)
@@ -148,7 +148,7 @@ As a **data modeler**, I want to reference industry schema standards (schema.org
   - `getStandardsBySource()` filters correctly
   - `findStandardByName()` finds exact and case-insensitive matches
   - `searchStandards()` returns relevant results for partial queries
-- [ ] **Unit tests** (`tests/unit/services/standards.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/standards.service.test.ts`):
   - `reviewAgainstStandard` correctly identifies matching fields
   - `reviewAgainstStandard` correctly identifies missing fields
   - `reviewAgainstStandard` correctly identifies extra fields

@@ -1,6 +1,6 @@
 # Story 8.3: Emitter Configuration & Type Mapping Administration
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As an **administrator**, I want to enable/disable emitter targets and configure type mapping policies, so that I can control which emission formats are available and how types translate.
@@ -25,7 +25,7 @@ As an **administrator**, I want to enable/disable emitter targets and configure 
 ## Tasks / Subtasks
 
 ### Database — Prisma Schema
-- [ ] Add `emitter_config` table to `prisma/schema.prisma`:
+- [x] Add `emitter_config` table to `prisma/schema.prisma`:
   - `id` String @id @default(cuid())
   - `emitterName` String @unique (e.g., "bigquery", "avro", "openapi")
   - `enabled` Boolean @default(true)
@@ -34,108 +34,108 @@ As an **administrator**, I want to enable/disable emitter targets and configure 
   - `updatedAt` DateTime @updatedAt
   - `createdAt` DateTime @default(now())
   - Relation: updater (User)
-- [ ] Run `npx prisma migrate dev` to generate and apply migration
-- [ ] Add seed data: create default emitter_config rows for each built-in emitter (bigquery, avro, openapi) with `enabled: true`
+- [x] Run `npx prisma migrate dev` to generate and apply migration
+- [x] Add seed data: create default emitter_config rows for each built-in emitter (bigquery, avro, openapi) with `enabled: true`
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/emitter-config.ts`:
+- [x] Create `src/types/schemas/emitter-config.ts`:
   - `EmitterConfigSchema` Zod schema: emitterName (z.string()), enabled (z.boolean()), configOverrides (z.record(z.unknown()).optional())
   - `UpdateEmitterConfigInput` schema: emitterName (z.string()), enabled (z.boolean().optional()), configOverrides (z.record(z.unknown()).optional())
   - `TestEmitterInput` schema: emitterName (z.string()), entityId (z.string())
   - `CreateTypeMappingOverrideInput` schema: targetType (z.string()), sourceType (z.string()), mappedType (z.string()), isOverride (z.literal(true))
 
 ### Backend — Emitter Config Service
-- [ ] Create `src/services/emitter-config.service.ts`
-- [ ] Implement `getEmitterConfigs(ctx): Result<EmitterConfigWithStats[]>`:
+- [x] Create `src/services/emitter-config.service.ts`
+- [x] Implement `getEmitterConfigs(ctx): Result<EmitterConfigWithStats[]>`:
   - Fetch all emitter_config rows
   - Join with emission_targets to compute: last emission timestamp, total emission count per emitter
   - Include emitter metadata (name, version, target format, description) from emitter registry
   - RBAC: require Admin role
-- [ ] Implement `getEmitterConfigByName(name, ctx): Result<EmitterConfigWithDetails>`:
+- [x] Implement `getEmitterConfigByName(name, ctx): Result<EmitterConfigWithDetails>`:
   - Fetch single emitter config with full details
   - Include type mapping policies for this target from `type_mapping_policies` table
   - RBAC: require Admin role
-- [ ] Implement `updateEmitterConfig(input, ctx): Result<EmitterConfig>`:
+- [x] Implement `updateEmitterConfig(input, ctx): Result<EmitterConfig>`:
   - Update enabled status and/or configOverrides
   - Validate configOverrides JSONB via Zod if provided
   - RBAC: require Admin role
   - Wrap in `withAudit()` — log config change with before/after state
   - Changes take effect immediately — the emission service reads config on each request
-- [ ] Implement `testEmitter(input, ctx): Result<TestEmitterResult>`:
+- [x] Implement `testEmitter(input, ctx): Result<TestEmitterResult>`:
   - Fetch the entity by entityId
   - Run the specified emitter against the entity using the emission service
   - Return: emitted output (string), validation result (pass/fail with details), compilation time
   - RBAC: require Admin role
   - Do NOT persist the emission — this is a test/preview only
-- [ ] Implement `getEnabledEmitters(ctx): Result<string[]>`:
+- [x] Implement `getEnabledEmitters(ctx): Result<string[]>`:
   - Return list of emitter names where enabled=true
   - Called by emission service to filter available emitters
   - No RBAC check needed — called internally by other services
 
 ### Backend — Type Mapping Administration
-- [ ] Implement `getTypeMappingsForTarget(targetType, ctx): Result<TypeMappingPolicy[]>`:
+- [x] Implement `getTypeMappingsForTarget(targetType, ctx): Result<TypeMappingPolicy[]>`:
   - Fetch all type_mapping_policies for the given target
   - Include both default and override mappings
   - RBAC: require Admin role
-- [ ] Implement `createTypeMappingOverride(input, ctx): Result<TypeMappingPolicy>`:
+- [x] Implement `createTypeMappingOverride(input, ctx): Result<TypeMappingPolicy>`:
   - Validate input via Zod (CreateTypeMappingOverrideInput)
   - Create new type_mapping_policies row with `isOverride: true`
   - RBAC: require Admin role
   - Wrap in `withAudit()`
-- [ ] Implement `updateTypeMapping(id, input, ctx): Result<TypeMappingPolicy>`:
+- [x] Implement `updateTypeMapping(id, input, ctx): Result<TypeMappingPolicy>`:
   - Update mapped type for an existing mapping
   - RBAC: require Admin role
   - Wrap in `withAudit()`
-- [ ] Implement `deleteTypeMappingOverride(id, ctx): Result<void>`:
+- [x] Implement `deleteTypeMappingOverride(id, ctx): Result<void>`:
   - Only allow deletion of override mappings (isOverride=true), not system defaults
   - RBAC: require Admin role
   - Wrap in `withAudit()`
 
 ### Backend — Emission Service Integration
-- [ ] Modify `src/services/emission.service.ts`:
+- [x] Modify `src/services/emission.service.ts`:
   - Before listing available emitters for UI (preview tabs, Emit dialog), call `emitterConfigService.getEnabledEmitters()` and filter out disabled emitters
   - Ensure disabled emitters cannot be selected for emission even if requested directly (guard check)
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/admin/emitters.ts` oRPC router
-- [ ] Add `emitters.getAll` query — thin wrapper calling `emitterConfigService.getEmitterConfigs()`, Admin-only via `adminProcedure`
-- [ ] Add `emitters.getByName` query — thin wrapper calling `emitterConfigService.getEmitterConfigByName()`, Admin-only
-- [ ] Add `emitters.updateConfig` mutation — thin wrapper calling `emitterConfigService.updateEmitterConfig()`, Admin-only
-- [ ] Add `emitters.test` mutation — thin wrapper calling `emitterConfigService.testEmitter()`, Admin-only
-- [ ] Add `emitters.getTypeMappings` query — thin wrapper calling `getTypeMappingsForTarget()`, Admin-only
-- [ ] Add `emitters.createTypeMappingOverride` mutation — thin wrapper, Admin-only
-- [ ] Add `emitters.updateTypeMapping` mutation — thin wrapper, Admin-only
-- [ ] Add `emitters.deleteTypeMappingOverride` mutation — thin wrapper, Admin-only
-- [ ] Wire router into `appRouter` under `admin.emitters` namespace
+- [x] Create `src/server/api/routers/admin/emitters.ts` oRPC router
+- [x] Add `emitters.getAll` query — thin wrapper calling `emitterConfigService.getEmitterConfigs()`, Admin-only via `adminProcedure`
+- [x] Add `emitters.getByName` query — thin wrapper calling `emitterConfigService.getEmitterConfigByName()`, Admin-only
+- [x] Add `emitters.updateConfig` mutation — thin wrapper calling `emitterConfigService.updateEmitterConfig()`, Admin-only
+- [x] Add `emitters.test` mutation — thin wrapper calling `emitterConfigService.testEmitter()`, Admin-only
+- [x] Add `emitters.getTypeMappings` query — thin wrapper calling `getTypeMappingsForTarget()`, Admin-only
+- [x] Add `emitters.createTypeMappingOverride` mutation — thin wrapper, Admin-only
+- [x] Add `emitters.updateTypeMapping` mutation — thin wrapper, Admin-only
+- [x] Add `emitters.deleteTypeMappingOverride` mutation — thin wrapper, Admin-only
+- [x] Wire router into `appRouter` under `admin.emitters` namespace
 
 ### Frontend — Emitters Tab UI Components
-- [ ] Create `src/components/custom/admin/EmitterCardGrid.tsx`:
+- [x] Create `src/components/custom/admin/EmitterCardGrid.tsx`:
   - Card grid layout displaying all emitters
   - Each card shows: emitter name, version, target format, status badge (Enabled green / Disabled gray), last emission timestamp, total emission count
   - Enable/Disable toggle on each card (inline, immediate effect)
   - Card click opens emitter detail panel
-- [ ] Create `src/components/custom/admin/EmitterDetailPanel.tsx`:
+- [x] Create `src/components/custom/admin/EmitterDetailPanel.tsx`:
   - Slide-over or right panel showing emitter details
   - Emitter info section: name, version, target format, description (read-only)
   - Type mapping policies table (see below)
   - "Test Emitter" button (see below)
-- [ ] Create `src/components/custom/admin/TypeMappingTable.tsx`:
+- [x] Create `src/components/custom/admin/TypeMappingTable.tsx`:
   - DataTable of type mapping policies for the selected emitter target
   - Columns: source type, mapped type, lossy indicator (warning icon), override indicator (badge)
   - Inline editing: click mapped type cell to edit
   - "Add Override" button opens form: source type dropdown, mapped type input, auto-set isOverride=true
   - Delete button on override rows only (system defaults cannot be deleted)
-- [ ] Create `src/components/custom/admin/TestEmitterDialog.tsx`:
+- [x] Create `src/components/custom/admin/TestEmitterDialog.tsx`:
   - Modal dialog with: entity selector dropdown (searchable, fetches from existing entities), "Run Test" button
   - Output display: emitted code in syntax-highlighted code block, validation result (pass/fail badge with details)
   - Loading state while emitter runs
-- [ ] Create `src/hooks/useAdminEmitters.ts`:
+- [x] Create `src/hooks/useAdminEmitters.ts`:
   - oRPC query hooks for emitter configs, emitter detail, type mappings
   - oRPC mutation hooks for toggle enable/disable, test emitter, CRUD type mappings
   - Optimistic update for enable/disable toggle
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/services/emitter-config.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/emitter-config.service.test.ts`):
   - getEmitterConfigs returns all configs with stats
   - updateEmitterConfig toggles enabled status
   - updateEmitterConfig records change in audit trail
@@ -143,18 +143,18 @@ As an **administrator**, I want to enable/disable emitter targets and configure 
   - testEmitter runs emitter against entity and returns output without persisting
   - testEmitter rejects non-Admin users
   - Disabled emitter is excluded from emission service available emitters
-- [ ] **Unit tests** (`tests/unit/services/emitter-config.type-mapping.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/emitter-config.type-mapping.test.ts`):
   - getTypeMappingsForTarget returns all mappings for target
   - createTypeMappingOverride creates override mapping
   - updateTypeMapping updates mapped type
   - deleteTypeMappingOverride deletes override but rejects deletion of system defaults
   - All type mapping CRUD operations are audited
-- [ ] **Integration test** (`tests/integration/emitter-admin.test.ts`):
+- [x] **Integration test** (`tests/integration/emitter-admin.test.ts`):
   - Disable an emitter via oRPC → verify it no longer appears in emission service available emitters
   - Enable the emitter → verify it reappears
   - Create a type mapping override → verify it is used during emission
   - Test emitter against a sample entity → verify output is returned
-- [ ] **Playwright E2E test** (`tests/e2e/admin-emitters.spec.ts`):
+- [x] **Playwright E2E test** (`tests/e2e/admin-emitters.spec.ts`):
   - Admin navigates to Admin Panel → Emitters tab
   - Emitter cards display with correct info and status
   - Toggle an emitter to Disabled → badge changes to "Disabled"

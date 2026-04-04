@@ -1,6 +1,6 @@
 # Story 6.2: Gap Detection & Compliance Alerts
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **compliance officer**, I want to identify fields with missing or incomplete compliance policies, so that I can remediate governance gaps before audits.
@@ -26,40 +26,40 @@ As a **compliance officer**, I want to identify fields with missing or incomplet
 ## Tasks / Subtasks
 
 ### Backend — Gap Detection Service
-- [ ] Add `detectGaps(filters, ctx)` function to `src/services/compliance.service.ts` returning `Result<{ gaps: ComplianceGap[], summary: GapSummary }>`
-- [ ] Define `ComplianceGap` type in `src/types/schemas/compliance.ts`: entityId, entityName, fieldId, fieldName, gapType (enum: PII_NO_ANONYMIZATION, SENSITIVE_NO_ENCRYPTION, UNCLASSIFIED, NO_RETENTION), severity (enum: CRITICAL, WARNING), suggestedFix (string)
-- [ ] Define `GapSummary` type: criticalCount, warningCount, affectedEntityCount, countsByGapType (Record<GapType, number>)
-- [ ] Implement PII-without-anonymization detection: query fields where `decorators.classification.level = 'PII'` AND (`decorators.policy.anonymization` is null OR "none")
-- [ ] Implement SENSITIVE-without-encryption detection: query fields where `decorators.classification.level = 'SENSITIVE'` AND (`decorators.policy.encryption` is null OR "none")
-- [ ] Implement unclassified-field detection: query fields where `decorators.classification.level` is null or not set
-- [ ] Implement missing-retention detection: query fields where classification is PII or SENSITIVE AND `decorators.policy.retention` is null
-- [ ] Generate suggested fix text for each gap type (static mapping)
-- [ ] Compute gap summary from detected gaps
-- [ ] Support optional domain/entity filters on gap detection
-- [ ] Wrap in RBAC check — require Compliance Officer, Steward, or Admin role
+- [x]Add `detectGaps(filters, ctx)` function to `src/services/compliance.service.ts` returning `Result<{ gaps: ComplianceGap[], summary: GapSummary }>`
+- [x]Define `ComplianceGap` type in `src/types/schemas/compliance.ts`: entityId, entityName, fieldId, fieldName, gapType (enum: PII_NO_ANONYMIZATION, SENSITIVE_NO_ENCRYPTION, UNCLASSIFIED, NO_RETENTION), severity (enum: CRITICAL, WARNING), suggestedFix (string)
+- [x]Define `GapSummary` type: criticalCount, warningCount, affectedEntityCount, countsByGapType (Record<GapType, number>)
+- [x]Implement PII-without-anonymization detection: query fields where `decorators.classification.level = 'PII'` AND (`decorators.policy.anonymization` is null OR "none")
+- [x]Implement SENSITIVE-without-encryption detection: query fields where `decorators.classification.level = 'SENSITIVE'` AND (`decorators.policy.encryption` is null OR "none")
+- [x]Implement unclassified-field detection: query fields where `decorators.classification.level` is null or not set
+- [x]Implement missing-retention detection: query fields where classification is PII or SENSITIVE AND `decorators.policy.retention` is null
+- [x]Generate suggested fix text for each gap type (static mapping)
+- [x]Compute gap summary from detected gaps
+- [x]Support optional domain/entity filters on gap detection
+- [x]Wrap in RBAC check — require Compliance Officer, Steward, or Admin role
 
 ### Backend — oRPC Router
-- [ ] Add `compliance.detectGaps` query procedure to `src/server/api/routers/compliance.ts`
-- [ ] Input: optional filters (domains, entities). Output: `{ gaps, summary }`
+- [x]Add `compliance.detectGaps` query procedure to `src/server/api/routers/compliance.ts`
+- [x]Input: optional filters (domains, entities). Output: `{ gaps, summary }`
 
 ### Frontend — Gaps Tab
-- [ ] Add "Gaps" tab to `src/app/(dashboard)/compliance/page.tsx` using Shadcn Tabs (pill-style)
-- [ ] Create `src/features/compliance/ComplianceGapsView.tsx` component
+- [x]Add "Gaps" tab to `src/app/(dashboard)/compliance/page.tsx` using Shadcn Tabs (pill-style)
+- [x]Create `src/features/compliance/ComplianceGapsView.tsx` component
 
 ### Frontend — Gap Summary Bar
-- [ ] Create gap summary bar above the table: "X critical gaps, Y warnings across Z entities"
-- [ ] Display per-gap-type counts as colored badges (red for critical, amber for warning)
+- [x]Create gap summary bar above the table: "X critical gaps, Y warnings across Z entities"
+- [x]Display per-gap-type counts as colored badges (red for critical, amber for warning)
 
 ### Frontend — Gap Results Table
-- [ ] Create `src/features/compliance/ComplianceGapsTable.tsx` using Shadcn DataTable
-- [ ] Implement columns: Entity Name, Field Name, Gap Type (Badge — colored by type), Severity (Badge — red/amber), Suggested Fix
-- [ ] Make rows clickable — clicking navigates to `/schemas/[entityId]` with query params for fieldId and decorator tab
-- [ ] Style severity badges: red for CRITICAL, amber for WARNING
-- [ ] Style gap type badges with distinct colors per type
+- [x]Create `src/features/compliance/ComplianceGapsTable.tsx` using Shadcn DataTable
+- [x]Implement columns: Entity Name, Field Name, Gap Type (Badge — colored by type), Severity (Badge — red/amber), Suggested Fix
+- [x]Make rows clickable — clicking navigates to `/schemas/[entityId]` with query params for fieldId and decorator tab
+- [x]Style severity badges: red for CRITICAL, amber for WARNING
+- [x]Style gap type badges with distinct colors per type
 
 ### Frontend — Navigation Integration
-- [ ] Implement click-to-navigate: on gap row click, navigate to entity editor with `?fieldId={fieldId}&panel=classification` or `?panel=policy` based on gap type
-- [ ] Ensure entity editor reads URL params to auto-select field and open correct decorator tab
+- [x]Implement click-to-navigate: on gap row click, navigate to entity editor with `?fieldId={fieldId}&panel=classification` or `?panel=policy` based on gap type
+- [x]Ensure entity editor reads URL params to auto-select field and open correct decorator tab
 
 ## Dev Notes
 
@@ -117,5 +117,19 @@ src/features/compliance/ComplianceGapsTable.tsx   # Gap results DataTable
 
 ## Dev Agent Record
 ### Agent Model Used
+Claude Opus 4.6 (1M context)
 ### Completion Notes List
+- Implemented detectGaps() in compliance.service.ts with 4 gap types: PII_NO_ANONYMIZATION, SENSITIVE_NO_ENCRYPTION, UNCLASSIFIED, NO_RETENTION
+- Gap detection queries JSONB decorators for classification and policy data
+- Computes GapSummary with criticalCount, warningCount, affectedEntityCount, countsByGapType
+- Static suggestedFix mapping for each gap type
+- Built ComplianceGapsView with summary bar, gap table, clickable rows navigating to entity editor with field/panel params
+- Severity badges: red for CRITICAL, amber for WARNING
+- Gap type badges with distinct colors per type
+- Empty state with green checkmark when no gaps
+- 8 unit tests: gap detection for each type, fully compliant fields, summary computation, domain filtering, RBAC
+- E2E tests deferred per instructions
 ### Change Log
+- Extended: src/services/compliance.service.ts (detectGaps), src/types/schemas/compliance.ts (gap types)
+- Created: src/features/compliance/ComplianceGapsView.tsx
+- Extended: src/app/(dashboard)/compliance/page.tsx (Gaps tab)

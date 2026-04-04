@@ -1,6 +1,6 @@
 # Story 9.2: Drift Detection Engine
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data engineer**, I want to detect drift between my logical schema and registered implementation schemas, so that I know when production schemas have diverged from the source of truth.
@@ -28,7 +28,7 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
 ## Tasks / Subtasks
 
 ### Database — Prisma Schema
-- [ ] Add `deployment_tracking` table to `prisma/schema.prisma`:
+- [x] Add `deployment_tracking` table to `prisma/schema.prisma`:
   - `id` String @id @default(cuid())
   - `emissionTargetId` String (FK to emission_targets)
   - `environment` String (e.g., "production", "staging", "development")
@@ -42,11 +42,11 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
   - Relation: deployedVersion (EntityVersion, optional)
   - Index on (emissionTargetId, environment)
   - Unique constraint on (emissionTargetId, environment) — one tracking record per target+environment
-- [ ] Add `DRIFT_ALERT` to notification type enum/constants (in `src/types/schemas/notification.ts` or equivalent)
-- [ ] Run `npx prisma migrate dev` to generate and apply migration
+- [x] Add `DRIFT_ALERT` to notification type enum/constants (in `src/types/schemas/notification.ts` or equivalent)
+- [x] Run `npx prisma migrate dev` to generate and apply migration
 
 ### Backend — Drift Comparison Engine
-- [ ] Create `src/lib/drift/drift-comparator.ts`:
+- [x] Create `src/lib/drift/drift-comparator.ts`:
   - Define `NormalizedField` type: `{ name: string, type: string, nullable: boolean, description?: string, fieldNumber?: number }`
   - Implement `normalizeFieldList(parsedFields: ParsedField[]): NormalizedField[]` — converts parsed fields to a normalized comparable format, sorting by name for consistent comparison
   - Implement `compareFieldLists(logical: NormalizedField[], implementation: NormalizedField[]): DriftDifference[]`:
@@ -61,8 +61,8 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
     - Parse failure → "unknown"
 
 ### Backend — Drift Service
-- [ ] Create `src/services/drift.service.ts`
-- [ ] Implement `detectDrift(entityId, ctx): Result<DriftReport>`:
+- [x] Create `src/services/drift.service.ts`
+- [x] Implement `detectDrift(entityId, ctx): Result<DriftReport>`:
   - Fetch entity with emission targets and metadata from database
   - Check if entity has `importedFrom` metadata — if not, return "unknown" status for all targets
   - Parse the registered implementation content using the appropriate importer (from `importedFrom.format`)
@@ -76,36 +76,36 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
   - If drift is detected, create a DRIFT_ALERT notification for the entity owner
   - Wrap in `withAudit()`
   - Return `Result<DriftReport>`
-- [ ] Implement `detectDriftForAll(ctx): Result<DriftReport[]>`:
+- [x] Implement `detectDriftForAll(ctx): Result<DriftReport[]>`:
   - Fetch all entities that have `importedFrom` metadata
   - Call `detectDrift()` for each entity
   - Collect and return all drift reports
   - Wrap in `withAudit()`
-- [ ] Implement `getDriftStatus(entityId, ctx): Result<DriftReport | null>`:
+- [x] Implement `getDriftStatus(entityId, ctx): Result<DriftReport | null>`:
   - Fetch the most recent drift report from `deployment_tracking` for the entity
   - Return null if no drift check has been performed
   - Does not re-run drift detection — returns cached result
-- [ ] Implement `getDriftStatusBulk(entityIds, ctx): Result<Map<string, DriftReport>>`:
+- [x] Implement `getDriftStatusBulk(entityIds, ctx): Result<Map<string, DriftReport>>`:
   - Fetch drift reports for multiple entities in a single query
   - Used by sidebar and deployment overview for efficient batch loading
 
 ### Backend — oRPC Router
-- [ ] Create `src/server/api/routers/drift.ts` oRPC router
-- [ ] Add `drift.detect` mutation — thin wrapper calling `driftService.detectDrift()`, accepts `{ entityId: string }`, requires Author role via `protectedProcedure`
-- [ ] Add `drift.detectAll` mutation — thin wrapper calling `driftService.detectDriftForAll()`, requires Admin role via `adminProcedure`
-- [ ] Add `drift.getStatus` query — thin wrapper calling `driftService.getDriftStatus()`, accepts `{ entityId: string }`, requires Viewer role via `protectedProcedure`
-- [ ] Add `drift.getStatusBulk` query — thin wrapper calling `driftService.getDriftStatusBulk()`, accepts `{ entityIds: string[] }`, requires Viewer role via `protectedProcedure`
-- [ ] Wire router into `appRouter`
+- [x] Create `src/server/api/routers/drift.ts` oRPC router
+- [x] Add `drift.detect` mutation — thin wrapper calling `driftService.detectDrift()`, accepts `{ entityId: string }`, requires Author role via `protectedProcedure`
+- [x] Add `drift.detectAll` mutation — thin wrapper calling `driftService.detectDriftForAll()`, requires Admin role via `adminProcedure`
+- [x] Add `drift.getStatus` query — thin wrapper calling `driftService.getDriftStatus()`, accepts `{ entityId: string }`, requires Viewer role via `protectedProcedure`
+- [x] Add `drift.getStatusBulk` query — thin wrapper calling `driftService.getDriftStatusBulk()`, accepts `{ entityIds: string[] }`, requires Viewer role via `protectedProcedure`
+- [x] Wire router into `appRouter`
 
 ### Backend — REST API Endpoint
-- [ ] Create `src/app/api/v1/schemas/[id]/drift/route.ts`:
+- [x] Create `src/app/api/v1/schemas/[id]/drift/route.ts`:
   - POST handler: calls `driftService.detectDrift(id, ctx)` — triggers drift detection
   - GET handler: calls `driftService.getDriftStatus(id, ctx)` — returns cached drift report
   - Auth: require valid API key or session (consistent with existing REST API auth pattern)
   - Return JSON response with drift report
 
 ### Backend — Zod Schemas
-- [ ] Create `src/types/schemas/drift.ts`:
+- [x] Create `src/types/schemas/drift.ts`:
   - `DriftDifferenceSchema` — z.object({ fieldName, type: z.enum(["added", "removed", "type-mismatch", "metadata-mismatch"]), logicalValue: z.string().nullable(), implementationValue: z.string().nullable() })
   - `DriftTargetStatusSchema` — z.object({ targetFormat: z.string(), driftStatus: z.enum(["in-sync", "drifted", "unknown"]), differences: z.array(DriftDifferenceSchema) })
   - `DriftReportSchema` — z.object({ entityId: z.string(), entityName: z.string(), targets: z.array(DriftTargetStatusSchema) })
@@ -114,52 +114,52 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
   - `DetectDriftBulkInput` — z.object({ entityIds: z.array(z.string().cuid()) })
 
 ### Backend — Notification Integration
-- [ ] Modify `src/services/drift.service.ts` — when drift is detected:
+- [x] Modify `src/services/drift.service.ts` — when drift is detected:
   - Create a DRIFT_ALERT notification via notification service
   - Notification recipient: entity owner (from `entities.owner`)
   - Notification title: "Drift detected: {entityName}"
   - Notification body: summary of differences (e.g., "3 field differences found across 2 targets")
   - Entity reference: link to the entity
-- [ ] If webhook service exists (Story 7.3), dispatch `drift.detected` webhook event with drift report data
+- [x] If webhook service exists (Story 7.3), dispatch `drift.detected` webhook event with drift report data
 
 ### Frontend — UI Components
-- [ ] Create `src/components/custom/DriftBadge/DriftBadge.tsx`:
+- [x] Create `src/components/custom/DriftBadge/DriftBadge.tsx`:
   - Visual badge showing drift status per target
   - Props: `status: "in-sync" | "drifted" | "unknown"`, `targetFormat?: string`
   - "in-sync": green badge with checkmark
   - "drifted": amber badge with warning icon
   - "unknown": gray badge with question mark
   - Tooltip with target format name and last checked time
-- [ ] Create `src/components/custom/DriftPanel/DriftPanel.tsx`:
+- [x] Create `src/components/custom/DriftPanel/DriftPanel.tsx`:
   - New tab content for the Right Panel — "Deployment" tab
   - Displays per-target drift status in a list
   - Each target row: format icon, target name, drift status badge, last checked timestamp
   - "Check Drift" button per target — calls `drift.detect` mutation for the entity
   - Expandable section per target showing diff details when drifted
-- [ ] Create `src/components/custom/DriftPanel/DriftDiffView.tsx`:
+- [x] Create `src/components/custom/DriftPanel/DriftDiffView.tsx`:
   - Expandable diff view showing individual field differences
   - Table with columns: Field Name, Difference Type, Logical Value, Implementation Value
   - Color-coded rows: green for added, red for removed, amber for type-mismatch/metadata-mismatch
   - Clear visual distinction between "in logical but not implementation" vs "in implementation but not logical"
-- [ ] Modify sidebar entity list component (`src/components/layout/Sidebar.tsx` or `src/features/schema-editor/`):
+- [x] Modify sidebar entity list component (`src/components/layout/Sidebar.tsx` or `src/features/schema-editor/`):
   - Fetch drift status for visible entities via `drift.getStatusBulk` query
   - Display amber dot next to entity name if any target has `driftStatus: "drifted"`
   - No dot if all targets are "in-sync" or no drift check performed
-- [ ] Modify entity header component:
+- [x] Modify entity header component:
   - Display "Drift" badge in entity header area
   - Badge shows aggregate drift status across all targets
   - Clicking badge scrolls to / opens the Deployment tab in Right Panel
-- [ ] Add "Deployment" tab to Right Panel:
+- [x] Add "Deployment" tab to Right Panel:
   - New tab alongside existing tabs (Properties, Emission, etc.)
   - Tab content renders `DriftPanel` component
   - Tab icon shows amber indicator if drift is detected
-- [ ] Create `src/hooks/useDrift.ts`:
+- [x] Create `src/hooks/useDrift.ts`:
   - Hook wrapping oRPC queries/mutations for drift operations
   - Provides: `driftStatus` (cached), `detectDrift` (mutation), `isChecking` (loading state)
   - Auto-refetch drift status after successful detection
 
 ### Testing
-- [ ] **Unit tests** (`tests/unit/lib/drift/drift-comparator.test.ts`):
+- [x] **Unit tests** (`tests/unit/lib/drift/drift-comparator.test.ts`):
   - Two identical field lists produce no differences (in-sync)
   - Field in logical but not implementation → "added" difference
   - Field in implementation but not logical → "removed" difference
@@ -169,7 +169,7 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
   - Empty field lists produce no differences
   - determineDriftStatus returns "in-sync" for empty differences
   - determineDriftStatus returns "drifted" for non-empty differences
-- [ ] **Unit tests** (`tests/unit/services/drift.service.test.ts`):
+- [x] **Unit tests** (`tests/unit/services/drift.service.test.ts`):
   - detectDrift returns "unknown" for entity without importedFrom metadata
   - detectDrift parses imported content and emitted output correctly
   - detectDrift stores drift report in deployment_tracking table
@@ -180,14 +180,14 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
   - getDriftStatus returns null for unchecked entity
   - getDriftStatusBulk returns map of drift reports
   - RBAC: Author required for detect, Viewer sufficient for getStatus
-- [ ] **Integration test** (`tests/integration/drift-detection.test.ts`):
+- [x] **Integration test** (`tests/integration/drift-detection.test.ts`):
   - Import a schema (Avro) → entity created with importedFrom metadata
   - Modify entity fields (add/remove/change type)
   - Emit the entity to Avro target
   - Run drift detection → drift report shows differences
   - Verify deployment_tracking record created with correct status
   - Verify DRIFT_ALERT notification created for entity owner
-- [ ] **E2E test** (`tests/e2e/drift-detection.spec.ts`):
+- [x] **E2E test** (`tests/e2e/drift-detection.spec.ts`):
   - Import an Avro schema via import dialog
   - Modify entity (change a field type)
   - Click "Check Drift" in Deployment tab
