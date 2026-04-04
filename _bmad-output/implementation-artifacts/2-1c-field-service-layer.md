@@ -1,6 +1,6 @@
 # Story 2.1c: Field Service Layer with oRPC Router
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -24,37 +24,37 @@ So that the UI can manage fields within entities.
 ## Tasks / Subtasks
 
 ### Task 1: Field Service [AC: field.service.ts exports]
-- [ ] Create `src/services/field.service.ts`
-- [ ] Define `CreateFieldInput` Zod schema: `{ name: string, type: string, precision?: number, scale?: number, nullable?: boolean, isKey?: boolean, fieldNumber?: number, description?: string, aliases?: string[], classification?: string, decorators?: Decorators }`
-- [ ] Define `UpdateFieldInput` Zod schema: same fields as create, all optional
-- [ ] Implement `createField(entityId: string, input: CreateFieldInput, ctx: ServiceContext): Promise<Result<Field>>`:
+- [x] Create `src/services/field.service.ts`
+- [x] Define `CreateFieldInput` Zod schema: `{ name: string, type: string, precision?: number, scale?: number, nullable?: boolean, isKey?: boolean, fieldNumber?: number, description?: string, aliases?: string[], classification?: string, decorators?: Decorators }`
+- [x] Define `UpdateFieldInput` Zod schema: same fields as create, all optional
+- [x] Implement `createField(entityId: string, input: CreateFieldInput, ctx: ServiceContext): Promise<Result<Field>>`:
   1. Validate `decorators` with `DecoratorSchema` if provided — return error with `suggestedFix` if invalid
   2. Verify entity exists via `getEntityById`
   3. Query max `sortOrder` for the entity and set new field's `sortOrder` to `max + 1` (or 0 if no fields)
   4. Wrap Prisma `field.create()` in `withAudit()`
   5. Handle unique constraint violation `(entityId, name)` — return error with `suggestedFix: "A field with this name already exists in this entity."`
   6. Return `Result<Field>`
-- [ ] Implement `updateField(id: string, input: UpdateFieldInput, ctx: ServiceContext): Promise<Result<Field>>`:
+- [x] Implement `updateField(id: string, input: UpdateFieldInput, ctx: ServiceContext): Promise<Result<Field>>`:
   1. Fetch existing field for before-state
   2. Validate `decorators` with `DecoratorSchema` if provided
   3. Wrap Prisma `field.update()` in `withAudit()`
   4. Return `Result<Field>`
-- [ ] Implement `deleteField(id: string, ctx: ServiceContext): Promise<Result<void>>`:
+- [x] Implement `deleteField(id: string, ctx: ServiceContext): Promise<Result<void>>`:
   1. Fetch existing field for before-state
   2. Wrap Prisma `field.delete()` in `withAudit()`
   3. Return `Result<void>`
-- [ ] Implement `reorderFields(entityId: string, fieldIds: string[], ctx: ServiceContext): Promise<Result<void>>`:
+- [x] Implement `reorderFields(entityId: string, fieldIds: string[], ctx: ServiceContext): Promise<Result<void>>`:
   1. Validate all fieldIds belong to the given entity
   2. Use Prisma `$transaction` to update `sortOrder` for each field based on array index position
   3. Wrap entire transaction in `withAudit()` with before/after sort orders
   4. Return `Result<void>`
 
 ### Task 2: Zod Input Schemas [AC: Zod validation on decorators]
-- [ ] Create `src/types/schemas/field.schema.ts` with `CreateFieldInputSchema`, `UpdateFieldInputSchema`, `ReorderFieldsInputSchema`
-- [ ] Import and use `DecoratorSchema` from `decorator.schema.ts` for the `decorators` field validation
+- [x] Create `src/types/schemas/field.schema.ts` with `CreateFieldInputSchema`, `UpdateFieldInputSchema`, `ReorderFieldsInputSchema`
+- [x] Import and use `DecoratorSchema` from `decorator.schema.ts` for the `decorators` field validation
 
 ### Task 3: oRPC Router [AC: thin wrapper in src/server/api/routers/field.ts]
-- [ ] Create `src/server/api/routers/field.ts`:
+- [x] Create `src/server/api/routers/field.ts`:
   ```typescript
   create: protectedProcedure
     .input(z.object({ entityId: z.string(), data: CreateFieldInputSchema }))
@@ -69,10 +69,10 @@ So that the UI can manage fields within entities.
     .input(z.object({ entityId: z.string(), fieldIds: z.array(z.string()) }))
     .mutation(({ input, ctx }) => reorderFields(input.entityId, input.fieldIds, ctx))
   ```
-- [ ] Register router in the app router
+- [x] Register router in the app router
 
 ### Task 4: Unit Tests [AC: all unit test verifications]
-- [ ] Create `tests/unit/services/field.service.test.ts`:
+- [x] Create `tests/unit/services/field.service.test.ts`:
   - Test `createField` returns `{ success: true, data: Field }` with correct `sortOrder` (max + 1)
   - Test `createField` with invalid decorators returns error with `suggestedFix`
   - Test `updateField` returns updated field
@@ -82,7 +82,7 @@ So that the UI can manage fields within entities.
   - Test `DecoratorSchema` rejects invalid structures (wrong type for `nullable`, invalid `level` enum value)
 
 ### Task 5: Integration Tests [AC: all integration test verifications]
-- [ ] Create `tests/integration/services/field-lifecycle.test.ts`:
+- [x] Create `tests/integration/services/field-lifecycle.test.ts`:
   - Test full lifecycle: create entity -> create field -> update field -> reorder fields -> delete field
   - Verify `sortOrder` is set correctly on create (auto-increment)
   - Verify `reorderFields` updates all sortOrder values in a transaction
@@ -160,8 +160,25 @@ tests/
 - [Source: architecture.md - JSONB decorator schema (DecoratorSchema)]
 - [Source: architecture.md - Data Architecture (fields table)]
 
+## File List
+
+- `src/types/schemas/field.schema.ts` — NEW
+- `src/services/field.service.ts` — NEW
+- `src/server/api/routers/field.ts` — NEW
+- `src/server/api/root.ts` — MODIFIED: register field router
+- `tests/unit/services/field.service.test.ts` — NEW: 8 tests
+- `tests/integration/services/field-lifecycle.test.ts` — NEW: 1 integration test
+
 ## Dev Agent Record
 
 ### Agent Model Used
+Claude Opus 4.6 (1M context)
+
 ### Completion Notes List
+- All 5 tasks completed. 103 total tests pass (9 new), build clean.
+- reorderFields uses $transaction for atomic sortOrder updates
+- createField auto-increments sortOrder (max + 1 or 0)
+- DecoratorSchema validation on every field write
+
 ### Change Log
+- 2026-04-03: Story 2.1c implementation complete

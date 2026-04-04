@@ -1,10 +1,35 @@
 "use client";
 
+import { useState, useEffect, useTransition } from "react";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
-import { addFieldAction, updateFieldAction, deleteFieldAction } from "./actions";
+import {
+  addFieldAction,
+  updateFieldAction,
+  deleteFieldAction,
+  updateEntityStatusAction,
+} from "./actions";
+import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
+import { RetirementBanner } from "@/components/custom/RetirementBanner";
+import { isReadOnly } from "@/lib/entity-lifecycle";
+import { trackRecentEntity } from "@/lib/recent-entities";
+
+type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
+
+const STATUS_OPTIONS: { value: EntityStatus; label: string; color: string; dotColor: string }[] = [
+  { value: "DRAFT", label: "DRAFT", color: "#e5a93b", dotColor: "bg-warning" },
+  { value: "ACTIVE", label: "ACTIVE", color: "#5bc27a", dotColor: "bg-success" },
+  { value: "DEPRECATED", label: "DEPRECATED", color: "#e88a3b", dotColor: "bg-[#e88a3b]" },
+  { value: "RETIRED", label: "RETIRED", color: "#8a8694", dotColor: "bg-muted-foreground" },
+];
+
+function getStatusOption(status: string) {
+  return STATUS_OPTIONS.find((o) => o.value === status) || STATUS_OPTIONS[0];
+}
 
 interface FieldData {
   id: string;
@@ -17,6 +42,8 @@ interface FieldData {
   fieldNumber: number | null;
   description: string;
   classification: string | null;
+  aliases: string[];
+  decorators: Record<string, unknown>;
   sortOrder: number;
 }
 
@@ -29,17 +56,76 @@ interface EntityWorkspaceProps {
     version: number;
     domainName: string;
     domainSlug: string;
+    metadata: Record<string, unknown> | null;
   };
   fields: FieldData[];
+  domainPolicy: Record<string, unknown> | null;
 }
 
-export function EntityWorkspace({ entity, fields }: EntityWorkspaceProps) {
-  const statusColor =
-    entity.status === "ACTIVE"
-      ? "bg-success"
-      : entity.status === "DRAFT"
-        ? "bg-warning"
-        : "bg-muted-foreground";
+export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspaceProps) {
+  const currentStatus = getStatusOption(entity.status);
+  const readOnly = isReadOnly(entity.status as EntityStatus);
+
+  // Track recent entity access for command palette
+  useEffect(() => {
+    trackRecentEntity({
+      entityId: entity.id,
+      domainSlug: entity.domainSlug,
+      entityName: entity.name,
+      domainName: entity.domainName,
+    });
+  }, [entity.id, entity.domainSlug, entity.name, entity.domainName]);
+
+  const [isPending, startTransition] = useTransition();
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  // Deprecation form state
+  const [showDeprecationForm, setShowDeprecationForm] = useState(false);
+  const [depSince, setDepSince] = useState(new Date().toISOString().split("T")[0]);
+  const [depReplacementEntityId, setDepReplacementEntityId] = useState("");
+  const [depMigrationNotes, setDepMigrationNotes] = useState("");
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+
+  function handleStatusChange(newStatus: EntityStatus) {
+    setStatusError(null);
+    setStatusDropdownOpen(false);
+
+    if (newStatus === entity.status) return;
+
+    if (newStatus === "DEPRECATED") {
+      // Show deprecation form first
+      setShowDeprecationForm(true);
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await updateEntityStatusAction(entity.id, newStatus);
+      if (result?.error) {
+        setStatusError(result.error);
+      }
+    });
+  }
+
+  function handleDeprecationSubmit() {
+    startTransition(async () => {
+      const existingMeta = (entity.metadata || {}) as Record<string, unknown>;
+      const metadata = {
+        ...existingMeta,
+        deprecation: {
+          deprecated: true,
+          since: depSince,
+          replacementEntityId: depReplacementEntityId || null,
+          migrationNotes: depMigrationNotes || undefined,
+        },
+      };
+      const result = await updateEntityStatusAction(entity.id, "DEPRECATED", metadata);
+      if (result?.error) {
+        setStatusError(result.error);
+      } else {
+        setShowDeprecationForm(false);
+      }
+    });
+  }
 
   return (
     <div className="animate-auth-fade-up">
@@ -60,14 +146,116 @@ export function EntityWorkspace({ entity, fields }: EntityWorkspaceProps) {
       </nav>
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-space-6">
+      <div className="flex items-center justify-between mb-space-4">
         <div className="flex items-center gap-space-3">
           <h1 className="text-display text-foreground font-mono">{entity.name}</h1>
-          <span className={`w-2.5 h-2.5 rounded-full ${statusColor}`} />
-          <Badge variant="outline">{entity.status}</Badge>
+          <span className={`w-2.5 h-2.5 rounded-full ${currentStatus.dotColor}`} />
+
+          {/* Status dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => !readOnly && setStatusDropdownOpen(!statusDropdownOpen)}
+              disabled={readOnly}
+              className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-body-small transition-colors hover:bg-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ color: currentStatus.color }}
+            >
+              {entity.status}
+              {!readOnly && (
+                <ChevronRight className="w-3 h-3 rotate-90" />
+              )}
+            </button>
+
+            {statusDropdownOpen && (
+              <div className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-lg border border-border bg-popover shadow-md py-1">
+                {STATUS_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleStatusChange(opt.value)}
+                    disabled={opt.value === entity.status}
+                    className="flex items-center gap-2 w-full px-3 py-1.5 text-body-small text-left hover:bg-accent/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: opt.color }}
+                    />
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <Badge variant="secondary">v{entity.version}</Badge>
         </div>
       </div>
+
+      {/* Status transition error */}
+      {statusError && (
+        <div className="mb-space-4 rounded-lg border border-destructive/50 bg-destructive/10 px-space-4 py-space-2 text-body-small text-destructive">
+          {statusError}
+        </div>
+      )}
+
+      {/* Deprecation inline form */}
+      {showDeprecationForm && (
+        <div className="mb-space-4 rounded-xl border px-space-4 py-space-4 space-y-space-3" style={{ borderColor: "#e88a3b", backgroundColor: "rgba(232,138,59,0.08)" }}>
+          <h4 className="text-body-small font-medium text-foreground">Deprecation Details</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-3">
+            <div>
+              <label className="text-caption text-muted-foreground mb-1 block">Deprecated Since</label>
+              <Input
+                type="date"
+                value={depSince}
+                onChange={(e) => setDepSince(e.target.value)}
+                className="h-8 text-body-small"
+              />
+            </div>
+            <div>
+              <label className="text-caption text-muted-foreground mb-1 block">Replacement Entity ID</label>
+              <Input
+                value={depReplacementEntityId}
+                onChange={(e) => setDepReplacementEntityId(e.target.value)}
+                placeholder="Entity ID (optional)"
+                className="h-8 text-body-small"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-caption text-muted-foreground mb-1 block">Migration Notes</label>
+            <textarea
+              value={depMigrationNotes}
+              onChange={(e) => setDepMigrationNotes(e.target.value)}
+              placeholder="Optional migration guidance..."
+              className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-body-small text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring resize-none"
+              rows={3}
+            />
+          </div>
+          <div className="flex items-center gap-space-2">
+            <Button
+              size="sm"
+              onClick={handleDeprecationSubmit}
+              disabled={isPending}
+            >
+              {isPending ? "Saving..." : "Mark as Deprecated"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowDeprecationForm(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Banners */}
+      {entity.status === "DEPRECATED" && (
+        <DeprecationBanner metadata={entity.metadata} domainSlug={entity.domainSlug} />
+      )}
+      {entity.status === "RETIRED" && (
+        <RetirementBanner metadata={entity.metadata} />
+      )}
 
       {entity.description && (
         <p className="text-body text-muted-foreground mb-space-6">{entity.description}</p>
@@ -82,8 +270,10 @@ export function EntityWorkspace({ entity, fields }: EntityWorkspaceProps) {
           entityId={entity.id}
           domainSlug={entity.domainSlug}
           fields={fields}
-          onAddField={async (name, type) => {
-            await addFieldAction(entity.id, name, type);
+          domainPolicy={domainPolicy}
+          isReadOnly={readOnly}
+          onAddField={async (name, type, opts) => {
+            await addFieldAction(entity.id, name, type, opts);
           }}
           onUpdateField={async (id, data) => {
             await updateFieldAction(id, data);
@@ -94,17 +284,6 @@ export function EntityWorkspace({ entity, fields }: EntityWorkspaceProps) {
         />
       </div>
 
-      {/* Implemented Schemas */}
-      <div>
-        <h2 className="text-heading-2 text-foreground mb-space-4">
-          Implemented Schemas
-        </h2>
-        <div className="surface-glass rounded-xl border border-border p-space-8 text-center">
-          <p className="text-body text-muted-foreground">
-            No implementations yet — emit this entity to generate target schemas
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

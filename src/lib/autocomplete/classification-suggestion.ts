@@ -1,27 +1,33 @@
-const NAME_TO_CLASSIFICATION: [RegExp, string][] = [
+export interface ClassificationSuggestion {
+  level: string;
+  reason: string;
+}
+
+const NAME_TO_CLASSIFICATION: [RegExp, ClassificationSuggestion][] = [
   // PII
-  [/(email|phone|mobile|fax|ssn|social_security|passport|driver_license|birth_date|date_of_birth|address|zip|postal|first_name|last_name|full_name)$/i, "PII"],
-  [/^(name|phone|email|ssn|dob|address)$/i, "PII"],
+  [/^(email|phone|mobile|fax|ssn|social_security|passport|driver_license|address|first_name|last_name|full_name|date_of_birth|name)$/i,
+    { level: "PII", reason: "Field name indicates personally identifiable information" }],
+  [/(email|phone|ssn|passport|birth_date|date_of_birth)$/i,
+    { level: "PII", reason: "Field name pattern suggests PII data" }],
 
-  // SENSITIVE
-  [/(password|secret|token|api_key|private_key|credit_card|card_number|cvv|pin|account_number|routing_number|salary|income|balance|amount)$/i, "SENSITIVE"],
-  [/^(password|secret|token|key|credential)$/i, "SENSITIVE"],
+  // SENSITIVE — security credentials
+  [/^(password|secret|token|api_key|credential|private_key)$/i,
+    { level: "SENSITIVE", reason: "Field name indicates security credentials" }],
+  [/(password|secret|token|api_key|private_key|credential)$/i,
+    { level: "SENSITIVE", reason: "Field name pattern suggests sensitive credentials" }],
 
-  // INTERNAL
-  [/(internal_id|tenant_id|org_id|company_id|department|team|role|permission|audit|log|trace)$/i, "INTERNAL"],
-  [/^(id|uuid|created_at|updated_at|deleted_at|version|status|type|category)$/i, "INTERNAL"],
-
-  // PUBLIC
-  [/(product_name|product_title|sku|barcode|country|currency|language|timezone|description|title|label|slug|url)$/i, "PUBLIC"],
+  // SENSITIVE — financial
+  [/^(amount|balance|salary|income|credit_card|card_number|account_number|routing_number|cvv|pin)$/i,
+    { level: "SENSITIVE", reason: "Field name indicates financial data" }],
 ];
 
-export function suggestClassification(fieldName: string): string | null {
+export function suggestClassification(fieldName: string): ClassificationSuggestion | null {
   const normalized = fieldName.toLowerCase().trim();
   if (!normalized) return null;
 
-  for (const [pattern, classification] of NAME_TO_CLASSIFICATION) {
+  for (const [pattern, suggestion] of NAME_TO_CLASSIFICATION) {
     if (pattern.test(normalized)) {
-      return classification;
+      return suggestion;
     }
   }
   return null;

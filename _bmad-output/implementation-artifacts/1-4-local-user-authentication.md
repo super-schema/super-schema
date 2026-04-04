@@ -1,6 +1,6 @@
 # Story 1.4: Local User Authentication
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -31,7 +31,7 @@ so that I can securely access my schema workspace.
 
 ## Tasks / Subtasks
 
-- [ ] **Define Auth.js Prisma adapter schema in `prisma/schema.prisma`**
+- [x] **Define Auth.js Prisma adapter schema in `prisma/schema.prisma`**
   - Add `User` model: `id` (cuid), `name` (String?), `email` (String, unique), `emailVerified` (DateTime?), `image` (String?), `password` (String?) -- password field for Credentials provider
   - Add `Account` model: `id` (cuid), `userId` (FK to User), `type`, `provider`, `providerAccountId`, `refresh_token`, `access_token`, `expires_at`, `token_type`, `scope`, `id_token`, `session_state` -- unique constraint on `(provider, providerAccountId)`
   - Add `Session` model: `id` (cuid), `sessionToken` (String, unique), `userId` (FK to User), `expires` (DateTime)
@@ -39,11 +39,11 @@ so that I can securely access my schema workspace.
   - Run `npx prisma migrate dev --name auth-tables` to create migration
   - Verify migration runs successfully against PostgreSQL
 
-- [ ] **Install bcrypt dependency**
+- [x] **Install bcrypt dependency**
   - Run `npm install bcryptjs` and `npm install -D @types/bcryptjs`
   - Use bcryptjs (pure JS, no native compilation issues in Docker)
 
-- [ ] **Configure Auth.js v5 (`src/lib/auth.ts`)**
+- [x] **Configure Auth.js v5 (`src/lib/auth.ts`)**
   - Create `src/lib/auth.ts` with Auth.js v5 configuration:
     - PrismaAdapter from `@auth/prisma-adapter`
     - Credentials provider with `email` and `password` fields
@@ -54,7 +54,7 @@ so that I can securely access my schema workspace.
   - Export `auth`, `signIn`, `signOut`, `handlers` from Auth.js config
   - Create `src/app/api/auth/[...nextauth]/route.ts` exporting `GET` and `POST` handlers
 
-- [ ] **Create registration API route or server action**
+- [x] **Create registration API route or server action**
   - Create `src/app/(auth)/register/actions.ts` (server action) or `src/app/api/auth/register/route.ts` (API route):
     - Accept: `email`, `password`, `confirmPassword`
     - Validate with Zod:
@@ -67,7 +67,7 @@ so that I can securely access my schema workspace.
     - Auto sign-in the new user via Auth.js `signIn('credentials', ...)`
     - Redirect to dashboard
 
-- [ ] **Build Register page (`src/app/(auth)/register/page.tsx`)**
+- [x] **Build Register page (`src/app/(auth)/register/page.tsx`)**
   - Centered layout: frosted glass card on `background` (#14141C) page
   - Card styling: `surface-glass` (rgba(28,28,38,0.8), backdrop-blur 12px), 12px border-radius, 1px `border` (#333340), max-width 400px
   - Card content:
@@ -84,7 +84,7 @@ so that I can securely access my schema workspace.
   - Loading state: Button shows spinner during submission
   - Server error display: Error message above form in `destructive` color
 
-- [ ] **Build Login page (`src/app/(auth)/login/page.tsx`)**
+- [x] **Build Login page (`src/app/(auth)/login/page.tsx`)**
   - Same centered frosted glass card layout as Register page
   - Card content:
     - Heading: "Sign In" using `heading-1`
@@ -98,12 +98,12 @@ so that I can securely access my schema workspace.
   - On failure: show "Invalid email or password" error message (no distinction between wrong email vs wrong password)
   - Loading state on button
 
-- [ ] **Create auth layout (`src/app/(auth)/layout.tsx`)**
+- [x] **Create auth layout (`src/app/(auth)/layout.tsx`)**
   - Full page with `background` (#14141C) color
   - Centered content (flexbox center both axes)
   - No TopBar, ActivityBar, or other chrome -- clean auth pages
 
-- [ ] **Implement Next.js middleware for route protection (`src/middleware.ts`)**
+- [x] **Implement Next.js middleware for route protection (`src/middleware.ts`)**
   - Use Auth.js middleware or custom middleware
   - Protect all `/(dashboard)/*` routes
   - If no session: redirect to `/login`
@@ -111,13 +111,13 @@ so that I can securely access my schema workspace.
   - Allow access to `/api/auth/*` routes without session
   - If authenticated user visits `/login` or `/register`: redirect to `/(dashboard)/schemas`
 
-- [ ] **Update TopBar user menu with real auth data**
+- [x] **Update TopBar user menu with real auth data**
   - In `TopBar.tsx`: use Auth.js `useSession()` hook (or server-side `auth()`) to get current user
   - Display user's email in the dropdown menu header
   - "Sign Out" item: calls Auth.js `signOut()`, redirects to `/login`
   - Replace placeholder avatar with user's first letter initial or email icon
 
-- [ ] **Set up oRPC base context and procedures**
+- [x] **Set up oRPC base context and procedures**
   - Create `src/server/api/context.ts`:
     ```typescript
     export async function createRPCContext(opts: { headers: Headers }) {
@@ -132,7 +132,7 @@ so that I can securely access my schema workspace.
   - Create `src/server/api/root.ts`: root oRPC router (empty for now, routers added in Epic 2)
   - Create `src/app/api/orpc/[...orpc]/route.ts` or equivalent oRPC HTTP handler
 
-- [ ] **Write integration tests (`tests/integration/auth.test.ts`)**
+- [x] **Write integration tests (`tests/integration/auth.test.ts`)**
   - Test: Registration with valid data creates a user in the database with hashed password
   - Test: Registration with duplicate email returns error "An account with this email already exists"
   - Test: Login with valid credentials returns a session/token
@@ -142,7 +142,7 @@ so that I can securely access my schema workspace.
   - Test: `protectedProcedure` allows requests with a valid session
   - Use Vitest with test database setup/teardown
 
-- [ ] **Write Playwright E2E test (`tests/e2e/auth.spec.ts`)**
+- [x] **Write Playwright E2E test (`tests/e2e/auth.spec.ts`)**
   - Full flow test:
     1. Navigate to `/login`
     2. Click "Don't have an account? Register" link

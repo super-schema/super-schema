@@ -1,11 +1,30 @@
 "use server";
 
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
 import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
+import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.schema";
+import { updateEntity } from "@/services/entity.service";
+import type { Relationship } from "@/types/schemas/entity-metadata.schema";
 
-export async function addFieldAction(entityId: string, name: string, type: string) {
+export async function addFieldAction(
+  entityId: string,
+  name: string,
+  type: string,
+  opts?: {
+    description?: string;
+    classification?: string | null;
+    nullable?: boolean;
+    isKey?: boolean;
+    precision?: number | null;
+    scale?: number | null;
+    fieldNumber?: number | null;
+    aliases?: string[];
+    decorators?: Record<string, unknown>;
+  }
+) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
@@ -14,6 +33,25 @@ export async function addFieldAction(entityId: string, name: string, type: strin
     orderBy: { sortOrder: "desc" },
     select: { sortOrder: true },
   });
+
+  // Validate typespec sub-key if present on create
+  if (opts?.decorators?.typespec) {
+    const validation = TypeSpecDecoratorSchema.safeParse(opts.decorators.typespec);
+    if (!validation.success) {
+      return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
+    }
+  }
+
+  // Validate field number uniqueness
+  if (opts?.fieldNumber != null) {
+    const conflict = await prisma.field.findFirst({
+      where: { entityId, fieldNumber: opts.fieldNumber },
+      select: { name: true },
+    });
+    if (conflict) {
+      return { error: `Field number ${opts.fieldNumber} is already assigned to field '${conflict.name}'` };
+    }
+  }
 
   try {
     const field = await withAudit({
@@ -28,6 +66,15 @@ export async function addFieldAction(entityId: string, name: string, type: strin
             name,
             type,
             sortOrder: maxField ? maxField.sortOrder + 1 : 0,
+            ...(opts?.description != null && { description: opts.description }),
+            ...(opts?.classification !== undefined && { classification: opts.classification }),
+            ...(opts?.nullable != null && { nullable: opts.nullable }),
+            ...(opts?.isKey != null && { isKey: opts.isKey }),
+            ...(opts?.precision !== undefined && { precision: opts.precision }),
+            ...(opts?.scale !== undefined && { scale: opts.scale }),
+            ...(opts?.fieldNumber !== undefined && { fieldNumber: opts.fieldNumber }),
+            ...(opts?.aliases && { aliases: opts.aliases }),
+            ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
           },
         }),
     });
@@ -43,7 +90,19 @@ export async function addFieldAction(entityId: string, name: string, type: strin
 
 export async function updateFieldAction(
   fieldId: string,
-  data: { name?: string; type?: string; nullable?: boolean; isKey?: boolean }
+  data: {
+    name?: string;
+    type?: string;
+    nullable?: boolean;
+    isKey?: boolean;
+    description?: string;
+    classification?: string | null;
+    precision?: number | null;
+    scale?: number | null;
+    fieldNumber?: number | null;
+    aliases?: string[];
+    decorators?: Record<string, unknown>;
+  }
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
@@ -51,13 +110,100 @@ export async function updateFieldAction(
   const existing = await prisma.field.findUnique({ where: { id: fieldId } });
   if (!existing) return { error: "Field not found" };
 
+  const { decorators, ...rest } = data;
+  // Validate typespec sub-key if present
+  if (decorators?.typespec) {
+    const validation = TypeSpecDecoratorSchema.safeParse(decorators.typespec);
+    if (!validation.success) {
+      return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
+    }
+  }
+
+  // Validate field number uniqueness
+  if (data.fieldNumber != null) {
+    const conflict = await prisma.field.findFirst({
+      where: {
+        entityId: existing.entityId,
+        fieldNumber: data.fieldNumber,
+        id: { not: fieldId },
+      },
+      select: { name: true },
+    });
+    if (conflict) {
+      return { error: `Field number ${data.fieldNumber} is already assigned to field '${conflict.name}'` };
+    }
+  }
+
   await withAudit({
     action: "UPDATE",
     entityType: "Field",
     entityId: fieldId,
     userId: session.user.id,
     beforeState: existing as unknown as object,
-    fn: () => prisma.field.update({ where: { id: fieldId }, data }),
+    fn: () =>
+      prisma.field.update({
+        where: { id: fieldId },
+        data: {
+          ...rest,
+          ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
+        },
+      }),
+  });
+
+  revalidatePath("/schemas");
+  return { success: true };
+}
+
+export async function updateEntityStatusAction(
+  entityId: string,
+  status: string,
+  metadata?: Record<string, unknown>
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const input: Record<string, unknown> = { status };
+  if (metadata) {
+    input.metadata = metadata;
+  }
+
+  const result = await updateEntity(entityId, input as { status?: string; metadata?: Record<string, unknown> }, {
+    userId: session.user.id,
+    userRole: "AUTHOR",
+    prisma,
+  });
+
+  if (!result.success) {
+    return { error: result.error.message };
+  }
+
+  revalidatePath("/schemas");
+  return { success: true };
+}
+
+/**
+ * Update the relationships array in entity metadata JSONB.
+ * Used when reference fields are created/updated/deleted.
+ */
+export async function updateEntityRelationshipsAction(
+  entityId: string,
+  relationships: Relationship[]
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const entity = await prisma.entity.findUnique({
+    where: { id: entityId },
+    select: { metadata: true },
+  });
+  if (!entity) return { error: "Entity not found" };
+
+  const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
+  const updatedMeta = { ...existingMeta, relationships };
+
+  await prisma.entity.update({
+    where: { id: entityId },
+    data: { metadata: updatedMeta as Prisma.InputJsonValue },
   });
 
   revalidatePath("/schemas");
@@ -70,6 +216,27 @@ export async function deleteFieldAction(fieldId: string) {
 
   const existing = await prisma.field.findUnique({ where: { id: fieldId } });
   if (!existing) return { error: "Field not found" };
+
+  // If this is a reference field, clean up relationship from entity metadata
+  if (existing.type === "reference") {
+    const entity = await prisma.entity.findUnique({
+      where: { id: existing.entityId },
+      select: { metadata: true },
+    });
+    if (entity?.metadata) {
+      const meta = entity.metadata as Record<string, unknown>;
+      const relationships = (meta.relationships as Relationship[]) ?? [];
+      const filtered = relationships.filter((r) => r.fieldId !== fieldId);
+      if (filtered.length !== relationships.length) {
+        await prisma.entity.update({
+          where: { id: existing.entityId },
+          data: {
+            metadata: { ...meta, relationships: filtered } as Prisma.InputJsonValue,
+          },
+        });
+      }
+    }
+  }
 
   await withAudit({
     action: "DELETE",

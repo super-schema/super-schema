@@ -22,6 +22,8 @@ export default async function EntityDetailPage({ params }: Props) {
     notFound();
   }
 
+  const domainPolicy = (entity.domain as { policyTemplate?: Record<string, unknown> }).policyTemplate ?? null;
+
   return (
     <EntityWorkspace
       entity={{
@@ -32,7 +34,9 @@ export default async function EntityDetailPage({ params }: Props) {
         version: entity.version,
         domainName: entity.domain.name,
         domainSlug,
+        metadata: entity.metadata as Record<string, unknown> | null,
       }}
+      domainPolicy={domainPolicy as Record<string, unknown> | null}
       fields={entity.fields.map((f) => ({
         id: f.id,
         name: f.name,
@@ -44,6 +48,8 @@ export default async function EntityDetailPage({ params }: Props) {
         fieldNumber: f.fieldNumber,
         description: f.description,
         classification: f.classification,
+        aliases: f.aliases,
+        decorators: f.decorators as Record<string, unknown>,
         sortOrder: f.sortOrder,
       }))}
     />

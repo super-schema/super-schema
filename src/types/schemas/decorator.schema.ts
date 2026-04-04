@@ -79,3 +79,44 @@ export const DecoratorSchema = z
   .partial();
 
 export type Decorators = z.infer<typeof DecoratorSchema>;
+
+/**
+ * Schema for complex type metadata stored at the root level of field decorators JSONB.
+ * These keys sit alongside structure, semantics, policy, etc. -- NOT under typespec.
+ */
+export const NestedFieldSchema: z.ZodType<NestedField> = z.lazy(() =>
+  z.object({
+    name: z.string(),
+    type: z.string(),
+    description: z.string().optional(),
+    nullable: z.boolean().optional(),
+    decorators: z.record(z.string(), z.unknown()).optional(),
+  })
+);
+
+export interface NestedField {
+  name: string;
+  type: string;
+  description?: string;
+  nullable?: boolean;
+  decorators?: Record<string, unknown>;
+}
+
+export const ComplexTypeMetadataSchema = z
+  .object({
+    // Array type
+    arrayElementType: z.string(),
+    arrayElementPrecision: z.number().int(),
+    arrayElementScale: z.number().int(),
+    // Map type
+    mapKeyType: z.string(),
+    mapValueType: z.string(),
+    // Object/nested type
+    nestedFields: z.array(NestedFieldSchema),
+    // Reference type
+    referencedEntityId: z.string(),
+    referencedEntityName: z.string(),
+  })
+  .partial();
+
+export type ComplexTypeMetadata = z.infer<typeof ComplexTypeMetadataSchema>;

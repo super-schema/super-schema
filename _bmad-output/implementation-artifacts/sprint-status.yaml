@@ -1,5 +1,5 @@
 # generated: 2026-04-03
-# last_updated: 2026-04-03 (story 2.1 in-progress)
+# last_updated: 2026-04-03 (story 2-11 created)
 # project: super-schema
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-03
-last_updated: 2026-04-03
+last_updated: 2026-04-03 # stories 2-6 through 2-10 implemented, 320 tests passing
 project: super-schema
 project_key: NOKEY
 tracking_system: file-system
@@ -52,20 +52,25 @@ development_status:
   1-6-enterprise-sso-integration: ready-for-dev
   epic-1-retrospective: optional
 
-  # Epic 2: Schema Authoring & Management (12 stories)
+  # Epic 2: Schema Authoring & Management (13 stories)
+  # NOTE: Stories 2-3 through 2-5 were partially implemented (diverged from spec).
+  # Stories 2-6 through 2-10 were incorrectly marked "review" — they are NOT implemented.
+  # Status corrected 2026-04-03 after codebase audit.
   epic-2: in-progress
-  2-1-database-schema-zod-utilities: review
-  2-1b-entity-domain-service-layer: review
-  2-1c-field-service-layer: ready-for-dev
-  2-2-entity-browsing-sidebar-navigation: ready-for-dev
-  2-3-schema-field-editor: ready-for-dev
-  2-4-decorator-detail-panel: ready-for-dev
-  2-5-completeness-enforcement-validation-indicators: ready-for-dev
-  2-6-autocomplete-system: ready-for-dev
-  2-7-complex-types-relationships-aliases: ready-for-dev
-  2-8-entity-field-lifecycle: ready-for-dev
-  2-9-command-palette-keyboard-shortcuts: ready-for-dev
-  2-10-lineage-dag-relationship-graph: ready-for-dev
+  2-1-database-schema-zod-utilities: done
+  2-1b-entity-domain-service-layer: done
+  2-1c-field-service-layer: done
+  2-1d-domain-selection-management-ui: done
+  2-2-entity-browsing-sidebar-navigation: done
+  2-3-schema-field-editor: in-progress     # partially implemented — diverged from spec, needs consolidation
+  2-4-decorator-detail-panel: in-progress  # partially implemented — no right panel, inline expansion instead
+  2-5-completeness-enforcement-validation-indicators: done  # all tasks checked, 13 unit tests passing
+  2-6-autocomplete-system: review   # implemented — 25 tests passing, E2E deferred
+  2-7-complex-types-relationships-aliases: review   # implemented — 43 tests, complex type display/storage/validation
+  2-8-entity-field-lifecycle: review   # implemented — 41 tests, status transitions/banners/read-only
+  2-9-command-palette-keyboard-shortcuts: review   # implemented — 16 tests, Cmd+K palette/shortcuts/recent tracking
+  2-10-lineage-dag-relationship-graph: review   # implemented — 22 tests, React Flow/dagre/domain filter
+  2-11-typespec-field-studio: done
   epic-2-retrospective: optional
 
   # Epic 3: Schema Emission, Validation & API (8 stories)

@@ -89,3 +89,37 @@ export function getTypeInfo(id: string): DataType | undefined {
 export function isDecimalType(typeId: string): boolean {
   return typeId === "decimal" || typeId === "decimal128";
 }
+
+const COMPLEX_TYPES = new Set(["array", "map", "object", "reference"]);
+
+export function isComplexType(typeId: string): boolean {
+  return COMPLEX_TYPES.has(typeId);
+}
+
+/**
+ * Format a complex type for display, e.g. "array<string>", "map<string, integer>"
+ */
+export function formatComplexTypeDisplay(
+  type: string,
+  decorators: Record<string, unknown>
+): string {
+  if (type === "array") {
+    const elementType = (decorators.arrayElementType as string) ?? "?";
+    return `array<${elementType}>`;
+  }
+  if (type === "map") {
+    const keyType = (decorators.mapKeyType as string) ?? "?";
+    const valueType = (decorators.mapValueType as string) ?? "?";
+    return `map<${keyType}, ${valueType}>`;
+  }
+  if (type === "object") {
+    const nestedFields = decorators.nestedFields as unknown[];
+    const count = Array.isArray(nestedFields) ? nestedFields.length : 0;
+    return `object{${count} field${count !== 1 ? "s" : ""}}`;
+  }
+  if (type === "reference") {
+    const entityName = (decorators.referencedEntityName as string) ?? "?";
+    return `ref(${entityName})`;
+  }
+  return type;
+}

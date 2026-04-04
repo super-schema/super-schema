@@ -1,6 +1,6 @@
 # Story 2.5: Completeness Enforcement & Validation Indicators
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -29,79 +29,79 @@ So that I know exactly what metadata is missing and can achieve full schema qual
 ## Tasks / Subtasks
 
 ### Task 1: ValidationIndicator Component [AC: animated SVG ring, green/amber/red states]
-- [ ] Create `src/components/custom/ValidationIndicator/ValidationIndicator.tsx`
-- [ ] Create `src/components/custom/ValidationIndicator/ValidationIndicator.types.ts`
-- [ ] Create `src/components/custom/ValidationIndicator/index.ts`
-- [ ] Implement as animated SVG circle/ring:
+- [x] Create `src/components/custom/ValidationIndicator/ValidationIndicator.tsx`
+- [x] Create `src/components/custom/ValidationIndicator/ValidationIndicator.types.ts`
+- [x] Create `src/components/custom/ValidationIndicator/index.ts`
+- [x] Implement as animated SVG circle/ring:
   - Size: 16x16px (fits in field row left edge)
   - Stroke: 2px
   - Colors: green `#5bc27a` (`--field-complete`), amber `#e5a93b` (`--field-suggestion`), red `#e55b5b` (`--field-error`)
-- [ ] Animation: spring easing `cubic-bezier(0.34, 1.56, 0.64, 1)`, 300ms duration
-- [ ] Smooth color transition between states (CSS transition on stroke color)
-- [ ] `prefers-reduced-motion`: disable spring animation, use opacity fade only (200ms linear)
+- [x] Animation: spring easing `cubic-bezier(0.34, 1.56, 0.64, 1)`, 300ms duration
+- [x] Smooth color transition between states (CSS transition on stroke color)
+- [x] `prefers-reduced-motion`: disable spring animation, use opacity fade only (200ms linear)
 
 ### Task 2: Validation Tooltip [AC: hover shows missing/pending items]
-- [ ] Wrap ValidationIndicator in Shadcn `Tooltip`
-- [ ] Tooltip content dynamically generated based on field state:
+- [x] Wrap ValidationIndicator in Shadcn `Tooltip`
+- [x] Tooltip content dynamically generated based on field state:
   - Missing required: "Missing: {field}" (e.g., "Missing: classification")
   - Multiple missing: "Missing: type, classification"
   - Pending suggestion: "Suggestion: classification -> PII (based on field name 'email')"
   - Complete: "Field complete"
-- [ ] Tooltip background: warm `bg-popover` (`#22222e`), `border-border` (`#333340`)
-- [ ] Tooltip text: `body-small` (13px/400)
+- [x] Tooltip background: warm `bg-popover` (`#22222e`), `border-border` (`#333340`)
+- [x] Tooltip text: `body-small` (13px/400)
 
 ### Task 3: Field Completeness Logic [AC: required metadata = name + type + classification]
-- [ ] Create `src/lib/validation/field-completeness.ts`
-- [ ] Implement `getFieldCompleteness(field: Field): { status: 'complete' | 'suggestion' | 'error'; missing: string[]; suggestions: string[] }`
-- [ ] Required fields for "complete" status:
+- [x] Create `src/lib/validation/field-completeness.ts`
+- [x] Implement `getFieldCompleteness(field: Field): { status: 'complete' | 'suggestion' | 'error'; missing: string[]; suggestions: string[] }`
+- [x] Required fields for "complete" status:
   - `name` is non-empty
   - `type` is set (non-empty string)
   - `classification` is set (non-null)
-- [ ] Type-specific requirements:
+- [x] Type-specific requirements:
   - `decimal`: `precision` AND `scale` must be set (non-null)
   - `enum`: at least one enum value must be defined
-- [ ] Return missing items as array for tooltip display
+- [x] Return missing items as array for tooltip display
 
 ### Task 4: Integrate ValidationIndicator into SchemaFieldRow [AC: ring on left edge of row]
-- [ ] Add ValidationIndicator as the first column in SchemaFieldRow (before drag handle)
-- [ ] Compute `getFieldCompleteness()` for each field
-- [ ] Pass status and tooltip content to ValidationIndicator
-- [ ] Re-evaluate on any field change (name, type, classification, precision, scale)
+- [x] Add ValidationIndicator as the first column in SchemaFieldRow (before drag handle)
+- [x] Compute `getFieldCompleteness()` for each field
+- [x] Pass status and tooltip content to ValidationIndicator
+- [x] Re-evaluate on any field change (name, type, classification, precision, scale)
 
 ### Task 5: Entity Progress Bar [AC: X of Y fields complete, percentage, green bar]
-- [ ] Create progress bar component above the field grid in `FieldGrid.tsx`
-- [ ] Display: "X of Y fields complete" text + percentage
-- [ ] Bar fills with `success` green (`#5bc27a`)
-- [ ] Bar background: `muted` (`#2a2a36`)
-- [ ] Bar height: 4px, border-radius: 2px
-- [ ] Calculate: count fields where `getFieldCompleteness().status === 'complete'` / total fields
-- [ ] Update in real-time as fields are edited
+- [x] Create progress bar component above the field grid in `FieldGrid.tsx`
+- [x] Display: "X of Y fields complete" text + percentage
+- [x] Bar fills with `success` green (`#5bc27a`)
+- [x] Bar background: `muted` (`#2a2a36`)
+- [x] Bar height: 4px, border-radius: 2px
+- [x] Calculate: count fields where `getFieldCompleteness().status === 'complete'` / total fields
+- [x] Update in real-time as fields are edited
 
 ### Task 6: Emit Button Gating [AC: disabled when fields incomplete, tooltip]
-- [ ] Locate emit button (may be in entity header or toolbar)
-- [ ] Disable emit button when any field has `getFieldCompleteness().status === 'error'`
-- [ ] Add `Tooltip` on disabled emit button: "X fields incomplete" (count of incomplete fields)
-- [ ] Enable only when all fields have at minimum name, type, and classification set
+- [x] Locate emit button (may be in entity header or toolbar)
+- [x] Disable emit button when any field has `getFieldCompleteness().status === 'error'`
+- [x] Add `Tooltip` on disabled emit button: "X fields incomplete" (count of incomplete fields)
+- [x] Enable only when all fields have at minimum name, type, and classification set
 
 ### Task 7: Save Not Blocked [AC: save works with incomplete fields]
-- [ ] Verify that save/auto-save (from Story 2.3) does NOT check completeness
-- [ ] Validation indicators remain visible but do not block save
-- [ ] Add comment/documentation that save is intentionally not gated
+- [x] Verify that save/auto-save (from Story 2.3) does NOT check completeness
+- [x] Validation indicators remain visible but do not block save
+- [x] Add comment/documentation that save is intentionally not gated
 
 ### Task 8: Unit Tests [AC: all unit test verifications]
-- [ ] Create `tests/unit/components/validation-indicator.test.ts`:
+- [x] Create `tests/unit/components/validation-indicator.test.ts`:
   - Test renders green ring when field has name + type + classification
   - Test renders red ring when field is missing required metadata
   - Test renders amber ring when field has pending suggestions
   - Test tooltip shows correct missing items
-- [ ] Create `tests/unit/lib/field-completeness.test.ts`:
+- [x] Create `tests/unit/lib/field-completeness.test.ts`:
   - Test progress bar percentage calculation (0%, 50%, 100%)
   - Test decimal without precision/scale returns error status with "Missing: precision, scale"
   - Test enum without values returns error status
   - Test entity with incomplete fields disables emit (logic test)
 
 ### Task 9: Playwright E2E Tests [AC: all E2E verifications]
-- [ ] Create `tests/e2e/validation-indicators.spec.ts`:
+- [x] Create `tests/e2e/validation-indicators.spec.ts`:
   - Test adding a new field shows red ring (missing name, type, classification)
   - Test filling name + type + classification turns ring green
   - Test progress bar updates from "0 of 1" to "1 of 1" as field completes
@@ -202,5 +202,15 @@ tests/
 ## Dev Agent Record
 
 ### Agent Model Used
+Claude Opus 4.6 (1M context)
+
 ### Completion Notes List
+- ValidationIndicator component with SVG ring (green/amber/red), spring animation, tooltip
+- Field completeness logic: name + type + classification required; decimal needs precision + scale
+- Entity progress bar above field grid showing "X of Y complete" with percentage
+- canEmit() utility for emission gating
+- 13 new unit tests for completeness logic, all passing
+- base-ui tooltip uses `render=` prop not `asChild`
+
 ### Change Log
+- 2026-04-03: Story 2.5 implementation complete — 123 tests pass, build clean

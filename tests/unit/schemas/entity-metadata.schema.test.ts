@@ -19,7 +19,8 @@ describe("EntityMetadataSchema", () => {
       relationships: [
         {
           targetEntityId: "cuid123",
-          type: "one-to-many",
+          fieldId: "field-1",
+          cardinality: "one-to-many",
           foreignKey: "customer_id",
         },
       ],
@@ -39,6 +40,18 @@ describe("EntityMetadataSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts deprecation info with replacementEntityId and migrationNotes", () => {
+    const result = EntityMetadataSchema.safeParse({
+      deprecation: {
+        deprecated: true,
+        since: "2026-04-02",
+        replacementEntityId: "ent-new-123",
+        migrationNotes: "Use CustomerV2 model instead",
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("accepts custom metadata", () => {
     const result = EntityMetadataSchema.safeParse({
       custom: { team: "data-platform", priority: 1 },
@@ -46,10 +59,10 @@ describe("EntityMetadataSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects invalid relationship type", () => {
+  it("rejects invalid relationship cardinality", () => {
     const result = EntityMetadataSchema.safeParse({
       relationships: [
-        { targetEntityId: "cuid123", type: "invalid-relation" },
+        { targetEntityId: "cuid123", fieldId: "field-1", cardinality: "invalid-relation" },
       ],
     });
     expect(result.success).toBe(false);

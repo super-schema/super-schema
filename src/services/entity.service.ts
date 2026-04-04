@@ -13,6 +13,7 @@ import {
   type EntityFilters,
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
+import { canTransition } from "@/lib/entity-lifecycle";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -159,6 +160,31 @@ export async function updateEntity(
       code: "NOT_FOUND",
       message: `Entity with ID "${id}" not found`,
       suggestedFix: "Verify the entity ID and try again.",
+    });
+  }
+
+  // Validate status transition if status is being changed
+  if (parsed.data.status && parsed.data.status !== existing.status) {
+    type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
+    const transition = canTransition(
+      existing.status as EntityStatus,
+      parsed.data.status as EntityStatus
+    );
+    if (!transition.allowed) {
+      return err({
+        code: "INVALID_TRANSITION",
+        message: transition.reason!,
+        suggestedFix: transition.reason!,
+      });
+    }
+  }
+
+  // Block all edits (except status) on retired entities
+  if (existing.status === "RETIRED" && !parsed.data.status) {
+    return err({
+      code: "ENTITY_READ_ONLY",
+      message: "This entity is retired and cannot be edited",
+      suggestedFix: "Retired entities are read-only. No changes are allowed.",
     });
   }
 

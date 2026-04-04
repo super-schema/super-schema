@@ -1,6 +1,6 @@
 # Story 2.4: Decorator Detail Panel — 8-Category Tabbed Editing
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 
@@ -239,7 +239,7 @@ tests/
 
 **Prerequisites:** Story 2.3 complete (field editor, field row click handling). Story 2.1 (DecoratorSchema Zod schema). Story 2.1c (field service for decorator JSONB updates).
 
-**Enables:** Story 2.5 (Validation Indicators — uses decorator completeness), Story 2.7 (Complex Types — extends Structure tab), Story 2.8 (Lifecycle — extends Evolution tab)
+**Enables:** Story 2.5 (Validation Indicators — uses decorator completeness), Story 2.7 (Complex Types — extends Structure tab), Story 2.8 (Lifecycle — extends Evolution tab), Story 2.11 (TypeSpec Field Studio — the full-page field editor supersedes this panel for deep TypeSpec attribute editing; this panel remains for quick metadata edits in the right sidebar)
 
 ### References
 - [Source: epics.md - Epic 2, Story 2.4]
@@ -251,5 +251,37 @@ tests/
 ## Dev Agent Record
 
 ### Agent Model Used
+Claude Opus 4.6 (1M context) — partial implementation, superseded by Story 2-11
+
+### Implementation Reality (Audit 2026-04-03)
+
+**IMPORTANT:** This story's right-panel tabbed decorator editing was NOT built as specified. Instead, the implementation took two different paths:
+
+1. **Inline expansion** in `field-editor.tsx` — clicking a field row expands it to show basic decorators (description, nullable, key, precision/scale, aliases, policy summary). This is a lightweight version, NOT the full 8-tab panel.
+
+2. **Field Studio (Story 2-11)** — a full-page route at `/fields/[fieldId]/` with 7 TypeSpec-aligned panels covering ALL decorators in depth. This supersedes the original 8-tab right panel concept for deep editing.
+
+**What was actually built:**
+- Inline field expansion with basic decorator controls — `field-editor.tsx`
+- Full Field Studio with 7 panels (Identity, Validation, Wire Format, Visibility, Documentation, Versioning, Extensions) — `fields/[fieldId]/field-studio.tsx` + `panels/`
+- TypeSpec decorator Zod schema — `src/types/schemas/typespec-decorator.schema.ts`
+- Auto-save with debounce in Field Studio
+- Navigation from field row to Field Studio (settings icon, double-click)
+
+**What was NOT built (from this story):**
+- Right panel shell with frosted glass (Task 1) — no separate right panel exists
+- 8-category tabbed interface in right panel (Task 2) — superseded by Field Studio's 7-panel approach
+- Structure, Semantics, Classification, Policy, Quality, Lineage, Operational, Evolution tabs (Tasks 3-10) — some covered by Field Studio panels, others not
+- react-hook-form + Zod integration for decorator panel (Task 11) — Field Studio uses direct state
+- Domain policy template inheritance badges (Task 14) — partial, domain defaults shown but no "Inherited from" badge
+- Tag input component for aliases/glossary (Task 4) — aliases are comma-separated text, not tag input
+- Autocomplete for entity.field references in Lineage/Evolution tabs (Tasks 8, 10) — not implemented
+- Unit and E2E tests (Tasks 15-16) — not implemented
+
+**Consolidation note:** The 8-category decorator model (structure/semantics/classification/policy/quality/lineage/operationalHints/evolution) still exists in the Zod DecoratorSchema and JSONB storage. Story 2-11's Field Studio covers the TypeSpec-specific decorators under `decorators.typespec`. The two decorator namespaces coexist: `decorators.structure`, `decorators.semantics`, etc. for the 8-category model, and `decorators.typespec` for the 7-panel TypeSpec model.
+
+**Decision needed:** Should a lightweight right panel still be built for quick metadata editing (clicking a field row shows a sidebar), or is the Field Studio full-page route sufficient? The inline expansion in field-editor.tsx serves as the "quick edit" but doesn't expose all 8 categories.
+
 ### Completion Notes List
 ### Change Log
+- 2026-04-03: Implementation audit — story partially superseded by 2-11 Field Studio

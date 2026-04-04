@@ -1,4 +1,20 @@
+"use client";
+
+import { useState, useEffect } from "react";
+
 export function StatusBar() {
+  const [saveFlash, setSaveFlash] = useState(false);
+
+  useEffect(() => {
+    function handleSaveFlash() {
+      setSaveFlash(true);
+      setTimeout(() => setSaveFlash(false), 2000);
+    }
+    document.addEventListener("super-schema:save-flash", handleSaveFlash);
+    return () =>
+      document.removeEventListener("super-schema:save-flash", handleSaveFlash);
+  }, []);
+
   return (
     <footer
       data-testid="status-bar"
@@ -14,6 +30,16 @@ export function StatusBar() {
         v0
       </span>
       <span>Not connected</span>
+
+      {/* Save flash indicator */}
+      {saveFlash && (
+        <span
+          data-testid="save-flash"
+          className="ml-auto text-success text-caption font-medium animate-auth-fade-up"
+        >
+          All changes saved
+        </span>
+      )}
     </footer>
   );
 }

@@ -10,9 +10,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useCommandPalette } from "@/hooks/useCommandPalette";
+import { modKey } from "@/lib/platform";
 
 export function TopBar() {
   const { data: session } = useSession();
+  const { open: openPalette } = useCommandPalette();
+  const mod = modKey();
 
   return (
     <header
@@ -26,14 +30,21 @@ export function TopBar() {
         </span>
       </div>
 
-      {/* Center: Search placeholder */}
+      {/* Center: Search — clickable to open command palette */}
       <div className="flex-1 max-w-md mx-space-6">
-        <div className="flex items-center gap-space-2 bg-muted rounded-lg px-space-3 py-1.5 border border-border">
+        <button
+          onClick={openPalette}
+          className="w-full flex items-center gap-space-2 bg-muted rounded-lg px-space-3 py-1.5 border border-border hover:border-primary/40 hover:bg-accent/30 transition-colors text-left"
+          title={`Search (${mod}+K)`}
+        >
           <Search className="w-4 h-4 text-muted-foreground" />
-          <span className="text-body-small text-muted-foreground">
-            Search or press Cmd+K...
+          <span className="text-body-small text-muted-foreground flex-1">
+            Search or press {mod}+K...
           </span>
-        </div>
+          <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground bg-background/50 rounded border border-border">
+            {mod}+K
+          </kbd>
+        </button>
       </div>
 
       {/* Right: Bell + User */}

@@ -113,6 +113,8 @@ export function LeftSidebar({
       case "DRAFT":
         return "bg-warning";
       case "DEPRECATED":
+        return "bg-[#e88a3b]";
+      case "RETIRED":
         return "bg-muted-foreground";
       default:
         return "bg-muted-foreground";
@@ -236,7 +238,7 @@ export function LeftSidebar({
                         <span
                           className={`w-2 h-2 rounded-full shrink-0 ${getStatusColor(entity.status)}`}
                         />
-                        <span className="text-mono-small truncate">
+                        <span className={`text-mono-small truncate ${entity.status === "RETIRED" ? "line-through" : ""}`}>
                           {entity.name}
                         </span>
                       </div>

@@ -1,21 +1,35 @@
 import { z } from "zod";
 
+export const RelationshipCardinality = z.enum([
+  "one-to-one",
+  "one-to-many",
+  "many-to-one",
+  "many-to-many",
+]);
+
+export type RelationshipCardinality = z.infer<typeof RelationshipCardinality>;
+
+export const RelationshipSchema = z.object({
+  targetEntityId: z.string(),
+  fieldId: z.string(),
+  cardinality: RelationshipCardinality,
+  foreignKey: z.string().optional(),
+});
+
+export type Relationship = z.infer<typeof RelationshipSchema>;
+
 export const EntityMetadataSchema = z
   .object({
     tags: z.array(z.string()),
-    relationships: z.array(
-      z.object({
-        targetEntityId: z.string(),
-        type: z.enum(["one-to-one", "one-to-many", "many-to-many"]),
-        foreignKey: z.string().optional(),
-      })
-    ),
+    relationships: z.array(RelationshipSchema),
     deprecation: z
       .object({
         deprecated: z.boolean(),
         since: z.string().optional(),
         replacement: z.string().nullable().optional(),
+        replacementEntityId: z.string().nullable().optional(),
         reason: z.string().optional(),
+        migrationNotes: z.string().optional(),
       })
       .optional(),
     custom: z.record(z.string(), z.unknown()).optional(),

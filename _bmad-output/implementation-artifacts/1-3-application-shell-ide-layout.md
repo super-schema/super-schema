@@ -1,6 +1,6 @@
 # Story 1.3: Application Shell & IDE Layout
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -30,7 +30,7 @@ so that I have a professional workspace layout for schema management.
 
 ## Tasks / Subtasks
 
-- [ ] **Create the dashboard layout wrapper (`src/app/(dashboard)/layout.tsx`)**
+- [x] **Create the dashboard layout wrapper (`src/app/(dashboard)/layout.tsx`)**
   - Implement the overall IDE grid layout using CSS Grid or Flexbox:
     - Top Bar: full width, 48px height, fixed at top
     - Below top bar: Activity Bar (48px fixed) | Left Sidebar (resizable) | Center Panel (flex: 1) | Right Panel (resizable)
@@ -40,14 +40,14 @@ so that I have a professional workspace layout for schema management.
   - Apply `surface-base` to Center Panel
   - Apply `surface-glass` to Right Panel
 
-- [ ] **Build TopBar component (`src/components/layout/TopBar.tsx`)**
+- [x] **Build TopBar component (`src/components/layout/TopBar.tsx`)**
   - Height: 48px, full width, frosted glass background (`--glass-bg`, `--glass-blur`)
   - Left section: App logo/name "Super Schema" using `heading-3` (15px, weight 500) with `primary` color (#A477B2)
   - Center section: Search input placeholder with "Search or press Cmd+K..." ghost text, `muted` background (#2a2a36), `border` (#333340), 12px border-radius -- visual only, no functionality yet
   - Right section: Notification bell icon (Lucide `Bell`) with a badge count placeholder (number "0" in a small circle using `primary` bg), user avatar placeholder (Lucide `User` icon) with DropdownMenu containing "Profile" and "Sign Out" items
   - Bottom border: 1px solid `border` (#333340)
 
-- [ ] **Build ActivityBar component (`src/components/layout/ActivityBar.tsx`)**
+- [x] **Build ActivityBar component (`src/components/layout/ActivityBar.tsx`)**
   - Width: 48px, full height (below TopBar, above StatusBar), icon-only vertical rail
   - Background: `surface-1` (#1c1c26)
   - Navigation items (top-aligned, vertical stack):
@@ -67,7 +67,7 @@ so that I have a professional workspace layout for schema management.
   - Use Next.js `usePathname()` to determine active item
   - Tooltip on hover showing the section name (using Shadcn Tooltip)
 
-- [ ] **Build LeftSidebar component (`src/components/layout/LeftSidebar.tsx`)**
+- [x] **Build LeftSidebar component (`src/components/layout/LeftSidebar.tsx`)**
   - Default width: 240px, resizable range: 240-320px, collapsible to 0px
   - Background: `surface-1` (#1c1c26)
   - Top section: Search input for filtering domains/entities, `muted` bg (#2a2a36), 12px border-radius
@@ -76,7 +76,7 @@ so that I have a professional workspace layout for schema management.
   - Double-click on drag handle collapses/expands the sidebar
   - Right border: 1px solid `border` (#333340)
 
-- [ ] **Build CenterPanel component (`src/components/layout/CenterPanel.tsx`)**
+- [x] **Build CenterPanel component (`src/components/layout/CenterPanel.tsx`)**
   - Flex: 1 (fills remaining horizontal space)
   - Background: `surface-base` (#14141C)
   - Padding: `space-6` (24px)
@@ -85,7 +85,7 @@ so that I have a professional workspace layout for schema management.
     - Subtext: "Start defining your data schemas" using `body` (14px), `muted-foreground` color
     - CTA button: "New Entity" using Shadcn Button with `primary` variant (#A477B2 bg), 12px border-radius
 
-- [ ] **Build RightPanel component (`src/components/layout/RightPanel.tsx`)**
+- [x] **Build RightPanel component (`src/components/layout/RightPanel.tsx`)**
   - Default width: 320px, resizable range: 320-480px, collapsible to 0px
   - Background: `surface-glass` (rgba(28,28,38,0.8), backdrop-blur 12px)
   - Header: "Detail Panel" using `heading-3` typography, with close/collapse button
@@ -93,7 +93,7 @@ so that I have a professional workspace layout for schema management.
   - Left edge: Drag handle for resizing (4px wide hit area)
   - Left border: 1px solid `border` (#333340)
 
-- [ ] **Build StatusBar component (`src/components/layout/StatusBar.tsx`)**
+- [x] **Build StatusBar component (`src/components/layout/StatusBar.tsx`)**
   - Height: 24px, full width, fixed at bottom
   - Background: `surface-1` (#1c1c26)
   - Top border: 1px solid `border` (#333340)
@@ -104,7 +104,7 @@ so that I have a professional workspace layout for schema management.
     4. Sync status: "Synced" or "Not connected" using `caption`, `muted-foreground`
   - All segments are placeholders -- real data wired in later stories
 
-- [ ] **Implement panel resize functionality**
+- [x] **Implement panel resize functionality**
   - Create `src/hooks/useResizablePanel.ts` custom hook:
     - Accept `minWidth`, `maxWidth`, `defaultWidth`, `panelId` (for localStorage key)
     - Track width in state, handle mousedown/mousemove/mouseup on drag handle
@@ -113,7 +113,7 @@ so that I have a professional workspace layout for schema management.
     - Restore width from `localStorage` on mount
   - Apply to LeftSidebar (panelId: `left-sidebar`) and RightPanel (panelId: `right-panel`)
 
-- [ ] **Implement responsive panel behavior (UX-DR33)**
+- [x] **Implement responsive panel behavior (UX-DR33)**
   - Create `src/hooks/useResponsiveLayout.ts` custom hook:
     - Listen to `window.innerWidth` with resize observer/listener
     - Below 1280px: auto-collapse both Sidebar and Right Panel, show warning toast/banner
@@ -123,7 +123,7 @@ so that I have a professional workspace layout for schema management.
   - Override user-saved widths when viewport changes breakpoint
   - Integrate with `useResizablePanel` hook
 
-- [ ] **Create placeholder route pages**
+- [x] **Create placeholder route pages**
   - Create `src/app/(dashboard)/schemas/page.tsx` -- renders CenterPanel with entity empty state
   - Create `src/app/(dashboard)/lineage/page.tsx` -- placeholder "Lineage Graph" heading
   - Create `src/app/(dashboard)/governance/page.tsx` -- placeholder "Governance Dashboard" heading
@@ -131,7 +131,7 @@ so that I have a professional workspace layout for schema management.
   - Create `src/app/(dashboard)/admin/page.tsx` -- placeholder "Admin" heading
   - Default route `/(dashboard)` redirects to `/(dashboard)/schemas`
 
-- [ ] **Write Playwright E2E tests**
+- [x] **Write Playwright E2E tests**
   - Create `tests/e2e/layout.spec.ts`:
     - Test 1 (1440px width): Verify all 6 sections render (TopBar, ActivityBar, LeftSidebar, CenterPanel, RightPanel, StatusBar)
     - Test 2: Click each Activity Bar icon and verify route changes (URL path updates)
@@ -267,5 +267,39 @@ tests/
 ## Dev Agent Record
 
 ### Agent Model Used
+Claude Opus 4.6 (1M context)
 ### Completion Notes List
+- Dashboard layout with 6-section IDE grid: TopBar, ActivityBar, LeftSidebar, CenterPanel, RightPanel, StatusBar
+- TopBar: frosted glass, logo, search placeholder, notification bell, user dropdown
+- ActivityBar: 5 nav items with gradient active indicator, tooltips, route navigation
+- LeftSidebar: resizable 240-320px, collapsible, search filter, tree view placeholder
+- CenterPanel: flex-1, empty state with "Create your first entity" CTA
+- RightPanel: resizable 320-480px, collapsible, frosted glass, detail panel placeholder
+- StatusBar: domain, validation, version, sync status placeholders
+- useResizablePanel hook: drag resize, double-click collapse, localStorage persistence
+- useResponsiveLayout hook: 4 breakpoints (compact/standard/comfortable/spacious), auto-collapse
+- 5 placeholder route pages: schemas, lineage, governance, compliance, admin
+- Dashboard root redirects to /schemas
+- 5 E2E tests: layout rendering, nav routing, sidebar collapse, localStorage persistence, responsive auto-collapse
+- All 46 unit tests + 6 E2E tests pass, build succeeds
+
+### File List
+- src/app/(dashboard)/layout.tsx (new)
+- src/app/(dashboard)/page.tsx (new - redirect)
+- src/app/(dashboard)/schemas/page.tsx (new)
+- src/app/(dashboard)/lineage/page.tsx (new)
+- src/app/(dashboard)/governance/page.tsx (new)
+- src/app/(dashboard)/compliance/page.tsx (new)
+- src/app/(dashboard)/admin/page.tsx (new)
+- src/components/layout/TopBar.tsx (new)
+- src/components/layout/ActivityBar.tsx (new)
+- src/components/layout/LeftSidebar.tsx (new)
+- src/components/layout/CenterPanel.tsx (new)
+- src/components/layout/RightPanel.tsx (new)
+- src/components/layout/StatusBar.tsx (new)
+- src/hooks/useResizablePanel.ts (new)
+- src/hooks/useResponsiveLayout.ts (new)
+- tests/e2e/layout.spec.ts (new)
+
 ### Change Log
+- 2026-04-03: Story 1.3 implemented - Full IDE-style application shell with 6 layout sections, resizable panels, responsive behavior, and 5 E2E tests

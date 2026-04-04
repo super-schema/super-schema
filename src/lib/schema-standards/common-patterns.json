@@ -1,0 +1,15 @@
+[
+  { "name": "id", "suggestedType": "string", "description": "Primary identifier" },
+  { "name": "created_at", "suggestedType": "utcDateTime", "description": "Creation timestamp" },
+  { "name": "updated_at", "suggestedType": "utcDateTime", "description": "Last update timestamp" },
+  { "name": "deleted_at", "suggestedType": "utcDateTime", "description": "Soft-delete timestamp" },
+  { "name": "status", "suggestedType": "enum", "description": "Record status" },
+  { "name": "is_active", "suggestedType": "boolean", "description": "Active flag" },
+  { "name": "description", "suggestedType": "string", "description": "Text description" },
+  { "name": "name", "suggestedType": "string", "description": "Display name" },
+  { "name": "type", "suggestedType": "enum", "description": "Type discriminator" },
+  { "name": "version", "suggestedType": "integer", "description": "Version number" },
+  { "name": "sort_order", "suggestedType": "integer", "description": "Ordering position" },
+  { "name": "notes", "suggestedType": "string", "description": "Free-text notes" },
+  { "name": "metadata", "suggestedType": "object", "description": "JSON metadata" }
+]

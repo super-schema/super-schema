@@ -1,6 +1,6 @@
 # Story 2.3: Schema Field Editor — Create, Edit, Delete Fields
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 
@@ -231,7 +231,7 @@ tests/
 
 **Prerequisites:** Story 2.2 complete (entity browsing, navigation to `/schemas/[id]`). Story 2.1c (field service, oRPC router for field CRUD and reorder).
 
-**Enables:** Story 2.4 (Decorator Panel — click field to open), Story 2.5 (Validation Indicators — added to field rows), Story 2.6 (Autocomplete — integrated into name/type editing), Story 2.7 (Complex Types — extends TypePickerGrid)
+**Enables:** Story 2.4 (Decorator Panel — click field to open), Story 2.5 (Validation Indicators — added to field rows), Story 2.6 (Autocomplete — integrated into name/type editing), Story 2.7 (Complex Types — extends TypePickerGrid), Story 2.11 (TypeSpec Field Studio — full-page field editor navigated from field card's settings icon or double-click)
 
 ### References
 - [Source: epics.md - Epic 2, Story 2.3]
@@ -242,5 +242,39 @@ tests/
 ## Dev Agent Record
 
 ### Agent Model Used
+Claude Opus 4.6 (1M context) — partial implementation across multiple sessions
+
+### Implementation Reality (Audit 2026-04-03)
+
+**IMPORTANT:** This story was partially implemented but DIVERGED from spec. The implementation exists in different files than specified, using a different pattern (card-based list vs. Airtable DataTable).
+
+**What was actually built:**
+- Entity header with editable name/description — `src/app/(dashboard)/schemas/[domainSlug]/[entityId]/entity-workspace.tsx`
+- Field list with inline add form (collapsible card, NOT DataTable) — `src/app/(dashboard)/schemas/[domainSlug]/[entityId]/field-editor.tsx`
+- TypePicker with hierarchical categories — `src/components/custom/TypePicker.tsx`
+- ClassificationPicker dropdown — `src/components/custom/ClassificationPicker.tsx`
+- Data types system (50+ types) — `src/lib/data-types.ts`
+- Add field via collapsible form with name, type, precision/scale, classification, nullable, isKey, aliases, description
+- Delete field with confirmation
+- Validation indicators (green/amber/red SVG ring) — from story 2-5
+- Entity progress bar — from story 2-5
+- Field Studio deep editing (7 TypeSpec panels) — from story 2-11
+
+**What was NOT built (remaining work):**
+- Airtable-style DataTable grid (Task 2, 13) — currently uses card list
+- SchemaFieldRow as separate reusable component (Task 2) — inline in field-editor.tsx
+- TypePickerGrid visual icon grid (Task 3) — TypePicker is a dropdown/combobox, not an icon grid
+- Hover-to-reveal "..." action menu (Task 8) — individual delete button exists but no menu
+- Drag-to-reorder with dnd-kit (Task 9) — DragHandle icon renders but no handler
+- "/" slash command for new field (Task 11) — not implemented
+- Duplicate field (Task 8) — not implemented
+- Move Up/Move Down (Task 8) — not implemented
+- react-hook-form integration (Task 12) — direct state management instead
+- Enum values tag editor (Task 5) — not implemented
+- E2E tests (Task 14) — not implemented
+
+**Architecture divergence:** Instead of separate `EntityHeader.tsx` + `FieldGrid.tsx` + `SchemaFieldRow/` components, everything is in `entity-workspace.tsx` and `field-editor.tsx`. Story 2-11 (Field Studio) added the deep editing route at `/fields/[fieldId]/`.
+
 ### Completion Notes List
 ### Change Log
+- 2026-04-03: Implementation audit — marked remaining unimplemented tasks

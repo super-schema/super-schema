@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
 import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
@@ -14,6 +15,8 @@ export interface CreateFieldInput {
   classification: string | null;
   precision: number | null;
   scale: number | null;
+  aliases?: string[];
+  decorators?: Record<string, unknown>;
 }
 
 export async function createEntityWithFieldsAction(
@@ -59,6 +62,8 @@ export async function createEntityWithFieldsAction(
                 precision: f.precision,
                 scale: f.scale,
                 sortOrder: i,
+                ...(f.aliases && f.aliases.length > 0 && { aliases: f.aliases }),
+                ...(f.decorators && Object.keys(f.decorators).length > 0 && { decorators: f.decorators as Prisma.InputJsonValue }),
               })),
             },
           },

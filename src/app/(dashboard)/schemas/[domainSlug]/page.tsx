@@ -49,12 +49,15 @@ export default async function DomainEntitiesPage({ params }: Props) {
     };
   });
 
+  const domainPolicy = (domain as { policyTemplate?: Record<string, unknown> }).policyTemplate ?? null;
+
   return (
     <DomainWorkspace
       domainId={domain.id}
       domainName={domain.name}
       domainSlug={domainSlug}
       domainDescription={domain.description}
+      domainPolicy={domainPolicy as Record<string, unknown> | null}
       entities={entities}
     />
   );
