@@ -86,11 +86,11 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Schema Versioning & Change Management (4 stories)
-  epic-4: backlog
-  4-1-version-history-service: ready-for-dev
-  4-2-structured-field-level-diff-viewer: ready-for-dev
-  4-3-change-records-and-change-history-view: ready-for-dev
-  4-4-migration-artifact-generation: ready-for-dev
+  epic-4: in-progress
+  4-1-version-history-service: review
+  4-2-structured-field-level-diff-viewer: review
+  4-3-change-records-and-change-history-view: review
+  4-4-migration-artifact-generation: review
   epic-4-retrospective: optional
 
   # Epic 5: Governance & Change Workflows (4 stories)

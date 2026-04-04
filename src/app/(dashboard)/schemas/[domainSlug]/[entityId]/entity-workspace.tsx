@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition, useCallback } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ChevronRight, Loader2, Zap } from "lucide-react";
+import { ChevronRight, Loader2, Zap, History, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,14 @@ import {
   emitEntityAction,
   createTypeMappingOverrideAction,
   acknowledgeLossyMappingAction,
+  createVersionAction,
+  getVersionHistoryAction,
+  compareVersionsAction,
+  getChangeHistoryAction,
 } from "./actions";
+import { VersionHistoryPanel } from "@/components/custom/VersionHistoryPanel";
+import { DiffViewer } from "@/components/custom/DiffViewer";
+import type { VersionSnapshot, DiffResult } from "@/services/version-history/version.types";
 import { EmissionPreviewPanel } from "@/components/custom/EmissionPreviewPanel";
 import type { OverrideMappingInfo } from "@/components/custom/EmissionPreviewPanel";
 import type { EmissionResult } from "@/lib/emission/emission.types";
@@ -27,12 +34,15 @@ import type {
   OverrideDialogMappingContext,
   CreateOverrideData,
 } from "@/components/custom/TypeMappingOverrideDialog";
+import { ChangeHistoryView } from "@/components/custom/ChangeHistoryView";
+import type { ChangeHistoryFilters } from "@/types/schemas/change-history";
 import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
 import { RetirementBanner } from "@/components/custom/RetirementBanner";
 import { isReadOnly } from "@/lib/entity-lifecycle";
 import { trackRecentEntity } from "@/lib/recent-entities";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
+type ViewTab = "editor" | "history";
 
 const STATUS_OPTIONS: { value: EntityStatus; label: string; color: string; dotColor: string }[] = [
   { value: "DRAFT", label: "DRAFT", color: "#e5a93b", dotColor: "bg-warning" },
@@ -97,6 +107,97 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
   const [emissionResult, setEmissionResult] = useState<EmissionResult | null>(null);
   const [emissionPanelOpen, setEmissionPanelOpen] = useState(false);
   const [isEmitting, setIsEmitting] = useState(false);
+
+  // Version history state
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
+  const [isCreatingVersion, setIsCreatingVersion] = useState(false);
+
+  // Diff viewer state
+  const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
+
+  // View tab state
+  const [activeTab, setActiveTab] = useState<ViewTab>("editor");
+
+  const handleCreateVersion = useCallback(async () => {
+    setIsCreatingVersion(true);
+    try {
+      const response = await createVersionAction(entity.id);
+      if (response.error) {
+        toast.error(response.error);
+        return;
+      }
+      toast.success(`Version v${response.version?.version} created`);
+      // Refresh version history
+      const historyResponse = await getVersionHistoryAction(entity.id);
+      if (historyResponse.versions) {
+        setVersionHistory(historyResponse.versions as VersionSnapshot[]);
+      }
+    } catch {
+      toast.error("Failed to create version");
+    } finally {
+      setIsCreatingVersion(false);
+    }
+  }, [entity.id]);
+
+  const handleOpenHistory = useCallback(async () => {
+    const response = await getVersionHistoryAction(entity.id);
+    if (response.versions) {
+      setVersionHistory(response.versions as VersionSnapshot[]);
+    }
+    setVersionHistoryOpen(true);
+  }, [entity.id]);
+
+  const handleCompare = useCallback(async (versionA: number, versionB: number) => {
+    const response = await compareVersionsAction(entity.id, versionA, versionB);
+    if (response.error) {
+      toast.error(response.error);
+      return;
+    }
+    if (response.diff) {
+      setDiffResult(response.diff as DiffResult);
+      setShowDiff(true);
+      setVersionHistoryOpen(false);
+    }
+  }, [entity.id]);
+
+  const handleViewDiff = useCallback(async (version: number, previousVersion: number) => {
+    await handleCompare(previousVersion, version);
+  }, [handleCompare]);
+
+  const handleCloseDiff = useCallback(() => {
+    setShowDiff(false);
+    setDiffResult(null);
+  }, []);
+
+  // Change history fetch handler
+  const fetchChangeHistory = useCallback(
+    async (
+      entId: string,
+      filters?: ChangeHistoryFilters,
+      cursor?: string
+    ) => {
+      const serializedFilters = filters
+        ? {
+            changeTypes: filters.changeTypes,
+            userId: filters.userId,
+            dateFrom: filters.dateFrom?.toISOString(),
+            dateTo: filters.dateTo?.toISOString(),
+          }
+        : undefined;
+      return getChangeHistoryAction(entId, serializedFilters, cursor);
+    },
+    []
+  );
+
+  const handleHistoryViewDiff = useCallback(
+    async (versionNumber: number, previousVersion: number) => {
+      await handleCompare(previousVersion, versionNumber);
+      setActiveTab("editor"); // switch to editor to show the diff
+    },
+    [handleCompare]
+  );
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -303,31 +404,67 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           <Badge variant="secondary">v{entity.version}</Badge>
         </div>
 
-        {/* Emit button */}
-        {!readOnly && (
+        <div className="flex items-center gap-space-2">
+          {/* History button */}
           <Button
-            onClick={handleEmit}
-            disabled={isEmitting || fields.length === 0}
+            variant="outline"
+            onClick={handleOpenHistory}
             className="gap-1.5"
-            title={
-              fields.length === 0
-                ? "Add fields before emitting"
-                : "Emit to all targets (Ctrl+E)"
-            }
+            title="View version history"
           >
-            {isEmitting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Emitting...
-              </>
-            ) : (
-              <>
-                <Zap className="w-4 h-4" />
-                Emit
-              </>
-            )}
+            <History className="w-4 h-4" />
+            History
           </Button>
-        )}
+
+          {/* Create Version button */}
+          {!readOnly && (
+            <Button
+              variant="outline"
+              onClick={handleCreateVersion}
+              disabled={isCreatingVersion}
+              className="gap-1.5"
+              title="Save current state as a new version"
+            >
+              {isCreatingVersion ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Create Version
+                </>
+              )}
+            </Button>
+          )}
+
+          {/* Emit button */}
+          {!readOnly && (
+            <Button
+              onClick={handleEmit}
+              disabled={isEmitting || fields.length === 0}
+              className="gap-1.5"
+              title={
+                fields.length === 0
+                  ? "Add fields before emitting"
+                  : "Emit to all targets (Ctrl+E)"
+              }
+            >
+              {isEmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Emitting...
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4" />
+                  Emit
+                </>
+              )}
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Status transition error */}
@@ -402,27 +539,67 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         <p className="text-body text-muted-foreground mb-space-6">{entity.description}</p>
       )}
 
-      {/* Field Editor */}
+      {/* View Tab Bar */}
+      <div className="flex items-center gap-space-1 mb-space-4 border-b border-border/50">
+        <button
+          onClick={() => { setActiveTab("editor"); }}
+          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === "editor"
+              ? "border-foreground text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-editor"
+        >
+          Editor
+        </button>
+        <button
+          onClick={() => { setActiveTab("history"); setShowDiff(false); setDiffResult(null); }}
+          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === "history"
+              ? "border-foreground text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-history"
+        >
+          Change History
+        </button>
+      </div>
+
+      {/* Center Panel */}
       <div className="mb-space-8">
-        <h2 className="text-heading-2 text-foreground mb-space-4">
-          Fields ({fields.length})
-        </h2>
-        <FieldEditor
-          entityId={entity.id}
-          domainSlug={entity.domainSlug}
-          fields={fields}
-          domainPolicy={domainPolicy}
-          isReadOnly={readOnly}
-          onAddField={async (name, type, opts) => {
-            await addFieldAction(entity.id, name, type, opts);
-          }}
-          onUpdateField={async (id, data) => {
-            await updateFieldAction(id, data);
-          }}
-          onDeleteField={async (id) => {
-            await deleteFieldAction(id);
-          }}
-        />
+        {activeTab === "editor" ? (
+          showDiff && diffResult ? (
+            <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
+          ) : (
+            <>
+              <h2 className="text-heading-2 text-foreground mb-space-4">
+                Fields ({fields.length})
+              </h2>
+              <FieldEditor
+                entityId={entity.id}
+                domainSlug={entity.domainSlug}
+                fields={fields}
+                domainPolicy={domainPolicy}
+                isReadOnly={readOnly}
+                onAddField={async (name, type, opts) => {
+                  await addFieldAction(entity.id, name, type, opts);
+                }}
+                onUpdateField={async (id, data) => {
+                  await updateFieldAction(id, data);
+                }}
+                onDeleteField={async (id) => {
+                  await deleteFieldAction(id);
+                }}
+              />
+            </>
+          )
+        ) : (
+          <ChangeHistoryView
+            entityId={entity.id}
+            fetchHistory={fetchChangeHistory}
+            onViewDiff={handleHistoryViewDiff}
+          />
+        )}
       </div>
 
       {/* Emission Preview Panel */}
@@ -447,6 +624,15 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         userRole="STEWARD"
         onCreateOverride={handleCreateOverride}
         onAcknowledge={handleAcknowledge}
+      />
+
+      {/* Version History Panel */}
+      <VersionHistoryPanel
+        versions={versionHistory}
+        open={versionHistoryOpen}
+        onClose={() => setVersionHistoryOpen(false)}
+        onCompare={handleCompare}
+        onViewDiff={handleViewDiff}
       />
     </div>
   );

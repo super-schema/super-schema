@@ -308,6 +308,154 @@ export async function acknowledgeLossyMappingAction(input: {
   return { success: true };
 }
 
+/**
+ * Create a new version snapshot for an entity.
+ */
+export async function createVersionAction(entityId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const { createSnapshot } = await import(
+      "@/services/version-history/version.service"
+    );
+    const result = await createSnapshot(entityId, {
+      userId: session.user.id,
+      userRole: "AUTHOR",
+      prisma,
+    });
+
+    if (!result.success) {
+      return { error: result.error.message };
+    }
+
+    revalidatePath("/schemas");
+    return { success: true, version: result.data };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to create version";
+    return { error: message };
+  }
+}
+
+/**
+ * Get version history for an entity.
+ */
+export async function getVersionHistoryAction(entityId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated", versions: [] };
+
+  try {
+    const { getVersionHistory } = await import(
+      "@/services/version-history/version.service"
+    );
+    const result = await getVersionHistory(entityId, {
+      userId: session.user.id,
+      userRole: "AUTHOR",
+      prisma,
+    });
+
+    if (!result.success) {
+      return { error: result.error.message, versions: [] };
+    }
+
+    return { success: true, versions: result.data };
+  } catch (e: unknown) {
+    const message =
+      e instanceof Error ? e.message : "Failed to get version history";
+    return { error: message, versions: [] };
+  }
+}
+
+/**
+ * Compare two versions and return structured diff result.
+ */
+export async function compareVersionsAction(
+  entityId: string,
+  v1: number,
+  v2: number
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const { compareVersionsStructured } = await import(
+      "@/services/version-history/version.service"
+    );
+    const result = await compareVersionsStructured(entityId, v1, v2, {
+      userId: session.user.id,
+      userRole: "AUTHOR",
+      prisma,
+    });
+
+    if (!result.success) {
+      return { error: result.error.message };
+    }
+
+    return { success: true, diff: result.data };
+  } catch (e: unknown) {
+    const message =
+      e instanceof Error ? e.message : "Failed to compare versions";
+    return { error: message };
+  }
+}
+
+/**
+ * Get change history for an entity (unified timeline of versions + audit entries).
+ */
+export async function getChangeHistoryAction(
+  entityId: string,
+  filters?: {
+    changeTypes?: string[];
+    userId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  },
+  cursor?: string
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const { getChangeHistory } = await import(
+      "@/services/change-history.service"
+    );
+    const parsedFilters = filters
+      ? {
+          changeTypes: filters.changeTypes as import("@/types/schemas/change-history").ChangeType[] | undefined,
+          userId: filters.userId,
+          dateFrom: filters.dateFrom ? new Date(filters.dateFrom) : undefined,
+          dateTo: filters.dateTo ? new Date(filters.dateTo) : undefined,
+        }
+      : undefined;
+
+    const result = await getChangeHistory(
+      entityId,
+      {
+        userId: session.user.id,
+        userRole: "AUTHOR",
+        prisma,
+      },
+      parsedFilters,
+      cursor
+    );
+
+    if (!result.success) {
+      return { error: result.error.message };
+    }
+
+    return {
+      success: true,
+      entries: result.data.entries,
+      hasMore: result.data.hasMore,
+      nextCursor: result.data.nextCursor,
+    };
+  } catch (e: unknown) {
+    const message =
+      e instanceof Error ? e.message : "Failed to get change history";
+    return { error: message };
+  }
+}
+
 export async function deleteFieldAction(fieldId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };

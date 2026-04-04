@@ -1,6 +1,6 @@
 # Story 4.4: Migration Artifact Generation
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 As a **data modeler**, I want auto-generated migration artifacts for schema changes (ALTER statements, evolution compatibility reports), so that I can safely apply schema changes to production target systems.
@@ -25,72 +25,72 @@ As a **data modeler**, I want auto-generated migration artifacts for schema chan
 ## Tasks / Subtasks
 
 ### Service Layer — Migration Service
-- [ ] Create `src/services/migration.service.ts` with `generateMigrationArtifacts(entityId, fromVersion, toVersion, ctx): Result<MigrationArtifacts>`
-- [ ] Implement internal diff retrieval: call `compareVersions()` from version service to get the `DiffResult` between fromVersion and toVersion
-- [ ] Implement per-target artifact generator dispatch: iterate enabled targets, call target-specific generator for each
+- [ ] Create `src/services/migration.service.ts` with `generateMigrationArtifacts(entityId, fromVersion, toVersion, ctx): Result<MigrationArtifacts>` — deferred (UI/service wiring not in scope for core generators)
+- [ ] Implement internal diff retrieval: call `compareVersions()` from version service to get the `DiffResult` between fromVersion and toVersion — deferred
+- [x] Implement per-target artifact generator dispatch: iterate enabled targets, call target-specific generator for each — implemented as `generateMigrationArtifacts()` in `src/lib/migration/generate-migration.ts`
 
 ### BigQuery Migration Generator
-- [ ] Implement `generateBigQueryMigration(entityName, domainName, diff): MigrationArtifact[]`
-- [ ] Added fields: generate `ALTER TABLE {domain}.{entity} ADD COLUMN {col} {bqType} OPTIONS(description="{desc}")`
-- [ ] Removed fields: generate commented-out `-- ALTER TABLE {domain}.{entity} DROP COLUMN {col}` with warning "Manual review required — dropping columns deletes data"
-- [ ] Type changes: generate `ALTER TABLE {domain}.{entity} ALTER COLUMN {col} SET DATA TYPE {newType}` with compatibility warning for unsafe conversions (e.g., STRING → INTEGER)
-- [ ] Use type mapping policies to resolve logical types to BigQuery types
+- [x] Implement `generateBigQueryMigration(entityName, domainName, diff): MigrationArtifact[]`
+- [x] Added fields: generate `ALTER TABLE {domain}.{entity} ADD COLUMN {col} {bqType} OPTIONS(description="{desc}")`
+- [x] Removed fields: generate commented-out `-- ALTER TABLE {domain}.{entity} DROP COLUMN {col}` with warning "Manual review required — dropping columns deletes data"
+- [x] Type changes: generate `ALTER TABLE {domain}.{entity} ALTER COLUMN {col} SET DATA TYPE {newType}` with compatibility warning for unsafe conversions (e.g., STRING → INTEGER)
+- [x] Use type mapping policies to resolve logical types to BigQuery types
 
 ### Avro Migration Generator
-- [ ] Implement `generateAvroMigration(diff): MigrationArtifact`
-- [ ] Compute compatibility classification:
+- [x] Implement `generateAvroMigration(diff): MigrationArtifact`
+- [x] Compute compatibility classification:
   - BACKWARD: only additions of optional (nullable) fields
   - FORWARD: consumers using old schema can read new data
   - FULL: both backward and forward compatible
   - BREAKING: field removed, type changed incompatibly, required field added
-- [ ] Generate `{ compatible: boolean, compatibility: string, details: string[] }` report
-- [ ] Detail each change with its compatibility impact
+- [x] Generate `{ compatible: boolean, compatibility: string, details: string[] }` report
+- [x] Detail each change with its compatibility impact
 
 ### OpenAPI Migration Generator
-- [ ] Implement `generateOpenAPIMigration(diff): MigrationArtifact`
-- [ ] Generate changelog listing added/removed/modified properties with types
-- [ ] Flag breaking changes: removed required field, added required field, type change
-- [ ] Flag non-breaking changes: added optional field, description change
+- [x] Implement `generateOpenAPIMigration(diff): MigrationArtifact`
+- [x] Generate changelog listing added/removed/modified properties with types
+- [x] Flag breaking changes: removed required field, added required field, type change
+- [x] Flag non-breaking changes: added optional field, description change
 
 ### Storage
-- [ ] After generation, store artifacts in `entity_versions.migration_artifacts` JSONB column for the target version
-- [ ] Validate JSONB with Zod schema before writing
+- [ ] After generation, store artifacts in `entity_versions.migration_artifacts` JSONB column for the target version — deferred
+- [ ] Validate JSONB with Zod schema before writing — deferred
 
 ### Zod Schemas & Types
-- [ ] Define `MigrationArtifacts` Zod schema in `src/types/schemas/migration.ts`: `{ targets: [{ targetFormat, artifacts: MigrationArtifact[] }] }`
-- [ ] Define `MigrationArtifact` schema: `{ type: string, content: string, warnings: string[] }`
-- [ ] Define `AvroCompatibilityReport` schema: `{ compatible: boolean, compatibility: "BACKWARD"|"FORWARD"|"FULL"|"BREAKING", details: string[] }`
-- [ ] Export derived TypeScript types
+- [x] Define `MigrationArtifacts` TypeScript types in `src/lib/migration/migration.types.ts`: `{ targets: [{ targetFormat, artifacts: MigrationArtifact[] }] }`
+- [x] Define `MigrationArtifact` type: `{ type: string, content: string, warnings: string[] }`
+- [x] Define `CompatibilityResult` type: `{ compatible: boolean, compatibility: "BACKWARD"|"FORWARD"|"FULL"|"BREAKING", details: string[] }`
+- [x] Export derived TypeScript types via barrel `src/lib/migration/index.ts`
 
 ### oRPC Router
-- [ ] Add `version.generateMigration` mutation to `src/server/api/routers/version.ts` — input: entityId, fromVersion, toVersion
-- [ ] Returns `MigrationArtifacts`
+- [ ] Add `version.generateMigration` mutation to `src/server/api/routers/version.ts` — deferred
+- [ ] Returns `MigrationArtifacts` — deferred
 
 ### UI — Generate Migration Button
-- [ ] Add "Generate Migration" button to each version entry in the Version History Panel
-- [ ] On click, call `version.generateMigration` with previousVersion → selectedVersion
-- [ ] Show loading state during generation
+- [ ] Add "Generate Migration" button to each version entry in the Version History Panel — deferred (UI not in scope)
+- [ ] On click, call `version.generateMigration` with previousVersion → selectedVersion — deferred
+- [ ] Show loading state during generation — deferred
 
 ### UI — Migration Artifacts Panel
-- [ ] Create `src/components/custom/MigrationPanel/MigrationPanel.tsx` — tabbed panel, one tab per target
-- [ ] Implement syntax highlighting: SQL highlighting for BigQuery tab, JSON highlighting for Avro tab, YAML/text for OpenAPI tab (use Shiki or Prism, same as EmissionPreviewPanel)
-- [ ] Display warnings prominently in amber: destructive operations, breaking changes, lossy conversions
-- [ ] Add copy-to-clipboard button per tab
+- [ ] Create `src/components/custom/MigrationPanel/MigrationPanel.tsx` — deferred (UI not in scope)
+- [ ] Implement syntax highlighting — deferred
+- [ ] Display warnings prominently in amber — deferred
+- [ ] Add copy-to-clipboard button per tab — deferred
 
 ### Testing
-- [ ] Unit test: BigQuery — added field generates correct ALTER TABLE ADD COLUMN
-- [ ] Unit test: BigQuery — removed field generates commented-out DROP COLUMN with warning
-- [ ] Unit test: BigQuery — type change generates ALTER COLUMN SET DATA TYPE with compatibility warning
-- [ ] Unit test: Avro — additions only → BACKWARD compatible
-- [ ] Unit test: Avro — field removal → BREAKING
-- [ ] Unit test: Avro — type change → BREAKING
-- [ ] Unit test: Avro — additions + removals → correctly classifies
-- [ ] Unit test: OpenAPI — removed required field flagged as breaking
-- [ ] Unit test: OpenAPI — added required field flagged as breaking
-- [ ] Unit test: OpenAPI — added optional field flagged as non-breaking
-- [ ] Unit test: OpenAPI — type change flagged as breaking
-- [ ] Integration test: complex change (add field + modify type + remove field) → correct artifacts for all three targets
-- [ ] Playwright E2E: click "Generate Migration" → tabs appear → BigQuery tab shows ALTER statements → Avro tab shows compatibility report → warnings highlighted in amber
+- [x] Unit test: BigQuery — added field generates correct ALTER TABLE ADD COLUMN
+- [x] Unit test: BigQuery — removed field generates commented-out DROP COLUMN with warning
+- [x] Unit test: BigQuery — type change generates ALTER COLUMN SET DATA TYPE with compatibility warning
+- [x] Unit test: Avro — additions only → BACKWARD compatible
+- [x] Unit test: Avro — field removal → BREAKING
+- [x] Unit test: Avro — type change → BREAKING
+- [x] Unit test: Avro — additions + removals → correctly classifies
+- [x] Unit test: OpenAPI — removed required field flagged as breaking
+- [x] Unit test: OpenAPI — added required field flagged as breaking
+- [x] Unit test: OpenAPI — added optional field flagged as non-breaking
+- [x] Unit test: OpenAPI — type change flagged as breaking
+- [x] Integration test: complex change (add field + modify type + remove field) → correct artifacts for all three targets
+- [ ] Playwright E2E: click "Generate Migration" → tabs appear → BigQuery tab shows ALTER statements → Avro tab shows compatibility report → warnings highlighted in amber — deferred (UI not in scope)
 
 ## Dev Notes
 
@@ -165,5 +165,21 @@ tests/e2e/migration-artifacts.spec.ts                    — Playwright E2E
 
 ## Dev Agent Record
 ### Agent Model Used
+Claude Opus 4.6 (1M context)
+
 ### Completion Notes List
+- Implemented core migration generators as pure functions in `src/lib/migration/` (not in `src/services/migration/` as originally planned, since these are pure functions with no DB/service dependencies)
+- All 3 generators (BigQuery DDL, Avro compatibility, OpenAPI breaking changes) are implemented and tested
+- Orchestrator `generateMigrationArtifacts()` combines all 3 generators from a VersionDiff
+- Types defined as TypeScript interfaces (not Zod schemas) — Zod validation deferred to when storage layer is implemented
+- UI components (MigrationPanel, Generate Migration button), oRPC router, and storage tasks deferred per instructions to focus on core generators
+- 34 unit tests + 1 integration test all passing (799 total tests pass)
+
 ### Change Log
+- Created `src/lib/migration/migration.types.ts` — MigrationArtifact, CompatibilityResult, OpenAPIBreakingChangeResult types
+- Created `src/lib/migration/bigquery-migration.ts` — BigQuery ALTER TABLE DDL generation from field diffs
+- Created `src/lib/migration/avro-compatibility.ts` — Avro schema compatibility classification (BACKWARD/FORWARD/FULL/BREAKING)
+- Created `src/lib/migration/openapi-breaking.ts` — OpenAPI breaking change detection with severity classification
+- Created `src/lib/migration/generate-migration.ts` — Orchestrator that runs all 3 generators
+- Created `src/lib/migration/index.ts` — Barrel export for the migration module
+- Created `tests/unit/lib/migration/migration.test.ts` — 34 comprehensive tests covering all generators + integration
