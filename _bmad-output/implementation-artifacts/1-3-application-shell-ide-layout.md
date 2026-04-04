@@ -303,3 +303,4 @@ Claude Opus 4.6 (1M context)
 
 ### Change Log
 - 2026-04-03: Story 1.3 implemented - Full IDE-style application shell with 6 layout sections, resizable panels, responsive behavior, and 5 E2E tests
+- 2026-04-04: Fix — Root page (/) was still Next.js boilerplate. Replaced with redirect to /schemas. Middleware updated: unauthenticated users on / → /login, authenticated users on / → /schemas. Removed / from public paths.

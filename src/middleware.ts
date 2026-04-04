@@ -10,7 +10,7 @@ export function middleware(req: NextRequest) {
   const isDevPage =
     process.env.NODE_ENV === "development" && pathname.startsWith("/dev");
   const isApiRoute = pathname.startsWith("/api/");
-  const isPublic = isAuthPage || isApiAuth || isDevPage || isApiRoute || pathname === "/";
+  const isPublic = isAuthPage || isApiAuth || isDevPage || isApiRoute;
 
   // Auth check via session cookie (supports both secure and non-secure cookie names)
   const sessionToken =
@@ -23,6 +23,12 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
+  // Authenticated users on root → redirect to dashboard
+  if (sessionToken && pathname === "/") {
+    return NextResponse.redirect(new URL("/schemas", req.url));
+  }
+
+  // Authenticated users on auth pages → redirect to dashboard
   if (sessionToken && isAuthPage) {
     return NextResponse.redirect(new URL("/schemas", req.url));
   }
