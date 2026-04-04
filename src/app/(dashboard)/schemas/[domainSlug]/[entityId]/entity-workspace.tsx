@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useTransition, useCallback } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronRight, Loader2, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,20 @@ import {
   updateFieldAction,
   deleteFieldAction,
   updateEntityStatusAction,
+  emitEntityAction,
+  createTypeMappingOverrideAction,
+  acknowledgeLossyMappingAction,
 } from "./actions";
+import { EmissionPreviewPanel } from "@/components/custom/EmissionPreviewPanel";
+import type { OverrideMappingInfo } from "@/components/custom/EmissionPreviewPanel";
+import type { EmissionResult } from "@/lib/emission/emission.types";
+import {
+  TypeMappingOverrideDialog,
+} from "@/components/custom/TypeMappingOverrideDialog";
+import type {
+  OverrideDialogMappingContext,
+  CreateOverrideData,
+} from "@/components/custom/TypeMappingOverrideDialog";
 import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
 import { RetirementBanner } from "@/components/custom/RetirementBanner";
 import { isReadOnly } from "@/lib/entity-lifecycle";
@@ -78,6 +92,107 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
 
   const [isPending, startTransition] = useTransition();
   const [statusError, setStatusError] = useState<string | null>(null);
+
+  // Emission state
+  const [emissionResult, setEmissionResult] = useState<EmissionResult | null>(null);
+  const [emissionPanelOpen, setEmissionPanelOpen] = useState(false);
+  const [isEmitting, setIsEmitting] = useState(false);
+
+  // Override dialog state
+  const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
+  const [overrideMappingContext, setOverrideMappingContext] = useState<OverrideDialogMappingContext | null>(null);
+  const [overrides, setOverrides] = useState<OverrideMappingInfo[]>([]);
+
+  const handleEmit = useCallback(async () => {
+    setIsEmitting(true);
+    try {
+      const response = await emitEntityAction(entity.id);
+      if (response.error) {
+        toast.error(response.error);
+        return;
+      }
+      if (response.result) {
+        setEmissionResult(response.result);
+        setEmissionPanelOpen(true);
+        const { summary } = response.result;
+        if (summary.invalidCount === 0 && summary.warningCount === 0) {
+          toast.success(`Emitted to ${summary.totalTargets} targets — all valid`);
+        } else if (summary.invalidCount === 0) {
+          toast.warning(
+            `Emitted to ${summary.totalTargets} targets — ${summary.warningCount} warning${summary.warningCount !== 1 ? "s" : ""}`
+          );
+        } else {
+          toast.error(
+            `Emission failed: ${summary.invalidCount} target${summary.invalidCount !== 1 ? "s" : ""} invalid`
+          );
+        }
+      }
+    } catch {
+      toast.error("Emission failed unexpectedly");
+    } finally {
+      setIsEmitting(false);
+    }
+  }, [entity.id]);
+
+  // Override dialog handlers
+  const handleWarningClick = useCallback((info: OverrideMappingInfo) => {
+    setOverrideMappingContext({
+      sourceType: info.sourceType,
+      targetFormat: info.targetFormat,
+      currentMappedType: info.currentMappedType,
+      lossDescription: info.lossDescription,
+      fieldName: info.fieldName,
+    });
+    setOverrideDialogOpen(true);
+  }, []);
+
+  const handleCreateOverride = useCallback(async (data: CreateOverrideData) => {
+    const result = await createTypeMappingOverrideAction({
+      ...data,
+      entityId: entity.id,
+    });
+    if (result.error) {
+      throw new Error(result.error);
+    }
+    // Add to local overrides for badge display
+    setOverrides((prev) => [
+      ...prev,
+      {
+        sourceType: data.sourceType,
+        targetFormat: data.targetFormat,
+        currentMappedType: data.mappedType,
+        isOverride: true,
+        overrideSource: data.scope === "global" ? "global" : "per-entity",
+      },
+    ]);
+    // Re-emit to reflect the override
+    await handleEmit();
+  }, [entity.id, handleEmit]);
+
+  const handleAcknowledge = useCallback(async (sourceType: string, targetFormat: string) => {
+    const result = await acknowledgeLossyMappingAction({
+      entityId: entity.id,
+      sourceType,
+      targetFormat,
+    });
+    if (result.error) {
+      throw new Error(result.error);
+    }
+  }, [entity.id]);
+
+  // Keyboard shortcut: Cmd+E / Ctrl+E to emit
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "e") {
+        e.preventDefault();
+        if (!readOnly && !isEmitting) {
+          handleEmit();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleEmit, readOnly, isEmitting]);
 
   // Deprecation form state
   const [showDeprecationForm, setShowDeprecationForm] = useState(false);
@@ -187,6 +302,32 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
 
           <Badge variant="secondary">v{entity.version}</Badge>
         </div>
+
+        {/* Emit button */}
+        {!readOnly && (
+          <Button
+            onClick={handleEmit}
+            disabled={isEmitting || fields.length === 0}
+            className="gap-1.5"
+            title={
+              fields.length === 0
+                ? "Add fields before emitting"
+                : "Emit to all targets (Ctrl+E)"
+            }
+          >
+            {isEmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Emitting...
+              </>
+            ) : (
+              <>
+                <Zap className="w-4 h-4" />
+                Emit
+              </>
+            )}
+          </Button>
+        )}
       </div>
 
       {/* Status transition error */}
@@ -284,6 +425,29 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         />
       </div>
 
+      {/* Emission Preview Panel */}
+      {emissionResult && (
+        <EmissionPreviewPanel
+          result={emissionResult}
+          open={emissionPanelOpen}
+          onClose={() => setEmissionPanelOpen(false)}
+          entityId={entity.id}
+          userRole="STEWARD"
+          onWarningClick={handleWarningClick}
+          overrides={overrides}
+        />
+      )}
+
+      {/* Type Mapping Override Dialog */}
+      <TypeMappingOverrideDialog
+        open={overrideDialogOpen}
+        onClose={() => setOverrideDialogOpen(false)}
+        mappingContext={overrideMappingContext}
+        entityId={entity.id}
+        userRole="STEWARD"
+        onCreateOverride={handleCreateOverride}
+        onAcknowledge={handleAcknowledge}
+      />
     </div>
   );
 }

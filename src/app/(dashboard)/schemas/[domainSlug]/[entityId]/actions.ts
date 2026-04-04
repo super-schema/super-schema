@@ -210,6 +210,104 @@ export async function updateEntityRelationshipsAction(
   return { success: true };
 }
 
+/**
+ * Run the full emission pipeline for an entity.
+ * Returns TypeSpec source + per-target emitted outputs with validation.
+ */
+export async function emitEntityAction(entityId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const { emitEntity } = await import("@/lib/emission/emission.service");
+    const result = await emitEntity(entityId);
+    return { success: true, result };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Emission failed";
+    return { error: message };
+  }
+}
+
+/**
+ * Create a type mapping override (global or per-entity).
+ */
+export async function createTypeMappingOverrideAction(input: {
+  sourceType: string;
+  targetFormat: string;
+  mappedType: string;
+  justification: string;
+  scope: "global" | "per-entity";
+  entityId: string;
+  isLossy: boolean;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const { createGlobalOverride, createEntityOverride } = await import(
+    "@/services/type-mapping.service"
+  );
+
+  const ctx = {
+    userId: session.user.id,
+    userRole: "STEWARD" as string, // MVP: default role
+    prisma,
+  };
+
+  if (input.scope === "global") {
+    const result = await createGlobalOverride(
+      {
+        sourceType: input.sourceType,
+        targetFormat: input.targetFormat,
+        mappedType: input.mappedType,
+        justification: input.justification,
+        isLossy: input.isLossy,
+      },
+      ctx
+    );
+    if (!result.success) return { error: result.error.message };
+    return { success: true, override: result.data };
+  } else {
+    const result = await createEntityOverride(
+      {
+        sourceType: input.sourceType,
+        targetFormat: input.targetFormat,
+        mappedType: input.mappedType,
+        justification: input.justification,
+        isLossy: input.isLossy,
+        entityId: input.entityId,
+      },
+      ctx
+    );
+    if (!result.success) return { error: result.error.message };
+    return { success: true, override: result.data };
+  }
+}
+
+/**
+ * Acknowledge a lossy type mapping for a specific entity.
+ */
+export async function acknowledgeLossyMappingAction(input: {
+  entityId: string;
+  sourceType: string;
+  targetFormat: string;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const { acknowledgeLossyMapping } = await import(
+    "@/services/type-mapping.service"
+  );
+
+  const result = await acknowledgeLossyMapping(input, {
+    userId: session.user.id,
+    userRole: "AUTHOR",
+    prisma,
+  });
+
+  if (!result.success) return { error: result.error.message };
+  return { success: true };
+}
+
 export async function deleteFieldAction(fieldId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };

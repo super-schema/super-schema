@@ -1,0 +1,263 @@
+/**
+ * compileEntity() — pure function that transforms Prisma entity + fields
+ * into a SuperSchemaModel IR.
+ *
+ * Zero side effects, zero Prisma runtime dependency.
+ * Accepts plain objects matching Prisma's shape.
+ */
+
+import type {
+  SuperSchemaModel,
+  SuperSchemaField,
+  SuperSchemaRelationship,
+  SuperSchemaEntityMetadata,
+  DecoratorSet,
+  ComplexTypeInfo,
+  LogicalType,
+} from "@/types/super-schema-model";
+import { ALL_DATA_TYPES } from "@/lib/data-types";
+
+// ---------------------------------------------------------------------------
+// Input shapes — match Prisma's output without importing Prisma
+// ---------------------------------------------------------------------------
+
+export interface PrismaEntityInput {
+  id: string;
+  name: string;
+  description: string;
+  status: string;
+  version: number;
+  domainId: string;
+  metadata: unknown; // Prisma JSONB
+  domain?: { id: string; name: string; slug: string } | null;
+}
+
+export interface PrismaFieldInput {
+  id: string;
+  name: string;
+  type: string;
+  precision: number | null;
+  scale: number | null;
+  nullable: boolean;
+  isKey: boolean;
+  fieldNumber: number | null;
+  description: string;
+  classification: string | null;
+  aliases: string[];
+  decorators: unknown; // Prisma JSONB
+  sortOrder: number;
+}
+
+// ---------------------------------------------------------------------------
+// compileEntity — pure function
+// ---------------------------------------------------------------------------
+
+export function compileEntity(
+  entity: PrismaEntityInput,
+  fields: PrismaFieldInput[]
+): SuperSchemaModel {
+  const metadata = parseEntityMetadata(entity.metadata);
+  const domainName = entity.domain?.name || entity.domain?.slug || "unknown";
+
+  const compiledFields = fields
+    .slice()
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map(compileField);
+
+  const relationships = extractRelationships(metadata, fields);
+
+  return {
+    entity: {
+      id: entity.id,
+      name: entity.name,
+      domain: domainName,
+      domainId: entity.domainId,
+      description: entity.description,
+      status: entity.status,
+      version: entity.version,
+      metadata,
+    },
+    fields: compiledFields,
+    relationships,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Field compilation
+// ---------------------------------------------------------------------------
+
+function compileField(field: PrismaFieldInput): SuperSchemaField {
+  const rawDecorators = (field.decorators ?? {}) as Record<string, unknown>;
+  const decorators = extractDecoratorSet(rawDecorators);
+  const complexType = extractComplexTypeInfo(field.type, rawDecorators);
+  const logicalType = resolveLogicalType(field.type);
+
+  return {
+    name: field.name,
+    type: logicalType,
+    precision: field.precision ?? undefined,
+    scale: field.scale ?? undefined,
+    nullable: field.nullable,
+    isKey: field.isKey,
+    fieldNumber: field.fieldNumber ?? undefined,
+    description: field.description,
+    classification: field.classification ?? undefined,
+    aliases: field.aliases ?? [],
+    decorators,
+    complexType: complexType ?? undefined,
+    sortOrder: field.sortOrder,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Type resolution
+// ---------------------------------------------------------------------------
+
+const VALID_LOGICAL_TYPES = new Set(ALL_DATA_TYPES);
+
+function resolveLogicalType(typeId: string): LogicalType {
+  if (VALID_LOGICAL_TYPES.has(typeId)) {
+    return typeId as LogicalType;
+  }
+  // Fallback: treat unknown types as string
+  return "string";
+}
+
+// ---------------------------------------------------------------------------
+// Decorator extraction
+// ---------------------------------------------------------------------------
+
+function extractDecoratorSet(raw: Record<string, unknown>): DecoratorSet {
+  const result: DecoratorSet = {};
+
+  if (raw.structure && typeof raw.structure === "object") {
+    result.structure = raw.structure as DecoratorSet["structure"];
+  }
+  if (raw.semantics && typeof raw.semantics === "object") {
+    result.semantics = raw.semantics as DecoratorSet["semantics"];
+  }
+  if (raw.classification && typeof raw.classification === "object") {
+    result.classification = raw.classification as DecoratorSet["classification"];
+  }
+  if (raw.policy && typeof raw.policy === "object") {
+    result.policy = raw.policy as DecoratorSet["policy"];
+  }
+  if (raw.quality && typeof raw.quality === "object") {
+    result.quality = raw.quality as DecoratorSet["quality"];
+  }
+  if (raw.lineage && typeof raw.lineage === "object") {
+    result.lineage = raw.lineage as DecoratorSet["lineage"];
+  }
+  if (raw.operationalHints && typeof raw.operationalHints === "object") {
+    result.operationalHints = raw.operationalHints as DecoratorSet["operationalHints"];
+  }
+  if (raw.evolution && typeof raw.evolution === "object") {
+    result.evolution = raw.evolution as DecoratorSet["evolution"];
+  }
+  if (raw.typespec && typeof raw.typespec === "object") {
+    result.typespec = raw.typespec as DecoratorSet["typespec"];
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Complex type info extraction
+// ---------------------------------------------------------------------------
+
+function extractComplexTypeInfo(
+  type: string,
+  decorators: Record<string, unknown>
+): ComplexTypeInfo | null {
+  switch (type) {
+    case "array":
+      return {
+        arrayElementType: (decorators.arrayElementType as string) ?? undefined,
+        arrayElementPrecision: (decorators.arrayElementPrecision as number) ?? undefined,
+        arrayElementScale: (decorators.arrayElementScale as number) ?? undefined,
+      };
+    case "map":
+      return {
+        mapKeyType: (decorators.mapKeyType as string) ?? undefined,
+        mapValueType: (decorators.mapValueType as string) ?? undefined,
+      };
+    case "object":
+      return {
+        nestedFields: Array.isArray(decorators.nestedFields)
+          ? (decorators.nestedFields as ComplexTypeInfo["nestedFields"])
+          : undefined,
+      };
+    case "reference":
+      return {
+        referencedEntityId: (decorators.referencedEntityId as string) ?? undefined,
+        referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
+      };
+    default:
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entity metadata parsing
+// ---------------------------------------------------------------------------
+
+function parseEntityMetadata(raw: unknown): SuperSchemaEntityMetadata {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+
+  const meta = raw as Record<string, unknown>;
+  const result: SuperSchemaEntityMetadata = {};
+
+  if (Array.isArray(meta.tags)) {
+    result.tags = meta.tags as string[];
+  }
+  if (Array.isArray(meta.relationships)) {
+    result.relationships = meta.relationships as SuperSchemaRelationship[];
+  }
+  if (meta.deprecation && typeof meta.deprecation === "object") {
+    result.deprecation = meta.deprecation as SuperSchemaEntityMetadata["deprecation"];
+  }
+  if (meta.custom && typeof meta.custom === "object") {
+    result.custom = meta.custom as Record<string, unknown>;
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Relationship extraction — from entity metadata + reference fields
+// ---------------------------------------------------------------------------
+
+function extractRelationships(
+  metadata: SuperSchemaEntityMetadata,
+  fields: PrismaFieldInput[]
+): SuperSchemaRelationship[] {
+  const relationships: SuperSchemaRelationship[] = [];
+
+  // From entity metadata
+  if (metadata.relationships) {
+    relationships.push(...metadata.relationships);
+  }
+
+  // From reference-type fields not already in metadata
+  const existingTargets = new Set(
+    relationships.map((r) => `${r.targetEntityId}:${r.fieldId}`)
+  );
+
+  for (const field of fields) {
+    if (field.type === "reference") {
+      const decorators = (field.decorators ?? {}) as Record<string, unknown>;
+      const targetId = decorators.referencedEntityId as string | undefined;
+      if (targetId && !existingTargets.has(`${targetId}:${field.id}`)) {
+        relationships.push({
+          targetEntityId: targetId,
+          fieldId: field.id,
+          cardinality: "many-to-one",
+        });
+      }
+    }
+  }
+
+  return relationships;
+}

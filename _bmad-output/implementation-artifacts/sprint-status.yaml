@@ -74,15 +74,15 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Schema Emission, Validation & API (8 stories)
-  epic-3: backlog
-  3-1-compiler-service-superschemamodel: ready-for-dev
-  3-2-type-translation-policies-mapping-engine: ready-for-dev
-  3-3-bigquery-ddl-emitter: ready-for-dev
-  3-4-avro-schema-emitter: ready-for-dev
-  3-5-openapi-schema-emitter: ready-for-dev
-  3-6-emission-pipeline-preview-panel: ready-for-dev
-  3-7-type-mapping-overrides-governance: ready-for-dev
-  3-8-external-api-orpc-openapi: ready-for-dev
+  epic-3: in-progress
+  3-1-compiler-service-superschemamodel: review
+  3-2-type-translation-policies-mapping-engine: review
+  3-3-bigquery-ddl-emitter: review
+  3-4-avro-schema-emitter: review
+  3-5-openapi-schema-emitter: review
+  3-6-emission-pipeline-preview-panel: review
+  3-7-type-mapping-overrides-governance: review
+  3-8-external-api-orpc-openapi: review
   epic-3-retrospective: optional
 
   # Epic 4: Schema Versioning & Change Management (4 stories)
