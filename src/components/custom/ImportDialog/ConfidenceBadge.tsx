@@ -41,7 +41,7 @@ export function ConfidenceBadge({
   return (
     <TooltipProvider>
       <Tooltip>
-        <TooltipTrigger asChild>
+        <TooltipTrigger>
           <span
             data-testid={`confidence-badge-${confidence}`}
             className={`inline-block w-2.5 h-2.5 rounded-full ${config.color} cursor-help`}

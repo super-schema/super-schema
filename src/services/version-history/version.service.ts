@@ -181,7 +181,7 @@ export async function createSnapshot(
         where: { id: entityId },
         data: {
           version: newVersionNumber,
-          metadata: updatedMetadata as Prisma.InputJsonValue,
+          metadata: updatedMetadata as unknown as Prisma.InputJsonValue,
         },
       });
     },

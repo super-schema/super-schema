@@ -3,7 +3,7 @@ import { z } from "zod";
 export const EmitterConfigSchema = z.object({
   emitterName: z.string().min(1),
   enabled: z.boolean(),
-  configOverrides: z.record(z.unknown()).optional(),
+  configOverrides: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type EmitterConfig = z.infer<typeof EmitterConfigSchema>;
@@ -11,7 +11,7 @@ export type EmitterConfig = z.infer<typeof EmitterConfigSchema>;
 export const UpdateEmitterConfigInputSchema = z.object({
   emitterName: z.string().min(1),
   enabled: z.boolean().optional(),
-  configOverrides: z.record(z.unknown()).optional(),
+  configOverrides: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type UpdateEmitterConfigInput = z.infer<typeof UpdateEmitterConfigInputSchema>;

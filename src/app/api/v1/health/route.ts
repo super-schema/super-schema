@@ -8,13 +8,14 @@
 import { NextResponse } from "next/server";
 import { runHealthCheck } from "@/services/health.service";
 import type { ServiceContext } from "@/types/service-context";
+import { prisma } from "@/lib/db";
 
 export async function GET() {
   // System context — no user session required
   const ctx: ServiceContext = {
     userId: "system",
     userRole: "ADMIN",
-    prisma: null as unknown as ServiceContext["prisma"],
+    prisma,
   };
 
   const result = await runHealthCheck(ctx);

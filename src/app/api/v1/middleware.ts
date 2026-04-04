@@ -8,6 +8,7 @@
  * Returns the authenticated user context or null if unauthenticated.
  */
 
+import crypto from "crypto";
 import { auth } from "@/lib/auth";
 import type { ServiceContext } from "@/types/service-context";
 import { prisma } from "@/lib/db";
@@ -50,7 +51,12 @@ async function authenticateWithApiKey(token: string): Promise<AuthResult> {
     return { authenticated: false };
   }
 
-  if (token !== expectedKey) {
+  const tokenBuf = Buffer.from(token);
+  const expectedBuf = Buffer.from(expectedKey);
+  if (
+    tokenBuf.length !== expectedBuf.length ||
+    !crypto.timingSafeEqual(tokenBuf, expectedBuf)
+  ) {
     return { authenticated: false };
   }
 
@@ -59,7 +65,7 @@ async function authenticateWithApiKey(token: string): Promise<AuthResult> {
     authenticated: true,
     context: {
       userId: "api-key-user",
-      userRole: "admin",
+      userRole: "ADMIN",
       prisma,
     },
   };
@@ -79,7 +85,7 @@ async function authenticateWithSession(): Promise<AuthResult> {
       authenticated: true,
       context: {
         userId: session.user.id,
-        userRole: "user",
+        userRole: "VIEWER",
         prisma,
       },
     };

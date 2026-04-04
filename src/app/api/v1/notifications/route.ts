@@ -17,6 +17,7 @@ import {
   markAllAsRead,
   getUnreadCount,
 } from "@/services/notification.service";
+import type { NotificationFilter } from "@/types/schemas/notification";
 
 export async function GET(request: Request) {
   const authResult = await authenticateRequest(request);
@@ -42,8 +43,8 @@ export async function GET(request: Request) {
     const page = parseInt(url.searchParams.get("page") ?? "1", 10);
     const pageSize = parseInt(url.searchParams.get("pageSize") ?? "25", 10);
 
-    const filters = {
-      types: typesParam ? typesParam.split(",") : undefined,
+    const filters: NotificationFilter = {
+      types: typesParam ? typesParam.split(",") as NotificationFilter["types"] : undefined,
       read: readParam !== null ? readParam === "true" : undefined,
     };
 

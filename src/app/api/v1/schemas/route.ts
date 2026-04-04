@@ -23,9 +23,9 @@ export async function GET(request: Request) {
 
   try {
     const url = new URL(request.url);
-    const filters = {
+    const filters: import("@/types/schemas/entity.schema").EntityFilters = {
       domainId: url.searchParams.get("domain") ?? undefined,
-      status: url.searchParams.get("status") ?? undefined,
+      status: (url.searchParams.get("status") ?? undefined) as "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED" | undefined,
       search: url.searchParams.get("search") ?? undefined,
     };
 

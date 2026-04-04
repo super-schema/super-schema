@@ -13,7 +13,7 @@ export const StandardFieldSchema = z.object({
     .array(
       z.object({
         rule: z.string(),
-        params: z.record(z.unknown()).optional(),
+        params: z.record(z.string(), z.unknown()).optional(),
       })
     )
     .optional(),

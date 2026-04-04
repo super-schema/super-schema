@@ -39,7 +39,7 @@ export function VersionBadge({
   return (
     <TooltipProvider>
       <Tooltip>
-        <TooltipTrigger asChild>
+        <TooltipTrigger>
           <span
             data-testid={`version-badge-${version}`}
             className={`inline-flex items-center px-1.5 py-0.5 rounded text-caption font-mono ${colorClass}`}

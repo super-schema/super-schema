@@ -18,7 +18,7 @@ export const CreateFieldInputSchema = z.object({
   decorators: DecoratorSchema.optional(),
 });
 
-export type CreateFieldInput = z.infer<typeof CreateFieldInputSchema>;
+export type CreateFieldInput = z.input<typeof CreateFieldInputSchema>;
 
 export const UpdateFieldInputSchema = CreateFieldInputSchema.partial();
 

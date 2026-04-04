@@ -116,7 +116,7 @@ function validateColumns(columnsBlock: string): ValidationError[] {
 
     // Match: column_name TYPE [NOT NULL] [OPTIONS(...)]
     const colMatch = col.match(
-      /^(`[^`]+`|[a-zA-Z_][a-zA-Z0-9_]*)\s+(.+)$/s
+      /^(`[^`]+`|[a-zA-Z_][a-zA-Z0-9_]*)\s+([\s\S]+)$/
     );
     if (!colMatch) {
       errors.push({

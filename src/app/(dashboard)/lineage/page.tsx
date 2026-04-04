@@ -50,7 +50,7 @@ export default async function LineagePage() {
     const metadata = (e.metadata as EntityMetadata) || {};
     const relationships = (metadata.relationships || []).map((r) => ({
       targetEntityId: r.targetEntityId,
-      type: r.type,
+      type: r.cardinality,
     }));
 
     const piiCount = e.fields.filter(

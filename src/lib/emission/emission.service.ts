@@ -51,7 +51,7 @@ export async function emitEntity(entityId: string): Promise<EmissionResult> {
     domainId: entity.domainId,
     metadata: entity.metadata,
     domain: entity.domain
-      ? { id: entity.domain.id, name: entity.domain.name, slug: entity.domain.slug }
+      ? { id: entity.domain.id, name: entity.domain.name, slug: entity.domain.name.toLowerCase().replace(/\s+/g, "-") }
       : null,
   };
 

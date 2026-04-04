@@ -7,7 +7,27 @@ import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.schema";
 import { updateEntity } from "@/services/entity.service";
+import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
+import { getEffectiveRole } from "@/services/rbac.service";
+
+/**
+ * Look up the effective role for the current user.
+ * TODO: Once RBAC roles are persisted to the database, this will return
+ * the actual role. For now (MVP in-memory store), it falls back to "AUTHOR".
+ */
+async function resolveUserRole(userId: string): Promise<string> {
+  const result = await getEffectiveRole(userId, null, {
+    userId,
+    userRole: "VIEWER",
+    prisma,
+  });
+  if (result.success && result.data) {
+    return result.data;
+  }
+  // Default fallback for MVP — no roles assigned yet in in-memory store
+  return "AUTHOR";
+}
 
 export async function addFieldAction(
   entityId: string,
@@ -167,9 +187,10 @@ export async function updateEntityStatusAction(
     input.metadata = metadata;
   }
 
-  const result = await updateEntity(entityId, input as { status?: string; metadata?: Record<string, unknown> }, {
+  const userRole = await resolveUserRole(session.user.id);
+  const result = await updateEntity(entityId, input as UpdateEntityInput, {
     userId: session.user.id,
-    userRole: "AUTHOR",
+    userRole,
     prisma,
   });
 
@@ -201,9 +222,17 @@ export async function updateEntityRelationshipsAction(
   const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
   const updatedMeta = { ...existingMeta, relationships };
 
-  await prisma.entity.update({
-    where: { id: entityId },
-    data: { metadata: updatedMeta as Prisma.InputJsonValue },
+  await withAudit({
+    action: "UPDATE",
+    entityType: "Entity",
+    entityId,
+    userId: session.user.id,
+    beforeState: { metadata: existingMeta } as unknown as object,
+    fn: () =>
+      prisma.entity.update({
+        where: { id: entityId },
+        data: { metadata: updatedMeta as Prisma.InputJsonValue },
+      }),
   });
 
   revalidatePath("/schemas");
@@ -247,9 +276,10 @@ export async function createTypeMappingOverrideAction(input: {
     "@/services/type-mapping.service"
   );
 
+  const userRole = await resolveUserRole(session.user.id);
   const ctx = {
     userId: session.user.id,
-    userRole: "STEWARD" as string, // MVP: default role
+    userRole,
     prisma,
   };
 
@@ -298,9 +328,10 @@ export async function acknowledgeLossyMappingAction(input: {
     "@/services/type-mapping.service"
   );
 
+  const userRole = await resolveUserRole(session.user.id);
   const result = await acknowledgeLossyMapping(input, {
     userId: session.user.id,
-    userRole: "AUTHOR",
+    userRole,
     prisma,
   });
 
@@ -319,9 +350,10 @@ export async function createVersionAction(entityId: string) {
     const { createSnapshot } = await import(
       "@/services/version-history/version.service"
     );
+    const userRole = await resolveUserRole(session.user.id);
     const result = await createSnapshot(entityId, {
       userId: session.user.id,
-      userRole: "AUTHOR",
+      userRole,
       prisma,
     });
 
@@ -348,9 +380,10 @@ export async function getVersionHistoryAction(entityId: string) {
     const { getVersionHistory } = await import(
       "@/services/version-history/version.service"
     );
+    const userRole = await resolveUserRole(session.user.id);
     const result = await getVersionHistory(entityId, {
       userId: session.user.id,
-      userRole: "AUTHOR",
+      userRole,
       prisma,
     });
 
@@ -381,9 +414,10 @@ export async function compareVersionsAction(
     const { compareVersionsStructured } = await import(
       "@/services/version-history/version.service"
     );
+    const userRole = await resolveUserRole(session.user.id);
     const result = await compareVersionsStructured(entityId, v1, v2, {
       userId: session.user.id,
-      userRole: "AUTHOR",
+      userRole,
       prisma,
     });
 
@@ -428,11 +462,12 @@ export async function getChangeHistoryAction(
         }
       : undefined;
 
+    const userRole = await resolveUserRole(session.user.id);
     const result = await getChangeHistory(
       entityId,
       {
         userId: session.user.id,
-        userRole: "AUTHOR",
+        userRole,
         prisma,
       },
       parsedFilters,

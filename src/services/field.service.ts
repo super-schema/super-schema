@@ -200,6 +200,14 @@ export async function reorderFields(
     select: { id: true, sortOrder: true },
   });
 
+  if (fieldIds.length !== fields.length) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: `Expected ${fields.length} field IDs but received ${fieldIds.length}. All fields must be included in the reorder request.`,
+      suggestedFix: "Include every field ID for this entity in the reorder array.",
+    });
+  }
+
   const entityFieldIds = new Set(fields.map((f) => f.id));
   for (const fid of fieldIds) {
     if (!entityFieldIds.has(fid)) {

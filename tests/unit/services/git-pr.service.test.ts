@@ -207,9 +207,8 @@ describe("Git PR Service — Pure Helpers", () => {
           validationStatus: "WARNING",
           warnings: [
             {
-              code: "LOSSY_TYPE",
               message: "Decimal mapped to bytes",
-              severity: "warning" as const,
+              fieldName: "amount",
             },
           ],
           errors: [],

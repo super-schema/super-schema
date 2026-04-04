@@ -346,6 +346,9 @@ function resolveTypeSpecType(
       const valueTypeInfo = getTypeInfo(valueType);
       const keyTypeSpec = keyTypeInfo?.typespecScalar ?? keyType;
       const valueTypeSpec = valueTypeInfo?.typespecScalar ?? valueType;
+      if (keyTypeSpec !== "string") {
+        return `Record<${keyTypeSpec}, ${valueTypeSpec}>`;
+      }
       return `Record<${valueTypeSpec}>`;
     }
     case "object": {
@@ -373,11 +376,20 @@ function resolveTypeSpecType(
 // Utilities
 // ---------------------------------------------------------------------------
 
+const TYPESPEC_RESERVED_WORDS = new Set([
+  "model", "enum", "interface", "namespace", "op", "union", "alias",
+  "scalar", "dec", "fn", "extern", "is", "extends", "using", "import",
+]);
+
 function sanitizeIdentifier(name: string): string {
   // Replace non-alphanumeric characters with underscores
   let safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
   // Ensure it doesn't start with a digit
   if (/^[0-9]/.test(safe)) {
+    safe = `_${safe}`;
+  }
+  // Escape TypeSpec reserved words
+  if (TYPESPEC_RESERVED_WORDS.has(safe)) {
     safe = `_${safe}`;
   }
   return safe;

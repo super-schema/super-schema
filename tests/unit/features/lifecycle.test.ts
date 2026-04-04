@@ -122,13 +122,13 @@ describe("Entity & Field Lifecycle (Story 2.8)", () => {
     it("stores deprecation metadata when transitioning to DEPRECATED", async () => {
       const existing = { id: "ent-1", name: "Customer", status: "ACTIVE", version: 1 };
       vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
-      vi.mocked(prisma.entity.update).mockImplementation(async (args) => {
-        return {
+      vi.mocked(prisma.entity.update).mockImplementation(((args: { data: { metadata: unknown } }) => {
+        return Promise.resolve({
           ...existing,
           status: "DEPRECATED",
-          metadata: (args as { data: { metadata: unknown } }).data.metadata,
-        } as never;
-      });
+          metadata: args.data.metadata,
+        });
+      }) as never);
 
       const deprecationMeta = {
         deprecation: {

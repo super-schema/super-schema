@@ -101,9 +101,12 @@ export class BigQueryEmitter implements Emitter {
   emit(model: SuperSchemaModel, policies: MappingPolicy[]): EmitterResult {
     const warnings: EmitterWarning[] = [];
 
-    // Cast to ScopedMappingPolicy[] — callers typically pass ScopedMappingPolicy
-    // (which extends MappingPolicy) from getDefaultPolicies(), preserving lossy info.
-    const scopedPolicies = policies as ScopedMappingPolicy[];
+    // Convert MappingPolicy[] to ScopedMappingPolicy[] with proper defaults
+    const scopedPolicies: ScopedMappingPolicy[] = policies.map(p => ({
+      ...p,
+      isLossy: (p as ScopedMappingPolicy).isLossy ?? false,
+      isOverride: (p as ScopedMappingPolicy).isOverride ?? false,
+    }));
 
     const tableName = toSnakeCase(model.entity.name);
     const datasetPrefix = model.entity.domain

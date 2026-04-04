@@ -58,7 +58,7 @@ export function DriftBadge({
     return (
       <TooltipProvider>
         <Tooltip>
-          <TooltipTrigger asChild>
+          <TooltipTrigger>
             <span
               data-testid={`drift-badge-${status}`}
               className={`inline-block w-2 h-2 rounded-full ${
@@ -85,7 +85,7 @@ export function DriftBadge({
   return (
     <TooltipProvider>
       <Tooltip>
-        <TooltipTrigger asChild>
+        <TooltipTrigger>
           <span
             data-testid={`drift-badge-${status}`}
             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption ${config.bgColor} ${config.color}`}

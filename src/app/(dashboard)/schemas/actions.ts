@@ -2,9 +2,15 @@
 
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
+import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 
 export async function getDomainsAction() {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { error: "Not authenticated" };
+  }
+
   const domains = await prisma.domain.findMany({
     orderBy: [{ isSystem: "desc" }, { name: "asc" }],
     include: {
@@ -32,8 +38,15 @@ export async function createDomainAction(formData: FormData) {
   }
 
   try {
-    await prisma.domain.create({
-      data: { name: name.trim(), description },
+    await withAudit({
+      action: "CREATE",
+      entityType: "Domain",
+      entityId: "pending",
+      userId: session.user.id,
+      fn: () =>
+        prisma.domain.create({
+          data: { name: name.trim(), description },
+        }),
     });
     revalidatePath("/schemas");
     return { success: true };
@@ -70,7 +83,17 @@ export async function deleteDomainAction(domainId: string) {
     };
   }
 
-  await prisma.domain.delete({ where: { id: domainId } });
+  await withAudit({
+    action: "DELETE",
+    entityType: "Domain",
+    entityId: domainId,
+    userId: session.user.id,
+    beforeState: domain as unknown as object,
+    fn: async () => {
+      await prisma.domain.delete({ where: { id: domainId } });
+      return null;
+    },
+  });
   revalidatePath("/schemas");
   return { success: true };
 }

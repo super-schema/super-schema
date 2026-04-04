@@ -7,8 +7,10 @@ export function middleware(req: NextRequest) {
   const isAuthPage =
     pathname.startsWith("/login") || pathname.startsWith("/register");
   const isApiAuth = pathname.startsWith("/api/auth");
-  const isDevPage = pathname.startsWith("/dev");
-  const isPublic = isAuthPage || isApiAuth || isDevPage || pathname === "/";
+  const isDevPage =
+    process.env.NODE_ENV === "development" && pathname.startsWith("/dev");
+  const isApiRoute = pathname.startsWith("/api/");
+  const isPublic = isAuthPage || isApiAuth || isDevPage || isApiRoute || pathname === "/";
 
   // Auth check via session cookie (supports both secure and non-secure cookie names)
   const sessionToken =
