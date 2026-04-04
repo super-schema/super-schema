@@ -20,8 +20,20 @@ import {
 import type { NotificationFilter } from "@/types/schemas/notification";
 
 export async function GET(request: Request) {
-  const authResult = await authenticateRequest(request);
+  let authResult;
+  try {
+    authResult = await authenticateRequest(request);
+  } catch {
+    // Auth infrastructure error — return empty count gracefully for polling
+    return apiSuccess({ unreadCount: 0, notifications: [], total: 0 });
+  }
+
   if (!authResult.authenticated || !authResult.context) {
+    // For polling requests, return empty data instead of 401
+    const url = new URL(request.url);
+    if (url.searchParams.get("countOnly") === "true") {
+      return apiSuccess({ unreadCount: 0 });
+    }
     return apiUnauthorized();
   }
 

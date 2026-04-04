@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback } from "react";
+import { useState, useEffect, useTransition, useCallback, useRef } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ChevronRight, Loader2, Zap, History, Save } from "lucide-react";
@@ -301,6 +301,26 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
   const [depReplacementEntityId, setDepReplacementEntityId] = useState("");
   const [depMigrationNotes, setDepMigrationNotes] = useState("");
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const statusDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close status dropdown on click outside or Escape
+  useEffect(() => {
+    if (!statusDropdownOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(e.target as Node)) {
+        setStatusDropdownOpen(false);
+      }
+    }
+    function handleEsc(e: KeyboardEvent) {
+      if (e.key === "Escape") setStatusDropdownOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEsc);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [statusDropdownOpen]);
 
   function handleStatusChange(newStatus: EntityStatus) {
     setStatusError(null);
@@ -368,7 +388,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           <span className={`w-2.5 h-2.5 rounded-full ${currentStatus.dotColor}`} />
 
           {/* Status dropdown */}
-          <div className="relative">
+          <div className="relative" ref={statusDropdownRef}>
             <button
               onClick={() => !readOnly && setStatusDropdownOpen(!statusDropdownOpen)}
               disabled={readOnly}

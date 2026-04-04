@@ -11,11 +11,14 @@ export function NotificationBadge({ count, onClick }: NotificationBadgeProps) {
   const displayCount = count > 9 ? "9+" : String(count);
 
   return (
-    <button
+    <div
       data-testid="notification-bell"
-      className="relative p-1.5 rounded-lg hover:bg-accent animate-field-hover"
+      className="relative p-1.5 rounded-lg hover:bg-accent animate-field-hover cursor-pointer"
       onClick={onClick}
+      role="button"
+      tabIndex={0}
       aria-label={`Notifications${count > 0 ? ` (${count} unread)` : ""}`}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }}
     >
       <Bell className="w-5 h-5 text-muted-foreground" />
       {count > 0 && (
@@ -28,6 +31,6 @@ export function NotificationBadge({ count, onClick }: NotificationBadgeProps) {
           </span>
         </span>
       )}
-    </button>
+    </div>
   );
 }
