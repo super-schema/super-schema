@@ -1,27 +1,20 @@
 "use client";
 
-/**
- * Governance Dashboard Page
- *
- * Accessible from Activity Bar. Shows pending requests, all requests,
- * and history. Supports approve/reject actions.
- */
-
 import { useState, useCallback, useEffect } from "react";
 import { GovernanceDashboard } from "@/features/governance/GovernanceDashboard";
 import type { GovernanceRequest } from "@/types/schemas/governance";
 import {
-  getAllRequests,
-  approveRequest,
-  rejectRequest,
-} from "@/services/governance.service";
+  getGovernanceRequestsAction,
+  approveGovernanceRequestAction,
+  rejectGovernanceRequestAction,
+} from "./actions";
 
 export default function GovernancePage() {
   const [requests, setRequests] = useState<GovernanceRequest[]>([]);
 
   const loadRequests = useCallback(async () => {
-    const result = await getAllRequests();
-    if (result.success) {
+    const result = await getGovernanceRequestsAction();
+    if ("data" in result && result.data) {
       setRequests(result.data);
     }
   }, []);
@@ -32,11 +25,8 @@ export default function GovernancePage() {
 
   const handleApprove = useCallback(
     async (requestId: string, comment: string | null) => {
-      const result = await approveRequest(requestId, comment, {
-        userId: "current-user",
-        userRole: "STEWARD",
-      });
-      if (result.success) {
+      const result = await approveGovernanceRequestAction(requestId, comment);
+      if ("success" in result) {
         loadRequests();
       }
     },
@@ -45,11 +35,8 @@ export default function GovernancePage() {
 
   const handleReject = useCallback(
     async (requestId: string, comment: string | null) => {
-      const result = await rejectRequest(requestId, comment, {
-        userId: "current-user",
-        userRole: "STEWARD",
-      });
-      if (result.success) {
+      const result = await rejectGovernanceRequestAction(requestId, comment);
+      if ("success" in result) {
         loadRequests();
       }
     },
