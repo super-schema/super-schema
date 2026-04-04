@@ -58,7 +58,21 @@ export const ModelName = {
   Domain: 'Domain',
   Entity: 'Entity',
   Field: 'Field',
-  AuditLog: 'AuditLog'
+  AuditLog: 'AuditLog',
+  GitConfig: 'GitConfig',
+  GitPullRequest: 'GitPullRequest',
+  UserRole: 'UserRole',
+  ClassificationLevel: 'ClassificationLevel',
+  Notification: 'Notification',
+  WebhookEndpoint: 'WebhookEndpoint',
+  WebhookDelivery: 'WebhookDelivery',
+  GovernanceRequest: 'GovernanceRequest',
+  GovernanceApproval: 'GovernanceApproval',
+  TypeMappingOverride: 'TypeMappingOverride',
+  LossyMappingAck: 'LossyMappingAck',
+  EmitterConfig: 'EmitterConfig',
+  EmissionTargetStatus: 'EmissionTargetStatus',
+  DeploymentRecord: 'DeploymentRecord'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -191,6 +205,218 @@ export const AuditLogScalarFieldEnum = {
 } as const
 
 export type AuditLogScalarFieldEnum = (typeof AuditLogScalarFieldEnum)[keyof typeof AuditLogScalarFieldEnum]
+
+
+export const GitConfigScalarFieldEnum = {
+  id: 'id',
+  repositoryUrl: 'repositoryUrl',
+  branch: 'branch',
+  basePath: 'basePath',
+  authMethod: 'authMethod',
+  authCredential: 'authCredential',
+  prReviewMode: 'prReviewMode',
+  enabled: 'enabled',
+  lastSyncAt: 'lastSyncAt',
+  lastSyncStatus: 'lastSyncStatus',
+  createdBy: 'createdBy',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type GitConfigScalarFieldEnum = (typeof GitConfigScalarFieldEnum)[keyof typeof GitConfigScalarFieldEnum]
+
+
+export const GitPullRequestScalarFieldEnum = {
+  id: 'id',
+  entityId: 'entityId',
+  versionId: 'versionId',
+  prUrl: 'prUrl',
+  prNumber: 'prNumber',
+  branchName: 'branchName',
+  status: 'status',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type GitPullRequestScalarFieldEnum = (typeof GitPullRequestScalarFieldEnum)[keyof typeof GitPullRequestScalarFieldEnum]
+
+
+export const UserRoleScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  role: 'role',
+  domainId: 'domainId',
+  createdAt: 'createdAt'
+} as const
+
+export type UserRoleScalarFieldEnum = (typeof UserRoleScalarFieldEnum)[keyof typeof UserRoleScalarFieldEnum]
+
+
+export const ClassificationLevelScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  displayColor: 'displayColor',
+  bgColor: 'bgColor',
+  textColor: 'textColor',
+  description: 'description',
+  sortOrder: 'sortOrder',
+  isSystem: 'isSystem',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ClassificationLevelScalarFieldEnum = (typeof ClassificationLevelScalarFieldEnum)[keyof typeof ClassificationLevelScalarFieldEnum]
+
+
+export const NotificationScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  type: 'type',
+  title: 'title',
+  body: 'body',
+  entityId: 'entityId',
+  read: 'read',
+  createdAt: 'createdAt'
+} as const
+
+export type NotificationScalarFieldEnum = (typeof NotificationScalarFieldEnum)[keyof typeof NotificationScalarFieldEnum]
+
+
+export const WebhookEndpointScalarFieldEnum = {
+  id: 'id',
+  url: 'url',
+  events: 'events',
+  secret: 'secret',
+  active: 'active',
+  createdBy: 'createdBy',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type WebhookEndpointScalarFieldEnum = (typeof WebhookEndpointScalarFieldEnum)[keyof typeof WebhookEndpointScalarFieldEnum]
+
+
+export const WebhookDeliveryScalarFieldEnum = {
+  id: 'id',
+  endpointId: 'endpointId',
+  event: 'event',
+  payload: 'payload',
+  statusCode: 'statusCode',
+  error: 'error',
+  attempt: 'attempt',
+  nextRetryAt: 'nextRetryAt',
+  deliveredAt: 'deliveredAt'
+} as const
+
+export type WebhookDeliveryScalarFieldEnum = (typeof WebhookDeliveryScalarFieldEnum)[keyof typeof WebhookDeliveryScalarFieldEnum]
+
+
+export const GovernanceRequestScalarFieldEnum = {
+  id: 'id',
+  entityId: 'entityId',
+  entityName: 'entityName',
+  domainId: 'domainId',
+  versionId: 'versionId',
+  changeType: 'changeType',
+  severity: 'severity',
+  status: 'status',
+  impactReport: 'impactReport',
+  requestedBy: 'requestedBy',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type GovernanceRequestScalarFieldEnum = (typeof GovernanceRequestScalarFieldEnum)[keyof typeof GovernanceRequestScalarFieldEnum]
+
+
+export const GovernanceApprovalScalarFieldEnum = {
+  id: 'id',
+  requestId: 'requestId',
+  approverId: 'approverId',
+  decision: 'decision',
+  comment: 'comment',
+  decidedAt: 'decidedAt'
+} as const
+
+export type GovernanceApprovalScalarFieldEnum = (typeof GovernanceApprovalScalarFieldEnum)[keyof typeof GovernanceApprovalScalarFieldEnum]
+
+
+export const TypeMappingOverrideScalarFieldEnum = {
+  id: 'id',
+  sourceType: 'sourceType',
+  targetFormat: 'targetFormat',
+  mappedType: 'mappedType',
+  isLossy: 'isLossy',
+  lossDescription: 'lossDescription',
+  justification: 'justification',
+  approvedBy: 'approvedBy',
+  entityId: 'entityId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type TypeMappingOverrideScalarFieldEnum = (typeof TypeMappingOverrideScalarFieldEnum)[keyof typeof TypeMappingOverrideScalarFieldEnum]
+
+
+export const LossyMappingAckScalarFieldEnum = {
+  id: 'id',
+  entityId: 'entityId',
+  sourceType: 'sourceType',
+  targetFormat: 'targetFormat',
+  userId: 'userId',
+  acknowledgedAt: 'acknowledgedAt'
+} as const
+
+export type LossyMappingAckScalarFieldEnum = (typeof LossyMappingAckScalarFieldEnum)[keyof typeof LossyMappingAckScalarFieldEnum]
+
+
+export const EmitterConfigScalarFieldEnum = {
+  id: 'id',
+  emitterName: 'emitterName',
+  targetFormat: 'targetFormat',
+  version: 'version',
+  enabled: 'enabled',
+  description: 'description',
+  configOverrides: 'configOverrides',
+  updatedBy: 'updatedBy',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type EmitterConfigScalarFieldEnum = (typeof EmitterConfigScalarFieldEnum)[keyof typeof EmitterConfigScalarFieldEnum]
+
+
+export const EmissionTargetStatusScalarFieldEnum = {
+  id: 'id',
+  entityId: 'entityId',
+  target: 'target',
+  emittedVersion: 'emittedVersion',
+  stagedVersion: 'stagedVersion',
+  lastEmittedAt: 'lastEmittedAt',
+  status: 'status',
+  output: 'output',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type EmissionTargetStatusScalarFieldEnum = (typeof EmissionTargetStatusScalarFieldEnum)[keyof typeof EmissionTargetStatusScalarFieldEnum]
+
+
+export const DeploymentRecordScalarFieldEnum = {
+  id: 'id',
+  entityId: 'entityId',
+  target: 'target',
+  environment: 'environment',
+  version: 'version',
+  status: 'status',
+  driftReport: 'driftReport',
+  isDrifted: 'isDrifted',
+  deployedBy: 'deployedBy',
+  deployedAt: 'deployedAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type DeploymentRecordScalarFieldEnum = (typeof DeploymentRecordScalarFieldEnum)[keyof typeof DeploymentRecordScalarFieldEnum]
 
 
 export const SortOrder = {

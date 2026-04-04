@@ -5,9 +5,10 @@
  * while deferring others. Tracks per-target emission status and version snapshots
  * for deferred emission.
  *
- * Uses in-memory store for MVP — no Prisma migration required.
+ * Persisted via Prisma `emissionTargetStatus` table.
  */
 
+import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type {
@@ -16,20 +17,11 @@ import type {
 } from "@/types/schemas/governance";
 
 // ---------------------------------------------------------------------------
-// In-Memory Stores
+// Reset (no-op for test compatibility)
 // ---------------------------------------------------------------------------
 
-/** Per-target emission status: key = `${entityId}:${target}` */
-const emissionTargetStatus = new Map<string, EmissionTargetStatus>();
-
-/** Staged targets awaiting deferred emission: key = `${entityId}:${target}` */
-const stagedTargets = new Map<string, StagedTarget>();
-
-/** Emitted outputs: key = `${entityId}:${target}` */
-const emittedOutputs = new Map<string, { output: string; version: number }>();
-
-function targetKey(entityId: string, target: string): string {
-  return `${entityId}:${target}`;
+export function _resetStagedEmissionStore(): void {
+  // No-op — Prisma persistence is managed via test mocks
 }
 
 // ---------------------------------------------------------------------------
@@ -40,18 +32,20 @@ function targetKey(entityId: string, target: string): string {
  * Emit to selected targets only.
  * Returns results per target. Unselected targets are not touched.
  */
-export function emitToTargets(
+export async function emitToTargets(
   entityId: string,
   versionId: number,
   selectedTargets: string[],
   emitFn: (target: string) => Result<string>
-): Result<
-  Array<{
-    target: string;
-    success: boolean;
-    output?: string;
-    error?: string;
-  }>
+): Promise<
+  Result<
+    Array<{
+      target: string;
+      success: boolean;
+      output?: string;
+      error?: string;
+    }>
+  >
 > {
   const results: Array<{
     target: string;
@@ -61,26 +55,31 @@ export function emitToTargets(
   }> = [];
 
   for (const target of selectedTargets) {
-    const key = targetKey(entityId, target);
     const emitResult = emitFn(target);
 
     if (emitResult.success) {
-      // Update emission status
-      emittedOutputs.set(key, {
-        output: emitResult.data,
-        version: versionId,
+      // Upsert emission status
+      await prisma.emissionTargetStatus.upsert({
+        where: {
+          entityId_target: { entityId, target },
+        },
+        create: {
+          entityId,
+          target,
+          emittedVersion: versionId,
+          stagedVersion: null,
+          lastEmittedAt: new Date(),
+          status: "CURRENT",
+          output: emitResult.data,
+        },
+        update: {
+          emittedVersion: versionId,
+          stagedVersion: null,
+          lastEmittedAt: new Date(),
+          status: "CURRENT",
+          output: emitResult.data,
+        },
       });
-
-      emissionTargetStatus.set(key, {
-        target,
-        emittedVersion: versionId,
-        stagedVersion: null,
-        lastEmittedAt: new Date().toISOString(),
-        status: "current",
-      });
-
-      // Clear any staged marker for this target
-      stagedTargets.delete(key);
 
       results.push({
         target,
@@ -104,17 +103,38 @@ export function emitToTargets(
  * Records the version snapshot reference so the correct version
  * is used when eventually emitted.
  */
-export function stageForLater(
+export async function stageForLater(
   entityId: string,
   target: string,
   versionId: number,
   compatible: boolean,
   migrationComplexity: StagedTarget["migrationComplexity"]
-): Result<StagedTarget> {
-  const key = targetKey(entityId, target);
+): Promise<Result<StagedTarget>> {
+  // Get existing status for emittedVersion
+  const existing = await prisma.emissionTargetStatus.findUnique({
+    where: { entityId_target: { entityId, target } },
+  });
+
+  await prisma.emissionTargetStatus.upsert({
+    where: {
+      entityId_target: { entityId, target },
+    },
+    create: {
+      entityId,
+      target,
+      emittedVersion: null,
+      stagedVersion: versionId,
+      lastEmittedAt: null,
+      status: "STAGED",
+    },
+    update: {
+      stagedVersion: versionId,
+      status: "STAGED",
+    },
+  });
 
   const staged: StagedTarget = {
-    targetId: key,
+    targetId: `${entityId}:${target}`,
     targetName: target,
     stagedVersionId: versionId,
     compatible,
@@ -122,33 +142,22 @@ export function stageForLater(
     createdAt: new Date().toISOString(),
   };
 
-  stagedTargets.set(key, staged);
-
-  // Update emission status
-  const existingStatus = emissionTargetStatus.get(key);
-  emissionTargetStatus.set(key, {
-    target,
-    emittedVersion: existingStatus?.emittedVersion ?? null,
-    stagedVersion: versionId,
-    lastEmittedAt: existingStatus?.lastEmittedAt ?? null,
-    status: "staged",
-  });
-
   return ok(staged);
 }
 
 /**
  * Emit a previously staged target using the stored version snapshot.
  */
-export function emitStagedTarget(
+export async function emitStagedTarget(
   entityId: string,
   target: string,
   emitFn: (target: string, versionId: number) => Result<string>
-): Result<{ target: string; output: string; version: number }> {
-  const key = targetKey(entityId, target);
-  const staged = stagedTargets.get(key);
+): Promise<Result<{ target: string; output: string; version: number }>> {
+  const row = await prisma.emissionTargetStatus.findUnique({
+    where: { entityId_target: { entityId, target } },
+  });
 
-  if (!staged) {
+  if (!row || row.stagedVersion === null) {
     return err({
       code: "NOT_FOUND",
       message: `No staged emission for target "${target}" on entity "${entityId}"`,
@@ -156,63 +165,85 @@ export function emitStagedTarget(
     });
   }
 
-  const emitResult = emitFn(target, staged.stagedVersionId);
+  const emitResult = emitFn(target, row.stagedVersion);
 
   if (!emitResult.success) {
     return err(emitResult.error);
   }
 
   // Update emission status
-  emittedOutputs.set(key, {
-    output: emitResult.data,
-    version: staged.stagedVersionId,
+  await prisma.emissionTargetStatus.update({
+    where: { entityId_target: { entityId, target } },
+    data: {
+      emittedVersion: row.stagedVersion,
+      stagedVersion: null,
+      lastEmittedAt: new Date(),
+      status: "CURRENT",
+      output: emitResult.data,
+    },
   });
-
-  emissionTargetStatus.set(key, {
-    target,
-    emittedVersion: staged.stagedVersionId,
-    stagedVersion: null,
-    lastEmittedAt: new Date().toISOString(),
-    status: "current",
-  });
-
-  // Clear staged marker
-  stagedTargets.delete(key);
 
   return ok({
     target,
     output: emitResult.data,
-    version: staged.stagedVersionId,
+    version: row.stagedVersion,
   });
 }
 
 /**
  * Get all staged targets for an entity.
  */
-export function getStagedTargets(
+export async function getStagedTargets(
   entityId: string
-): Result<StagedTarget[]> {
-  const result: StagedTarget[] = [];
-  for (const [key, staged] of stagedTargets) {
-    if (key.startsWith(`${entityId}:`)) {
-      result.push(staged);
-    }
-  }
+): Promise<Result<StagedTarget[]>> {
+  const rows = await prisma.emissionTargetStatus.findMany({
+    where: {
+      entityId,
+      status: "STAGED",
+      stagedVersion: { not: null },
+    },
+  });
+
+  const result: StagedTarget[] = rows.map((row) => ({
+    targetId: `${row.entityId}:${row.target}`,
+    targetName: row.target,
+    stagedVersionId: row.stagedVersion!,
+    compatible: true, // Compatibility info not stored in DB — default
+    migrationComplexity: "trivial" as const, // Not stored in DB — default
+    createdAt: row.createdAt.toISOString(),
+  }));
+
   return ok(result);
 }
 
 /**
  * Get per-target emission status for an entity.
  */
-export function getTargetStatuses(
+export async function getTargetStatuses(
   entityId: string,
   targets: string[]
-): Result<EmissionTargetStatus[]> {
-  const result: EmissionTargetStatus[] = targets.map((target) => {
-    const key = targetKey(entityId, target);
-    const existing = emissionTargetStatus.get(key);
+): Promise<Result<EmissionTargetStatus[]>> {
+  const rows = await prisma.emissionTargetStatus.findMany({
+    where: {
+      entityId,
+      target: { in: targets },
+    },
+  });
 
-    if (existing) return existing;
+  const rowMap = new Map(rows.map((r) => [r.target, r]));
+
+  const result: EmissionTargetStatus[] = targets.map((target) => {
+    const row = rowMap.get(target);
+
+    if (row) {
+      return {
+        target: row.target,
+        emittedVersion: row.emittedVersion,
+        stagedVersion: row.stagedVersion,
+        lastEmittedAt: row.lastEmittedAt?.toISOString() ?? null,
+        status: row.status.toLowerCase() as "current" | "staged" | "behind",
+      };
+    }
 
     // Default: no emission yet
     return {
@@ -230,21 +261,20 @@ export function getTargetStatuses(
 /**
  * Get the emitted output for a target.
  */
-export function getEmittedOutput(
+export async function getEmittedOutput(
   entityId: string,
   target: string
-): Result<{ output: string; version: number } | null> {
-  const key = targetKey(entityId, target);
-  const output = emittedOutputs.get(key);
-  return ok(output ?? null);
-}
+): Promise<Result<{ output: string; version: number } | null>> {
+  const row = await prisma.emissionTargetStatus.findUnique({
+    where: { entityId_target: { entityId, target } },
+  });
 
-// ---------------------------------------------------------------------------
-// Reset (for testing)
-// ---------------------------------------------------------------------------
+  if (!row || row.emittedVersion === null || row.output === null) {
+    return ok(null);
+  }
 
-export function _resetStagedEmissionStore(): void {
-  emissionTargetStatus.clear();
-  stagedTargets.clear();
-  emittedOutputs.clear();
+  return ok({
+    output: row.output,
+    version: row.emittedVersion,
+  });
 }

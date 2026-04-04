@@ -2,10 +2,11 @@
  * Health Service — system health checks and metrics computation.
  *
  * Provides health check for database, compiler, and emitters,
- * plus usage, activity, and error metrics from in-memory stores.
+ * plus usage, activity, and error metrics via Prisma aggregate queries.
  * All functions return Result<T>.
  */
 
+import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -19,70 +20,38 @@ import type {
 } from "@/types/schemas/health";
 
 // ---------------------------------------------------------------------------
-// In-memory metrics stores (MVP — no DB queries)
+// Configurable check functions (overridable for testing)
 // ---------------------------------------------------------------------------
 
-let usageStore: UsageMetrics = {
-  totalEntities: 0,
-  totalFields: 0,
-  totalDomains: 0,
-  totalUsers: 0,
-  totalEmissions: 0,
-};
-
-let activityStore: ActivityMetrics = {
-  activeUsers24h: 0,
-  emissionsToday: 0,
-  schemaChangesToday: 0,
-  governanceRequestsPending: 0,
-};
-
-let errorStore: ErrorSummary = {
-  compilationErrors24h: 0,
-  emissionValidationFailures24h: 0,
-  apiErrors24h: 0,
-};
-
-let auditLogStore: AuditLogEntry[] = [];
-
-// Configurable check functions for testing
 let dbChecker: () => Promise<ComponentStatus> = defaultDbCheck;
 let compilerChecker: () => Promise<ComponentStatus> = defaultCompilerCheck;
 let emitterChecker: () => Promise<ComponentStatus> = defaultEmitterCheck;
 
+// ---------------------------------------------------------------------------
+// Reset / seed helpers — kept for test compatibility
+// ---------------------------------------------------------------------------
+
 export function _resetHealthStore(): void {
-  usageStore = {
-    totalEntities: 0, totalFields: 0, totalDomains: 0,
-    totalUsers: 0, totalEmissions: 0,
-  };
-  activityStore = {
-    activeUsers24h: 0, emissionsToday: 0,
-    schemaChangesToday: 0, governanceRequestsPending: 0,
-  };
-  errorStore = {
-    compilationErrors24h: 0, emissionValidationFailures24h: 0,
-    apiErrors24h: 0,
-  };
-  auditLogStore = [];
+  // Reset checkers to defaults
   dbChecker = defaultDbCheck;
   compilerChecker = defaultCompilerCheck;
   emitterChecker = defaultEmitterCheck;
 }
 
-export function _setUsageMetrics(metrics: Partial<UsageMetrics>): void {
-  usageStore = { ...usageStore, ...metrics };
+export function _setUsageMetrics(_metrics: Partial<UsageMetrics>): void {
+  // No-op — usage metrics now come from Prisma aggregate queries
 }
 
-export function _setActivityMetrics(metrics: Partial<ActivityMetrics>): void {
-  activityStore = { ...activityStore, ...metrics };
+export function _setActivityMetrics(_metrics: Partial<ActivityMetrics>): void {
+  // No-op — activity metrics now come from Prisma aggregate queries
 }
 
-export function _setErrorSummary(errors: Partial<ErrorSummary>): void {
-  errorStore = { ...errorStore, ...errors };
+export function _setErrorSummary(_errors: Partial<ErrorSummary>): void {
+  // No-op — error summary now comes from Prisma aggregate queries
 }
 
-export function _addAuditLog(entry: AuditLogEntry): void {
-  auditLogStore.push(entry);
+export function _addAuditLog(_entry: AuditLogEntry): void {
+  // No-op — audit log entries are now managed via Prisma
 }
 
 export function _setDbChecker(checker: () => Promise<ComponentStatus>): void {
@@ -103,14 +72,24 @@ export function _setEmitterChecker(checker: () => Promise<ComponentStatus>): voi
 
 async function defaultDbCheck(): Promise<ComponentStatus> {
   const start = Date.now();
-  // Simulate DB check
-  const latency = Date.now() - start;
-  return {
-    name: "Database",
-    status: latency < 100 ? "healthy" : latency < 500 ? "degraded" : "unhealthy",
-    message: `Connection OK (${latency}ms)`,
-    latencyMs: latency,
-  };
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    const latency = Date.now() - start;
+    return {
+      name: "Database",
+      status: latency < 100 ? "healthy" : latency < 500 ? "degraded" : "unhealthy",
+      message: `Connection OK (${latency}ms)`,
+      latencyMs: latency,
+    };
+  } catch (e) {
+    const latency = Date.now() - start;
+    return {
+      name: "Database",
+      status: "unhealthy",
+      message: e instanceof Error ? e.message : "Database check failed",
+      latencyMs: latency,
+    };
+  }
 }
 
 async function defaultCompilerCheck(): Promise<ComponentStatus> {
@@ -218,7 +197,7 @@ export async function runHealthCheck(
 }
 
 // ---------------------------------------------------------------------------
-// getUsageMetrics — Admin only
+// getUsageMetrics — Admin only, uses Prisma aggregate queries
 // ---------------------------------------------------------------------------
 
 export async function getUsageMetrics(
@@ -232,11 +211,30 @@ export async function getUsageMetrics(
     });
   }
 
-  return ok({ ...usageStore });
+  const [totalEntities, totalFields, totalDomains, totalUsers] =
+    await Promise.all([
+      prisma.entity.count(),
+      prisma.field.count(),
+      prisma.domain.count(),
+      prisma.user.count(),
+    ]);
+
+  // Count total emissions from emissionTargetStatus records with CURRENT status
+  const totalEmissions = await prisma.emissionTargetStatus.count({
+    where: { status: "CURRENT" },
+  });
+
+  return ok({
+    totalEntities,
+    totalFields,
+    totalDomains,
+    totalUsers,
+    totalEmissions,
+  });
 }
 
 // ---------------------------------------------------------------------------
-// getActivityMetrics — Admin only
+// getActivityMetrics — Admin only, uses Prisma queries on audit_log
 // ---------------------------------------------------------------------------
 
 export async function getActivityMetrics(
@@ -250,11 +248,49 @@ export async function getActivityMetrics(
     });
   }
 
-  return ok({ ...activityStore });
+  const now = new Date();
+  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  // Active users in last 24h — distinct userIds in audit_log
+  const activeUsersResult = await prisma.auditLog.findMany({
+    where: { timestamp: { gte: twentyFourHoursAgo } },
+    select: { userId: true },
+    distinct: ["userId"],
+  });
+  const activeUsers24h = activeUsersResult.length;
+
+  // Emissions today
+  const emissionsToday = await prisma.auditLog.count({
+    where: {
+      action: { startsWith: "emission." },
+      timestamp: { gte: startOfToday },
+    },
+  });
+
+  // Schema changes today
+  const schemaChangesToday = await prisma.auditLog.count({
+    where: {
+      action: { in: ["field.create", "field.update", "field.delete", "entity.create", "entity.update"] },
+      timestamp: { gte: startOfToday },
+    },
+  });
+
+  // Pending governance requests
+  const governanceRequestsPending = await prisma.governanceRequest.count({
+    where: { status: "PENDING" },
+  });
+
+  return ok({
+    activeUsers24h,
+    emissionsToday,
+    schemaChangesToday,
+    governanceRequestsPending,
+  });
 }
 
 // ---------------------------------------------------------------------------
-// getErrorSummary — Admin only
+// getErrorSummary — Admin only, uses Prisma queries on audit_log
 // ---------------------------------------------------------------------------
 
 export async function getErrorSummary(
@@ -268,7 +304,36 @@ export async function getErrorSummary(
     });
   }
 
-  return ok({ ...errorStore });
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const [compilationErrors24h, emissionValidationFailures24h, apiErrors24h] =
+    await Promise.all([
+      prisma.auditLog.count({
+        where: {
+          action: "compilation.error",
+          timestamp: { gte: twentyFourHoursAgo },
+        },
+      }),
+      prisma.auditLog.count({
+        where: {
+          action: "emission.validation.failure",
+          timestamp: { gte: twentyFourHoursAgo },
+        },
+      }),
+      prisma.auditLog.count({
+        where: {
+          action: { endsWith: ".error" },
+          timestamp: { gte: twentyFourHoursAgo },
+          NOT: { action: "compilation.error" },
+        },
+      }),
+    ]);
+
+  return ok({
+    compilationErrors24h,
+    emissionValidationFailures24h,
+    apiErrors24h,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -287,12 +352,32 @@ export async function getErrorDetails(
     });
   }
 
-  const filtered = auditLogStore.filter((entry) => {
-    if (errorType === "compilation") return entry.action === "compilation.error";
-    if (errorType === "emission") return entry.action === "emission.validation.failure";
-    if (errorType === "api") return entry.action.endsWith(".error");
-    return false;
+  let actionFilter: Record<string, unknown>;
+  if (errorType === "compilation") {
+    actionFilter = { action: "compilation.error" };
+  } else if (errorType === "emission") {
+    actionFilter = { action: "emission.validation.failure" };
+  } else if (errorType === "api") {
+    actionFilter = { action: { endsWith: ".error" } };
+  } else {
+    return ok([]);
+  }
+
+  const rows = await prisma.auditLog.findMany({
+    where: actionFilter,
+    orderBy: { timestamp: "desc" },
+    take: 50,
   });
 
-  return ok(filtered.slice(0, 50));
+  return ok(
+    rows.map((row) => ({
+      id: row.id,
+      action: row.action,
+      entityType: row.entityType,
+      entityId: row.entityId,
+      userId: row.userId,
+      timestamp: row.timestamp,
+      details: (row.afterState as Record<string, unknown>) ?? undefined,
+    }))
+  );
 }

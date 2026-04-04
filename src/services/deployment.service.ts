@@ -4,12 +4,16 @@
  * Tracks which schema versions are deployed to which environments, and provides
  * a system-wide deployment overview.
  *
+ * Persisted via Prisma `deploymentRecord` table.
+ *
  * MVP approach: deployment marking is manual (user clicks "Mark as Deployed").
  * Automated CI/CD integration deferred to Phase 2.
  *
  * Service layer pattern: all functions return Result<T, ServiceError>.
  */
 
+import type { Prisma } from "@/generated/prisma/client";
+import { prisma } from "@/lib/db";
 import { ok } from "@/types/result";
 import type { Result } from "@/types/result";
 
@@ -79,89 +83,132 @@ export interface DeploymentOverviewFilters {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory deployment tracking store (MVP — no Prisma migration)
+// clearStore — no-op, kept for test compatibility
 // ---------------------------------------------------------------------------
 
-const deploymentStore = new Map<string, DeploymentRecord>();
-
-function makeKey(emissionTargetId: string, environment: string): string {
-  return `${emissionTargetId}::${environment}`;
+export function clearDeploymentStore(): void {
+  // No-op — Prisma persistence is managed via test mocks
 }
 
-let idCounter = 0;
-function generateId(): string {
-  return `deploy-${++idCounter}`;
+// ---------------------------------------------------------------------------
+// Helper: map Prisma row to DeploymentRecord
+// ---------------------------------------------------------------------------
+
+function toDeploymentRecord(row: {
+  id: string;
+  entityId: string;
+  target: string;
+  environment: string;
+  version: number;
+  status: string;
+  driftReport: unknown;
+  isDrifted: boolean;
+  deployedBy: string | null;
+  deployedAt: Date;
+  updatedAt: Date;
+}): DeploymentRecord {
+  const isDrifted = row.isDrifted;
+  const status: DeploymentTrackingStatus = isDrifted
+    ? "DRIFTED"
+    : (row.status as DeploymentTrackingStatus);
+
+  return {
+    id: row.id,
+    emissionTargetId: row.target,
+    environment: row.environment,
+    status,
+    deployedVersionId: String(row.version),
+    driftReport: (row.driftReport as Record<string, unknown>) ?? null,
+    checkedAt: row.updatedAt.toISOString(),
+    markedDeployedAt: row.deployedAt.toISOString(),
+    markedDeployedBy: row.deployedBy,
+    createdAt: row.deployedAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }
 
 // ---------------------------------------------------------------------------
 // markAsDeployed
 // ---------------------------------------------------------------------------
 
-export function markAsDeployed(
+export async function markAsDeployed(
   input: MarkAsDeployedInput,
   userId: string
-): Result<DeploymentRecord> {
-  const key = makeKey(input.emissionTargetId, input.environment);
-  const now = new Date().toISOString();
+): Promise<Result<DeploymentRecord>> {
+  const now = new Date();
 
   // Determine status: DEPLOYED if version matches current emission, STAGED otherwise
-  const status: DeploymentTrackingStatus =
+  const status =
     input.currentEmittedVersionId &&
     input.versionId !== input.currentEmittedVersionId
       ? "STAGED"
       : "DEPLOYED";
 
-  const existing = deploymentStore.get(key);
+  // We use entityId as emissionTargetId for upsert key
+  // The Prisma model uses @@unique([entityId, target, environment])
+  const row = await prisma.deploymentRecord.upsert({
+    where: {
+      entityId_target_environment: {
+        entityId: input.emissionTargetId,
+        target: input.emissionTargetId,
+        environment: input.environment,
+      },
+    },
+    create: {
+      entityId: input.emissionTargetId,
+      target: input.emissionTargetId,
+      environment: input.environment,
+      version: parseInt(input.versionId.replace(/\D/g, "")) || 0,
+      status: status as "DEPLOYED" | "STAGED",
+      deployedBy: userId,
+      deployedAt: now,
+    },
+    update: {
+      version: parseInt(input.versionId.replace(/\D/g, "")) || 0,
+      status: status as "DEPLOYED" | "STAGED",
+      deployedBy: userId,
+      deployedAt: now,
+    },
+  });
 
-  const record: DeploymentRecord = {
-    id: existing?.id || generateId(),
-    emissionTargetId: input.emissionTargetId,
-    environment: input.environment,
-    status,
-    deployedVersionId: input.versionId,
-    driftReport: existing?.driftReport || null,
-    checkedAt: existing?.checkedAt || now,
-    markedDeployedAt: now,
-    markedDeployedBy: userId,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-  };
-
-  deploymentStore.set(key, record);
-
-  return ok(record);
+  return ok(toDeploymentRecord(row));
 }
 
 // ---------------------------------------------------------------------------
 // getDeploymentStatus — get per-target deployment status for an entity
 // ---------------------------------------------------------------------------
 
-export function getDeploymentStatus(
-  entityId: string,
+export async function getDeploymentStatus(
+  _entityId: string,
   emissionTargets: {
     id: string;
     targetFormat: string;
     emittedVersion?: string | null;
   }[]
-): Result<DeploymentStatus[]> {
+): Promise<Result<DeploymentStatus[]>> {
   const statuses: DeploymentStatus[] = [];
 
   for (const target of emissionTargets) {
-    const environments: EnvironmentDeployment[] = [];
+    const rows = await prisma.deploymentRecord.findMany({
+      where: { target: target.id },
+    });
 
-    // Find all deployment records for this target
-    for (const [, record] of deploymentStore) {
-      if (record.emissionTargetId === target.id) {
-        environments.push({
-          name: record.environment,
-          deployedVersion: record.deployedVersionId,
-          status: record.status,
-          driftStatus: record.status === "DRIFTED" ? "drifted" : record.status === "DEPLOYED" ? "in-sync" : "unknown",
-          lastChecked: record.checkedAt,
-          markedDeployedAt: record.markedDeployedAt,
-        });
-      }
-    }
+    const environments: EnvironmentDeployment[] = rows.map((row) => {
+      const rec = toDeploymentRecord(row);
+      return {
+        name: rec.environment,
+        deployedVersion: rec.deployedVersionId,
+        status: rec.status,
+        driftStatus:
+          rec.status === "DRIFTED"
+            ? ("drifted" as const)
+            : rec.status === "DEPLOYED"
+              ? ("in-sync" as const)
+              : ("unknown" as const),
+        lastChecked: rec.checkedAt,
+        markedDeployedAt: rec.markedDeployedAt,
+      };
+    });
 
     statuses.push({
       targetFormat: target.targetFormat,
@@ -178,7 +225,7 @@ export function getDeploymentStatus(
 // getDeploymentOverview — system-wide overview with filtering + pagination
 // ---------------------------------------------------------------------------
 
-export function getDeploymentOverview(
+export async function getDeploymentOverview(
   entities: {
     entityId: string;
     entityName: string;
@@ -192,32 +239,48 @@ export function getDeploymentOverview(
   filters?: DeploymentOverviewFilters,
   offset = 0,
   limit = 25
-): Result<{ rows: DeploymentOverviewRow[]; total: number }> {
+): Promise<Result<{ rows: DeploymentOverviewRow[]; total: number }>> {
+  // Collect all target IDs for batch query
+  const allTargetIds = entities.flatMap((e) => e.targets.map((t) => t.id));
+
+  const allRecords = await prisma.deploymentRecord.findMany({
+    where: { target: { in: allTargetIds } },
+  });
+
+  // Group records by target ID
+  const recordsByTarget = new Map<string, typeof allRecords>();
+  for (const rec of allRecords) {
+    const existing = recordsByTarget.get(rec.target) ?? [];
+    existing.push(rec);
+    recordsByTarget.set(rec.target, existing);
+  }
+
   let rows: DeploymentOverviewRow[] = entities.map((entity) => ({
     entityId: entity.entityId,
     entityName: entity.entityName,
     domain: entity.domain,
     currentVersion: entity.currentVersion,
     targets: entity.targets.map((target) => {
+      const records = recordsByTarget.get(target.id) ?? [];
       // Find the latest deployment record for this target
-      let latestRecord: DeploymentRecord | null = null;
-      for (const [, record] of deploymentStore) {
-        if (record.emissionTargetId === target.id) {
-          if (
-            !latestRecord ||
-            record.updatedAt > latestRecord.updatedAt
-          ) {
-            latestRecord = record;
-          }
+      let latestRecord: (typeof allRecords)[0] | null = null;
+      for (const record of records) {
+        if (
+          !latestRecord ||
+          record.updatedAt > latestRecord.updatedAt
+        ) {
+          latestRecord = record;
         }
       }
 
+      const rec = latestRecord ? toDeploymentRecord(latestRecord) : null;
+
       return {
         format: target.format,
-        deployedVersion: latestRecord?.deployedVersionId || null,
-        driftStatus: (latestRecord?.status === "DRIFTED"
+        deployedVersion: rec?.deployedVersionId || null,
+        driftStatus: (rec?.status === "DRIFTED"
           ? "drifted"
-          : latestRecord?.status === "DEPLOYED"
+          : rec?.status === "DEPLOYED"
             ? "in-sync"
             : "unknown") as "in-sync" | "drifted" | "unknown",
       };
@@ -249,12 +312,20 @@ export function getDeploymentOverview(
 // unmarkDeployment — remove a deployment tracking record
 // ---------------------------------------------------------------------------
 
-export function unmarkDeployment(
+export async function unmarkDeployment(
   emissionTargetId: string,
   environment: string
-): Result<void> {
-  const key = makeKey(emissionTargetId, environment);
-  deploymentStore.delete(key);
+): Promise<Result<void>> {
+  try {
+    await prisma.deploymentRecord.deleteMany({
+      where: {
+        target: emissionTargetId,
+        environment,
+      },
+    });
+  } catch {
+    // Ignore — record may not exist
+  }
   return ok(undefined as unknown as void);
 }
 
@@ -262,33 +333,30 @@ export function unmarkDeployment(
 // updateDriftStatus — update drift report on a deployment record
 // ---------------------------------------------------------------------------
 
-export function updateDriftStatus(
+export async function updateDriftStatus(
   emissionTargetId: string,
   environment: string,
   driftReport: Record<string, unknown>,
   isDrifted: boolean
-): Result<DeploymentRecord | null> {
-  const key = makeKey(emissionTargetId, environment);
-  const existing = deploymentStore.get(key);
+): Promise<Result<DeploymentRecord | null>> {
+  const rows = await prisma.deploymentRecord.findMany({
+    where: {
+      target: emissionTargetId,
+      environment,
+    },
+  });
 
-  if (!existing) {
+  if (rows.length === 0) {
     return ok(null);
   }
 
-  existing.driftReport = driftReport;
-  existing.status = isDrifted ? "DRIFTED" : existing.status;
-  existing.checkedAt = new Date().toISOString();
-  existing.updatedAt = new Date().toISOString();
+  const updated = await prisma.deploymentRecord.update({
+    where: { id: rows[0].id },
+    data: {
+      driftReport: driftReport as unknown as Prisma.InputJsonValue,
+      isDrifted,
+    },
+  });
 
-  deploymentStore.set(key, existing);
-  return ok(existing);
-}
-
-// ---------------------------------------------------------------------------
-// clearStore — for testing
-// ---------------------------------------------------------------------------
-
-export function clearDeploymentStore(): void {
-  deploymentStore.clear();
-  idCounter = 0;
+  return ok(toDeploymentRecord(updated));
 }

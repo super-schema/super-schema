@@ -57,3 +57,73 @@ export type Field = Prisma.FieldModel
  * 
  */
 export type AuditLog = Prisma.AuditLogModel
+/**
+ * Model GitConfig
+ * 
+ */
+export type GitConfig = Prisma.GitConfigModel
+/**
+ * Model GitPullRequest
+ * 
+ */
+export type GitPullRequest = Prisma.GitPullRequestModel
+/**
+ * Model UserRole
+ * 
+ */
+export type UserRole = Prisma.UserRoleModel
+/**
+ * Model ClassificationLevel
+ * 
+ */
+export type ClassificationLevel = Prisma.ClassificationLevelModel
+/**
+ * Model Notification
+ * 
+ */
+export type Notification = Prisma.NotificationModel
+/**
+ * Model WebhookEndpoint
+ * 
+ */
+export type WebhookEndpoint = Prisma.WebhookEndpointModel
+/**
+ * Model WebhookDelivery
+ * 
+ */
+export type WebhookDelivery = Prisma.WebhookDeliveryModel
+/**
+ * Model GovernanceRequest
+ * 
+ */
+export type GovernanceRequest = Prisma.GovernanceRequestModel
+/**
+ * Model GovernanceApproval
+ * 
+ */
+export type GovernanceApproval = Prisma.GovernanceApprovalModel
+/**
+ * Model TypeMappingOverride
+ * 
+ */
+export type TypeMappingOverride = Prisma.TypeMappingOverrideModel
+/**
+ * Model LossyMappingAck
+ * 
+ */
+export type LossyMappingAck = Prisma.LossyMappingAckModel
+/**
+ * Model EmitterConfig
+ * 
+ */
+export type EmitterConfig = Prisma.EmitterConfigModel
+/**
+ * Model EmissionTargetStatus
+ * 
+ */
+export type EmissionTargetStatus = Prisma.EmissionTargetStatusModel
+/**
+ * Model DeploymentRecord
+ * 
+ */
+export type DeploymentRecord = Prisma.DeploymentRecordModel

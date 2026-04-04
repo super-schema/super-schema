@@ -1,4 +1,126 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory stores to simulate Prisma behavior
+// ---------------------------------------------------------------------------
+
+let overrideRows: Array<{
+  id: string;
+  sourceType: string;
+  targetFormat: string;
+  mappedType: string;
+  isLossy: boolean;
+  lossDescription: string | null;
+  justification: string | null;
+  approvedBy: string | null;
+  entityId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+
+let ackRows: Array<{
+  id: string;
+  entityId: string;
+  sourceType: string;
+  targetFormat: string;
+  userId: string;
+  acknowledgedAt: Date;
+}> = [];
+
+let nextId = 1;
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    typeMappingOverride: {
+      findMany: vi.fn().mockImplementation(async (args?: { where?: Record<string, unknown> }) => {
+        if (!args?.where) return overrideRows;
+        if (args.where.targetFormat) {
+          return overrideRows.filter((r) => r.targetFormat === args.where!.targetFormat);
+        }
+        if (args.where.OR) {
+          const conditions = args.where.OR as Array<{ entityId: string | null }>;
+          return overrideRows.filter((r) =>
+            conditions.some((cond) => {
+              if (cond.entityId === null) return r.entityId === null;
+              return r.entityId === cond.entityId;
+            })
+          );
+        }
+        return overrideRows;
+      }),
+      upsert: vi.fn().mockImplementation(async (args: {
+        where: { sourceType_targetFormat_entityId: { sourceType: string; targetFormat: string; entityId: string | null } };
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) => {
+        const { sourceType, targetFormat, entityId } = args.where.sourceType_targetFormat_entityId;
+        const existingIndex = overrideRows.findIndex(
+          (r) => r.sourceType === sourceType && r.targetFormat === targetFormat && r.entityId === entityId
+        );
+        if (existingIndex >= 0) {
+          overrideRows[existingIndex] = {
+            ...overrideRows[existingIndex],
+            ...(args.update as Record<string, unknown>),
+            updatedAt: new Date(),
+          } as typeof overrideRows[0];
+          return overrideRows[existingIndex];
+        }
+        const row = {
+          id: `override-${nextId++}`,
+          ...(args.create as Record<string, unknown>),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as typeof overrideRows[0];
+        overrideRows.push(row);
+        return row;
+      }),
+      delete: vi.fn().mockImplementation(async (args: {
+        where: { sourceType_targetFormat_entityId: { sourceType: string; targetFormat: string; entityId: string | null } };
+      }) => {
+        const { sourceType, targetFormat, entityId } = args.where.sourceType_targetFormat_entityId;
+        const index = overrideRows.findIndex(
+          (r) => r.sourceType === sourceType && r.targetFormat === targetFormat && r.entityId === entityId
+        );
+        if (index === -1) throw new Error("Record not found");
+        const deleted = overrideRows[index];
+        overrideRows.splice(index, 1);
+        return deleted;
+      }),
+    },
+    lossyMappingAck: {
+      upsert: vi.fn().mockImplementation(async (args: {
+        where: { entityId_sourceType_targetFormat_userId: { entityId: string; sourceType: string; targetFormat: string; userId: string } };
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) => {
+        const { entityId, sourceType, targetFormat, userId } = args.where.entityId_sourceType_targetFormat_userId;
+        const existingIndex = ackRows.findIndex(
+          (r) => r.entityId === entityId && r.sourceType === sourceType && r.targetFormat === targetFormat && r.userId === userId
+        );
+        if (existingIndex >= 0) {
+          ackRows[existingIndex].acknowledgedAt = new Date();
+          return ackRows[existingIndex];
+        }
+        const row = {
+          id: `ack-${nextId++}`,
+          entityId,
+          sourceType,
+          targetFormat,
+          userId,
+          acknowledgedAt: new Date(),
+        };
+        ackRows.push(row);
+        return row;
+      }),
+      count: vi.fn().mockImplementation(async (args: { where: { entityId: string; sourceType: string; targetFormat: string } }) => {
+        return ackRows.filter(
+          (r) => r.entityId === args.where.entityId && r.sourceType === args.where.sourceType && r.targetFormat === args.where.targetFormat
+        ).length;
+      }),
+    },
+  },
+}));
+
 import {
   createOverride,
   createGlobalOverride,
@@ -12,7 +134,6 @@ import {
 import { resolveMapping } from "@/lib/type-mapping/mapping-engine";
 import { getDefaultPolicies } from "@/lib/type-mapping/default-mappings";
 import type { ServiceContext } from "@/types/service-context";
-import type { ScopedMappingPolicy } from "@/lib/type-mapping/types";
 
 // ---------------------------------------------------------------------------
 // Mock contexts
@@ -48,6 +169,10 @@ const viewerCtx: ServiceContext = {
 
 describe("Type Mapping Override Governance", () => {
   beforeEach(() => {
+    overrideRows = [];
+    ackRows = [];
+    nextId = 1;
+    vi.clearAllMocks();
     _resetOverrideStore();
   });
 
@@ -59,7 +184,6 @@ describe("Type Mapping Override Governance", () => {
     it("override takes precedence over default mapping", async () => {
       const defaults = getDefaultPolicies();
 
-      // Default: string -> bigquery = STRING
       const defaultResult = resolveMapping("string", "bigquery", defaults);
       expect(defaultResult.success).toBe(true);
       if (defaultResult.success) {
@@ -67,7 +191,6 @@ describe("Type Mapping Override Governance", () => {
         expect(defaultResult.result.isOverride).toBe(false);
       }
 
-      // Create a global override
       await createOverride(
         {
           sourceType: "string",
@@ -94,7 +217,6 @@ describe("Type Mapping Override Governance", () => {
     it("per-entity override takes precedence over global override", async () => {
       const entityId = "entity-abc";
 
-      // Create a global override
       await createOverride(
         {
           sourceType: "decimal",
@@ -105,7 +227,6 @@ describe("Type Mapping Override Governance", () => {
         adminCtx
       );
 
-      // Create a per-entity override
       await createOverride(
         {
           sourceType: "decimal",
@@ -121,7 +242,6 @@ describe("Type Mapping Override Governance", () => {
       const allMappings = await getAllMappings(adminCtx);
       if (!allMappings.success) return;
 
-      // Without entityId, should get global override
       const globalResult = resolveMapping(
         "decimal",
         "openapi",
@@ -134,7 +254,6 @@ describe("Type Mapping Override Governance", () => {
         expect(globalResult.result.overrideSource).toBe("global");
       }
 
-      // With entityId, should get per-entity override
       const entityResult = resolveMapping(
         "decimal",
         "openapi",
@@ -152,7 +271,6 @@ describe("Type Mapping Override Governance", () => {
     it("default mapping used when no override exists for entity", async () => {
       const entityId = "entity-no-override";
 
-      // Create a global override for a different type
       await createOverride(
         {
           sourceType: "integer",
@@ -166,7 +284,6 @@ describe("Type Mapping Override Governance", () => {
       const allMappings = await getAllMappings(adminCtx);
       if (!allMappings.success) return;
 
-      // string -> bigquery should still use default (no override for string)
       const result = resolveMapping(
         "string",
         "bigquery",
@@ -390,7 +507,7 @@ describe("Type Mapping Override Governance", () => {
       const entityId = "entity-ack";
 
       expect(
-        isLossyMappingAcknowledged(entityId, "decimal", "openapi")
+        await isLossyMappingAcknowledged(entityId, "decimal", "openapi")
       ).toBe(false);
 
       const result = await acknowledgeLossyMapping(
@@ -407,7 +524,7 @@ describe("Type Mapping Override Governance", () => {
       }
 
       expect(
-        isLossyMappingAcknowledged(entityId, "decimal", "openapi")
+        await isLossyMappingAcknowledged(entityId, "decimal", "openapi")
       ).toBe(true);
     });
 
@@ -433,8 +550,8 @@ describe("Type Mapping Override Governance", () => {
         authorCtx
       );
 
-      expect(isLossyMappingAcknowledged("entity-1", "decimal", "openapi")).toBe(true);
-      expect(isLossyMappingAcknowledged("entity-2", "decimal", "openapi")).toBe(false);
+      expect(await isLossyMappingAcknowledged("entity-1", "decimal", "openapi")).toBe(true);
+      expect(await isLossyMappingAcknowledged("entity-2", "decimal", "openapi")).toBe(false);
     });
   });
 
@@ -482,7 +599,6 @@ describe("Type Mapping Override Governance", () => {
       const result = await getOverridesForEntity(entityId, adminCtx);
       expect(result.success).toBe(true);
       if (result.success) {
-        // Should include entity-specific + global, but not other-entity's
         expect(result.data.length).toBe(2);
         const sources = result.data.map((p) => p.sourceType).sort();
         expect(sources).toEqual(["integer", "string"]);

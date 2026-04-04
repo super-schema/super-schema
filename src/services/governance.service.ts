@@ -2,12 +2,14 @@
  * Governance Service
  *
  * Business logic for governance workflow, approval routing, and emission gating.
- * Uses in-memory store (Map) for MVP — no Prisma migration required.
+ * Persistence: Prisma `governanceRequest` and `governanceApproval` tables.
  *
  * All write operations are audited via withAudit().
  * RBAC checks enforced: only Steward/Admin can approve/reject.
  */
 
+import type { Prisma } from "@/generated/prisma/client";
+import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ChangeClassification } from "@/types/schemas/classification";
@@ -17,24 +19,6 @@ import type {
   GovernanceStatus,
   ImpactReport,
 } from "@/types/schemas/governance";
-
-// ---------------------------------------------------------------------------
-// In-Memory Store (MVP — replaces Prisma tables)
-// ---------------------------------------------------------------------------
-
-const governanceRequests = new Map<string, GovernanceRequest>();
-const governanceApprovals = new Map<string, GovernanceApproval>();
-
-let requestCounter = 0;
-let approvalCounter = 0;
-
-function generateRequestId(): string {
-  return `gov-req-${++requestCounter}`;
-}
-
-function generateApprovalId(): string {
-  return `gov-apr-${++approvalCounter}`;
-}
 
 // ---------------------------------------------------------------------------
 // Context type for governance operations
@@ -57,6 +41,59 @@ function canApproveOrReject(role: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Prisma row → app type mappers
+// ---------------------------------------------------------------------------
+
+function toGovernanceRequest(row: {
+  id: string;
+  entityId: string;
+  entityName: string;
+  domainId: string | null;
+  versionId: string | null;
+  changeType: string;
+  severity: string;
+  status: string;
+  impactReport: unknown;
+  requestedBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}): GovernanceRequest {
+  return {
+    id: row.id,
+    entityId: row.entityId,
+    entityName: row.entityName,
+    domainId: row.domainId ?? undefined,
+    versionId: row.versionId ? Number(row.versionId) : 0,
+    changeType: row.changeType,
+    status: row.status as GovernanceStatus,
+    impactReport: row.impactReport as ImpactReport | null,
+    requestedBy: row.requestedBy,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function toGovernanceApproval(row: {
+  id: string;
+  requestId: string;
+  approverId: string;
+  decision: string;
+  comment: string | null;
+  decidedAt: Date;
+}): GovernanceApproval {
+  // Prisma enum is APPROVE/REJECT, app type is APPROVED/REJECTED
+  const decision = row.decision === "APPROVE" ? "APPROVED" : "REJECTED";
+  return {
+    id: row.id,
+    requestId: row.requestId,
+    approverId: row.approverId,
+    decision: decision as GovernanceApproval["decision"],
+    comment: row.comment,
+    decidedAt: row.decidedAt.toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -66,7 +103,7 @@ function canApproveOrReject(role: string): boolean {
  * Non-breaking changes are auto-approved.
  * Breaking and classification changes create pending requests.
  */
-export function createRequest(
+export async function createRequest(
   entityId: string,
   versionId: number,
   classification: ChangeClassification,
@@ -74,9 +111,7 @@ export function createRequest(
   ctx: GovernanceContext,
   entityName?: string,
   domainId?: string
-): Result<GovernanceRequest> {
-  const now = new Date().toISOString();
-
+): Promise<Result<GovernanceRequest>> {
   // Determine initial status based on change type
   let status: GovernanceStatus;
   if (classification.changeType === "non-breaking") {
@@ -85,34 +120,32 @@ export function createRequest(
     status = "PENDING";
   }
 
-  const request: GovernanceRequest = {
-    id: generateRequestId(),
-    entityId,
-    entityName: entityName ?? entityId,
-    domainId: domainId ?? ctx.domainId,
-    versionId,
-    changeType: classification.changeType,
-    status,
-    impactReport,
-    requestedBy: ctx.userId,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const row = await prisma.governanceRequest.create({
+    data: {
+      entityId,
+      entityName: entityName ?? entityId,
+      domainId: domainId ?? ctx.domainId ?? null,
+      versionId: String(versionId),
+      changeType: classification.changeType,
+      severity: classification.severity ?? "low",
+      status: status as Parameters<typeof prisma.governanceRequest.create>[0]["data"]["status"],
+      impactReport: (impactReport ?? undefined) as unknown as Prisma.InputJsonValue | undefined,
+      requestedBy: ctx.userId,
+    },
+  });
 
-  governanceRequests.set(request.id, request);
-
-  return ok(request);
+  return ok(toGovernanceRequest(row));
 }
 
 /**
  * Approve a governance request.
  * Only Steward/Admin roles can approve.
  */
-export function approveRequest(
+export async function approveRequest(
   requestId: string,
   comment: string | null,
   ctx: GovernanceContext
-): Result<GovernanceApproval> {
+): Promise<Result<GovernanceApproval>> {
   if (!canApproveOrReject(ctx.userRole)) {
     return err({
       code: "FORBIDDEN",
@@ -121,7 +154,9 @@ export function approveRequest(
     });
   }
 
-  const request = governanceRequests.get(requestId);
+  const request = await prisma.governanceRequest.findUnique({
+    where: { id: requestId },
+  });
   if (!request) {
     return err({
       code: "NOT_FOUND",
@@ -139,36 +174,33 @@ export function approveRequest(
   }
 
   // Update request status
-  const updatedRequest = {
-    ...request,
-    status: "APPROVED" as GovernanceStatus,
-    updatedAt: new Date().toISOString(),
-  };
-  governanceRequests.set(requestId, updatedRequest);
+  await prisma.governanceRequest.update({
+    where: { id: requestId },
+    data: { status: "APPROVED" },
+  });
 
   // Create approval record
-  const approval: GovernanceApproval = {
-    id: generateApprovalId(),
-    requestId,
-    approverId: ctx.userId,
-    decision: "APPROVED",
-    comment,
-    decidedAt: new Date().toISOString(),
-  };
-  governanceApprovals.set(approval.id, approval);
+  const approvalRow = await prisma.governanceApproval.create({
+    data: {
+      requestId,
+      approverId: ctx.userId,
+      decision: "APPROVE",
+      comment,
+    },
+  });
 
-  return ok(approval);
+  return ok(toGovernanceApproval(approvalRow));
 }
 
 /**
  * Reject a governance request.
  * Only Steward/Admin roles can reject.
  */
-export function rejectRequest(
+export async function rejectRequest(
   requestId: string,
   comment: string | null,
   ctx: GovernanceContext
-): Result<GovernanceApproval> {
+): Promise<Result<GovernanceApproval>> {
   if (!canApproveOrReject(ctx.userRole)) {
     return err({
       code: "FORBIDDEN",
@@ -177,7 +209,9 @@ export function rejectRequest(
     });
   }
 
-  const request = governanceRequests.get(requestId);
+  const request = await prisma.governanceRequest.findUnique({
+    where: { id: requestId },
+  });
   if (!request) {
     return err({
       code: "NOT_FOUND",
@@ -195,95 +229,92 @@ export function rejectRequest(
   }
 
   // Update request status
-  const updatedRequest = {
-    ...request,
-    status: "REJECTED" as GovernanceStatus,
-    updatedAt: new Date().toISOString(),
-  };
-  governanceRequests.set(requestId, updatedRequest);
+  await prisma.governanceRequest.update({
+    where: { id: requestId },
+    data: { status: "REJECTED" },
+  });
 
   // Create approval record
-  const approval: GovernanceApproval = {
-    id: generateApprovalId(),
-    requestId,
-    approverId: ctx.userId,
-    decision: "REJECTED",
-    comment,
-    decidedAt: new Date().toISOString(),
-  };
-  governanceApprovals.set(approval.id, approval);
+  const approvalRow = await prisma.governanceApproval.create({
+    data: {
+      requestId,
+      approverId: ctx.userId,
+      decision: "REJECT",
+      comment,
+    },
+  });
 
-  return ok(approval);
+  return ok(toGovernanceApproval(approvalRow));
 }
 
 /**
  * Get all governance requests for an entity.
  */
-export function getRequestsForEntity(
+export async function getRequestsForEntity(
   entityId: string
-): Result<GovernanceRequest[]> {
-  const requests = Array.from(governanceRequests.values()).filter(
-    (r) => r.entityId === entityId
-  );
-  return ok(requests);
+): Promise<Result<GovernanceRequest[]>> {
+  const rows = await prisma.governanceRequest.findMany({
+    where: { entityId },
+  });
+  return ok(rows.map(toGovernanceRequest));
 }
 
 /**
  * Get pending governance requests.
  * Optionally filter by domain.
  */
-export function getPendingRequests(
+export async function getPendingRequests(
   domainId?: string
-): Result<GovernanceRequest[]> {
-  let requests = Array.from(governanceRequests.values()).filter(
-    (r) => r.status === "PENDING"
-  );
-
+): Promise<Result<GovernanceRequest[]>> {
+  const where: Record<string, unknown> = { status: "PENDING" };
   if (domainId) {
-    requests = requests.filter((r) => r.domainId === domainId);
+    where.domainId = domainId;
   }
 
-  return ok(requests);
+  const rows = await prisma.governanceRequest.findMany({
+    where: where as Parameters<typeof prisma.governanceRequest.findMany>[0] extends { where?: infer W } ? W : never,
+  });
+  return ok(rows.map(toGovernanceRequest));
 }
 
 /**
  * Get all governance requests (for dashboard).
  */
-export function getAllRequests(): Result<GovernanceRequest[]> {
-  const requests = Array.from(governanceRequests.values());
-  // Sort by createdAt descending
-  requests.sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-  return ok(requests);
+export async function getAllRequests(): Promise<Result<GovernanceRequest[]>> {
+  const rows = await prisma.governanceRequest.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+  return ok(rows.map(toGovernanceRequest));
 }
 
 /**
  * Get a specific governance request by ID.
  */
-export function getRequest(
+export async function getRequest(
   requestId: string
-): Result<GovernanceRequest> {
-  const request = governanceRequests.get(requestId);
+): Promise<Result<GovernanceRequest>> {
+  const request = await prisma.governanceRequest.findUnique({
+    where: { id: requestId },
+  });
   if (!request) {
     return err({
       code: "NOT_FOUND",
       message: `Governance request "${requestId}" not found`,
     });
   }
-  return ok(request);
+  return ok(toGovernanceRequest(request));
 }
 
 /**
  * Get approvals for a request.
  */
-export function getApprovalsForRequest(
+export async function getApprovalsForRequest(
   requestId: string
-): Result<GovernanceApproval[]> {
-  const approvals = Array.from(governanceApprovals.values()).filter(
-    (a) => a.requestId === requestId
-  );
-  return ok(approvals);
+): Promise<Result<GovernanceApproval[]>> {
+  const rows = await prisma.governanceApproval.findMany({
+    where: { requestId },
+  });
+  return ok(rows.map(toGovernanceApproval));
 }
 
 // ---------------------------------------------------------------------------
@@ -294,17 +325,18 @@ export function getApprovalsForRequest(
  * Check if an entity can be emitted based on governance status.
  * Returns ok(true) if emission is allowed, err(...) if blocked.
  */
-export function checkEmissionGate(
+export async function checkEmissionGate(
   entityId: string,
   versionId: number
-): Result<{ allowed: boolean; reason: string; requestId?: string }> {
+): Promise<Result<{ allowed: boolean; reason: string; requestId?: string }>> {
   // Find the most recent request for this entity+version
-  const requests = Array.from(governanceRequests.values())
-    .filter((r) => r.entityId === entityId && r.versionId === versionId)
-    .sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+  const requests = await prisma.governanceRequest.findMany({
+    where: {
+      entityId,
+      versionId: String(versionId),
+    },
+    orderBy: { createdAt: "desc" },
+  });
 
   if (requests.length === 0) {
     // No governance request exists — allow emission (no classified changes)
@@ -358,9 +390,7 @@ export function checkEmissionGate(
 // Reset (for testing)
 // ---------------------------------------------------------------------------
 
-export function _resetGovernanceStore(): void {
-  governanceRequests.clear();
-  governanceApprovals.clear();
-  requestCounter = 0;
-  approvalCounter = 0;
+export async function _resetGovernanceStore(): Promise<void> {
+  await prisma.governanceApproval.deleteMany();
+  await prisma.governanceRequest.deleteMany();
 }

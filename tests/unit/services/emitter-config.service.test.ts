@@ -1,4 +1,155 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory stores to simulate Prisma behavior
+// ---------------------------------------------------------------------------
+
+let configRows: Array<{
+  id: string;
+  emitterName: string;
+  enabled: boolean;
+  configOverrides: Record<string, unknown> | null;
+  version: string;
+  targetFormat: string;
+  description: string;
+  updatedBy: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+
+let overrideRows: Array<{
+  id: string;
+  sourceType: string;
+  targetFormat: string;
+  mappedType: string;
+  isLossy: boolean;
+  lossDescription: string | null;
+  justification: string | null;
+  approvedBy: string | null;
+  entityId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+
+let nextId = 1;
+
+function seedDefaults() {
+  if (configRows.length > 0) return;
+  const defaults = [
+    { name: "bigquery", format: "SQL", version: "1.0.0", description: "Google BigQuery SQL DDL emitter" },
+    { name: "avro", format: "JSON", version: "1.0.0", description: "Apache Avro schema emitter" },
+    { name: "openapi", format: "YAML", version: "1.0.0", description: "OpenAPI 3.0 specification emitter" },
+  ];
+  for (const d of defaults) {
+    configRows.push({
+      id: `emitter-${nextId++}`,
+      emitterName: d.name,
+      enabled: true,
+      configOverrides: null,
+      version: d.version,
+      targetFormat: d.format,
+      description: d.description,
+      updatedBy: "system",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+}
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    emitterConfig: {
+      count: vi.fn().mockImplementation(async () => configRows.length),
+      findMany: vi.fn().mockImplementation(async (args?: { where?: { enabled?: boolean }; select?: Record<string, boolean> }) => {
+        seedDefaults();
+        let rows = configRows;
+        if (args?.where?.enabled !== undefined) {
+          rows = rows.filter((r) => r.enabled === args.where!.enabled);
+        }
+        if (args?.select?.emitterName) {
+          return rows.map((r) => ({ emitterName: r.emitterName }));
+        }
+        return rows;
+      }),
+      findUnique: vi.fn().mockImplementation(async (args: { where: { emitterName?: string; id?: string } }) => {
+        seedDefaults();
+        if (args.where.emitterName) {
+          return configRows.find((r) => r.emitterName === args.where.emitterName) ?? null;
+        }
+        if (args.where.id) {
+          return configRows.find((r) => r.id === args.where.id) ?? null;
+        }
+        return null;
+      }),
+      update: vi.fn().mockImplementation(async (args: { where: { emitterName: string }; data: Record<string, unknown> }) => {
+        const index = configRows.findIndex((r) => r.emitterName === args.where.emitterName);
+        if (index === -1) throw new Error("Not found");
+        configRows[index] = {
+          ...configRows[index],
+          ...(args.data as Record<string, unknown>),
+          updatedAt: new Date(),
+        } as typeof configRows[0];
+        return configRows[index];
+      }),
+      upsert: vi.fn().mockImplementation(async (args: { where: { emitterName: string }; create: Record<string, unknown>; update: Record<string, unknown> }) => {
+        const existing = configRows.find((r) => r.emitterName === args.where.emitterName);
+        if (existing) return existing;
+        const row = {
+          id: `emitter-${nextId++}`,
+          ...args.create,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as typeof configRows[0];
+        configRows.push(row);
+        return row;
+      }),
+    },
+    typeMappingOverride: {
+      findMany: vi.fn().mockImplementation(async (args?: { where?: { targetFormat?: string } }) => {
+        if (!args?.where) return overrideRows;
+        if (args.where.targetFormat) {
+          return overrideRows.filter((r) => r.targetFormat === args.where!.targetFormat);
+        }
+        return overrideRows;
+      }),
+      findUnique: vi.fn().mockImplementation(async (args: { where: { id: string } }) => {
+        return overrideRows.find((r) => r.id === args.where.id) ?? null;
+      }),
+      create: vi.fn().mockImplementation(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: `mapping-${nextId++}`,
+          ...(args.data as Record<string, unknown>),
+          lossDescription: null,
+          justification: null,
+          approvedBy: null,
+          entityId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as typeof overrideRows[0];
+        overrideRows.push(row);
+        return row;
+      }),
+      update: vi.fn().mockImplementation(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const index = overrideRows.findIndex((r) => r.id === args.where.id);
+        if (index === -1) throw new Error("Not found");
+        overrideRows[index] = {
+          ...overrideRows[index],
+          ...(args.data as Record<string, unknown>),
+          updatedAt: new Date(),
+        } as typeof overrideRows[0];
+        return overrideRows[index];
+      }),
+      delete: vi.fn().mockImplementation(async (args: { where: { id: string } }) => {
+        const index = overrideRows.findIndex((r) => r.id === args.where.id);
+        if (index === -1) throw new Error("Not found");
+        const deleted = overrideRows[index];
+        overrideRows.splice(index, 1);
+        return deleted;
+      }),
+    },
+  },
+}));
+
 import {
   getEmitterConfigs,
   getEmitterConfigByName,
@@ -28,6 +179,10 @@ const viewerCtx: ServiceContext = {
 
 describe("Emitter Config Service", () => {
   beforeEach(() => {
+    configRows = [];
+    overrideRows = [];
+    nextId = 1;
+    vi.clearAllMocks();
     _resetEmitterConfigStore();
   });
 
@@ -107,7 +262,6 @@ describe("Emitter Config Service", () => {
 
   describe("getEnabledEmitters", () => {
     it("returns only enabled emitter names", async () => {
-      // All default to enabled
       const result = await getEnabledEmitters(adminCtx);
       expect(result.success).toBe(true);
       if (result.success) {
@@ -211,14 +365,20 @@ describe("Emitter Config Service", () => {
     });
 
     it("rejects deletion of system default mappings", async () => {
-      _seedTypeMappings([{
+      // Seed a "default" mapping with an ID starting with "default-"
+      overrideRows.push({
         id: "default-1",
         targetFormat: "bigquery",
         sourceType: "string",
         mappedType: "STRING",
         isLossy: false,
-        isOverride: false,
-      }]);
+        lossDescription: null,
+        justification: null,
+        approvedBy: null,
+        entityId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
 
       const result = await deleteTypeMappingOverride("default-1", adminCtx);
       expect(result.success).toBe(false);

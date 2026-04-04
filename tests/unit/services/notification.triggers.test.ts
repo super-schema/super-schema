@@ -1,4 +1,71 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory stores for Prisma mocks
+// ---------------------------------------------------------------------------
+let notifications: Array<{
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  body: string;
+  entityId: string | null;
+  read: boolean;
+  createdAt: Date;
+}> = [];
+let notifCounter = 0;
+
+let webhookEndpoints: Array<Record<string, unknown>> = [];
+let webhookDeliveries: Array<Record<string, unknown>> = [];
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    notification: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: `notif_${++notifCounter}_${Date.now()}`,
+          userId: args.data.userId as string,
+          type: args.data.type as string,
+          title: args.data.title as string,
+          body: args.data.body as string,
+          entityId: (args.data.entityId as string) ?? null,
+          read: (args.data.read as boolean) ?? false,
+          createdAt: new Date(),
+        };
+        notifications.push(row);
+        return row;
+      }),
+      findMany: vi.fn(async () => [...notifications]),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => {
+        return notifications.find((n) => n.id === args.where.id) ?? null;
+      }),
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const n = notifications.find((n) => n.id === args.where.id);
+        if (n) Object.assign(n, args.data);
+        return n;
+      }),
+      updateMany: vi.fn(async () => {}),
+      count: vi.fn(async () => 0),
+      deleteMany: vi.fn(async () => {
+        notifications = [];
+        notifCounter = 0;
+      }),
+    },
+    webhookEndpoint: {
+      findMany: vi.fn(async () => [...webhookEndpoints]),
+      deleteMany: vi.fn(async () => {
+        webhookEndpoints = [];
+      }),
+    },
+    webhookDelivery: {
+      findMany: vi.fn(async () => [...webhookDeliveries]),
+      deleteMany: vi.fn(async () => {
+        webhookDeliveries = [];
+      }),
+    },
+  },
+}));
+
 import {
   notifyGovernanceApprovalRequest,
   notifyGovernanceDecision,
@@ -18,9 +85,9 @@ const mockCtx: ServiceContext = {
 };
 
 describe("Notification Triggers", () => {
-  beforeEach(() => {
-    _resetStore();
-    _resetWebhookStore();
+  beforeEach(async () => {
+    await _resetStore();
+    await _resetWebhookStore();
     vi.restoreAllMocks();
   });
 
@@ -35,7 +102,7 @@ describe("Notification Triggers", () => {
         mockCtx
       );
 
-      const store = _getStore();
+      const store = await _getStore();
       expect(store).toHaveLength(2);
       expect(store[0].type).toBe("APPROVAL_REQUEST");
       expect(store[0].userId).toBe("steward-1");
@@ -56,7 +123,7 @@ describe("Notification Triggers", () => {
         mockCtx
       );
 
-      const store = _getStore();
+      const store = await _getStore();
       expect(store).toHaveLength(1);
       expect(store[0].type).toBe("APPROVAL_DECISION");
       expect(store[0].userId).toBe("requestor-1");
@@ -74,7 +141,7 @@ describe("Notification Triggers", () => {
         mockCtx
       );
 
-      const store = _getStore();
+      const store = await _getStore();
       expect(store).toHaveLength(1);
       expect(store[0].title).toContain("rejected");
       expect(store[0].title).toContain("John Admin");
@@ -92,7 +159,7 @@ describe("Notification Triggers", () => {
         mockCtx
       );
 
-      const store = _getStore();
+      const store = await _getStore();
       expect(store).toHaveLength(3);
       expect(store[0].type).toBe("ANNOTATION_TAG");
       expect(store[0].title).toContain("Alice");
@@ -112,7 +179,7 @@ describe("Notification Triggers", () => {
         mockCtx
       );
 
-      const store = _getStore();
+      const store = await _getStore();
       expect(store).toHaveLength(1);
       expect(store[0].type).toBe("CHANGE_COMPLETE");
       expect(store[0].userId).toBe("owner-1");

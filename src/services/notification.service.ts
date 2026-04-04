@@ -1,9 +1,12 @@
 /**
- * Notification Service — In-memory store for MVP (no Prisma migration).
+ * Notification Service — Prisma-backed persistence.
  *
  * Provides CRUD operations for in-app notifications.
+ * The Prisma `notification` model stores `entityId` as a string;
+ * the full `entityRef` object is serialized as JSON into that column.
  */
 
+import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import {
@@ -14,29 +17,57 @@ import {
   type Notification,
   type NotificationFilter,
   type Pagination,
+  type EntityRef,
 } from "@/types/schemas/notification";
 import type { ServiceContext } from "@/types/service-context";
+import type { Notification as PrismaNotification } from "@/generated/prisma/client";
 
 // ---------------------------------------------------------------------------
-// In-memory store (MVP — replaces Prisma notification table)
+// Test helpers (kept for backward compat — delegate to Prisma)
 // ---------------------------------------------------------------------------
-let notifications: Notification[] = [];
-let idCounter = 0;
 
-function generateId(): string {
-  idCounter++;
-  return `notif_${idCounter}_${Date.now()}`;
-}
-
-/** Exposed for testing — resets the in-memory store. */
-export function _resetStore(): void {
-  notifications = [];
-  idCounter = 0;
+/** Exposed for testing — resets the store. */
+export async function _resetStore(): Promise<void> {
+  await prisma.notification.deleteMany();
 }
 
 /** Exposed for testing — returns the raw store. */
-export function _getStore(): Notification[] {
-  return notifications;
+export async function _getStore(): Promise<Notification[]> {
+  const rows = await prisma.notification.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map(toNotification);
+}
+
+// ---------------------------------------------------------------------------
+// Prisma row → app Notification mapper
+// ---------------------------------------------------------------------------
+
+function toNotification(row: PrismaNotification): Notification {
+  // entityRef is stored as JSON string in the entityId column
+  let entityRef: EntityRef = { entityId: row.entityId ?? "" };
+  if (row.entityId) {
+    try {
+      const parsed = JSON.parse(row.entityId);
+      if (typeof parsed === "object" && parsed !== null && parsed.entityId) {
+        entityRef = parsed as EntityRef;
+      }
+    } catch {
+      // If it's not JSON, treat as a plain entityId
+      entityRef = { entityId: row.entityId };
+    }
+  }
+
+  return {
+    id: row.id,
+    userId: row.userId,
+    type: row.type as Notification["type"],
+    title: row.title,
+    body: row.body,
+    entityRef,
+    read: row.read,
+    createdAt: row.createdAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -56,19 +87,18 @@ export async function createNotification(
     });
   }
 
-  const notification: Notification = {
-    id: generateId(),
-    userId: parsed.data.userId,
-    type: parsed.data.type,
-    title: parsed.data.title,
-    body: parsed.data.body,
-    entityRef: parsed.data.entityRef,
-    read: false,
-    createdAt: new Date(),
-  };
+  const row = await prisma.notification.create({
+    data: {
+      userId: parsed.data.userId,
+      type: parsed.data.type as PrismaNotification["type"],
+      title: parsed.data.title,
+      body: parsed.data.body,
+      entityId: JSON.stringify(parsed.data.entityRef),
+      read: false,
+    },
+  });
 
-  notifications.push(notification);
-  return ok(notification);
+  return ok(toNotification(row));
 }
 
 export async function getNotificationsForUser(
@@ -95,44 +125,47 @@ export async function getNotificationsForUser(
     });
   }
 
-  let userNotifications = notifications.filter((n) => n.userId === userId);
-
-  // Apply filters
   const f = parsedFilters.data;
+  const p = parsedPagination.data;
+
+  // Build where clause
+  const where: Record<string, unknown> = { userId };
   if (f.types && f.types.length > 0) {
-    userNotifications = userNotifications.filter((n) =>
-      f.types!.includes(n.type)
-    );
+    where.type = { in: f.types };
   }
   if (f.read !== undefined) {
-    userNotifications = userNotifications.filter((n) => n.read === f.read);
+    where.read = f.read;
   }
 
-  // Sort by createdAt desc
-  userNotifications.sort(
-    (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-  );
+  const skip = (p.page - 1) * p.pageSize;
 
-  // Unread count (always for the user, ignoring filters)
-  const unreadCount = notifications.filter(
-    (n) => n.userId === userId && !n.read
-  ).length;
+  const [rows, unreadCount] = await Promise.all([
+    prisma.notification.findMany({
+      where: where as Parameters<typeof prisma.notification.findMany>[0] extends { where?: infer W } ? W : never,
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: p.pageSize,
+    }),
+    prisma.notification.count({
+      where: { userId, read: false },
+    }),
+  ]);
 
-  // Paginate
-  const p = parsedPagination.data;
-  const start = (p.page - 1) * p.pageSize;
-  const paginated = userNotifications.slice(start, start + p.pageSize);
-
-  return ok({ notifications: paginated, unreadCount });
+  return ok({
+    notifications: rows.map(toNotification),
+    unreadCount,
+  });
 }
 
 export async function markAsRead(
   notificationId: string,
   ctx: ServiceContext
 ): Promise<Result<Notification>> {
-  const notification = notifications.find((n) => n.id === notificationId);
+  const row = await prisma.notification.findUnique({
+    where: { id: notificationId },
+  });
 
-  if (!notification) {
+  if (!row) {
     return err({
       code: "NOT_FOUND",
       message: `Notification "${notificationId}" not found`,
@@ -140,26 +173,29 @@ export async function markAsRead(
   }
 
   // Verify ownership
-  if (notification.userId !== ctx.userId) {
+  if (row.userId !== ctx.userId) {
     return err({
       code: "FORBIDDEN",
       message: "You can only mark your own notifications as read",
     });
   }
 
-  notification.read = true;
-  return ok(notification);
+  const updated = await prisma.notification.update({
+    where: { id: notificationId },
+    data: { read: true },
+  });
+
+  return ok(toNotification(updated));
 }
 
 export async function markAllAsRead(
   userId: string,
   _ctx: ServiceContext
 ): Promise<Result<void>> {
-  notifications
-    .filter((n) => n.userId === userId && !n.read)
-    .forEach((n) => {
-      n.read = true;
-    });
+  await prisma.notification.updateMany({
+    where: { userId, read: false },
+    data: { read: true },
+  });
 
   return ok(undefined);
 }
@@ -168,8 +204,8 @@ export async function getUnreadCount(
   userId: string,
   _ctx: ServiceContext
 ): Promise<Result<number>> {
-  const count = notifications.filter(
-    (n) => n.userId === userId && !n.read
-  ).length;
+  const count = await prisma.notification.count({
+    where: { userId, read: false },
+  });
   return ok(count);
 }

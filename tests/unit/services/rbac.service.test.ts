@@ -1,4 +1,74 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory store for the Prisma mock
+// ---------------------------------------------------------------------------
+let roleStore: Array<{
+  id: string;
+  userId: string;
+  role: string;
+  domainId: string | null;
+  createdAt: Date;
+}> = [];
+let idCounter = 0;
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    userRole: {
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.userId) {
+          return roleStore.filter((r) => r.userId === args.where!.userId);
+        }
+        return [...roleStore];
+      }),
+      findFirst: vi.fn(
+        async (args: { where: { userId: string; role: string; domainId: string | null } }) => {
+          return (
+            roleStore.find(
+              (r) =>
+                r.userId === args.where.userId &&
+                r.role === args.where.role &&
+                r.domainId === args.where.domainId
+            ) ?? null
+          );
+        }
+      ),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => {
+        return roleStore.find((r) => r.id === args.where.id) ?? null;
+      }),
+      create: vi.fn(
+        async (args: {
+          data: { userId: string; role: string; domainId: string | null };
+        }) => {
+          const row = {
+            id: `role-${++idCounter}`,
+            userId: args.data.userId,
+            role: args.data.role,
+            domainId: args.data.domainId,
+            createdAt: new Date(),
+          };
+          roleStore.push(row);
+          return row;
+        }
+      ),
+      delete: vi.fn(async (args: { where: { id: string } }) => {
+        const idx = roleStore.findIndex((r) => r.id === args.where.id);
+        if (idx !== -1) roleStore.splice(idx, 1);
+      }),
+      deleteMany: vi.fn(async () => {
+        roleStore = [];
+        idCounter = 0;
+      }),
+      count: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.role) {
+          return roleStore.filter((r) => r.role === args.where!.role).length;
+        }
+        return roleStore.length;
+      }),
+    },
+  },
+}));
+
 import {
   getUserRoles,
   assignRole,
@@ -30,8 +100,8 @@ const viewerCtx: ServiceContext = {
 };
 
 describe("RBAC Service", () => {
-  beforeEach(() => {
-    _resetRoleStore();
+  beforeEach(async () => {
+    await _resetRoleStore();
   });
 
   describe("assignRole", () => {
@@ -164,7 +234,8 @@ describe("RBAC Service", () => {
 
       const result = await removeRole(assigned.data.id, adminCtx);
       expect(result.success).toBe(true);
-      expect(_getRoleStore()).toHaveLength(0);
+      const store = await _getRoleStore();
+      expect(store).toHaveLength(0);
     });
 
     it("admin cannot remove their own Admin role", async () => {
@@ -379,7 +450,7 @@ describe("RBAC Service", () => {
       const result = await bootstrapFirstAdmin("first-user", adminCtx);
       expect(result.success).toBe(true);
 
-      const roles = _getRoleStore();
+      const roles = await _getRoleStore();
       expect(roles).toHaveLength(1);
       expect(roles[0].role).toBe("ADMIN");
       expect(roles[0].userId).toBe("first-user");
@@ -391,7 +462,7 @@ describe("RBAC Service", () => {
       const result = await bootstrapFirstAdmin("second-user", adminCtx);
       expect(result.success).toBe(true);
 
-      const roles = _getRoleStore();
+      const roles = await _getRoleStore();
       const adminRoles = roles.filter((r) => r.role === "ADMIN");
       expect(adminRoles).toHaveLength(1);
       expect(adminRoles[0].userId).toBe("existing-admin");

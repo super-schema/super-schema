@@ -1,4 +1,89 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory store for the Prisma mock
+// ---------------------------------------------------------------------------
+let notifications: Array<{
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  body: string;
+  entityId: string | null;
+  read: boolean;
+  createdAt: Date;
+}> = [];
+let idCounter = 0;
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    notification: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: `notif_${++idCounter}_${Date.now()}`,
+          userId: args.data.userId as string,
+          type: args.data.type as string,
+          title: args.data.title as string,
+          body: args.data.body as string,
+          entityId: (args.data.entityId as string) ?? null,
+          read: (args.data.read as boolean) ?? false,
+          createdAt: new Date(),
+        };
+        notifications.push(row);
+        return row;
+      }),
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown>; orderBy?: Record<string, string>; skip?: number; take?: number }) => {
+        let result = [...notifications];
+        if (args?.where) {
+          const w = args.where;
+          if (w.userId) result = result.filter((n) => n.userId === w.userId);
+          if (w.type && typeof w.type === "object" && "in" in w.type) {
+            const types = (w.type as { in: string[] }).in;
+            result = result.filter((n) => types.includes(n.type));
+          }
+          if (w.read !== undefined) result = result.filter((n) => n.read === w.read);
+        }
+        // Sort by createdAt desc by default
+        result.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        if (args?.skip) result = result.slice(args.skip);
+        if (args?.take) result = result.slice(0, args.take);
+        return result;
+      }),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => {
+        return notifications.find((n) => n.id === args.where.id) ?? null;
+      }),
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const n = notifications.find((n) => n.id === args.where.id);
+        if (n) {
+          Object.assign(n, args.data);
+        }
+        return n;
+      }),
+      updateMany: vi.fn(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        notifications
+          .filter((n) => {
+            if (args.where.userId && n.userId !== args.where.userId) return false;
+            if (args.where.read !== undefined && n.read !== args.where.read) return false;
+            return true;
+          })
+          .forEach((n) => Object.assign(n, args.data));
+      }),
+      count: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        let result = [...notifications];
+        if (args?.where) {
+          if (args.where.userId) result = result.filter((n) => n.userId === args.where!.userId);
+          if (args.where.read !== undefined) result = result.filter((n) => n.read === args.where!.read);
+        }
+        return result.length;
+      }),
+      deleteMany: vi.fn(async () => {
+        notifications = [];
+        idCounter = 0;
+      }),
+    },
+  },
+}));
+
 import {
   createNotification,
   getNotificationsForUser,
@@ -28,8 +113,8 @@ const makeInput = (
 });
 
 describe("Notification Service", () => {
-  beforeEach(() => {
-    _resetStore();
+  beforeEach(async () => {
+    await _resetStore();
   });
 
   describe("createNotification", () => {

@@ -2,11 +2,11 @@
  * Type mapping service — orchestrates mapping resolution with RBAC,
  * audit trail, and override management.
  *
- * For MVP, default mappings come from static TypeScript config (no database).
- * Overrides are stored in-memory for now; database persistence will be added
- * when Prisma migration for type_mapping_policies is created.
+ * Overrides and acknowledgments are persisted via Prisma.
+ * Default mappings come from static TypeScript config.
  */
 
+import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -18,34 +18,52 @@ import { VALID_TARGET_TYPES } from "@/lib/type-mapping/types";
 import { getDefaultPolicies } from "@/lib/type-mapping/default-mappings";
 
 // ---------------------------------------------------------------------------
-// In-memory override store (MVP — will move to Prisma in future)
-// ---------------------------------------------------------------------------
-
-let overrideStore: ScopedMappingPolicy[] = [];
-
-// In-memory acknowledgment store (MVP)
-let acknowledgmentStore: Array<{
-  entityId: string;
-  sourceType: string;
-  targetFormat: string;
-  userId: string;
-  acknowledgedAt: Date;
-}> = [];
-
-/**
- * Reset override store — for testing only.
- */
-export function _resetOverrideStore(): void {
-  overrideStore = [];
-  acknowledgmentStore = [];
-}
-
-// ---------------------------------------------------------------------------
 // Allowed roles for creating overrides
 // ---------------------------------------------------------------------------
 
 const GLOBAL_OVERRIDE_ROLES = ["STEWARD", "ADMIN"];
 const ENTITY_OVERRIDE_ROLES = ["AUTHOR", "STEWARD", "ADMIN"];
+
+// ---------------------------------------------------------------------------
+// resetStore — no-op, kept for test compatibility
+// ---------------------------------------------------------------------------
+
+export function _resetOverrideStore(): void {
+  // No-op — Prisma persistence is managed via test mocks
+}
+
+// ---------------------------------------------------------------------------
+// Helper: map Prisma row to ScopedMappingPolicy
+// ---------------------------------------------------------------------------
+
+function toScopedPolicy(row: {
+  id: string;
+  sourceType: string;
+  targetFormat: string;
+  mappedType: string;
+  isLossy: boolean;
+  lossDescription: string | null;
+  justification: string | null;
+  approvedBy: string | null;
+  entityId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): ScopedMappingPolicy {
+  return {
+    sourceType: row.sourceType,
+    targetType: row.mappedType,
+    targetFormat: row.targetFormat,
+    mappedType: row.mappedType,
+    isOverride: true,
+    isLossy: row.isLossy,
+    lossDescription: row.lossDescription ?? undefined,
+    justification: row.justification ?? undefined,
+    approvedBy: row.approvedBy ?? undefined,
+    entityId: row.entityId ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // getMappingsForTarget — returns all policies (defaults + overrides) for a target
@@ -58,9 +76,10 @@ export async function getMappingsForTarget(
   const defaults = getDefaultPolicies().filter(
     (p) => p.targetFormat === targetFormat
   );
-  const overrides = overrideStore.filter(
-    (p) => p.targetFormat === targetFormat
-  );
+  const rows = await prisma.typeMappingOverride.findMany({
+    where: { targetFormat },
+  });
+  const overrides = rows.map(toScopedPolicy);
 
   return ok([...defaults, ...overrides]);
 }
@@ -73,7 +92,9 @@ export async function getAllMappings(
   _ctx: ServiceContext
 ): Promise<Result<ScopedMappingPolicy[]>> {
   const defaults = getDefaultPolicies();
-  return ok([...defaults, ...overrideStore]);
+  const rows = await prisma.typeMappingOverride.findMany();
+  const overrides = rows.map(toScopedPolicy);
+  return ok([...defaults, ...overrides]);
 }
 
 // ---------------------------------------------------------------------------
@@ -117,37 +138,35 @@ export async function createOverride(
     });
   }
 
-  // Check for duplicate override
-  const existingIndex = overrideStore.findIndex(
-    (p) =>
-      p.sourceType === input.sourceType &&
-      p.targetFormat === input.targetFormat &&
-      p.entityId === input.entityId
-  );
+  // Upsert: unique on [sourceType, targetFormat, entityId]
+  const row = await prisma.typeMappingOverride.upsert({
+    where: {
+      sourceType_targetFormat_entityId: {
+        sourceType: input.sourceType,
+        targetFormat: input.targetFormat,
+        entityId: (input.entityId ?? null) as string,
+      },
+    },
+    create: {
+      sourceType: input.sourceType,
+      targetFormat: input.targetFormat,
+      mappedType: input.mappedType,
+      isLossy: input.isLossy,
+      lossDescription: input.lossDescription ?? null,
+      justification: input.justification ?? null,
+      approvedBy: ctx.userId,
+      entityId: input.entityId ?? null,
+    },
+    update: {
+      mappedType: input.mappedType,
+      isLossy: input.isLossy,
+      lossDescription: input.lossDescription ?? null,
+      justification: input.justification ?? null,
+      approvedBy: ctx.userId,
+    },
+  });
 
-  const policy: ScopedMappingPolicy = {
-    sourceType: input.sourceType,
-    targetType: input.mappedType,
-    targetFormat: input.targetFormat,
-    mappedType: input.mappedType,
-    isOverride: true,
-    isLossy: input.isLossy,
-    lossDescription: input.lossDescription,
-    justification: input.justification,
-    approvedBy: ctx.userId,
-    entityId: input.entityId,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-
-  if (existingIndex >= 0) {
-    // Replace existing override
-    overrideStore[existingIndex] = policy;
-  } else {
-    overrideStore.push(policy);
-  }
-
-  return ok(policy);
+  return ok(toScopedPolicy(row));
 }
 
 // ---------------------------------------------------------------------------
@@ -235,27 +254,25 @@ export async function acknowledgeLossyMapping(
     });
   }
 
-  // Check for existing acknowledgment
-  const existingIndex = acknowledgmentStore.findIndex(
-    (a) =>
-      a.entityId === input.entityId &&
-      a.sourceType === input.sourceType &&
-      a.targetFormat === input.targetFormat
-  );
-
-  const ack = {
-    entityId: input.entityId,
-    sourceType: input.sourceType,
-    targetFormat: input.targetFormat,
-    userId: ctx.userId,
-    acknowledgedAt: new Date(),
-  };
-
-  if (existingIndex >= 0) {
-    acknowledgmentStore[existingIndex] = ack;
-  } else {
-    acknowledgmentStore.push(ack);
-  }
+  await prisma.lossyMappingAck.upsert({
+    where: {
+      entityId_sourceType_targetFormat_userId: {
+        entityId: input.entityId,
+        sourceType: input.sourceType,
+        targetFormat: input.targetFormat,
+        userId: ctx.userId,
+      },
+    },
+    create: {
+      entityId: input.entityId,
+      sourceType: input.sourceType,
+      targetFormat: input.targetFormat,
+      userId: ctx.userId,
+    },
+    update: {
+      acknowledgedAt: new Date(),
+    },
+  });
 
   return ok({ acknowledged: true });
 }
@@ -264,17 +281,15 @@ export async function acknowledgeLossyMapping(
 // isLossyMappingAcknowledged — check if a lossy mapping has been acknowledged
 // ---------------------------------------------------------------------------
 
-export function isLossyMappingAcknowledged(
+export async function isLossyMappingAcknowledged(
   entityId: string,
   sourceType: string,
   targetFormat: string
-): boolean {
-  return acknowledgmentStore.some(
-    (a) =>
-      a.entityId === entityId &&
-      a.sourceType === sourceType &&
-      a.targetFormat === targetFormat
-  );
+): Promise<boolean> {
+  const count = await prisma.lossyMappingAck.count({
+    where: { entityId, sourceType, targetFormat },
+  });
+  return count > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,13 +300,12 @@ export async function getOverridesForEntity(
   entityId: string,
   _ctx: ServiceContext
 ): Promise<Result<ScopedMappingPolicy[]>> {
-  const entityOverrides = overrideStore.filter(
-    (p) => p.entityId === entityId
-  );
-  const globalOverrides = overrideStore.filter(
-    (p) => !p.entityId
-  );
-  return ok([...entityOverrides, ...globalOverrides]);
+  const rows = await prisma.typeMappingOverride.findMany({
+    where: {
+      OR: [{ entityId }, { entityId: null }],
+    },
+  });
+  return ok(rows.map(toScopedPolicy));
 }
 
 // ---------------------------------------------------------------------------
@@ -313,15 +327,19 @@ export async function deleteOverride(
     });
   }
 
-  const initialLength = overrideStore.length;
-  overrideStore = overrideStore.filter(
-    (p) =>
-      !(
-        p.sourceType === sourceType &&
-        p.targetFormat === targetFormat &&
-        p.entityId === entityId
-      )
-  );
-
-  return ok({ deleted: overrideStore.length < initialLength });
+  try {
+    await prisma.typeMappingOverride.delete({
+      where: {
+        sourceType_targetFormat_entityId: {
+          sourceType,
+          targetFormat,
+          entityId: (entityId ?? null) as string,
+        },
+      },
+    });
+    return ok({ deleted: true });
+  } catch {
+    // Record not found — nothing to delete
+    return ok({ deleted: false });
+  }
 }

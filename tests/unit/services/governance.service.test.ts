@@ -1,4 +1,117 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory stores for the Prisma mock
+// ---------------------------------------------------------------------------
+let requests: Array<{
+  id: string;
+  entityId: string;
+  entityName: string;
+  domainId: string | null;
+  versionId: string | null;
+  changeType: string;
+  severity: string;
+  status: string;
+  impactReport: unknown;
+  requestedBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+let approvals: Array<{
+  id: string;
+  requestId: string;
+  approverId: string;
+  decision: string;
+  comment: string | null;
+  decidedAt: Date;
+}> = [];
+let reqCounter = 0;
+let aprCounter = 0;
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    governanceRequest: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: `gov-req-${++reqCounter}`,
+          entityId: args.data.entityId as string,
+          entityName: args.data.entityName as string,
+          domainId: (args.data.domainId as string | null) ?? null,
+          versionId: (args.data.versionId as string | null) ?? null,
+          changeType: args.data.changeType as string,
+          severity: (args.data.severity as string) ?? "low",
+          status: args.data.status as string,
+          impactReport: args.data.impactReport ?? null,
+          requestedBy: args.data.requestedBy as string,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        requests.push(row);
+        return row;
+      }),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => {
+        return requests.find((r) => r.id === args.where.id) ?? null;
+      }),
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
+        let result = [...requests];
+        if (args?.where) {
+          if (args.where.entityId) {
+            result = result.filter((r) => r.entityId === args.where!.entityId);
+          }
+          if (args.where.versionId) {
+            result = result.filter((r) => r.versionId === args.where!.versionId);
+          }
+          if (args.where.status) {
+            result = result.filter((r) => r.status === args.where!.status);
+          }
+          if (args.where.domainId) {
+            result = result.filter((r) => r.domainId === args.where!.domainId);
+          }
+        }
+        if (args?.orderBy?.createdAt === "desc") {
+          result.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        }
+        return result;
+      }),
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const r = requests.find((r) => r.id === args.where.id);
+        if (r) {
+          Object.assign(r, args.data, { updatedAt: new Date() });
+        }
+        return r;
+      }),
+      deleteMany: vi.fn(async () => {
+        requests = [];
+        reqCounter = 0;
+      }),
+    },
+    governanceApproval: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: `gov-apr-${++aprCounter}`,
+          requestId: args.data.requestId as string,
+          approverId: args.data.approverId as string,
+          decision: args.data.decision as string,
+          comment: (args.data.comment as string | null) ?? null,
+          decidedAt: new Date(),
+        };
+        approvals.push(row);
+        return row;
+      }),
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        let result = [...approvals];
+        if (args?.where?.requestId) {
+          result = result.filter((a) => a.requestId === args.where!.requestId);
+        }
+        return result;
+      }),
+      deleteMany: vi.fn(async () => {
+        approvals = [];
+        aprCounter = 0;
+      }),
+    },
+  },
+}));
 
 import {
   createRequest,
@@ -50,13 +163,13 @@ function makeClassification(
 // ---------------------------------------------------------------------------
 
 describe("Governance Service", () => {
-  beforeEach(() => {
-    _resetGovernanceStore();
+  beforeEach(async () => {
+    await _resetGovernanceStore();
   });
 
   describe("createRequest", () => {
-    it("auto-approves non-breaking changes", () => {
-      const result = createRequest(
+    it("auto-approves non-breaking changes", async () => {
+      const result = await createRequest(
         "ent-1",
         2,
         makeClassification("non-breaking"),
@@ -73,8 +186,8 @@ describe("Governance Service", () => {
       }
     });
 
-    it("creates PENDING request for breaking changes", () => {
-      const result = createRequest(
+    it("creates PENDING request for breaking changes", async () => {
+      const result = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -88,8 +201,8 @@ describe("Governance Service", () => {
       }
     });
 
-    it("creates PENDING request for classification changes", () => {
-      const result = createRequest(
+    it("creates PENDING request for classification changes", async () => {
+      const result = await createRequest(
         "ent-1",
         2,
         makeClassification("classification-change"),
@@ -105,8 +218,8 @@ describe("Governance Service", () => {
   });
 
   describe("approveRequest", () => {
-    it("changes status to APPROVED", () => {
-      const createResult = createRequest(
+    it("changes status to APPROVED", async () => {
+      const createResult = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -116,7 +229,7 @@ describe("Governance Service", () => {
       expect(createResult.success).toBe(true);
       if (!createResult.success) return;
 
-      const result = approveRequest(
+      const result = await approveRequest(
         createResult.data.id,
         "Looks good",
         stewardCtx
@@ -129,8 +242,8 @@ describe("Governance Service", () => {
       }
     });
 
-    it("approval enables emission", () => {
-      const createResult = createRequest(
+    it("approval enables emission", async () => {
+      const createResult = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -140,17 +253,17 @@ describe("Governance Service", () => {
       if (!createResult.success) return;
 
       // Before approval — blocked
-      let gate = checkEmissionGate("ent-1", 2);
+      let gate = await checkEmissionGate("ent-1", 2);
       expect(gate.success).toBe(true);
       if (gate.success) {
         expect(gate.data.allowed).toBe(false);
       }
 
       // Approve
-      approveRequest(createResult.data.id, null, stewardCtx);
+      await approveRequest(createResult.data.id, null, stewardCtx);
 
       // After approval — allowed
-      gate = checkEmissionGate("ent-1", 2);
+      gate = await checkEmissionGate("ent-1", 2);
       expect(gate.success).toBe(true);
       if (gate.success) {
         expect(gate.data.allowed).toBe(true);
@@ -159,8 +272,8 @@ describe("Governance Service", () => {
   });
 
   describe("rejectRequest", () => {
-    it("changes status to REJECTED", () => {
-      const createResult = createRequest(
+    it("changes status to REJECTED", async () => {
+      const createResult = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -169,7 +282,7 @@ describe("Governance Service", () => {
       );
       if (!createResult.success) return;
 
-      const result = rejectRequest(
+      const result = await rejectRequest(
         createResult.data.id,
         "Too risky",
         stewardCtx
@@ -181,8 +294,8 @@ describe("Governance Service", () => {
       }
     });
 
-    it("rejection blocks emission", () => {
-      const createResult = createRequest(
+    it("rejection blocks emission", async () => {
+      const createResult = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -191,9 +304,9 @@ describe("Governance Service", () => {
       );
       if (!createResult.success) return;
 
-      rejectRequest(createResult.data.id, "Too risky", stewardCtx);
+      await rejectRequest(createResult.data.id, "Too risky", stewardCtx);
 
-      const gate = checkEmissionGate("ent-1", 2);
+      const gate = await checkEmissionGate("ent-1", 2);
       expect(gate.success).toBe(true);
       if (gate.success) {
         expect(gate.data.allowed).toBe(false);
@@ -203,8 +316,8 @@ describe("Governance Service", () => {
   });
 
   describe("RBAC enforcement", () => {
-    it("only Steward/Admin can approve", () => {
-      const createResult = createRequest(
+    it("only Steward/Admin can approve", async () => {
+      const createResult = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -213,15 +326,15 @@ describe("Governance Service", () => {
       );
       if (!createResult.success) return;
 
-      const result = approveRequest(createResult.data.id, null, authorCtx);
+      const result = await approveRequest(createResult.data.id, null, authorCtx);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe("FORBIDDEN");
       }
     });
 
-    it("only Steward/Admin can reject", () => {
-      const createResult = createRequest(
+    it("only Steward/Admin can reject", async () => {
+      const createResult = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -230,15 +343,15 @@ describe("Governance Service", () => {
       );
       if (!createResult.success) return;
 
-      const result = rejectRequest(createResult.data.id, "nope", authorCtx);
+      const result = await rejectRequest(createResult.data.id, "nope", authorCtx);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe("FORBIDDEN");
       }
     });
 
-    it("Admin can approve", () => {
-      const createResult = createRequest(
+    it("Admin can approve", async () => {
+      const createResult = await createRequest(
         "ent-1",
         2,
         makeClassification("breaking"),
@@ -247,17 +360,17 @@ describe("Governance Service", () => {
       );
       if (!createResult.success) return;
 
-      const result = approveRequest(createResult.data.id, null, adminCtx);
+      const result = await approveRequest(createResult.data.id, null, adminCtx);
       expect(result.success).toBe(true);
     });
   });
 
   describe("Query functions", () => {
-    it("getRequestsForEntity returns requests for the entity", () => {
-      createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
-      createRequest("ent-2", 1, makeClassification("non-breaking"), null, authorCtx);
+    it("getRequestsForEntity returns requests for the entity", async () => {
+      await createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
+      await createRequest("ent-2", 1, makeClassification("non-breaking"), null, authorCtx);
 
-      const result = getRequestsForEntity("ent-1");
+      const result = await getRequestsForEntity("ent-1");
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toHaveLength(1);
@@ -265,11 +378,11 @@ describe("Governance Service", () => {
       }
     });
 
-    it("getPendingRequests returns only pending requests", () => {
-      createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
-      createRequest("ent-2", 1, makeClassification("non-breaking"), null, authorCtx);
+    it("getPendingRequests returns only pending requests", async () => {
+      await createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
+      await createRequest("ent-2", 1, makeClassification("non-breaking"), null, authorCtx);
 
-      const result = getPendingRequests();
+      const result = await getPendingRequests();
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toHaveLength(1);
@@ -279,28 +392,28 @@ describe("Governance Service", () => {
   });
 
   describe("Emission Gate", () => {
-    it("allows emission when no governance request exists", () => {
-      const gate = checkEmissionGate("ent-new", 1);
+    it("allows emission when no governance request exists", async () => {
+      const gate = await checkEmissionGate("ent-new", 1);
       expect(gate.success).toBe(true);
       if (gate.success) {
         expect(gate.data.allowed).toBe(true);
       }
     });
 
-    it("allows emission for auto-approved changes", () => {
-      createRequest("ent-1", 2, makeClassification("non-breaking"), null, authorCtx);
+    it("allows emission for auto-approved changes", async () => {
+      await createRequest("ent-1", 2, makeClassification("non-breaking"), null, authorCtx);
 
-      const gate = checkEmissionGate("ent-1", 2);
+      const gate = await checkEmissionGate("ent-1", 2);
       expect(gate.success).toBe(true);
       if (gate.success) {
         expect(gate.data.allowed).toBe(true);
       }
     });
 
-    it("blocks emission for pending changes", () => {
-      createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
+    it("blocks emission for pending changes", async () => {
+      await createRequest("ent-1", 2, makeClassification("breaking"), null, authorCtx);
 
-      const gate = checkEmissionGate("ent-1", 2);
+      const gate = await checkEmissionGate("ent-1", 2);
       expect(gate.success).toBe(true);
       if (gate.success) {
         expect(gate.data.allowed).toBe(false);

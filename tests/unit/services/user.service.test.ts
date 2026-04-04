@@ -1,4 +1,74 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory store for the Prisma mock (used by rbac.service)
+// ---------------------------------------------------------------------------
+let roleStore: Array<{
+  id: string;
+  userId: string;
+  role: string;
+  domainId: string | null;
+  createdAt: Date;
+}> = [];
+let idCounter = 0;
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    userRole: {
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.userId) {
+          return roleStore.filter((r) => r.userId === args.where!.userId);
+        }
+        return [...roleStore];
+      }),
+      findFirst: vi.fn(
+        async (args: { where: { userId: string; role: string; domainId: string | null } }) => {
+          return (
+            roleStore.find(
+              (r) =>
+                r.userId === args.where.userId &&
+                r.role === args.where.role &&
+                r.domainId === args.where.domainId
+            ) ?? null
+          );
+        }
+      ),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => {
+        return roleStore.find((r) => r.id === args.where.id) ?? null;
+      }),
+      create: vi.fn(
+        async (args: {
+          data: { userId: string; role: string; domainId: string | null };
+        }) => {
+          const row = {
+            id: `role-${++idCounter}`,
+            userId: args.data.userId,
+            role: args.data.role,
+            domainId: args.data.domainId,
+            createdAt: new Date(),
+          };
+          roleStore.push(row);
+          return row;
+        }
+      ),
+      delete: vi.fn(async (args: { where: { id: string } }) => {
+        const idx = roleStore.findIndex((r) => r.id === args.where.id);
+        if (idx !== -1) roleStore.splice(idx, 1);
+      }),
+      deleteMany: vi.fn(async () => {
+        roleStore = [];
+        idCounter = 0;
+      }),
+      count: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        if (args?.where?.role) {
+          return roleStore.filter((r) => r.role === args.where!.role).length;
+        }
+        return roleStore.length;
+      }),
+    },
+  },
+}));
+
 import {
   getUsers,
   getUserById,
@@ -46,9 +116,9 @@ const testUsers: UserRecord[] = [
 ];
 
 describe("User Service", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     _resetUserStore();
-    _resetRoleStore();
+    await _resetRoleStore();
     _seedUsers(testUsers);
   });
 

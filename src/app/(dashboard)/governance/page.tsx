@@ -19,8 +19,8 @@ import {
 export default function GovernancePage() {
   const [requests, setRequests] = useState<GovernanceRequest[]>([]);
 
-  const loadRequests = useCallback(() => {
-    const result = getAllRequests();
+  const loadRequests = useCallback(async () => {
+    const result = await getAllRequests();
     if (result.success) {
       setRequests(result.data);
     }
@@ -31,8 +31,8 @@ export default function GovernancePage() {
   }, [loadRequests]);
 
   const handleApprove = useCallback(
-    (requestId: string, comment: string | null) => {
-      const result = approveRequest(requestId, comment, {
+    async (requestId: string, comment: string | null) => {
+      const result = await approveRequest(requestId, comment, {
         userId: "current-user",
         userRole: "STEWARD",
       });
@@ -44,8 +44,8 @@ export default function GovernancePage() {
   );
 
   const handleReject = useCallback(
-    (requestId: string, comment: string | null) => {
-      const result = rejectRequest(requestId, comment, {
+    async (requestId: string, comment: string | null) => {
+      const result = await rejectRequest(requestId, comment, {
         userId: "current-user",
         userRole: "STEWARD",
       });

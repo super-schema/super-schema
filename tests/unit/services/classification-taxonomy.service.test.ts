@@ -1,4 +1,86 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory store for the Prisma mock
+// ---------------------------------------------------------------------------
+let classificationStore: Array<{
+  id: string;
+  name: string;
+  displayColor: string;
+  bgColor: string;
+  textColor: string;
+  description: string;
+  sortOrder: number;
+  isSystem: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+let idCounter = 0;
+let fieldUsageOverrides: Map<string, number> = new Map();
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    classificationLevel: {
+      count: vi.fn(async () => classificationStore.length),
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: (args.data.id as string) ?? `cls-${++idCounter}`,
+          name: args.data.name as string,
+          displayColor: args.data.displayColor as string,
+          bgColor: args.data.bgColor as string,
+          textColor: args.data.textColor as string,
+          description: (args.data.description as string) ?? "",
+          sortOrder: (args.data.sortOrder as number) ?? 0,
+          isSystem: (args.data.isSystem as boolean) ?? false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        classificationStore.push(row);
+        return row;
+      }),
+      findMany: vi.fn(async (args?: { orderBy?: Record<string, string> }) => {
+        const result = [...classificationStore];
+        if (args?.orderBy?.sortOrder === "asc") {
+          result.sort((a, b) => a.sortOrder - b.sortOrder);
+        }
+        return result;
+      }),
+      findFirst: vi.fn(async (args: { where: Record<string, unknown> }) => {
+        if (args.where.name) {
+          return classificationStore.find((c) => c.name === args.where.name) ?? null;
+        }
+        return null;
+      }),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => {
+        return classificationStore.find((c) => c.id === args.where.id) ?? null;
+      }),
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const c = classificationStore.find((c) => c.id === args.where.id);
+        if (c) {
+          Object.assign(c, args.data, { updatedAt: new Date() });
+        }
+        return c;
+      }),
+      delete: vi.fn(async (args: { where: { id: string } }) => {
+        const idx = classificationStore.findIndex((c) => c.id === args.where.id);
+        if (idx !== -1) classificationStore.splice(idx, 1);
+      }),
+      deleteMany: vi.fn(async () => {
+        classificationStore = [];
+        idCounter = 0;
+      }),
+    },
+    field: {
+      count: vi.fn(async (args?: { where?: { classification?: string } }) => {
+        if (args?.where?.classification) {
+          return fieldUsageOverrides.get(args.where.classification) ?? 0;
+        }
+        return 0;
+      }),
+    },
+  },
+}));
+
 import {
   getClassificationLevels,
   createClassification,
@@ -23,8 +105,9 @@ const viewerCtx: ServiceContext = {
 };
 
 describe("Classification Taxonomy Service", () => {
-  beforeEach(() => {
-    _resetClassificationStore();
+  beforeEach(async () => {
+    await _resetClassificationStore();
+    fieldUsageOverrides = new Map();
   });
 
   describe("getClassificationLevels", () => {
@@ -147,7 +230,7 @@ describe("Classification Taxonomy Service", () => {
     it("updates colors and description", async () => {
       // Seed defaults, then get one ID
       await getClassificationLevels(adminCtx);
-      const store = _getClassificationStore();
+      const store = await _getClassificationStore();
       const pii = store.find((c) => c.name === "PII");
       expect(pii).toBeDefined();
 
@@ -168,7 +251,7 @@ describe("Classification Taxonomy Service", () => {
 
     it("allows color update on system defaults", async () => {
       await getClassificationLevels(adminCtx);
-      const store = _getClassificationStore();
+      const store = await _getClassificationStore();
       const internal = store.find((c) => c.name === "INTERNAL");
 
       const result = await updateClassification(
@@ -231,7 +314,7 @@ describe("Classification Taxonomy Service", () => {
 
     it("blocks deletion of system default (isSystem=true)", async () => {
       await getClassificationLevels(adminCtx);
-      const store = _getClassificationStore();
+      const store = await _getClassificationStore();
       const pii = store.find((c) => c.name === "PII");
 
       const result = await deleteClassification(pii!.id, adminCtx);
@@ -256,7 +339,8 @@ describe("Classification Taxonomy Service", () => {
       expect(created.success).toBe(true);
       if (!created.success) return;
 
-      _setFieldUsage("INUSE", 3);
+      // Set field usage via the mock map
+      fieldUsageOverrides.set("INUSE", 3);
 
       const result = await deleteClassification(created.data.id, adminCtx);
       expect(result.success).toBe(false);

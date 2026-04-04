@@ -1,4 +1,35 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// Mock Prisma with configurable return values
+// ---------------------------------------------------------------------------
+
+const mockEntityCount = vi.fn().mockResolvedValue(0);
+const mockFieldCount = vi.fn().mockResolvedValue(0);
+const mockDomainCount = vi.fn().mockResolvedValue(0);
+const mockUserCount = vi.fn().mockResolvedValue(0);
+const mockEmissionTargetStatusCount = vi.fn().mockResolvedValue(0);
+const mockAuditLogFindMany = vi.fn().mockResolvedValue([]);
+const mockAuditLogCount = vi.fn().mockResolvedValue(0);
+const mockGovernanceRequestCount = vi.fn().mockResolvedValue(0);
+const mockQueryRaw = vi.fn().mockResolvedValue([{ result: 1 }]);
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    entity: { count: (...args: unknown[]) => mockEntityCount(...args) },
+    field: { count: (...args: unknown[]) => mockFieldCount(...args) },
+    domain: { count: (...args: unknown[]) => mockDomainCount(...args) },
+    user: { count: (...args: unknown[]) => mockUserCount(...args) },
+    emissionTargetStatus: { count: (...args: unknown[]) => mockEmissionTargetStatusCount(...args) },
+    auditLog: {
+      findMany: (...args: unknown[]) => mockAuditLogFindMany(...args),
+      count: (...args: unknown[]) => mockAuditLogCount(...args),
+    },
+    governanceRequest: { count: (...args: unknown[]) => mockGovernanceRequestCount(...args) },
+    $queryRaw: (...args: unknown[]) => mockQueryRaw(...args),
+  },
+}));
+
 import {
   checkDatabase,
   checkCompiler,
@@ -33,7 +64,17 @@ const viewerCtx: ServiceContext = {
 
 describe("Health Service", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     _resetHealthStore();
+    // Reset mock return values
+    mockEntityCount.mockResolvedValue(0);
+    mockFieldCount.mockResolvedValue(0);
+    mockDomainCount.mockResolvedValue(0);
+    mockUserCount.mockResolvedValue(0);
+    mockEmissionTargetStatusCount.mockResolvedValue(0);
+    mockAuditLogFindMany.mockResolvedValue([]);
+    mockAuditLogCount.mockResolvedValue(0);
+    mockGovernanceRequestCount.mockResolvedValue(0);
   });
 
   describe("checkDatabase", () => {
@@ -130,13 +171,11 @@ describe("Health Service", () => {
 
   describe("getUsageMetrics", () => {
     it("returns correct counts", async () => {
-      _setUsageMetrics({
-        totalEntities: 10,
-        totalFields: 50,
-        totalDomains: 3,
-        totalUsers: 5,
-        totalEmissions: 20,
-      });
+      mockEntityCount.mockResolvedValue(10);
+      mockFieldCount.mockResolvedValue(50);
+      mockDomainCount.mockResolvedValue(3);
+      mockUserCount.mockResolvedValue(5);
+      mockEmissionTargetStatusCount.mockResolvedValue(20);
 
       const result = await getUsageMetrics(adminCtx);
       expect(result.success).toBe(true);
@@ -160,12 +199,17 @@ describe("Health Service", () => {
 
   describe("getActivityMetrics", () => {
     it("returns correct 24h activity counts", async () => {
-      _setActivityMetrics({
-        activeUsers24h: 3,
-        emissionsToday: 7,
-        schemaChangesToday: 12,
-        governanceRequestsPending: 2,
-      });
+      // Mock distinct userId query
+      mockAuditLogFindMany.mockResolvedValue([
+        { userId: "u-1" },
+        { userId: "u-2" },
+        { userId: "u-3" },
+      ]);
+      // Mock count calls: emissions, schema changes
+      mockAuditLogCount
+        .mockResolvedValueOnce(7)   // emissionsToday
+        .mockResolvedValueOnce(12); // schemaChangesToday
+      mockGovernanceRequestCount.mockResolvedValue(2);
 
       const result = await getActivityMetrics(adminCtx);
       expect(result.success).toBe(true);
@@ -185,11 +229,10 @@ describe("Health Service", () => {
 
   describe("getErrorSummary", () => {
     it("returns correct error counts from audit_log", async () => {
-      _setErrorSummary({
-        compilationErrors24h: 5,
-        emissionValidationFailures24h: 2,
-        apiErrors24h: 1,
-      });
+      mockAuditLogCount
+        .mockResolvedValueOnce(5)  // compilationErrors24h
+        .mockResolvedValueOnce(2)  // emissionValidationFailures24h
+        .mockResolvedValueOnce(1); // apiErrors24h
 
       const result = await getErrorSummary(adminCtx);
       expect(result.success).toBe(true);
@@ -208,22 +251,17 @@ describe("Health Service", () => {
 
   describe("getErrorDetails", () => {
     it("returns filtered audit entries for compilation errors", async () => {
-      _addAuditLog({
-        id: "log-1",
-        action: "compilation.error",
-        entityType: "Entity",
-        entityId: "e-1",
-        userId: "u-1",
-        timestamp: new Date(),
-      });
-      _addAuditLog({
-        id: "log-2",
-        action: "field.update",
-        entityType: "Field",
-        entityId: "f-1",
-        userId: "u-1",
-        timestamp: new Date(),
-      });
+      mockAuditLogFindMany.mockResolvedValue([
+        {
+          id: "log-1",
+          action: "compilation.error",
+          entityType: "Entity",
+          entityId: "e-1",
+          userId: "u-1",
+          timestamp: new Date(),
+          afterState: null,
+        },
+      ]);
 
       const result = await getErrorDetails("compilation", adminCtx);
       expect(result.success).toBe(true);
@@ -234,14 +272,17 @@ describe("Health Service", () => {
     });
 
     it("returns filtered audit entries for emission failures", async () => {
-      _addAuditLog({
-        id: "log-3",
-        action: "emission.validation.failure",
-        entityType: "Emission",
-        entityId: "em-1",
-        userId: "u-1",
-        timestamp: new Date(),
-      });
+      mockAuditLogFindMany.mockResolvedValue([
+        {
+          id: "log-3",
+          action: "emission.validation.failure",
+          entityType: "Emission",
+          entityId: "em-1",
+          userId: "u-1",
+          timestamp: new Date(),
+          afterState: null,
+        },
+      ]);
 
       const result = await getErrorDetails("emission", adminCtx);
       expect(result.success).toBe(true);

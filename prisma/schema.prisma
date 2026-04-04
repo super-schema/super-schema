@@ -22,6 +22,9 @@ model User {
   entities      Entity[]
   auditLogs     AuditLog[]
   gitConfigs    GitConfig[]
+  roles         UserRole[]
+  notifications Notification[]
+  webhooks      WebhookEndpoint[] @relation("WebhookCreator")
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -86,6 +89,7 @@ model Domain {
   policyTemplate Json?
   isSystem       Boolean  @default(false)
   entities       Entity[]
+  userRoles      UserRole[]
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -214,4 +218,261 @@ model GitPullRequest {
   entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
 
   @@map("git_pull_requests")
+}
+
+// ============================================================
+// RBAC & User Roles
+// ============================================================
+
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String
+  domainId  String?
+  createdAt DateTime @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain Domain? @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role, domainId])
+  @@map("user_roles")
+}
+
+// ============================================================
+// Classification Taxonomy
+// ============================================================
+
+model ClassificationLevel {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  displayColor String
+  bgColor      String
+  textColor    String
+  description  String   @default("")
+  sortOrder    Int      @default(0)
+  isSystem     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("classification_levels")
+}
+
+// ============================================================
+// Notifications
+// ============================================================
+
+enum NotificationType {
+  APPROVAL_REQUEST
+  APPROVAL_DECISION
+  CHANGE_COMPLETE
+  DRIFT_ALERT
+  ANNOTATION_TAG
+  ANNOTATION_REPLY
+  COMPLIANCE_GAP
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String           @default("")
+  entityId  String?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+// ============================================================
+// Webhooks
+// ============================================================
+
+model WebhookEndpoint {
+  id        String            @id @default(cuid())
+  url       String
+  events    String[]
+  secret    String
+  active    Boolean           @default(true)
+  createdBy String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  deliveries WebhookDelivery[]
+
+  creator User @relation("WebhookCreator", fields: [createdBy], references: [id])
+
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  endpointId  String
+  event       String
+  payload     Json
+  statusCode  Int?
+  error       String?
+  attempt     Int      @default(1)
+  nextRetryAt DateTime?
+  deliveredAt DateTime @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@map("webhook_deliveries")
+}
+
+// ============================================================
+// Governance & Approvals
+// ============================================================
+
+enum GovernanceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AUTO_APPROVED
+}
+
+enum GovernanceDecision {
+  APPROVE
+  REJECT
+}
+
+model GovernanceRequest {
+  id           String           @id @default(cuid())
+  entityId     String
+  entityName   String
+  domainId     String?
+  versionId    String?
+  changeType   String
+  severity     String
+  status       GovernanceStatus @default(PENDING)
+  impactReport Json?
+  requestedBy  String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  approvals    GovernanceApproval[]
+
+  @@index([status])
+  @@map("governance_requests")
+}
+
+model GovernanceApproval {
+  id         String             @id @default(cuid())
+  requestId  String
+  approverId String
+  decision   GovernanceDecision
+  comment    String?
+  decidedAt  DateTime           @default(now())
+
+  request GovernanceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@map("governance_approvals")
+}
+
+// ============================================================
+// Type Mapping Overrides
+// ============================================================
+
+model TypeMappingOverride {
+  id              String   @id @default(cuid())
+  sourceType      String
+  targetFormat    String
+  mappedType      String
+  isLossy         Boolean  @default(false)
+  lossDescription String?
+  justification   String?
+  approvedBy      String?
+  entityId        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([sourceType, targetFormat, entityId])
+  @@map("type_mapping_overrides")
+}
+
+model LossyMappingAck {
+  id           String   @id @default(cuid())
+  entityId     String
+  sourceType   String
+  targetFormat String
+  userId       String
+  acknowledgedAt DateTime @default(now())
+
+  @@unique([entityId, sourceType, targetFormat, userId])
+  @@map("lossy_mapping_acks")
+}
+
+// ============================================================
+// Emitter Configuration
+// ============================================================
+
+model EmitterConfig {
+  id             String   @id @default(cuid())
+  emitterName    String   @unique
+  targetFormat   String
+  version        String   @default("1.0.0")
+  enabled        Boolean  @default(true)
+  description    String   @default("")
+  configOverrides Json?
+  updatedBy      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("emitter_configs")
+}
+
+// ============================================================
+// Emission Tracking
+// ============================================================
+
+enum EmissionStatus {
+  CURRENT
+  STAGED
+  BEHIND
+}
+
+model EmissionTargetStatus {
+  id              String         @id @default(cuid())
+  entityId        String
+  target          String
+  emittedVersion  Int?
+  stagedVersion   Int?
+  lastEmittedAt   DateTime?
+  status          EmissionStatus @default(BEHIND)
+  output          String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([entityId, target])
+  @@map("emission_target_statuses")
+}
+
+// ============================================================
+// Deployment Tracking
+// ============================================================
+
+enum DeploymentStatus {
+  DEPLOYED
+  STAGED
+  UNKNOWN
+}
+
+model DeploymentRecord {
+  id           String           @id @default(cuid())
+  entityId     String
+  target       String
+  environment  String
+  version      Int
+  status       DeploymentStatus @default(DEPLOYED)
+  driftReport  Json?
+  isDrifted    Boolean          @default(false)
+  deployedBy   String?
+  deployedAt   DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([entityId, target, environment])
+  @@map("deployment_records")
 }

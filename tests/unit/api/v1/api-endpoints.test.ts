@@ -21,11 +21,19 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     field: {
       findMany: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
     },
     entity: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
     },
+    domain: { count: vi.fn().mockResolvedValue(0) },
+    user: { count: vi.fn().mockResolvedValue(0) },
+    emissionTargetStatus: { count: vi.fn().mockResolvedValue(0) },
+    auditLog: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
+    governanceRequest: { count: vi.fn().mockResolvedValue(0) },
+    $queryRaw: vi.fn().mockResolvedValue([{ result: 1 }]),
   },
 }));
 

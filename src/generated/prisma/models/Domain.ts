@@ -195,6 +195,7 @@ export type DomainWhereInput = {
   createdAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   entities?: Prisma.EntityListRelationFilter
+  userRoles?: Prisma.UserRoleListRelationFilter
 }
 
 export type DomainOrderByWithRelationInput = {
@@ -206,6 +207,7 @@ export type DomainOrderByWithRelationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   entities?: Prisma.EntityOrderByRelationAggregateInput
+  userRoles?: Prisma.UserRoleOrderByRelationAggregateInput
 }
 
 export type DomainWhereUniqueInput = Prisma.AtLeast<{
@@ -220,6 +222,7 @@ export type DomainWhereUniqueInput = Prisma.AtLeast<{
   createdAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   entities?: Prisma.EntityListRelationFilter
+  userRoles?: Prisma.UserRoleListRelationFilter
 }, "id" | "name">
 
 export type DomainOrderByWithAggregationInput = {
@@ -257,6 +260,7 @@ export type DomainCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
 }
 
 export type DomainUncheckedCreateInput = {
@@ -268,6 +272,7 @@ export type DomainUncheckedCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
 }
 
 export type DomainUpdateInput = {
@@ -279,6 +284,7 @@ export type DomainUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
 }
 
 export type DomainUncheckedUpdateInput = {
@@ -290,6 +296,7 @@ export type DomainUncheckedUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
 }
 
 export type DomainCreateManyInput = {
@@ -355,6 +362,11 @@ export type DomainScalarRelationFilter = {
   isNot?: Prisma.DomainWhereInput
 }
 
+export type DomainNullableScalarRelationFilter = {
+  is?: Prisma.DomainWhereInput | null
+  isNot?: Prisma.DomainWhereInput | null
+}
+
 export type BoolFieldUpdateOperationsInput = {
   set?: boolean
 }
@@ -373,6 +385,22 @@ export type DomainUpdateOneRequiredWithoutEntitiesNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutEntitiesInput, Prisma.DomainUpdateWithoutEntitiesInput>, Prisma.DomainUncheckedUpdateWithoutEntitiesInput>
 }
 
+export type DomainCreateNestedOneWithoutUserRolesInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutUserRolesInput, Prisma.DomainUncheckedCreateWithoutUserRolesInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutUserRolesInput
+  connect?: Prisma.DomainWhereUniqueInput
+}
+
+export type DomainUpdateOneWithoutUserRolesNestedInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutUserRolesInput, Prisma.DomainUncheckedCreateWithoutUserRolesInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutUserRolesInput
+  upsert?: Prisma.DomainUpsertWithoutUserRolesInput
+  disconnect?: Prisma.DomainWhereInput | boolean
+  delete?: Prisma.DomainWhereInput | boolean
+  connect?: Prisma.DomainWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutUserRolesInput, Prisma.DomainUpdateWithoutUserRolesInput>, Prisma.DomainUncheckedUpdateWithoutUserRolesInput>
+}
+
 export type DomainCreateWithoutEntitiesInput = {
   id?: string
   name: string
@@ -381,6 +409,7 @@ export type DomainCreateWithoutEntitiesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
 }
 
 export type DomainUncheckedCreateWithoutEntitiesInput = {
@@ -391,6 +420,7 @@ export type DomainUncheckedCreateWithoutEntitiesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
 }
 
 export type DomainCreateOrConnectWithoutEntitiesInput = {
@@ -417,6 +447,7 @@ export type DomainUpdateWithoutEntitiesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
 }
 
 export type DomainUncheckedUpdateWithoutEntitiesInput = {
@@ -427,6 +458,67 @@ export type DomainUncheckedUpdateWithoutEntitiesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainCreateWithoutUserRolesInput = {
+  id?: string
+  name: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+}
+
+export type DomainUncheckedCreateWithoutUserRolesInput = {
+  id?: string
+  name: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+}
+
+export type DomainCreateOrConnectWithoutUserRolesInput = {
+  where: Prisma.DomainWhereUniqueInput
+  create: Prisma.XOR<Prisma.DomainCreateWithoutUserRolesInput, Prisma.DomainUncheckedCreateWithoutUserRolesInput>
+}
+
+export type DomainUpsertWithoutUserRolesInput = {
+  update: Prisma.XOR<Prisma.DomainUpdateWithoutUserRolesInput, Prisma.DomainUncheckedUpdateWithoutUserRolesInput>
+  create: Prisma.XOR<Prisma.DomainCreateWithoutUserRolesInput, Prisma.DomainUncheckedCreateWithoutUserRolesInput>
+  where?: Prisma.DomainWhereInput
+}
+
+export type DomainUpdateToOneWithWhereWithoutUserRolesInput = {
+  where?: Prisma.DomainWhereInput
+  data: Prisma.XOR<Prisma.DomainUpdateWithoutUserRolesInput, Prisma.DomainUncheckedUpdateWithoutUserRolesInput>
+}
+
+export type DomainUpdateWithoutUserRolesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainUncheckedUpdateWithoutUserRolesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
 }
 
 
@@ -436,10 +528,12 @@ export type DomainUncheckedUpdateWithoutEntitiesInput = {
 
 export type DomainCountOutputType = {
   entities: number
+  userRoles: number
 }
 
 export type DomainCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entities?: boolean | DomainCountOutputTypeCountEntitiesArgs
+  userRoles?: boolean | DomainCountOutputTypeCountUserRolesArgs
 }
 
 /**
@@ -459,6 +553,13 @@ export type DomainCountOutputTypeCountEntitiesArgs<ExtArgs extends runtime.Types
   where?: Prisma.EntityWhereInput
 }
 
+/**
+ * DomainCountOutputType without action
+ */
+export type DomainCountOutputTypeCountUserRolesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.UserRoleWhereInput
+}
+
 
 export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -469,6 +570,7 @@ export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   createdAt?: boolean
   updatedAt?: boolean
   entities?: boolean | Prisma.Domain$entitiesArgs<ExtArgs>
+  userRoles?: boolean | Prisma.Domain$userRolesArgs<ExtArgs>
   _count?: boolean | Prisma.DomainCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["domain"]>
 
@@ -505,6 +607,7 @@ export type DomainSelectScalar = {
 export type DomainOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "description" | "policyTemplate" | "isSystem" | "createdAt" | "updatedAt", ExtArgs["result"]["domain"]>
 export type DomainInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entities?: boolean | Prisma.Domain$entitiesArgs<ExtArgs>
+  userRoles?: boolean | Prisma.Domain$userRolesArgs<ExtArgs>
   _count?: boolean | Prisma.DomainCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type DomainIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
@@ -514,6 +617,7 @@ export type $DomainPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
   name: "Domain"
   objects: {
     entities: Prisma.$EntityPayload<ExtArgs>[]
+    userRoles: Prisma.$UserRolePayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -918,6 +1022,7 @@ readonly fields: DomainFieldRefs;
 export interface Prisma__DomainClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
   entities<T extends Prisma.Domain$entitiesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$entitiesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EntityPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  userRoles<T extends Prisma.Domain$userRolesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$userRolesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$UserRolePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1368,6 +1473,30 @@ export type Domain$entitiesArgs<ExtArgs extends runtime.Types.Extensions.Interna
   take?: number
   skip?: number
   distinct?: Prisma.EntityScalarFieldEnum | Prisma.EntityScalarFieldEnum[]
+}
+
+/**
+ * Domain.userRoles
+ */
+export type Domain$userRolesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the UserRole
+   */
+  select?: Prisma.UserRoleSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the UserRole
+   */
+  omit?: Prisma.UserRoleOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.UserRoleInclude<ExtArgs> | null
+  where?: Prisma.UserRoleWhereInput
+  orderBy?: Prisma.UserRoleOrderByWithRelationInput | Prisma.UserRoleOrderByWithRelationInput[]
+  cursor?: Prisma.UserRoleWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.UserRoleScalarFieldEnum | Prisma.UserRoleScalarFieldEnum[]
 }
 
 /**

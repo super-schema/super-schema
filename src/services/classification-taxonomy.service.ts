@@ -2,10 +2,11 @@
  * Classification Taxonomy Service — custom classification level management.
  *
  * Manages system default and custom classification levels for
- * the data classification taxonomy. Uses in-memory store for MVP.
+ * the data classification taxonomy. Persistence: Prisma `classificationLevel` table.
  * All functions return Result<T>.
  */
 
+import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -19,41 +20,94 @@ import {
 } from "@/types/schemas/classification-taxonomy";
 
 // ---------------------------------------------------------------------------
-// In-memory store (MVP)
+// Prisma row → app ClassificationLevel mapper
 // ---------------------------------------------------------------------------
 
-let classificationStore: ClassificationLevel[] = [];
-let fieldUsageMap: Map<string, number> = new Map();
-let nextId = 1;
+function toClassificationLevel(row: {
+  id: string;
+  name: string;
+  displayColor: string;
+  bgColor: string;
+  textColor: string;
+  description: string;
+  sortOrder: number;
+  isSystem: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}): ClassificationLevel {
+  return {
+    id: row.id,
+    name: row.name,
+    displayColor: row.displayColor,
+    bgColor: row.bgColor,
+    textColor: row.textColor,
+    description: row.description || null,
+    sortOrder: row.sortOrder,
+    isSystem: row.isSystem,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
 
-function ensureDefaults(): void {
-  if (classificationStore.length > 0) return;
+// ---------------------------------------------------------------------------
+// Seed system defaults if table is empty
+// ---------------------------------------------------------------------------
+
+async function ensureDefaults(): Promise<void> {
+  const count = await prisma.classificationLevel.count();
+  if (count > 0) return;
+
   for (const def of SYSTEM_CLASSIFICATION_DEFAULTS) {
-    classificationStore.push({
-      ...def,
-      id: `cls-${nextId++}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+    await prisma.classificationLevel.create({
+      data: {
+        name: def.name,
+        displayColor: def.displayColor,
+        bgColor: def.bgColor,
+        textColor: def.textColor,
+        description: def.description ?? "",
+        sortOrder: def.sortOrder,
+        isSystem: def.isSystem,
+      },
     });
   }
 }
 
-export function _resetClassificationStore(): void {
-  classificationStore = [];
-  fieldUsageMap = new Map();
-  nextId = 1;
+// ---------------------------------------------------------------------------
+// Test helpers (delegate to Prisma)
+// ---------------------------------------------------------------------------
+
+export async function _resetClassificationStore(): Promise<void> {
+  await prisma.classificationLevel.deleteMany();
 }
 
-export function _seedClassifications(levels: ClassificationLevel[]): void {
-  classificationStore = [...levels];
+export async function _seedClassifications(levels: ClassificationLevel[]): Promise<void> {
+  await prisma.classificationLevel.deleteMany();
+  for (const level of levels) {
+    await prisma.classificationLevel.create({
+      data: {
+        id: level.id,
+        name: level.name,
+        displayColor: level.displayColor,
+        bgColor: level.bgColor,
+        textColor: level.textColor,
+        description: level.description ?? "",
+        sortOrder: level.sortOrder,
+        isSystem: level.isSystem,
+      },
+    });
+  }
 }
 
-export function _setFieldUsage(classificationName: string, count: number): void {
-  fieldUsageMap.set(classificationName, count);
+export async function _setFieldUsage(_classificationName: string, _count: number): Promise<void> {
+  // Field usage is now queried live from the field table.
+  // This is a no-op in production; tests mock prisma.field.count directly.
 }
 
-export function _getClassificationStore(): ClassificationLevel[] {
-  return classificationStore;
+export async function _getClassificationStore(): Promise<ClassificationLevel[]> {
+  const rows = await prisma.classificationLevel.findMany({
+    orderBy: { sortOrder: "asc" },
+  });
+  return rows.map(toClassificationLevel);
 }
 
 // ---------------------------------------------------------------------------
@@ -63,9 +117,11 @@ export function _getClassificationStore(): ClassificationLevel[] {
 export async function getClassificationLevels(
   _ctx: ServiceContext
 ): Promise<Result<ClassificationLevel[]>> {
-  ensureDefaults();
-  const sorted = [...classificationStore].sort((a, b) => a.sortOrder - b.sortOrder);
-  return ok(sorted);
+  await ensureDefaults();
+  const rows = await prisma.classificationLevel.findMany({
+    orderBy: { sortOrder: "asc" },
+  });
+  return ok(rows.map(toClassificationLevel));
 }
 
 // ---------------------------------------------------------------------------
@@ -93,12 +149,13 @@ export async function createClassification(
     });
   }
 
-  ensureDefaults();
+  await ensureDefaults();
 
   // Enforce unique name (case-insensitive — names stored uppercase)
-  const duplicate = classificationStore.find(
-    (c) => c.name.toUpperCase() === parsed.data.name.toUpperCase()
-  );
+  const uppercaseName = parsed.data.name.toUpperCase();
+  const duplicate = await prisma.classificationLevel.findFirst({
+    where: { name: uppercaseName },
+  });
   if (duplicate) {
     return err({
       code: "DUPLICATE",
@@ -107,21 +164,19 @@ export async function createClassification(
     });
   }
 
-  const level: ClassificationLevel = {
-    id: `cls-${nextId++}`,
-    name: parsed.data.name,
-    displayColor: parsed.data.displayColor,
-    bgColor: parsed.data.bgColor,
-    textColor: parsed.data.textColor,
-    description: parsed.data.description ?? null,
-    sortOrder: parsed.data.sortOrder,
-    isSystem: false,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+  const row = await prisma.classificationLevel.create({
+    data: {
+      name: uppercaseName,
+      displayColor: parsed.data.displayColor,
+      bgColor: parsed.data.bgColor,
+      textColor: parsed.data.textColor,
+      description: parsed.data.description ?? "",
+      sortOrder: parsed.data.sortOrder,
+      isSystem: false,
+    },
+  });
 
-  classificationStore.push(level);
-  return ok(level);
+  return ok(toClassificationLevel(row));
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +204,12 @@ export async function updateClassification(
     });
   }
 
-  ensureDefaults();
+  await ensureDefaults();
 
-  const index = classificationStore.findIndex((c) => c.id === parsed.data.id);
-  if (index === -1) {
+  const existing = await prisma.classificationLevel.findUnique({
+    where: { id: parsed.data.id },
+  });
+  if (!existing) {
     return err({
       code: "NOT_FOUND",
       message: `Classification with ID "${parsed.data.id}" not found`,
@@ -160,20 +217,19 @@ export async function updateClassification(
     });
   }
 
-  const existing = classificationStore[index];
-  classificationStore[index] = {
-    ...existing,
-    displayColor: parsed.data.displayColor ?? existing.displayColor,
-    bgColor: parsed.data.bgColor ?? existing.bgColor,
-    textColor: parsed.data.textColor ?? existing.textColor,
-    description: parsed.data.description !== undefined
-      ? (parsed.data.description ?? null)
-      : existing.description,
-    sortOrder: parsed.data.sortOrder ?? existing.sortOrder,
-    updatedAt: new Date(),
-  };
+  const data: Record<string, unknown> = {};
+  if (parsed.data.displayColor !== undefined) data.displayColor = parsed.data.displayColor;
+  if (parsed.data.bgColor !== undefined) data.bgColor = parsed.data.bgColor;
+  if (parsed.data.textColor !== undefined) data.textColor = parsed.data.textColor;
+  if (parsed.data.description !== undefined) data.description = parsed.data.description ?? "";
+  if (parsed.data.sortOrder !== undefined) data.sortOrder = parsed.data.sortOrder;
 
-  return ok(classificationStore[index]);
+  const updated = await prisma.classificationLevel.update({
+    where: { id: parsed.data.id },
+    data,
+  });
+
+  return ok(toClassificationLevel(updated));
 }
 
 // ---------------------------------------------------------------------------
@@ -192,18 +248,18 @@ export async function deleteClassification(
     });
   }
 
-  ensureDefaults();
+  await ensureDefaults();
 
-  const index = classificationStore.findIndex((c) => c.id === id);
-  if (index === -1) {
+  const level = await prisma.classificationLevel.findUnique({
+    where: { id },
+  });
+  if (!level) {
     return err({
       code: "NOT_FOUND",
       message: `Classification with ID "${id}" not found`,
       suggestedFix: "Verify the classification ID.",
     });
   }
-
-  const level = classificationStore[index];
 
   // Block deletion of system defaults
   if (level.isSystem) {
@@ -214,8 +270,10 @@ export async function deleteClassification(
     });
   }
 
-  // Block deletion if in use
-  const usageCount = fieldUsageMap.get(level.name) ?? 0;
+  // Block deletion if in use — query field table
+  const usageCount = await prisma.field.count({
+    where: { classification: level.name },
+  });
   if (usageCount > 0) {
     return err({
       code: "CONFLICT",
@@ -224,6 +282,6 @@ export async function deleteClassification(
     });
   }
 
-  classificationStore.splice(index, 1);
+  await prisma.classificationLevel.delete({ where: { id } });
   return ok(undefined);
 }

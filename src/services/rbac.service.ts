@@ -3,8 +3,11 @@
  *
  * Manages user roles, permission checks, and the bootstrap mechanism
  * for the first admin user. All service functions return Result<T>.
+ *
+ * Persistence: Prisma `userRole` table.
  */
 
+import { prisma } from "@/lib/db";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -19,21 +22,38 @@ import {
 } from "@/types/schemas/rbac";
 
 // ---------------------------------------------------------------------------
-// In-memory role store (MVP — skipping Prisma migration per instructions)
+// Test helpers (no-ops — Prisma is mocked in tests)
 // ---------------------------------------------------------------------------
 
-let roleStore: UserRole[] = [];
-let nextId = 1;
-
-/** Reset store — for testing only */
-export function _resetRoleStore(): void {
-  roleStore = [];
-  nextId = 1;
+/** Reset store — no-op, kept for backward compatibility with tests. */
+export async function _resetRoleStore(): Promise<void> {
+  await prisma.userRole.deleteMany();
 }
 
-/** Direct access to store — for testing only */
-export function _getRoleStore(): UserRole[] {
-  return roleStore;
+/** Direct access to store — for testing only. Returns all roles from DB. */
+export async function _getRoleStore(): Promise<UserRole[]> {
+  const rows = await prisma.userRole.findMany();
+  return rows.map(toUserRole);
+}
+
+// ---------------------------------------------------------------------------
+// Prisma row → app UserRole mapper
+// ---------------------------------------------------------------------------
+
+function toUserRole(row: {
+  id: string;
+  userId: string;
+  role: string;
+  domainId: string | null;
+  createdAt: Date;
+}): UserRole {
+  return {
+    id: row.id,
+    userId: row.userId,
+    role: row.role as Role,
+    domainId: row.domainId,
+    createdAt: row.createdAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -44,8 +64,8 @@ export async function getUserRoles(
   userId: string,
   _ctx: ServiceContext
 ): Promise<Result<UserRole[]>> {
-  const roles = roleStore.filter((r) => r.userId === userId);
-  return ok(roles);
+  const rows = await prisma.userRole.findMany({ where: { userId } });
+  return ok(rows.map(toUserRole));
 }
 
 // ---------------------------------------------------------------------------
@@ -96,12 +116,13 @@ export async function assignRole(
   }
 
   // Prevent duplicate role assignments
-  const existing = roleStore.find(
-    (r) =>
-      r.userId === userId &&
-      r.role === role &&
-      r.domainId === (domainId ?? null)
-  );
+  const existing = await prisma.userRole.findFirst({
+    where: {
+      userId,
+      role,
+      domainId: domainId ?? null,
+    },
+  });
   if (existing) {
     return err({
       code: "DUPLICATE",
@@ -110,16 +131,15 @@ export async function assignRole(
     });
   }
 
-  const userRole: UserRole = {
-    id: `role-${nextId++}`,
-    userId,
-    role: role as Role,
-    domainId: domainId ?? null,
-    createdAt: new Date(),
-  };
+  const created = await prisma.userRole.create({
+    data: {
+      userId,
+      role,
+      domainId: domainId ?? null,
+    },
+  });
 
-  roleStore.push(userRole);
-  return ok(userRole);
+  return ok(toUserRole(created));
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +159,8 @@ export async function removeRole(
     });
   }
 
-  const roleIndex = roleStore.findIndex((r) => r.id === id);
-  if (roleIndex === -1) {
+  const roleRow = await prisma.userRole.findUnique({ where: { id } });
+  if (!roleRow) {
     return err({
       code: "NOT_FOUND",
       message: "Role assignment not found",
@@ -148,10 +168,8 @@ export async function removeRole(
     });
   }
 
-  const role = roleStore[roleIndex];
-
   // Safety: admin cannot remove their own Admin role
-  if (role.role === "ADMIN" && role.userId === ctx.userId) {
+  if (roleRow.role === "ADMIN" && roleRow.userId === ctx.userId) {
     return err({
       code: "FORBIDDEN",
       message: "Cannot remove your own admin role",
@@ -160,8 +178,10 @@ export async function removeRole(
   }
 
   // Safety: ensure at least one Admin remains
-  if (role.role === "ADMIN") {
-    const adminCount = roleStore.filter((r) => r.role === "ADMIN").length;
+  if (roleRow.role === "ADMIN") {
+    const adminCount = await prisma.userRole.count({
+      where: { role: "ADMIN" },
+    });
     if (adminCount <= 1) {
       return err({
         code: "FORBIDDEN",
@@ -171,7 +191,7 @@ export async function removeRole(
     }
   }
 
-  roleStore.splice(roleIndex, 1);
+  await prisma.userRole.delete({ where: { id } });
   return ok(undefined);
 }
 
@@ -184,7 +204,9 @@ export async function getEffectiveRole(
   domainId: string | null,
   _ctx: ServiceContext
 ): Promise<Result<Role | null>> {
-  const userRoles = roleStore.filter((r) => r.userId === userId);
+  const userRoles = await prisma.userRole.findMany({
+    where: { userId },
+  });
 
   if (userRoles.length === 0) {
     return ok(null);
@@ -206,10 +228,10 @@ export async function getEffectiveRole(
   let maxRole: Role | null = null;
 
   for (const r of applicable) {
-    const idx = ROLE_HIERARCHY.indexOf(r.role);
+    const idx = ROLE_HIERARCHY.indexOf(r.role as Role);
     if (idx > maxIndex) {
       maxIndex = idx;
-      maxRole = r.role;
+      maxRole = r.role as Role;
     }
   }
 
@@ -244,21 +266,22 @@ export async function hasPermission(
 
 export async function bootstrapFirstAdmin(
   userId: string,
-  ctx: ServiceContext
+  _ctx: ServiceContext
 ): Promise<Result<void>> {
-  const hasAdmin = roleStore.some((r) => r.role === "ADMIN");
-  if (hasAdmin) {
+  const adminCount = await prisma.userRole.count({
+    where: { role: "ADMIN" },
+  });
+  if (adminCount > 0) {
     return ok(undefined);
   }
 
-  const adminRole: UserRole = {
-    id: `role-${nextId++}`,
-    userId,
-    role: "ADMIN",
-    domainId: null,
-    createdAt: new Date(),
-  };
+  await prisma.userRole.create({
+    data: {
+      userId,
+      role: "ADMIN",
+      domainId: null,
+    },
+  });
 
-  roleStore.push(adminRole);
   return ok(undefined);
 }

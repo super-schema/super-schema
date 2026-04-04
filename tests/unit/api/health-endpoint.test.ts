@@ -1,4 +1,19 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Mock Prisma before importing health service
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    $queryRaw: vi.fn().mockResolvedValue([{ result: 1 }]),
+    entity: { count: vi.fn().mockResolvedValue(0) },
+    field: { count: vi.fn().mockResolvedValue(0) },
+    domain: { count: vi.fn().mockResolvedValue(0) },
+    user: { count: vi.fn().mockResolvedValue(0) },
+    emissionTargetStatus: { count: vi.fn().mockResolvedValue(0) },
+    auditLog: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
+    governanceRequest: { count: vi.fn().mockResolvedValue(0) },
+  },
+}));
+
 import {
   _resetHealthStore,
   _setDbChecker,

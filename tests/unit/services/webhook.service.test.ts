@@ -1,4 +1,135 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory stores for the Prisma mock
+// ---------------------------------------------------------------------------
+let endpoints: Array<{
+  id: string;
+  url: string;
+  events: string[];
+  secret: string;
+  active: boolean;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+let deliveries: Array<{
+  id: string;
+  endpointId: string;
+  event: string;
+  payload: unknown;
+  statusCode: number | null;
+  error: string | null;
+  attempt: number;
+  nextRetryAt: Date | null;
+  deliveredAt: Date;
+}> = [];
+let epCounter = 0;
+let dlCounter = 0;
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    webhookEndpoint: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: `whep_${++epCounter}_${Date.now()}`,
+          url: args.data.url as string,
+          events: args.data.events as string[],
+          secret: args.data.secret as string,
+          active: args.data.active as boolean,
+          createdBy: args.data.createdBy as string,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        endpoints.push(row);
+        return row;
+      }),
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
+        let result = [...endpoints];
+        if (args?.where) {
+          if (args.where.active !== undefined) {
+            result = result.filter((e) => e.active === args.where!.active);
+          }
+          if (args.where.events && typeof args.where.events === "object" && "hasSome" in (args.where.events as Record<string, unknown>)) {
+            const events = ((args.where.events as { hasSome: string[] }).hasSome);
+            result = result.filter((e) => e.events.some((ev) => events.includes(ev)));
+          }
+        }
+        return result;
+      }),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => {
+        return endpoints.find((e) => e.id === args.where.id) ?? null;
+      }),
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const ep = endpoints.find((e) => e.id === args.where.id);
+        if (ep) {
+          Object.assign(ep, args.data, { updatedAt: new Date() });
+        }
+        return ep;
+      }),
+      delete: vi.fn(async (args: { where: { id: string } }) => {
+        const idx = endpoints.findIndex((e) => e.id === args.where.id);
+        if (idx !== -1) endpoints.splice(idx, 1);
+      }),
+      deleteMany: vi.fn(async () => {
+        endpoints = [];
+        epCounter = 0;
+      }),
+    },
+    webhookDelivery: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: `whdl_${++dlCounter}_${Date.now()}`,
+          endpointId: args.data.endpointId as string,
+          event: args.data.event as string,
+          payload: args.data.payload,
+          statusCode: (args.data.statusCode as number | null) ?? null,
+          error: (args.data.error as string | null) ?? null,
+          attempt: (args.data.attempt as number) ?? 1,
+          nextRetryAt: (args.data.nextRetryAt as Date | null) ?? null,
+          deliveredAt: new Date(),
+        };
+        deliveries.push(row);
+        return row;
+      }),
+      findMany: vi.fn(async (args?: { where?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
+        let result = [...deliveries];
+        if (args?.where) {
+          if (args.where.endpointId) {
+            result = result.filter((d) => d.endpointId === args.where!.endpointId);
+          }
+          if (args.where.nextRetryAt && typeof args.where.nextRetryAt === "object" && "lte" in (args.where.nextRetryAt as Record<string, unknown>)) {
+            const threshold = (args.where.nextRetryAt as { lte: Date }).lte;
+            result = result.filter((d) => d.nextRetryAt !== null && d.nextRetryAt <= threshold);
+          }
+          if (args.where.attempt && typeof args.where.attempt === "object" && "lt" in (args.where.attempt as Record<string, unknown>)) {
+            const maxAttempt = (args.where.attempt as { lt: number }).lt;
+            result = result.filter((d) => d.attempt < maxAttempt);
+          }
+          if (args.where.error && typeof args.where.error === "object" && "not" in (args.where.error as Record<string, unknown>)) {
+            result = result.filter((d) => d.error !== null);
+          }
+        }
+        if (args?.orderBy?.deliveredAt === "desc") {
+          result.sort((a, b) => b.deliveredAt.getTime() - a.deliveredAt.getTime());
+        }
+        return result;
+      }),
+      update: vi.fn(async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+        const d = deliveries.find((d) => d.id === args.where.id);
+        if (d) {
+          Object.assign(d, args.data);
+        }
+        return d;
+      }),
+      deleteMany: vi.fn(async () => {
+        deliveries = [];
+        dlCounter = 0;
+      }),
+    },
+  },
+}));
+
 import {
   createEndpoint,
   updateEndpoint,
@@ -36,8 +167,8 @@ const makeEndpointInput = (
 });
 
 describe("Webhook Service", () => {
-  beforeEach(() => {
-    _resetStore();
+  beforeEach(async () => {
+    await _resetStore();
     vi.restoreAllMocks();
   });
 
@@ -143,8 +274,8 @@ describe("Webhook Service", () => {
       const result = await deleteEndpoint(createResult.data.id, adminCtx);
       expect(result.success).toBe(true);
 
-      const endpoints = _getEndpoints();
-      expect(endpoints).toHaveLength(0);
+      const eps = await _getEndpoints();
+      expect(eps).toHaveLength(0);
     });
 
     it("rejects non-Admin users", async () => {
@@ -363,7 +494,7 @@ describe("Webhook Service", () => {
         data: {},
       });
 
-      const allDeliveries = _getDeliveries();
+      const allDeliveries = await _getDeliveries();
       expect(allDeliveries.length).toBeGreaterThanOrEqual(1);
       const failed = allDeliveries.find((d) => d.error !== null);
       expect(failed).toBeDefined();
@@ -389,7 +520,7 @@ describe("Webhook Service", () => {
         data: {},
       });
 
-      const allDeliveries = _getDeliveries();
+      const allDeliveries = await _getDeliveries();
       const failed = allDeliveries.find(
         (d) => d.error !== null && d.attempt === 1
       );
@@ -408,8 +539,6 @@ describe("Webhook Service", () => {
     });
 
     it("max 3 retries (4 total attempts) — no retry scheduled after 4th", async () => {
-      // This tests the scheduleRetry logic indirectly
-      // After attempt 4, nextRetryAt should be null
       await createEndpoint(
         makeEndpointInput({ events: ["governance.request.created"] }),
         adminCtx
@@ -426,7 +555,7 @@ describe("Webhook Service", () => {
         data: {},
       });
 
-      const allDeliveries = _getDeliveries();
+      const allDeliveries = await _getDeliveries();
       const attempt1 = allDeliveries.find((d) => d.attempt === 1);
       expect(attempt1).toBeDefined();
       expect(attempt1!.nextRetryAt).not.toBeNull();
@@ -472,7 +601,7 @@ describe("Webhook Service", () => {
         data: {},
       });
 
-      const allDeliveries = _getDeliveries();
+      const allDeliveries = await _getDeliveries();
       const failed = allDeliveries.find((d) => d.error !== null);
       expect(failed).toBeDefined();
       expect(failed!.error).toContain("aborted");

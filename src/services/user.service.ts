@@ -59,7 +59,7 @@ export async function getUsers(
     });
   }
 
-  const roles = _getRoleStore();
+  const roles = await _getRoleStore();
   const usersWithRoles: UserWithRoles[] = userStore.map((u) => ({
     id: u.id,
     name: u.name,
@@ -104,7 +104,7 @@ export async function getUserById(
     });
   }
 
-  const roles = _getRoleStore();
+  const roles = await _getRoleStore();
   return ok({
     id: user.id,
     name: user.name,

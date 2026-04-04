@@ -1,4 +1,91 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// In-memory stores to simulate Prisma behavior
+// ---------------------------------------------------------------------------
+
+let overrideRows: Array<{
+  id: string;
+  sourceType: string;
+  targetFormat: string;
+  mappedType: string;
+  isLossy: boolean;
+  lossDescription: string | null;
+  justification: string | null;
+  approvedBy: string | null;
+  entityId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}> = [];
+
+let nextId = 1;
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    typeMappingOverride: {
+      findMany: vi.fn().mockImplementation(async (args?: { where?: { targetFormat?: string; OR?: Array<{ entityId: string | null }> } }) => {
+        if (!args?.where) return overrideRows;
+        if (args.where.targetFormat) {
+          return overrideRows.filter((r) => r.targetFormat === args.where!.targetFormat);
+        }
+        if (args.where.OR) {
+          return overrideRows.filter((r) =>
+            args.where!.OR!.some((cond) => {
+              if (cond.entityId === null) return r.entityId === null;
+              return r.entityId === cond.entityId;
+            })
+          );
+        }
+        return overrideRows;
+      }),
+      upsert: vi.fn().mockImplementation(async (args: {
+        where: { sourceType_targetFormat_entityId: { sourceType: string; targetFormat: string; entityId: string | null } };
+        create: Record<string, unknown>;
+        update: Record<string, unknown>;
+      }) => {
+        const { sourceType, targetFormat, entityId } = args.where.sourceType_targetFormat_entityId;
+        const existingIndex = overrideRows.findIndex(
+          (r) => r.sourceType === sourceType && r.targetFormat === targetFormat && r.entityId === entityId
+        );
+        if (existingIndex >= 0) {
+          overrideRows[existingIndex] = {
+            ...overrideRows[existingIndex],
+            ...(args.update as Record<string, unknown>),
+            updatedAt: new Date(),
+          } as typeof overrideRows[0];
+          return overrideRows[existingIndex];
+        }
+        const row = {
+          id: `override-${nextId++}`,
+          ...(args.create as Record<string, unknown>),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as typeof overrideRows[0];
+        overrideRows.push(row);
+        return row;
+      }),
+      delete: vi.fn().mockImplementation(async (args: {
+        where: { sourceType_targetFormat_entityId: { sourceType: string; targetFormat: string; entityId: string | null } };
+      }) => {
+        const { sourceType, targetFormat, entityId } = args.where.sourceType_targetFormat_entityId;
+        const index = overrideRows.findIndex(
+          (r) => r.sourceType === sourceType && r.targetFormat === targetFormat && r.entityId === entityId
+        );
+        if (index === -1) {
+          throw new Error("Record not found");
+        }
+        const deleted = overrideRows[index];
+        overrideRows.splice(index, 1);
+        return deleted;
+      }),
+    },
+    lossyMappingAck: {
+      upsert: vi.fn().mockResolvedValue({}),
+      count: vi.fn().mockResolvedValue(0),
+    },
+  },
+}));
+
 import {
   getMappingsForTarget,
   getAllMappings,
@@ -6,6 +93,7 @@ import {
   deleteOverride,
   _resetOverrideStore,
 } from "@/services/type-mapping.service";
+import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
 
 // ---------------------------------------------------------------------------
@@ -42,6 +130,9 @@ const viewerCtx: ServiceContext = {
 
 describe("Type Mapping Service", () => {
   beforeEach(() => {
+    overrideRows = [];
+    nextId = 1;
+    vi.clearAllMocks();
     _resetOverrideStore();
   });
 
@@ -92,7 +183,6 @@ describe("Type Mapping Service", () => {
     });
 
     it("includes overrides alongside defaults", async () => {
-      // Create an override first (using valid BigQuery type)
       await createOverride(
         {
           sourceType: "string",
@@ -237,7 +327,6 @@ describe("Type Mapping Service", () => {
     });
 
     it("replaces existing override for same source+target+entity", async () => {
-      // Create first override
       await createOverride(
         {
           sourceType: "string",
@@ -248,7 +337,6 @@ describe("Type Mapping Service", () => {
         adminCtx
       );
 
-      // Create second override for same combination
       await createOverride(
         {
           sourceType: "string",
@@ -259,7 +347,6 @@ describe("Type Mapping Service", () => {
         adminCtx
       );
 
-      // Should only have one override
       const all = await getMappingsForTarget("bigquery", adminCtx);
       if (all.success) {
         const overrides = all.data.filter(
@@ -310,7 +397,6 @@ describe("Type Mapping Service", () => {
         expect(result.data.deleted).toBe(true);
       }
 
-      // Verify it's gone
       const mappings = await getMappingsForTarget("bigquery", adminCtx);
       if (mappings.success) {
         const overrides = mappings.data.filter(

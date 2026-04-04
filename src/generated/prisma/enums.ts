@@ -17,3 +17,88 @@ export const EntityStatus = {
 } as const
 
 export type EntityStatus = (typeof EntityStatus)[keyof typeof EntityStatus]
+
+
+export const GitAuthMethod = {
+  SSH_KEY: 'SSH_KEY',
+  PERSONAL_ACCESS_TOKEN: 'PERSONAL_ACCESS_TOKEN',
+  GITHUB_APP: 'GITHUB_APP'
+} as const
+
+export type GitAuthMethod = (typeof GitAuthMethod)[keyof typeof GitAuthMethod]
+
+
+export const GitSyncStatus = {
+  SUCCESS: 'SUCCESS',
+  FAILED: 'FAILED',
+  PENDING: 'PENDING'
+} as const
+
+export type GitSyncStatus = (typeof GitSyncStatus)[keyof typeof GitSyncStatus]
+
+
+export const PrReviewMode = {
+  ALWAYS: 'ALWAYS',
+  BREAKING_ONLY: 'BREAKING_ONLY',
+  NEVER: 'NEVER'
+} as const
+
+export type PrReviewMode = (typeof PrReviewMode)[keyof typeof PrReviewMode]
+
+
+export const GitPrStatus = {
+  OPEN: 'OPEN',
+  MERGED: 'MERGED',
+  CLOSED: 'CLOSED'
+} as const
+
+export type GitPrStatus = (typeof GitPrStatus)[keyof typeof GitPrStatus]
+
+
+export const NotificationType = {
+  APPROVAL_REQUEST: 'APPROVAL_REQUEST',
+  APPROVAL_DECISION: 'APPROVAL_DECISION',
+  CHANGE_COMPLETE: 'CHANGE_COMPLETE',
+  DRIFT_ALERT: 'DRIFT_ALERT',
+  ANNOTATION_TAG: 'ANNOTATION_TAG',
+  ANNOTATION_REPLY: 'ANNOTATION_REPLY',
+  COMPLIANCE_GAP: 'COMPLIANCE_GAP'
+} as const
+
+export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType]
+
+
+export const GovernanceStatus = {
+  PENDING: 'PENDING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+  AUTO_APPROVED: 'AUTO_APPROVED'
+} as const
+
+export type GovernanceStatus = (typeof GovernanceStatus)[keyof typeof GovernanceStatus]
+
+
+export const GovernanceDecision = {
+  APPROVE: 'APPROVE',
+  REJECT: 'REJECT'
+} as const
+
+export type GovernanceDecision = (typeof GovernanceDecision)[keyof typeof GovernanceDecision]
+
+
+export const EmissionStatus = {
+  CURRENT: 'CURRENT',
+  STAGED: 'STAGED',
+  BEHIND: 'BEHIND'
+} as const
+
+export type EmissionStatus = (typeof EmissionStatus)[keyof typeof EmissionStatus]
+
+
+export const DeploymentStatus = {
+  DEPLOYED: 'DEPLOYED',
+  STAGED: 'STAGED',
+  UNKNOWN: 'UNKNOWN'
+} as const
+
+export type DeploymentStatus = (typeof DeploymentStatus)[keyof typeof DeploymentStatus]
