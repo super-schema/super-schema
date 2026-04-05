@@ -125,13 +125,6 @@ export const GovernanceSchema = z
         params: z.record(z.string(), z.unknown()),
       })
     ),
-    lineage: z
-      .object({
-        source: z.string().nullable(),
-        upstream: z.array(z.string()),
-        downstream: z.array(z.string()),
-      })
-      .partial(),
     operationalHints: z
       .object({
         partition: z.boolean(),

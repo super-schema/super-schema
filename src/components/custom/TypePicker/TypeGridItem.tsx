@@ -7,6 +7,7 @@ interface TypeGridItemProps {
   iconColor: string;
   label: string;
   description: string;
+  example?: string;
   isSelected: boolean;
   onClick: () => void;
 }
@@ -16,6 +17,7 @@ export function TypeGridItem({
   iconColor,
   label,
   description,
+  example,
   isSelected,
   onClick,
 }: TypeGridItemProps) {
@@ -35,6 +37,11 @@ export function TypeGridItem({
       <span className="text-[9px] text-muted-foreground/60 leading-tight line-clamp-2">
         {description}
       </span>
+      {example && (
+        <span className="text-[8px] text-muted-foreground/40 leading-tight truncate w-full font-mono">
+          {example}
+        </span>
+      )}
     </button>
   );
 }

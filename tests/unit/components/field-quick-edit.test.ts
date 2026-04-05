@@ -107,7 +107,7 @@ describe("FieldQuickEditPanel", () => {
     expect(screen.getByText("customer_email")).toBeDefined();
 
     // Should have accordion section labels
-    expect(screen.getByText("Identity")).toBeDefined();
+    expect(screen.getByText("Semantics")).toBeDefined();
     expect(screen.getByText("Validation")).toBeDefined();
     expect(screen.getByText("Documentation")).toBeDefined();
     expect(screen.getByText("Governance")).toBeDefined();

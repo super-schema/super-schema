@@ -35,7 +35,7 @@ interface FieldQuickEditPanelProps {
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
 }
 
-const SECTION_LABELS = ["Identity", "Validation", "Documentation", "Governance"] as const;
+const SECTION_LABELS = ["Semantics", "Validation", "Documentation", "Governance"] as const;
 
 export function FieldQuickEditPanel({
   field,
@@ -375,12 +375,17 @@ export function FieldQuickEditPanel({
         {/* Save indicator */}
         <div className="flex items-center justify-between">
           <SaveIndicator status={saveStatus} />
+        </div>
+        <div>
           <Link
             href={`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${field.id}`}
             className="text-caption text-primary hover:underline"
           >
             Open Full Field Studio &rarr;
           </Link>
+          <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+            Wire Format, Visibility, Versioning, Extensions
+          </p>
         </div>
       </div>
     </div>

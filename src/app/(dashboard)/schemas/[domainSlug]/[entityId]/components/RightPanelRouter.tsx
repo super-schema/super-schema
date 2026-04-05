@@ -5,7 +5,7 @@ import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
 import { TypeSpecPreview } from "@/components/custom/TypeSpecPreview";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
 
-type RightPanelTab = "quick-edit" | "typespec-preview" | "emission-preview";
+type RightPanelTab = "quick-edit" | "typespec-preview";
 
 interface FieldData {
   id: string;
@@ -38,7 +38,6 @@ interface RightPanelRouterProps {
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: "quick-edit", label: "Quick Edit" },
   { id: "typespec-preview", label: "TypeSpec" },
-  { id: "emission-preview", label: "Emission" },
 ];
 
 export function RightPanelRouter({
@@ -103,14 +102,6 @@ export function RightPanelRouter({
           entityId={entityId}
           trigger={typeSpecTrigger}
         />
-      );
-    } else if (rightPanelTab === "emission-preview") {
-      tabContent = (
-        <div className="p-space-4">
-          <p className="text-body-small text-muted-foreground">
-            Click &ldquo;Emit&rdquo; in the toolbar to preview emission output here.
-          </p>
-        </div>
       );
     }
 

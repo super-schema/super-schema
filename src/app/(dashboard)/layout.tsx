@@ -42,8 +42,8 @@ export default function DashboardLayout({
 
   const rightPanel = useResizablePanel({
     minWidth: 320,
-    maxWidth: 480,
-    defaultWidth: responsive.rightPanel || 320,
+    maxWidth: 800,
+    defaultWidth: responsive.rightPanel || 400,
     panelId: "right-panel",
     side: "right",
   });

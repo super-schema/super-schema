@@ -49,6 +49,7 @@ export function TypeGrid({ value, onSelect, excludeComplex }: TypeGridProps) {
                   iconColor={iconColor}
                   label={type.label}
                   description={type.description}
+                  example={type.example}
                   isSelected={value === type.id}
                   onClick={() => onSelect(type.id)}
                 />

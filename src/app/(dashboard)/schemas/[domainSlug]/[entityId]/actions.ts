@@ -62,14 +62,30 @@ export async function addFieldAction(
     }
   }
 
+  // Auto-assign field number if not provided
+  let assignedFieldNumber = opts?.fieldNumber ?? null;
+  if (assignedFieldNumber == null) {
+    const maxFieldNumber = await prisma.field.findFirst({
+      where: { entityId, fieldNumber: { not: null } },
+      orderBy: { fieldNumber: "desc" },
+      select: { fieldNumber: true },
+    });
+    if (maxFieldNumber?.fieldNumber != null) {
+      assignedFieldNumber = maxFieldNumber.fieldNumber + 1;
+    } else {
+      // Fall back to sortOrder + 1 if no field numbers exist
+      assignedFieldNumber = (maxField ? maxField.sortOrder + 1 : 0) + 1;
+    }
+  }
+
   // Validate field number uniqueness
-  if (opts?.fieldNumber != null) {
+  if (assignedFieldNumber != null) {
     const conflict = await prisma.field.findFirst({
-      where: { entityId, fieldNumber: opts.fieldNumber },
+      where: { entityId, fieldNumber: assignedFieldNumber },
       select: { name: true },
     });
     if (conflict) {
-      return { error: `Field number ${opts.fieldNumber} is already assigned to field '${conflict.name}'` };
+      return { error: `Field number ${assignedFieldNumber} is already assigned to field '${conflict.name}'` };
     }
   }
 
@@ -92,7 +108,7 @@ export async function addFieldAction(
             ...(opts?.isKey != null && { isKey: opts.isKey }),
             ...(opts?.precision !== undefined && { precision: opts.precision }),
             ...(opts?.scale !== undefined && { scale: opts.scale }),
-            ...(opts?.fieldNumber !== undefined && { fieldNumber: opts.fieldNumber }),
+            fieldNumber: assignedFieldNumber,
             ...(opts?.aliases && { aliases: opts.aliases }),
             ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
           },

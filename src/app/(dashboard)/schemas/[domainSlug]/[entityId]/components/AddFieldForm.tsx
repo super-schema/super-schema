@@ -103,12 +103,28 @@ export function AddFieldForm({
   const [newReferenceEntityId, setNewReferenceEntityId] = useState("");
   const [newCardinality, setNewCardinality] = useState<RelationshipCardinality>("one-to-many");
   const [newFieldNumber, setNewFieldNumber] = useState<string>("");
+  const [fieldNumberEditing, setFieldNumberEditing] = useState(false);
+  const [newFormat, setNewFormat] = useState<string>("");
+  const [newSecret, setNewSecret] = useState(false);
   const [aliasInput, setAliasInput] = useState("");
 
   // Auto-suggestion state
   const [typeSuggestion, setTypeSuggestion] = useState<TypeSuggestion | null>(null);
   const [classificationSuggestion, setClassificationSuggestion] = useState<ClassificationSuggestion | null>(null);
   const [classificationDismissed, setClassificationDismissed] = useState(false);
+
+  // Compute auto-assigned field number
+  const autoFieldNumber = (() => {
+    const existingNumbers = fields
+      .map((f) => f.fieldNumber)
+      .filter((n): n is number => n != null);
+    if (existingNumbers.length > 0) {
+      return Math.max(...existingNumbers) + 1;
+    }
+    // Fallback: sortOrder-based
+    const maxSort = fields.length > 0 ? Math.max(...fields.map((f) => f.sortOrder)) : -1;
+    return maxSort + 2; // +1 for next sortOrder, +1 for field number starting at 1
+  })();
 
   // Smart defaults from domain policy
   const defaultClassification = (domainPolicy?.defaultClassification as string) ?? null;
@@ -243,6 +259,22 @@ export function AddFieldForm({
         decorators.cardinality = newCardinality;
       }
 
+      // Add @format and @secret to typespec identity decorators if set
+      if (newFormat || newSecret) {
+        const identity: Record<string, unknown> = {};
+        if (newFormat) identity.format = newFormat;
+        if (newSecret) identity.secret = true;
+        decorators.typespec = {
+          ...((decorators.typespec as Record<string, unknown>) ?? {}),
+          identity,
+        };
+      }
+
+      // Use auto-assigned field number if not manually overridden
+      const effectiveFieldNumber = Number.isFinite(parsedFieldNumber)
+        ? Math.floor(parsedFieldNumber)
+        : autoFieldNumber;
+
       await onAddField(newName.trim(), newType, {
         description: newDescription.trim() || undefined,
         classification: newClassification,
@@ -250,7 +282,7 @@ export function AddFieldForm({
         isKey: newIsKey,
         precision: Number.isFinite(parsedPrecision) ? Math.floor(parsedPrecision) : null,
         scale: Number.isFinite(parsedScale) ? Math.floor(parsedScale) : null,
-        fieldNumber: Number.isFinite(parsedFieldNumber) ? Math.floor(parsedFieldNumber) : null,
+        fieldNumber: effectiveFieldNumber,
         aliases: aliases.length > 0 ? aliases : undefined,
         decorators: Object.keys(decorators).length > 0 ? decorators : undefined,
       });
@@ -484,9 +516,40 @@ export function AddFieldForm({
         </div>
       </div>
 
-      {/* Row 4: Field Number */}
+      {/* Row 4: @format + @secret */}
+      <div className="flex items-center gap-space-4 flex-wrap">
+        <div className="w-[160px]">
+          <label className="text-caption text-muted-foreground mb-1 block">@format</label>
+          <select
+            value={newFormat}
+            onChange={(e) => setNewFormat(e.target.value)}
+            className="h-8 w-full rounded border border-border bg-background px-2 text-body-small text-foreground"
+          >
+            <option value="">None</option>
+            <option value="uuid">uuid</option>
+            <option value="email">email</option>
+            <option value="uri">uri</option>
+            <option value="date-time">date-time</option>
+            <option value="password">password</option>
+            <option value="ip-address">ip-address</option>
+            <option value="ip-v4-address">ip-v4-address</option>
+            <option value="ip-v6-address">ip-v6-address</option>
+          </select>
+        </div>
+        <label className="flex items-center gap-1.5 text-caption text-muted-foreground pt-5">
+          <input
+            type="checkbox"
+            checked={newSecret}
+            onChange={(e) => setNewSecret(e.target.checked)}
+            className="accent-primary"
+          />
+          @secret
+        </label>
+      </div>
+
+      {/* Row 5: Field Number (auto-assigned) */}
       <div className="flex items-center gap-space-3">
-        <div className="w-[120px]">
+        <div className="w-[200px]">
           <label className="text-caption text-muted-foreground mb-1 flex items-center gap-1">
             Field Number
             <span
@@ -496,13 +559,33 @@ export function AddFieldForm({
               <Info className="w-3 h-3 inline" />
             </span>
           </label>
-          <Input
-            type="number"
-            value={newFieldNumber}
-            onChange={(e) => setNewFieldNumber(e.target.value)}
-            className="h-8 text-body-small"
-            placeholder="--"
-          />
+          {fieldNumberEditing ? (
+            <Input
+              type="number"
+              value={newFieldNumber}
+              onChange={(e) => setNewFieldNumber(e.target.value)}
+              className="h-8 text-body-small"
+              placeholder={String(autoFieldNumber)}
+              autoFocus
+              onBlur={() => {
+                if (!newFieldNumber.trim()) setFieldNumberEditing(false);
+              }}
+            />
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-body-small font-mono text-foreground bg-muted px-2 py-1 rounded border border-border">
+                {newFieldNumber ? newFieldNumber : autoFieldNumber}
+              </span>
+              <span className="text-[10px] text-muted-foreground/50">auto</span>
+              <button
+                type="button"
+                onClick={() => setFieldNumberEditing(true)}
+                className="text-[10px] text-primary hover:underline"
+              >
+                edit
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -568,6 +651,14 @@ export function AddFieldForm({
           )}
         </div>
       )}
+
+      {/* Field Studio note */}
+      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 bg-muted/30 px-3 py-1.5 rounded-md">
+        <Info className="w-3.5 h-3.5 shrink-0" />
+        <span>
+          After creating, open <strong>Field Studio</strong> for full editing: validation, wire format, visibility, documentation, versioning, extensions, and governance.
+        </span>
+      </div>
 
       {/* Actions */}
       <div className="flex items-center gap-space-2 pt-space-1">

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback } from "react";
+import { Loader2, Zap, Save } from "lucide-react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
 import {
   addFieldAction,
@@ -16,10 +18,8 @@ import {
   compareVersionsAction,
   getChangeHistoryAction,
 } from "./actions";
-import { VersionHistoryPanel } from "@/components/custom/VersionHistoryPanel";
 import { DiffViewer } from "@/components/custom/DiffViewer";
 import type { VersionSnapshot, DiffResult } from "@/services/version-history/version.types";
-import { EmissionPreviewPanel } from "@/components/custom/EmissionPreviewPanel";
 import type { OverrideMappingInfo } from "@/components/custom/EmissionPreviewPanel";
 import type { EmissionResult } from "@/lib/emission/emission.types";
 import {
@@ -38,8 +38,8 @@ import { EntityToolbar } from "./components/EntityToolbar";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
-type ViewTab = "editor" | "history";
-type RightPanelTab = "quick-edit" | "typespec-preview" | "emission-preview";
+type ViewTab = "editor" | "emit" | "versions";
+type RightPanelTab = "quick-edit" | "typespec-preview";
 
 interface FieldData {
   id: string;
@@ -91,11 +91,9 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
 
   // Emission state
   const [emissionResult, setEmissionResult] = useState<EmissionResult | null>(null);
-  const [emissionPanelOpen, setEmissionPanelOpen] = useState(false);
   const [isEmitting, setIsEmitting] = useState(false);
 
   // Version history state
-  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
   const [isCreatingVersion, setIsCreatingVersion] = useState(false);
 
@@ -154,7 +152,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       }
       if (response.result) {
         setEmissionResult(response.result);
-        setEmissionPanelOpen(true);
         const { summary } = response.result;
         if (summary.invalidCount === 0 && summary.warningCount === 0) {
           toast.success(`Emitted to ${summary.totalTargets} targets — all valid`);
@@ -200,7 +197,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
     if (response.versions) {
       setVersionHistory(response.versions as VersionSnapshot[]);
     }
-    setVersionHistoryOpen(true);
   }, [entity.id]);
 
   const handleCompare = useCallback(async (versionA: number, versionB: number) => {
@@ -212,7 +208,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
     if (response.diff) {
       setDiffResult(response.diff as DiffResult);
       setShowDiff(true);
-      setVersionHistoryOpen(false);
     }
   }, [entity.id]);
 
@@ -318,15 +313,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         isPending={isPending}
         statusError={statusError}
         toolbar={
-          <EntityToolbar
-            onHistory={handleOpenHistory}
-            onCreateVersion={handleCreateVersion}
-            onEmit={handleEmit}
-            isEmitting={isEmitting}
-            isCreatingVersion={isCreatingVersion}
-            readOnly={readOnly_}
-            hasFields={fields.length > 0}
-          />
+          <EntityToolbar />
         }
       />
 
@@ -357,21 +344,32 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           Editor
         </button>
         <button
-          onClick={() => { setActiveTab("history"); setShowDiff(false); setDiffResult(null); }}
+          onClick={() => { setActiveTab("emit"); }}
           className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "history"
+            activeTab === "emit"
               ? "border-foreground text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
-          data-testid="tab-history"
+          data-testid="tab-emit"
         >
-          Change History
+          Emit
+        </button>
+        <button
+          onClick={() => { setActiveTab("versions"); handleOpenHistory(); }}
+          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === "versions"
+              ? "border-foreground text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-versions"
+        >
+          Versions
         </button>
       </div>
 
       {/* Center Panel */}
       <div className="mb-space-8">
-        {activeTab === "editor" ? (
+        {activeTab === "editor" && (
           showDiff && diffResult ? (
             <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
           ) : (
@@ -407,27 +405,190 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
               />
             </>
           )
-        ) : (
-          <ChangeHistoryView
-            entityId={entity.id}
-            fetchHistory={fetchChangeHistory}
-            onViewDiff={handleHistoryViewDiff}
-          />
+        )}
+
+        {activeTab === "emit" && (
+          <div className="space-y-space-6">
+            <h2 className="text-heading-2 text-foreground">Emission Targets</h2>
+
+            {/* Emitter toggles and generate */}
+            <div className="space-y-space-3">
+              {["BigQuery", "Avro", "OpenAPI"].map((target) => (
+                <div
+                  key={target}
+                  className="flex items-center justify-between rounded-lg border border-border/50 px-space-4 py-space-3"
+                >
+                  <div className="flex items-center gap-space-3">
+                    <span className="text-body-small font-medium text-foreground">
+                      {target}
+                    </span>
+                    {emissionResult && (
+                      <span className="text-caption text-muted-foreground">
+                        v{entity.version}
+                      </span>
+                    )}
+                  </div>
+                  <label className="flex items-center gap-2 text-caption text-muted-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      defaultChecked
+                      className="accent-primary"
+                    />
+                    Enabled
+                  </label>
+                </div>
+              ))}
+            </div>
+
+            <Button
+              onClick={handleEmit}
+              disabled={isEmitting || !fields.length || readOnly_}
+              className="gap-1.5"
+            >
+              {isEmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4" />
+                  Generate
+                </>
+              )}
+            </Button>
+
+            {/* Emission output */}
+            {emissionResult && (
+              <div className="space-y-space-4">
+                <div className="flex items-center gap-space-3">
+                  <h3 className="text-heading-3 text-foreground">Generated Output</h3>
+                  <span className="text-caption text-muted-foreground">
+                    v{entity.version} &middot; {emissionResult.summary.totalTargets} target{emissionResult.summary.totalTargets !== 1 ? "s" : ""}
+                  </span>
+                  {emissionResult.summary.invalidCount > 0 && (
+                    <span className="text-caption text-destructive">
+                      {emissionResult.summary.invalidCount} invalid
+                    </span>
+                  )}
+                  {emissionResult.summary.warningCount > 0 && (
+                    <span className="text-caption text-warning">
+                      {emissionResult.summary.warningCount} warning{emissionResult.summary.warningCount !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+
+                {Object.values(emissionResult.targets).map((target) => (
+                  <div
+                    key={target.targetFormat}
+                    className="rounded-lg border border-border/50 overflow-hidden"
+                  >
+                    <div className="flex items-center justify-between px-space-4 py-space-2 bg-muted/30 border-b border-border/50">
+                      <span className="text-body-small font-medium text-foreground">
+                        {target.name}
+                      </span>
+                      <span
+                        className={`text-caption ${
+                          target.validationStatus === "VALID"
+                            ? "text-success"
+                            : target.validationStatus === "WARNING"
+                              ? "text-warning"
+                              : "text-destructive"
+                        }`}
+                      >
+                        {target.validationStatus}
+                      </span>
+                    </div>
+                    <pre className="p-space-4 text-caption font-mono text-foreground overflow-x-auto bg-background max-h-80 overflow-y-auto">
+                      <code>{target.output}</code>
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "versions" && (
+          <div className="space-y-space-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-heading-2 text-foreground">Version History</h2>
+              {!readOnly_ && (
+                <Button
+                  variant="outline"
+                  onClick={handleCreateVersion}
+                  disabled={isCreatingVersion}
+                  className="gap-1.5"
+                >
+                  {isCreatingVersion ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      Create Version
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+
+            {/* Diff viewer */}
+            {showDiff && diffResult && (
+              <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
+            )}
+
+            {/* Version list */}
+            {versionHistory.length > 0 ? (
+              <div className="space-y-space-2">
+                {versionHistory.map((v, idx) => (
+                  <div
+                    key={v.version}
+                    className="flex items-center justify-between rounded-lg border border-border/50 px-space-4 py-space-3"
+                  >
+                    <div>
+                      <span className="text-body-small font-medium text-foreground">
+                        v{v.version}
+                      </span>
+                      <span className="text-caption text-muted-foreground ml-space-3">
+                        {new Date(v.timestamp).toLocaleString()}
+                      </span>
+                    </div>
+                    {idx < versionHistory.length - 1 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          handleViewDiff(v.version, versionHistory[idx + 1].version)
+                        }
+                        className="text-caption"
+                      >
+                        View Diff
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-body-small text-muted-foreground">
+                No versions created yet.
+              </p>
+            )}
+
+            {/* Change log */}
+            <div className="border-t border-border/50 pt-space-4">
+              <h3 className="text-heading-3 text-foreground mb-space-3">Change Log</h3>
+              <ChangeHistoryView
+                entityId={entity.id}
+                fetchHistory={fetchChangeHistory}
+                onViewDiff={handleHistoryViewDiff}
+              />
+            </div>
+          </div>
         )}
       </div>
-
-      {/* Emission Preview Panel */}
-      {emissionResult && (
-        <EmissionPreviewPanel
-          result={emissionResult}
-          open={emissionPanelOpen}
-          onClose={() => setEmissionPanelOpen(false)}
-          entityId={entity.id}
-          userRole="STEWARD"
-          onWarningClick={handleWarningClick}
-          overrides={overrides}
-        />
-      )}
 
       {/* Type Mapping Override Dialog */}
       <TypeMappingOverrideDialog
@@ -438,15 +599,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         userRole="STEWARD"
         onCreateOverride={handleCreateOverride}
         onAcknowledge={handleAcknowledge}
-      />
-
-      {/* Version History Panel */}
-      <VersionHistoryPanel
-        versions={versionHistory}
-        open={versionHistoryOpen}
-        onClose={() => setVersionHistoryOpen(false)}
-        onCompare={handleCompare}
-        onViewDiff={handleViewDiff}
       />
     </div>
   );

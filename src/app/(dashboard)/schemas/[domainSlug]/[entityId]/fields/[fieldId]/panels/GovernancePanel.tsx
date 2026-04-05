@@ -60,7 +60,6 @@ export function GovernancePanel({ governance, onChange, fieldClassification, onC
   }
 
   const qualityRules = governance.qualityRules ?? [];
-  const lineage = governance.lineage ?? {};
   const operationalHints = governance.operationalHints ?? {};
   const customAttributes = governance.customAttributes ?? {};
   const customEntries = Object.entries(customAttributes);
@@ -72,9 +71,6 @@ export function GovernancePanel({ governance, onChange, fieldClassification, onC
     (governance.anonymization ? 1 : 0) +
     (governance.encryption ? 1 : 0) +
     qualityRules.length +
-    (lineage.source ? 1 : 0) +
-    (lineage.upstream?.length ?? 0) +
-    (lineage.downstream?.length ?? 0) +
     Object.values(operationalHints).filter(Boolean).length +
     customEntries.length;
 
@@ -323,78 +319,7 @@ export function GovernancePanel({ governance, onChange, fieldClassification, onC
         </div>
       </div>
 
-      {/* Section 4: Lineage */}
-      <div className="border-t border-border/50 pt-space-3">
-        <label className="text-caption text-muted-foreground mb-2 block">
-          Lineage
-        </label>
-        <div className="space-y-space-2">
-          <div>
-            <label className="text-[10px] text-muted-foreground mb-0.5 block">
-              Source
-            </label>
-            <Input
-              value={lineage.source ?? ""}
-              onChange={(e) =>
-                update({
-                  lineage: {
-                    ...lineage,
-                    source: e.target.value || null,
-                  },
-                })
-              }
-              placeholder="e.g. legacy_users.user_id"
-              className="h-7 text-body-small font-mono w-full"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-space-3">
-            <div>
-              <label className="text-[10px] text-muted-foreground mb-0.5 block">
-                Upstream (comma-separated)
-              </label>
-              <Input
-                value={(lineage.upstream ?? []).join(", ")}
-                onChange={(e) =>
-                  update({
-                    lineage: {
-                      ...lineage,
-                      upstream: e.target.value
-                        ? e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
-                        : [],
-                    },
-                  })
-                }
-                placeholder="system.field1, system.field2"
-                className="h-7 text-body-small font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="text-[10px] text-muted-foreground mb-0.5 block">
-                Downstream (comma-separated)
-              </label>
-              <Input
-                value={(lineage.downstream ?? []).join(", ")}
-                onChange={(e) =>
-                  update({
-                    lineage: {
-                      ...lineage,
-                      downstream: e.target.value
-                        ? e.target.value.split(",").map((s) => s.trim()).filter(Boolean)
-                        : [],
-                    },
-                  })
-                }
-                placeholder="analytics.dim_user"
-                className="h-7 text-body-small font-mono"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Section 5: Operational Hints */}
+      {/* Section 4: Operational Hints */}
       <div className="border-t border-border/50 pt-space-3">
         <label className="text-caption text-muted-foreground mb-2 block">
           Operational Hints
@@ -453,7 +378,7 @@ export function GovernancePanel({ governance, onChange, fieldClassification, onC
         </div>
       </div>
 
-      {/* Section 6: Custom Governance Attributes */}
+      {/* Section 5: Custom Governance Attributes */}
       <div className="border-t border-border/50 pt-space-3">
         <label className="text-caption text-muted-foreground mb-2 block">
           Custom Governance Attributes

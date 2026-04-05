@@ -302,12 +302,12 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
         value={expandedPanels}
         onValueChange={(val: number[]) => setExpandedPanels(val)}
       >
-        {/* Panel 1: Identity & Semantics */}
+        {/* Panel 1: Semantics */}
         <AccordionItem value={0}>
           <AccordionTrigger className="px-space-3">
             <span className="flex items-center gap-2">
               <span className="text-body font-medium">
-                Identity & Semantics
+                Semantics
               </span>
               {typespec.identity?.key && (
                 <Badge variant="warning" className="text-[10px] h-4 px-1">
