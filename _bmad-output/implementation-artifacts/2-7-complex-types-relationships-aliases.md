@@ -1,6 +1,6 @@
 # Story 2.7: Complex Types, Relationships, Aliases & Field Numbers
 
-Status: review
+Status: done
 
 ## Story
 
@@ -322,3 +322,5 @@ src/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/field-studi
 src/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/page.tsx
 tests/unit/features/complex-types.test.ts
 ```
+
+- 2026-04-05: Status changed from review to done

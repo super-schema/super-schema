@@ -412,3 +412,4 @@ Claude Opus 4.6 (1M context)
 
 ### Change Log
 - 2026-04-03: Story 2-11 TypeSpec Field Studio implemented — full-page field editor with 7-panel attribute system, TypeSpec decorator schema, auto-save, navigation integration, 50 unit tests
+- 2026-04-05: Panels reorganized to 8 panels: Properties, Constraints, Serialization, Access Control, Documentation, Version History, Extensions, Data Governance. Retention removed from field-level (entity-level concern). Lineage removed from field-level (separate concern). Field number auto-assigned, editable in Serialization panel for Protobuf. Used for both field creation AND field editing

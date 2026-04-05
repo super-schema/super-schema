@@ -1,6 +1,6 @@
 # Story 2.4: Decorator Detail Panel — 8-Category Tabbed Editing
 
-Status: in-progress
+Status: done
 
 ## Story
 
@@ -283,5 +283,17 @@ Claude Opus 4.6 (1M context) — partial implementation, superseded by Story 2-1
 **Decision needed:** Should a lightweight right panel still be built for quick metadata editing (clicking a field row shows a sidebar), or is the Field Studio full-page route sufficient? The inline expansion in field-editor.tsx serves as the "quick edit" but doesn't expose all 8 categories.
 
 ### Completion Notes List
+- Original 8-tab right panel concept superseded by 3-tier editing model:
+  - **Tier 1 (Inline):** Field cards in field-editor.tsx show summary badges and basic properties
+  - **Tier 2 (Quick Edit):** Right panel sidebar with 4 sections: Properties, Constraints, Documentation, Data Governance — for quick metadata edits without leaving the entity view
+  - **Tier 3 (Field Studio):** Full-page editor at `/schemas/[domainSlug]/[entityId]/fields/[fieldId]` with 8 panels: Properties, Constraints, Serialization, Access Control, Documentation, Version History, Extensions, Data Governance
+- No 8-tab tabbed right panel — replaced by Quick Edit + Field Studio 3-tier model
+- Right panel now has two tabs: Quick Edit | TypeSpec Preview (no Emission tab)
+- Right panel max width increased to 800px for comfortable editing
+- TypeSpec decorator Zod schema at `src/types/schemas/typespec-decorator.schema.ts`
+- Auto-save with debounce in Field Studio
+- All decorator categories covered between Quick Edit (lightweight) and Field Studio (comprehensive)
+
 ### Change Log
 - 2026-04-03: Implementation audit — story partially superseded by 2-11 Field Studio
+- 2026-04-05: Status changed to done — original 8-tab right panel concept superseded by Quick Edit sidebar (Tier 2) + Field Studio full page (Tier 3). All decorator editing functionality is available through the 3-tier model. Right panel serves as Quick Edit with 4 sections rather than 8 tabs

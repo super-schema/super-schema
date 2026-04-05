@@ -193,13 +193,6 @@ export function FieldCard({
             </span>
           )}
 
-          {/* Field number badge */}
-          {field.fieldNumber != null && (
-            <Badge variant="outline" className="text-[10px] h-4 px-1 font-mono">
-              #{field.fieldNumber}
-            </Badge>
-          )}
-
           {/* Key badge */}
           {field.isKey && (
             <Badge variant="warning" className="text-[10px] h-4 px-1">

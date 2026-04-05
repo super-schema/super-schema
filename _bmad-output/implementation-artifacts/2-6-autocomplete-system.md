@@ -1,6 +1,6 @@
 # Story 2.6: Autocomplete System — Field Name, Type & Classification Suggestions
 
-Status: review
+Status: done
 
 ## Story
 
@@ -380,3 +380,4 @@ Claude Opus 4.6 (1M context)
 
 ### Change Log
 - 2026-04-03: Story 2-6 Autocomplete System implemented — 3-source name autocomplete, type/classification auto-suggestion, suggestion tracking, UI integration, 25 unit tests
+- 2026-04-05: Status changed from review to done

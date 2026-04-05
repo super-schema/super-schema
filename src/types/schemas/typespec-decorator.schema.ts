@@ -111,12 +111,12 @@ export const ExtensionsSchema = z
   })
   .partial();
 
-// Panel 8: Governance
+// Panel 8: Data Governance
 // Note: classification is stored on field.classification (single source of truth),
 // NOT in the decorators JSONB. See GovernancePanel for read/write path.
+// Retention is an entity/domain-level policy, not field-level.
 export const GovernanceSchema = z
   .object({
-    retention: z.string().nullable(),
     anonymization: z.string().nullable(),
     encryption: z.string().nullable(),
     qualityRules: z.array(

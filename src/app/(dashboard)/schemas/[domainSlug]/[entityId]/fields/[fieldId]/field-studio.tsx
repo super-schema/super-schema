@@ -302,12 +302,12 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
         value={expandedPanels}
         onValueChange={(val: number[]) => setExpandedPanels(val)}
       >
-        {/* Panel 1: Semantics */}
+        {/* Panel 1: Properties */}
         <AccordionItem value={0}>
           <AccordionTrigger className="px-space-3">
             <span className="flex items-center gap-2">
               <span className="text-body font-medium">
-                Semantics
+                Properties
               </span>
               {typespec.identity?.key && (
                 <Badge variant="warning" className="text-[10px] h-4 px-1">
@@ -337,11 +337,11 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Panel 2: Validation & Constraints */}
+        {/* Panel 2: Constraints */}
         <AccordionItem value={1}>
           <AccordionTrigger className="px-space-3">
             <span className="text-body font-medium">
-              Validation & Constraints
+              Constraints
             </span>
           </AccordionTrigger>
           <AccordionContent className="px-space-3">
@@ -354,11 +354,11 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Panel 3: Wire Format & Encoding */}
+        {/* Panel 3: Serialization */}
         <AccordionItem value={2}>
           <AccordionTrigger className="px-space-3">
             <span className="text-body font-medium">
-              Wire Format & Encoding
+              Serialization
             </span>
           </AccordionTrigger>
           <AccordionContent className="px-space-3">
@@ -376,12 +376,12 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Panel 4: Visibility & Lifecycle */}
+        {/* Panel 4: Access Control */}
         <AccordionItem value={3}>
           <AccordionTrigger className="px-space-3">
             <span className="flex items-center gap-2">
               <span className="text-body font-medium">
-                Visibility & Lifecycle
+                Access Control
               </span>
               {typespec.visibility?.invisible && (
                 <Badge variant="secondary" className="text-[10px] h-4 px-1">
@@ -419,10 +419,10 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Panel 6: Versioning */}
+        {/* Panel 6: Version History */}
         <AccordionItem value={5}>
           <AccordionTrigger className="px-space-3">
-            <span className="text-body font-medium">Versioning</span>
+            <span className="text-body font-medium">Version History</span>
           </AccordionTrigger>
           <AccordionContent className="px-space-3">
             <VersioningPanel
@@ -432,12 +432,12 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Panel 7: Protocol Extensions */}
+        {/* Panel 7: Extensions */}
         <AccordionItem value={6}>
           <AccordionTrigger className="px-space-3">
             <span className="flex items-center gap-2">
               <span className="text-body font-medium">
-                Protocol Extensions
+                Extensions
               </span>
               {(() => {
                 const extCount =
@@ -460,16 +460,15 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Panel 8: Governance */}
+        {/* Panel 8: Data Governance */}
         <AccordionItem value={7}>
           <AccordionTrigger className="px-space-3">
             <span className="flex items-center gap-2">
-              <span className="text-body font-medium">Governance</span>
+              <span className="text-body font-medium">Data Governance</span>
               {(() => {
                 const gov = typespec.governance ?? {};
                 const govCount =
                   (fieldClassification ? 1 : 0) +
-                  (gov.retention ? 1 : 0) +
                   (gov.anonymization ? 1 : 0) +
                   (gov.encryption ? 1 : 0) +
                   (gov.qualityRules?.length ?? 0) +

@@ -2,13 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, Loader2 } from "lucide-react";
 import {
   getEntityCompleteness,
 } from "@/lib/validation/field-completeness";
 import type { DomainField } from "@/lib/autocomplete/field-name-autocomplete";
 import { FieldCard } from "./components/FieldCard";
-import { AddFieldForm } from "./components/AddFieldForm";
 
 interface FieldData {
   id: string;
@@ -26,11 +25,6 @@ interface FieldData {
   sortOrder: number;
 }
 
-interface EntityInfo {
-  id: string;
-  name: string;
-}
-
 interface FieldEditorProps {
   entityId: string;
   entitySlug?: string;
@@ -39,7 +33,6 @@ interface FieldEditorProps {
   domainFields?: DomainField[];
   domainPolicy: Record<string, unknown> | null;
   isReadOnly?: boolean;
-  availableEntities?: EntityInfo[];
   onAddField: (
     name: string,
     type: string,
@@ -54,7 +47,7 @@ interface FieldEditorProps {
       aliases?: string[];
       decorators?: Record<string, unknown>;
     }
-  ) => Promise<void>;
+  ) => Promise<{ field?: { id: string } } | void>;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDeleteField: (id: string) => Promise<void>;
   onFieldSelect?: (fieldId: string) => void;
@@ -66,10 +59,8 @@ export function FieldEditor({
   entitySlug,
   domainSlug,
   fields,
-  domainFields = [],
   domainPolicy,
   isReadOnly = false,
-  availableEntities = [],
   onAddField,
   onUpdateField,
   onDeleteField,
@@ -77,6 +68,7 @@ export function FieldEditor({
   selectedFieldId,
 }: FieldEditorProps) {
   const router = useRouter();
+  const [isCreating, setIsCreating] = useState(false);
 
   function navigateToFieldStudio(fieldId: string) {
     router.push(`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${fieldId}`);
@@ -86,15 +78,29 @@ export function FieldEditor({
   useEffect(() => {
     function handleSlashCommand() {
       if (!isReadOnly) {
-        setShowAddForm(true);
+        handleAddField();
       }
     }
     document.addEventListener("super-schema:slash-command", handleSlashCommand);
     return () =>
       document.removeEventListener("super-schema:slash-command", handleSlashCommand);
-  }, [isReadOnly]);
+  }, [isReadOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [showAddForm, setShowAddForm] = useState(false);
+  async function handleAddField() {
+    if (isCreating) return;
+    setIsCreating(true);
+    try {
+      const result = await onAddField("new_field", "string");
+      const fieldId = (result as { field?: { id: string } } | undefined)?.field?.id;
+      if (fieldId) {
+        navigateToFieldStudio(fieldId);
+      }
+    } catch {
+      // Allow UI to recover on error
+    } finally {
+      setIsCreating(false);
+    }
+  }
 
   const completeness = getEntityCompleteness(fields);
 
@@ -137,25 +143,24 @@ export function FieldEditor({
         ))}
       </div>
 
-      {/* Add field form -- hidden in read-only mode */}
-      {isReadOnly ? null : showAddForm ? (
-        <AddFieldForm
-          onAddField={onAddField}
-          domainPolicy={domainPolicy}
-          fields={fields}
-          domainFields={domainFields}
-          availableEntities={availableEntities}
-          onClose={() => setShowAddForm(false)}
-        />
-      ) : (
+      {/* Add field button -- creates field with defaults and navigates to Field Studio */}
+      {!isReadOnly && (
         <button
-          onClick={() => {
-            setShowAddForm(true);
-          }}
-          className="mt-space-3 w-full flex items-center justify-center gap-2 py-space-3 rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-body-small"
+          onClick={handleAddField}
+          disabled={isCreating}
+          className="mt-space-3 w-full flex items-center justify-center gap-2 py-space-3 rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-body-small disabled:opacity-50"
         >
-          <Plus className="w-4 h-4" />
-          Add Field
+          {isCreating ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Creating field...
+            </>
+          ) : (
+            <>
+              <Plus className="w-4 h-4" />
+              Add Field
+            </>
+          )}
         </button>
       )}
     </div>

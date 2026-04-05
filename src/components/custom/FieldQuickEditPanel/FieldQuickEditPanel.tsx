@@ -35,7 +35,7 @@ interface FieldQuickEditPanelProps {
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
 }
 
-const SECTION_LABELS = ["Semantics", "Validation", "Documentation", "Governance"] as const;
+const SECTION_LABELS = ["Properties", "Constraints", "Documentation", "Data Governance"] as const;
 
 export function FieldQuickEditPanel({
   field,
@@ -77,7 +77,6 @@ export function FieldQuickEditPanel({
   const [localMaxItems, setLocalMaxItems] = useState<number | null>((validation.maxItems as number) ?? null);
 
   // Governance local state
-  const [localRetention, setLocalRetention] = useState(policy.retention ?? "");
   const [localAnonymization, setLocalAnonymization] = useState(policy.anonymization ?? "");
   const [localEncryption, setLocalEncryption] = useState(policy.encryption ?? "");
 
@@ -106,7 +105,6 @@ export function FieldQuickEditPanel({
     localPattern,
     localMinItems,
     localMaxItems,
-    localRetention,
     localAnonymization,
     localEncryption,
   });
@@ -131,7 +129,6 @@ export function FieldQuickEditPanel({
       localPattern,
       localMinItems,
       localMaxItems,
-      localRetention,
       localAnonymization,
       localEncryption,
     };
@@ -163,7 +160,6 @@ export function FieldQuickEditPanel({
     setLocalPattern((val.pattern as string) ?? null);
     setLocalMinItems((val.minItems as number) ?? null);
     setLocalMaxItems((val.maxItems as number) ?? null);
-    setLocalRetention(pol.retention ?? "");
     setLocalAnonymization(pol.anonymization ?? "");
     setLocalEncryption(pol.encryption ?? "");
 
@@ -208,7 +204,6 @@ export function FieldQuickEditPanel({
     };
 
     const cleanPolicy: Record<string, string> = {};
-    if (c.localRetention) cleanPolicy.retention = c.localRetention;
     if (c.localAnonymization) cleanPolicy.anonymization = c.localAnonymization;
     if (c.localEncryption) cleanPolicy.encryption = c.localEncryption;
 
@@ -279,7 +274,6 @@ export function FieldQuickEditPanel({
       case "pattern": setLocalPattern(value as string | null); break;
       case "minItems": setLocalMinItems(value as number | null); break;
       case "maxItems": setLocalMaxItems(value as number | null); break;
-      case "retention": setLocalRetention(value as string); break;
       case "anonymization": setLocalAnonymization(value as string); break;
       case "encryption": setLocalEncryption(value as string); break;
     }
@@ -357,7 +351,6 @@ export function FieldQuickEditPanel({
                 {idx === 3 && (
                   <GovernanceSection
                     classification={localClassification}
-                    retention={localRetention}
                     anonymization={localAnonymization}
                     encryption={localEncryption}
                     isReadOnly={isReadOnly}
@@ -384,7 +377,7 @@ export function FieldQuickEditPanel({
             Open Full Field Studio &rarr;
           </Link>
           <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-            Wire Format, Visibility, Versioning, Extensions
+            Serialization, Access Control, Version History, Extensions
           </p>
         </div>
       </div>

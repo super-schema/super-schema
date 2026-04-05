@@ -8,17 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import type { Governance } from "@/types/schemas/typespec-decorator.schema";
 
-const RETENTION_OPTIONS = [
-  { value: "", label: "Not set" },
-  { value: "30d", label: "30 days" },
-  { value: "90d", label: "90 days" },
-  { value: "1y", label: "1 year" },
-  { value: "3y", label: "3 years" },
-  { value: "5y", label: "5 years" },
-  { value: "7y", label: "7 years" },
-  { value: "indefinite", label: "Indefinite" },
-];
-
 const ANONYMIZATION_OPTIONS = [
   { value: "", label: "None" },
   { value: "mask", label: "Mask" },
@@ -67,7 +56,6 @@ export function GovernancePanel({ governance, onChange, fieldClassification, onC
   // Count active governance settings for the badge
   const activeCount =
     (fieldClassification ? 1 : 0) +
-    (governance.retention ? 1 : 0) +
     (governance.anonymization ? 1 : 0) +
     (governance.encryption ? 1 : 0) +
     qualityRules.length +
@@ -101,26 +89,7 @@ export function GovernancePanel({ governance, onChange, fieldClassification, onC
         <label className="text-caption text-muted-foreground mb-2 block">
           Data Protection
         </label>
-        <div className="grid grid-cols-3 gap-space-3">
-          <div>
-            <label className="text-[10px] text-muted-foreground mb-0.5 block">
-              Retention
-            </label>
-            <select
-              value={governance.retention ?? ""}
-              onChange={(e) =>
-                update({ retention: e.target.value || null })
-              }
-              className="h-7 w-full rounded border border-border bg-background px-2 text-body-small text-foreground"
-            >
-              {RETENTION_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
+        <div className="grid grid-cols-2 gap-space-3">
           <div>
             <label className="text-[10px] text-muted-foreground mb-0.5 block">
               Anonymization

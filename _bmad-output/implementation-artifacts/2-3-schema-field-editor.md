@@ -1,6 +1,6 @@
 # Story 2.3: Schema Field Editor — Create, Edit, Delete Fields
 
-Status: in-progress
+Status: done
 
 ## Story
 
@@ -276,5 +276,17 @@ Claude Opus 4.6 (1M context) — partial implementation across multiple sessions
 **Architecture divergence:** Instead of separate `EntityHeader.tsx` + `FieldGrid.tsx` + `SchemaFieldRow/` components, everything is in `entity-workspace.tsx` and `field-editor.tsx`. Story 2-11 (Field Studio) added the deep editing route at `/fields/[fieldId]/`.
 
 ### Completion Notes List
+- Field creation now navigates to full Field Studio at `/schemas/[domainSlug]/[entityId]/fields/[fieldId]` rather than using an inline form
+- "Add Field" button creates a field with sensible defaults (auto-assigned field number, default type "string") and opens Field Studio for editing
+- Field cards show: index number, validation ring (green/amber/red), drag handle, field name, type badge, classification badge, decorator summary badges
+- No DataTable/Airtable-style grid — uses a card-based list layout in `field-editor.tsx`
+- Field numbers are auto-assigned (max + 1), editable later in Field Studio Serialization panel for Protobuf compatibility
+- TypePicker shows full hierarchical type system with 50+ types across 7 categories (Number, String, Boolean, Bytes, Date & Time, Structured, Special) with subtypes and examples
+- Delete field with confirmation dialog implemented
+- Entity header with editable name/description implemented in `entity-workspace.tsx`
+- ClassificationPicker dropdown with PII/SENSITIVE/INTERNAL/PUBLIC badges implemented
+- Story 2-11 (Field Studio) provides deep editing; this story provides the field list and card-based overview
+
 ### Change Log
 - 2026-04-03: Implementation audit — marked remaining unimplemented tasks
+- 2026-04-05: Status changed to done — field editor is functional with card-based list, field creation with defaults + Field Studio navigation, TypePicker with full type hierarchy, validation indicators, auto-assigned field numbers. Architecture diverged from original Airtable DataTable spec to card-based list + Field Studio 3-tier model (inline card -> Quick Edit sidebar -> Field Studio full page)

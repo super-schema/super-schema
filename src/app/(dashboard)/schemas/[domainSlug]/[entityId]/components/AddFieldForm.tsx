@@ -547,48 +547,6 @@ export function AddFieldForm({
         </label>
       </div>
 
-      {/* Row 5: Field Number (auto-assigned) */}
-      <div className="flex items-center gap-space-3">
-        <div className="w-[200px]">
-          <label className="text-caption text-muted-foreground mb-1 flex items-center gap-1">
-            Field Number
-            <span
-              className="text-muted-foreground/50 cursor-help"
-              title="Permanent field number for Protobuf wire compatibility -- once assigned, should not change"
-            >
-              <Info className="w-3 h-3 inline" />
-            </span>
-          </label>
-          {fieldNumberEditing ? (
-            <Input
-              type="number"
-              value={newFieldNumber}
-              onChange={(e) => setNewFieldNumber(e.target.value)}
-              className="h-8 text-body-small"
-              placeholder={String(autoFieldNumber)}
-              autoFocus
-              onBlur={() => {
-                if (!newFieldNumber.trim()) setFieldNumberEditing(false);
-              }}
-            />
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-body-small font-mono text-foreground bg-muted px-2 py-1 rounded border border-border">
-                {newFieldNumber ? newFieldNumber : autoFieldNumber}
-              </span>
-              <span className="text-[10px] text-muted-foreground/50">auto</span>
-              <button
-                type="button"
-                onClick={() => setFieldNumberEditing(true)}
-                className="text-[10px] text-primary hover:underline"
-              >
-                edit
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
       {/* Row 5: Aliases -- tag input */}
       <div>
         <label className="text-caption text-muted-foreground mb-1 block">

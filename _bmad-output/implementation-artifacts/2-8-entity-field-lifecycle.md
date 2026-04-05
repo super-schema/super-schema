@@ -1,6 +1,6 @@
 # Story 2.8: Entity & Field Lifecycle — Deprecation, Retirement & Status Management
 
-Status: review
+Status: done
 
 ## Story
 
@@ -328,3 +328,5 @@ NEW:
   src/components/custom/RetirementBanner.tsx
   tests/unit/features/lifecycle.test.ts
 ```
+
+- 2026-04-05: Status changed from review to done

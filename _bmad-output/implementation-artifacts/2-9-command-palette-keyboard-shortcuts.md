@@ -1,6 +1,6 @@
 # Story 2.9: Command Palette & Global Keyboard Shortcuts
 
-Status: review
+Status: done
 
 ## Story
 
@@ -399,3 +399,5 @@ Claude Opus 4.6 (1M context)
 | `src/app/(dashboard)/schemas/[domainSlug]/[entityId]/field-editor.tsx` | Modified | Slash command event listener for add form |
 | `tests/unit/hooks/useKeyboardShortcuts.test.ts` | Created | 8 unit tests for keyboard shortcut logic |
 | `tests/unit/hooks/recent-entities.test.ts` | Created | 8 unit tests for recent entity tracking |
+
+- 2026-04-05: Status changed from review to done

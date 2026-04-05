@@ -1,6 +1,6 @@
 # Story 2.10: Lineage DAG — Interactive Entity Relationship Graph
 
-Status: review
+Status: done
 
 ## Story
 
@@ -323,3 +323,4 @@ Claude Opus 4.6 (1M context)
 - `src/features/lineage/EntityNode.tsx` — MODIFIED: classification badges, popover with entity details, "Open in Editor"
 - `src/app/(dashboard)/lineage/page.tsx` — MODIFIED: dynamic import, enriched data fetching
 - `tests/unit/features/lineage.test.ts` — NEW: 22 unit tests for layout utilities
+- 2026-04-05: Status changed from review to done

@@ -387,8 +387,9 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
                 selectedFieldId={selectedFieldId}
                 onFieldSelect={handleFieldSelect}
                 onAddField={async (name, type, opts) => {
-                  await addFieldAction(entity.id, name, type, opts);
+                  const result = await addFieldAction(entity.id, name, type, opts);
                   setTypeSpecTrigger((n) => n + 1);
+                  return result;
                 }}
                 onUpdateField={async (id, data) => {
                   await updateFieldAction(id, data);

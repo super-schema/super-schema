@@ -4,22 +4,11 @@ import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 
 interface GovernanceSectionProps {
   classification: string | null;
-  retention: string;
   anonymization: string;
   encryption: string;
   isReadOnly?: boolean;
   onChange: (field: string, value: unknown) => void;
 }
-
-const RETENTION_OPTIONS = [
-  { value: "", label: "Not set" },
-  { value: "30d", label: "30 days" },
-  { value: "90d", label: "90 days" },
-  { value: "1y", label: "1 year" },
-  { value: "3y", label: "3 years" },
-  { value: "7y", label: "7 years" },
-  { value: "forever", label: "Forever" },
-];
 
 const ANONYMIZATION_OPTIONS = [
   { value: "", label: "None" },
@@ -40,7 +29,6 @@ const ENCRYPTION_OPTIONS = [
 
 export function GovernanceSection({
   classification,
-  retention,
   anonymization,
   encryption,
   isReadOnly = false,
@@ -57,21 +45,6 @@ export function GovernanceSection({
             onChange={(val) => onChange("classification", val)}
           />
         </div>
-      </div>
-
-      {/* Retention */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">Retention</label>
-        <select
-          value={retention}
-          onChange={(e) => onChange("retention", e.target.value)}
-          disabled={isReadOnly}
-          className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground disabled:opacity-50"
-        >
-          {RETENTION_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
       </div>
 
       {/* Anonymization */}

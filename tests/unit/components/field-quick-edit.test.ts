@@ -107,10 +107,10 @@ describe("FieldQuickEditPanel", () => {
     expect(screen.getByText("customer_email")).toBeDefined();
 
     // Should have accordion section labels
-    expect(screen.getByText("Semantics")).toBeDefined();
-    expect(screen.getByText("Validation")).toBeDefined();
+    expect(screen.getByText("Properties")).toBeDefined();
+    expect(screen.getByText("Constraints")).toBeDefined();
     expect(screen.getByText("Documentation")).toBeDefined();
-    expect(screen.getByText("Governance")).toBeDefined();
+    expect(screen.getByText("Data Governance")).toBeDefined();
   });
 
   it("has the data-testid for quick edit panel", () => {
@@ -223,7 +223,6 @@ describe("GovernanceSection", () => {
     render(
       createElement(GovernanceSection, {
         classification: "PII",
-        retention: "3y",
         anonymization: "",
         encryption: "at-rest",
         isReadOnly: false,
@@ -233,12 +232,12 @@ describe("GovernanceSection", () => {
 
     // Should show the Classification label
     expect(screen.getByText("Classification")).toBeDefined();
-    // Should show the Retention label
-    expect(screen.getByText("Retention")).toBeDefined();
     // Should show the Anonymization label
     expect(screen.getByText("Anonymization")).toBeDefined();
     // Should show the Encryption label
     expect(screen.getByText("Encryption")).toBeDefined();
+    // Retention is entity-level, not field-level
+    expect(screen.queryByText("Retention")).toBeNull();
 
     // The ClassificationPicker renders PII in both trigger and dropdown option
     const piiElements = screen.getAllByText("PII");
@@ -249,7 +248,6 @@ describe("GovernanceSection", () => {
     render(
       createElement(GovernanceSection, {
         classification: null,
-        retention: "",
         anonymization: "",
         encryption: "",
         isReadOnly: false,

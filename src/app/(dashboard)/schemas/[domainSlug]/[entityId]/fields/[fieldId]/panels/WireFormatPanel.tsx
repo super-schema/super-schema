@@ -93,7 +93,7 @@ export function WireFormatPanel({
             className="h-7 text-body-small font-mono w-32"
           />
           <span className="text-[10px] text-muted-foreground/50 mt-0.5 block">
-            For Protobuf wire compatibility. Once assigned, should not change.
+            Auto-assigned. Edit only for Protobuf wire compatibility.
           </span>
         </div>
       )}
