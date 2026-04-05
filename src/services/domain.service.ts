@@ -10,6 +10,7 @@ import {
   type CreateDomainInput,
 } from "@/types/schemas/domain.schema";
 import type { Prisma } from "@/generated/prisma/client";
+import { generateSlug } from "@/lib/slug";
 
 export async function createDomain(
   input: CreateDomainInput,
@@ -47,6 +48,7 @@ export async function createDomain(
         return prisma.domain.create({
           data: {
             name: parsed.data.name,
+            slug: generateSlug(parsed.data.name),
             description: parsed.data.description,
             policyTemplate:
               (parsed.data.policyTemplate as Prisma.InputJsonValue) ??

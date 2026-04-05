@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/db";
-import { fromSlug } from "@/lib/domain-utils";
 import { notFound } from "next/navigation";
 import { DomainWorkspace } from "./domain-workspace";
 
@@ -9,10 +8,9 @@ interface Props {
 
 export default async function DomainEntitiesPage({ params }: Props) {
   const { domainSlug } = await params;
-  const domainName = fromSlug(domainSlug);
 
   const domain = await prisma.domain.findFirst({
-    where: { name: { equals: domainName, mode: "insensitive" } },
+    where: { slug: domainSlug },
     include: {
       entities: {
         orderBy: { updatedAt: "desc" },
@@ -40,6 +38,7 @@ export default async function DomainEntitiesPage({ params }: Props) {
     return {
       id: e.id,
       name: e.name,
+      slug: e.slug,
       description: e.description,
       status: e.status,
       version: e.version,

@@ -4,6 +4,7 @@ import type { Node, Edge } from "@xyflow/react";
 export interface EntityData {
   id: string;
   name: string;
+  slug: string;
   domainName: string;
   domainSlug: string;
   status: string;
@@ -59,6 +60,7 @@ export function buildNodesAndEdges(entities: EntityData[]): {
       position: { x: 0, y: 0 }, // will be set by dagre
       data: {
         label: entity.name,
+        slug: entity.slug,
         domainName: entity.domainName,
         domainSlug: entity.domainSlug,
         status: entity.status,

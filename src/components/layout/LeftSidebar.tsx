@@ -10,15 +10,15 @@ import {
   Folder,
   Plus,
 } from "lucide-react";
-import { toSlug } from "@/lib/domain-utils";
-
 interface DomainNode {
   id: string;
   name: string;
+  slug: string;
   isSystem: boolean;
   entities: {
     id: string;
     name: string;
+    slug: string;
     status: string;
   }[];
 }
@@ -70,9 +70,9 @@ export function LeftSidebar({
   useEffect(() => {
     const match = pathname.match(/^\/schemas\/([^/]+)/);
     if (match) {
-      const slug = match[1];
+      const urlSlug = match[1];
       const domain = domains.find(
-        (d) => toSlug(d.name) === slug
+        (d) => d.slug === urlSlug
       );
       if (domain) {
         setExpanded((prev) => new Set([...prev, domain.id]));
@@ -179,7 +179,7 @@ export function LeftSidebar({
         ) : (
           filteredDomains.map((domain) => {
             const isExpanded = expanded.has(domain.id);
-            const slug = toSlug(domain.name);
+            const slug = domain.slug;
             const isActive = pathname.startsWith(`/schemas/${slug}`);
 
             return (
@@ -232,7 +232,7 @@ export function LeftSidebar({
                         key={entity.id}
                         className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
                         onClick={() =>
-                          router.push(`/schemas/${slug}/${entity.id}`)
+                          router.push(`/schemas/${slug}/${entity.slug}`)
                         }
                       >
                         <span

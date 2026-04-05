@@ -38,6 +38,7 @@ const domainTabs = [
 interface EntityData {
   id: string;
   name: string;
+  slug: string;
   description: string;
   status: string;
   version: number;
@@ -667,7 +668,7 @@ export function DomainWorkspace({
                 <tr
                   key={entity.id}
                   className="border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
-                  onClick={() => window.location.href = `/schemas/${domainSlug}/${entity.id}`}
+                  onClick={() => window.location.href = `/schemas/${domainSlug}/${entity.slug}`}
                 >
                   <td className="px-space-4 py-space-3 font-mono text-body-small text-foreground">
                     {entity.name}

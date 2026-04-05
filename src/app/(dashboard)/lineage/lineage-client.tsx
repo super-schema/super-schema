@@ -34,6 +34,7 @@ interface LineagePageClientProps {
   entities: Array<{
     id: string;
     name: string;
+    slug: string;
     description: string;
     domainName: string;
     domainSlug: string;

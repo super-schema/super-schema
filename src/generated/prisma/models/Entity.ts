@@ -37,6 +37,7 @@ export type EntitySumAggregateOutputType = {
 export type EntityMinAggregateOutputType = {
   id: string | null
   name: string | null
+  slug: string | null
   domainId: string | null
   version: number | null
   status: $Enums.EntityStatus | null
@@ -49,6 +50,7 @@ export type EntityMinAggregateOutputType = {
 export type EntityMaxAggregateOutputType = {
   id: string | null
   name: string | null
+  slug: string | null
   domainId: string | null
   version: number | null
   status: $Enums.EntityStatus | null
@@ -61,6 +63,7 @@ export type EntityMaxAggregateOutputType = {
 export type EntityCountAggregateOutputType = {
   id: number
   name: number
+  slug: number
   domainId: number
   version: number
   status: number
@@ -84,6 +87,7 @@ export type EntitySumAggregateInputType = {
 export type EntityMinAggregateInputType = {
   id?: true
   name?: true
+  slug?: true
   domainId?: true
   version?: true
   status?: true
@@ -96,6 +100,7 @@ export type EntityMinAggregateInputType = {
 export type EntityMaxAggregateInputType = {
   id?: true
   name?: true
+  slug?: true
   domainId?: true
   version?: true
   status?: true
@@ -108,6 +113,7 @@ export type EntityMaxAggregateInputType = {
 export type EntityCountAggregateInputType = {
   id?: true
   name?: true
+  slug?: true
   domainId?: true
   version?: true
   status?: true
@@ -208,6 +214,7 @@ export type EntityGroupByArgs<ExtArgs extends runtime.Types.Extensions.InternalA
 export type EntityGroupByOutputType = {
   id: string
   name: string
+  slug: string
   domainId: string
   version: number
   status: $Enums.EntityStatus
@@ -244,6 +251,7 @@ export type EntityWhereInput = {
   NOT?: Prisma.EntityWhereInput | Prisma.EntityWhereInput[]
   id?: Prisma.StringFilter<"Entity"> | string
   name?: Prisma.StringFilter<"Entity"> | string
+  slug?: Prisma.StringFilter<"Entity"> | string
   domainId?: Prisma.StringFilter<"Entity"> | string
   version?: Prisma.IntFilter<"Entity"> | number
   status?: Prisma.EnumEntityStatusFilter<"Entity"> | $Enums.EntityStatus
@@ -261,6 +269,7 @@ export type EntityWhereInput = {
 export type EntityOrderByWithRelationInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   domainId?: Prisma.SortOrder
   version?: Prisma.SortOrder
   status?: Prisma.SortOrder
@@ -277,11 +286,13 @@ export type EntityOrderByWithRelationInput = {
 
 export type EntityWhereUniqueInput = Prisma.AtLeast<{
   id?: string
+  slug_domainId?: Prisma.EntitySlugDomainIdCompoundUniqueInput
   name_domainId?: Prisma.EntityNameDomainIdCompoundUniqueInput
   AND?: Prisma.EntityWhereInput | Prisma.EntityWhereInput[]
   OR?: Prisma.EntityWhereInput[]
   NOT?: Prisma.EntityWhereInput | Prisma.EntityWhereInput[]
   name?: Prisma.StringFilter<"Entity"> | string
+  slug?: Prisma.StringFilter<"Entity"> | string
   domainId?: Prisma.StringFilter<"Entity"> | string
   version?: Prisma.IntFilter<"Entity"> | number
   status?: Prisma.EnumEntityStatusFilter<"Entity"> | $Enums.EntityStatus
@@ -294,11 +305,12 @@ export type EntityWhereUniqueInput = Prisma.AtLeast<{
   pullRequests?: Prisma.GitPullRequestListRelationFilter
   domain?: Prisma.XOR<Prisma.DomainScalarRelationFilter, Prisma.DomainWhereInput>
   owner?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
-}, "id" | "name_domainId">
+}, "id" | "slug_domainId" | "name_domainId">
 
 export type EntityOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   domainId?: Prisma.SortOrder
   version?: Prisma.SortOrder
   status?: Prisma.SortOrder
@@ -320,6 +332,7 @@ export type EntityScalarWhereWithAggregatesInput = {
   NOT?: Prisma.EntityScalarWhereWithAggregatesInput | Prisma.EntityScalarWhereWithAggregatesInput[]
   id?: Prisma.StringWithAggregatesFilter<"Entity"> | string
   name?: Prisma.StringWithAggregatesFilter<"Entity"> | string
+  slug?: Prisma.StringWithAggregatesFilter<"Entity"> | string
   domainId?: Prisma.StringWithAggregatesFilter<"Entity"> | string
   version?: Prisma.IntWithAggregatesFilter<"Entity"> | number
   status?: Prisma.EnumEntityStatusWithAggregatesFilter<"Entity"> | $Enums.EntityStatus
@@ -333,6 +346,7 @@ export type EntityScalarWhereWithAggregatesInput = {
 export type EntityCreateInput = {
   id?: string
   name: string
+  slug: string
   version?: number
   status?: $Enums.EntityStatus
   description?: string
@@ -348,6 +362,7 @@ export type EntityCreateInput = {
 export type EntityUncheckedCreateInput = {
   id?: string
   name: string
+  slug: string
   domainId: string
   version?: number
   status?: $Enums.EntityStatus
@@ -363,6 +378,7 @@ export type EntityUncheckedCreateInput = {
 export type EntityUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -378,6 +394,7 @@ export type EntityUpdateInput = {
 export type EntityUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   domainId?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
@@ -393,6 +410,7 @@ export type EntityUncheckedUpdateInput = {
 export type EntityCreateManyInput = {
   id?: string
   name: string
+  slug: string
   domainId: string
   version?: number
   status?: $Enums.EntityStatus
@@ -406,6 +424,7 @@ export type EntityCreateManyInput = {
 export type EntityUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -417,6 +436,7 @@ export type EntityUpdateManyMutationInput = {
 export type EntityUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   domainId?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
@@ -437,6 +457,11 @@ export type EntityOrderByRelationAggregateInput = {
   _count?: Prisma.SortOrder
 }
 
+export type EntitySlugDomainIdCompoundUniqueInput = {
+  slug: string
+  domainId: string
+}
+
 export type EntityNameDomainIdCompoundUniqueInput = {
   name: string
   domainId: string
@@ -445,6 +470,7 @@ export type EntityNameDomainIdCompoundUniqueInput = {
 export type EntityCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   domainId?: Prisma.SortOrder
   version?: Prisma.SortOrder
   status?: Prisma.SortOrder
@@ -462,6 +488,7 @@ export type EntityAvgOrderByAggregateInput = {
 export type EntityMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   domainId?: Prisma.SortOrder
   version?: Prisma.SortOrder
   status?: Prisma.SortOrder
@@ -474,6 +501,7 @@ export type EntityMaxOrderByAggregateInput = {
 export type EntityMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   domainId?: Prisma.SortOrder
   version?: Prisma.SortOrder
   status?: Prisma.SortOrder
@@ -619,6 +647,7 @@ export type EntityUpdateOneRequiredWithoutPullRequestsNestedInput = {
 export type EntityCreateWithoutOwnerInput = {
   id?: string
   name: string
+  slug: string
   version?: number
   status?: $Enums.EntityStatus
   description?: string
@@ -633,6 +662,7 @@ export type EntityCreateWithoutOwnerInput = {
 export type EntityUncheckedCreateWithoutOwnerInput = {
   id?: string
   name: string
+  slug: string
   domainId: string
   version?: number
   status?: $Enums.EntityStatus
@@ -676,6 +706,7 @@ export type EntityScalarWhereInput = {
   NOT?: Prisma.EntityScalarWhereInput | Prisma.EntityScalarWhereInput[]
   id?: Prisma.StringFilter<"Entity"> | string
   name?: Prisma.StringFilter<"Entity"> | string
+  slug?: Prisma.StringFilter<"Entity"> | string
   domainId?: Prisma.StringFilter<"Entity"> | string
   version?: Prisma.IntFilter<"Entity"> | number
   status?: Prisma.EnumEntityStatusFilter<"Entity"> | $Enums.EntityStatus
@@ -689,6 +720,7 @@ export type EntityScalarWhereInput = {
 export type EntityCreateWithoutDomainInput = {
   id?: string
   name: string
+  slug: string
   version?: number
   status?: $Enums.EntityStatus
   description?: string
@@ -703,6 +735,7 @@ export type EntityCreateWithoutDomainInput = {
 export type EntityUncheckedCreateWithoutDomainInput = {
   id?: string
   name: string
+  slug: string
   version?: number
   status?: $Enums.EntityStatus
   ownerId: string
@@ -743,6 +776,7 @@ export type EntityUpdateManyWithWhereWithoutDomainInput = {
 export type EntityCreateWithoutFieldsInput = {
   id?: string
   name: string
+  slug: string
   version?: number
   status?: $Enums.EntityStatus
   description?: string
@@ -757,6 +791,7 @@ export type EntityCreateWithoutFieldsInput = {
 export type EntityUncheckedCreateWithoutFieldsInput = {
   id?: string
   name: string
+  slug: string
   domainId: string
   version?: number
   status?: $Enums.EntityStatus
@@ -787,6 +822,7 @@ export type EntityUpdateToOneWithWhereWithoutFieldsInput = {
 export type EntityUpdateWithoutFieldsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -801,6 +837,7 @@ export type EntityUpdateWithoutFieldsInput = {
 export type EntityUncheckedUpdateWithoutFieldsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   domainId?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
@@ -815,6 +852,7 @@ export type EntityUncheckedUpdateWithoutFieldsInput = {
 export type EntityCreateWithoutPullRequestsInput = {
   id?: string
   name: string
+  slug: string
   version?: number
   status?: $Enums.EntityStatus
   description?: string
@@ -829,6 +867,7 @@ export type EntityCreateWithoutPullRequestsInput = {
 export type EntityUncheckedCreateWithoutPullRequestsInput = {
   id?: string
   name: string
+  slug: string
   domainId: string
   version?: number
   status?: $Enums.EntityStatus
@@ -859,6 +898,7 @@ export type EntityUpdateToOneWithWhereWithoutPullRequestsInput = {
 export type EntityUpdateWithoutPullRequestsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -873,6 +913,7 @@ export type EntityUpdateWithoutPullRequestsInput = {
 export type EntityUncheckedUpdateWithoutPullRequestsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   domainId?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
@@ -887,6 +928,7 @@ export type EntityUncheckedUpdateWithoutPullRequestsInput = {
 export type EntityCreateManyOwnerInput = {
   id?: string
   name: string
+  slug: string
   domainId: string
   version?: number
   status?: $Enums.EntityStatus
@@ -899,6 +941,7 @@ export type EntityCreateManyOwnerInput = {
 export type EntityUpdateWithoutOwnerInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -913,6 +956,7 @@ export type EntityUpdateWithoutOwnerInput = {
 export type EntityUncheckedUpdateWithoutOwnerInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   domainId?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
@@ -927,6 +971,7 @@ export type EntityUncheckedUpdateWithoutOwnerInput = {
 export type EntityUncheckedUpdateManyWithoutOwnerInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   domainId?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
@@ -939,6 +984,7 @@ export type EntityUncheckedUpdateManyWithoutOwnerInput = {
 export type EntityCreateManyDomainInput = {
   id?: string
   name: string
+  slug: string
   version?: number
   status?: $Enums.EntityStatus
   ownerId: string
@@ -951,6 +997,7 @@ export type EntityCreateManyDomainInput = {
 export type EntityUpdateWithoutDomainInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -965,6 +1012,7 @@ export type EntityUpdateWithoutDomainInput = {
 export type EntityUncheckedUpdateWithoutDomainInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
@@ -979,6 +1027,7 @@ export type EntityUncheckedUpdateWithoutDomainInput = {
 export type EntityUncheckedUpdateManyWithoutDomainInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1031,6 +1080,7 @@ export type EntityCountOutputTypeCountPullRequestsArgs<ExtArgs extends runtime.T
 export type EntitySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   name?: boolean
+  slug?: boolean
   domainId?: boolean
   version?: boolean
   status?: boolean
@@ -1049,6 +1099,7 @@ export type EntitySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
 export type EntitySelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   name?: boolean
+  slug?: boolean
   domainId?: boolean
   version?: boolean
   status?: boolean
@@ -1064,6 +1115,7 @@ export type EntitySelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extens
 export type EntitySelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   name?: boolean
+  slug?: boolean
   domainId?: boolean
   version?: boolean
   status?: boolean
@@ -1079,6 +1131,7 @@ export type EntitySelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extens
 export type EntitySelectScalar = {
   id?: boolean
   name?: boolean
+  slug?: boolean
   domainId?: boolean
   version?: boolean
   status?: boolean
@@ -1089,7 +1142,7 @@ export type EntitySelectScalar = {
   updatedAt?: boolean
 }
 
-export type EntityOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "domainId" | "version" | "status" | "ownerId" | "description" | "metadata" | "createdAt" | "updatedAt", ExtArgs["result"]["entity"]>
+export type EntityOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "slug" | "domainId" | "version" | "status" | "ownerId" | "description" | "metadata" | "createdAt" | "updatedAt", ExtArgs["result"]["entity"]>
 export type EntityInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   fields?: boolean | Prisma.Entity$fieldsArgs<ExtArgs>
   pullRequests?: boolean | Prisma.Entity$pullRequestsArgs<ExtArgs>
@@ -1117,6 +1170,7 @@ export type $EntityPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
     name: string
+    slug: string
     domainId: string
     version: number
     status: $Enums.EntityStatus
@@ -1554,6 +1608,7 @@ export interface Prisma__EntityClient<T, Null = never, ExtArgs extends runtime.T
 export interface EntityFieldRefs {
   readonly id: Prisma.FieldRef<"Entity", 'String'>
   readonly name: Prisma.FieldRef<"Entity", 'String'>
+  readonly slug: Prisma.FieldRef<"Entity", 'String'>
   readonly domainId: Prisma.FieldRef<"Entity", 'String'>
   readonly version: Prisma.FieldRef<"Entity", 'Int'>
   readonly status: Prisma.FieldRef<"Entity", 'EntityStatus'>

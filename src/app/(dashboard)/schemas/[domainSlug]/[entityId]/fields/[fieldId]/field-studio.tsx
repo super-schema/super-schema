@@ -47,6 +47,7 @@ interface FieldStudioProps {
   entity: {
     id: string;
     name: string;
+    slug: string;
     domainSlug: string;
   };
   domain: {
@@ -265,7 +266,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
         </Link>
         <ChevronRight className="w-3 h-3" />
         <Link
-          href={`/schemas/${entity.domainSlug}/${entity.id}`}
+          href={`/schemas/${entity.domainSlug}/${entity.slug}`}
           className="hover:text-foreground transition-colors"
         >
           {entity.name}

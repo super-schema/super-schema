@@ -5,6 +5,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
 import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
+import { generateSlug } from "@/lib/slug";
 
 export interface CreateFieldInput {
   name: string;
@@ -48,6 +49,7 @@ export async function createEntityWithFieldsAction(
         return prisma.entity.create({
           data: {
             name: name.trim(),
+            slug: generateSlug(name),
             domainId,
             description,
             ownerId: session.user!.id!,
@@ -109,6 +111,7 @@ export async function createEntityAction(domainId: string, formData: FormData) {
         return prisma.entity.create({
           data: {
             name: name.trim(),
+            slug: generateSlug(name),
             domainId,
             description,
             ownerId: session.user!.id!,

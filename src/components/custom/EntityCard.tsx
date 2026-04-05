@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { toSlug } from "@/lib/domain-utils";
-
 interface EntityCardProps {
   id: string;
   name: string;
+  slug: string;
   description: string;
   status: string;
   version: number;
@@ -25,6 +24,7 @@ interface EntityCardProps {
 export function EntityCard({
   id,
   name,
+  slug,
   description,
   status,
   version,
@@ -42,7 +42,7 @@ export function EntityCard({
 
   return (
     <Link
-      href={`/schemas/${domainSlug}/${id}`}
+      href={`/schemas/${domainSlug}/${slug}`}
       className="group block surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/30 hover:shadow-lg"
     >
       {/* Header */}

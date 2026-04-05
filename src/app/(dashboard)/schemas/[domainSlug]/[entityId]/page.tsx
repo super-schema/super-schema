@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/db";
-import { fromSlug } from "@/lib/domain-utils";
 import { notFound } from "next/navigation";
 import { EntityWorkspace } from "./entity-workspace";
 
@@ -10,13 +9,24 @@ interface Props {
 export default async function EntityDetailPage({ params }: Props) {
   const { domainSlug, entityId } = await params;
 
-  const entity = await prisma.entity.findUnique({
-    where: { id: entityId },
+  // Look up entity by slug first (human-readable URL), fall back to cuid for backward compat
+  let entity = await prisma.entity.findFirst({
+    where: { slug: entityId, domain: { slug: domainSlug } },
     include: {
       domain: true,
       fields: { orderBy: { sortOrder: "asc" } },
     },
   });
+
+  if (!entity) {
+    entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      include: {
+        domain: true,
+        fields: { orderBy: { sortOrder: "asc" } },
+      },
+    });
+  }
 
   if (!entity) {
     notFound();
@@ -29,6 +39,7 @@ export default async function EntityDetailPage({ params }: Props) {
       entity={{
         id: entity.id,
         name: entity.name,
+        slug: entity.slug,
         description: entity.description,
         status: entity.status,
         version: entity.version,

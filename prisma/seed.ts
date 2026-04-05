@@ -3,6 +3,16 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { hashSync } from "bcryptjs";
 
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 async function main() {
   const adapter = new PrismaPg({
     connectionString: process.env.DATABASE_URL!,
@@ -30,12 +40,14 @@ async function main() {
   const systemDomains = [
     {
       name: "Public",
+      slug: "public",
       description:
         "Shared domain for general-purpose entities accessible to all users",
       isSystem: true,
     },
     {
       name: "Playground",
+      slug: "playground",
       description:
         "Sandbox domain for developers to experiment with entity creation",
       isSystem: true,

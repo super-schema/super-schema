@@ -147,6 +147,7 @@ export type VerificationTokenScalarFieldEnum = (typeof VerificationTokenScalarFi
 export const DomainScalarFieldEnum = {
   id: 'id',
   name: 'name',
+  slug: 'slug',
   description: 'description',
   policyTemplate: 'policyTemplate',
   isSystem: 'isSystem',
@@ -160,6 +161,7 @@ export type DomainScalarFieldEnum = (typeof DomainScalarFieldEnum)[keyof typeof 
 export const EntityScalarFieldEnum = {
   id: 'id',
   name: 'name',
+  slug: 'slug',
   domainId: 'domainId',
   version: 'version',
   status: 'status',

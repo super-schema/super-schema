@@ -27,6 +27,7 @@ export type AggregateDomain = {
 export type DomainMinAggregateOutputType = {
   id: string | null
   name: string | null
+  slug: string | null
   description: string | null
   isSystem: boolean | null
   createdAt: Date | null
@@ -36,6 +37,7 @@ export type DomainMinAggregateOutputType = {
 export type DomainMaxAggregateOutputType = {
   id: string | null
   name: string | null
+  slug: string | null
   description: string | null
   isSystem: boolean | null
   createdAt: Date | null
@@ -45,6 +47,7 @@ export type DomainMaxAggregateOutputType = {
 export type DomainCountAggregateOutputType = {
   id: number
   name: number
+  slug: number
   description: number
   policyTemplate: number
   isSystem: number
@@ -57,6 +60,7 @@ export type DomainCountAggregateOutputType = {
 export type DomainMinAggregateInputType = {
   id?: true
   name?: true
+  slug?: true
   description?: true
   isSystem?: true
   createdAt?: true
@@ -66,6 +70,7 @@ export type DomainMinAggregateInputType = {
 export type DomainMaxAggregateInputType = {
   id?: true
   name?: true
+  slug?: true
   description?: true
   isSystem?: true
   createdAt?: true
@@ -75,6 +80,7 @@ export type DomainMaxAggregateInputType = {
 export type DomainCountAggregateInputType = {
   id?: true
   name?: true
+  slug?: true
   description?: true
   policyTemplate?: true
   isSystem?: true
@@ -158,6 +164,7 @@ export type DomainGroupByArgs<ExtArgs extends runtime.Types.Extensions.InternalA
 export type DomainGroupByOutputType = {
   id: string
   name: string
+  slug: string
   description: string
   policyTemplate: runtime.JsonValue | null
   isSystem: boolean
@@ -189,6 +196,7 @@ export type DomainWhereInput = {
   NOT?: Prisma.DomainWhereInput | Prisma.DomainWhereInput[]
   id?: Prisma.StringFilter<"Domain"> | string
   name?: Prisma.StringFilter<"Domain"> | string
+  slug?: Prisma.StringFilter<"Domain"> | string
   description?: Prisma.StringFilter<"Domain"> | string
   policyTemplate?: Prisma.JsonNullableFilter<"Domain">
   isSystem?: Prisma.BoolFilter<"Domain"> | boolean
@@ -201,6 +209,7 @@ export type DomainWhereInput = {
 export type DomainOrderByWithRelationInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
   policyTemplate?: Prisma.SortOrderInput | Prisma.SortOrder
   isSystem?: Prisma.SortOrder
@@ -213,6 +222,7 @@ export type DomainOrderByWithRelationInput = {
 export type DomainWhereUniqueInput = Prisma.AtLeast<{
   id?: string
   name?: string
+  slug?: string
   AND?: Prisma.DomainWhereInput | Prisma.DomainWhereInput[]
   OR?: Prisma.DomainWhereInput[]
   NOT?: Prisma.DomainWhereInput | Prisma.DomainWhereInput[]
@@ -223,11 +233,12 @@ export type DomainWhereUniqueInput = Prisma.AtLeast<{
   updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   entities?: Prisma.EntityListRelationFilter
   userRoles?: Prisma.UserRoleListRelationFilter
-}, "id" | "name">
+}, "id" | "name" | "slug">
 
 export type DomainOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
   policyTemplate?: Prisma.SortOrderInput | Prisma.SortOrder
   isSystem?: Prisma.SortOrder
@@ -244,6 +255,7 @@ export type DomainScalarWhereWithAggregatesInput = {
   NOT?: Prisma.DomainScalarWhereWithAggregatesInput | Prisma.DomainScalarWhereWithAggregatesInput[]
   id?: Prisma.StringWithAggregatesFilter<"Domain"> | string
   name?: Prisma.StringWithAggregatesFilter<"Domain"> | string
+  slug?: Prisma.StringWithAggregatesFilter<"Domain"> | string
   description?: Prisma.StringWithAggregatesFilter<"Domain"> | string
   policyTemplate?: Prisma.JsonNullableWithAggregatesFilter<"Domain">
   isSystem?: Prisma.BoolWithAggregatesFilter<"Domain"> | boolean
@@ -254,6 +266,7 @@ export type DomainScalarWhereWithAggregatesInput = {
 export type DomainCreateInput = {
   id?: string
   name: string
+  slug: string
   description?: string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: boolean
@@ -266,6 +279,7 @@ export type DomainCreateInput = {
 export type DomainUncheckedCreateInput = {
   id?: string
   name: string
+  slug: string
   description?: string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: boolean
@@ -278,6 +292,7 @@ export type DomainUncheckedCreateInput = {
 export type DomainUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -290,6 +305,7 @@ export type DomainUpdateInput = {
 export type DomainUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -302,6 +318,7 @@ export type DomainUncheckedUpdateInput = {
 export type DomainCreateManyInput = {
   id?: string
   name: string
+  slug: string
   description?: string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: boolean
@@ -312,6 +329,7 @@ export type DomainCreateManyInput = {
 export type DomainUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -322,6 +340,7 @@ export type DomainUpdateManyMutationInput = {
 export type DomainUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -332,6 +351,7 @@ export type DomainUncheckedUpdateManyInput = {
 export type DomainCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
   policyTemplate?: Prisma.SortOrder
   isSystem?: Prisma.SortOrder
@@ -342,6 +362,7 @@ export type DomainCountOrderByAggregateInput = {
 export type DomainMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
   isSystem?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -351,6 +372,7 @@ export type DomainMaxOrderByAggregateInput = {
 export type DomainMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
   isSystem?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -404,6 +426,7 @@ export type DomainUpdateOneWithoutUserRolesNestedInput = {
 export type DomainCreateWithoutEntitiesInput = {
   id?: string
   name: string
+  slug: string
   description?: string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: boolean
@@ -415,6 +438,7 @@ export type DomainCreateWithoutEntitiesInput = {
 export type DomainUncheckedCreateWithoutEntitiesInput = {
   id?: string
   name: string
+  slug: string
   description?: string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: boolean
@@ -442,6 +466,7 @@ export type DomainUpdateToOneWithWhereWithoutEntitiesInput = {
 export type DomainUpdateWithoutEntitiesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -453,6 +478,7 @@ export type DomainUpdateWithoutEntitiesInput = {
 export type DomainUncheckedUpdateWithoutEntitiesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -464,6 +490,7 @@ export type DomainUncheckedUpdateWithoutEntitiesInput = {
 export type DomainCreateWithoutUserRolesInput = {
   id?: string
   name: string
+  slug: string
   description?: string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: boolean
@@ -475,6 +502,7 @@ export type DomainCreateWithoutUserRolesInput = {
 export type DomainUncheckedCreateWithoutUserRolesInput = {
   id?: string
   name: string
+  slug: string
   description?: string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: boolean
@@ -502,6 +530,7 @@ export type DomainUpdateToOneWithWhereWithoutUserRolesInput = {
 export type DomainUpdateWithoutUserRolesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -513,6 +542,7 @@ export type DomainUpdateWithoutUserRolesInput = {
 export type DomainUncheckedUpdateWithoutUserRolesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -564,6 +594,7 @@ export type DomainCountOutputTypeCountUserRolesArgs<ExtArgs extends runtime.Type
 export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   name?: boolean
+  slug?: boolean
   description?: boolean
   policyTemplate?: boolean
   isSystem?: boolean
@@ -577,6 +608,7 @@ export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
 export type DomainSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   name?: boolean
+  slug?: boolean
   description?: boolean
   policyTemplate?: boolean
   isSystem?: boolean
@@ -587,6 +619,7 @@ export type DomainSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extens
 export type DomainSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
   name?: boolean
+  slug?: boolean
   description?: boolean
   policyTemplate?: boolean
   isSystem?: boolean
@@ -597,6 +630,7 @@ export type DomainSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extens
 export type DomainSelectScalar = {
   id?: boolean
   name?: boolean
+  slug?: boolean
   description?: boolean
   policyTemplate?: boolean
   isSystem?: boolean
@@ -604,7 +638,7 @@ export type DomainSelectScalar = {
   updatedAt?: boolean
 }
 
-export type DomainOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "description" | "policyTemplate" | "isSystem" | "createdAt" | "updatedAt", ExtArgs["result"]["domain"]>
+export type DomainOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "slug" | "description" | "policyTemplate" | "isSystem" | "createdAt" | "updatedAt", ExtArgs["result"]["domain"]>
 export type DomainInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entities?: boolean | Prisma.Domain$entitiesArgs<ExtArgs>
   userRoles?: boolean | Prisma.Domain$userRolesArgs<ExtArgs>
@@ -622,6 +656,7 @@ export type $DomainPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
     name: string
+    slug: string
     description: string
     policyTemplate: runtime.JsonValue | null
     isSystem: boolean
@@ -1054,6 +1089,7 @@ export interface Prisma__DomainClient<T, Null = never, ExtArgs extends runtime.T
 export interface DomainFieldRefs {
   readonly id: Prisma.FieldRef<"Domain", 'String'>
   readonly name: Prisma.FieldRef<"Domain", 'String'>
+  readonly slug: Prisma.FieldRef<"Domain", 'String'>
   readonly description: Prisma.FieldRef<"Domain", 'String'>
   readonly policyTemplate: Prisma.FieldRef<"Domain", 'Json'>
   readonly isSystem: Prisma.FieldRef<"Domain", 'Boolean'>

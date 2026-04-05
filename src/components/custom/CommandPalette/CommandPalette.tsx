@@ -28,7 +28,6 @@ import {
   trackRecentEntity,
   type RecentEntityEntry,
 } from "@/lib/recent-entities";
-import { toSlug } from "@/lib/domain-utils";
 import type {
   CommandPaletteProps,
   CommandPaletteEntity,
@@ -38,8 +37,9 @@ import type {
 interface DomainTreeNode {
   id: string;
   name: string;
+  slug: string;
   isSystem: boolean;
-  entities: { id: string; name: string; status: string }[];
+  entities: { id: string; name: string; slug: string; status: string }[];
 }
 
 export function CommandPalette({
@@ -71,13 +71,13 @@ export function CommandPalette({
 
         const entityList: CommandPaletteEntity[] = [];
         domains.forEach((domain) => {
-          const slug = toSlug(domain.name);
           domain.entities.forEach((entity) => {
             entityList.push({
               id: entity.id,
               name: entity.name,
+              slug: entity.slug,
               domainName: domain.name,
-              domainSlug: slug,
+              domainSlug: domain.slug,
               status: entity.status,
             });
           });
@@ -123,7 +123,7 @@ export function CommandPalette({
         entityName: entity.name,
         domainName: entity.domainName,
       });
-      router.push(`/schemas/${entity.domainSlug}/${entity.id}`);
+      router.push(`/schemas/${entity.domainSlug}/${entity.slug || entity.id}`);
       onClose();
     },
     [router, onClose]
@@ -132,7 +132,7 @@ export function CommandPalette({
   const navigateToField = useCallback(
     (field: CommandPaletteField) => {
       router.push(
-        `/schemas/${field.domainSlug}/${field.entityId}/fields/${field.id}`
+        `/schemas/${field.domainSlug}/${field.entitySlug || field.entityId}/fields/${field.id}`
       );
       onClose();
     },

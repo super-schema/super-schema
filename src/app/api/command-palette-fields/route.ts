@@ -1,6 +1,5 @@
 import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
-import { toSlug } from "@/lib/domain-utils";
 import { authenticateRequest } from "../v1/middleware";
 
 export async function GET(request: Request) {
@@ -19,8 +18,9 @@ export async function GET(request: Request) {
           select: {
             id: true,
             name: true,
+            slug: true,
             domain: {
-              select: { name: true },
+              select: { name: true, slug: true },
             },
           },
         },
@@ -35,8 +35,9 @@ export async function GET(request: Request) {
         name: f.name,
         type: f.type,
         entityId: f.entity.id,
+        entitySlug: f.entity.slug,
         entityName: f.entity.name,
-        domainSlug: toSlug(f.entity.domain.name),
+        domainSlug: f.entity.domain.slug,
       }))
     );
   } catch {

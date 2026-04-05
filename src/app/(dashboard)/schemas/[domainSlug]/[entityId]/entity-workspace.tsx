@@ -61,6 +61,7 @@ interface EntityWorkspaceProps {
   entity: {
     id: string;
     name: string;
+    slug: string;
     description: string;
     status: string;
     version: number;
@@ -333,6 +334,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       <RightPanelRouter
         selectedField={selectedField}
         entityId={entity.id}
+        entitySlug={entity.slug}
         domainSlug={entity.domainSlug}
         isReadOnly={readOnly_}
         rightPanelTab={rightPanelTab}
@@ -379,6 +381,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
               </h2>
               <FieldEditor
                 entityId={entity.id}
+                entitySlug={entity.slug}
                 domainSlug={entity.domainSlug}
                 fields={fields}
                 domainPolicy={domainPolicy}

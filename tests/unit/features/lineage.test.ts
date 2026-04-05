@@ -12,6 +12,7 @@ function makeEntity(overrides: Partial<EntityData> = {}): EntityData {
   return {
     id: "entity-1",
     name: "User",
+    slug: "user",
     domainName: "Identity",
     domainSlug: "identity",
     status: "ACTIVE",

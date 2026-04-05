@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     orderBy: [{ isSystem: "desc" }, { name: "asc" }],
     include: {
       entities: {
-        select: { id: true, name: true, status: true },
+        select: { id: true, name: true, slug: true, status: true },
         orderBy: { name: "asc" },
       },
     },
@@ -22,6 +22,7 @@ export async function GET(request: Request) {
     domains.map((d) => ({
       id: d.id,
       name: d.name,
+      slug: d.slug,
       isSystem: d.isSystem,
       entities: d.entities,
     }))

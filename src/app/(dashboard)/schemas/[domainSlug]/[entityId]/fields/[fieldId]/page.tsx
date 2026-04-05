@@ -18,7 +18,8 @@ export default async function FieldDetailPage({ params }: Props) {
     },
   });
 
-  if (!field || field.entityId !== entityId) {
+  // entityId param may be a slug or a cuid — accept either
+  if (!field || (field.entityId !== entityId && field.entity.slug !== entityId)) {
     notFound();
   }
 
@@ -46,6 +47,7 @@ export default async function FieldDetailPage({ params }: Props) {
       entity={{
         id: field.entity.id,
         name: field.entity.name,
+        slug: field.entity.slug,
         domainSlug,
       }}
       domain={{

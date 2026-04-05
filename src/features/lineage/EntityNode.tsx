@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 
 export interface EntityNodeData {
   label: string;
+  slug: string;
   domainName: string;
   domainSlug: string;
   status: string;
@@ -40,8 +41,8 @@ function EntityNodeInner({ data, id }: NodeProps) {
   );
 
   const handleOpenEditor = useCallback(() => {
-    router.push(`/schemas/${nodeData.domainSlug}/${id}`);
-  }, [router, nodeData.domainSlug, id]);
+    router.push(`/schemas/${nodeData.domainSlug}/${nodeData.slug || id}`);
+  }, [router, nodeData.domainSlug, nodeData.slug, id]);
 
   const displayFields = nodeData.fields?.slice(0, 10) ?? [];
   const remainingFields = Math.max(0, (nodeData.fields?.length ?? 0) - 10);

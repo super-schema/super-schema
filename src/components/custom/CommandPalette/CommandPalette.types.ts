@@ -1,6 +1,7 @@
 export interface CommandPaletteEntity {
   id: string;
   name: string;
+  slug?: string;
   domainName: string;
   domainSlug: string;
   status?: string;
@@ -12,6 +13,7 @@ export interface CommandPaletteField {
   name: string;
   type: string;
   entityId: string;
+  entitySlug?: string;
   entityName: string;
   domainSlug: string;
 }

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
+import { generateSlug } from "@/lib/slug";
 
 export async function getDomainsAction() {
   const session = await auth();
@@ -45,7 +46,7 @@ export async function createDomainAction(formData: FormData) {
       userId: session.user.id,
       fn: () =>
         prisma.domain.create({
-          data: { name: name.trim(), description },
+          data: { name: name.trim(), slug: generateSlug(name), description },
         }),
     });
     revalidatePath("/schemas");

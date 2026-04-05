@@ -29,6 +29,7 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 interface FieldQuickEditPanelProps {
   field: FieldData;
   entityId: string;
+  entitySlug?: string;
   domainSlug: string;
   isReadOnly?: boolean;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
@@ -39,6 +40,7 @@ const SECTION_LABELS = ["Identity", "Validation", "Documentation", "Governance"]
 export function FieldQuickEditPanel({
   field,
   entityId,
+  entitySlug,
   domainSlug,
   isReadOnly = false,
   onUpdateField,
@@ -374,7 +376,7 @@ export function FieldQuickEditPanel({
         <div className="flex items-center justify-between">
           <SaveIndicator status={saveStatus} />
           <Link
-            href={`/schemas/${domainSlug}/${entityId}/fields/${field.id}`}
+            href={`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${field.id}`}
             className="text-caption text-primary hover:underline"
           >
             Open Full Field Studio &rarr;

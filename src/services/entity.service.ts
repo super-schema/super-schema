@@ -14,6 +14,7 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
+import { generateSlug } from "@/lib/slug";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -51,6 +52,7 @@ export async function createEntity(
         return prisma.entity.create({
           data: {
             name: parsed.data.name,
+            slug: generateSlug(parsed.data.name),
             domainId: parsed.data.domainId,
             description: parsed.data.description,
             ownerId: ctx.userId,

@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/db";
-import { toSlug } from "@/lib/domain-utils";
 import type { EntityMetadata } from "@/types/schemas/entity-metadata.schema";
 import { LineagePageClient } from "./lineage-client";
 
@@ -35,9 +34,10 @@ export default async function LineagePage() {
     return {
       id: e.id,
       name: e.name,
+      slug: e.slug,
       description: (e as Record<string, unknown>).description as string ?? "",
       domainName: e.domain.name,
-      domainSlug: toSlug(e.domain.name),
+      domainSlug: e.domain.slug,
       status: e.status,
       fieldCount: e._count.fields,
       piiCount,

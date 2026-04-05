@@ -26,6 +26,7 @@ interface FieldData {
 interface RightPanelRouterProps {
   selectedField: FieldData | null;
   entityId: string;
+  entitySlug?: string;
   domainSlug: string;
   isReadOnly: boolean;
   rightPanelTab: RightPanelTab;
@@ -43,6 +44,7 @@ const TABS: { id: RightPanelTab; label: string }[] = [
 export function RightPanelRouter({
   selectedField,
   entityId,
+  entitySlug,
   domainSlug,
   isReadOnly,
   rightPanelTab,
@@ -80,6 +82,7 @@ export function RightPanelRouter({
             key={selectedField.id}
             field={selectedField}
             entityId={entityId}
+            entitySlug={entitySlug}
             domainSlug={domainSlug}
             isReadOnly={isReadOnly}
             onUpdateField={onUpdateField}
@@ -127,6 +130,7 @@ export function RightPanelRouter({
     rightPanelTab,
     selectedField,
     entityId,
+    entitySlug,
     domainSlug,
     isReadOnly,
     onUpdateField,

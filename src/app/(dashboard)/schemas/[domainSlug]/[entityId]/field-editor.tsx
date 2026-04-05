@@ -33,6 +33,7 @@ interface EntityInfo {
 
 interface FieldEditorProps {
   entityId: string;
+  entitySlug?: string;
   domainSlug: string;
   fields: FieldData[];
   domainFields?: DomainField[];
@@ -62,6 +63,7 @@ interface FieldEditorProps {
 
 export function FieldEditor({
   entityId,
+  entitySlug,
   domainSlug,
   fields,
   domainFields = [],
@@ -77,7 +79,7 @@ export function FieldEditor({
   const router = useRouter();
 
   function navigateToFieldStudio(fieldId: string) {
-    router.push(`/schemas/${domainSlug}/${entityId}/fields/${fieldId}`);
+    router.push(`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${fieldId}`);
   }
 
   // Listen for "/" slash command from global keyboard shortcuts
