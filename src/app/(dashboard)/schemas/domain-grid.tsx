@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Database, Sparkles, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DomainCard } from "@/components/custom/DomainCard";
@@ -134,16 +134,61 @@ export function DomainGrid({ domains }: DomainGridProps) {
 
       {/* Domain Grid */}
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <p className="text-heading-2 text-foreground mb-space-2">
-            No domains found
-          </p>
-          <p className="text-body text-muted-foreground">
-            {search
-              ? "Try a different search term"
-              : "Create your first domain to get started"}
-          </p>
-        </div>
+        search ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <p className="text-heading-2 text-foreground mb-space-2">
+              No domains found
+            </p>
+            <p className="text-body text-muted-foreground">
+              Try a different search term
+            </p>
+          </div>
+        ) : domains.filter((d) => !d.isSystem).length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Database className="w-16 h-16 text-muted-foreground/30 mb-space-4" />
+            <h2 className="text-heading-1 text-foreground mb-space-2">
+              Welcome to Super Schema
+            </h2>
+            <p className="text-body text-muted-foreground mb-space-2 max-w-md">
+              Super Schema helps you define, govern, and emit logical schemas across your data platform. Start by creating your first domain.
+            </p>
+            <p className="text-body-small text-muted-foreground mb-space-6 max-w-md">
+              A domain groups related entities together &mdash; for example, &ldquo;Customer&rdquo;, &ldquo;Payment&rdquo;, or &ldquo;Inventory&rdquo;.
+            </p>
+            <div className="flex items-center gap-space-3">
+              <Button onClick={() => setShowCreate(true)} className="gap-2" size="lg">
+                <Plus className="w-4 h-4" />
+                Create Your First Domain
+              </Button>
+            </div>
+            <div className="mt-space-8 grid grid-cols-1 sm:grid-cols-3 gap-space-4 max-w-2xl w-full text-left">
+              <div className="rounded-lg border border-border/50 p-space-4">
+                <div className="text-primary font-mono text-caption font-medium mb-space-1">Step 1</div>
+                <p className="text-body-small text-foreground font-medium">Create a Domain</p>
+                <p className="text-caption text-muted-foreground mt-1">Group related entities under a business domain.</p>
+              </div>
+              <div className="rounded-lg border border-border/50 p-space-4">
+                <div className="text-primary font-mono text-caption font-medium mb-space-1">Step 2</div>
+                <p className="text-body-small text-foreground font-medium">Define Entities</p>
+                <p className="text-caption text-muted-foreground mt-1">Add logical entities with fields, types, and classifications.</p>
+              </div>
+              <div className="rounded-lg border border-border/50 p-space-4">
+                <div className="text-primary font-mono text-caption font-medium mb-space-1">Step 3</div>
+                <p className="text-body-small text-foreground font-medium">Emit Schemas</p>
+                <p className="text-caption text-muted-foreground mt-1">Generate BigQuery, Avro, OpenAPI and more with one click.</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <p className="text-heading-2 text-foreground mb-space-2">
+              No domains found
+            </p>
+            <p className="text-body text-muted-foreground">
+              Create your first domain to get started
+            </p>
+          </div>
+        )
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-space-4">
           {filtered.map((domain) => (

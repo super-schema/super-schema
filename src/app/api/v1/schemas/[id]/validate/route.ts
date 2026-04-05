@@ -6,6 +6,7 @@
  */
 
 import { authenticateRequest } from "@/app/api/v1/middleware";
+import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import {
   apiSuccess,
   apiError,
@@ -24,6 +25,10 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Rate limit
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   // Authenticate
   const authResult = await authenticateRequest(request);
   if (!authResult.authenticated || !authResult.context) {

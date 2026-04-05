@@ -7,6 +7,10 @@ interface RightPanelContentState {
   setContent: (content: ReactNode | null) => void;
   onExpandRequest: (() => void) | null;
   registerExpandHandler: (handler: () => void) => void;
+  togglePanel: () => void;
+  registerToggleHandler: (handler: () => void) => void;
+  isPanelCollapsed: boolean;
+  registerCollapsedState: (collapsed: boolean) => void;
 }
 
 const RightPanelContentContext = createContext<RightPanelContentState>({
@@ -14,11 +18,17 @@ const RightPanelContentContext = createContext<RightPanelContentState>({
   setContent: () => {},
   onExpandRequest: null,
   registerExpandHandler: () => {},
+  togglePanel: () => {},
+  registerToggleHandler: () => {},
+  isPanelCollapsed: false,
+  registerCollapsedState: () => {},
 });
 
 export function RightPanelContentProvider({ children }: { children: ReactNode }) {
   const [content, setContentState] = useState<ReactNode | null>(null);
   const [expandHandler, setExpandHandler] = useState<(() => void) | null>(null);
+  const [toggleHandler, setToggleHandler] = useState<(() => void) | null>(null);
+  const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
 
   const setContent = useCallback((node: ReactNode | null) => {
     setContentState(node);
@@ -32,8 +42,31 @@ export function RightPanelContentProvider({ children }: { children: ReactNode })
     setExpandHandler(() => handler);
   }, []);
 
+  const registerToggleHandler = useCallback((handler: () => void) => {
+    setToggleHandler(() => handler);
+  }, []);
+
+  const togglePanel = useCallback(() => {
+    if (toggleHandler) {
+      toggleHandler();
+    }
+  }, [toggleHandler]);
+
+  const registerCollapsedState = useCallback((collapsed: boolean) => {
+    setIsPanelCollapsed(collapsed);
+  }, []);
+
   return (
-    <RightPanelContentContext.Provider value={{ content, setContent, onExpandRequest: expandHandler, registerExpandHandler }}>
+    <RightPanelContentContext.Provider value={{
+      content,
+      setContent,
+      onExpandRequest: expandHandler,
+      registerExpandHandler,
+      togglePanel,
+      registerToggleHandler,
+      isPanelCollapsed,
+      registerCollapsedState,
+    }}>
       {children}
     </RightPanelContentContext.Provider>
   );

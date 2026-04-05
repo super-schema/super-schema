@@ -45,9 +45,13 @@ const QUALITY_RULE_TYPES = [
 interface GovernancePanelProps {
   governance: Governance;
   onChange: (governance: Governance) => void;
+  /** Classification from field.classification (single source of truth) */
+  fieldClassification: string | null;
+  /** Callback to update field.classification directly */
+  onClassificationChange: (classification: string | null) => void;
 }
 
-export function GovernancePanel({ governance, onChange }: GovernancePanelProps) {
+export function GovernancePanel({ governance, onChange, fieldClassification, onClassificationChange }: GovernancePanelProps) {
   const [newAttrKey, setNewAttrKey] = useState("");
   const [newAttrValue, setNewAttrValue] = useState("");
 
@@ -55,7 +59,6 @@ export function GovernancePanel({ governance, onChange }: GovernancePanelProps) 
     onChange({ ...governance, ...partial });
   }
 
-  const classification = governance.classification ?? {};
   const qualityRules = governance.qualityRules ?? [];
   const lineage = governance.lineage ?? {};
   const operationalHints = governance.operationalHints ?? {};
@@ -64,7 +67,7 @@ export function GovernancePanel({ governance, onChange }: GovernancePanelProps) 
 
   // Count active governance settings for the badge
   const activeCount =
-    (classification.level ? 1 : 0) +
+    (fieldClassification ? 1 : 0) +
     (governance.retention ? 1 : 0) +
     (governance.anonymization ? 1 : 0) +
     (governance.encryption ? 1 : 0) +
@@ -84,35 +87,16 @@ export function GovernancePanel({ governance, onChange }: GovernancePanelProps) 
         </Badge>
       )}
 
-      {/* Section 1: Classification */}
+      {/* Section 1: Classification (source of truth: field.classification) */}
       <div>
         <label className="text-caption text-muted-foreground mb-1 block">
           Classification
         </label>
         <div className="flex items-center gap-space-3">
           <ClassificationPicker
-            value={classification.level ?? null}
-            onChange={(level) =>
-              update({
-                classification: { ...classification, level },
-              })
-            }
+            value={fieldClassification}
+            onChange={(level) => onClassificationChange(level)}
           />
-          <div className="flex-1">
-            <Input
-              value={classification.customLevel ?? ""}
-              onChange={(e) =>
-                update({
-                  classification: {
-                    ...classification,
-                    customLevel: e.target.value || null,
-                  },
-                })
-              }
-              placeholder="Custom classification level"
-              className="h-7 text-body-small font-mono"
-            />
-          </div>
         </div>
       </div>
 

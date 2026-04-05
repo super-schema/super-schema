@@ -389,26 +389,31 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
   switch (status) {
     case "saving":
       return (
-        <span className="flex items-center gap-1 text-caption text-muted-foreground">
+        <span className="flex items-center gap-1 text-caption text-muted-foreground animate-pulse">
           <Loader2 className="w-3 h-3 animate-spin" />
-          Saving...
+          Saving&hellip;
         </span>
       );
     case "saved":
       return (
         <span className="flex items-center gap-1 text-caption text-success">
           <Check className="w-3 h-3" />
-          Saved
+          All changes saved
         </span>
       );
     case "error":
       return (
         <span className="flex items-center gap-1 text-caption text-destructive">
           <AlertCircle className="w-3 h-3" />
-          Save failed
+          Save failed &mdash; retrying&hellip;
         </span>
       );
     default:
-      return <span className="text-caption text-muted-foreground/50">Auto-save</span>;
+      return (
+        <span className="flex items-center gap-1 text-caption text-muted-foreground/50">
+          <Check className="w-3 h-3" />
+          Auto-save enabled
+        </span>
+      );
   }
 }

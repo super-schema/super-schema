@@ -13,7 +13,6 @@ import type { ServiceContext } from "@/types/service-context";
 import {
   CreateClassificationInputSchema,
   UpdateClassificationInputSchema,
-  SYSTEM_CLASSIFICATION_DEFAULTS,
   type ClassificationLevel,
   type CreateClassificationInput,
   type UpdateClassificationInput,
@@ -47,29 +46,6 @@ function toClassificationLevel(row: {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Seed system defaults if table is empty
-// ---------------------------------------------------------------------------
-
-async function ensureDefaults(): Promise<void> {
-  const count = await prisma.classificationLevel.count();
-  if (count > 0) return;
-
-  for (const def of SYSTEM_CLASSIFICATION_DEFAULTS) {
-    await prisma.classificationLevel.create({
-      data: {
-        name: def.name,
-        displayColor: def.displayColor,
-        bgColor: def.bgColor,
-        textColor: def.textColor,
-        description: def.description ?? "",
-        sortOrder: def.sortOrder,
-        isSystem: def.isSystem,
-      },
-    });
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +93,6 @@ export async function _getClassificationStore(): Promise<ClassificationLevel[]> 
 export async function getClassificationLevels(
   _ctx: ServiceContext
 ): Promise<Result<ClassificationLevel[]>> {
-  await ensureDefaults();
   const rows = await prisma.classificationLevel.findMany({
     orderBy: { sortOrder: "asc" },
   });
@@ -149,7 +124,6 @@ export async function createClassification(
     });
   }
 
-  await ensureDefaults();
 
   // Enforce unique name (case-insensitive — names stored uppercase)
   const uppercaseName = parsed.data.name.toUpperCase();
@@ -204,7 +178,6 @@ export async function updateClassification(
     });
   }
 
-  await ensureDefaults();
 
   const existing = await prisma.classificationLevel.findUnique({
     where: { id: parsed.data.id },
@@ -248,7 +221,6 @@ export async function deleteClassification(
     });
   }
 
-  await ensureDefaults();
 
   const level = await prisma.classificationLevel.findUnique({
     where: { id },

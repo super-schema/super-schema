@@ -87,9 +87,11 @@ import {
   updateClassification,
   deleteClassification,
   _resetClassificationStore,
+  _seedClassifications,
   _setFieldUsage,
   _getClassificationStore,
 } from "@/services/classification-taxonomy.service";
+import { SYSTEM_CLASSIFICATION_DEFAULTS } from "@/types/schemas/classification-taxonomy";
 import type { ServiceContext } from "@/types/service-context";
 
 const adminCtx: ServiceContext = {
@@ -108,6 +110,15 @@ describe("Classification Taxonomy Service", () => {
   beforeEach(async () => {
     await _resetClassificationStore();
     fieldUsageOverrides = new Map();
+    // Seed system defaults (previously done by ensureDefaults(), now handled by prisma/seed.ts in production)
+    const defaults = SYSTEM_CLASSIFICATION_DEFAULTS.map((d, i) => ({
+      ...d,
+      id: `sys-${i + 1}`,
+      description: d.description ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    await _seedClassifications(defaults);
   });
 
   describe("getClassificationLevels", () => {

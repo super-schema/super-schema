@@ -54,6 +54,56 @@ async function main() {
     }
   }
 
+  // Seed default emitter configs (idempotent)
+  const defaultEmitters = [
+    { name: "bigquery", format: "SQL", version: "1.0.0", description: "Google BigQuery SQL DDL emitter" },
+    { name: "avro", format: "JSON", version: "1.0.0", description: "Apache Avro schema emitter" },
+    { name: "openapi", format: "YAML", version: "1.0.0", description: "OpenAPI 3.0 specification emitter" },
+  ];
+
+  for (const d of defaultEmitters) {
+    const existing = await prisma.emitterConfig.findUnique({
+      where: { emitterName: d.name },
+    });
+    if (!existing) {
+      await prisma.emitterConfig.create({
+        data: {
+          emitterName: d.name,
+          enabled: true,
+          targetFormat: d.format,
+          version: d.version,
+          description: d.description,
+          updatedBy: "system",
+        },
+      });
+      console.log(`Created default emitter config: ${d.name}`);
+    } else {
+      console.log(`Emitter config already exists: ${d.name}`);
+    }
+  }
+
+  // Seed default classification levels (idempotent)
+  const defaultClassifications = [
+    { name: "PII", displayColor: "#DC2626", bgColor: "#DC262620", textColor: "#DC2626", description: "Personally Identifiable Information", sortOrder: 1 },
+    { name: "SENSITIVE", displayColor: "#D97706", bgColor: "#D9770620", textColor: "#D97706", description: "Sensitive business data", sortOrder: 2 },
+    { name: "INTERNAL", displayColor: "#2563EB", bgColor: "#2563EB20", textColor: "#2563EB", description: "Internal use only", sortOrder: 3 },
+    { name: "PUBLIC", displayColor: "#16A34A", bgColor: "#16A34A20", textColor: "#16A34A", description: "Public data", sortOrder: 4 },
+  ];
+
+  for (const cls of defaultClassifications) {
+    const existing = await prisma.classificationLevel.findFirst({
+      where: { name: cls.name },
+    });
+    if (!existing) {
+      await prisma.classificationLevel.create({
+        data: { ...cls, isSystem: true },
+      });
+      console.log(`Created default classification: ${cls.name}`);
+    } else {
+      console.log(`Classification already exists: ${cls.name}`);
+    }
+  }
+
   await prisma.$disconnect();
   console.log("Seed complete.");
 }

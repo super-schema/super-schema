@@ -10,6 +10,7 @@ import {
   Check,
   X,
   Shield,
+  ClipboardCopy,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -304,6 +305,33 @@ export function EmissionPreviewPanel({
   onWarningClick,
   overrides,
 }: EmissionPreviewPanelProps) {
+  const [copiedAll, setCopiedAll] = useState(false);
+
+  const handleCopyAll = useCallback(async () => {
+    const targetEntries = Object.entries(result.targets);
+    const sections: string[] = [];
+
+    // TypeSpec section
+    sections.push(`${"=".repeat(60)}\n TypeSpec\n${"=".repeat(60)}\n\n${result.typespec}`);
+
+    // Target sections
+    for (const [key, target] of targetEntries) {
+      const displayName = getDisplayName(key);
+      sections.push(`${"=".repeat(60)}\n ${displayName} (${target.targetFormat})\n${"=".repeat(60)}\n\n${target.output}`);
+    }
+
+    const allText = sections.join("\n\n");
+
+    try {
+      await navigator.clipboard.writeText(allText);
+      setCopiedAll(true);
+      toast.success("All outputs copied to clipboard");
+      setTimeout(() => setCopiedAll(false), 2000);
+    } catch {
+      toast.error("Failed to copy");
+    }
+  }, [result]);
+
   if (!open) return null;
 
   const targetEntries = Object.entries(result.targets);
@@ -319,9 +347,30 @@ export function EmissionPreviewPanel({
             {result.summary.totalTargets} target{result.summary.totalTargets !== 1 ? "s" : ""}
           </span>
         </div>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close emission preview">
-          <X className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyAll}
+            className="gap-1.5 text-caption"
+            aria-label="Copy all outputs"
+          >
+            {copiedAll ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-success" />
+                Copied
+              </>
+            ) : (
+              <>
+                <ClipboardCopy className="w-3.5 h-3.5" />
+                Copy All
+              </>
+            )}
+          </Button>
+          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close emission preview">
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Summary bar */}

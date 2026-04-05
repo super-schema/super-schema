@@ -41,36 +41,6 @@ export function _getConfigStore(): EmitterConfigRecord[] {
 }
 
 // ---------------------------------------------------------------------------
-// Default emitter seeding — ensures defaults exist in DB
-// ---------------------------------------------------------------------------
-
-async function ensureDefaults(): Promise<void> {
-  const count = await prisma.emitterConfig.count();
-  if (count > 0) return;
-
-  const defaults = [
-    { name: "bigquery", format: "SQL", version: "1.0.0", description: "Google BigQuery SQL DDL emitter" },
-    { name: "avro", format: "JSON", version: "1.0.0", description: "Apache Avro schema emitter" },
-    { name: "openapi", format: "YAML", version: "1.0.0", description: "OpenAPI 3.0 specification emitter" },
-  ];
-
-  for (const d of defaults) {
-    await prisma.emitterConfig.upsert({
-      where: { emitterName: d.name },
-      create: {
-        emitterName: d.name,
-        enabled: true,
-        targetFormat: d.format,
-        version: d.version,
-        description: d.description,
-        updatedBy: "system",
-      },
-      update: {},
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Helper: map Prisma row to EmitterConfigRecord
 // ---------------------------------------------------------------------------
 
@@ -115,7 +85,6 @@ export async function getEmitterConfigs(
     });
   }
 
-  await ensureDefaults();
 
   const rows = await prisma.emitterConfig.findMany();
   const results: EmitterConfigWithStats[] = rows.map((row) => ({
@@ -143,7 +112,6 @@ export async function getEmitterConfigByName(
     });
   }
 
-  await ensureDefaults();
 
   const row = await prisma.emitterConfig.findUnique({
     where: { emitterName: name },
@@ -189,7 +157,6 @@ export async function updateEmitterConfig(
     });
   }
 
-  await ensureDefaults();
 
   const existing = await prisma.emitterConfig.findUnique({
     where: { emitterName: parsed.data.emitterName },
@@ -234,7 +201,6 @@ export async function testEmitter(
     });
   }
 
-  await ensureDefaults();
 
   const config = await prisma.emitterConfig.findUnique({
     where: { emitterName },
@@ -266,7 +232,6 @@ export async function testEmitter(
 export async function getEnabledEmitters(
   _ctx: ServiceContext
 ): Promise<Result<string[]>> {
-  await ensureDefaults();
   const rows = await prisma.emitterConfig.findMany({
     where: { enabled: true },
     select: { emitterName: true },

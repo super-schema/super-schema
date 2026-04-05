@@ -112,14 +112,10 @@ export const ExtensionsSchema = z
   .partial();
 
 // Panel 8: Governance
+// Note: classification is stored on field.classification (single source of truth),
+// NOT in the decorators JSONB. See GovernancePanel for read/write path.
 export const GovernanceSchema = z
   .object({
-    classification: z
-      .object({
-        level: z.string().nullable(),
-        customLevel: z.string().nullable(),
-      })
-      .partial(),
     retention: z.string().nullable(),
     anonymization: z.string().nullable(),
     encryption: z.string().nullable(),

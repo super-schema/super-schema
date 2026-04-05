@@ -183,12 +183,28 @@ function DashboardShell({
   paletteActions: { id: string; label: string; icon: React.ReactNode; shortcut?: string; onSelect: () => void }[];
   children: React.ReactNode;
 }) {
-  const { content: rightPanelContent, registerExpandHandler } = useRightPanelContent();
+  const { content: rightPanelContent, registerExpandHandler, registerToggleHandler, registerCollapsedState } = useRightPanelContent();
 
   // Register the right panel expand handler so content pushes auto-expand the panel
   useEffect(() => {
     registerExpandHandler(() => rightPanel.expand());
   }, [registerExpandHandler, rightPanel]);
+
+  // Register the right panel toggle handler
+  useEffect(() => {
+    registerToggleHandler(() => {
+      if (rightPanel.isCollapsed) {
+        rightPanel.expand();
+      } else {
+        rightPanel.collapse();
+      }
+    });
+  }, [registerToggleHandler, rightPanel]);
+
+  // Sync collapsed state to context
+  useEffect(() => {
+    registerCollapsedState(rightPanel.isCollapsed);
+  }, [registerCollapsedState, rightPanel.isCollapsed]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">

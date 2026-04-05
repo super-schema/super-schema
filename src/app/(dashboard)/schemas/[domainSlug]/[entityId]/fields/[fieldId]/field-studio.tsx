@@ -66,6 +66,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
   const [fieldType, setFieldType] = useState(field.type);
   const [isOptional, setIsOptional] = useState(field.nullable);
   const [fieldNumber, setFieldNumber] = useState<number | null>(field.fieldNumber);
+  const [fieldClassification, setFieldClassification] = useState<string | null>(field.classification);
 
   // TypeSpec decorators state
   const existingTypespec = (field.decorators?.typespec as TypeSpecDecorators) ?? {};
@@ -78,8 +79,8 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
   const savingRef = useRef(false);
 
   // Refs to track current values for save (fixes stale closure P1 + P2)
-  const currentRef = useRef({ fieldName, fieldType, isOptional, typespec, fieldNumber });
-  currentRef.current = { fieldName, fieldType, isOptional, typespec, fieldNumber };
+  const currentRef = useRef({ fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification });
+  currentRef.current = { fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification };
 
   // Panel state from localStorage — keyed by field.id (P8 fix)
   const [expandedPanels, setExpandedPanels] = useState<number[]>(() => {
@@ -111,7 +112,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
     setSaveStatus("saving");
     pendingRef.current = false;
 
-    const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn } = currentRef.current;
+    const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls } = currentRef.current;
     const decorators = { ...field.decorators, typespec: ts };
 
     const result = await updateFieldAction(field.id, {
@@ -119,6 +120,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
       type,
       nullable,
       fieldNumber: fn,
+      classification: cls,
       decorators,
     });
 
@@ -167,9 +169,9 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
         clearTimeout(saveTimeoutRef.current);
       }
       if (pendingRef.current) {
-        const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn } = currentRef.current;
+        const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls } = currentRef.current;
         const decorators = { ...field.decorators, typespec: ts };
-        updateFieldAction(field.id, { name, type, nullable, fieldNumber: fn, decorators });
+        updateFieldAction(field.id, { name, type, nullable, fieldNumber: fn, classification: cls, decorators });
       }
     };
   }, [field.id, field.decorators]);
@@ -465,7 +467,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
               {(() => {
                 const gov = typespec.governance ?? {};
                 const govCount =
-                  (gov.classification?.level ? 1 : 0) +
+                  (fieldClassification ? 1 : 0) +
                   (gov.retention ? 1 : 0) +
                   (gov.anonymization ? 1 : 0) +
                   (gov.encryption ? 1 : 0) +
@@ -484,6 +486,11 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
             <GovernancePanel
               governance={typespec.governance ?? {}}
               onChange={(val) => updateTypespec("governance", val)}
+              fieldClassification={fieldClassification}
+              onClassificationChange={(cls) => {
+                setFieldClassification(cls);
+                scheduleSave();
+              }}
             />
           </AccordionContent>
         </AccordionItem>
