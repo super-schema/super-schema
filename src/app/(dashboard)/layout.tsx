@@ -183,7 +183,12 @@ function DashboardShell({
   paletteActions: { id: string; label: string; icon: React.ReactNode; shortcut?: string; onSelect: () => void }[];
   children: React.ReactNode;
 }) {
-  const { content: rightPanelContent } = useRightPanelContent();
+  const { content: rightPanelContent, registerExpandHandler } = useRightPanelContent();
+
+  // Register the right panel expand handler so content pushes auto-expand the panel
+  useEffect(() => {
+    registerExpandHandler(() => rightPanel.expand());
+  }, [registerExpandHandler, rightPanel]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
