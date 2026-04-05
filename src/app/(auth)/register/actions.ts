@@ -56,9 +56,16 @@ export async function registerAction(
 
   const hashedPassword = await bcrypt.hash(password, 12);
 
-  await prisma.user.create({
-    data: { email, password: hashedPassword },
-  });
+  try {
+    await prisma.user.create({
+      data: { email, password: hashedPassword },
+    });
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) {
+      return { fieldErrors: { email: "An account with this email already exists" } };
+    }
+    return { error: "Registration failed. Please try again." };
+  }
 
   await signIn("credentials", {
     email,

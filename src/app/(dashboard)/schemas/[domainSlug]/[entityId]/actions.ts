@@ -104,7 +104,8 @@ export async function addFieldAction(
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `Field "${name}" already exists` };
     }
-    throw e;
+    const message = e instanceof Error ? e.message : "Failed to create field";
+    return { error: message };
   }
 }
 
@@ -154,24 +155,32 @@ export async function updateFieldAction(
     }
   }
 
-  await withAudit({
-    action: "UPDATE",
-    entityType: "Field",
-    entityId: fieldId,
-    userId: session.user.id,
-    beforeState: existing as unknown as object,
-    fn: () =>
-      prisma.field.update({
-        where: { id: fieldId },
-        data: {
-          ...rest,
-          ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
-        },
-      }),
-  });
+  try {
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Field",
+      entityId: fieldId,
+      userId: session.user.id,
+      beforeState: existing as unknown as object,
+      fn: () =>
+        prisma.field.update({
+          where: { id: fieldId },
+          data: {
+            ...rest,
+            ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
+          },
+        }),
+    });
 
-  revalidatePath("/schemas");
-  return { success: true };
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) {
+      return { error: `A field with that name already exists` };
+    }
+    const message = e instanceof Error ? e.message : "Failed to update field";
+    return { error: message };
+  }
 }
 
 export async function updateEntityStatusAction(
@@ -222,21 +231,26 @@ export async function updateEntityRelationshipsAction(
   const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
   const updatedMeta = { ...existingMeta, relationships };
 
-  await withAudit({
-    action: "UPDATE",
-    entityType: "Entity",
-    entityId,
-    userId: session.user.id,
-    beforeState: { metadata: existingMeta } as unknown as object,
-    fn: () =>
-      prisma.entity.update({
-        where: { id: entityId },
-        data: { metadata: updatedMeta as Prisma.InputJsonValue },
-      }),
-  });
+  try {
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: session.user.id,
+      beforeState: { metadata: existingMeta } as unknown as object,
+      fn: () =>
+        prisma.entity.update({
+          where: { id: entityId },
+          data: { metadata: updatedMeta as Prisma.InputJsonValue },
+        }),
+    });
 
-  revalidatePath("/schemas");
-  return { success: true };
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to update relationships";
+    return { error: message };
+  }
 }
 
 /**
@@ -538,39 +552,44 @@ export async function deleteFieldAction(fieldId: string) {
   const existing = await prisma.field.findUnique({ where: { id: fieldId } });
   if (!existing) return { error: "Field not found" };
 
-  // If this is a reference field, clean up relationship from entity metadata
-  if (existing.type === "reference") {
-    const entity = await prisma.entity.findUnique({
-      where: { id: existing.entityId },
-      select: { metadata: true },
-    });
-    if (entity?.metadata) {
-      const meta = entity.metadata as Record<string, unknown>;
-      const relationships = (meta.relationships as Relationship[]) ?? [];
-      const filtered = relationships.filter((r) => r.fieldId !== fieldId);
-      if (filtered.length !== relationships.length) {
-        await prisma.entity.update({
-          where: { id: existing.entityId },
-          data: {
-            metadata: { ...meta, relationships: filtered } as Prisma.InputJsonValue,
-          },
-        });
+  try {
+    // If this is a reference field, clean up relationship from entity metadata
+    if (existing.type === "reference") {
+      const entity = await prisma.entity.findUnique({
+        where: { id: existing.entityId },
+        select: { metadata: true },
+      });
+      if (entity?.metadata) {
+        const meta = entity.metadata as Record<string, unknown>;
+        const relationships = (meta.relationships as Relationship[]) ?? [];
+        const filtered = relationships.filter((r) => r.fieldId !== fieldId);
+        if (filtered.length !== relationships.length) {
+          await prisma.entity.update({
+            where: { id: existing.entityId },
+            data: {
+              metadata: { ...meta, relationships: filtered } as Prisma.InputJsonValue,
+            },
+          });
+        }
       }
     }
+
+    await withAudit({
+      action: "DELETE",
+      entityType: "Field",
+      entityId: fieldId,
+      userId: session.user.id,
+      beforeState: existing as unknown as object,
+      fn: async () => {
+        await prisma.field.delete({ where: { id: fieldId } });
+        return null;
+      },
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to delete field";
+    return { error: message };
   }
-
-  await withAudit({
-    action: "DELETE",
-    entityType: "Field",
-    entityId: fieldId,
-    userId: session.user.id,
-    beforeState: existing as unknown as object,
-    fn: async () => {
-      await prisma.field.delete({ where: { id: fieldId } });
-      return null;
-    },
-  });
-
-  revalidatePath("/schemas");
-  return { success: true };
 }

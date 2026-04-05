@@ -54,7 +54,8 @@ export async function createDomainAction(formData: FormData) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `A domain named "${name}" already exists` };
     }
-    throw e;
+    const message = e instanceof Error ? e.message : "Failed to create domain";
+    return { error: message };
   }
 }
 
@@ -83,17 +84,22 @@ export async function deleteDomainAction(domainId: string) {
     };
   }
 
-  await withAudit({
-    action: "DELETE",
-    entityType: "Domain",
-    entityId: domainId,
-    userId: session.user.id,
-    beforeState: domain as unknown as object,
-    fn: async () => {
-      await prisma.domain.delete({ where: { id: domainId } });
-      return null;
-    },
-  });
-  revalidatePath("/schemas");
-  return { success: true };
+  try {
+    await withAudit({
+      action: "DELETE",
+      entityType: "Domain",
+      entityId: domainId,
+      userId: session.user.id,
+      beforeState: domain as unknown as object,
+      fn: async () => {
+        await prisma.domain.delete({ where: { id: domainId } });
+        return null;
+      },
+    });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to delete domain";
+    return { error: message };
+  }
 }

@@ -77,7 +77,8 @@ export async function createEntityWithFieldsAction(
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `An entity named "${name}" already exists in this domain` };
     }
-    throw e;
+    const message = e instanceof Error ? e.message : "Failed to create entity";
+    return { error: message };
   }
 }
 
@@ -122,6 +123,7 @@ export async function createEntityAction(domainId: string, formData: FormData) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `An entity named "${name}" already exists in this domain` };
     }
-    throw e;
+    const message = e instanceof Error ? e.message : "Failed to create entity";
+    return { error: message };
   }
 }
