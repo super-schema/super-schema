@@ -309,6 +309,7 @@ export type FieldWhereInput = {
   createdAt?: Prisma.DateTimeFilter<"Field"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Field"> | Date | string
   entity?: Prisma.XOR<Prisma.EntityScalarRelationFilter, Prisma.EntityWhereInput>
+  conceptLinks?: Prisma.FieldConceptLinkListRelationFilter
 }
 
 export type FieldOrderByWithRelationInput = {
@@ -329,6 +330,7 @@ export type FieldOrderByWithRelationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   entity?: Prisma.EntityOrderByWithRelationInput
+  conceptLinks?: Prisma.FieldConceptLinkOrderByRelationAggregateInput
 }
 
 export type FieldWhereUniqueInput = Prisma.AtLeast<{
@@ -353,6 +355,7 @@ export type FieldWhereUniqueInput = Prisma.AtLeast<{
   createdAt?: Prisma.DateTimeFilter<"Field"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Field"> | Date | string
   entity?: Prisma.XOR<Prisma.EntityScalarRelationFilter, Prisma.EntityWhereInput>
+  conceptLinks?: Prisma.FieldConceptLinkListRelationFilter
 }, "id" | "entityId_name">
 
 export type FieldOrderByWithAggregationInput = {
@@ -418,6 +421,7 @@ export type FieldCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entity: Prisma.EntityCreateNestedOneWithoutFieldsInput
+  conceptLinks?: Prisma.FieldConceptLinkCreateNestedManyWithoutFieldInput
 }
 
 export type FieldUncheckedCreateInput = {
@@ -437,6 +441,7 @@ export type FieldUncheckedCreateInput = {
   decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
+  conceptLinks?: Prisma.FieldConceptLinkUncheckedCreateNestedManyWithoutFieldInput
 }
 
 export type FieldUpdateInput = {
@@ -456,6 +461,7 @@ export type FieldUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entity?: Prisma.EntityUpdateOneRequiredWithoutFieldsNestedInput
+  conceptLinks?: Prisma.FieldConceptLinkUpdateManyWithoutFieldNestedInput
 }
 
 export type FieldUncheckedUpdateInput = {
@@ -475,6 +481,7 @@ export type FieldUncheckedUpdateInput = {
   decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  conceptLinks?: Prisma.FieldConceptLinkUncheckedUpdateManyWithoutFieldNestedInput
 }
 
 export type FieldCreateManyInput = {
@@ -623,6 +630,11 @@ export type FieldSumOrderByAggregateInput = {
   sortOrder?: Prisma.SortOrder
 }
 
+export type FieldScalarRelationFilter = {
+  is?: Prisma.FieldWhereInput
+  isNot?: Prisma.FieldWhereInput
+}
+
 export type FieldCreateNestedManyWithoutEntityInput = {
   create?: Prisma.XOR<Prisma.FieldCreateWithoutEntityInput, Prisma.FieldUncheckedCreateWithoutEntityInput> | Prisma.FieldCreateWithoutEntityInput[] | Prisma.FieldUncheckedCreateWithoutEntityInput[]
   connectOrCreate?: Prisma.FieldCreateOrConnectWithoutEntityInput | Prisma.FieldCreateOrConnectWithoutEntityInput[]
@@ -674,6 +686,20 @@ export type FieldUpdatealiasesInput = {
   push?: string | string[]
 }
 
+export type FieldCreateNestedOneWithoutConceptLinksInput = {
+  create?: Prisma.XOR<Prisma.FieldCreateWithoutConceptLinksInput, Prisma.FieldUncheckedCreateWithoutConceptLinksInput>
+  connectOrCreate?: Prisma.FieldCreateOrConnectWithoutConceptLinksInput
+  connect?: Prisma.FieldWhereUniqueInput
+}
+
+export type FieldUpdateOneRequiredWithoutConceptLinksNestedInput = {
+  create?: Prisma.XOR<Prisma.FieldCreateWithoutConceptLinksInput, Prisma.FieldUncheckedCreateWithoutConceptLinksInput>
+  connectOrCreate?: Prisma.FieldCreateOrConnectWithoutConceptLinksInput
+  upsert?: Prisma.FieldUpsertWithoutConceptLinksInput
+  connect?: Prisma.FieldWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.FieldUpdateToOneWithWhereWithoutConceptLinksInput, Prisma.FieldUpdateWithoutConceptLinksInput>, Prisma.FieldUncheckedUpdateWithoutConceptLinksInput>
+}
+
 export type FieldCreateWithoutEntityInput = {
   id?: string
   name: string
@@ -690,6 +716,7 @@ export type FieldCreateWithoutEntityInput = {
   decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
+  conceptLinks?: Prisma.FieldConceptLinkCreateNestedManyWithoutFieldInput
 }
 
 export type FieldUncheckedCreateWithoutEntityInput = {
@@ -708,6 +735,7 @@ export type FieldUncheckedCreateWithoutEntityInput = {
   decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
+  conceptLinks?: Prisma.FieldConceptLinkUncheckedCreateNestedManyWithoutFieldInput
 }
 
 export type FieldCreateOrConnectWithoutEntityInput = {
@@ -758,6 +786,98 @@ export type FieldScalarWhereInput = {
   updatedAt?: Prisma.DateTimeFilter<"Field"> | Date | string
 }
 
+export type FieldCreateWithoutConceptLinksInput = {
+  id?: string
+  name: string
+  type: string
+  precision?: number | null
+  scale?: number | null
+  nullable?: boolean
+  isKey?: boolean
+  fieldNumber?: number | null
+  description?: string
+  aliases?: Prisma.FieldCreatealiasesInput | string[]
+  classification?: string | null
+  sortOrder: number
+  decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entity: Prisma.EntityCreateNestedOneWithoutFieldsInput
+}
+
+export type FieldUncheckedCreateWithoutConceptLinksInput = {
+  id?: string
+  entityId: string
+  name: string
+  type: string
+  precision?: number | null
+  scale?: number | null
+  nullable?: boolean
+  isKey?: boolean
+  fieldNumber?: number | null
+  description?: string
+  aliases?: Prisma.FieldCreatealiasesInput | string[]
+  classification?: string | null
+  sortOrder: number
+  decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type FieldCreateOrConnectWithoutConceptLinksInput = {
+  where: Prisma.FieldWhereUniqueInput
+  create: Prisma.XOR<Prisma.FieldCreateWithoutConceptLinksInput, Prisma.FieldUncheckedCreateWithoutConceptLinksInput>
+}
+
+export type FieldUpsertWithoutConceptLinksInput = {
+  update: Prisma.XOR<Prisma.FieldUpdateWithoutConceptLinksInput, Prisma.FieldUncheckedUpdateWithoutConceptLinksInput>
+  create: Prisma.XOR<Prisma.FieldCreateWithoutConceptLinksInput, Prisma.FieldUncheckedCreateWithoutConceptLinksInput>
+  where?: Prisma.FieldWhereInput
+}
+
+export type FieldUpdateToOneWithWhereWithoutConceptLinksInput = {
+  where?: Prisma.FieldWhereInput
+  data: Prisma.XOR<Prisma.FieldUpdateWithoutConceptLinksInput, Prisma.FieldUncheckedUpdateWithoutConceptLinksInput>
+}
+
+export type FieldUpdateWithoutConceptLinksInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  type?: Prisma.StringFieldUpdateOperationsInput | string
+  precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  nullable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  isKey?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  fieldNumber?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  aliases?: Prisma.FieldUpdatealiasesInput | string[]
+  classification?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entity?: Prisma.EntityUpdateOneRequiredWithoutFieldsNestedInput
+}
+
+export type FieldUncheckedUpdateWithoutConceptLinksInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  entityId?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  type?: Prisma.StringFieldUpdateOperationsInput | string
+  precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  nullable?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  isKey?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  fieldNumber?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  aliases?: Prisma.FieldUpdatealiasesInput | string[]
+  classification?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
 export type FieldCreateManyEntityInput = {
   id?: string
   name: string
@@ -792,6 +912,7 @@ export type FieldUpdateWithoutEntityInput = {
   decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  conceptLinks?: Prisma.FieldConceptLinkUpdateManyWithoutFieldNestedInput
 }
 
 export type FieldUncheckedUpdateWithoutEntityInput = {
@@ -810,6 +931,7 @@ export type FieldUncheckedUpdateWithoutEntityInput = {
   decorators?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  conceptLinks?: Prisma.FieldConceptLinkUncheckedUpdateManyWithoutFieldNestedInput
 }
 
 export type FieldUncheckedUpdateManyWithoutEntityInput = {
@@ -831,6 +953,35 @@ export type FieldUncheckedUpdateManyWithoutEntityInput = {
 }
 
 
+/**
+ * Count Type FieldCountOutputType
+ */
+
+export type FieldCountOutputType = {
+  conceptLinks: number
+}
+
+export type FieldCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  conceptLinks?: boolean | FieldCountOutputTypeCountConceptLinksArgs
+}
+
+/**
+ * FieldCountOutputType without action
+ */
+export type FieldCountOutputTypeDefaultArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the FieldCountOutputType
+   */
+  select?: Prisma.FieldCountOutputTypeSelect<ExtArgs> | null
+}
+
+/**
+ * FieldCountOutputType without action
+ */
+export type FieldCountOutputTypeCountConceptLinksArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.FieldConceptLinkWhereInput
+}
+
 
 export type FieldSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -850,6 +1001,8 @@ export type FieldSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   createdAt?: boolean
   updatedAt?: boolean
   entity?: boolean | Prisma.EntityDefaultArgs<ExtArgs>
+  conceptLinks?: boolean | Prisma.Field$conceptLinksArgs<ExtArgs>
+  _count?: boolean | Prisma.FieldCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["field"]>
 
 export type FieldSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -914,6 +1067,8 @@ export type FieldSelectScalar = {
 export type FieldOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "entityId" | "name" | "type" | "precision" | "scale" | "nullable" | "isKey" | "fieldNumber" | "description" | "aliases" | "classification" | "sortOrder" | "decorators" | "createdAt" | "updatedAt", ExtArgs["result"]["field"]>
 export type FieldInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entity?: boolean | Prisma.EntityDefaultArgs<ExtArgs>
+  conceptLinks?: boolean | Prisma.Field$conceptLinksArgs<ExtArgs>
+  _count?: boolean | Prisma.FieldCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type FieldIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entity?: boolean | Prisma.EntityDefaultArgs<ExtArgs>
@@ -926,6 +1081,7 @@ export type $FieldPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   name: "Field"
   objects: {
     entity: Prisma.$EntityPayload<ExtArgs>
+    conceptLinks: Prisma.$FieldConceptLinkPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1339,6 +1495,7 @@ readonly fields: FieldFieldRefs;
 export interface Prisma__FieldClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
   entity<T extends Prisma.EntityDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.EntityDefaultArgs<ExtArgs>>): Prisma.Prisma__EntityClient<runtime.Types.Result.GetResult<Prisma.$EntityPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
+  conceptLinks<T extends Prisma.Field$conceptLinksArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Field$conceptLinksArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$FieldConceptLinkPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1782,6 +1939,30 @@ export type FieldDeleteManyArgs<ExtArgs extends runtime.Types.Extensions.Interna
    * Limit how many Fields to delete.
    */
   limit?: number
+}
+
+/**
+ * Field.conceptLinks
+ */
+export type Field$conceptLinksArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the FieldConceptLink
+   */
+  select?: Prisma.FieldConceptLinkSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the FieldConceptLink
+   */
+  omit?: Prisma.FieldConceptLinkOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.FieldConceptLinkInclude<ExtArgs> | null
+  where?: Prisma.FieldConceptLinkWhereInput
+  orderBy?: Prisma.FieldConceptLinkOrderByWithRelationInput | Prisma.FieldConceptLinkOrderByWithRelationInput[]
+  cursor?: Prisma.FieldConceptLinkWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.FieldConceptLinkScalarFieldEnum | Prisma.FieldConceptLinkScalarFieldEnum[]
 }
 
 /**

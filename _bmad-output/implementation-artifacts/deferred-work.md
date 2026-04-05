@@ -69,3 +69,33 @@
 | M24 | **Deployments page empty state** — `deployments/page.tsx` has TODO to fetch from API; shows empty state. | 9-3 | S |
 | M25 | **PR status webhook sync** — PR status synced on-demand via `syncPrStatus()`. No webhook listener for real-time GitHub status updates. | 10-2 | M |
 | M26 | **Auto-approval policy configurability** — Non-breaking changes always auto-approved. Per-domain configurable auto-approval rules deferred. | 5-2 | M |
+
+---
+
+## SOR (Single Source of Record) Enhancements — Deferred from Party Mode Review
+
+> These items transform Super Schema from a "TypeSpec Studio" into an enterprise data SOR.
+> Business Concept Registry is being implemented. The rest are deferred.
+
+### HIGH: Enterprise SOR Features
+
+| # | Description | Source | Effort |
+|---|-------------|--------|--------|
+| S1 | **External System Registry** — Prisma models for ExternalSystem + FieldSystemLink. Track source/sink systems per field (e.g., "Salesforce CRM → customer_id"). Enables rich lineage. | Winston/Amelia | L |
+| S2 | **Domain Target Configuration** — DomainTarget model so each domain can configure which emitters are active (Payments→BigQuery+Avro, Analytics→BigQuery+dbt). Scopes drift detection. | Winston | M |
+| S3 | **Bidirectional Drift Detection** — If a BigQuery table is altered directly (outside Super Schema), detect the change and prompt: "Update logical model?" Requires polling or webhook from target systems. | John | L |
+| S4 | **Data Contract Testing** — Downstream consumers register which fields they depend on. Super Schema alerts them and blocks breaking changes to those fields. Consumer-driven contracts. | Murat | L |
+| S5 | **CI/CD GitHub Action** — GitHub Action that runs on PRs: validates schema changes, runs compatibility checks against all targets, generates report comment on the PR. | John/Winston | M |
+| S6 | **Schema Registry Push** — Push emitted Avro schemas to Confluent Schema Registry, OpenAPI specs to API gateways. Bidirectional sync. | Winston | L |
+| S7 | **Catalog Sync** — Export/sync to DataHub, Atlan, Amundsen, AWS Glue Data Catalog. Super Schema as design-time companion to runtime catalogs. | Victor | L |
+| S8 | **Import from More Sources** — dbt schema.yml, Terraform schemas, Confluent Schema Registry, AWS Glue Catalog, DataHub export. Bootstrap SOR from existing infrastructure. | John | L |
+
+### MEDIUM: UX Improvements for SOR
+
+| # | Description | Source | Effort |
+|---|-------------|--------|--------|
+| S9 | **Entity Canvas View** — Drag-and-drop entity relationship diagram (ERD) using React Flow. Zoom in to see fields, zoom out to see domain relationships. Figma-meets-ERD. | Sally | L |
+| S10 | **"What Would Break?" Preview** — Before any change, show blast radius: affected targets, downstream consumers, compatibility classification. Pre-change impact analysis. | Sally/Murat | M |
+| S11 | **Cross-Entity Concept Consistency** — When creating a field, if a matching Business Concept exists, auto-suggest the canonical type and classification. Enforce naming consistency across entities. | Mary | M |
+| S12 | **Schema Compatibility SLA** — Each entity can declare a compatibility level (BACKWARD, FORWARD, FULL, NONE). Breaking changes to BACKWARD-compatible entities require steward approval. | Victor | M |
+

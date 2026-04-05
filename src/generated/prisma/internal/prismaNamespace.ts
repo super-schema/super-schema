@@ -391,6 +391,8 @@ export const ModelName = {
   Domain: 'Domain',
   Entity: 'Entity',
   Field: 'Field',
+  BusinessConcept: 'BusinessConcept',
+  FieldConceptLink: 'FieldConceptLink',
   AuditLog: 'AuditLog',
   GitConfig: 'GitConfig',
   GitPullRequest: 'GitPullRequest',
@@ -421,7 +423,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "user" | "account" | "session" | "verificationToken" | "domain" | "entity" | "field" | "auditLog" | "gitConfig" | "gitPullRequest" | "userRole" | "classificationLevel" | "notification" | "webhookEndpoint" | "webhookDelivery" | "governanceRequest" | "governanceApproval" | "typeMappingOverride" | "lossyMappingAck" | "emitterConfig" | "emissionTargetStatus" | "deploymentRecord"
+    modelProps: "user" | "account" | "session" | "verificationToken" | "domain" | "entity" | "field" | "businessConcept" | "fieldConceptLink" | "auditLog" | "gitConfig" | "gitPullRequest" | "userRole" | "classificationLevel" | "notification" | "webhookEndpoint" | "webhookDelivery" | "governanceRequest" | "governanceApproval" | "typeMappingOverride" | "lossyMappingAck" | "emitterConfig" | "emissionTargetStatus" | "deploymentRecord"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -940,6 +942,154 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.FieldCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.FieldCountAggregateOutputType> | number
+        }
+      }
+    }
+    BusinessConcept: {
+      payload: Prisma.$BusinessConceptPayload<ExtArgs>
+      fields: Prisma.BusinessConceptFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.BusinessConceptFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.BusinessConceptFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>
+        }
+        findFirst: {
+          args: Prisma.BusinessConceptFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.BusinessConceptFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>
+        }
+        findMany: {
+          args: Prisma.BusinessConceptFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>[]
+        }
+        create: {
+          args: Prisma.BusinessConceptCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>
+        }
+        createMany: {
+          args: Prisma.BusinessConceptCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.BusinessConceptCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>[]
+        }
+        delete: {
+          args: Prisma.BusinessConceptDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>
+        }
+        update: {
+          args: Prisma.BusinessConceptUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>
+        }
+        deleteMany: {
+          args: Prisma.BusinessConceptDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.BusinessConceptUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.BusinessConceptUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>[]
+        }
+        upsert: {
+          args: Prisma.BusinessConceptUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$BusinessConceptPayload>
+        }
+        aggregate: {
+          args: Prisma.BusinessConceptAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateBusinessConcept>
+        }
+        groupBy: {
+          args: Prisma.BusinessConceptGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.BusinessConceptGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.BusinessConceptCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.BusinessConceptCountAggregateOutputType> | number
+        }
+      }
+    }
+    FieldConceptLink: {
+      payload: Prisma.$FieldConceptLinkPayload<ExtArgs>
+      fields: Prisma.FieldConceptLinkFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.FieldConceptLinkFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.FieldConceptLinkFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>
+        }
+        findFirst: {
+          args: Prisma.FieldConceptLinkFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.FieldConceptLinkFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>
+        }
+        findMany: {
+          args: Prisma.FieldConceptLinkFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>[]
+        }
+        create: {
+          args: Prisma.FieldConceptLinkCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>
+        }
+        createMany: {
+          args: Prisma.FieldConceptLinkCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.FieldConceptLinkCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>[]
+        }
+        delete: {
+          args: Prisma.FieldConceptLinkDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>
+        }
+        update: {
+          args: Prisma.FieldConceptLinkUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>
+        }
+        deleteMany: {
+          args: Prisma.FieldConceptLinkDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.FieldConceptLinkUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.FieldConceptLinkUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>[]
+        }
+        upsert: {
+          args: Prisma.FieldConceptLinkUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$FieldConceptLinkPayload>
+        }
+        aggregate: {
+          args: Prisma.FieldConceptLinkAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateFieldConceptLink>
+        }
+        groupBy: {
+          args: Prisma.FieldConceptLinkGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.FieldConceptLinkGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.FieldConceptLinkCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.FieldConceptLinkCountAggregateOutputType> | number
         }
       }
     }
@@ -2194,6 +2344,35 @@ export const FieldScalarFieldEnum = {
 export type FieldScalarFieldEnum = (typeof FieldScalarFieldEnum)[keyof typeof FieldScalarFieldEnum]
 
 
+export const BusinessConceptScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  domain: 'domain',
+  definition: 'definition',
+  synonyms: 'synonyms',
+  canonicalType: 'canonicalType',
+  classification: 'classification',
+  tags: 'tags',
+  ownerId: 'ownerId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type BusinessConceptScalarFieldEnum = (typeof BusinessConceptScalarFieldEnum)[keyof typeof BusinessConceptScalarFieldEnum]
+
+
+export const FieldConceptLinkScalarFieldEnum = {
+  id: 'id',
+  fieldId: 'fieldId',
+  conceptId: 'conceptId',
+  confidence: 'confidence',
+  linkedBy: 'linkedBy',
+  createdAt: 'createdAt'
+} as const
+
+export type FieldConceptLinkScalarFieldEnum = (typeof FieldConceptLinkScalarFieldEnum)[keyof typeof FieldConceptLinkScalarFieldEnum]
+
+
 export const AuditLogScalarFieldEnum = {
   id: 'id',
   action: 'action',
@@ -2552,6 +2731,20 @@ export type ListEnumEntityStatusFieldRefInput<$PrismaModel> = FieldRefInputType<
 
 
 /**
+ * Reference to a field of type 'Float'
+ */
+export type FloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Float'>
+    
+
+
+/**
+ * Reference to a field of type 'Float[]'
+ */
+export type ListFloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Float[]'>
+    
+
+
+/**
  * Reference to a field of type 'GitAuthMethod'
  */
 export type EnumGitAuthMethodFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'GitAuthMethod'>
@@ -2676,20 +2869,6 @@ export type EnumDeploymentStatusFieldRefInput<$PrismaModel> = FieldRefInputType<
 export type ListEnumDeploymentStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'DeploymentStatus[]'>
     
 
-
-/**
- * Reference to a field of type 'Float'
- */
-export type FloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Float'>
-    
-
-
-/**
- * Reference to a field of type 'Float[]'
- */
-export type ListFloatFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Float[]'>
-    
-
 /**
  * Batch Payload for updateMany & deleteMany & createMany
  */
@@ -2792,6 +2971,8 @@ export type GlobalOmitConfig = {
   domain?: Prisma.DomainOmit
   entity?: Prisma.EntityOmit
   field?: Prisma.FieldOmit
+  businessConcept?: Prisma.BusinessConceptOmit
+  fieldConceptLink?: Prisma.FieldConceptLinkOmit
   auditLog?: Prisma.AuditLogOmit
   gitConfig?: Prisma.GitConfigOmit
   gitPullRequest?: Prisma.GitPullRequestOmit

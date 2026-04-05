@@ -136,9 +136,46 @@ model Field {
   updatedAt      DateTime @updatedAt
 
   entity Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  conceptLinks FieldConceptLink[]
 
   @@unique([entityId, name])
   @@map("fields")
+}
+
+// ============================================================
+// Business Concept Registry
+// ============================================================
+
+model BusinessConcept {
+  id              String   @id @default(cuid())
+  name            String   @unique  // "Customer Identifier", "Transaction Amount"
+  domain          String   @default("Core")  // business domain grouping
+  definition      String   @default("")  // human-readable definition
+  synonyms        String[]  // ["cust_id", "customer_number", "CustomerNo"]
+  canonicalType   String?  // the canonical logical type: "string", "decimal", etc.
+  classification  String?  // default classification: PII, SENSITIVE, etc.
+  tags            String[]  // ["financial", "identity", "temporal"]
+  ownerId         String?
+  fieldLinks      FieldConceptLink[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("business_concepts")
+}
+
+model FieldConceptLink {
+  id        String @id @default(cuid())
+  fieldId   String
+  conceptId String
+  confidence Float @default(1.0)  // 0.0-1.0, how strong the link is
+  linkedBy  String?  // user who linked, or "auto" for AI-suggested
+  createdAt DateTime @default(now())
+
+  field     Field           @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  concept   BusinessConcept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, conceptId])
+  @@map("field_concept_links")
 }
 
 model AuditLog {

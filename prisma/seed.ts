@@ -104,6 +104,167 @@ async function main() {
     }
   }
 
+  // Seed default business concepts (idempotent)
+  const defaultConcepts = [
+    {
+      name: "Customer Identifier",
+      domain: "Identity",
+      definition: "A unique identifier assigned to each customer across all systems",
+      synonyms: ["cust_id", "customer_number", "CustomerNo", "customer_id", "customerId"],
+      canonicalType: "string",
+      classification: "PII",
+      tags: ["identity", "customer"],
+    },
+    {
+      name: "Customer Name",
+      domain: "Identity",
+      definition: "The full legal name of a customer",
+      synonyms: ["cust_name", "customer_name", "CustomerName", "full_name", "fullName"],
+      canonicalType: "string",
+      classification: "PII",
+      tags: ["identity", "customer"],
+    },
+    {
+      name: "Email Address",
+      domain: "Identity",
+      definition: "A valid email address used for communication and authentication",
+      synonyms: ["email", "email_addr", "emailAddress", "e_mail", "contact_email"],
+      canonicalType: "string",
+      classification: "PII",
+      tags: ["identity", "contact"],
+    },
+    {
+      name: "Phone Number",
+      domain: "Identity",
+      definition: "A phone number including country code for customer contact",
+      synonyms: ["phone", "phone_number", "phoneNumber", "tel", "telephone", "mobile"],
+      canonicalType: "string",
+      classification: "PII",
+      tags: ["identity", "contact"],
+    },
+    {
+      name: "Transaction Amount",
+      domain: "Finance",
+      definition: "The monetary value of a financial transaction",
+      synonyms: ["amount", "txn_amount", "transaction_amt", "transactionAmount", "tx_amount"],
+      canonicalType: "decimal",
+      classification: "SENSITIVE",
+      tags: ["financial", "transaction"],
+    },
+    {
+      name: "Currency Code",
+      domain: "Finance",
+      definition: "ISO 4217 three-letter currency code (e.g., USD, EUR, GBP)",
+      synonyms: ["currency", "currency_code", "currencyCode", "ccy", "curr_cd"],
+      canonicalType: "string",
+      classification: null,
+      tags: ["financial", "reference"],
+    },
+    {
+      name: "Transaction Date",
+      domain: "Finance",
+      definition: "The date and time when a financial transaction occurred",
+      synonyms: ["txn_date", "transaction_date", "transactionDate", "tx_dt", "trade_date"],
+      canonicalType: "datetime",
+      classification: null,
+      tags: ["financial", "temporal"],
+    },
+    {
+      name: "Account Balance",
+      domain: "Finance",
+      definition: "The current monetary balance of a financial account",
+      synonyms: ["balance", "acct_balance", "accountBalance", "current_balance", "bal"],
+      canonicalType: "decimal",
+      classification: "SENSITIVE",
+      tags: ["financial", "account"],
+    },
+    {
+      name: "Account Number",
+      domain: "Finance",
+      definition: "A unique identifier for a financial account",
+      synonyms: ["acct_no", "account_number", "accountNumber", "acct_num", "account_id"],
+      canonicalType: "string",
+      classification: "SENSITIVE",
+      tags: ["financial", "account", "identity"],
+    },
+    {
+      name: "Product Name",
+      domain: "Commerce",
+      definition: "The display name of a product or service offering",
+      synonyms: ["product_name", "productName", "prod_name", "item_name", "product_title"],
+      canonicalType: "string",
+      classification: null,
+      tags: ["commerce", "product"],
+    },
+    {
+      name: "Product SKU",
+      domain: "Commerce",
+      definition: "Stock Keeping Unit - a unique product identifier for inventory management",
+      synonyms: ["sku", "product_sku", "productSku", "stock_code", "item_code"],
+      canonicalType: "string",
+      classification: null,
+      tags: ["commerce", "product", "inventory"],
+    },
+    {
+      name: "Product Price",
+      domain: "Commerce",
+      definition: "The retail or wholesale price of a product",
+      synonyms: ["price", "unit_price", "productPrice", "list_price", "retail_price"],
+      canonicalType: "decimal",
+      classification: null,
+      tags: ["commerce", "product", "financial"],
+    },
+    {
+      name: "Created Timestamp",
+      domain: "Core",
+      definition: "The date and time when a record was first created in the system",
+      synonyms: ["created_at", "createdAt", "create_date", "created_date", "creation_time"],
+      canonicalType: "timestamp",
+      classification: null,
+      tags: ["temporal", "audit"],
+    },
+    {
+      name: "Updated Timestamp",
+      domain: "Core",
+      definition: "The date and time when a record was last modified",
+      synonyms: ["updated_at", "updatedAt", "modify_date", "modified_date", "last_modified"],
+      canonicalType: "timestamp",
+      classification: null,
+      tags: ["temporal", "audit"],
+    },
+    {
+      name: "Record Status",
+      domain: "Core",
+      definition: "The lifecycle status of a record (e.g., ACTIVE, INACTIVE, DELETED)",
+      synonyms: ["status", "record_status", "recordStatus", "state", "is_active"],
+      canonicalType: "string",
+      classification: null,
+      tags: ["lifecycle", "audit"],
+    },
+  ];
+
+  for (const concept of defaultConcepts) {
+    const existing = await prisma.businessConcept.findUnique({
+      where: { name: concept.name },
+    });
+    if (!existing) {
+      await prisma.businessConcept.create({
+        data: {
+          name: concept.name,
+          domain: concept.domain,
+          definition: concept.definition,
+          synonyms: concept.synonyms,
+          canonicalType: concept.canonicalType,
+          classification: concept.classification,
+          tags: concept.tags,
+        },
+      });
+      console.log(`Created business concept: ${concept.name}`);
+    } else {
+      console.log(`Business concept already exists: ${concept.name}`);
+    }
+  }
+
   await prisma.$disconnect();
   console.log("Seed complete.");
 }

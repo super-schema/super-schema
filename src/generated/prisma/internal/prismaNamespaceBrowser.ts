@@ -58,6 +58,8 @@ export const ModelName = {
   Domain: 'Domain',
   Entity: 'Entity',
   Field: 'Field',
+  BusinessConcept: 'BusinessConcept',
+  FieldConceptLink: 'FieldConceptLink',
   AuditLog: 'AuditLog',
   GitConfig: 'GitConfig',
   GitPullRequest: 'GitPullRequest',
@@ -191,6 +193,35 @@ export const FieldScalarFieldEnum = {
 } as const
 
 export type FieldScalarFieldEnum = (typeof FieldScalarFieldEnum)[keyof typeof FieldScalarFieldEnum]
+
+
+export const BusinessConceptScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  domain: 'domain',
+  definition: 'definition',
+  synonyms: 'synonyms',
+  canonicalType: 'canonicalType',
+  classification: 'classification',
+  tags: 'tags',
+  ownerId: 'ownerId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type BusinessConceptScalarFieldEnum = (typeof BusinessConceptScalarFieldEnum)[keyof typeof BusinessConceptScalarFieldEnum]
+
+
+export const FieldConceptLinkScalarFieldEnum = {
+  id: 'id',
+  fieldId: 'fieldId',
+  conceptId: 'conceptId',
+  confidence: 'confidence',
+  linkedBy: 'linkedBy',
+  createdAt: 'createdAt'
+} as const
+
+export type FieldConceptLinkScalarFieldEnum = (typeof FieldConceptLinkScalarFieldEnum)[keyof typeof FieldConceptLinkScalarFieldEnum]
 
 
 export const AuditLogScalarFieldEnum = {

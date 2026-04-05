@@ -9,6 +9,7 @@ import {
   ClipboardCheck,
   Settings,
   Rocket,
+  BookOpen,
 } from "lucide-react";
 import {
   Tooltip,
@@ -19,6 +20,7 @@ import {
 
 const navItems = [
   { icon: Database, label: "Schema Editor", href: "/schemas" },
+  { icon: BookOpen, label: "Glossary", href: "/glossary" },
   { icon: GitBranch, label: "Lineage Graph", href: "/lineage" },
   { icon: ShieldCheck, label: "Governance", href: "/governance" },
   { icon: ClipboardCheck, label: "Compliance", href: "/compliance" },

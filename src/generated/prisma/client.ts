@@ -77,6 +77,16 @@ export type Entity = Prisma.EntityModel
  */
 export type Field = Prisma.FieldModel
 /**
+ * Model BusinessConcept
+ * 
+ */
+export type BusinessConcept = Prisma.BusinessConceptModel
+/**
+ * Model FieldConceptLink
+ * 
+ */
+export type FieldConceptLink = Prisma.FieldConceptLinkModel
+/**
  * Model AuditLog
  * 
  */
