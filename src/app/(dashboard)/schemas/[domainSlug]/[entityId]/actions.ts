@@ -491,6 +491,46 @@ export async function getChangeHistoryAction(
   }
 }
 
+/**
+ * Generate a TypeSpec preview for an entity.
+ * Compiles the entity + fields into a SuperSchemaModel IR, then generates TypeSpec source.
+ */
+export async function generateTypeSpecPreviewAction(entityId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated", source: "" };
+
+  try {
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      include: { domain: true },
+    });
+    if (!entity) return { error: "Entity not found", source: "" };
+
+    const fields = await prisma.field.findMany({
+      where: { entityId },
+      orderBy: { sortOrder: "asc" },
+    });
+
+    const { compileEntity } = await import("@/lib/compiler/compiler.service");
+    const { generateTypeSpec } = await import("@/lib/compiler/typespec-generator");
+
+    // Adapt Prisma entity to PrismaEntityInput shape (add slug derived from name)
+    const entityInput = {
+      ...entity,
+      domain: entity.domain
+        ? { ...entity.domain, slug: entity.domain.name.toLowerCase().replace(/\s+/g, "-") }
+        : null,
+    };
+    const model = compileEntity(entityInput, fields);
+    const source = generateTypeSpec(model);
+
+    return { success: true, source };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to generate TypeSpec preview";
+    return { error: message, source: "" };
+  }
+}
+
 export async function deleteFieldAction(fieldId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };

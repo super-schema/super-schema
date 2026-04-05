@@ -31,7 +31,19 @@ const LineageGraph = dynamic(
 );
 
 interface LineagePageClientProps {
-  entities: Parameters<typeof LineageGraph>[0]["entities"];
+  entities: Array<{
+    id: string;
+    name: string;
+    description: string;
+    domainName: string;
+    domainSlug: string;
+    status: string;
+    fieldCount: number;
+    piiCount: number;
+    sensitiveCount: number;
+    fields: Array<{ name: string; type: string; classification?: string }>;
+    relationships: Array<{ targetEntityId: string; type: string }>;
+  }>;
 }
 
 export function LineagePageClient({ entities }: LineagePageClientProps) {

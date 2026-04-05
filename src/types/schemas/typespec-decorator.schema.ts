@@ -111,6 +111,42 @@ export const ExtensionsSchema = z
   })
   .partial();
 
+// Panel 8: Governance
+export const GovernanceSchema = z
+  .object({
+    classification: z
+      .object({
+        level: z.string().nullable(),
+        customLevel: z.string().nullable(),
+      })
+      .partial(),
+    retention: z.string().nullable(),
+    anonymization: z.string().nullable(),
+    encryption: z.string().nullable(),
+    qualityRules: z.array(
+      z.object({
+        type: z.string(),
+        params: z.record(z.string(), z.unknown()),
+      })
+    ),
+    lineage: z
+      .object({
+        source: z.string().nullable(),
+        upstream: z.array(z.string()),
+        downstream: z.array(z.string()),
+      })
+      .partial(),
+    operationalHints: z
+      .object({
+        partition: z.boolean(),
+        index: z.boolean(),
+        cluster: z.boolean(),
+      })
+      .partial(),
+    customAttributes: z.record(z.string(), z.string()),
+  })
+  .partial();
+
 // Combined TypeSpec Decorator Schema
 export const TypeSpecDecoratorSchema = z
   .object({
@@ -121,6 +157,7 @@ export const TypeSpecDecoratorSchema = z
     documentation: DocumentationSchema,
     versioning: VersioningSchema,
     extensions: ExtensionsSchema,
+    governance: GovernanceSchema,
   })
   .partial();
 
@@ -132,3 +169,4 @@ export type Visibility = z.infer<typeof VisibilitySchema>;
 export type Documentation = z.infer<typeof DocumentationSchema>;
 export type Versioning = z.infer<typeof VersioningSchema>;
 export type Extensions = z.infer<typeof ExtensionsSchema>;
+export type Governance = z.infer<typeof GovernanceSchema>;

@@ -25,6 +25,7 @@ import { VisibilityPanel } from "./panels/VisibilityPanel";
 import { DocumentationPanel } from "./panels/DocumentationPanel";
 import { VersioningPanel } from "./panels/VersioningPanel";
 import { ExtensionsPanel } from "./panels/ExtensionsPanel";
+import { GovernancePanel } from "./panels/GovernancePanel";
 
 interface FieldData {
   id: string;
@@ -293,7 +294,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
         </div>
       </div>
 
-      {/* 7 Collapsible Panels */}
+      {/* 8 Collapsible Panels */}
       <Accordion
         value={expandedPanels}
         onValueChange={(val: number[]) => setExpandedPanels(val)}
@@ -452,6 +453,37 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
             <ExtensionsPanel
               extensions={typespec.extensions ?? {}}
               onChange={(val) => updateTypespec("extensions", val)}
+            />
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Panel 8: Governance */}
+        <AccordionItem value={7}>
+          <AccordionTrigger className="px-space-3">
+            <span className="flex items-center gap-2">
+              <span className="text-body font-medium">Governance</span>
+              {(() => {
+                const gov = typespec.governance ?? {};
+                const govCount =
+                  (gov.classification?.level ? 1 : 0) +
+                  (gov.retention ? 1 : 0) +
+                  (gov.anonymization ? 1 : 0) +
+                  (gov.encryption ? 1 : 0) +
+                  (gov.qualityRules?.length ?? 0) +
+                  Object.values(gov.operationalHints ?? {}).filter(Boolean).length +
+                  Object.keys(gov.customAttributes ?? {}).length;
+                return govCount > 0 ? (
+                  <Badge variant="secondary" className="text-[10px] h-4 px-1">
+                    {govCount} setting{govCount !== 1 ? "s" : ""}
+                  </Badge>
+                ) : null;
+              })()}
+            </span>
+          </AccordionTrigger>
+          <AccordionContent className="px-space-3">
+            <GovernancePanel
+              governance={typespec.governance ?? {}}
+              onChange={(val) => updateTypespec("governance", val)}
             />
           </AccordionContent>
         </AccordionItem>

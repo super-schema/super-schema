@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChevronRight,
   Plus,
@@ -82,6 +83,7 @@ export function DomainWorkspace({
   domainPolicy,
   entities,
 }: DomainWorkspaceProps) {
+  const router = useRouter();
   const [viewMode, setViewMode] = useState<"tile" | "list">(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem("super-schema:view-mode") as "tile" | "list") || "tile";
@@ -90,15 +92,15 @@ export function DomainWorkspace({
   });
   const [showCreate, setShowCreate] = useState(false);
 
-  // Listen for Cmd+N global shortcut to open create form
+  // Listen for Cmd+N global shortcut to navigate to wizard
   useEffect(() => {
     function handleNewEntity() {
-      setShowCreate(true);
+      router.push(`/schemas/${domainSlug}/new`);
     }
     document.addEventListener("super-schema:new-entity", handleNewEntity);
     return () =>
       document.removeEventListener("super-schema:new-entity", handleNewEntity);
-  }, []);
+  }, [router, domainSlug]);
 
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -284,7 +286,7 @@ export function DomainWorkspace({
               <List className="w-4 h-4" />
             </button>
           </div>
-          <Button onClick={() => setShowCreate(true)} className="gap-2" title={`New Entity (${modKey()}+N)`}>
+          <Button onClick={() => router.push(`/schemas/${domainSlug}/new`)} className="gap-2" title={`New Entity (${modKey()}+N)`}>
             <Plus className="w-4 h-4" />
             New Entity
           </Button>
@@ -582,7 +584,7 @@ export function DomainWorkspace({
           <p className="text-body text-muted-foreground mb-space-4">
             Get started by defining your first logical entity in <strong>{domainName}</strong>
           </p>
-          <Button onClick={() => setShowCreate(true)} className="gap-2">
+          <Button onClick={() => router.push(`/schemas/${domainSlug}/new`)} className="gap-2">
             <Plus className="w-4 h-4" />
             Create Entity
           </Button>

@@ -215,7 +215,7 @@ export function LeftSidebar({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      // TODO: Create entity in this domain
+                      router.push(`/schemas/${slug}/new`);
                     }}
                     className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-accent rounded transition-opacity"
                     title="New Entity"

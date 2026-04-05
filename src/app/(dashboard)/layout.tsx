@@ -17,6 +17,10 @@ import {
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { modKey } from "@/lib/platform";
 import { Plus, Save, Zap, FileCode, Download } from "lucide-react";
+import {
+  RightPanelContentProvider,
+  useRightPanelContent,
+} from "@/hooks/useRightPanelContent";
 
 export default function DashboardLayout({
   children,
@@ -147,54 +151,89 @@ export default function DashboardLayout({
   return (
     <SessionProvider>
       <CommandPaletteContext.Provider value={palette}>
-        <div className="flex flex-col h-screen overflow-hidden">
-          <TopBar />
-
-          {responsive.autoCollapse && (
-            <div
-              data-testid="responsive-warning"
-              className="bg-warning/15 text-warning text-caption px-space-4 py-1 text-center"
-            >
-              Viewport too narrow — panels auto-collapsed for best experience
-            </div>
-          )}
-
-          <div className="flex flex-1 overflow-hidden">
-            <LeftSidebar
-              width={sidebar.width}
-              isCollapsed={sidebar.isCollapsed}
-              onMouseDown={sidebar.handleMouseDown}
-              onDoubleClick={sidebar.handleDoubleClick}
-            />
-            <main
-              data-testid="center-panel"
-              className="flex-1 surface-base p-space-6 overflow-auto"
-              style={
-                responsive.breakpoint === "spacious"
-                  ? { maxWidth: 1200, margin: "0 auto" }
-                  : undefined
-              }
-            >
-              {children}
-            </main>
-
-            <RightPanel
-              width={rightPanel.width}
-              isCollapsed={rightPanel.isCollapsed}
-              onMouseDown={rightPanel.handleMouseDown}
-              onDoubleClick={rightPanel.handleDoubleClick}
-              onCollapse={rightPanel.collapse}
-            />
-          </div>
-
-          <StatusBar />
-          <CommandPalette
-            isOpen={palette.isOpen}
-            onClose={palette.close}
-            actions={paletteActions}
-          />
-        </div>
+        <RightPanelContentProvider>
+          <DashboardShell
+            responsive={responsive}
+            sidebar={sidebar}
+            rightPanel={rightPanel}
+            palette={palette}
+            paletteActions={paletteActions}
+          >
+            {children}
+          </DashboardShell>
+        </RightPanelContentProvider>
       </CommandPaletteContext.Provider>
     </SessionProvider>
+  );
+}
+
+/** Inner component that can read RightPanelContentContext */
+function DashboardShell({
+  responsive,
+  sidebar,
+  rightPanel,
+  palette,
+  paletteActions,
+  children,
+}: {
+  responsive: ReturnType<typeof useResponsiveLayout>;
+  sidebar: ReturnType<typeof useResizablePanel>;
+  rightPanel: ReturnType<typeof useResizablePanel>;
+  palette: ReturnType<typeof useCommandPaletteProvider>;
+  paletteActions: { id: string; label: string; icon: React.ReactNode; shortcut?: string; onSelect: () => void }[];
+  children: React.ReactNode;
+}) {
+  const { content: rightPanelContent } = useRightPanelContent();
+
+  return (
+    <div className="flex flex-col h-screen overflow-hidden">
+      <TopBar />
+
+      {responsive.autoCollapse && (
+        <div
+          data-testid="responsive-warning"
+          className="bg-warning/15 text-warning text-caption px-space-4 py-1 text-center"
+        >
+          Viewport too narrow — panels auto-collapsed for best experience
+        </div>
+      )}
+
+      <div className="flex flex-1 overflow-hidden">
+        <LeftSidebar
+          width={sidebar.width}
+          isCollapsed={sidebar.isCollapsed}
+          onMouseDown={sidebar.handleMouseDown}
+          onDoubleClick={sidebar.handleDoubleClick}
+        />
+        <main
+          data-testid="center-panel"
+          className="flex-1 surface-base p-space-6 overflow-auto"
+          style={
+            responsive.breakpoint === "spacious"
+              ? { maxWidth: 1200, margin: "0 auto" }
+              : undefined
+          }
+        >
+          {children}
+        </main>
+
+        <RightPanel
+          width={rightPanel.width}
+          isCollapsed={rightPanel.isCollapsed}
+          onMouseDown={rightPanel.handleMouseDown}
+          onDoubleClick={rightPanel.handleDoubleClick}
+          onCollapse={rightPanel.collapse}
+        >
+          {rightPanelContent}
+        </RightPanel>
+      </div>
+
+      <StatusBar />
+      <CommandPalette
+        isOpen={palette.isOpen}
+        onClose={palette.close}
+        actions={paletteActions}
+      />
+    </div>
   );
 }

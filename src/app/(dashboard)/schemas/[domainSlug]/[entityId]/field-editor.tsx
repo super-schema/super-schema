@@ -72,6 +72,8 @@ interface FieldEditorProps {
   ) => Promise<void>;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDeleteField: (id: string) => Promise<void>;
+  onFieldSelect?: (fieldId: string) => void;
+  selectedFieldId?: string | null;
 }
 
 function needsPrecisionScale(typeId: string): boolean {
@@ -131,6 +133,8 @@ export function FieldEditor({
   onAddField,
   onUpdateField,
   onDeleteField,
+  onFieldSelect,
+  selectedFieldId,
 }: FieldEditorProps) {
   const router = useRouter();
 
@@ -413,8 +417,20 @@ export function FieldEditor({
           return (
             <div
               key={field.id}
-              className="surface-glass rounded-lg border border-border/50 hover:border-border transition-colors group"
+              className={`surface-glass rounded-lg border transition-colors group cursor-pointer ${
+                selectedFieldId === field.id
+                  ? "border-primary ring-1 ring-primary/30"
+                  : "border-border/50 hover:border-border"
+              }`}
               onDoubleClick={() => navigateToFieldStudio(field.id)}
+              onClick={(e) => {
+                // Only select if click is not on an interactive element
+                const target = e.target as HTMLElement;
+                const interactive = target.closest("input, button, select, textarea, [role='combobox']");
+                if (!interactive && onFieldSelect) {
+                  onFieldSelect(field.id);
+                }
+              }}
             >
               {/* Main row */}
               <div className="flex items-center gap-space-2 px-space-3 py-space-2">

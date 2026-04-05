@@ -40,9 +40,13 @@ import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
 import { RetirementBanner } from "@/components/custom/RetirementBanner";
 import { isReadOnly } from "@/lib/entity-lifecycle";
 import { trackRecentEntity } from "@/lib/recent-entities";
+import { useRightPanelContent } from "@/hooks/useRightPanelContent";
+import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
+import { TypeSpecPreview } from "@/components/custom/TypeSpecPreview";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "history";
+type RightPanelTab = "quick-edit" | "typespec-preview" | "emission-preview";
 
 const STATUS_OPTIONS: { value: EntityStatus; label: string; color: string; dotColor: string }[] = [
   { value: "DRAFT", label: "DRAFT", color: "#e5a93b", dotColor: "bg-warning" },
@@ -119,6 +123,116 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
 
   // View tab state
   const [activeTab, setActiveTab] = useState<ViewTab>("editor");
+
+  // Right panel state
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("typespec-preview");
+  const [typeSpecTrigger, setTypeSpecTrigger] = useState(0);
+  const { setContent: setRightPanelContent } = useRightPanelContent();
+
+  const selectedField = selectedFieldId
+    ? fields.find((f) => f.id === selectedFieldId) ?? null
+    : null;
+
+  const handleFieldSelect = useCallback((fieldId: string) => {
+    setSelectedFieldId(fieldId);
+    setRightPanelTab("quick-edit");
+  }, []);
+
+  // Wrap updateFieldAction to also bump typespec trigger
+  const handleUpdateField = useCallback(async (id: string, data: Record<string, unknown>) => {
+    await updateFieldAction(id, data);
+    setTypeSpecTrigger((n) => n + 1);
+  }, []);
+
+  // Push right panel content into layout's RightPanel via context
+  useEffect(() => {
+    const rightPanelTabBar = (
+      <div className="flex items-center gap-space-1 px-space-3 border-b border-border/50">
+        {(
+          [
+            { id: "quick-edit" as const, label: "Quick Edit" },
+            { id: "typespec-preview" as const, label: "TypeSpec" },
+            { id: "emission-preview" as const, label: "Emission" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setRightPanelTab(tab.id)}
+            className={`px-space-2 py-space-2 text-caption font-medium transition-colors border-b-2 -mb-px ${
+              rightPanelTab === tab.id
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+    );
+
+    let tabContent: React.ReactNode = null;
+
+    if (rightPanelTab === "quick-edit") {
+      if (selectedField) {
+        tabContent = (
+          <FieldQuickEditPanel
+            key={selectedField.id}
+            field={selectedField}
+            entityId={entity.id}
+            domainSlug={entity.domainSlug}
+            isReadOnly={readOnly}
+            onUpdateField={handleUpdateField}
+          />
+        );
+      } else {
+        tabContent = (
+          <div className="p-space-4">
+            <p className="text-body-small text-muted-foreground">
+              Select a field to edit its properties.
+            </p>
+          </div>
+        );
+      }
+    } else if (rightPanelTab === "typespec-preview") {
+      tabContent = (
+        <TypeSpecPreview
+          entityId={entity.id}
+          trigger={typeSpecTrigger}
+        />
+      );
+    } else if (rightPanelTab === "emission-preview") {
+      tabContent = (
+        <div className="p-space-4">
+          <p className="text-body-small text-muted-foreground">
+            Click &ldquo;Emit&rdquo; in the toolbar to preview emission output here.
+          </p>
+        </div>
+      );
+    }
+
+    setRightPanelContent(
+      <>
+        {rightPanelTabBar}
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {tabContent}
+        </div>
+      </>
+    );
+
+    return () => {
+      setRightPanelContent(null);
+    };
+  }, [
+    rightPanelTab,
+    selectedField,
+    entity.id,
+    entity.domainSlug,
+    readOnly,
+    handleUpdateField,
+    typeSpecTrigger,
+    setRightPanelContent,
+  ]);
 
   const handleCreateVersion = useCallback(async () => {
     setIsCreatingVersion(true);
@@ -601,14 +715,23 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
                 fields={fields}
                 domainPolicy={domainPolicy}
                 isReadOnly={readOnly}
+                selectedFieldId={selectedFieldId}
+                onFieldSelect={handleFieldSelect}
                 onAddField={async (name, type, opts) => {
                   await addFieldAction(entity.id, name, type, opts);
+                  setTypeSpecTrigger((n) => n + 1);
                 }}
                 onUpdateField={async (id, data) => {
                   await updateFieldAction(id, data);
+                  setTypeSpecTrigger((n) => n + 1);
                 }}
                 onDeleteField={async (id) => {
                   await deleteFieldAction(id);
+                  if (selectedFieldId === id) {
+                    setSelectedFieldId(null);
+                    setRightPanelTab("typespec-preview");
+                  }
+                  setTypeSpecTrigger((n) => n + 1);
                 }}
               />
             </>
