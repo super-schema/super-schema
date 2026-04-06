@@ -74,11 +74,69 @@
 }
 
 /* ============================================================
-   Color Tokens - Hex-Inspired Dark Theme (always dark)
+   Color Tokens
    ============================================================ */
 
+/* ---------- Light theme (default) ---------- */
 :root {
   /* Primary Palette */
+  --background: #f8f8fa;
+  --foreground: #1a1a2e;
+  --card: #ffffff;
+  --card-foreground: #1a1a2e;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a2e;
+  --primary: #8B5CA0;
+  --primary-foreground: #ffffff;
+  --secondary: #e8a3a3;
+  --secondary-foreground: #1a1a2e;
+  --muted: #f0eff2;
+  --muted-foreground: #6b6580;
+  --accent: #eae8ed;
+  --accent-foreground: #1a1a2e;
+  --border: #d8d6dc;
+  --input: #d8d6dc;
+  --ring: #8B5CA0;
+
+  /* Status Colors */
+  --destructive: #dc3545;
+  --success: #2ea043;
+  --warning: #d4920a;
+  --info: #3b82f6;
+
+  /* Border Radius: 12px global */
+  --radius: 12px;
+
+  /* Charts */
+  --chart-1: #8B5CA0;
+  --chart-2: #e8a3a3;
+  --chart-3: #2ea043;
+  --chart-4: #d4920a;
+  --chart-5: #3b82f6;
+
+  /* Sidebar */
+  --sidebar: #f0eff2;
+  --sidebar-foreground: #1a1a2e;
+  --sidebar-primary: #8B5CA0;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e4e2e8;
+  --sidebar-accent-foreground: #1a1a2e;
+  --sidebar-border: #d8d6dc;
+  --sidebar-ring: #8B5CA0;
+
+  /* Custom Design Tokens */
+  --glass-bg: rgba(255, 255, 255, 0.85);
+  --glass-blur: blur(12px);
+  --gradient-border: linear-gradient(135deg, #8B5CA0, #e8a3a3);
+  --field-complete: #2ea043;
+  --field-suggestion: #d4920a;
+  --field-error: #dc3545;
+  --mono-size: 13px;
+  --transition-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ---------- Dark theme ---------- */
+.dark {
   --background: #14141C;
   --foreground: #e3e1e4;
   --card: #1c1c26;
@@ -97,23 +155,17 @@
   --input: #333340;
   --ring: #A477B2;
 
-  /* Status Colors */
   --destructive: #e55b5b;
   --success: #5bc27a;
   --warning: #e5a93b;
   --info: #6ba3e8;
 
-  /* Border Radius: 12px global */
-  --radius: 12px;
-
-  /* Charts */
   --chart-1: #A477B2;
   --chart-2: #F5C0C0;
   --chart-3: #5bc27a;
   --chart-4: #e5a93b;
   --chart-5: #6ba3e8;
 
-  /* Sidebar */
   --sidebar: #1c1c26;
   --sidebar-foreground: #e3e1e4;
   --sidebar-primary: #A477B2;
@@ -123,17 +175,11 @@
   --sidebar-border: #333340;
   --sidebar-ring: #A477B2;
 
-  /* ============================================================
-     Custom Design Tokens
-     ============================================================ */
   --glass-bg: rgba(28, 28, 38, 0.8);
-  --glass-blur: blur(12px);
   --gradient-border: linear-gradient(135deg, #A477B2, #F5C0C0);
   --field-complete: #5bc27a;
   --field-suggestion: #e5a93b;
   --field-error: #e55b5b;
-  --mono-size: 13px;
-  --transition-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* ============================================================
@@ -227,16 +273,24 @@
    ============================================================ */
 
 .surface-base {
-  background-color: #14141C;
+  background-color: var(--background);
 }
 
 .surface-1 {
-  background-color: #1c1c26;
+  background-color: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.dark .surface-1 {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 .surface-2 {
-  background-color: #22222e;
+  background-color: var(--popover);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.dark .surface-2 {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
