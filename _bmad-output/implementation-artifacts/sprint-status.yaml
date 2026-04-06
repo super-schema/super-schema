@@ -53,14 +53,22 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Schema Authoring & Management (13 stories)
-  epic-2: in-progress                             # 2-3 and 2-4 still in-progress
+  # NOTE (2026-04-05): UX restructured to 3-tier editing model:
+  #   Tier 1: Inline field cards (field-editor.tsx)
+  #   Tier 2: Quick Edit right sidebar with 4 sections (Properties, Constraints, Documentation, Data Governance)
+  #   Tier 3: Field Studio full-page editor with 8 panels (Properties, Constraints, Serialization, Access Control, Documentation, Version History, Extensions, Data Governance)
+  # Entity workspace tabs: Editor | Emit | Versions (no top-level History/Create Version/Emit buttons)
+  # Right panel tabs: Quick Edit | TypeSpec Preview (no Emission tab, max width 800px)
+  # Human-readable slugs in URLs: /schemas/playground/customer-order
+  # Business Concept Registry and Glossary at /glossary
+  epic-2: done                                     # all stories complete
   2-1-database-schema-zod-utilities: done
   2-1b-entity-domain-service-layer: done
   2-1c-field-service-layer: done
   2-1d-domain-selection-management-ui: done
   2-2-entity-browsing-sidebar-navigation: done
-  2-3-schema-field-editor: in-progress             # partially implemented — diverged from spec, needs consolidation
-  2-4-decorator-detail-panel: in-progress          # partially implemented — no right panel, inline expansion instead
+  2-3-schema-field-editor: done                    # card-based list (not DataTable), field creation navigates to Field Studio
+  2-4-decorator-detail-panel: done                 # superseded by Quick Edit sidebar (Tier 2) + Field Studio (Tier 3)
   2-5-completeness-enforcement-validation-indicators: done
   2-6-autocomplete-system: done
   2-7-complex-types-relationships-aliases: done
