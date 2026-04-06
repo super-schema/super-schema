@@ -517,6 +517,16 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         onTabChange={setRightPanelTab}
         onUpdateField={handleUpdateField}
         typeSpecTrigger={typeSpecTrigger}
+        existingFields={fields.map((f) => ({
+          name: f.name,
+          type: f.type,
+          isOptional: f.nullable,
+          isKey: f.isKey,
+        }))}
+        onTypeSpecApplied={() => {
+          // Trigger page refresh to reload fields from DB
+          window.location.reload();
+        }}
       />
 
       {/* View Tab Bar */}

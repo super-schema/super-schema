@@ -619,6 +619,229 @@ export async function deleteFieldAction(fieldId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Bidirectional TypeSpec editing — apply parsed TypeSpec to entity fields
+// ---------------------------------------------------------------------------
+
+export interface ApplyTypeSpecResult {
+  added: number;
+  updated: number;
+  removed: string[];
+  error?: string;
+}
+
+export async function applyTypeSpecAction(
+  entityId: string,
+  parsedFields: Array<{
+    name: string;
+    type: string;
+    isOptional: boolean;
+    isKey: boolean;
+    decorators: Record<string, unknown>;
+    arrayElementType?: string;
+  }>,
+  fieldsToRemove?: string[]
+): Promise<ApplyTypeSpecResult> {
+  const session = await auth();
+  if (!session?.user?.id) return { added: 0, updated: 0, removed: [], error: "Not authenticated" };
+
+  try {
+    // Get existing fields for this entity
+    const existingFields = await prisma.field.findMany({
+      where: { entityId },
+      orderBy: { sortOrder: "asc" },
+    });
+
+    const existingByName = new Map(existingFields.map((f) => [f.name, f]));
+
+    let addedCount = 0;
+    let updatedCount = 0;
+    const removedNames: string[] = [];
+
+    // Get max sort order for new fields
+    const maxSort = existingFields.reduce((max, f) => Math.max(max, f.sortOrder), -1);
+    let nextSort = maxSort + 1;
+
+    // Get max field number for new fields
+    const maxFieldNum = existingFields.reduce(
+      (max, f) => Math.max(max, f.fieldNumber ?? 0),
+      0
+    );
+    let nextFieldNum = maxFieldNum + 1;
+
+    for (const pf of parsedFields) {
+      const existing = existingByName.get(pf.name);
+
+      // Build decorators JSONB from parsed decorators
+      const decoratorsJson = buildDecoratorsJson(pf.decorators, pf.arrayElementType);
+
+      if (!existing) {
+        // Create new field
+        await withAudit({
+          action: "CREATE",
+          entityType: "Field",
+          entityId: "pending",
+          userId: session.user.id,
+          fn: () =>
+            prisma.field.create({
+              data: {
+                entityId,
+                name: pf.name,
+                slug: generateSlug(pf.name),
+                type: pf.type,
+                sortOrder: nextSort++,
+                nullable: pf.isOptional,
+                isKey: pf.isKey,
+                fieldNumber: nextFieldNum++,
+                description: (pf.decorators.doc as string) ?? "",
+                classification: extractClassification(pf.decorators.tag as string | undefined),
+                decorators: decoratorsJson as Prisma.InputJsonValue,
+                ...(pf.type === "array" && pf.arrayElementType
+                  ? {} // arrayElementType is stored in decorators
+                  : {}),
+              },
+            }),
+        });
+        addedCount++;
+      } else {
+        // Check if anything changed
+        const needsUpdate =
+          existing.type !== pf.type ||
+          existing.nullable !== pf.isOptional ||
+          existing.isKey !== pf.isKey ||
+          (pf.decorators.doc && existing.description !== pf.decorators.doc);
+
+        if (needsUpdate) {
+          await withAudit({
+            action: "UPDATE",
+            entityType: "Field",
+            entityId: existing.id,
+            userId: session.user.id,
+            beforeState: existing as unknown as object,
+            fn: () =>
+              prisma.field.update({
+                where: { id: existing.id },
+                data: {
+                  type: pf.type,
+                  nullable: pf.isOptional,
+                  isKey: pf.isKey,
+                  description: (pf.decorators.doc as string) ?? existing.description,
+                  classification: extractClassification(pf.decorators.tag as string | undefined) ?? existing.classification,
+                  decorators: decoratorsJson as Prisma.InputJsonValue,
+                },
+              }),
+          });
+          updatedCount++;
+        }
+      }
+    }
+
+    // Handle field removal (only if explicitly requested)
+    if (fieldsToRemove && fieldsToRemove.length > 0) {
+      for (const fieldName of fieldsToRemove) {
+        const existing = existingByName.get(fieldName);
+        if (existing) {
+          await withAudit({
+            action: "DELETE",
+            entityType: "Field",
+            entityId: existing.id,
+            userId: session.user.id,
+            beforeState: existing as unknown as object,
+            fn: async () => {
+              await prisma.field.delete({ where: { id: existing.id } });
+              return null;
+            },
+          });
+          removedNames.push(fieldName);
+        }
+      }
+    }
+
+    revalidatePath("/schemas");
+    return { added: addedCount, updated: updatedCount, removed: removedNames };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to apply TypeSpec";
+    return { added: 0, updated: 0, removed: [], error: message };
+  }
+}
+
+/**
+ * Build the decorators JSONB from parsed TypeSpec decorators.
+ */
+function buildDecoratorsJson(
+  decorators: Record<string, unknown>,
+  arrayElementType?: string
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  // TypeSpec sub-key for identity & semantics
+  const identity: Record<string, unknown> = {};
+  if (decorators.secret) identity.secret = true;
+  if (decorators.format) identity.format = decorators.format;
+  if (Object.keys(identity).length > 0) {
+    if (!result.typespec) result.typespec = {};
+    (result.typespec as Record<string, unknown>).identity = identity;
+  }
+
+  // TypeSpec sub-key for validation
+  const validation: Record<string, unknown> = {};
+  if (decorators.minLength != null) validation.minLength = decorators.minLength;
+  if (decorators.maxLength != null) validation.maxLength = decorators.maxLength;
+  if (decorators.minValue != null) validation.minValue = decorators.minValue;
+  if (decorators.maxValue != null) validation.maxValue = decorators.maxValue;
+  if (decorators.minValueExclusive != null) validation.minValueExclusive = decorators.minValueExclusive;
+  if (decorators.maxValueExclusive != null) validation.maxValueExclusive = decorators.maxValueExclusive;
+  if (decorators.pattern) validation.pattern = decorators.pattern;
+  if (decorators.minItems != null) validation.minItems = decorators.minItems;
+  if (decorators.maxItems != null) validation.maxItems = decorators.maxItems;
+  if (Object.keys(validation).length > 0) {
+    if (!result.typespec) result.typespec = {};
+    (result.typespec as Record<string, unknown>).validation = validation;
+  }
+
+  // TypeSpec sub-key for wire format
+  const wireFormat: Record<string, unknown> = {};
+  if (decorators.encode) wireFormat.encode = decorators.encode;
+  if (decorators.encodeSubType) wireFormat.encodeSubType = decorators.encodeSubType;
+  if (Object.keys(wireFormat).length > 0) {
+    if (!result.typespec) result.typespec = {};
+    (result.typespec as Record<string, unknown>).wireFormat = wireFormat;
+  }
+
+  // TypeSpec sub-key for documentation
+  const documentation: Record<string, unknown> = {};
+  if (decorators.summary) documentation.summary = decorators.summary;
+  if (decorators.deprecated) documentation.deprecated = decorators.deprecated;
+  if (Object.keys(documentation).length > 0) {
+    if (!result.typespec) result.typespec = {};
+    (result.typespec as Record<string, unknown>).documentation = documentation;
+  }
+
+  // TypeSpec sub-key for visibility
+  if (decorators.visibility && Array.isArray(decorators.visibility)) {
+    if (!result.typespec) result.typespec = {};
+    (result.typespec as Record<string, unknown>).visibility = {
+      phases: decorators.visibility,
+    };
+  }
+
+  // Array element type stored at top level of decorators (used by compiler)
+  if (arrayElementType) {
+    result.arrayElementType = arrayElementType;
+  }
+
+  return result;
+}
+
+/**
+ * Extract classification from @tag("classification:...") value.
+ */
+function extractClassification(tag: string | undefined): string | null {
+  if (!tag) return null;
+  const match = tag.match(/^classification:(.+)$/);
+  return match ? match[1] : null;
+}
+
+// ---------------------------------------------------------------------------
 // Schema version management (stored in entity metadata JSONB)
 // ---------------------------------------------------------------------------
 

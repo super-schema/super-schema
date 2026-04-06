@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
 import { TypeSpecPreview } from "@/components/custom/TypeSpecPreview";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
+import type { ExistingFieldSummary } from "@/lib/compiler/typespec-parser";
 
 type RightPanelTab = "quick-edit" | "typespec-preview";
 
@@ -33,6 +34,8 @@ interface RightPanelRouterProps {
   onTabChange: (tab: RightPanelTab) => void;
   onUpdateField: (id: string, data: Record<string, unknown>) => Promise<void>;
   typeSpecTrigger: number;
+  existingFields?: ExistingFieldSummary[];
+  onTypeSpecApplied?: () => void;
 }
 
 const TABS: { id: RightPanelTab; label: string }[] = [
@@ -50,6 +53,8 @@ export function RightPanelRouter({
   onTabChange,
   onUpdateField,
   typeSpecTrigger,
+  existingFields,
+  onTypeSpecApplied,
 }: RightPanelRouterProps) {
   const { setContent: setRightPanelContent } = useRightPanelContent();
 
@@ -101,6 +106,8 @@ export function RightPanelRouter({
         <TypeSpecPreview
           entityId={entityId}
           trigger={typeSpecTrigger}
+          existingFields={existingFields}
+          onApplied={onTypeSpecApplied}
         />
       );
     }
@@ -128,6 +135,8 @@ export function RightPanelRouter({
     typeSpecTrigger,
     setRightPanelContent,
     onTabChange,
+    existingFields,
+    onTypeSpecApplied,
   ]);
 
   // This component renders nothing itself -- it pushes content into the layout's RightPanel via context

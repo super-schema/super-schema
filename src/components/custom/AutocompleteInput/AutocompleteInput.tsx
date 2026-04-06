@@ -48,7 +48,13 @@ export function AutocompleteInput({
 
   useEffect(() => {
     updateSuggestions(value);
-  }, [value, updateSuggestions]);
+    // Auto-close if the value exactly matches a suggestion (user finished typing)
+    if (value && suggestions.some((s) => s.value.toLowerCase() === value.toLowerCase())) {
+      // Keep open briefly for selection, then close
+      const timer = setTimeout(() => setIsOpen(false), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [value, updateSuggestions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSelect(suggestion: AutocompleteSuggestion) {
     onChange(suggestion.value);
@@ -117,7 +123,7 @@ export function AutocompleteInput({
       {isOpen && suggestions.length > 0 && (
         <div
           ref={listRef}
-          className="absolute z-50 top-full mt-1 w-full max-h-[240px] overflow-y-auto rounded-xl border border-border bg-popover shadow-lg"
+          className="absolute z-50 top-full mt-1 w-full max-h-[160px] overflow-y-auto rounded-xl border border-border bg-popover shadow-lg pointer-events-auto"
         >
           {suggestions.map((suggestion, i) => (
             <button
