@@ -3,7 +3,7 @@
 import type React from "react";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ interface EntityHeaderProps {
   isPending: boolean;
   statusError: string | null;
   toolbar?: React.ReactNode;
+  showSaved?: boolean;
 }
 
 export function EntityHeader({
@@ -48,6 +49,7 @@ export function EntityHeader({
   isPending,
   statusError,
   toolbar,
+  showSaved = false,
 }: EntityHeaderProps) {
   const currentStatus = getStatusOption(entity.status);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -164,6 +166,13 @@ export function EntityHeader({
         </div>
 
         <Badge variant="secondary">v{entity.version}</Badge>
+
+        {/* Saved flash indicator */}
+        {showSaved && (
+          <span className="flex items-center gap-1 text-caption text-success animate-auth-fade-up">
+            <Check className="w-3 h-3" /> Saved
+          </span>
+        )}
         </div>
 
         {toolbar}

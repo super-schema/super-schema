@@ -2,6 +2,12 @@
 
 > Comprehensive list of all deferred items discovered during implementation.
 > Organized by priority. Updated 2026-04-05.
+>
+> COMPLETED items removed on 2026-04-05:
+> - Field slugs: now auto-generated via generateSlug() on create and update
+> - TypePicker hierarchy: hierarchical data type system implemented (data-types.ts)
+> - Retention move: entity lifecycle transitions enforced (entity-lifecycle.ts)
+> - Tab restructure: entity workspace restructured to Editor | Schemas | Versions tabs
 
 ---
 
@@ -19,6 +25,7 @@
 | C8 | **API key management uses env var** — Simple `API_KEY` env var validation instead of per-user API keys table (`user_api_keys`). No key rotation or scoping. | 3-8 | M |
 | C9 | **Notification service triggers not wired** — Trigger functions exist but are not called from governance/annotation/emission services. | 7-1 | M |
 | C10 | **Webhook retry without background worker** — Uses piggyback retry during next `dispatchEvent()` call. Retries only happen when new events fire. | 7-3 | M |
+| C11 | **Schema versions stored in metadata JSONB** — Schema versions (draft/published/deployed) stored in entity `metadata.schemaVersions` instead of a dedicated Prisma table. Not scalable for production. | 3-6 | L |
 
 ## HIGH: Items that affect quality/completeness
 
@@ -38,6 +45,8 @@
 | H12 | **PostgreSQL immutability trigger not verified** — Requires live database to test; documented but not validated. | 6-5 | S |
 | H13 | **Emit flow not wired to version creation** — Emit commits do not trigger `createVersion()`. Versioning and emission are disconnected. | 4-1 | M |
 | H14 | **Hardcoded AUTHOR role fallback** — `entity.ts` and `domain.ts` routers use `userRole: "AUTHOR"` TODO placeholder until RBAC (story 8-1). | 2-1, 2-1b | S |
+| H15 | **Activity Bar navigation not fully wired** — Activity Bar sidebar icons render but navigation between top-level sections (Schemas, Glossary, Deployments, Admin) relies on Next.js routing without active-state highlighting. | 1-3 | M |
+| H16 | **Enterprise SSO (Story 1-6) explicitly deferred** — SAML/OIDC enterprise SSO integration not required for MVP. Google OAuth + local auth sufficient. | 1-6 | L |
 
 ## MEDIUM: Nice-to-have improvements
 

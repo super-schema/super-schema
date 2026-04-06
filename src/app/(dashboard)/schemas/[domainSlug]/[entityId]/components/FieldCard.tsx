@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { GripVertical, Trash2, Settings2, Link2 } from "lucide-react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ValidationIndicator } from "@/components/custom/ValidationIndicator";
@@ -88,6 +90,23 @@ export function FieldCard({
 }: FieldCardProps) {
   const [editingField, setEditingField] = useState(false);
 
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: field.id, disabled: isReadOnly });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+    zIndex: isDragging ? 50 : undefined,
+    boxShadow: isDragging ? "0 8px 24px rgba(0,0,0,0.18)" : undefined,
+  };
+
   const fc = getFieldCompleteness(field);
   const tooltipContent =
     fc.status === "complete"
@@ -101,6 +120,9 @@ export function FieldCard({
 
   return (
     <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
       className={`surface-glass rounded-lg border transition-colors group cursor-pointer ${
         isSelected
           ? "border-primary ring-1 ring-primary/30"
@@ -131,7 +153,10 @@ export function FieldCard({
         <ValidationIndicator status={fc.status} tooltipContent={tooltipContent} />
 
         {/* Drag handle */}
-        <div className="text-muted-foreground/30 group-hover:text-muted-foreground cursor-grab">
+        <div
+          className="text-muted-foreground/30 group-hover:text-muted-foreground cursor-grab touch-none"
+          {...listeners}
+        >
           <GripVertical className="w-4 h-4" />
         </div>
 

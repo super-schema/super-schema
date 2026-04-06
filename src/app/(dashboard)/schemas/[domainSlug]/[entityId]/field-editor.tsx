@@ -1,14 +1,31 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Loader2, ExternalLink, X } from "lucide-react";
+import { Plus, Loader2, ExternalLink, X, Search } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { AutocompleteInput } from "@/components/custom/AutocompleteInput";
 import { TypePicker } from "@/components/custom/TypePicker";
 import {
   getEntityCompleteness,
+  getFieldCompleteness,
 } from "@/lib/validation/field-completeness";
+import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
 import {
   getFieldNameSuggestions,
   type AutocompleteSuggestion,
@@ -82,6 +99,59 @@ export function FieldEditor({
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldType, setNewFieldType] = useState("string");
+
+  // Filter state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [classificationFilter, setClassificationFilter] = useState("");
+  const [completenessFilter, setCompletenessFilter] = useState("");
+
+  const hasActiveFilters = searchQuery || typeFilter || classificationFilter || completenessFilter;
+
+  // Unique type categories for the type filter dropdown
+  const typeCategories = useMemo(() => {
+    const cats = new Map<string, string>();
+    DATA_TYPE_HIERARCHY.forEach((t) => {
+      if (!t.parent) {
+        cats.set(t.id, t.label);
+      }
+    });
+    return Array.from(cats.entries());
+  }, []);
+
+  // Apply client-side filters
+  const filteredFields = useMemo(() => {
+    let result = fields;
+
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((f) => f.name.toLowerCase().includes(q));
+    }
+
+    if (typeFilter) {
+      // Match exact type or types whose parent chain includes the filter
+      const childTypes = DATA_TYPE_HIERARCHY
+        .filter((t) => t.id === typeFilter || t.parent === typeFilter)
+        .map((t) => t.id);
+      result = result.filter((f) => childTypes.includes(f.type));
+    }
+
+    if (classificationFilter) {
+      result = result.filter(
+        (f) => f.classification?.toUpperCase() === classificationFilter
+      );
+    }
+
+    if (completenessFilter) {
+      result = result.filter((f) => {
+        const fc = getFieldCompleteness(f);
+        if (completenessFilter === "complete") return fc.status === "complete";
+        return fc.status !== "complete";
+      });
+    }
+
+    return result;
+  }, [fields, searchQuery, typeFilter, classificationFilter, completenessFilter]);
 
   function navigateToFieldStudio(fieldId: string) {
     router.push(`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${fieldId}`);
@@ -178,6 +248,40 @@ export function FieldEditor({
 
   const completeness = getEntityCompleteness(fields);
 
+  // Drag-and-drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const fieldIds = fields.map((f) => f.id);
+
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const oldIndex = fields.findIndex((f) => f.id === active.id);
+      const newIndex = fields.findIndex((f) => f.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      // Build the reordered list
+      const reordered = [...fields];
+      const [moved] = reordered.splice(oldIndex, 1);
+      reordered.splice(newIndex, 0, moved);
+
+      // Update sortOrder for all fields that changed position
+      const updates: Promise<void>[] = [];
+      for (let i = 0; i < reordered.length; i++) {
+        if (reordered[i].sortOrder !== i) {
+          updates.push(onUpdateField(reordered[i].id, { sortOrder: i }));
+        }
+      }
+      await Promise.all(updates);
+    },
+    [fields, onUpdateField]
+  );
+
   return (
     <div>
       {/* Progress bar */}
@@ -200,22 +304,95 @@ export function FieldEditor({
         </div>
       )}
 
+      {/* Filter bar */}
+      {fields.length > 3 && (
+        <div className="mb-space-3 flex flex-wrap items-center gap-space-2">
+          <div className="relative flex-1 min-w-[160px] max-w-[240px]">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search fields..."
+              className="h-7 pl-7 text-body-small"
+            />
+          </div>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="">All types</option>
+            {typeCategories.map(([id, label]) => (
+              <option key={id} value={id}>{label}</option>
+            ))}
+          </select>
+          <select
+            value={classificationFilter}
+            onChange={(e) => setClassificationFilter(e.target.value)}
+            className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="">All classifications</option>
+            <option value="PII">PII</option>
+            <option value="SENSITIVE">Sensitive</option>
+            <option value="INTERNAL">Internal</option>
+            <option value="PUBLIC">Public</option>
+          </select>
+          <select
+            value={completenessFilter}
+            onChange={(e) => setCompletenessFilter(e.target.value)}
+            className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="">All completeness</option>
+            <option value="complete">Complete</option>
+            <option value="incomplete">Incomplete</option>
+          </select>
+          {hasActiveFilters && (
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                setTypeFilter("");
+                setClassificationFilter("");
+                setCompletenessFilter("");
+              }}
+              className="text-caption text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Filtered result count */}
+      {hasActiveFilters && (
+        <p className="text-caption text-muted-foreground mb-space-2">
+          Showing {filteredFields.length} of {fields.length} fields
+        </p>
+      )}
+
       {/* Field cards */}
-      <div className="space-y-1">
-        {fields.map((field, index) => (
-          <FieldCard
-            key={field.id}
-            field={field}
-            index={index}
-            isSelected={selectedFieldId === field.id}
-            isReadOnly={isReadOnly}
-            onFieldSelect={onFieldSelect}
-            onUpdateField={onUpdateField}
-            onDeleteField={onDeleteField}
-            onNavigateStudio={navigateToFieldStudio}
-          />
-        ))}
-      </div>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext items={fieldIds} strategy={verticalListSortingStrategy}>
+          <div className="space-y-1">
+            {filteredFields.map((field, index) => (
+              <FieldCard
+                key={field.id}
+                field={field}
+                index={index}
+                isSelected={selectedFieldId === field.id}
+                isReadOnly={isReadOnly}
+                onFieldSelect={onFieldSelect}
+                onUpdateField={onUpdateField}
+                onDeleteField={onDeleteField}
+                onNavigateStudio={navigateToFieldStudio}
+              />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
 
       {/* Inline quick-create dialog */}
       {!isReadOnly && showCreateDialog && (

@@ -49,7 +49,7 @@ development_status:
   1-3-application-shell-ide-layout: done
   1-4-local-user-authentication: done
   1-5-google-sso-authentication: done
-  1-6-enterprise-sso-integration: ready-for-dev   # not implemented
+  1-6-enterprise-sso-integration: ready-for-dev   # deferred — not required for MVP, enterprise feature
   epic-1-retrospective: optional
 
   # Epic 2: Schema Authoring & Management (13 stories)
@@ -151,3 +151,13 @@ development_status:
   11-3-ai-assisted-field-suggestions-domain-context: done
   11-4-ai-enhanced-schema-import-confidence-scoring: done
   epic-11-retrospective: optional
+
+# ---------------------------------------------------------------------------
+# QUALITY NOTES: UI coverage by epic
+# ---------------------------------------------------------------------------
+# Epics 1-4:  Full UI + backend — complete user-facing workflows with
+#             polished React components, form validation, and navigation.
+# Epics 5-7:  Backend services + basic UI — core services implemented with
+#             functional but minimal UI (tables, status badges, simple forms).
+# Epics 8-11: Backend services + admin UI — service layer complete with
+#             admin-oriented UI (dashboards, config panels, import wizards).

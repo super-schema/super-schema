@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback } from "react";
-import { Loader2, Save } from "lucide-react";
+import { useState, useEffect, useTransition, useCallback, useRef } from "react";
+import { Loader2, Save, ChevronDown, Tag, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { FieldEditor } from "./field-editor";
 import {
   addFieldAction,
@@ -17,6 +19,7 @@ import {
   getVersionHistoryAction,
   compareVersionsAction,
   getChangeHistoryAction,
+  updateEntityMetadataAction,
 } from "./actions";
 import { SchemasTab } from "./components/SchemasTab";
 import { DiffViewer } from "@/components/custom/DiffViewer";
@@ -75,6 +78,175 @@ interface EntityWorkspaceProps {
   domainPolicy: Record<string, unknown> | null;
 }
 
+// ---------------------------------------------------------------------------
+// Retention policy options
+// ---------------------------------------------------------------------------
+
+const RETENTION_OPTIONS = [
+  { value: "30d", label: "30 days" },
+  { value: "90d", label: "90 days" },
+  { value: "1y", label: "1 year" },
+  { value: "3y", label: "3 years" },
+  { value: "5y", label: "5 years" },
+  { value: "7y", label: "7 years" },
+  { value: "indefinite", label: "Indefinite" },
+];
+
+// ---------------------------------------------------------------------------
+// Entity Metadata Panel (collapsible)
+// ---------------------------------------------------------------------------
+
+function EntityMetadataPanel({
+  entity,
+  isReadOnly,
+}: {
+  entity: EntityWorkspaceProps["entity"];
+  isReadOnly: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const meta = (entity.metadata ?? {}) as Record<string, unknown>;
+
+  const [tags, setTags] = useState<string[]>((meta.tags as string[]) ?? []);
+  const [tagInput, setTagInput] = useState("");
+  const [owner, setOwner] = useState<string>((meta.owner as string) ?? "");
+  const [retention, setRetention] = useState<string>(
+    (meta.retentionPolicy as string) ?? ""
+  );
+  const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  function addTag(value: string) {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed && !tags.includes(trimmed)) {
+      setTags([...tags, trimmed]);
+      setIsDirty(true);
+    }
+    setTagInput("");
+  }
+
+  function removeTag(tag: string) {
+    setTags(tags.filter((t) => t !== tag));
+    setIsDirty(true);
+  }
+
+  async function handleSave() {
+    setIsSaving(true);
+    try {
+      await updateEntityMetadataAction(entity.id, {
+        tags,
+        owner: owner || null,
+        retentionPolicy: retention || null,
+      });
+      setIsDirty(false);
+    } catch {
+      // error handled by server action
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="mb-space-4 rounded-lg border border-border/50 overflow-hidden">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center justify-between w-full px-space-4 py-space-2 text-body-small font-medium text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <span className="flex items-center gap-space-2">
+          <Tag className="w-3.5 h-3.5" />
+          Entity Metadata
+          {(tags.length > 0 || owner || retention) && (
+            <span className="text-caption text-muted-foreground/60">
+              ({[tags.length > 0 && `${tags.length} tag${tags.length !== 1 ? "s" : ""}`, owner && "owner", retention && "retention"].filter(Boolean).join(", ")})
+            </span>
+          )}
+        </span>
+        <ChevronDown
+          className={`w-4 h-4 transition-transform ${isOpen ? "" : "-rotate-90"}`}
+        />
+      </button>
+
+      {isOpen && (
+        <div className="px-space-4 pb-space-4 space-y-space-3 border-t border-border/50 pt-space-3">
+          {/* Tags */}
+          <div>
+            <label className="text-caption text-muted-foreground mb-1 block">Tags</label>
+            <div className="flex flex-wrap items-center gap-1 mb-1">
+              {tags.map((tag) => (
+                <Badge key={tag} variant="secondary" className="text-[11px] h-5 gap-1">
+                  {tag}
+                  {!isReadOnly && (
+                    <button onClick={() => removeTag(tag)} className="hover:text-destructive">
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </Badge>
+              ))}
+            </div>
+            {!isReadOnly && (
+              <Input
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && tagInput.trim()) {
+                    e.preventDefault();
+                    addTag(tagInput);
+                  }
+                  if (e.key === "Backspace" && !tagInput && tags.length > 0) {
+                    removeTag(tags[tags.length - 1]);
+                  }
+                }}
+                onBlur={() => { if (tagInput.trim()) addTag(tagInput); }}
+                placeholder="Add tag and press Enter..."
+                className="h-7 text-body-small"
+              />
+            )}
+          </div>
+
+          {/* Owner + Retention row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-3">
+            <div>
+              <label className="text-caption text-muted-foreground mb-1 block">Owner</label>
+              <Input
+                value={owner}
+                onChange={(e) => { setOwner(e.target.value); setIsDirty(true); }}
+                placeholder="e.g. data-platform-team"
+                className="h-7 text-body-small"
+                disabled={isReadOnly}
+              />
+            </div>
+            <div>
+              <label className="text-caption text-muted-foreground mb-1 block">Retention Policy</label>
+              <select
+                value={retention}
+                onChange={(e) => { setRetention(e.target.value); setIsDirty(true); }}
+                disabled={isReadOnly}
+                className="h-7 w-full rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+              >
+                <option value="">Not set</option>
+                {RETENTION_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Save button */}
+          {!isReadOnly && isDirty && (
+            <div className="flex justify-end">
+              <Button size="sm" onClick={handleSave} disabled={isSaving} className="gap-1.5">
+                {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Save Metadata
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
@@ -90,6 +262,15 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
 
   const [isPending, startTransition] = useTransition();
   const [statusError, setStatusError] = useState<string | null>(null);
+
+  // "Saved" flash indicator state
+  const [showSaved, setShowSaved] = useState(false);
+  const savedTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const flashSaved = useCallback(() => {
+    setShowSaved(true);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setShowSaved(false), 2000);
+  }, []);
 
   // Emission state
   const [emissionResult, setEmissionResult] = useState<EmissionResult | null>(null);
@@ -140,9 +321,11 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       const result = await updateEntityStatusAction(entity.id, newStatus, metadata);
       if (result?.error) {
         setStatusError(result.error);
+      } else {
+        flashSaved();
       }
     });
-  }, [entity.id, entity.status]);
+  }, [entity.id, entity.status, flashSaved]);
 
   const handleEmit = useCallback(async () => {
     setIsEmitting(true);
@@ -314,10 +497,14 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         readOnly={readOnly_}
         isPending={isPending}
         statusError={statusError}
+        showSaved={showSaved}
         toolbar={
           <EntityToolbar />
         }
       />
+
+      {/* Entity metadata panel */}
+      <EntityMetadataPanel entity={entity} isReadOnly={readOnly_} />
 
       {/* Right panel router (renders nothing itself, pushes content via context) */}
       <RightPanelRouter
@@ -370,7 +557,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       </div>
 
       {/* Center Panel */}
-      <div className="mb-space-8">
+      <div key={activeTab} className="mb-space-8 animate-in fade-in duration-150">
         {activeTab === "editor" && (
           showDiff && diffResult ? (
             <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
