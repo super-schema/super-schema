@@ -57,6 +57,8 @@ export type Pagination = z.infer<typeof PaginationSchema>;
 export type ComplianceFieldResult = {
   entityId: string;
   entityName: string;
+  entitySlug?: string;
+  domainSlug?: string;
   fieldId: string;
   fieldName: string;
   fieldType: string;
@@ -87,6 +89,8 @@ export type GapSeverity = z.infer<typeof GapSeverityEnum>;
 export type ComplianceGap = {
   entityId: string;
   entityName: string;
+  entitySlug?: string;
+  domainSlug?: string;
   fieldId: string;
   fieldName: string;
   gapType: GapType;

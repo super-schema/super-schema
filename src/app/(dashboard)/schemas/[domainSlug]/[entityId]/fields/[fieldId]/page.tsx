@@ -9,17 +9,36 @@ interface Props {
 export default async function FieldDetailPage({ params }: Props) {
   const { domainSlug, entityId, fieldId } = await params;
 
-  const field = await prisma.field.findUnique({
-    where: { id: fieldId },
+  // Resolve the entity first (param may be slug or cuid)
+  const entity = await prisma.entity.findFirst({
+    where: {
+      OR: [{ id: entityId }, { slug: entityId }],
+    },
+    include: { domain: true },
+  });
+  if (!entity) notFound();
+
+  // Try slug-based lookup first, fall back to id-based lookup
+  let field = await prisma.field.findFirst({
+    where: { slug: fieldId, entityId: entity.id },
     include: {
       entity: {
         include: { domain: true },
       },
     },
   });
+  if (!field) {
+    field = await prisma.field.findUnique({
+      where: { id: fieldId },
+      include: {
+        entity: {
+          include: { domain: true },
+        },
+      },
+    });
+  }
 
-  // entityId param may be a slug or a cuid — accept either
-  if (!field || (field.entityId !== entityId && field.entity.slug !== entityId)) {
+  if (!field || field.entityId !== entity.id) {
     notFound();
   }
 

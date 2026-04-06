@@ -59,7 +59,7 @@ export function DeploymentOverviewTable({
             >
               <td className="px-space-3 py-2">
                 <Link
-                  href={`/schemas/_/${row.entityId}`}
+                  href={`/schemas/${row.domainSlug || "_"}/${row.entitySlug || row.entityId}`}
                   className="text-body-small text-primary hover:underline"
                 >
                   {row.entityName}

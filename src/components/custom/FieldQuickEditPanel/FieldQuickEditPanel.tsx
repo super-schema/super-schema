@@ -10,6 +10,7 @@ import { GovernanceSection } from "./GovernanceSection";
 
 interface FieldData {
   id: string;
+  slug?: string;
   name: string;
   type: string;
   precision: number | null;
@@ -371,7 +372,7 @@ export function FieldQuickEditPanel({
         </div>
         <div>
           <Link
-            href={`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${field.id}`}
+            href={`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${field.slug || field.id}`}
             className="text-caption text-primary hover:underline"
           >
             Open Full Field Studio &rarr;

@@ -19,6 +19,7 @@ import { FieldCard } from "./components/FieldCard";
 
 interface FieldData {
   id: string;
+  slug?: string;
   name: string;
   type: string;
   precision: number | null;
@@ -55,7 +56,7 @@ interface FieldEditorProps {
       aliases?: string[];
       decorators?: Record<string, unknown>;
     }
-  ) => Promise<{ field?: { id: string } } | void>;
+  ) => Promise<{ field?: { id: string; slug?: string } } | void>;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDeleteField: (id: string) => Promise<void>;
   onFieldSelect?: (fieldId: string) => void;
@@ -150,10 +151,10 @@ export function FieldEditor({
     setIsCreating(true);
     try {
       const result = await onAddField(newFieldName.trim(), newFieldType);
-      const fieldId = (result as { field?: { id: string } } | undefined)?.field?.id;
+      const createdField = (result as { field?: { id: string; slug?: string } } | undefined)?.field;
       resetDialog();
-      if (fieldId) {
-        navigateToFieldStudio(fieldId);
+      if (createdField) {
+        navigateToFieldStudio(createdField.slug || createdField.id);
       }
     } catch {
       // Allow UI to recover on error

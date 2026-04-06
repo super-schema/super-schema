@@ -50,6 +50,7 @@ export default async function EntityDetailPage({ params }: Props) {
       domainPolicy={domainPolicy as Record<string, unknown> | null}
       fields={entity.fields.map((f) => ({
         id: f.id,
+        slug: f.slug,
         name: f.name,
         type: f.type,
         precision: f.precision,

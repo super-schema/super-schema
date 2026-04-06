@@ -82,6 +82,7 @@ describe("Database Schema", () => {
       data: {
         entityId: entity.id,
         name: "order_id",
+        slug: "order-id",
         type: "string",
         sortOrder: 0,
         isKey: true,
@@ -96,6 +97,7 @@ describe("Database Schema", () => {
         data: {
           entityId: entity.id,
           name: "order_id",
+          slug: "order-id-dup",
           type: "integer",
           sortOrder: 1,
         },
@@ -127,6 +129,7 @@ describe("Database Schema", () => {
       data: {
         entityId: entity.id,
         name: "product_name",
+        slug: "product-name",
         type: "string",
         sortOrder: 0,
       },

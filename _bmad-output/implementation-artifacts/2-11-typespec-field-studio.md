@@ -280,8 +280,17 @@ All TypeSpec decorators are stored under `decorators.typespec` in the field's JS
 - `category === "String"` → show string constraints
 - `category === "Structured" && id === "array"` → show array constraints
 
+**TypePicker hierarchy** (compact row layout with tree connectors):
+The TypePicker displays all 31 TypeSpec built-in types in a hierarchical list flowing from generalized supertypes to specialized concrete types. Each type shows its monospace label and an example value/range right-aligned. The hierarchy follows typespec.io/docs/language-basics/built-in-types/:
+- Number: `numeric` → `integer` → int8/16/32/64, safeint, uint8-64 | `float` → float32/64 | `decimal` → decimal128
+- String: `string` → `url`
+- Boolean, Bytes (flat — no subtypes)
+- Date & Time: plainDate, plainTime, utcDateTime, offsetDateTime, duration, unixTimestamp32
+- Structured: enum, array, map, object (complex type prompts for array element, map key/value, enum values)
+- Special: reference (entity picker + cardinality)
+
 **Existing components to reuse:**
-- `TypePicker` — already exists at `src/components/custom/TypePicker.tsx`
+- `TypePicker` — directory at `src/components/custom/TypePicker/` (TypePicker.tsx, TypeGrid.tsx, ComplexTypePrompt.tsx, type-icons.ts)
 - `ClassificationPicker` — already exists at `src/components/custom/ClassificationPicker.tsx`
 - `Badge` — `src/components/ui/badge.tsx` with pii/sensitive/internal/public variants
 - `ValidationIndicator` — `src/components/custom/ValidationIndicator/`

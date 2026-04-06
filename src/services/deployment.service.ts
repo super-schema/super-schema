@@ -60,7 +60,9 @@ export interface DeploymentStatus {
 export interface DeploymentOverviewRow {
   entityId: string;
   entityName: string;
+  entitySlug?: string;
   domain: string;
+  domainSlug?: string;
   currentVersion: string | null;
   targets: {
     format: string;

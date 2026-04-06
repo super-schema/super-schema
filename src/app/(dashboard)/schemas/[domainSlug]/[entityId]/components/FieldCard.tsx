@@ -12,6 +12,7 @@ import { getFieldCompleteness } from "@/lib/validation/field-completeness";
 
 interface FieldData {
   id: string;
+  slug?: string;
   name: string;
   type: string;
   precision: number | null;
@@ -105,7 +106,7 @@ export function FieldCard({
           ? "border-primary ring-1 ring-primary/30"
           : "border-border/50 hover:border-border"
       }`}
-      onDoubleClick={() => onNavigateStudio(field.id)}
+      onDoubleClick={() => onNavigateStudio(field.slug || field.id)}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         const interactive = target.closest("input, button, select, textarea, [role='combobox']");
@@ -244,7 +245,7 @@ export function FieldCard({
         {/* Expand / actions */}
         <div className="flex items-center gap-1 shrink-0">
           <button
-            onClick={() => onNavigateStudio(field.id)}
+            onClick={() => onNavigateStudio(field.slug || field.id)}
             className="p-1 text-muted-foreground/50 hover:text-foreground transition-colors rounded"
             title="Open Field Studio"
           >

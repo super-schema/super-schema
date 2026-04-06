@@ -54,20 +54,69 @@ So that I can define the structure of my data entities visually.
 - [ ] Row hover state: `bg-accent` (`#3a3a48`), 150ms ease-in-out transition
 - [ ] Row padding: `space-2` (8px) vertical, `space-3` (12px) horizontal
 
-### Task 3: TypePickerGrid Component [AC: visual icon grid, categories, search]
-- [ ] Create `src/components/custom/TypePickerGrid/TypePickerGrid.tsx`
-- [ ] Create `src/components/custom/TypePickerGrid/TypePickerGrid.types.ts`
-- [ ] Create `src/components/custom/TypePickerGrid/index.ts`
-- [ ] Implement as `Popover` with `bg-popover` (`#22222e`), `backdrop-blur-md`, gradient border
-- [ ] Search input at top with filter icon
-- [ ] Categories with headers:
-  - **Primitives**: string, integer, decimal, boolean, float — each with icon + label
-  - **Temporal**: date, time, datetime, timestamp
-  - **Complex**: enum, array, map, object
-  - **Special**: reference
-- [ ] Grid layout: `grid-cols-4` with `gap-2`
-- [ ] Each type as clickable tile: icon (24x24), label below, hover `bg-accent`
-- [ ] Selecting a type closes the popover and fires `onSelect(type)` callback
+### Task 3: TypePicker — Hierarchical Type Selection [AC: TypeSpec type hierarchy, search, examples]
+- [x] Create `src/components/custom/TypePicker/TypePicker.tsx` — Popover with Command search + TypeGrid
+- [x] Create `src/components/custom/TypePicker/TypeGrid.tsx` — compact hierarchical list layout
+- [x] Create `src/components/custom/TypePicker/TypeGridItem.tsx` — individual type row
+- [x] Create `src/components/custom/TypePicker/ComplexTypePrompt.tsx` — secondary prompts for array/map/reference/enum
+- [x] Create `src/components/custom/TypePicker/type-icons.ts` — Lucide icon + color per category
+- [x] Implement as `Popover` (420px wide, 480px max scroll) with `bg-popover`, search at top
+- [x] **Hierarchy follows TypeSpec built-in types** (typespec.io/docs/language-basics/built-in-types/):
+  - Types flow from **generalized (supertypes) → specialized (concrete types)**
+  - Tree connectors show parent→child relationships with indentation
+  - Each type shows: monospace label + example value (right-aligned)
+- [x] **Complete type hierarchy with 7 categories:**
+  ```
+  Number (Hash icon, blue)
+    numeric                     42, 3.14, 99999
+    ├ integer                   0, 42, -100
+    │ ├ int8                    -128 … 127
+    │ ├ int16                   -32 768 … 32 767
+    │ ├ int32                   -2 147 483 648 … 2 147 483 647
+    │ ├ int64                   ±9.2 × 10¹⁸
+    │ ├ safeint                 ±9 007 199 254 740 991
+    │ ├ uint8                   0 … 255
+    │ ├ uint16                  0 … 65 535
+    │ ├ uint32                  0 … 4 294 967 295
+    │ └ uint64                  0 … 1.8 × 10¹⁹
+    ├ float                     3.14, -0.001
+    │ ├ float32                 3.14159
+    │ └ float64                 3.141592653589793
+    └ decimal                   19.99, 1234567.89
+      └ decimal128              99999999999.99999999
+
+  String (Type icon, green)
+    string                      "Hello World"
+    └ url                       "https://example.com/path"
+
+  Boolean (ToggleLeft icon, amber)
+    boolean                     true, false
+
+  Bytes (FileCode icon, purple)
+    bytes                       0x48656C6C6F
+
+  Date & Time (Calendar icon, orange)
+    plainDate                   2024-05-06
+    plainTime                   12:34:00
+    utcDateTime                 2024-05-06T12:20:00Z
+    offsetDateTime              2024-05-06T12:20:00-07:00
+    duration                    P1Y2M3DT4H5M
+    unixTimestamp32              1714992000
+
+  Structured (Layers icon, pink)
+    enum                        ACTIVE | INACTIVE | PENDING
+    array                       ["a", "b", "c"]
+    map                         {"key": "value"}
+    object                      { name: string, age: int32 }
+
+  Special (Link icon, cyan)
+    reference                   → Customer, → Order
+  ```
+- [x] Category headers are **sticky** during scroll
+- [x] Selected type highlighted with `bg-primary/15` + primary color text
+- [x] Parent types show ▸ indicator to signal expandable hierarchy
+- [x] Search mode: typing filters all types across categories (falls back to Command list)
+- [x] Complex type prompts: selecting array/map/reference/enum opens secondary picker for element type, key/value types, entity+cardinality, or enum values
 
 ### Task 4: Decimal Precision/Scale Prompt [AC: precision/scale for decimal type]
 - [ ] When decimal type is selected in TypePickerGrid, show inline prompt below the type cell

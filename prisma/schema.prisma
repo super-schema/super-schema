@@ -124,6 +124,7 @@ model Field {
   id             String   @id @default(cuid())
   entityId       String
   name           String
+  slug           String   @default("")
   type           String
   precision      Int?
   scale          Int?
@@ -142,6 +143,7 @@ model Field {
   conceptLinks FieldConceptLink[]
 
   @@unique([entityId, name])
+  @@unique([entityId, slug])
   @@map("fields")
 }
 

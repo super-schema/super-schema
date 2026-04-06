@@ -56,6 +56,7 @@ export async function createEntityWithFieldsAction(
             fields: {
               create: fields.map((f, i) => ({
                 name: f.name,
+                slug: generateSlug(f.name),
                 type: f.type,
                 nullable: f.nullable,
                 isKey: f.isKey,

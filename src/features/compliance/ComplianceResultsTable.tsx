@@ -128,7 +128,7 @@ export function ComplianceResultsTable({
                   className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
                   onClick={() =>
                     router.push(
-                      `/schemas/${encodeURIComponent(field.domain.toLowerCase().replace(/\s+/g, "-"))}/${field.entityId}`
+                      `/schemas/${field.domainSlug || encodeURIComponent(field.domain.toLowerCase().replace(/\s+/g, "-"))}/${field.entitySlug || field.entityId}`
                     )
                   }
                 >

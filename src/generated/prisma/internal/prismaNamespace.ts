@@ -2328,6 +2328,7 @@ export const FieldScalarFieldEnum = {
   id: 'id',
   entityId: 'entityId',
   name: 'name',
+  slug: 'slug',
   type: 'type',
   precision: 'precision',
   scale: 'scale',

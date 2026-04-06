@@ -12,6 +12,7 @@ export async function GET(request: Request) {
     const fields = await prisma.field.findMany({
       select: {
         id: true,
+        slug: true,
         name: true,
         type: true,
         entity: {
@@ -32,6 +33,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       fields.map((f) => ({
         id: f.id,
+        slug: f.slug,
         name: f.name,
         type: f.type,
         entityId: f.entity.id,

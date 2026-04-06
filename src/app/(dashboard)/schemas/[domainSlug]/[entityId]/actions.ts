@@ -5,6 +5,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
 import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
+import { generateSlug } from "@/lib/slug";
 import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.schema";
 import { updateEntity } from "@/services/entity.service";
 import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
@@ -100,6 +101,7 @@ export async function addFieldAction(
           data: {
             entityId,
             name,
+            slug: generateSlug(name),
             type,
             sortOrder: maxField ? maxField.sortOrder + 1 : 0,
             ...(opts?.description != null && { description: opts.description }),
@@ -148,6 +150,12 @@ export async function updateFieldAction(
   if (!existing) return { error: "Field not found" };
 
   const { decorators, ...rest } = data;
+
+  // Regenerate slug when name changes
+  if (rest.name && rest.name !== existing.name) {
+    (rest as Record<string, unknown>).slug = generateSlug(rest.name);
+  }
+
   // Validate typespec sub-key if present
   if (decorators?.typespec) {
     const validation = TypeSpecDecoratorSchema.safeParse(decorators.typespec);

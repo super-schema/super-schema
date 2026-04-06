@@ -10,6 +10,7 @@ export interface CommandPaletteEntity {
 
 export interface CommandPaletteField {
   id: string;
+  slug?: string;
   name: string;
   type: string;
   entityId: string;

@@ -43,6 +43,7 @@ type RightPanelTab = "quick-edit" | "typespec-preview";
 
 interface FieldData {
   id: string;
+  slug?: string;
   name: string;
   type: string;
   precision: number | null;

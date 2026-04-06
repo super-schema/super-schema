@@ -44,6 +44,7 @@ export type FieldMinAggregateOutputType = {
   id: string | null
   entityId: string | null
   name: string | null
+  slug: string | null
   type: string | null
   precision: number | null
   scale: number | null
@@ -61,6 +62,7 @@ export type FieldMaxAggregateOutputType = {
   id: string | null
   entityId: string | null
   name: string | null
+  slug: string | null
   type: string | null
   precision: number | null
   scale: number | null
@@ -78,6 +80,7 @@ export type FieldCountAggregateOutputType = {
   id: number
   entityId: number
   name: number
+  slug: number
   type: number
   precision: number
   scale: number
@@ -113,6 +116,7 @@ export type FieldMinAggregateInputType = {
   id?: true
   entityId?: true
   name?: true
+  slug?: true
   type?: true
   precision?: true
   scale?: true
@@ -130,6 +134,7 @@ export type FieldMaxAggregateInputType = {
   id?: true
   entityId?: true
   name?: true
+  slug?: true
   type?: true
   precision?: true
   scale?: true
@@ -147,6 +152,7 @@ export type FieldCountAggregateInputType = {
   id?: true
   entityId?: true
   name?: true
+  slug?: true
   type?: true
   precision?: true
   scale?: true
@@ -253,6 +259,7 @@ export type FieldGroupByOutputType = {
   id: string
   entityId: string
   name: string
+  slug: string
   type: string
   precision: number | null
   scale: number | null
@@ -295,6 +302,7 @@ export type FieldWhereInput = {
   id?: Prisma.StringFilter<"Field"> | string
   entityId?: Prisma.StringFilter<"Field"> | string
   name?: Prisma.StringFilter<"Field"> | string
+  slug?: Prisma.StringFilter<"Field"> | string
   type?: Prisma.StringFilter<"Field"> | string
   precision?: Prisma.IntNullableFilter<"Field"> | number | null
   scale?: Prisma.IntNullableFilter<"Field"> | number | null
@@ -316,6 +324,7 @@ export type FieldOrderByWithRelationInput = {
   id?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   type?: Prisma.SortOrder
   precision?: Prisma.SortOrderInput | Prisma.SortOrder
   scale?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -336,11 +345,13 @@ export type FieldOrderByWithRelationInput = {
 export type FieldWhereUniqueInput = Prisma.AtLeast<{
   id?: string
   entityId_name?: Prisma.FieldEntityIdNameCompoundUniqueInput
+  entityId_slug?: Prisma.FieldEntityIdSlugCompoundUniqueInput
   AND?: Prisma.FieldWhereInput | Prisma.FieldWhereInput[]
   OR?: Prisma.FieldWhereInput[]
   NOT?: Prisma.FieldWhereInput | Prisma.FieldWhereInput[]
   entityId?: Prisma.StringFilter<"Field"> | string
   name?: Prisma.StringFilter<"Field"> | string
+  slug?: Prisma.StringFilter<"Field"> | string
   type?: Prisma.StringFilter<"Field"> | string
   precision?: Prisma.IntNullableFilter<"Field"> | number | null
   scale?: Prisma.IntNullableFilter<"Field"> | number | null
@@ -356,12 +367,13 @@ export type FieldWhereUniqueInput = Prisma.AtLeast<{
   updatedAt?: Prisma.DateTimeFilter<"Field"> | Date | string
   entity?: Prisma.XOR<Prisma.EntityScalarRelationFilter, Prisma.EntityWhereInput>
   conceptLinks?: Prisma.FieldConceptLinkListRelationFilter
-}, "id" | "entityId_name">
+}, "id" | "entityId_name" | "entityId_slug">
 
 export type FieldOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   type?: Prisma.SortOrder
   precision?: Prisma.SortOrderInput | Prisma.SortOrder
   scale?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -389,6 +401,7 @@ export type FieldScalarWhereWithAggregatesInput = {
   id?: Prisma.StringWithAggregatesFilter<"Field"> | string
   entityId?: Prisma.StringWithAggregatesFilter<"Field"> | string
   name?: Prisma.StringWithAggregatesFilter<"Field"> | string
+  slug?: Prisma.StringWithAggregatesFilter<"Field"> | string
   type?: Prisma.StringWithAggregatesFilter<"Field"> | string
   precision?: Prisma.IntNullableWithAggregatesFilter<"Field"> | number | null
   scale?: Prisma.IntNullableWithAggregatesFilter<"Field"> | number | null
@@ -407,6 +420,7 @@ export type FieldScalarWhereWithAggregatesInput = {
 export type FieldCreateInput = {
   id?: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -428,6 +442,7 @@ export type FieldUncheckedCreateInput = {
   id?: string
   entityId: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -447,6 +462,7 @@ export type FieldUncheckedCreateInput = {
 export type FieldUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -468,6 +484,7 @@ export type FieldUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   entityId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -488,6 +505,7 @@ export type FieldCreateManyInput = {
   id?: string
   entityId: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -506,6 +524,7 @@ export type FieldCreateManyInput = {
 export type FieldUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -525,6 +544,7 @@ export type FieldUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   entityId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -563,10 +583,16 @@ export type FieldEntityIdNameCompoundUniqueInput = {
   name: string
 }
 
+export type FieldEntityIdSlugCompoundUniqueInput = {
+  entityId: string
+  slug: string
+}
+
 export type FieldCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   type?: Prisma.SortOrder
   precision?: Prisma.SortOrder
   scale?: Prisma.SortOrder
@@ -593,6 +619,7 @@ export type FieldMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   type?: Prisma.SortOrder
   precision?: Prisma.SortOrder
   scale?: Prisma.SortOrder
@@ -610,6 +637,7 @@ export type FieldMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   entityId?: Prisma.SortOrder
   name?: Prisma.SortOrder
+  slug?: Prisma.SortOrder
   type?: Prisma.SortOrder
   precision?: Prisma.SortOrder
   scale?: Prisma.SortOrder
@@ -703,6 +731,7 @@ export type FieldUpdateOneRequiredWithoutConceptLinksNestedInput = {
 export type FieldCreateWithoutEntityInput = {
   id?: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -722,6 +751,7 @@ export type FieldCreateWithoutEntityInput = {
 export type FieldUncheckedCreateWithoutEntityInput = {
   id?: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -771,6 +801,7 @@ export type FieldScalarWhereInput = {
   id?: Prisma.StringFilter<"Field"> | string
   entityId?: Prisma.StringFilter<"Field"> | string
   name?: Prisma.StringFilter<"Field"> | string
+  slug?: Prisma.StringFilter<"Field"> | string
   type?: Prisma.StringFilter<"Field"> | string
   precision?: Prisma.IntNullableFilter<"Field"> | number | null
   scale?: Prisma.IntNullableFilter<"Field"> | number | null
@@ -789,6 +820,7 @@ export type FieldScalarWhereInput = {
 export type FieldCreateWithoutConceptLinksInput = {
   id?: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -809,6 +841,7 @@ export type FieldUncheckedCreateWithoutConceptLinksInput = {
   id?: string
   entityId: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -843,6 +876,7 @@ export type FieldUpdateToOneWithWhereWithoutConceptLinksInput = {
 export type FieldUpdateWithoutConceptLinksInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -863,6 +897,7 @@ export type FieldUncheckedUpdateWithoutConceptLinksInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   entityId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -881,6 +916,7 @@ export type FieldUncheckedUpdateWithoutConceptLinksInput = {
 export type FieldCreateManyEntityInput = {
   id?: string
   name: string
+  slug?: string
   type: string
   precision?: number | null
   scale?: number | null
@@ -899,6 +935,7 @@ export type FieldCreateManyEntityInput = {
 export type FieldUpdateWithoutEntityInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -918,6 +955,7 @@ export type FieldUpdateWithoutEntityInput = {
 export type FieldUncheckedUpdateWithoutEntityInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -937,6 +975,7 @@ export type FieldUncheckedUpdateWithoutEntityInput = {
 export type FieldUncheckedUpdateManyWithoutEntityInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
   type?: Prisma.StringFieldUpdateOperationsInput | string
   precision?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   scale?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
@@ -987,6 +1026,7 @@ export type FieldSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   id?: boolean
   entityId?: boolean
   name?: boolean
+  slug?: boolean
   type?: boolean
   precision?: boolean
   scale?: boolean
@@ -1009,6 +1049,7 @@ export type FieldSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensi
   id?: boolean
   entityId?: boolean
   name?: boolean
+  slug?: boolean
   type?: boolean
   precision?: boolean
   scale?: boolean
@@ -1029,6 +1070,7 @@ export type FieldSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensi
   id?: boolean
   entityId?: boolean
   name?: boolean
+  slug?: boolean
   type?: boolean
   precision?: boolean
   scale?: boolean
@@ -1049,6 +1091,7 @@ export type FieldSelectScalar = {
   id?: boolean
   entityId?: boolean
   name?: boolean
+  slug?: boolean
   type?: boolean
   precision?: boolean
   scale?: boolean
@@ -1064,7 +1107,7 @@ export type FieldSelectScalar = {
   updatedAt?: boolean
 }
 
-export type FieldOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "entityId" | "name" | "type" | "precision" | "scale" | "nullable" | "isKey" | "fieldNumber" | "description" | "aliases" | "classification" | "sortOrder" | "decorators" | "createdAt" | "updatedAt", ExtArgs["result"]["field"]>
+export type FieldOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "entityId" | "name" | "slug" | "type" | "precision" | "scale" | "nullable" | "isKey" | "fieldNumber" | "description" | "aliases" | "classification" | "sortOrder" | "decorators" | "createdAt" | "updatedAt", ExtArgs["result"]["field"]>
 export type FieldInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entity?: boolean | Prisma.EntityDefaultArgs<ExtArgs>
   conceptLinks?: boolean | Prisma.Field$conceptLinksArgs<ExtArgs>
@@ -1087,6 +1130,7 @@ export type $FieldPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs 
     id: string
     entityId: string
     name: string
+    slug: string
     type: string
     precision: number | null
     scale: number | null
@@ -1528,6 +1572,7 @@ export interface FieldFieldRefs {
   readonly id: Prisma.FieldRef<"Field", 'String'>
   readonly entityId: Prisma.FieldRef<"Field", 'String'>
   readonly name: Prisma.FieldRef<"Field", 'String'>
+  readonly slug: Prisma.FieldRef<"Field", 'String'>
   readonly type: Prisma.FieldRef<"Field", 'String'>
   readonly precision: Prisma.FieldRef<"Field", 'Int'>
   readonly scale: Prisma.FieldRef<"Field", 'Int'>

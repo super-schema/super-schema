@@ -136,7 +136,7 @@ export function ComplianceGapsView({
                 className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
                 onClick={() =>
                   router.push(
-                    `/schemas/${encodeURIComponent(gap.entityName.toLowerCase().replace(/\s+/g, "-"))}/${gap.entityId}?fieldId=${gap.fieldId}&panel=${GapPanelForType(gap.gapType)}`
+                    `/schemas/${gap.domainSlug || encodeURIComponent(gap.entityName.toLowerCase().replace(/\s+/g, "-"))}/${gap.entitySlug || gap.entityId}?fieldId=${gap.fieldId}&panel=${GapPanelForType(gap.gapType)}`
                   )
                 }
               >

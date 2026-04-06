@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { withAudit } from "@/lib/audit";
+import { generateSlug } from "@/lib/slug";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { Field } from "@/generated/prisma/client";
@@ -69,6 +70,7 @@ export async function createField(
           data: {
             entityId,
             name: parsed.data.name,
+            slug: generateSlug(parsed.data.name),
             type: parsed.data.type,
             precision: parsed.data.precision,
             scale: parsed.data.scale,
@@ -146,15 +148,20 @@ export async function updateField(
     userId: ctx.userId,
     beforeState: existing as unknown as object,
     fn: async () => {
-      return prisma.field.update({
-        where: { id },
-        data: {
+      const updateData: Record<string, unknown> = {
           ...parsed.data,
           decorators:
             parsed.data.decorators !== undefined
               ? (parsed.data.decorators as unknown as Prisma.InputJsonValue)
               : undefined,
-        },
+        };
+      // Regenerate slug when name changes
+      if (parsed.data.name && parsed.data.name !== existing.name) {
+        updateData.slug = generateSlug(parsed.data.name);
+      }
+      return prisma.field.update({
+        where: { id },
+        data: updateData,
       });
     },
   });

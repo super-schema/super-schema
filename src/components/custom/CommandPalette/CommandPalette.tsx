@@ -132,7 +132,7 @@ export function CommandPalette({
   const navigateToField = useCallback(
     (field: CommandPaletteField) => {
       router.push(
-        `/schemas/${field.domainSlug}/${field.entitySlug || field.entityId}/fields/${field.id}`
+        `/schemas/${field.domainSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
       );
       onClose();
     },
