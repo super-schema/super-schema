@@ -216,15 +216,23 @@ export function FieldEditor({
     setNewFieldType("string");
   }
 
-  async function handleCreateAndOpenStudio() {
+  async function handleCreateAndAddDetails() {
     if (!newFieldName.trim() || isCreating) return;
     setIsCreating(true);
     try {
       const result = await onAddField(newFieldName.trim(), newFieldType);
-      const createdField = (result as { field?: { id: string; slug?: string } } | undefined)?.field;
+      // result shape: { success: true, field: { id, slug, ... } } or { error: string }
+      const r = result as { success?: boolean; field?: { id: string; slug?: string }; error?: string } | undefined;
+      if (r?.error) {
+        // Show error but keep dialog open
+        setIsCreating(false);
+        return;
+      }
+      const fieldSlugOrId = r?.field?.slug || r?.field?.id;
       resetDialog();
-      if (createdField) {
-        navigateToFieldStudio(createdField.slug || createdField.id);
+      if (fieldSlugOrId) {
+        // Use setTimeout to ensure the page revalidation has time to propagate
+        setTimeout(() => navigateToFieldStudio(fieldSlugOrId), 100);
       }
     } catch {
       // Allow UI to recover on error
@@ -425,7 +433,7 @@ export function FieldEditor({
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && newFieldName.trim()) {
-                    handleCreateAndOpenStudio();
+                    handleCreateAndAddDetails();
                   }
                 }}
               />
@@ -445,7 +453,7 @@ export function FieldEditor({
           <div className="flex items-center gap-space-2">
             <Button
               size="sm"
-              onClick={handleCreateAndOpenStudio}
+              onClick={handleCreateAndAddDetails}
               disabled={!newFieldName.trim() || isCreating}
               className="gap-1.5"
             >
@@ -454,7 +462,7 @@ export function FieldEditor({
               ) : (
                 <ExternalLink className="w-3.5 h-3.5" />
               )}
-              Create &amp; Open Studio
+              Create &amp; Add Details
             </Button>
             <Button
               size="sm"
