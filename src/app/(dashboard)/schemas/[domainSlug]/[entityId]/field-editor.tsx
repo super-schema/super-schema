@@ -221,21 +221,21 @@ export function FieldEditor({
     setIsCreating(true);
     try {
       const result = await onAddField(newFieldName.trim(), newFieldType);
-      // result shape: { success: true, field: { id, slug, ... } } or { error: string }
       const r = result as { success?: boolean; field?: { id: string; slug?: string }; error?: string } | undefined;
       if (r?.error) {
-        // Show error but keep dialog open
         setIsCreating(false);
         return;
       }
       const fieldSlugOrId = r?.field?.slug || r?.field?.id;
       resetDialog();
       if (fieldSlugOrId) {
-        // Use setTimeout to ensure the page revalidation has time to propagate
-        setTimeout(() => navigateToFieldStudio(fieldSlugOrId), 100);
+        // Use window.location for hard navigation — router.push gets killed by
+        // revalidatePath re-rendering the parent server component
+        window.location.href = `/schemas/${domainSlug}/${entitySlug || entityId}/fields/${fieldSlugOrId}`;
+        return; // Don't reset isCreating — we're navigating away
       }
     } catch {
-      // Allow UI to recover on error
+      // Allow UI to recover
     } finally {
       setIsCreating(false);
     }
@@ -248,7 +248,7 @@ export function FieldEditor({
       await onAddField(newFieldName.trim(), newFieldType);
       resetDialog();
     } catch {
-      // Allow UI to recover on error
+      // Allow UI to recover
     } finally {
       setIsCreating(false);
     }
