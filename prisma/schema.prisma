@@ -91,6 +91,11 @@ model Domain {
   isSystem       Boolean  @default(false)
   entities       Entity[]
   userRoles      UserRole[]
+  sharedEnums    SharedEnum[]
+  customScalars  CustomScalar[]
+  unionTypes     UnionType[]
+  services       ServiceDefinition[]
+  interfaces     InterfaceDefinition[]
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -107,13 +112,16 @@ model Entity {
   ownerId        String
   description    String           @default("")
   metadata       Json?
+  parentEntityId String?
   fields         Field[]
   pullRequests   GitPullRequest[]
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  owner  User   @relation(fields: [ownerId], references: [id])
+  domain        Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  owner         User     @relation(fields: [ownerId], references: [id])
+  parentEntity  Entity?  @relation("EntityInheritance", fields: [parentEntityId], references: [id])
+  childEntities Entity[] @relation("EntityInheritance")
 
   @@unique([slug, domainId])
   @@unique([name, domainId])
@@ -517,4 +525,138 @@ model DeploymentRecord {
 
   @@unique([entityId, target, environment])
   @@map("deployment_records")
+}
+
+// ============================================================
+// Shared Enums (standalone enum definitions)
+// ============================================================
+
+model SharedEnum {
+  id          String   @id @default(cuid())
+  name        String
+  values      String[]
+  description String   @default("")
+  domainId    String
+  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@map("shared_enums")
+}
+
+// ============================================================
+// Custom Scalars
+// ============================================================
+
+model CustomScalar {
+  id          String   @id @default(cuid())
+  name        String
+  baseType    String
+  format      String?
+  pattern     String?
+  description String   @default("")
+  domainId    String
+  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@map("custom_scalars")
+}
+
+// ============================================================
+// Union Types
+// ============================================================
+
+model UnionType {
+  id          String   @id @default(cuid())
+  name        String
+  memberTypes String[]
+  description String   @default("")
+  domainId    String
+  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@map("union_types")
+}
+
+// ============================================================
+// API Service Definitions & Operations
+// ============================================================
+
+model ServiceDefinition {
+  id          String      @id @default(cuid())
+  name        String
+  description String      @default("")
+  basePath    String      @default("/")
+  domainId    String
+  domain      Domain      @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  operations  Operation[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([name, domainId])
+  @@map("service_definitions")
+}
+
+model Operation {
+  id          String               @id @default(cuid())
+  serviceId   String
+  name        String
+  httpMethod  String
+  httpPath    String
+  description String               @default("")
+  decorators  Json                 @default("{}")
+  service     ServiceDefinition    @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  parameters  OperationParameter[]
+  responses   OperationResponse[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@map("operations")
+}
+
+model OperationParameter {
+  id          String    @id @default(cuid())
+  operationId String
+  name        String
+  type        String
+  location    String
+  required    Boolean   @default(true)
+  description String    @default("")
+  operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@map("operation_parameters")
+}
+
+model OperationResponse {
+  id          String    @id @default(cuid())
+  operationId String
+  statusCode  Int
+  type        String?
+  description String    @default("")
+  operation   Operation @relation(fields: [operationId], references: [id], onDelete: Cascade)
+
+  @@map("operation_responses")
+}
+
+// ============================================================
+// Interface Definitions (groups of operations)
+// ============================================================
+
+model InterfaceDefinition {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  domainId    String
+  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  operationIds String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@map("interface_definitions")
 }

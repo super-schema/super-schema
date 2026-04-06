@@ -109,9 +109,13 @@ export class BigQueryEmitter implements Emitter {
     }));
 
     const tableName = toSnakeCase(model.entity.name);
-    const datasetPrefix = model.entity.domain
-      ? `${toSnakeCase(model.entity.domain)}.`
-      : "";
+    // Use namespace as dataset prefix if available, otherwise domain
+    const datasetName = model.namespace
+      ? toSnakeCase(model.namespace.split(".").pop() || model.entity.domain)
+      : model.entity.domain
+        ? toSnakeCase(model.entity.domain)
+        : "";
+    const datasetPrefix = datasetName ? `${datasetName}.` : "";
 
     // Sort fields by sortOrder for deterministic output
     const sortedFields = [...model.fields].sort(

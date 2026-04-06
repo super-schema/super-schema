@@ -74,7 +74,15 @@ export const ModelName = {
   LossyMappingAck: 'LossyMappingAck',
   EmitterConfig: 'EmitterConfig',
   EmissionTargetStatus: 'EmissionTargetStatus',
-  DeploymentRecord: 'DeploymentRecord'
+  DeploymentRecord: 'DeploymentRecord',
+  SharedEnum: 'SharedEnum',
+  CustomScalar: 'CustomScalar',
+  UnionType: 'UnionType',
+  ServiceDefinition: 'ServiceDefinition',
+  Operation: 'Operation',
+  OperationParameter: 'OperationParameter',
+  OperationResponse: 'OperationResponse',
+  InterfaceDefinition: 'InterfaceDefinition'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -168,6 +176,7 @@ export const EntityScalarFieldEnum = {
   ownerId: 'ownerId',
   description: 'description',
   metadata: 'metadata',
+  parentEntityId: 'parentEntityId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -451,6 +460,112 @@ export const DeploymentRecordScalarFieldEnum = {
 } as const
 
 export type DeploymentRecordScalarFieldEnum = (typeof DeploymentRecordScalarFieldEnum)[keyof typeof DeploymentRecordScalarFieldEnum]
+
+
+export const SharedEnumScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  values: 'values',
+  description: 'description',
+  domainId: 'domainId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type SharedEnumScalarFieldEnum = (typeof SharedEnumScalarFieldEnum)[keyof typeof SharedEnumScalarFieldEnum]
+
+
+export const CustomScalarScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  baseType: 'baseType',
+  format: 'format',
+  pattern: 'pattern',
+  description: 'description',
+  domainId: 'domainId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type CustomScalarScalarFieldEnum = (typeof CustomScalarScalarFieldEnum)[keyof typeof CustomScalarScalarFieldEnum]
+
+
+export const UnionTypeScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  memberTypes: 'memberTypes',
+  description: 'description',
+  domainId: 'domainId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type UnionTypeScalarFieldEnum = (typeof UnionTypeScalarFieldEnum)[keyof typeof UnionTypeScalarFieldEnum]
+
+
+export const ServiceDefinitionScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  description: 'description',
+  basePath: 'basePath',
+  domainId: 'domainId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ServiceDefinitionScalarFieldEnum = (typeof ServiceDefinitionScalarFieldEnum)[keyof typeof ServiceDefinitionScalarFieldEnum]
+
+
+export const OperationScalarFieldEnum = {
+  id: 'id',
+  serviceId: 'serviceId',
+  name: 'name',
+  httpMethod: 'httpMethod',
+  httpPath: 'httpPath',
+  description: 'description',
+  decorators: 'decorators',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type OperationScalarFieldEnum = (typeof OperationScalarFieldEnum)[keyof typeof OperationScalarFieldEnum]
+
+
+export const OperationParameterScalarFieldEnum = {
+  id: 'id',
+  operationId: 'operationId',
+  name: 'name',
+  type: 'type',
+  location: 'location',
+  required: 'required',
+  description: 'description'
+} as const
+
+export type OperationParameterScalarFieldEnum = (typeof OperationParameterScalarFieldEnum)[keyof typeof OperationParameterScalarFieldEnum]
+
+
+export const OperationResponseScalarFieldEnum = {
+  id: 'id',
+  operationId: 'operationId',
+  statusCode: 'statusCode',
+  type: 'type',
+  description: 'description'
+} as const
+
+export type OperationResponseScalarFieldEnum = (typeof OperationResponseScalarFieldEnum)[keyof typeof OperationResponseScalarFieldEnum]
+
+
+export const InterfaceDefinitionScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  description: 'description',
+  domainId: 'domainId',
+  operationIds: 'operationIds',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InterfaceDefinitionScalarFieldEnum = (typeof InterfaceDefinitionScalarFieldEnum)[keyof typeof InterfaceDefinitionScalarFieldEnum]
 
 
 export const SortOrder = {

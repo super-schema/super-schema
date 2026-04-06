@@ -43,6 +43,7 @@ export type EntityMinAggregateOutputType = {
   status: $Enums.EntityStatus | null
   ownerId: string | null
   description: string | null
+  parentEntityId: string | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -56,6 +57,7 @@ export type EntityMaxAggregateOutputType = {
   status: $Enums.EntityStatus | null
   ownerId: string | null
   description: string | null
+  parentEntityId: string | null
   createdAt: Date | null
   updatedAt: Date | null
 }
@@ -70,6 +72,7 @@ export type EntityCountAggregateOutputType = {
   ownerId: number
   description: number
   metadata: number
+  parentEntityId: number
   createdAt: number
   updatedAt: number
   _all: number
@@ -93,6 +96,7 @@ export type EntityMinAggregateInputType = {
   status?: true
   ownerId?: true
   description?: true
+  parentEntityId?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -106,6 +110,7 @@ export type EntityMaxAggregateInputType = {
   status?: true
   ownerId?: true
   description?: true
+  parentEntityId?: true
   createdAt?: true
   updatedAt?: true
 }
@@ -120,6 +125,7 @@ export type EntityCountAggregateInputType = {
   ownerId?: true
   description?: true
   metadata?: true
+  parentEntityId?: true
   createdAt?: true
   updatedAt?: true
   _all?: true
@@ -221,6 +227,7 @@ export type EntityGroupByOutputType = {
   ownerId: string
   description: string
   metadata: runtime.JsonValue | null
+  parentEntityId: string | null
   createdAt: Date
   updatedAt: Date
   _count: EntityCountAggregateOutputType | null
@@ -258,12 +265,15 @@ export type EntityWhereInput = {
   ownerId?: Prisma.StringFilter<"Entity"> | string
   description?: Prisma.StringFilter<"Entity"> | string
   metadata?: Prisma.JsonNullableFilter<"Entity">
+  parentEntityId?: Prisma.StringNullableFilter<"Entity"> | string | null
   createdAt?: Prisma.DateTimeFilter<"Entity"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Entity"> | Date | string
   fields?: Prisma.FieldListRelationFilter
   pullRequests?: Prisma.GitPullRequestListRelationFilter
   domain?: Prisma.XOR<Prisma.DomainScalarRelationFilter, Prisma.DomainWhereInput>
   owner?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
+  parentEntity?: Prisma.XOR<Prisma.EntityNullableScalarRelationFilter, Prisma.EntityWhereInput> | null
+  childEntities?: Prisma.EntityListRelationFilter
 }
 
 export type EntityOrderByWithRelationInput = {
@@ -276,12 +286,15 @@ export type EntityOrderByWithRelationInput = {
   ownerId?: Prisma.SortOrder
   description?: Prisma.SortOrder
   metadata?: Prisma.SortOrderInput | Prisma.SortOrder
+  parentEntityId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   fields?: Prisma.FieldOrderByRelationAggregateInput
   pullRequests?: Prisma.GitPullRequestOrderByRelationAggregateInput
   domain?: Prisma.DomainOrderByWithRelationInput
   owner?: Prisma.UserOrderByWithRelationInput
+  parentEntity?: Prisma.EntityOrderByWithRelationInput
+  childEntities?: Prisma.EntityOrderByRelationAggregateInput
 }
 
 export type EntityWhereUniqueInput = Prisma.AtLeast<{
@@ -299,12 +312,15 @@ export type EntityWhereUniqueInput = Prisma.AtLeast<{
   ownerId?: Prisma.StringFilter<"Entity"> | string
   description?: Prisma.StringFilter<"Entity"> | string
   metadata?: Prisma.JsonNullableFilter<"Entity">
+  parentEntityId?: Prisma.StringNullableFilter<"Entity"> | string | null
   createdAt?: Prisma.DateTimeFilter<"Entity"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Entity"> | Date | string
   fields?: Prisma.FieldListRelationFilter
   pullRequests?: Prisma.GitPullRequestListRelationFilter
   domain?: Prisma.XOR<Prisma.DomainScalarRelationFilter, Prisma.DomainWhereInput>
   owner?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
+  parentEntity?: Prisma.XOR<Prisma.EntityNullableScalarRelationFilter, Prisma.EntityWhereInput> | null
+  childEntities?: Prisma.EntityListRelationFilter
 }, "id" | "slug_domainId" | "name_domainId">
 
 export type EntityOrderByWithAggregationInput = {
@@ -317,6 +333,7 @@ export type EntityOrderByWithAggregationInput = {
   ownerId?: Prisma.SortOrder
   description?: Prisma.SortOrder
   metadata?: Prisma.SortOrderInput | Prisma.SortOrder
+  parentEntityId?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.EntityCountOrderByAggregateInput
@@ -339,6 +356,7 @@ export type EntityScalarWhereWithAggregatesInput = {
   ownerId?: Prisma.StringWithAggregatesFilter<"Entity"> | string
   description?: Prisma.StringWithAggregatesFilter<"Entity"> | string
   metadata?: Prisma.JsonNullableWithAggregatesFilter<"Entity">
+  parentEntityId?: Prisma.StringNullableWithAggregatesFilter<"Entity"> | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"Entity"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"Entity"> | Date | string
 }
@@ -357,6 +375,8 @@ export type EntityCreateInput = {
   pullRequests?: Prisma.GitPullRequestCreateNestedManyWithoutEntityInput
   domain: Prisma.DomainCreateNestedOneWithoutEntitiesInput
   owner: Prisma.UserCreateNestedOneWithoutEntitiesInput
+  parentEntity?: Prisma.EntityCreateNestedOneWithoutChildEntitiesInput
+  childEntities?: Prisma.EntityCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityUncheckedCreateInput = {
@@ -369,10 +389,12 @@ export type EntityUncheckedCreateInput = {
   ownerId: string
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   fields?: Prisma.FieldUncheckedCreateNestedManyWithoutEntityInput
   pullRequests?: Prisma.GitPullRequestUncheckedCreateNestedManyWithoutEntityInput
+  childEntities?: Prisma.EntityUncheckedCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityUpdateInput = {
@@ -389,6 +411,8 @@ export type EntityUpdateInput = {
   pullRequests?: Prisma.GitPullRequestUpdateManyWithoutEntityNestedInput
   domain?: Prisma.DomainUpdateOneRequiredWithoutEntitiesNestedInput
   owner?: Prisma.UserUpdateOneRequiredWithoutEntitiesNestedInput
+  parentEntity?: Prisma.EntityUpdateOneWithoutChildEntitiesNestedInput
+  childEntities?: Prisma.EntityUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityUncheckedUpdateInput = {
@@ -401,10 +425,12 @@ export type EntityUncheckedUpdateInput = {
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   fields?: Prisma.FieldUncheckedUpdateManyWithoutEntityNestedInput
   pullRequests?: Prisma.GitPullRequestUncheckedUpdateManyWithoutEntityNestedInput
+  childEntities?: Prisma.EntityUncheckedUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityCreateManyInput = {
@@ -417,6 +443,7 @@ export type EntityCreateManyInput = {
   ownerId: string
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -443,6 +470,7 @@ export type EntityUncheckedUpdateManyInput = {
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -455,6 +483,11 @@ export type EntityListRelationFilter = {
 
 export type EntityOrderByRelationAggregateInput = {
   _count?: Prisma.SortOrder
+}
+
+export type EntityNullableScalarRelationFilter = {
+  is?: Prisma.EntityWhereInput | null
+  isNot?: Prisma.EntityWhereInput | null
 }
 
 export type EntitySlugDomainIdCompoundUniqueInput = {
@@ -477,6 +510,7 @@ export type EntityCountOrderByAggregateInput = {
   ownerId?: Prisma.SortOrder
   description?: Prisma.SortOrder
   metadata?: Prisma.SortOrder
+  parentEntityId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -494,6 +528,7 @@ export type EntityMaxOrderByAggregateInput = {
   status?: Prisma.SortOrder
   ownerId?: Prisma.SortOrder
   description?: Prisma.SortOrder
+  parentEntityId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -507,6 +542,7 @@ export type EntityMinOrderByAggregateInput = {
   status?: Prisma.SortOrder
   ownerId?: Prisma.SortOrder
   description?: Prisma.SortOrder
+  parentEntityId?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -604,6 +640,26 @@ export type EntityUncheckedUpdateManyWithoutDomainNestedInput = {
   deleteMany?: Prisma.EntityScalarWhereInput | Prisma.EntityScalarWhereInput[]
 }
 
+export type EntityCreateNestedOneWithoutChildEntitiesInput = {
+  create?: Prisma.XOR<Prisma.EntityCreateWithoutChildEntitiesInput, Prisma.EntityUncheckedCreateWithoutChildEntitiesInput>
+  connectOrCreate?: Prisma.EntityCreateOrConnectWithoutChildEntitiesInput
+  connect?: Prisma.EntityWhereUniqueInput
+}
+
+export type EntityCreateNestedManyWithoutParentEntityInput = {
+  create?: Prisma.XOR<Prisma.EntityCreateWithoutParentEntityInput, Prisma.EntityUncheckedCreateWithoutParentEntityInput> | Prisma.EntityCreateWithoutParentEntityInput[] | Prisma.EntityUncheckedCreateWithoutParentEntityInput[]
+  connectOrCreate?: Prisma.EntityCreateOrConnectWithoutParentEntityInput | Prisma.EntityCreateOrConnectWithoutParentEntityInput[]
+  createMany?: Prisma.EntityCreateManyParentEntityInputEnvelope
+  connect?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+}
+
+export type EntityUncheckedCreateNestedManyWithoutParentEntityInput = {
+  create?: Prisma.XOR<Prisma.EntityCreateWithoutParentEntityInput, Prisma.EntityUncheckedCreateWithoutParentEntityInput> | Prisma.EntityCreateWithoutParentEntityInput[] | Prisma.EntityUncheckedCreateWithoutParentEntityInput[]
+  connectOrCreate?: Prisma.EntityCreateOrConnectWithoutParentEntityInput | Prisma.EntityCreateOrConnectWithoutParentEntityInput[]
+  createMany?: Prisma.EntityCreateManyParentEntityInputEnvelope
+  connect?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+}
+
 export type IntFieldUpdateOperationsInput = {
   set?: number
   increment?: number
@@ -614,6 +670,44 @@ export type IntFieldUpdateOperationsInput = {
 
 export type EnumEntityStatusFieldUpdateOperationsInput = {
   set?: $Enums.EntityStatus
+}
+
+export type EntityUpdateOneWithoutChildEntitiesNestedInput = {
+  create?: Prisma.XOR<Prisma.EntityCreateWithoutChildEntitiesInput, Prisma.EntityUncheckedCreateWithoutChildEntitiesInput>
+  connectOrCreate?: Prisma.EntityCreateOrConnectWithoutChildEntitiesInput
+  upsert?: Prisma.EntityUpsertWithoutChildEntitiesInput
+  disconnect?: Prisma.EntityWhereInput | boolean
+  delete?: Prisma.EntityWhereInput | boolean
+  connect?: Prisma.EntityWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.EntityUpdateToOneWithWhereWithoutChildEntitiesInput, Prisma.EntityUpdateWithoutChildEntitiesInput>, Prisma.EntityUncheckedUpdateWithoutChildEntitiesInput>
+}
+
+export type EntityUpdateManyWithoutParentEntityNestedInput = {
+  create?: Prisma.XOR<Prisma.EntityCreateWithoutParentEntityInput, Prisma.EntityUncheckedCreateWithoutParentEntityInput> | Prisma.EntityCreateWithoutParentEntityInput[] | Prisma.EntityUncheckedCreateWithoutParentEntityInput[]
+  connectOrCreate?: Prisma.EntityCreateOrConnectWithoutParentEntityInput | Prisma.EntityCreateOrConnectWithoutParentEntityInput[]
+  upsert?: Prisma.EntityUpsertWithWhereUniqueWithoutParentEntityInput | Prisma.EntityUpsertWithWhereUniqueWithoutParentEntityInput[]
+  createMany?: Prisma.EntityCreateManyParentEntityInputEnvelope
+  set?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  disconnect?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  delete?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  connect?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  update?: Prisma.EntityUpdateWithWhereUniqueWithoutParentEntityInput | Prisma.EntityUpdateWithWhereUniqueWithoutParentEntityInput[]
+  updateMany?: Prisma.EntityUpdateManyWithWhereWithoutParentEntityInput | Prisma.EntityUpdateManyWithWhereWithoutParentEntityInput[]
+  deleteMany?: Prisma.EntityScalarWhereInput | Prisma.EntityScalarWhereInput[]
+}
+
+export type EntityUncheckedUpdateManyWithoutParentEntityNestedInput = {
+  create?: Prisma.XOR<Prisma.EntityCreateWithoutParentEntityInput, Prisma.EntityUncheckedCreateWithoutParentEntityInput> | Prisma.EntityCreateWithoutParentEntityInput[] | Prisma.EntityUncheckedCreateWithoutParentEntityInput[]
+  connectOrCreate?: Prisma.EntityCreateOrConnectWithoutParentEntityInput | Prisma.EntityCreateOrConnectWithoutParentEntityInput[]
+  upsert?: Prisma.EntityUpsertWithWhereUniqueWithoutParentEntityInput | Prisma.EntityUpsertWithWhereUniqueWithoutParentEntityInput[]
+  createMany?: Prisma.EntityCreateManyParentEntityInputEnvelope
+  set?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  disconnect?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  delete?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  connect?: Prisma.EntityWhereUniqueInput | Prisma.EntityWhereUniqueInput[]
+  update?: Prisma.EntityUpdateWithWhereUniqueWithoutParentEntityInput | Prisma.EntityUpdateWithWhereUniqueWithoutParentEntityInput[]
+  updateMany?: Prisma.EntityUpdateManyWithWhereWithoutParentEntityInput | Prisma.EntityUpdateManyWithWhereWithoutParentEntityInput[]
+  deleteMany?: Prisma.EntityScalarWhereInput | Prisma.EntityScalarWhereInput[]
 }
 
 export type EntityCreateNestedOneWithoutFieldsInput = {
@@ -657,6 +751,8 @@ export type EntityCreateWithoutOwnerInput = {
   fields?: Prisma.FieldCreateNestedManyWithoutEntityInput
   pullRequests?: Prisma.GitPullRequestCreateNestedManyWithoutEntityInput
   domain: Prisma.DomainCreateNestedOneWithoutEntitiesInput
+  parentEntity?: Prisma.EntityCreateNestedOneWithoutChildEntitiesInput
+  childEntities?: Prisma.EntityCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityUncheckedCreateWithoutOwnerInput = {
@@ -668,10 +764,12 @@ export type EntityUncheckedCreateWithoutOwnerInput = {
   status?: $Enums.EntityStatus
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   fields?: Prisma.FieldUncheckedCreateNestedManyWithoutEntityInput
   pullRequests?: Prisma.GitPullRequestUncheckedCreateNestedManyWithoutEntityInput
+  childEntities?: Prisma.EntityUncheckedCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityCreateOrConnectWithoutOwnerInput = {
@@ -713,6 +811,7 @@ export type EntityScalarWhereInput = {
   ownerId?: Prisma.StringFilter<"Entity"> | string
   description?: Prisma.StringFilter<"Entity"> | string
   metadata?: Prisma.JsonNullableFilter<"Entity">
+  parentEntityId?: Prisma.StringNullableFilter<"Entity"> | string | null
   createdAt?: Prisma.DateTimeFilter<"Entity"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Entity"> | Date | string
 }
@@ -730,6 +829,8 @@ export type EntityCreateWithoutDomainInput = {
   fields?: Prisma.FieldCreateNestedManyWithoutEntityInput
   pullRequests?: Prisma.GitPullRequestCreateNestedManyWithoutEntityInput
   owner: Prisma.UserCreateNestedOneWithoutEntitiesInput
+  parentEntity?: Prisma.EntityCreateNestedOneWithoutChildEntitiesInput
+  childEntities?: Prisma.EntityCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityUncheckedCreateWithoutDomainInput = {
@@ -741,10 +842,12 @@ export type EntityUncheckedCreateWithoutDomainInput = {
   ownerId: string
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   fields?: Prisma.FieldUncheckedCreateNestedManyWithoutEntityInput
   pullRequests?: Prisma.GitPullRequestUncheckedCreateNestedManyWithoutEntityInput
+  childEntities?: Prisma.EntityUncheckedCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityCreateOrConnectWithoutDomainInput = {
@@ -773,6 +876,150 @@ export type EntityUpdateManyWithWhereWithoutDomainInput = {
   data: Prisma.XOR<Prisma.EntityUpdateManyMutationInput, Prisma.EntityUncheckedUpdateManyWithoutDomainInput>
 }
 
+export type EntityCreateWithoutChildEntitiesInput = {
+  id?: string
+  name: string
+  slug: string
+  version?: number
+  status?: $Enums.EntityStatus
+  description?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  fields?: Prisma.FieldCreateNestedManyWithoutEntityInput
+  pullRequests?: Prisma.GitPullRequestCreateNestedManyWithoutEntityInput
+  domain: Prisma.DomainCreateNestedOneWithoutEntitiesInput
+  owner: Prisma.UserCreateNestedOneWithoutEntitiesInput
+  parentEntity?: Prisma.EntityCreateNestedOneWithoutChildEntitiesInput
+}
+
+export type EntityUncheckedCreateWithoutChildEntitiesInput = {
+  id?: string
+  name: string
+  slug: string
+  domainId: string
+  version?: number
+  status?: $Enums.EntityStatus
+  ownerId: string
+  description?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  fields?: Prisma.FieldUncheckedCreateNestedManyWithoutEntityInput
+  pullRequests?: Prisma.GitPullRequestUncheckedCreateNestedManyWithoutEntityInput
+}
+
+export type EntityCreateOrConnectWithoutChildEntitiesInput = {
+  where: Prisma.EntityWhereUniqueInput
+  create: Prisma.XOR<Prisma.EntityCreateWithoutChildEntitiesInput, Prisma.EntityUncheckedCreateWithoutChildEntitiesInput>
+}
+
+export type EntityCreateWithoutParentEntityInput = {
+  id?: string
+  name: string
+  slug: string
+  version?: number
+  status?: $Enums.EntityStatus
+  description?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  fields?: Prisma.FieldCreateNestedManyWithoutEntityInput
+  pullRequests?: Prisma.GitPullRequestCreateNestedManyWithoutEntityInput
+  domain: Prisma.DomainCreateNestedOneWithoutEntitiesInput
+  owner: Prisma.UserCreateNestedOneWithoutEntitiesInput
+  childEntities?: Prisma.EntityCreateNestedManyWithoutParentEntityInput
+}
+
+export type EntityUncheckedCreateWithoutParentEntityInput = {
+  id?: string
+  name: string
+  slug: string
+  domainId: string
+  version?: number
+  status?: $Enums.EntityStatus
+  ownerId: string
+  description?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  fields?: Prisma.FieldUncheckedCreateNestedManyWithoutEntityInput
+  pullRequests?: Prisma.GitPullRequestUncheckedCreateNestedManyWithoutEntityInput
+  childEntities?: Prisma.EntityUncheckedCreateNestedManyWithoutParentEntityInput
+}
+
+export type EntityCreateOrConnectWithoutParentEntityInput = {
+  where: Prisma.EntityWhereUniqueInput
+  create: Prisma.XOR<Prisma.EntityCreateWithoutParentEntityInput, Prisma.EntityUncheckedCreateWithoutParentEntityInput>
+}
+
+export type EntityCreateManyParentEntityInputEnvelope = {
+  data: Prisma.EntityCreateManyParentEntityInput | Prisma.EntityCreateManyParentEntityInput[]
+  skipDuplicates?: boolean
+}
+
+export type EntityUpsertWithoutChildEntitiesInput = {
+  update: Prisma.XOR<Prisma.EntityUpdateWithoutChildEntitiesInput, Prisma.EntityUncheckedUpdateWithoutChildEntitiesInput>
+  create: Prisma.XOR<Prisma.EntityCreateWithoutChildEntitiesInput, Prisma.EntityUncheckedCreateWithoutChildEntitiesInput>
+  where?: Prisma.EntityWhereInput
+}
+
+export type EntityUpdateToOneWithWhereWithoutChildEntitiesInput = {
+  where?: Prisma.EntityWhereInput
+  data: Prisma.XOR<Prisma.EntityUpdateWithoutChildEntitiesInput, Prisma.EntityUncheckedUpdateWithoutChildEntitiesInput>
+}
+
+export type EntityUpdateWithoutChildEntitiesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  version?: Prisma.IntFieldUpdateOperationsInput | number
+  status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  fields?: Prisma.FieldUpdateManyWithoutEntityNestedInput
+  pullRequests?: Prisma.GitPullRequestUpdateManyWithoutEntityNestedInput
+  domain?: Prisma.DomainUpdateOneRequiredWithoutEntitiesNestedInput
+  owner?: Prisma.UserUpdateOneRequiredWithoutEntitiesNestedInput
+  parentEntity?: Prisma.EntityUpdateOneWithoutChildEntitiesNestedInput
+}
+
+export type EntityUncheckedUpdateWithoutChildEntitiesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  domainId?: Prisma.StringFieldUpdateOperationsInput | string
+  version?: Prisma.IntFieldUpdateOperationsInput | number
+  status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
+  ownerId?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  fields?: Prisma.FieldUncheckedUpdateManyWithoutEntityNestedInput
+  pullRequests?: Prisma.GitPullRequestUncheckedUpdateManyWithoutEntityNestedInput
+}
+
+export type EntityUpsertWithWhereUniqueWithoutParentEntityInput = {
+  where: Prisma.EntityWhereUniqueInput
+  update: Prisma.XOR<Prisma.EntityUpdateWithoutParentEntityInput, Prisma.EntityUncheckedUpdateWithoutParentEntityInput>
+  create: Prisma.XOR<Prisma.EntityCreateWithoutParentEntityInput, Prisma.EntityUncheckedCreateWithoutParentEntityInput>
+}
+
+export type EntityUpdateWithWhereUniqueWithoutParentEntityInput = {
+  where: Prisma.EntityWhereUniqueInput
+  data: Prisma.XOR<Prisma.EntityUpdateWithoutParentEntityInput, Prisma.EntityUncheckedUpdateWithoutParentEntityInput>
+}
+
+export type EntityUpdateManyWithWhereWithoutParentEntityInput = {
+  where: Prisma.EntityScalarWhereInput
+  data: Prisma.XOR<Prisma.EntityUpdateManyMutationInput, Prisma.EntityUncheckedUpdateManyWithoutParentEntityInput>
+}
+
 export type EntityCreateWithoutFieldsInput = {
   id?: string
   name: string
@@ -786,6 +1033,8 @@ export type EntityCreateWithoutFieldsInput = {
   pullRequests?: Prisma.GitPullRequestCreateNestedManyWithoutEntityInput
   domain: Prisma.DomainCreateNestedOneWithoutEntitiesInput
   owner: Prisma.UserCreateNestedOneWithoutEntitiesInput
+  parentEntity?: Prisma.EntityCreateNestedOneWithoutChildEntitiesInput
+  childEntities?: Prisma.EntityCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityUncheckedCreateWithoutFieldsInput = {
@@ -798,9 +1047,11 @@ export type EntityUncheckedCreateWithoutFieldsInput = {
   ownerId: string
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   pullRequests?: Prisma.GitPullRequestUncheckedCreateNestedManyWithoutEntityInput
+  childEntities?: Prisma.EntityUncheckedCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityCreateOrConnectWithoutFieldsInput = {
@@ -832,6 +1083,8 @@ export type EntityUpdateWithoutFieldsInput = {
   pullRequests?: Prisma.GitPullRequestUpdateManyWithoutEntityNestedInput
   domain?: Prisma.DomainUpdateOneRequiredWithoutEntitiesNestedInput
   owner?: Prisma.UserUpdateOneRequiredWithoutEntitiesNestedInput
+  parentEntity?: Prisma.EntityUpdateOneWithoutChildEntitiesNestedInput
+  childEntities?: Prisma.EntityUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityUncheckedUpdateWithoutFieldsInput = {
@@ -844,9 +1097,11 @@ export type EntityUncheckedUpdateWithoutFieldsInput = {
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   pullRequests?: Prisma.GitPullRequestUncheckedUpdateManyWithoutEntityNestedInput
+  childEntities?: Prisma.EntityUncheckedUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityCreateWithoutPullRequestsInput = {
@@ -862,6 +1117,8 @@ export type EntityCreateWithoutPullRequestsInput = {
   fields?: Prisma.FieldCreateNestedManyWithoutEntityInput
   domain: Prisma.DomainCreateNestedOneWithoutEntitiesInput
   owner: Prisma.UserCreateNestedOneWithoutEntitiesInput
+  parentEntity?: Prisma.EntityCreateNestedOneWithoutChildEntitiesInput
+  childEntities?: Prisma.EntityCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityUncheckedCreateWithoutPullRequestsInput = {
@@ -874,9 +1131,11 @@ export type EntityUncheckedCreateWithoutPullRequestsInput = {
   ownerId: string
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
   fields?: Prisma.FieldUncheckedCreateNestedManyWithoutEntityInput
+  childEntities?: Prisma.EntityUncheckedCreateNestedManyWithoutParentEntityInput
 }
 
 export type EntityCreateOrConnectWithoutPullRequestsInput = {
@@ -908,6 +1167,8 @@ export type EntityUpdateWithoutPullRequestsInput = {
   fields?: Prisma.FieldUpdateManyWithoutEntityNestedInput
   domain?: Prisma.DomainUpdateOneRequiredWithoutEntitiesNestedInput
   owner?: Prisma.UserUpdateOneRequiredWithoutEntitiesNestedInput
+  parentEntity?: Prisma.EntityUpdateOneWithoutChildEntitiesNestedInput
+  childEntities?: Prisma.EntityUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityUncheckedUpdateWithoutPullRequestsInput = {
@@ -920,9 +1181,11 @@ export type EntityUncheckedUpdateWithoutPullRequestsInput = {
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   fields?: Prisma.FieldUncheckedUpdateManyWithoutEntityNestedInput
+  childEntities?: Prisma.EntityUncheckedUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityCreateManyOwnerInput = {
@@ -934,6 +1197,7 @@ export type EntityCreateManyOwnerInput = {
   status?: $Enums.EntityStatus
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -951,6 +1215,8 @@ export type EntityUpdateWithoutOwnerInput = {
   fields?: Prisma.FieldUpdateManyWithoutEntityNestedInput
   pullRequests?: Prisma.GitPullRequestUpdateManyWithoutEntityNestedInput
   domain?: Prisma.DomainUpdateOneRequiredWithoutEntitiesNestedInput
+  parentEntity?: Prisma.EntityUpdateOneWithoutChildEntitiesNestedInput
+  childEntities?: Prisma.EntityUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityUncheckedUpdateWithoutOwnerInput = {
@@ -962,10 +1228,12 @@ export type EntityUncheckedUpdateWithoutOwnerInput = {
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   fields?: Prisma.FieldUncheckedUpdateManyWithoutEntityNestedInput
   pullRequests?: Prisma.GitPullRequestUncheckedUpdateManyWithoutEntityNestedInput
+  childEntities?: Prisma.EntityUncheckedUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityUncheckedUpdateManyWithoutOwnerInput = {
@@ -977,6 +1245,7 @@ export type EntityUncheckedUpdateManyWithoutOwnerInput = {
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   description?: Prisma.StringFieldUpdateOperationsInput | string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -990,6 +1259,7 @@ export type EntityCreateManyDomainInput = {
   ownerId: string
   description?: string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: string | null
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -1007,6 +1277,8 @@ export type EntityUpdateWithoutDomainInput = {
   fields?: Prisma.FieldUpdateManyWithoutEntityNestedInput
   pullRequests?: Prisma.GitPullRequestUpdateManyWithoutEntityNestedInput
   owner?: Prisma.UserUpdateOneRequiredWithoutEntitiesNestedInput
+  parentEntity?: Prisma.EntityUpdateOneWithoutChildEntitiesNestedInput
+  childEntities?: Prisma.EntityUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityUncheckedUpdateWithoutDomainInput = {
@@ -1018,16 +1290,81 @@ export type EntityUncheckedUpdateWithoutDomainInput = {
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
   metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   fields?: Prisma.FieldUncheckedUpdateManyWithoutEntityNestedInput
   pullRequests?: Prisma.GitPullRequestUncheckedUpdateManyWithoutEntityNestedInput
+  childEntities?: Prisma.EntityUncheckedUpdateManyWithoutParentEntityNestedInput
 }
 
 export type EntityUncheckedUpdateManyWithoutDomainInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
+  version?: Prisma.IntFieldUpdateOperationsInput | number
+  status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
+  ownerId?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  parentEntityId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
+export type EntityCreateManyParentEntityInput = {
+  id?: string
+  name: string
+  slug: string
+  domainId: string
+  version?: number
+  status?: $Enums.EntityStatus
+  ownerId: string
+  description?: string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type EntityUpdateWithoutParentEntityInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  version?: Prisma.IntFieldUpdateOperationsInput | number
+  status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  fields?: Prisma.FieldUpdateManyWithoutEntityNestedInput
+  pullRequests?: Prisma.GitPullRequestUpdateManyWithoutEntityNestedInput
+  domain?: Prisma.DomainUpdateOneRequiredWithoutEntitiesNestedInput
+  owner?: Prisma.UserUpdateOneRequiredWithoutEntitiesNestedInput
+  childEntities?: Prisma.EntityUpdateManyWithoutParentEntityNestedInput
+}
+
+export type EntityUncheckedUpdateWithoutParentEntityInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  domainId?: Prisma.StringFieldUpdateOperationsInput | string
+  version?: Prisma.IntFieldUpdateOperationsInput | number
+  status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
+  ownerId?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  metadata?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  fields?: Prisma.FieldUncheckedUpdateManyWithoutEntityNestedInput
+  pullRequests?: Prisma.GitPullRequestUncheckedUpdateManyWithoutEntityNestedInput
+  childEntities?: Prisma.EntityUncheckedUpdateManyWithoutParentEntityNestedInput
+}
+
+export type EntityUncheckedUpdateManyWithoutParentEntityInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  domainId?: Prisma.StringFieldUpdateOperationsInput | string
   version?: Prisma.IntFieldUpdateOperationsInput | number
   status?: Prisma.EnumEntityStatusFieldUpdateOperationsInput | $Enums.EntityStatus
   ownerId?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1045,11 +1382,13 @@ export type EntityUncheckedUpdateManyWithoutDomainInput = {
 export type EntityCountOutputType = {
   fields: number
   pullRequests: number
+  childEntities: number
 }
 
 export type EntityCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   fields?: boolean | EntityCountOutputTypeCountFieldsArgs
   pullRequests?: boolean | EntityCountOutputTypeCountPullRequestsArgs
+  childEntities?: boolean | EntityCountOutputTypeCountChildEntitiesArgs
 }
 
 /**
@@ -1076,6 +1415,13 @@ export type EntityCountOutputTypeCountPullRequestsArgs<ExtArgs extends runtime.T
   where?: Prisma.GitPullRequestWhereInput
 }
 
+/**
+ * EntityCountOutputType without action
+ */
+export type EntityCountOutputTypeCountChildEntitiesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.EntityWhereInput
+}
+
 
 export type EntitySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -1087,12 +1433,15 @@ export type EntitySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   ownerId?: boolean
   description?: boolean
   metadata?: boolean
+  parentEntityId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   fields?: boolean | Prisma.Entity$fieldsArgs<ExtArgs>
   pullRequests?: boolean | Prisma.Entity$pullRequestsArgs<ExtArgs>
   domain?: boolean | Prisma.DomainDefaultArgs<ExtArgs>
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
+  parentEntity?: boolean | Prisma.Entity$parentEntityArgs<ExtArgs>
+  childEntities?: boolean | Prisma.Entity$childEntitiesArgs<ExtArgs>
   _count?: boolean | Prisma.EntityCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["entity"]>
 
@@ -1106,10 +1455,12 @@ export type EntitySelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extens
   ownerId?: boolean
   description?: boolean
   metadata?: boolean
+  parentEntityId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   domain?: boolean | Prisma.DomainDefaultArgs<ExtArgs>
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
+  parentEntity?: boolean | Prisma.Entity$parentEntityArgs<ExtArgs>
 }, ExtArgs["result"]["entity"]>
 
 export type EntitySelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -1122,10 +1473,12 @@ export type EntitySelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extens
   ownerId?: boolean
   description?: boolean
   metadata?: boolean
+  parentEntityId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
   domain?: boolean | Prisma.DomainDefaultArgs<ExtArgs>
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
+  parentEntity?: boolean | Prisma.Entity$parentEntityArgs<ExtArgs>
 }, ExtArgs["result"]["entity"]>
 
 export type EntitySelectScalar = {
@@ -1138,25 +1491,30 @@ export type EntitySelectScalar = {
   ownerId?: boolean
   description?: boolean
   metadata?: boolean
+  parentEntityId?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type EntityOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "slug" | "domainId" | "version" | "status" | "ownerId" | "description" | "metadata" | "createdAt" | "updatedAt", ExtArgs["result"]["entity"]>
+export type EntityOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "slug" | "domainId" | "version" | "status" | "ownerId" | "description" | "metadata" | "parentEntityId" | "createdAt" | "updatedAt", ExtArgs["result"]["entity"]>
 export type EntityInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   fields?: boolean | Prisma.Entity$fieldsArgs<ExtArgs>
   pullRequests?: boolean | Prisma.Entity$pullRequestsArgs<ExtArgs>
   domain?: boolean | Prisma.DomainDefaultArgs<ExtArgs>
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
+  parentEntity?: boolean | Prisma.Entity$parentEntityArgs<ExtArgs>
+  childEntities?: boolean | Prisma.Entity$childEntitiesArgs<ExtArgs>
   _count?: boolean | Prisma.EntityCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type EntityIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   domain?: boolean | Prisma.DomainDefaultArgs<ExtArgs>
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
+  parentEntity?: boolean | Prisma.Entity$parentEntityArgs<ExtArgs>
 }
 export type EntityIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   domain?: boolean | Prisma.DomainDefaultArgs<ExtArgs>
   owner?: boolean | Prisma.UserDefaultArgs<ExtArgs>
+  parentEntity?: boolean | Prisma.Entity$parentEntityArgs<ExtArgs>
 }
 
 export type $EntityPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1166,6 +1524,8 @@ export type $EntityPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
     pullRequests: Prisma.$GitPullRequestPayload<ExtArgs>[]
     domain: Prisma.$DomainPayload<ExtArgs>
     owner: Prisma.$UserPayload<ExtArgs>
+    parentEntity: Prisma.$EntityPayload<ExtArgs> | null
+    childEntities: Prisma.$EntityPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1177,6 +1537,7 @@ export type $EntityPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
     ownerId: string
     description: string
     metadata: runtime.JsonValue | null
+    parentEntityId: string | null
     createdAt: Date
     updatedAt: Date
   }, ExtArgs["result"]["entity"]>
@@ -1577,6 +1938,8 @@ export interface Prisma__EntityClient<T, Null = never, ExtArgs extends runtime.T
   pullRequests<T extends Prisma.Entity$pullRequestsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Entity$pullRequestsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$GitPullRequestPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   domain<T extends Prisma.DomainDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.DomainDefaultArgs<ExtArgs>>): Prisma.Prisma__DomainClient<runtime.Types.Result.GetResult<Prisma.$DomainPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
   owner<T extends Prisma.UserDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.UserDefaultArgs<ExtArgs>>): Prisma.Prisma__UserClient<runtime.Types.Result.GetResult<Prisma.$UserPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
+  parentEntity<T extends Prisma.Entity$parentEntityArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Entity$parentEntityArgs<ExtArgs>>): Prisma.Prisma__EntityClient<runtime.Types.Result.GetResult<Prisma.$EntityPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+  childEntities<T extends Prisma.Entity$childEntitiesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Entity$childEntitiesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EntityPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1615,6 +1978,7 @@ export interface EntityFieldRefs {
   readonly ownerId: Prisma.FieldRef<"Entity", 'String'>
   readonly description: Prisma.FieldRef<"Entity", 'String'>
   readonly metadata: Prisma.FieldRef<"Entity", 'Json'>
+  readonly parentEntityId: Prisma.FieldRef<"Entity", 'String'>
   readonly createdAt: Prisma.FieldRef<"Entity", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"Entity", 'DateTime'>
 }
@@ -2063,6 +2427,49 @@ export type Entity$pullRequestsArgs<ExtArgs extends runtime.Types.Extensions.Int
   take?: number
   skip?: number
   distinct?: Prisma.GitPullRequestScalarFieldEnum | Prisma.GitPullRequestScalarFieldEnum[]
+}
+
+/**
+ * Entity.parentEntity
+ */
+export type Entity$parentEntityArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Entity
+   */
+  select?: Prisma.EntitySelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Entity
+   */
+  omit?: Prisma.EntityOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.EntityInclude<ExtArgs> | null
+  where?: Prisma.EntityWhereInput
+}
+
+/**
+ * Entity.childEntities
+ */
+export type Entity$childEntitiesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Entity
+   */
+  select?: Prisma.EntitySelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Entity
+   */
+  omit?: Prisma.EntityOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.EntityInclude<ExtArgs> | null
+  where?: Prisma.EntityWhereInput
+  orderBy?: Prisma.EntityOrderByWithRelationInput | Prisma.EntityOrderByWithRelationInput[]
+  cursor?: Prisma.EntityWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.EntityScalarFieldEnum | Prisma.EntityScalarFieldEnum[]
 }
 
 /**

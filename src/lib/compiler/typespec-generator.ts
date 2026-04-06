@@ -2,6 +2,9 @@
  * TypeSpec source code generator.
  *
  * Transforms a SuperSchemaModel IR into a valid TypeSpec (.tsp) source string.
+ * Supports: models (with inheritance/spread), enums, custom scalars, unions,
+ * aliases, namespaces, operations, interfaces.
+ *
  * Pure function — no side effects, no I/O.
  */
 
@@ -10,6 +13,12 @@ import type {
   SuperSchemaField,
   DecoratorSet,
   LogicalType,
+  SuperSchemaSharedEnum,
+  SuperSchemaCustomScalar,
+  SuperSchemaUnionType,
+  SuperSchemaAlias,
+  SuperSchemaInterface,
+  SuperSchemaOperation,
 } from "@/types/super-schema-model";
 import { getTypeInfo } from "@/lib/data-types";
 
@@ -24,18 +33,75 @@ import { getTypeInfo } from "@/lib/data-types";
 export function generateTypeSpec(model: SuperSchemaModel): string {
   const lines: string[] = [];
 
-  // Emit enum definitions first (for enum-type fields)
+  // Emit namespace if present
+  const ns = model.namespace || model.entity.domain;
+  const useNamespace = model.namespace !== undefined;
+
+  if (useNamespace && ns) {
+    lines.push(`namespace ${sanitizeNamespace(ns)};`);
+    lines.push("");
+  }
+
+  // Emit custom scalars
+  if (model.customScalars && model.customScalars.length > 0) {
+    for (const scalar of model.customScalars) {
+      lines.push(...generateScalarDefinition(scalar));
+      lines.push("");
+    }
+  }
+
+  // Emit shared enums
+  if (model.sharedEnums && model.sharedEnums.length > 0) {
+    for (const sharedEnum of model.sharedEnums) {
+      lines.push(...generateSharedEnumDefinition(sharedEnum));
+      lines.push("");
+    }
+  }
+
+  // Emit unions
+  if (model.unionTypes && model.unionTypes.length > 0) {
+    for (const union of model.unionTypes) {
+      lines.push(...generateUnionDefinition(union));
+      lines.push("");
+    }
+  }
+
+  // Emit aliases
+  if (model.aliases && model.aliases.length > 0) {
+    for (const alias of model.aliases) {
+      lines.push(`alias ${sanitizeIdentifier(alias.name)} = ${alias.type};`);
+      lines.push("");
+    }
+  }
+
+  // Emit inline enum definitions (for enum-type fields not in shared enums)
+  const sharedEnumNames = new Set(model.sharedEnums?.map((e) => e.name) ?? []);
   const enumFields = model.fields.filter((f) => f.type === "enum");
   for (const field of enumFields) {
-    lines.push(...generateEnumDefinition(field, model.entity.name));
-    lines.push("");
+    // Only emit inline enum if it's not a shared enum reference
+    const enumName = `${sanitizeIdentifier(model.entity.name)}_${sanitizeIdentifier(field.name)}`;
+    if (!sharedEnumNames.has(enumName)) {
+      lines.push(...generateInlineEnumDefinition(field, model.entity.name));
+      lines.push("");
+    }
   }
 
   // Emit model-level decorators
   lines.push(...generateModelDecorators(model));
 
-  // Emit model definition
-  lines.push(`model ${sanitizeIdentifier(model.entity.name)} {`);
+  // Emit model definition with optional extends
+  const modelName = sanitizeIdentifier(model.entity.name);
+  const extendsClause = model.entity.parentEntityName
+    ? ` extends ${sanitizeIdentifier(model.entity.parentEntityName)}`
+    : "";
+  lines.push(`model ${modelName}${extendsClause} {`);
+
+  // Emit spread references
+  if (model.entity.spreadFrom && model.entity.spreadFrom.length > 0) {
+    for (const spreadName of model.entity.spreadFrom) {
+      lines.push(`  ...${sanitizeIdentifier(spreadName)};`);
+    }
+  }
 
   // Emit fields
   for (const field of model.fields) {
@@ -46,6 +112,14 @@ export function generateTypeSpec(model: SuperSchemaModel): string {
   }
 
   lines.push("}");
+
+  // Emit interfaces
+  if (model.interfaces && model.interfaces.length > 0) {
+    for (const iface of model.interfaces) {
+      lines.push("");
+      lines.push(...generateInterfaceDefinition(iface));
+    }
+  }
 
   return lines.join("\n") + "\n";
 }
@@ -76,24 +150,79 @@ export function generateTypeSpecWithSourceMap(
   const lines: string[] = [];
   const sourceMap: SourceMapEntry[] = [];
 
-  // Emit enum definitions first
+  // Namespace
+  const ns = model.namespace || model.entity.domain;
+  const useNamespace = model.namespace !== undefined;
+  if (useNamespace && ns) {
+    lines.push(`namespace ${sanitizeNamespace(ns)};`);
+    lines.push("");
+  }
+
+  // Custom scalars
+  if (model.customScalars && model.customScalars.length > 0) {
+    for (const scalar of model.customScalars) {
+      lines.push(...generateScalarDefinition(scalar));
+      lines.push("");
+    }
+  }
+
+  // Shared enums
+  if (model.sharedEnums && model.sharedEnums.length > 0) {
+    for (const sharedEnum of model.sharedEnums) {
+      lines.push(...generateSharedEnumDefinition(sharedEnum));
+      lines.push("");
+    }
+  }
+
+  // Unions
+  if (model.unionTypes && model.unionTypes.length > 0) {
+    for (const union of model.unionTypes) {
+      lines.push(...generateUnionDefinition(union));
+      lines.push("");
+    }
+  }
+
+  // Aliases
+  if (model.aliases && model.aliases.length > 0) {
+    for (const alias of model.aliases) {
+      lines.push(`alias ${sanitizeIdentifier(alias.name)} = ${alias.type};`);
+      lines.push("");
+    }
+  }
+
+  // Emit inline enum definitions first
+  const sharedEnumNames = new Set(model.sharedEnums?.map((e) => e.name) ?? []);
   const enumFields = model.fields.filter((f) => f.type === "enum");
   for (const field of enumFields) {
-    const startLine = lines.length + 1;
-    lines.push(...generateEnumDefinition(field, model.entity.name));
-    lines.push("");
-    sourceMap.push({
-      fieldName: field.name,
-      startLine,
-      endLine: lines.length,
-    });
+    const enumName = `${sanitizeIdentifier(model.entity.name)}_${sanitizeIdentifier(field.name)}`;
+    if (!sharedEnumNames.has(enumName)) {
+      const startLine = lines.length + 1;
+      lines.push(...generateInlineEnumDefinition(field, model.entity.name));
+      lines.push("");
+      sourceMap.push({
+        fieldName: field.name,
+        startLine,
+        endLine: lines.length,
+      });
+    }
   }
 
   // Emit model-level decorators
   lines.push(...generateModelDecorators(model));
 
   // Emit model definition
-  lines.push(`model ${sanitizeIdentifier(model.entity.name)} {`);
+  const modelName = sanitizeIdentifier(model.entity.name);
+  const extendsClause = model.entity.parentEntityName
+    ? ` extends ${sanitizeIdentifier(model.entity.parentEntityName)}`
+    : "";
+  lines.push(`model ${modelName}${extendsClause} {`);
+
+  // Spread
+  if (model.entity.spreadFrom && model.entity.spreadFrom.length > 0) {
+    for (const spreadName of model.entity.spreadFrom) {
+      lines.push(`  ...${sanitizeIdentifier(spreadName)};`);
+    }
+  }
 
   // Emit fields with source map tracking
   for (const field of model.fields) {
@@ -132,10 +261,34 @@ function generateModelDecorators(model: SuperSchemaModel): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Enum definition
+// Shared enum definition
 // ---------------------------------------------------------------------------
 
-function generateEnumDefinition(
+function generateSharedEnumDefinition(sharedEnum: SuperSchemaSharedEnum): string[] {
+  const lines: string[] = [];
+
+  if (sharedEnum.description) {
+    lines.push(`@doc("${escapeString(sharedEnum.description)}")`);
+  }
+  lines.push(`enum ${sanitizeIdentifier(sharedEnum.name)} {`);
+
+  for (const val of sharedEnum.values) {
+    lines.push(`  ${sanitizeIdentifier(val)},`);
+  }
+
+  if (sharedEnum.values.length === 0) {
+    lines.push(`  // TODO: Define enum values`);
+  }
+
+  lines.push("}");
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Inline enum definition (field-scoped)
+// ---------------------------------------------------------------------------
+
+function generateInlineEnumDefinition(
   field: SuperSchemaField,
   entityName: string
 ): string[] {
@@ -183,6 +336,104 @@ function extractEnumValues(field: SuperSchemaField): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Custom scalar definition
+// ---------------------------------------------------------------------------
+
+function generateScalarDefinition(scalar: SuperSchemaCustomScalar): string[] {
+  const lines: string[] = [];
+
+  if (scalar.description) {
+    lines.push(`@doc("${escapeString(scalar.description)}")`);
+  }
+
+  lines.push(`scalar ${sanitizeIdentifier(scalar.name)} extends ${scalar.baseType};`);
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Union definition
+// ---------------------------------------------------------------------------
+
+function generateUnionDefinition(union: SuperSchemaUnionType): string[] {
+  const lines: string[] = [];
+
+  if (union.description) {
+    lines.push(`@doc("${escapeString(union.description)}")`);
+  }
+
+  if (union.memberTypes.length <= 3) {
+    // Inline form for short unions
+    lines.push(`union ${sanitizeIdentifier(union.name)} = ${union.memberTypes.join(" | ")};`);
+  } else {
+    // Block form for longer unions
+    lines.push(`union ${sanitizeIdentifier(union.name)} {`);
+    for (const member of union.memberTypes) {
+      lines.push(`  ${member},`);
+    }
+    lines.push("}");
+  }
+
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Interface definition
+// ---------------------------------------------------------------------------
+
+function generateInterfaceDefinition(iface: SuperSchemaInterface): string[] {
+  const lines: string[] = [];
+
+  if (iface.description) {
+    lines.push(`@doc("${escapeString(iface.description)}")`);
+  }
+
+  lines.push(`interface ${sanitizeIdentifier(iface.name)} {`);
+
+  for (const op of iface.operations) {
+    lines.push(...generateOperationDefinition(op).map((l) => `  ${l}`));
+  }
+
+  lines.push("}");
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Operation definition
+// ---------------------------------------------------------------------------
+
+function generateOperationDefinition(op: SuperSchemaOperation): string[] {
+  const lines: string[] = [];
+
+  if (op.description) {
+    lines.push(`@doc("${escapeString(op.description)}")`);
+  }
+
+  if (op.httpPath) {
+    lines.push(`@route("${escapeString(op.httpPath)}")`);
+  }
+
+  if (op.httpMethod) {
+    lines.push(`@${op.httpMethod.toLowerCase()}`);
+  }
+
+  // Build parameter list
+  const paramParts: string[] = [];
+  for (const param of op.parameters) {
+    const locationDecorator = param.location !== "body" ? `@${param.location} ` : "";
+    const optional = param.required ? "" : "?";
+    paramParts.push(`${locationDecorator}${param.name}${optional}: ${param.type}`);
+  }
+
+  const paramStr = paramParts.join(", ");
+  const returnType = op.responses.length > 0
+    ? op.responses[0].type || "void"
+    : "void";
+
+  lines.push(`op ${sanitizeIdentifier(op.name)}(${paramStr}): ${returnType};`);
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
 // Field definition
 // ---------------------------------------------------------------------------
 
@@ -201,7 +452,12 @@ function generateFieldDefinition(
   // Determine optionality
   const optional = field.nullable ? "?" : "";
 
-  lines.push(`${sanitizeIdentifier(field.name)}${optional}: ${typeExpr};`);
+  // Default value
+  const defaultClause = field.decorators.typespec?.identity?.defaultValue !== undefined
+    ? ` = ${JSON.stringify(field.decorators.typespec.identity.defaultValue)}`
+    : "";
+
+  lines.push(`${sanitizeIdentifier(field.name)}${optional}: ${typeExpr}${defaultClause};`);
 
   return lines;
 }
@@ -226,6 +482,11 @@ function generateFieldDecorators(field: SuperSchemaField): string[] {
   // @secret (from typespec identity)
   if (field.decorators.typespec?.identity?.secret) {
     decorators.push("@secret");
+  }
+
+  // @discriminator
+  if (field.decorators.typespec?.identity?.discriminator) {
+    decorators.push(`@discriminator("${field.name}")`);
   }
 
   // @format (from typespec identity)
@@ -393,6 +654,14 @@ function sanitizeIdentifier(name: string): string {
     safe = `_${safe}`;
   }
   return safe;
+}
+
+function sanitizeNamespace(ns: string): string {
+  // Namespace can have dots, so only sanitize each segment
+  return ns
+    .split(".")
+    .map((segment) => sanitizeIdentifier(segment))
+    .join(".");
 }
 
 function escapeString(str: string): string {

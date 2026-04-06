@@ -14,6 +14,7 @@ import type {
   SuperSchemaField,
   MappingPolicy,
   QualityRule,
+  SuperSchemaOperation,
 } from "@/types/super-schema-model";
 import type {
   Emitter,
@@ -51,16 +52,51 @@ interface OpenApiProperty {
 // ---------------------------------------------------------------------------
 
 interface OpenApiSchemaComponent {
-  type: "object";
+  type?: "object";
   description?: string;
   required?: string[];
-  properties: Record<string, OpenApiProperty>;
+  properties?: Record<string, OpenApiProperty>;
+  allOf?: Array<{ $ref: string } | OpenApiSchemaComponent>;
+  oneOf?: Array<{ $ref?: string; type?: string }>;
+  discriminator?: { propertyName: string };
+  enum?: string[];
+}
+
+interface OpenApiPathOperation {
+  summary?: string;
+  description?: string;
+  operationId?: string;
+  tags?: string[];
+  parameters?: Array<{
+    name: string;
+    in: string;
+    required?: boolean;
+    description?: string;
+    schema: { type: string; format?: string };
+  }>;
+  requestBody?: {
+    required?: boolean;
+    content: {
+      "application/json": {
+        schema: { $ref: string } | { type: string };
+      };
+    };
+  };
+  responses: Record<string, {
+    description: string;
+    content?: {
+      "application/json": {
+        schema: { $ref: string } | { type: string };
+      };
+    };
+  }>;
 }
 
 interface OpenApiOutput {
   components: {
     schemas: Record<string, OpenApiSchemaComponent>;
   };
+  paths?: Record<string, Record<string, OpenApiPathOperation>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,8 +323,6 @@ export const openApiEmitter: Emitter = {
     const warnings: EmitterWarning[] = [];
 
     // Convert MappingPolicy[] to ScopedMappingPolicy[] for the engine.
-    // If the input already has ScopedMappingPolicy fields (isLossy, lossDescription),
-    // preserve them; otherwise default to non-lossy.
     const scopedPolicies: ScopedMappingPolicy[] = policies.map((p) => {
       const scoped = p as Partial<ScopedMappingPolicy>;
       return {
@@ -297,6 +331,35 @@ export const openApiEmitter: Emitter = {
         lossDescription: scoped.lossDescription,
       };
     });
+
+    const schemas: Record<string, OpenApiSchemaComponent> = {};
+
+    // Emit shared enums as enum schemas
+    if (model.sharedEnums) {
+      for (const sharedEnum of model.sharedEnums) {
+        const enumSchema: OpenApiSchemaComponent = {
+          type: "object",
+          enum: sharedEnum.values,
+        };
+        if (sharedEnum.description) {
+          enumSchema.description = sharedEnum.description;
+        }
+        schemas[sharedEnum.name] = enumSchema;
+      }
+    }
+
+    // Emit union types as oneOf schemas
+    if (model.unionTypes) {
+      for (const union of model.unionTypes) {
+        const unionSchema: OpenApiSchemaComponent = {
+          oneOf: union.memberTypes.map((t) => ({ $ref: `#/components/schemas/${t}` })),
+        };
+        if (union.description) {
+          unionSchema.description = union.description;
+        }
+        schemas[union.name] = unionSchema;
+      }
+    }
 
     // Build entity schema
     const entityName = model.entity.name;
@@ -320,26 +383,112 @@ export const openApiEmitter: Emitter = {
       }
     }
 
-    const schemaComponent: OpenApiSchemaComponent = {
-      type: "object",
-      properties,
-    };
+    // Handle inheritance with allOf
+    if (model.entity.parentEntityName) {
+      const ownSchema: OpenApiSchemaComponent = {
+        type: "object",
+        properties,
+      };
+      if (requiredFields.length > 0) {
+        ownSchema.required = requiredFields;
+      }
 
-    if (model.entity.description) {
-      schemaComponent.description = model.entity.description;
-    }
-
-    if (requiredFields.length > 0) {
-      schemaComponent.required = requiredFields;
+      const schemaComponent: OpenApiSchemaComponent = {
+        allOf: [
+          { $ref: `#/components/schemas/${model.entity.parentEntityName}` },
+          ownSchema,
+        ],
+      };
+      if (model.entity.description) {
+        schemaComponent.description = model.entity.description;
+      }
+      schemas[entityName] = schemaComponent;
+    } else {
+      const schemaComponent: OpenApiSchemaComponent = {
+        type: "object",
+        properties,
+      };
+      if (model.entity.description) {
+        schemaComponent.description = model.entity.description;
+      }
+      if (requiredFields.length > 0) {
+        schemaComponent.required = requiredFields;
+      }
+      schemas[entityName] = schemaComponent;
     }
 
     const output: OpenApiOutput = {
       components: {
-        schemas: {
-          [entityName]: schemaComponent,
-        },
+        schemas,
       },
     };
+
+    // Emit operations as paths
+    const allOps = collectOperations(model);
+    if (allOps.length > 0) {
+      const paths: Record<string, Record<string, OpenApiPathOperation>> = {};
+      for (const { op, interfaceName } of allOps) {
+        const path = op.httpPath || `/${entityName.toLowerCase()}s`;
+        const method = (op.httpMethod || "GET").toLowerCase();
+
+        if (!paths[path]) paths[path] = {};
+
+        const pathOp: OpenApiPathOperation = {
+          operationId: op.name,
+          responses: {},
+        };
+
+        if (op.description) pathOp.description = op.description;
+        if (interfaceName) pathOp.tags = [interfaceName];
+
+        // Parameters
+        const params = op.parameters.filter((p) => p.location !== "body");
+        if (params.length > 0) {
+          pathOp.parameters = params.map((p) => ({
+            name: p.name,
+            in: p.location,
+            required: p.required,
+            description: p.description,
+            schema: { type: mapParamType(p.type) },
+          }));
+        }
+
+        // Request body
+        const bodyParam = op.parameters.find((p) => p.location === "body");
+        if (bodyParam) {
+          pathOp.requestBody = {
+            required: bodyParam.required,
+            content: {
+              "application/json": {
+                schema: { $ref: `#/components/schemas/${bodyParam.type}` },
+              },
+            },
+          };
+        }
+
+        // Responses
+        if (op.responses.length > 0) {
+          for (const resp of op.responses) {
+            const respObj: { description: string; content?: { "application/json": { schema: { $ref: string } | { type: string } } } } = {
+              description: resp.description || `${resp.statusCode} response`,
+            };
+            if (resp.type) {
+              respObj.content = {
+                "application/json": {
+                  schema: { $ref: `#/components/schemas/${resp.type}` },
+                },
+              };
+            }
+            pathOp.responses[String(resp.statusCode)] = respObj;
+          }
+        } else {
+          pathOp.responses["200"] = { description: "Successful response" };
+        }
+
+        paths[path][method] = pathOp;
+      }
+      output.paths = paths;
+    }
 
     const yamlOutput = yamlStringify(output, {
       sortMapEntries: false,
@@ -357,3 +506,36 @@ export const openApiEmitter: Emitter = {
     return validateOpenApiSchema(output);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Operation helpers
+// ---------------------------------------------------------------------------
+
+function collectOperations(
+  model: SuperSchemaModel
+): Array<{ op: SuperSchemaOperation; interfaceName?: string }> {
+  const ops: Array<{ op: SuperSchemaOperation; interfaceName?: string }> = [];
+
+  if (model.interfaces) {
+    for (const iface of model.interfaces) {
+      for (const op of iface.operations) {
+        ops.push({ op, interfaceName: iface.name });
+      }
+    }
+  }
+
+  return ops;
+}
+
+function mapParamType(type: string): string {
+  const typeMap: Record<string, string> = {
+    string: "string",
+    int32: "integer",
+    int64: "integer",
+    integer: "integer",
+    boolean: "boolean",
+    float32: "number",
+    float64: "number",
+  };
+  return typeMap[type] || "string";
+}

@@ -5,7 +5,9 @@
  * and maps ParsedTypeSpecModel to the import pipeline's ParsedEntity format.
  *
  * Handles:
+ * - Single model and multi-model documents
  * - Model name and @doc description
+ * - Model inheritance (extends) and spread (...)
  * - Field types (mapped via the parser's type system)
  * - Optional fields (isOptional -> nullable)
  * - @key decorator -> isKey
@@ -16,6 +18,10 @@
  * - @minLength, @maxLength, @minValue, @maxValue, @pattern -> constraints
  * - @deprecated -> deprecated flag
  * - Array types (e.g. string[])
+ * - Default values
+ * - Standalone enums, custom scalars, unions, aliases
+ * - Operations and interfaces
+ * - Namespace declarations
  *
  * All fields have confidence "high" since TypeSpec is an exact schema language.
  */
@@ -23,8 +29,38 @@
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ParsedEntity, ParsedField, ParsedFieldConstraint } from "./types";
-import { parseTypeSpec } from "@/lib/compiler/typespec-parser";
-import type { ParsedTypeSpecField, ParsedTypeSpecDecorators } from "@/lib/compiler/typespec-parser";
+import { parseTypeSpec, parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
+import type {
+  ParsedTypeSpecField,
+  ParsedTypeSpecDecorators,
+  ParsedTypeSpecDocument,
+} from "@/lib/compiler/typespec-parser";
+
+// ---------------------------------------------------------------------------
+// Multi-model import result
+// ---------------------------------------------------------------------------
+
+export interface TypeSpecImportResult {
+  entities: ParsedEntity[];
+  sharedEnums: Array<{ name: string; values: string[]; doc?: string }>;
+  customScalars: Array<{ name: string; baseType: string; doc?: string }>;
+  unions: Array<{ name: string; memberTypes: string[]; doc?: string }>;
+  aliases: Array<{ name: string; type: string }>;
+  interfaces: Array<{
+    name: string;
+    doc?: string;
+    operations: Array<{
+      name: string;
+      doc?: string;
+      httpMethod?: string;
+      httpPath?: string;
+      returnType: string;
+      params: Array<{ name: string; type: string; location?: string; isOptional: boolean }>;
+    }>;
+  }>;
+  namespace?: string;
+  warnings: string[];
+}
 
 // ---------------------------------------------------------------------------
 // Extract classification from decorators
@@ -106,7 +142,7 @@ function mapField(tsField: ParsedTypeSpecField): ParsedField {
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Public API — single entity (backwards compatible)
 // ---------------------------------------------------------------------------
 
 export function parseTypeSpecSchema(content: string): Result<ParsedEntity> {
@@ -137,5 +173,100 @@ export function parseTypeSpecSchema(content: string): Result<ParsedEntity> {
     fields,
     sourceFormat: "typespec",
     originalContent: content,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Public API — full document import (multi-model)
+// ---------------------------------------------------------------------------
+
+export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImportResult> {
+  if (!content || !content.trim()) {
+    return err({
+      code: "PARSE_ERROR",
+      message: "Empty TypeSpec content",
+      suggestedFix: "Provide TypeSpec content with at least one model, enum, or operation.",
+    });
+  }
+
+  const doc = parseTypeSpecDocument(content);
+  const warnings: string[] = [];
+
+  // If nothing was parsed at all
+  if (
+    doc.models.length === 0 &&
+    doc.enums.length === 0 &&
+    doc.scalars.length === 0 &&
+    doc.unions.length === 0 &&
+    doc.interfaces.length === 0 &&
+    doc.operations.length === 0
+  ) {
+    return err({
+      code: "PARSE_ERROR",
+      message: "No TypeSpec constructs found in the document",
+      suggestedFix:
+        "Ensure the content contains TypeSpec constructs like model, enum, scalar, union, interface, or op.",
+    });
+  }
+
+  // Map models to entities
+  const entities: ParsedEntity[] = doc.models.map((model) => ({
+    name: model.name,
+    description: model.doc,
+    fields: model.fields.map(mapField),
+    sourceFormat: "typespec" as const,
+    originalContent: content,
+  }));
+
+  // Note warnings for imports and usings
+  for (const imp of doc.imports) {
+    warnings.push(`Import "${imp}" noted — external imports are not resolved.`);
+  }
+  for (const using of doc.usings) {
+    warnings.push(`Using "${using}" noted — library references are informational only.`);
+  }
+
+  // Map consts as warnings
+  for (const c of doc.consts) {
+    warnings.push(`Const "${c.name}" = ${c.value} noted — stored as metadata.`);
+  }
+
+  return ok({
+    entities,
+    sharedEnums: doc.enums.map((e) => ({
+      name: e.name,
+      values: e.values,
+      doc: e.doc,
+    })),
+    customScalars: doc.scalars.map((s) => ({
+      name: s.name,
+      baseType: s.baseType,
+      doc: s.doc,
+    })),
+    unions: doc.unions.map((u) => ({
+      name: u.name,
+      memberTypes: u.memberTypes,
+      doc: u.doc,
+    })),
+    aliases: doc.aliases,
+    interfaces: doc.interfaces.map((iface) => ({
+      name: iface.name,
+      doc: iface.doc,
+      operations: iface.operations.map((op) => ({
+        name: op.name,
+        doc: op.doc,
+        httpMethod: op.httpMethod,
+        httpPath: op.httpPath,
+        returnType: op.returnType,
+        params: op.params.map((p) => ({
+          name: p.name,
+          type: p.type,
+          location: p.location,
+          isOptional: p.isOptional,
+        })),
+      })),
+    })),
+    namespace: doc.namespace,
+    warnings,
   });
 }

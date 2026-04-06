@@ -418,10 +418,15 @@ export const avroEmitter: Emitter = {
     );
 
     // Build the top-level Avro record schema
+    // Use explicit namespace from model if set, otherwise derive from domain
+    const namespace = model.namespace
+      ? model.namespace.split(".").reverse().join(".")
+      : toNamespace(model.entity.domain);
+
     const schema: AvroRecordSchema = {
       type: "record",
       name: toPascalCase(model.entity.name),
-      namespace: toNamespace(model.entity.domain),
+      namespace,
       fields: avroFields,
     };
 

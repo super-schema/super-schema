@@ -137,3 +137,43 @@ export type EmissionTargetStatus = Prisma.EmissionTargetStatusModel
  * 
  */
 export type DeploymentRecord = Prisma.DeploymentRecordModel
+/**
+ * Model SharedEnum
+ * 
+ */
+export type SharedEnum = Prisma.SharedEnumModel
+/**
+ * Model CustomScalar
+ * 
+ */
+export type CustomScalar = Prisma.CustomScalarModel
+/**
+ * Model UnionType
+ * 
+ */
+export type UnionType = Prisma.UnionTypeModel
+/**
+ * Model ServiceDefinition
+ * 
+ */
+export type ServiceDefinition = Prisma.ServiceDefinitionModel
+/**
+ * Model Operation
+ * 
+ */
+export type Operation = Prisma.OperationModel
+/**
+ * Model OperationParameter
+ * 
+ */
+export type OperationParameter = Prisma.OperationParameterModel
+/**
+ * Model OperationResponse
+ * 
+ */
+export type OperationResponse = Prisma.OperationResponseModel
+/**
+ * Model InterfaceDefinition
+ * 
+ */
+export type InterfaceDefinition = Prisma.InterfaceDefinitionModel

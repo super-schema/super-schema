@@ -272,6 +272,84 @@ export interface SuperSchemaEntityMetadata {
 }
 
 // ---------------------------------------------------------------------------
+// Shared Enum in the IR
+// ---------------------------------------------------------------------------
+
+export interface SuperSchemaSharedEnum {
+  name: string;
+  values: string[];
+  description?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Custom Scalar in the IR
+// ---------------------------------------------------------------------------
+
+export interface SuperSchemaCustomScalar {
+  name: string;
+  baseType: string;
+  format?: string;
+  pattern?: string;
+  description?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Union Type in the IR
+// ---------------------------------------------------------------------------
+
+export interface SuperSchemaUnionType {
+  name: string;
+  memberTypes: string[];
+  description?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Alias in the IR
+// ---------------------------------------------------------------------------
+
+export interface SuperSchemaAlias {
+  name: string;
+  type: string;
+}
+
+// ---------------------------------------------------------------------------
+// Operation in the IR
+// ---------------------------------------------------------------------------
+
+export interface SuperSchemaOperationParameter {
+  name: string;
+  type: string;
+  location: "path" | "query" | "header" | "body";
+  required: boolean;
+  description?: string;
+}
+
+export interface SuperSchemaOperationResponse {
+  statusCode: number;
+  type?: string;
+  description?: string;
+}
+
+export interface SuperSchemaOperation {
+  name: string;
+  httpMethod: string;
+  httpPath: string;
+  description?: string;
+  parameters: SuperSchemaOperationParameter[];
+  responses: SuperSchemaOperationResponse[];
+}
+
+// ---------------------------------------------------------------------------
+// Interface Definition in the IR
+// ---------------------------------------------------------------------------
+
+export interface SuperSchemaInterface {
+  name: string;
+  description?: string;
+  operations: SuperSchemaOperation[];
+}
+
+// ---------------------------------------------------------------------------
 // The SuperSchemaModel — top-level IR
 // ---------------------------------------------------------------------------
 
@@ -285,9 +363,17 @@ export interface SuperSchemaModel {
     status: string;
     version: number;
     metadata: SuperSchemaEntityMetadata;
+    parentEntityName?: string;
+    spreadFrom?: string[];
   };
   fields: SuperSchemaField[];
   relationships: SuperSchemaRelationship[];
+  sharedEnums?: SuperSchemaSharedEnum[];
+  customScalars?: SuperSchemaCustomScalar[];
+  unionTypes?: SuperSchemaUnionType[];
+  aliases?: SuperSchemaAlias[];
+  interfaces?: SuperSchemaInterface[];
+  namespace?: string;
 }
 
 // ---------------------------------------------------------------------------

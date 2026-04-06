@@ -55,11 +55,14 @@ function detectByContent(content: string): ImportFormat | null {
     return "protobuf";
   }
 
-  // Check for TypeSpec: import "@typespec", model keyword with block, or TypeSpec decorators
+  // Check for TypeSpec: import "@typespec", model/enum/scalar/union/interface/namespace keywords
   if (/^\s*import\s+"@typespec/m.test(trimmed)) {
     return "typespec";
   }
-  if (/^\s*model\s+\w+\s*\{/m.test(trimmed)) {
+  if (/^\s*model\s+\w+\s*(?:extends\s+\w+\s*)?\{/m.test(trimmed)) {
+    return "typespec";
+  }
+  if (/^\s*(?:enum|scalar|union|interface|namespace)\s+\w+/m.test(trimmed)) {
     return "typespec";
   }
   if (/(?:@doc|@key|@format|@secret)\s*(?:\(|$)/m.test(trimmed) && /model\s+\w+/m.test(trimmed)) {
