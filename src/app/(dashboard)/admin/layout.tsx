@@ -8,9 +8,11 @@ import {
   Zap,
   Activity,
   Tags,
+  Settings,
 } from "lucide-react";
 
 const ADMIN_TABS = [
+  { id: "settings", label: "Settings", icon: Settings, href: "/admin/settings" },
   { id: "users", label: "Users", icon: Users, href: "/admin" },
   { id: "domains", label: "Domains", icon: Globe, href: "/admin/domains" },
   { id: "emitters", label: "Emitters", icon: Zap, href: "/admin/emitters" },

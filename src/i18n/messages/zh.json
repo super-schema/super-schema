@@ -1,0 +1,41 @@
+{
+  "nav": {
+    "schemas": "Jiagou",
+    "glossary": "Shuyu Biao",
+    "governance": "Zhili",
+    "compliance": "Heguixing",
+    "admin": "Shezhi",
+    "search": "Sousuo huo anxia"
+  },
+  "common": {
+    "save": "Baocun",
+    "cancel": "Quxiao",
+    "delete": "Shanchu",
+    "create": "Chuangjian",
+    "edit": "Bianji",
+    "done": "Wancheng"
+  },
+  "entity": {
+    "fields": "Ziduan",
+    "addField": "Tianjia Ziduan",
+    "emit": "Fashe",
+    "versions": "Banben",
+    "editor": "Bianjiqi"
+  },
+  "settings": {
+    "title": "Shezhi",
+    "language": "Yuyan",
+    "fontSize": "Ziti Daxiao",
+    "theme": "Zhuti",
+    "small": "Xiao",
+    "medium": "Zhong",
+    "large": "Da",
+    "light": "Liang Se",
+    "dark": "An Se",
+    "system": "Xitong",
+    "appearance": "Wai Guan",
+    "appearanceDesc": "Zidingyi yingyong chengxu de waiguan.",
+    "fontSizeDesc": "Tiaozheng zhengge yingyong chengxu de jichu ziti daxiao.",
+    "languageDesc": "Xuanze ninde shouquan xianshi yuyan."
+  }
+}

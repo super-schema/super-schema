@@ -1,0 +1,41 @@
+{
+  "nav": {
+    "schemas": "Schemas",
+    "glossary": "Glossaire",
+    "governance": "Gouvernance",
+    "compliance": "Conformite",
+    "admin": "Parametres",
+    "search": "Rechercher ou appuyer"
+  },
+  "common": {
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "create": "Creer",
+    "edit": "Modifier",
+    "done": "Termine"
+  },
+  "entity": {
+    "fields": "Champs",
+    "addField": "Ajouter un Champ",
+    "emit": "Emettre",
+    "versions": "Versions",
+    "editor": "Editeur"
+  },
+  "settings": {
+    "title": "Parametres",
+    "language": "Langue",
+    "fontSize": "Taille de Police",
+    "theme": "Theme",
+    "small": "Petit",
+    "medium": "Moyen",
+    "large": "Grand",
+    "light": "Clair",
+    "dark": "Sombre",
+    "system": "Systeme",
+    "appearance": "Apparence",
+    "appearanceDesc": "Personnalisez l'apparence de l'application.",
+    "fontSizeDesc": "Ajustez la taille de police de base pour toute l'application.",
+    "languageDesc": "Choisissez votre langue d'affichage preferee."
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "nav": {
+    "schemas": "Schemas",
+    "glossary": "Glossary",
+    "governance": "Governance",
+    "compliance": "Compliance",
+    "admin": "Settings",
+    "search": "Search or press"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "create": "Create",
+    "edit": "Edit",
+    "done": "Done"
+  },
+  "entity": {
+    "fields": "Fields",
+    "addField": "Add Field",
+    "emit": "Emit",
+    "versions": "Versions",
+    "editor": "Editor"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "fontSize": "Font Size",
+    "theme": "Theme",
+    "small": "Small",
+    "medium": "Medium",
+    "large": "Large",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "appearance": "Appearance",
+    "appearanceDesc": "Customize how the application looks.",
+    "fontSizeDesc": "Adjust the base font size for the entire application.",
+    "languageDesc": "Choose your preferred display language."
+  }
+}

@@ -27,6 +27,14 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${jetbrainsMono.variable} dark h-full antialiased`}
     >
+      <head>
+        {/* Hydrate font-scale before first paint to prevent layout shift */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var s=localStorage.getItem("super-schema:font-scale");var m={"small":"0.875","medium":"1","large":"1.125"};if(s&&m[s])document.documentElement.style.setProperty("--font-scale",m[s])}catch(e){}})()`,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

@@ -183,14 +183,17 @@ function DashboardShell({
   paletteActions: { id: string; label: string; icon: React.ReactNode; shortcut?: string; onSelect: () => void }[];
   children: React.ReactNode;
 }) {
-  const { content: rightPanelContent, registerExpandHandler, registerToggleHandler, registerCollapsedState } = useRightPanelContent();
+  const { content: rightPanelContent, registerExpandHandler, registerToggleHandler, registerCollapseHandler, registerCollapsedState } = useRightPanelContent();
 
-  // Register the right panel expand handler so content pushes auto-expand the panel
+  // Register handlers — use refs in the context so they always call the latest rightPanel methods
   useEffect(() => {
     registerExpandHandler(() => rightPanel.expand());
-  }, [registerExpandHandler, rightPanel]);
+  }, [registerExpandHandler, rightPanel.expand]);
 
-  // Register the right panel toggle handler
+  useEffect(() => {
+    registerCollapseHandler(() => rightPanel.collapse());
+  }, [registerCollapseHandler, rightPanel.collapse]);
+
   useEffect(() => {
     registerToggleHandler(() => {
       if (rightPanel.isCollapsed) {
@@ -199,9 +202,8 @@ function DashboardShell({
         rightPanel.collapse();
       }
     });
-  }, [registerToggleHandler, rightPanel]);
+  }, [registerToggleHandler, rightPanel.isCollapsed, rightPanel.expand, rightPanel.collapse]);
 
-  // Sync collapsed state to context
   useEffect(() => {
     registerCollapsedState(rightPanel.isCollapsed);
   }, [registerCollapsedState, rightPanel.isCollapsed]);

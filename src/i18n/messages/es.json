@@ -1,0 +1,41 @@
+{
+  "nav": {
+    "schemas": "Esquemas",
+    "glossary": "Glosario",
+    "governance": "Gobernanza",
+    "compliance": "Cumplimiento",
+    "admin": "Configuracion",
+    "search": "Buscar o presionar"
+  },
+  "common": {
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "create": "Crear",
+    "edit": "Editar",
+    "done": "Hecho"
+  },
+  "entity": {
+    "fields": "Campos",
+    "addField": "Agregar Campo",
+    "emit": "Emitir",
+    "versions": "Versiones",
+    "editor": "Editor"
+  },
+  "settings": {
+    "title": "Configuracion",
+    "language": "Idioma",
+    "fontSize": "Tamano de Fuente",
+    "theme": "Tema",
+    "small": "Pequeno",
+    "medium": "Mediano",
+    "large": "Grande",
+    "light": "Claro",
+    "dark": "Oscuro",
+    "system": "Sistema",
+    "appearance": "Apariencia",
+    "appearanceDesc": "Personaliza la apariencia de la aplicacion.",
+    "fontSizeDesc": "Ajusta el tamano de fuente base para toda la aplicacion.",
+    "languageDesc": "Elige tu idioma de visualizacion preferido."
+  }
+}

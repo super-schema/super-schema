@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from "react";
 
 interface RightPanelContentState {
   content: ReactNode | null;
@@ -9,6 +9,8 @@ interface RightPanelContentState {
   registerExpandHandler: (handler: () => void) => void;
   togglePanel: () => void;
   registerToggleHandler: (handler: () => void) => void;
+  collapsePanel: () => void;
+  registerCollapseHandler: (handler: () => void) => void;
   isPanelCollapsed: boolean;
   registerCollapsedState: (collapsed: boolean) => void;
 }
@@ -20,37 +22,47 @@ const RightPanelContentContext = createContext<RightPanelContentState>({
   registerExpandHandler: () => {},
   togglePanel: () => {},
   registerToggleHandler: () => {},
+  collapsePanel: () => {},
+  registerCollapseHandler: () => {},
   isPanelCollapsed: false,
   registerCollapsedState: () => {},
 });
 
 export function RightPanelContentProvider({ children }: { children: ReactNode }) {
   const [content, setContentState] = useState<ReactNode | null>(null);
-  const [expandHandler, setExpandHandler] = useState<(() => void) | null>(null);
-  const [toggleHandler, setToggleHandler] = useState<(() => void) | null>(null);
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
+
+  // Use refs to avoid stale closure issues with handlers
+  const expandHandlerRef = useRef<(() => void) | null>(null);
+  const toggleHandlerRef = useRef<(() => void) | null>(null);
+  const collapseHandlerRef = useRef<(() => void) | null>(null);
 
   const setContent = useCallback((node: ReactNode | null) => {
     setContentState(node);
-    // Auto-expand when content is pushed
-    if (node && expandHandler) {
-      expandHandler();
+    if (node && expandHandlerRef.current) {
+      expandHandlerRef.current();
     }
-  }, [expandHandler]);
+  }, []);
 
   const registerExpandHandler = useCallback((handler: () => void) => {
-    setExpandHandler(() => handler);
+    expandHandlerRef.current = handler;
   }, []);
 
   const registerToggleHandler = useCallback((handler: () => void) => {
-    setToggleHandler(() => handler);
+    toggleHandlerRef.current = handler;
+  }, []);
+
+  const registerCollapseHandler = useCallback((handler: () => void) => {
+    collapseHandlerRef.current = handler;
   }, []);
 
   const togglePanel = useCallback(() => {
-    if (toggleHandler) {
-      toggleHandler();
-    }
-  }, [toggleHandler]);
+    toggleHandlerRef.current?.();
+  }, []);
+
+  const collapsePanel = useCallback(() => {
+    collapseHandlerRef.current?.();
+  }, []);
 
   const registerCollapsedState = useCallback((collapsed: boolean) => {
     setIsPanelCollapsed(collapsed);
@@ -60,10 +72,12 @@ export function RightPanelContentProvider({ children }: { children: ReactNode })
     <RightPanelContentContext.Provider value={{
       content,
       setContent,
-      onExpandRequest: expandHandler,
+      onExpandRequest: expandHandlerRef.current,
       registerExpandHandler,
       togglePanel,
       registerToggleHandler,
+      collapsePanel,
+      registerCollapseHandler,
       isPanelCollapsed,
       registerCollapsedState,
     }}>

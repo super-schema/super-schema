@@ -376,5 +376,6 @@
   }
   html {
     @apply font-sans;
+    font-size: calc(16px * var(--font-scale, 1));
   }
 }

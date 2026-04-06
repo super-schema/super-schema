@@ -1,0 +1,41 @@
+{
+  "nav": {
+    "schemas": "Schemata",
+    "glossary": "Glossar",
+    "governance": "Governance",
+    "compliance": "Compliance",
+    "admin": "Einstellungen",
+    "search": "Suchen oder druecken"
+  },
+  "common": {
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "Loeschen",
+    "create": "Erstellen",
+    "edit": "Bearbeiten",
+    "done": "Fertig"
+  },
+  "entity": {
+    "fields": "Felder",
+    "addField": "Feld hinzufuegen",
+    "emit": "Emittieren",
+    "versions": "Versionen",
+    "editor": "Editor"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "language": "Sprache",
+    "fontSize": "Schriftgroesse",
+    "theme": "Design",
+    "small": "Klein",
+    "medium": "Mittel",
+    "large": "Gross",
+    "light": "Hell",
+    "dark": "Dunkel",
+    "system": "System",
+    "appearance": "Erscheinungsbild",
+    "appearanceDesc": "Passen Sie das Aussehen der Anwendung an.",
+    "fontSizeDesc": "Passen Sie die Basis-Schriftgroesse fuer die gesamte Anwendung an.",
+    "languageDesc": "Waehlen Sie Ihre bevorzugte Anzeigesprache."
+  }
+}

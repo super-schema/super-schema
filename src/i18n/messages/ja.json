@@ -1,0 +1,41 @@
+{
+  "nav": {
+    "schemas": "Sukima",
+    "glossary": "Yougo-shuu",
+    "governance": "Gabanansu",
+    "compliance": "Konpuraiansu",
+    "admin": "Settei",
+    "search": "Kensaku matawa"
+  },
+  "common": {
+    "save": "Hozon",
+    "cancel": "Kyanseru",
+    "delete": "Sakujo",
+    "create": "Sakusei",
+    "edit": "Henshuu",
+    "done": "Kanryou"
+  },
+  "entity": {
+    "fields": "Fiirudo",
+    "addField": "Fiirudo Tsuika",
+    "emit": "Shutsuryoku",
+    "versions": "Baajon",
+    "editor": "Edita"
+  },
+  "settings": {
+    "title": "Settei",
+    "language": "Gengo",
+    "fontSize": "Moji Saizu",
+    "theme": "Teema",
+    "small": "Shou",
+    "medium": "Chuu",
+    "large": "Dai",
+    "light": "Raito",
+    "dark": "Daaku",
+    "system": "Shisutemu",
+    "appearance": "Gaikan",
+    "appearanceDesc": "Apurikeeshon no gaikan wo kasutamaizu shimasu.",
+    "fontSizeDesc": "Apurikeeshon zentai no beisu fonto saizu wo chousei shimasu.",
+    "languageDesc": "Gohope no hyouji gengo wo sentaku shite kudasai."
+  }
+}
