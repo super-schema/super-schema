@@ -9,7 +9,7 @@
 // Import format enum
 // ---------------------------------------------------------------------------
 
-export type ImportFormat = "avro" | "bigquery-ddl" | "protobuf";
+export type ImportFormat = "avro" | "bigquery-ddl" | "protobuf" | "typespec";
 
 // ---------------------------------------------------------------------------
 // Confidence levels for type mappings
@@ -20,6 +20,11 @@ export type ImportConfidence = "high" | "medium" | "low";
 // ---------------------------------------------------------------------------
 // A single parsed field from an imported schema
 // ---------------------------------------------------------------------------
+
+export interface ParsedFieldConstraint {
+  type: string;
+  value: number | string;
+}
 
 export interface ParsedField {
   /** Field name as it appears in the source schema */
@@ -36,6 +41,18 @@ export interface ParsedField {
   confidence: ImportConfidence;
   /** The original type string from the source format */
   originalType: string;
+  /** Whether this field is a key field (TypeSpec @key) */
+  isKey?: boolean;
+  /** Classification level (e.g. PII, SENSITIVE, INTERNAL) */
+  classification?: string;
+  /** Format hint (e.g. email, uri, uuid) */
+  format?: string;
+  /** Whether the field is deprecated */
+  deprecated?: boolean;
+  /** Deprecation message */
+  deprecatedMessage?: string;
+  /** Validation constraints (minLength, maxLength, etc.) */
+  constraints?: ParsedFieldConstraint[];
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +62,8 @@ export interface ParsedField {
 export interface ParsedEntity {
   /** Entity name extracted from the schema */
   name: string;
+  /** Entity description (e.g. from TypeSpec @doc on model) */
+  description?: string;
   /** Parsed fields */
   fields: ParsedField[];
   /** Source format identifier */

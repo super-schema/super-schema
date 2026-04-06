@@ -16,6 +16,7 @@ import type {
 import { parseAvroSchema } from "@/lib/importers/avro.importer";
 import { parseBigQueryDDL } from "@/lib/importers/bigquery.importer";
 import { parseProtobufSchema } from "@/lib/importers/protobuf.importer";
+import { parseTypeSpecSchema } from "@/lib/importers/typespec.importer";
 import { detectFormat } from "@/lib/importers/format-detector";
 
 // ---------------------------------------------------------------------------
@@ -33,12 +34,14 @@ function parseWithFormat(
       return parseBigQueryDDL(content);
     case "protobuf":
       return parseProtobufSchema(content);
+    case "typespec":
+      return parseTypeSpecSchema(content);
     default:
       return err({
         code: "UNSUPPORTED_FORMAT",
         message: `Unsupported import format: ${format}`,
         suggestedFix:
-          "Supported formats are: avro, bigquery-ddl, protobuf.",
+          "Supported formats are: avro, bigquery-ddl, protobuf, typespec.",
       });
   }
 }
@@ -60,7 +63,7 @@ export function importSchema(
       code: "UNKNOWN_FORMAT",
       message: "Could not detect schema format from content",
       suggestedFix:
-        "Specify the format explicitly or ensure the content matches a known schema format (Avro JSON, BigQuery DDL, or Protobuf).",
+        "Specify the format explicitly or ensure the content matches a known schema format (Avro JSON, BigQuery DDL, Protobuf, or TypeSpec).",
     });
   }
 

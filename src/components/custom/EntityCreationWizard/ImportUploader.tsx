@@ -72,7 +72,7 @@ export function ImportUploader({
           Import Schema
         </h3>
         <p className="text-body-small text-muted-foreground mb-space-4">
-          Upload a schema file or paste schema content. Supported formats: Avro (.avsc), BigQuery DDL (.sql), Protobuf (.proto).
+          Upload a schema file or paste schema content. Supported formats: Avro (.avsc), BigQuery DDL (.sql), Protobuf (.proto), TypeSpec (.tsp).
         </p>
       </div>
 
@@ -94,13 +94,13 @@ export function ImportUploader({
             {isDragging ? "Drop file here" : "Click to browse or drag a file"}
           </p>
           <p className="text-caption text-muted-foreground mt-1">
-            .avsc, .sql, .ddl, .proto
+            .avsc, .sql, .ddl, .proto, .tsp
           </p>
         </div>
         <input
           ref={fileInputRef}
           type="file"
-          accept=".avsc,.avro,.sql,.ddl,.proto"
+          accept=".avsc,.avro,.sql,.ddl,.proto,.tsp"
           onChange={handleFileChange}
           className="hidden"
         />

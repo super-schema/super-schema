@@ -20,6 +20,7 @@ const EXTENSION_MAP: Record<string, ImportFormat> = {
   ".sql": "bigquery-ddl",
   ".ddl": "bigquery-ddl",
   ".proto": "protobuf",
+  ".tsp": "typespec",
 };
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,17 @@ function detectByContent(content: string): ImportFormat | null {
   }
   if (/^\s*message\s+\w+\s*\{/m.test(trimmed)) {
     return "protobuf";
+  }
+
+  // Check for TypeSpec: import "@typespec", model keyword with block, or TypeSpec decorators
+  if (/^\s*import\s+"@typespec/m.test(trimmed)) {
+    return "typespec";
+  }
+  if (/^\s*model\s+\w+\s*\{/m.test(trimmed)) {
+    return "typespec";
+  }
+  if (/(?:@doc|@key|@format|@secret)\s*(?:\(|$)/m.test(trimmed) && /model\s+\w+/m.test(trimmed)) {
+    return "typespec";
   }
 
   return null;
