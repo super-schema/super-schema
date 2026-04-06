@@ -265,7 +265,7 @@ export async function updateEntityRelationshipsAction(
       fn: () =>
         prisma.entity.update({
           where: { id: entityId },
-          data: { metadata: updatedMeta as Prisma.InputJsonValue },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
         }),
     });
 
@@ -614,6 +614,287 @@ export async function deleteFieldAction(fieldId: string) {
     return { success: true };
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to delete field";
+    return { error: message };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Schema version management (stored in entity metadata JSONB)
+// ---------------------------------------------------------------------------
+
+export interface SchemaVersion {
+  version: number;
+  status: "draft" | "published" | "deployed";
+  output: string;
+  generatedAt: string;
+  entityVersion: number;
+  publishedAt?: string;
+  deployedAt?: string;
+}
+
+export type SchemaVersionsMap = Record<string, SchemaVersion[]>;
+
+/**
+ * Get all schema versions per target from entity metadata.
+ */
+export async function getSchemaVersionsAction(entityId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { metadata: true },
+    });
+    if (!entity) return { error: "Entity not found" };
+
+    const meta = (entity.metadata as Record<string, unknown>) ?? {};
+    const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
+    return { success: true, schemaVersions };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to get schema versions";
+    return { error: message };
+  }
+}
+
+/**
+ * Generate a schema for ONE target, store as draft version in entity metadata.
+ */
+export async function generateSchemaAction(entityId: string, target: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    // Run full emission pipeline
+    const { emitEntity } = await import("@/lib/emission/emission.service");
+    const result = await emitEntity(entityId);
+
+    // Find the target output
+    const targetOutput = result.targets[target];
+    if (!targetOutput) {
+      return { error: `No output found for target "${target}"` };
+    }
+
+    // Load entity to get current metadata and version
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { metadata: true, version: true },
+    });
+    if (!entity) return { error: "Entity not found" };
+
+    const meta = (entity.metadata as Record<string, unknown>) ?? {};
+    const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
+    const targetVersions = schemaVersions[target] ?? [];
+
+    // Calculate next version number
+    const maxVersion = targetVersions.reduce(
+      (max, v) => Math.max(max, v.version),
+      0
+    );
+
+    const newVersion: SchemaVersion = {
+      version: maxVersion + 1,
+      status: "draft",
+      output: targetOutput.output,
+      generatedAt: new Date().toISOString(),
+      entityVersion: entity.version,
+    };
+
+    // Prepend new version (newest first)
+    const updatedVersions = [newVersion, ...targetVersions];
+    const updatedMeta = {
+      ...meta,
+      schemaVersions: { ...schemaVersions, [target]: updatedVersions },
+    };
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: session.user.id,
+      beforeState: { metadata: meta } as unknown as object,
+      fn: () =>
+        prisma.entity.update({
+          where: { id: entityId },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+        }),
+    });
+
+    revalidatePath("/schemas");
+    return {
+      success: true,
+      schemaVersion: newVersion,
+      validationStatus: targetOutput.validationStatus,
+      warnings: targetOutput.warnings,
+      errors: targetOutput.errors,
+    };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to generate schema";
+    return { error: message };
+  }
+}
+
+/**
+ * Publish a schema version (draft -> published).
+ */
+export async function publishSchemaAction(
+  entityId: string,
+  target: string,
+  version: number
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { metadata: true },
+    });
+    if (!entity) return { error: "Entity not found" };
+
+    const meta = (entity.metadata as Record<string, unknown>) ?? {};
+    const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
+    const targetVersions = schemaVersions[target];
+    if (!targetVersions) return { error: `No versions found for target "${target}"` };
+
+    const idx = targetVersions.findIndex((v) => v.version === version);
+    if (idx === -1) return { error: `Version ${version} not found` };
+    if (targetVersions[idx].status !== "draft") {
+      return { error: `Version ${version} is not a draft (current: ${targetVersions[idx].status})` };
+    }
+
+    const updated = [...targetVersions];
+    updated[idx] = {
+      ...updated[idx],
+      status: "published",
+      publishedAt: new Date().toISOString(),
+    };
+
+    const updatedMeta = {
+      ...meta,
+      schemaVersions: { ...schemaVersions, [target]: updated },
+    };
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: session.user.id,
+      beforeState: { metadata: meta } as unknown as object,
+      fn: () =>
+        prisma.entity.update({
+          where: { id: entityId },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+        }),
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to publish schema";
+    return { error: message };
+  }
+}
+
+/**
+ * Deploy a schema version (published -> deployed).
+ */
+export async function deploySchemaAction(
+  entityId: string,
+  target: string,
+  version: number
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { metadata: true },
+    });
+    if (!entity) return { error: "Entity not found" };
+
+    const meta = (entity.metadata as Record<string, unknown>) ?? {};
+    const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
+    const targetVersions = schemaVersions[target];
+    if (!targetVersions) return { error: `No versions found for target "${target}"` };
+
+    const idx = targetVersions.findIndex((v) => v.version === version);
+    if (idx === -1) return { error: `Version ${version} not found` };
+    if (targetVersions[idx].status !== "published") {
+      return { error: `Version ${version} is not published (current: ${targetVersions[idx].status})` };
+    }
+
+    const updated = [...targetVersions];
+    updated[idx] = {
+      ...updated[idx],
+      status: "deployed",
+      deployedAt: new Date().toISOString(),
+    };
+
+    const updatedMeta = {
+      ...meta,
+      schemaVersions: { ...schemaVersions, [target]: updated },
+    };
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: session.user.id,
+      beforeState: { metadata: meta } as unknown as object,
+      fn: () =>
+        prisma.entity.update({
+          where: { id: entityId },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+        }),
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to deploy schema";
+    return { error: message };
+  }
+}
+
+/**
+ * Update entity metadata (generic helper for schema version updates).
+ */
+export async function updateEntityMetadataAction(
+  entityId: string,
+  metadata: Record<string, unknown>
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { metadata: true },
+    });
+    if (!entity) return { error: "Entity not found" };
+
+    const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
+    const updatedMeta = { ...existingMeta, ...metadata };
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: session.user.id,
+      beforeState: { metadata: existingMeta } as unknown as object,
+      fn: () =>
+        prisma.entity.update({
+          where: { id: entityId },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+        }),
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to update metadata";
     return { error: message };
   }
 }

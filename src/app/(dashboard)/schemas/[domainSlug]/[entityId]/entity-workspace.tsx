@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback } from "react";
-import { Loader2, Zap, Save } from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
@@ -18,6 +18,7 @@ import {
   compareVersionsAction,
   getChangeHistoryAction,
 } from "./actions";
+import { SchemasTab } from "./components/SchemasTab";
 import { DiffViewer } from "@/components/custom/DiffViewer";
 import type { VersionSnapshot, DiffResult } from "@/services/version-history/version.types";
 import type { OverrideMappingInfo } from "@/components/custom/EmissionPreviewPanel";
@@ -38,7 +39,7 @@ import { EntityToolbar } from "./components/EntityToolbar";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
-type ViewTab = "editor" | "emit" | "versions";
+type ViewTab = "editor" | "schemas" | "versions";
 type RightPanelTab = "quick-edit" | "typespec-preview";
 
 interface FieldData {
@@ -345,15 +346,15 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           Editor
         </button>
         <button
-          onClick={() => { setActiveTab("emit"); }}
+          onClick={() => { setActiveTab("schemas"); }}
           className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "emit"
+            activeTab === "schemas"
               ? "border-foreground text-foreground"
               : "border-transparent text-muted-foreground hover:text-foreground"
           }`}
-          data-testid="tab-emit"
+          data-testid="tab-schemas"
         >
-          Emit
+          Schemas
         </button>
         <button
           onClick={() => { setActiveTab("versions"); handleOpenHistory(); }}
@@ -409,106 +410,20 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           )
         )}
 
-        {activeTab === "emit" && (
-          <div className="space-y-space-6">
-            <h2 className="text-heading-2 text-foreground">Emission Targets</h2>
-
-            {/* Emitter toggles and generate */}
-            <div className="space-y-space-3">
-              {["BigQuery", "Avro", "OpenAPI"].map((target) => (
-                <div
-                  key={target}
-                  className="flex items-center justify-between rounded-lg border border-border/50 px-space-4 py-space-3"
-                >
-                  <div className="flex items-center gap-space-3">
-                    <span className="text-body-small font-medium text-foreground">
-                      {target}
-                    </span>
-                    {emissionResult && (
-                      <span className="text-caption text-muted-foreground">
-                        v{entity.version}
-                      </span>
-                    )}
-                  </div>
-                  <label className="flex items-center gap-2 text-caption text-muted-foreground cursor-pointer">
-                    <input
-                      type="checkbox"
-                      defaultChecked
-                      className="accent-primary"
-                    />
-                    Enabled
-                  </label>
-                </div>
-              ))}
-            </div>
-
-            <Button
-              onClick={handleEmit}
-              disabled={isEmitting || !fields.length || readOnly_}
-              className="gap-1.5"
-            >
-              {isEmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4" />
-                  Generate
-                </>
-              )}
-            </Button>
-
-            {/* Emission output */}
-            {emissionResult && (
-              <div className="space-y-space-4">
-                <div className="flex items-center gap-space-3">
-                  <h3 className="text-heading-3 text-foreground">Generated Output</h3>
-                  <span className="text-caption text-muted-foreground">
-                    v{entity.version} &middot; {emissionResult.summary.totalTargets} target{emissionResult.summary.totalTargets !== 1 ? "s" : ""}
-                  </span>
-                  {emissionResult.summary.invalidCount > 0 && (
-                    <span className="text-caption text-destructive">
-                      {emissionResult.summary.invalidCount} invalid
-                    </span>
-                  )}
-                  {emissionResult.summary.warningCount > 0 && (
-                    <span className="text-caption text-warning">
-                      {emissionResult.summary.warningCount} warning{emissionResult.summary.warningCount !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </div>
-
-                {Object.values(emissionResult.targets).map((target) => (
-                  <div
-                    key={target.targetFormat}
-                    className="rounded-lg border border-border/50 overflow-hidden"
-                  >
-                    <div className="flex items-center justify-between px-space-4 py-space-2 bg-muted/30 border-b border-border/50">
-                      <span className="text-body-small font-medium text-foreground">
-                        {target.name}
-                      </span>
-                      <span
-                        className={`text-caption ${
-                          target.validationStatus === "VALID"
-                            ? "text-success"
-                            : target.validationStatus === "WARNING"
-                              ? "text-warning"
-                              : "text-destructive"
-                        }`}
-                      >
-                        {target.validationStatus}
-                      </span>
-                    </div>
-                    <pre className="p-space-4 text-caption font-mono text-foreground overflow-x-auto bg-background max-h-80 overflow-y-auto">
-                      <code>{target.output}</code>
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {activeTab === "schemas" && (
+          <SchemasTab
+            entityId={entity.id}
+            entityName={entity.name}
+            fields={fields}
+            entity={{
+              id: entity.id,
+              name: entity.name,
+              slug: entity.slug,
+              domainSlug: entity.domainSlug,
+              version: entity.version,
+              metadata: entity.metadata,
+            }}
+          />
         )}
 
         {activeTab === "versions" && (
