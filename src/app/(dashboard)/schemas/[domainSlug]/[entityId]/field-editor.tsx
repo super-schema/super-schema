@@ -1,12 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, ExternalLink, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { AutocompleteInput } from "@/components/custom/AutocompleteInput";
+import { TypePicker } from "@/components/custom/TypePicker";
 import {
   getEntityCompleteness,
 } from "@/lib/validation/field-completeness";
-import type { DomainField } from "@/lib/autocomplete/field-name-autocomplete";
+import {
+  getFieldNameSuggestions,
+  type AutocompleteSuggestion,
+  type DomainField,
+} from "@/lib/autocomplete/field-name-autocomplete";
+import { suggestType } from "@/lib/autocomplete/type-suggestion";
 import { FieldCard } from "./components/FieldCard";
 
 interface FieldData {
@@ -59,6 +67,7 @@ export function FieldEditor({
   entitySlug,
   domainSlug,
   fields,
+  domainFields = [],
   domainPolicy,
   isReadOnly = false,
   onAddField,
@@ -69,6 +78,9 @@ export function FieldEditor({
 }: FieldEditorProps) {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [newFieldName, setNewFieldName] = useState("");
+  const [newFieldType, setNewFieldType] = useState("string");
 
   function navigateToFieldStudio(fieldId: string) {
     router.push(`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${fieldId}`);
@@ -78,23 +90,84 @@ export function FieldEditor({
   useEffect(() => {
     function handleSlashCommand() {
       if (!isReadOnly) {
-        handleAddField();
+        setShowCreateDialog(true);
       }
     }
     document.addEventListener("super-schema:slash-command", handleSlashCommand);
     return () =>
       document.removeEventListener("super-schema:slash-command", handleSlashCommand);
-  }, [isReadOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isReadOnly]);
 
-  async function handleAddField() {
-    if (isCreating) return;
+  // Close dialog on Escape
+  useEffect(() => {
+    if (!showCreateDialog) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setShowCreateDialog(false);
+        setNewFieldName("");
+        setNewFieldType("string");
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [showCreateDialog]);
+
+  // Autocomplete callback
+  const getNameSuggestions = useCallback(
+    (query: string) =>
+      getFieldNameSuggestions(query, {
+        existingFieldNames: fields.map((f) => f.name),
+        domainFields,
+        maxResults: 8,
+      }),
+    [fields, domainFields]
+  );
+
+  function handleNameChange(name: string) {
+    setNewFieldName(name);
+    // Auto-suggest type based on field name
+    const ts = suggestType(name);
+    if (ts && newFieldType === "string") {
+      setNewFieldType(ts.type);
+    }
+  }
+
+  function handleNameSelect(suggestion: AutocompleteSuggestion) {
+    setNewFieldName(suggestion.value);
+    if (suggestion.suggestedType) {
+      setNewFieldType(suggestion.suggestedType);
+    }
+  }
+
+  function resetDialog() {
+    setShowCreateDialog(false);
+    setNewFieldName("");
+    setNewFieldType("string");
+  }
+
+  async function handleCreateAndOpenStudio() {
+    if (!newFieldName.trim() || isCreating) return;
     setIsCreating(true);
     try {
-      const result = await onAddField("new_field", "string");
+      const result = await onAddField(newFieldName.trim(), newFieldType);
       const fieldId = (result as { field?: { id: string } } | undefined)?.field?.id;
+      resetDialog();
       if (fieldId) {
         navigateToFieldStudio(fieldId);
       }
+    } catch {
+      // Allow UI to recover on error
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function handleQuickCreate() {
+    if (!newFieldName.trim() || isCreating) return;
+    setIsCreating(true);
+    try {
+      await onAddField(newFieldName.trim(), newFieldType);
+      resetDialog();
     } catch {
       // Allow UI to recover on error
     } finally {
@@ -143,24 +216,94 @@ export function FieldEditor({
         ))}
       </div>
 
-      {/* Add field button -- creates field with defaults and navigates to Field Studio */}
-      {!isReadOnly && (
+      {/* Inline quick-create dialog */}
+      {!isReadOnly && showCreateDialog && (
+        <div className="mt-space-3 surface-glass rounded-xl border border-primary/20 p-space-4 space-y-space-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-body-small text-foreground font-medium">
+              New Field
+            </h4>
+            <button
+              onClick={resetDialog}
+              className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Name + Type row */}
+          <div className="flex items-end gap-space-3">
+            <div className="flex-1 min-w-0">
+              <label className="text-caption text-muted-foreground mb-1 block">
+                Name
+              </label>
+              <AutocompleteInput
+                value={newFieldName}
+                onChange={handleNameChange}
+                onSelect={handleNameSelect}
+                getSuggestions={getNameSuggestions}
+                placeholder="field_name"
+                className="h-8 font-mono text-body-small"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newFieldName.trim()) {
+                    handleCreateAndOpenStudio();
+                  }
+                }}
+              />
+            </div>
+            <div className="w-[140px] shrink-0">
+              <label className="text-caption text-muted-foreground mb-1 block">
+                Type
+              </label>
+              <TypePicker
+                value={newFieldType}
+                onChange={(t) => setNewFieldType(t)}
+              />
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-space-2">
+            <Button
+              size="sm"
+              onClick={handleCreateAndOpenStudio}
+              disabled={!newFieldName.trim() || isCreating}
+              className="gap-1.5"
+            >
+              {isCreating ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <ExternalLink className="w-3.5 h-3.5" />
+              )}
+              Create &amp; Open Studio
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleQuickCreate}
+              disabled={!newFieldName.trim() || isCreating}
+              className="gap-1.5"
+            >
+              {isCreating ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Plus className="w-3.5 h-3.5" />
+              )}
+              Quick Create
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Add field button -- opens the inline create dialog */}
+      {!isReadOnly && !showCreateDialog && (
         <button
-          onClick={handleAddField}
-          disabled={isCreating}
-          className="mt-space-3 w-full flex items-center justify-center gap-2 py-space-3 rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-body-small disabled:opacity-50"
+          onClick={() => setShowCreateDialog(true)}
+          className="mt-space-3 w-full flex items-center justify-center gap-2 py-space-3 rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-body-small"
         >
-          {isCreating ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Creating field...
-            </>
-          ) : (
-            <>
-              <Plus className="w-4 h-4" />
-              Add Field
-            </>
-          )}
+          <Plus className="w-4 h-4" />
+          Add Field
         </button>
       )}
     </div>

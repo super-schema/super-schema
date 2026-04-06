@@ -116,9 +116,14 @@ export function FieldCard({
     >
       {/* Main row */}
       <div className="flex items-center gap-space-2 px-space-3 py-space-2">
-        {/* Index */}
-        <span className="text-[10px] text-muted-foreground/40 font-mono w-4 text-right shrink-0 select-none">
+        {/* Index (display-only row number) */}
+        <span className="text-[10px] text-muted-foreground/40 font-mono w-4 text-right shrink-0 select-none" aria-label={`Row ${index + 1}`}>
           {index + 1}
+          {field.fieldNumber != null && field.fieldNumber !== index + 1 && (
+            <span className="block text-[9px] text-muted-foreground/30" title={`Field number: ${field.fieldNumber}`}>
+              (#{field.fieldNumber})
+            </span>
+          )}
         </span>
 
         {/* Validation */}

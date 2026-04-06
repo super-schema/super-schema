@@ -3,7 +3,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Loader2, Check, AlertCircle } from "lucide-react";
+import { ChevronRight, Loader2, Check, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -151,6 +152,18 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
     doSave();
   }, [doSave]);
 
+  // "Done — Back to Entity" handler: flush pending save, then navigate back
+  const handleDone = useCallback(async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (pendingRef.current || savingRef.current) {
+      await doSave();
+    }
+    router.push(`/schemas/${entity.domainSlug}/${entity.slug}`);
+  }, [doSave, router, entity.domainSlug, entity.slug]);
+
   // Cmd+S / Ctrl+S immediate save
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -252,30 +265,36 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
 
   return (
     <div className="animate-auth-fade-up">
-      {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
-        <Link href="/schemas" className="hover:text-foreground transition-colors">
-          Domains
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <Link
-          href={`/schemas/${entity.domainSlug}`}
-          className="hover:text-foreground transition-colors"
-        >
-          {domain.name}
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <Link
-          href={`/schemas/${entity.domainSlug}/${entity.slug}`}
-          className="hover:text-foreground transition-colors"
-        >
-          {entity.name}
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <span className="text-foreground font-medium font-mono">
-          {fieldName}
-        </span>
-      </nav>
+      {/* Breadcrumb + Done button */}
+      <div className="flex items-center justify-between mb-space-4">
+        <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground">
+          <Link href="/schemas" className="hover:text-foreground transition-colors">
+            Domains
+          </Link>
+          <ChevronRight className="w-3 h-3" />
+          <Link
+            href={`/schemas/${entity.domainSlug}`}
+            className="hover:text-foreground transition-colors"
+          >
+            {domain.name}
+          </Link>
+          <ChevronRight className="w-3 h-3" />
+          <Link
+            href={`/schemas/${entity.domainSlug}/${entity.slug}`}
+            className="hover:text-foreground transition-colors"
+          >
+            {entity.name}
+          </Link>
+          <ChevronRight className="w-3 h-3" />
+          <span className="text-foreground font-medium font-mono">
+            {fieldName}
+          </span>
+        </nav>
+        <Button onClick={handleDone} className="gap-1.5">
+          <CheckCircle2 className="w-4 h-4" />
+          Done &mdash; Back to Entity
+        </Button>
+      </div>
 
       {/* Field header */}
       <div className="flex items-center justify-between mb-space-6">
