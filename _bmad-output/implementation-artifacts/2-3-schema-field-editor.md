@@ -281,7 +281,13 @@ Claude Opus 4.6 (1M context) — partial implementation across multiple sessions
 - Field cards show: index number, validation ring (green/amber/red), drag handle, field name, type badge, classification badge, decorator summary badges
 - No DataTable/Airtable-style grid — uses a card-based list layout in `field-editor.tsx`
 - Field numbers are auto-assigned (max + 1), editable later in Field Studio Serialization panel for Protobuf compatibility
-- TypePicker shows full hierarchical type system with 50+ types across 7 categories (Number, String, Boolean, Bytes, Date & Time, Structured, Special) with subtypes and examples
+- TypePicker shows full hierarchical type system following typespec.io/docs/language-basics/built-in-types/ hierarchy:
+  - Number: numeric (supertype) → integer → int8/16/32/64, safeint, uint8/16/32/64 | float → float32/64 | decimal → decimal128
+  - String: string → url
+  - Boolean, Bytes, Date & Time (plainDate, plainTime, utcDateTime, offsetDateTime, duration, unixTimestamp32)
+  - Structured: enum, array, map, object | Special: reference
+  - Each type shows: label, description, value range/example (e.g., int32: "-2 147 483 648 … 2 147 483 647")
+  - UI displays generalized → specialized with indentation under parent types
 - Delete field with confirmation dialog implemented
 - Entity header with editable name/description implemented in `entity-workspace.tsx`
 - ClassificationPicker dropdown with PII/SENSITIVE/INTERNAL/PUBLIC badges implemented

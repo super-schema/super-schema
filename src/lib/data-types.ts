@@ -11,50 +11,56 @@ export interface DataType {
 }
 
 export const DATA_TYPE_HIERARCHY: DataType[] = [
-  // Number category
-  { id: "numeric", label: "Number", typespecScalar: "numeric", category: "Number", description: "Any numeric value", example: "42" },
-  { id: "integer", label: "Integer", typespecScalar: "integer", category: "Number", parent: "numeric", description: "Whole number (arbitrary precision)", example: "100" },
-  { id: "int8", label: "int8", typespecScalar: "int8", category: "Number", parent: "integer", description: "8-bit signed integer (-128 to 127)", example: "-128 to 127" },
-  { id: "int16", label: "int16", typespecScalar: "int16", category: "Number", parent: "integer", description: "16-bit signed integer (-32768 to 32767)", example: "-32768 to 32767" },
-  { id: "int32", label: "int32", typespecScalar: "int32", category: "Number", parent: "integer", description: "32-bit signed integer", example: "-2B to 2B" },
-  { id: "int64", label: "int64", typespecScalar: "int64", category: "Number", parent: "integer", description: "64-bit signed integer", example: "large integers" },
-  { id: "safeint", label: "safeint", typespecScalar: "safeint", category: "Number", parent: "integer", description: "Safe integer (JS Number.MAX_SAFE_INTEGER)", example: "JS safe" },
-  { id: "uint8", label: "uint8", typespecScalar: "uint8", category: "Number", parent: "integer", description: "8-bit unsigned integer (0 to 255)", example: "0-255" },
-  { id: "uint16", label: "uint16", typespecScalar: "uint16", category: "Number", parent: "integer", description: "16-bit unsigned integer (0 to 65535)", example: "0-65535" },
-  { id: "uint32", label: "uint32", typespecScalar: "uint32", category: "Number", parent: "integer", description: "32-bit unsigned integer", example: "0-4B" },
-  { id: "uint64", label: "uint64", typespecScalar: "uint64", category: "Number", parent: "integer", description: "64-bit unsigned integer", example: "large unsigned" },
-  { id: "float", label: "Float", typespecScalar: "float", category: "Number", parent: "numeric", description: "Floating-point number", example: "3.14" },
-  { id: "float32", label: "float32", typespecScalar: "float32", category: "Number", parent: "float", description: "32-bit IEEE 754 floating-point", example: "3.14" },
-  { id: "float64", label: "float64", typespecScalar: "float64", category: "Number", parent: "float", description: "64-bit IEEE 754 floating-point", example: "precise decimals" },
-  { id: "decimal", label: "Decimal", typespecScalar: "decimal", category: "Number", parent: "numeric", description: "Exact decimal number", example: "19.99", requiresPrecision: true, requiresScale: true },
-  { id: "decimal128", label: "decimal128", typespecScalar: "decimal128", category: "Number", parent: "decimal", description: "128-bit decimal floating-point", example: "high precision", requiresPrecision: true, requiresScale: true },
+  // ── Number ── generalized → specialized
+  // Hierarchy: numeric → integer → int8/16/32/64, safeint, uint8/16/32/64
+  //            numeric → float   → float32, float64
+  //            numeric → decimal  → decimal128
+  { id: "numeric", label: "numeric", typespecScalar: "numeric", category: "Number", description: "Any numeric value (supertype for all numbers)", example: "42, 3.14, 99999" },
 
-  // String category
-  { id: "string", label: "String", typespecScalar: "string", category: "String", description: "Unicode text value", example: '"Hello World"' },
-  { id: "url", label: "url", typespecScalar: "url", category: "String", parent: "string", description: "URL string", example: '"https://example.com"' },
+  { id: "integer", label: "integer", typespecScalar: "integer", category: "Number", parent: "numeric", description: "Whole number, arbitrary precision", example: "0, 42, -100" },
+  { id: "int8", label: "int8", typespecScalar: "int8", category: "Number", parent: "integer", description: "8-bit signed integer", example: "-128 … 127" },
+  { id: "int16", label: "int16", typespecScalar: "int16", category: "Number", parent: "integer", description: "16-bit signed integer", example: "-32 768 … 32 767" },
+  { id: "int32", label: "int32", typespecScalar: "int32", category: "Number", parent: "integer", description: "32-bit signed integer (most common)", example: "-2 147 483 648 … 2 147 483 647" },
+  { id: "int64", label: "int64", typespecScalar: "int64", category: "Number", parent: "integer", description: "64-bit signed integer", example: "±9.2 × 10¹⁸" },
+  { id: "safeint", label: "safeint", typespecScalar: "safeint", category: "Number", parent: "integer", description: "JavaScript-safe integer", example: "±9 007 199 254 740 991" },
+  { id: "uint8", label: "uint8", typespecScalar: "uint8", category: "Number", parent: "integer", description: "8-bit unsigned integer", example: "0 … 255" },
+  { id: "uint16", label: "uint16", typespecScalar: "uint16", category: "Number", parent: "integer", description: "16-bit unsigned integer", example: "0 … 65 535" },
+  { id: "uint32", label: "uint32", typespecScalar: "uint32", category: "Number", parent: "integer", description: "32-bit unsigned integer", example: "0 … 4 294 967 295" },
+  { id: "uint64", label: "uint64", typespecScalar: "uint64", category: "Number", parent: "integer", description: "64-bit unsigned integer", example: "0 … 1.8 × 10¹⁹" },
 
-  // Boolean category
-  { id: "boolean", label: "Boolean", typespecScalar: "boolean", category: "Boolean", description: "True or false value", example: "true / false" },
+  { id: "float", label: "float", typespecScalar: "float", category: "Number", parent: "numeric", description: "IEEE 754 floating-point (supertype)", example: "3.14, -0.001" },
+  { id: "float32", label: "float32", typespecScalar: "float32", category: "Number", parent: "float", description: "32-bit single-precision (~7 digits)", example: "3.14159" },
+  { id: "float64", label: "float64", typespecScalar: "float64", category: "Number", parent: "float", description: "64-bit double-precision (~15 digits)", example: "3.141592653589793" },
 
-  // Bytes category
-  { id: "bytes", label: "Bytes", typespecScalar: "bytes", category: "Bytes", description: "Binary data", example: "binary data" },
+  { id: "decimal", label: "decimal", typespecScalar: "decimal", category: "Number", parent: "numeric", description: "Exact decimal — no rounding (money, finance)", example: "19.99, 1234567.89", requiresPrecision: true, requiresScale: true },
+  { id: "decimal128", label: "decimal128", typespecScalar: "decimal128", category: "Number", parent: "decimal", description: "128-bit decimal (34 significant digits)", example: "99999999999.99999999", requiresPrecision: true, requiresScale: true },
 
-  // Date & Time category
-  { id: "plainDate", label: "plainDate", typespecScalar: "plainDate", category: "Date & Time", description: "Date without time or timezone (YYYY-MM-DD)", example: "2024-05-06" },
-  { id: "plainTime", label: "plainTime", typespecScalar: "plainTime", category: "Date & Time", description: "Time without date or timezone (HH:mm:ss)", example: "12:34:00" },
-  { id: "utcDateTime", label: "utcDateTime", typespecScalar: "utcDateTime", category: "Date & Time", description: "Date and time in UTC", example: "2024-05-06T12:20:00Z" },
-  { id: "offsetDateTime", label: "offsetDateTime", typespecScalar: "offsetDateTime", category: "Date & Time", description: "Date and time with UTC offset", example: "2024-05-06T12:20:00-07:00" },
-  { id: "duration", label: "duration", typespecScalar: "duration", category: "Date & Time", description: "ISO 8601 duration", example: "P1Y1D" },
-  { id: "unixTimestamp32", label: "unixTimestamp32", typespecScalar: "unixTimestamp32", category: "Date & Time", description: "32-bit Unix timestamp (seconds since epoch)", example: "1714992000" },
+  // ── String ──
+  { id: "string", label: "string", typespecScalar: "string", category: "String", description: "Unicode text of any length", example: '"Hello World"' },
+  { id: "url", label: "url", typespecScalar: "url", category: "String", parent: "string", description: "Validated URL (RFC 3986)", example: '"https://example.com/path"' },
 
-  // Structured category
-  { id: "enum", label: "enum", typespecScalar: "enum", category: "Structured", description: "Enumeration of named values", example: "A | B | C" },
-  { id: "array", label: "array", typespecScalar: "array", category: "Structured", description: "Ordered list of elements", example: "[1, 2, 3]" },
-  { id: "map", label: "map", typespecScalar: "Record", category: "Structured", description: "Key-value mapping", example: '{"k": "v"}' },
-  { id: "object", label: "object", typespecScalar: "model", category: "Structured", description: "Structured object with named properties", example: "{ ... }" },
+  // ── Boolean ──
+  { id: "boolean", label: "boolean", typespecScalar: "boolean", category: "Boolean", description: "Logical true or false", example: "true, false" },
 
-  // Special category
-  { id: "reference", label: "reference", typespecScalar: "reference", category: "Special", description: "Reference to another entity", example: "ref(Entity)" },
+  // ── Bytes ──
+  { id: "bytes", label: "bytes", typespecScalar: "bytes", category: "Bytes", description: "Raw binary data (files, images, blobs)", example: "0x48656C6C6F" },
+
+  // ── Date & Time ──
+  { id: "plainDate", label: "plainDate", typespecScalar: "plainDate", category: "Date & Time", description: "Calendar date without time or timezone", example: "2024-05-06" },
+  { id: "plainTime", label: "plainTime", typespecScalar: "plainTime", category: "Date & Time", description: "Clock time without date or timezone", example: "12:34:00" },
+  { id: "utcDateTime", label: "utcDateTime", typespecScalar: "utcDateTime", category: "Date & Time", description: "Date and time in UTC (most common)", example: "2024-05-06T12:20:00Z" },
+  { id: "offsetDateTime", label: "offsetDateTime", typespecScalar: "offsetDateTime", category: "Date & Time", description: "Date and time with timezone offset", example: "2024-05-06T12:20:00-07:00" },
+  { id: "duration", label: "duration", typespecScalar: "duration", category: "Date & Time", description: "Time span in ISO 8601 format", example: "P1Y2M3DT4H5M" },
+  { id: "unixTimestamp32", label: "unixTimestamp32", typespecScalar: "unixTimestamp32", category: "Date & Time", description: "Seconds since Unix epoch (1970-01-01)", example: "1714992000" },
+
+  // ── Structured ──
+  { id: "enum", label: "enum", typespecScalar: "enum", category: "Structured", description: "Fixed set of named values", example: "ACTIVE | INACTIVE | PENDING" },
+  { id: "array", label: "array", typespecScalar: "array", category: "Structured", description: "Ordered list of items of one type", example: '["a", "b", "c"]' },
+  { id: "map", label: "map", typespecScalar: "Record", category: "Structured", description: "Key-value pairs (dictionary)", example: '{"key": "value"}' },
+  { id: "object", label: "object", typespecScalar: "model", category: "Structured", description: "Nested model with named properties", example: "{ name: string, age: int32 }" },
+
+  // ── Special ──
+  { id: "reference", label: "reference", typespecScalar: "reference", category: "Special", description: "Foreign key reference to another entity", example: "→ Customer, → Order" },
 ];
 
 export const ALL_DATA_TYPES = DATA_TYPE_HIERARCHY.map((t) => t.id);
