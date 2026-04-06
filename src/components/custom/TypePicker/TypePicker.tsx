@@ -130,7 +130,7 @@ export function TypePicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className={`p-0 ${view === "complex" ? "w-80" : "w-[340px]"}`}
+        className={`p-0 ${view === "complex" ? "w-80" : "w-[420px]"}`}
       >
         {view === "complex" && complexType ? (
           <ComplexTypePrompt
@@ -147,7 +147,7 @@ export function TypePicker({
               onValueChange={setSearchQuery}
             />
             {view === "grid" && !searchQuery.trim() ? (
-              <div className="max-h-[360px] overflow-y-auto">
+              <div className="max-h-[480px] overflow-y-auto">
                 <TypeGrid
                   value={value}
                   onSelect={handleSelect}
