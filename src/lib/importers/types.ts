@@ -53,6 +53,23 @@ export interface ParsedField {
   deprecatedMessage?: string;
   /** Validation constraints (minLength, maxLength, etc.) */
   constraints?: ParsedFieldConstraint[];
+  /** Summary text (@summary decorator) */
+  summary?: string;
+  /** Visibility phases (Lifecycle.Read, Lifecycle.Create, etc.) */
+  visibility?: string[];
+  /** Wire format encoding (@encode) */
+  encode?: string;
+  /** Wire format encoding sub-type (@encode second arg) */
+  encodeSubType?: string;
+  /** Exclusive min/max bounds */
+  minValueExclusive?: number;
+  maxValueExclusive?: number;
+  /** Extension key-value pairs (@extension) */
+  extensions?: Record<string, string>;
+  /** Whether @secret was applied */
+  secret?: boolean;
+  /** Discriminator field name */
+  discriminator?: string;
 }
 
 // ---------------------------------------------------------------------------

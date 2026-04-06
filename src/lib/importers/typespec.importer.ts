@@ -136,6 +136,16 @@ function mapField(tsField: ParsedTypeSpecField): ParsedField {
     constraints: constraints.length > 0 ? constraints : undefined,
     deprecated: tsField.decorators.deprecated !== undefined ? true : undefined,
     deprecatedMessage: tsField.decorators.deprecated,
+    // Decorators previously dropped — now preserved
+    summary: tsField.decorators.summary,
+    visibility: tsField.decorators.visibility,
+    encode: tsField.decorators.encode,
+    encodeSubType: tsField.decorators.encodeSubType,
+    minValueExclusive: tsField.decorators.minValueExclusive,
+    maxValueExclusive: tsField.decorators.maxValueExclusive,
+    extensions: tsField.decorators.extensions,
+    secret: tsField.decorators.secret || undefined,
+    discriminator: tsField.decorators.discriminator,
   };
 
   return field;

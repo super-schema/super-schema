@@ -13,9 +13,9 @@ export type { LogicalType, MappingPolicy };
 // Supported target formats
 // ---------------------------------------------------------------------------
 
-export type TargetFormat = "bigquery" | "avro" | "openapi";
+export type TargetFormat = "bigquery" | "avro" | "openapi" | "spanner";
 
-export const TARGET_FORMATS: TargetFormat[] = ["bigquery", "avro", "openapi"];
+export const TARGET_FORMATS: TargetFormat[] = ["bigquery", "avro", "openapi", "spanner"];
 
 // ---------------------------------------------------------------------------
 // Mapping result — returned by resolveMapping()
@@ -51,6 +51,10 @@ export const VALID_TARGET_TYPES: Record<string, string[]> = {
     "string/date-time", "string/duration", "string+enum",
     "number/float", "number/double", "integer/int32", "integer/int64",
     "object/additionalProperties", "$ref",
+  ],
+  spanner: [
+    "STRING", "BYTES", "INT64", "FLOAT64", "NUMERIC", "BOOL",
+    "DATE", "TIMESTAMP", "ARRAY", "JSON",
   ],
 };
 

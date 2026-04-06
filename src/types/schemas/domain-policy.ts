@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RetentionPolicySchema } from "./retention-policy.schema";
 
 export const QualityRuleTemplateSchema = z.object({
   type: z.string(),
@@ -11,6 +12,7 @@ export const PolicyTemplateSchema = z
       .enum(["PII", "SENSITIVE", "INTERNAL", "PUBLIC"])
       .optional(),
     retention: z.string().optional(),
+    retentionPolicy: RetentionPolicySchema.optional(),
     qualityRules: z.array(QualityRuleTemplateSchema).optional(),
     namingConventions: z.string().optional(),
   })

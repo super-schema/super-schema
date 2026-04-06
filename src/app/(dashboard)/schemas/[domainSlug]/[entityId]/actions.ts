@@ -1121,3 +1121,24 @@ export async function updateEntityMetadataAction(
     return { error: message };
   }
 }
+
+export async function updateEntityDescriptionAction(
+  entityId: string,
+  description: string
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    await prisma.entity.update({
+      where: { id: entityId },
+      data: { description },
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to update description";
+    return { error: message };
+  }
+}

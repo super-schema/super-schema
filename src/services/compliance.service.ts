@@ -195,8 +195,29 @@ function matchRetention(
   }
 }
 
-export function parseRetentionToYears(retention: string): number | null {
-  const lower = retention.toLowerCase().trim();
+export function parseRetentionToYears(retention: string | Record<string, unknown>): number | null {
+  // Handle structured RetentionPolicy object
+  if (typeof retention === "object" && retention !== null) {
+    const policy = retention as { strategy?: string; period?: number; periodUnit?: string };
+    if (policy.strategy === "indefinite") return null;
+    if (!policy.period || !policy.periodUnit) return null;
+    switch (policy.periodUnit) {
+      case "years": return policy.period;
+      case "months": return policy.period / 12;
+      case "days": return policy.period / 365;
+      default: return null;
+    }
+  }
+
+  // Handle legacy string format
+  const lower = (retention as string).toLowerCase().trim();
+  // Handle compact format: "30d", "90d", "1y"
+  const compactMatch = lower.match(/^(\d+)(d|y)$/);
+  if (compactMatch) {
+    const num = parseInt(compactMatch[1], 10);
+    return compactMatch[2] === "y" ? num : num / 365;
+  }
+  // Handle verbose format: "1 year", "90 days"
   const match = lower.match(/^(\d+)\s*(year|yr|month|mo|day|d)s?$/);
   if (!match) return null;
   const num = parseInt(match[1], 10);

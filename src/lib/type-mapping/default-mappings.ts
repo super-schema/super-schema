@@ -124,6 +124,44 @@ const OPENAPI_MAPPINGS: DefaultMappingEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Spanner default mappings
+// ---------------------------------------------------------------------------
+
+const SPANNER_MAPPINGS: DefaultMappingEntry[] = [
+  { sourceType: "string", targetFormat: "spanner", mappedType: "STRING(MAX)", isLossy: false },
+  { sourceType: "url", targetFormat: "spanner", mappedType: "STRING(MAX)", isLossy: false },
+  { sourceType: "integer", targetFormat: "spanner", mappedType: "INT64", isLossy: false },
+  { sourceType: "int8", targetFormat: "spanner", mappedType: "INT64", isLossy: true, lossDescription: "int8 widened to INT64 — Spanner only supports 64-bit integers" },
+  { sourceType: "int16", targetFormat: "spanner", mappedType: "INT64", isLossy: true, lossDescription: "int16 widened to INT64 — Spanner only supports 64-bit integers" },
+  { sourceType: "int32", targetFormat: "spanner", mappedType: "INT64", isLossy: true, lossDescription: "int32 widened to INT64 — Spanner only supports 64-bit integers" },
+  { sourceType: "int64", targetFormat: "spanner", mappedType: "INT64", isLossy: false },
+  { sourceType: "safeint", targetFormat: "spanner", mappedType: "INT64", isLossy: false },
+  { sourceType: "uint8", targetFormat: "spanner", mappedType: "INT64", isLossy: false },
+  { sourceType: "uint16", targetFormat: "spanner", mappedType: "INT64", isLossy: false },
+  { sourceType: "uint32", targetFormat: "spanner", mappedType: "INT64", isLossy: false },
+  { sourceType: "uint64", targetFormat: "spanner", mappedType: "INT64", isLossy: true, lossDescription: "uint64 values above 2^63-1 cannot be represented in signed INT64" },
+  { sourceType: "numeric", targetFormat: "spanner", mappedType: "NUMERIC", isLossy: false },
+  { sourceType: "float", targetFormat: "spanner", mappedType: "FLOAT64", isLossy: false },
+  { sourceType: "float32", targetFormat: "spanner", mappedType: "FLOAT64", isLossy: true, lossDescription: "float32 widened to FLOAT64 — Spanner only supports 64-bit floats" },
+  { sourceType: "float64", targetFormat: "spanner", mappedType: "FLOAT64", isLossy: false },
+  { sourceType: "decimal", targetFormat: "spanner", mappedType: "NUMERIC", isLossy: true, lossDescription: "Spanner NUMERIC has fixed precision 38,9 — custom precision/scale not supported" },
+  { sourceType: "decimal128", targetFormat: "spanner", mappedType: "NUMERIC", isLossy: true, lossDescription: "decimal128 reduced to NUMERIC (38,9) — values beyond 38 digits will be truncated" },
+  { sourceType: "boolean", targetFormat: "spanner", mappedType: "BOOL", isLossy: false },
+  { sourceType: "bytes", targetFormat: "spanner", mappedType: "BYTES(MAX)", isLossy: false },
+  { sourceType: "plainDate", targetFormat: "spanner", mappedType: "DATE", isLossy: false },
+  { sourceType: "plainTime", targetFormat: "spanner", mappedType: "STRING(MAX)", isLossy: true, lossDescription: "No native TIME type in Spanner — stored as ISO 8601 string" },
+  { sourceType: "utcDateTime", targetFormat: "spanner", mappedType: "TIMESTAMP", isLossy: false },
+  { sourceType: "offsetDateTime", targetFormat: "spanner", mappedType: "TIMESTAMP", isLossy: true, lossDescription: "UTC offset information is normalized to UTC — original offset value is lost" },
+  { sourceType: "duration", targetFormat: "spanner", mappedType: "STRING(MAX)", isLossy: true, lossDescription: "No native duration type in Spanner — stored as ISO 8601 string" },
+  { sourceType: "unixTimestamp32", targetFormat: "spanner", mappedType: "INT64", isLossy: false },
+  { sourceType: "enum", targetFormat: "spanner", mappedType: "STRING(MAX)", isLossy: false },
+  { sourceType: "array", targetFormat: "spanner", mappedType: "ARRAY", isLossy: false },
+  { sourceType: "map", targetFormat: "spanner", mappedType: "JSON", isLossy: true, lossDescription: "Map stored as JSON — no typed key-value access" },
+  { sourceType: "object", targetFormat: "spanner", mappedType: "JSON", isLossy: true, lossDescription: "Nested object stored as JSON — no typed field access" },
+  { sourceType: "reference", targetFormat: "spanner", mappedType: "STRING(MAX)", isLossy: true, lossDescription: "Reference resolved to foreign key string — relationship semantics lost" },
+];
+
+// ---------------------------------------------------------------------------
 // Combined default mappings
 // ---------------------------------------------------------------------------
 
@@ -131,6 +169,7 @@ export const DEFAULT_MAPPINGS: DefaultMappingEntry[] = [
   ...BIGQUERY_MAPPINGS,
   ...AVRO_MAPPINGS,
   ...OPENAPI_MAPPINGS,
+  ...SPANNER_MAPPINGS,
 ];
 
 // ---------------------------------------------------------------------------

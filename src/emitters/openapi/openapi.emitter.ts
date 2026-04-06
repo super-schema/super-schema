@@ -60,6 +60,14 @@ interface OpenApiSchemaComponent {
   oneOf?: Array<{ $ref?: string; type?: string }>;
   discriminator?: { propertyName: string };
   enum?: string[];
+  "x-retention"?: {
+    strategy: string;
+    period?: number;
+    periodUnit?: string;
+    referenceField?: string;
+    condition?: string;
+    action: string;
+  };
 }
 
 interface OpenApiPathOperation {
@@ -415,6 +423,20 @@ export const openApiEmitter: Emitter = {
         schemaComponent.required = requiredFields;
       }
       schemas[entityName] = schemaComponent;
+    }
+
+    // Add x-retention extension if retention policy exists
+    const rp = model.entity.metadata?.retentionPolicy;
+    if (rp && schemas[entityName]) {
+      const ext: OpenApiSchemaComponent["x-retention"] = {
+        strategy: rp.strategy,
+        action: rp.action,
+      };
+      if (rp.period) ext.period = rp.period;
+      if (rp.periodUnit) ext.periodUnit = rp.periodUnit;
+      if (rp.referenceField) ext.referenceField = rp.referenceField;
+      if (rp.condition) ext.condition = rp.condition;
+      schemas[entityName]["x-retention"] = ext;
     }
 
     const output: OpenApiOutput = {

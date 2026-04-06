@@ -26,6 +26,7 @@ import type {
   OverrideMappingInfo,
 } from "./EmissionPreviewPanel.types";
 import type { TargetOutput, ValidationStatus } from "@/lib/emission/emission.types";
+import { highlightLine } from "@/lib/syntax-highlight";
 
 // ---------------------------------------------------------------------------
 // Display name mapping
@@ -35,6 +36,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   bigquery: "BigQuery",
   avro: "Avro",
   openapi: "OpenAPI",
+  spanner: "Spanner",
 };
 
 function getDisplayName(name: string): string {
@@ -175,7 +177,7 @@ function CodeViewer({
                   {i + 1}
                 </span>
                 <span className="flex-1 whitespace-pre-wrap break-all">
-                  {line}
+                  {highlightLine(line, language)}
                   {isOverridden && lineOverride && (
                     <OverrideBadge override={lineOverride} />
                   )}
@@ -284,6 +286,7 @@ function TargetTabContent({
 function getLanguageForTarget(name: string): string {
   switch (name) {
     case "bigquery":
+    case "spanner":
       return "sql";
     case "avro":
       return "json";

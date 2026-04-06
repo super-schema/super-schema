@@ -15,14 +15,19 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
-import { importSchema, bulkImport } from "@/services/import.service";
+import { importSchema, bulkImport, importTypeSpecDocument } from "@/services/import.service";
 import type { ParsedEntity } from "@/lib/importers/types";
+import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
+import { detectFormat } from "@/lib/importers/format-detector";
+import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import { ImportReviewScreen } from "./ImportReviewScreen";
 import { BulkImportReviewScreen } from "./BulkImportReviewScreen";
+import { TypeSpecImportReviewScreen } from "./TypeSpecImportReviewScreen";
+import { toast } from "sonner";
 
 type ImportTab = "single" | "bulk" | "paste";
-type ImportPhase = "input" | "review" | "bulk-review";
+type ImportPhase = "input" | "review" | "bulk-review" | "typespec-review";
 
 interface DiagnosticItem {
   type: "error" | "warning" | "info";
@@ -57,6 +62,7 @@ export function ImportDialog({
   // Review state
   const [parsedEntity, setParsedEntity] = useState<ParsedEntity | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [typeSpecResult, setTypeSpecResult] = useState<TypeSpecImportResult | null>(null);
   const [bulkParsed, setBulkParsed] = useState<ParsedEntity[]>([]);
   const [bulkErrors, setBulkErrors] = useState<
     { filename: string; error: string }[]
@@ -69,6 +75,7 @@ export function ImportDialog({
     setError(null);
     setParsedEntity(null);
     setWarnings([]);
+    setTypeSpecResult(null);
     setBulkParsed([]);
     setBulkErrors([]);
     setBulkWarnings([]);
@@ -229,7 +236,33 @@ export function ImportDialog({
       return;
     }
     setError(null);
-    const result = importSchema(pasteContent.trim());
+    const content = pasteContent.trim();
+
+    // Detect format — if TypeSpec, try full document parser for multi-model support
+    const format = detectFormat(content);
+    if (format === "typespec") {
+      const tsResult = importTypeSpecDocument(content);
+      if (!tsResult.success) {
+        setError(tsResult.error.message);
+        return;
+      }
+
+      const data = tsResult.data;
+      const totalConstructs =
+        data.entities.length + data.sharedEnums.length +
+        data.customScalars.length + data.unions.length;
+
+      // If multiple constructs, use TypeSpec review screen
+      if (totalConstructs > 1 || data.sharedEnums.length > 0 ||
+          data.customScalars.length > 0 || data.unions.length > 0) {
+        setTypeSpecResult(data);
+        setPhase("typespec-review");
+        return;
+      }
+    }
+
+    // Fallback: single entity import (any format)
+    const result = importSchema(content);
     if (!result.success) {
       setError(result.error.message);
       return;
@@ -316,6 +349,81 @@ export function ImportDialog({
     handleClose();
   }
 
+  async function handleConfirmTypeSpec(
+    domainId: string,
+    selectedEntities: number[],
+    selectedEnums: number[],
+    selectedScalars: number[],
+    selectedUnions: number[]
+  ) {
+    if (!typeSpecResult) return;
+
+    // Build payload with only selected items
+    const entities = selectedEntities.map((idx) => {
+      const entity = typeSpecResult.entities[idx];
+      return {
+        name: entity.name,
+        description: entity.description,
+        fields: entity.fields.map((f) => ({
+          name: f.name,
+          type: f.type,
+          nullable: f.nullable,
+          isKey: f.isKey ?? false,
+          description: f.description ?? "",
+          classification: f.classification ?? null,
+          precision: null,
+          scale: null,
+          decorators: buildDecoratorsFromParsedField(f),
+        })),
+      };
+    });
+
+    const sharedEnums = selectedEnums.map((idx) => typeSpecResult.sharedEnums[idx]);
+    const customScalars = selectedScalars.map((idx) => typeSpecResult.customScalars[idx]);
+    const unionTypes = selectedUnions.map((idx) => typeSpecResult.unions[idx]);
+
+    try {
+      // Dynamic import to avoid SSR issues with server actions
+      const { createEntitiesFromImportAction } = await import(
+        "@/app/(dashboard)/schemas/[domainSlug]/actions"
+      );
+
+      const result = await createEntitiesFromImportAction({
+        domainId,
+        entities,
+        sharedEnums,
+        customScalars,
+        unionTypes,
+      });
+
+      const parts: string[] = [];
+      if (result.entitiesCreated > 0) parts.push(`${result.entitiesCreated} entity(ies)`);
+      if (result.enumsCreated > 0) parts.push(`${result.enumsCreated} enum(s)`);
+      if (result.scalarsCreated > 0) parts.push(`${result.scalarsCreated} scalar(s)`);
+      if (result.unionsCreated > 0) parts.push(`${result.unionsCreated} union(s)`);
+
+      if (parts.length > 0) {
+        toast.success(`Created ${parts.join(", ")}`);
+      }
+
+      if (result.errors.length > 0) {
+        for (const err of result.errors) {
+          toast.warning(err);
+        }
+      }
+
+      // Notify with entity names (consistent with single/bulk flows)
+      for (const entity of entities) {
+        onImported?.(entity.name);
+      }
+
+      handleClose();
+    } catch {
+      toast.error("Failed to import TypeSpec document");
+      // Don't close — let user retry
+    }
+  }
+
   if (!isOpen) return null;
 
   const hasErrors = diagnostics.some((d) => d.type === "error");
@@ -365,6 +473,16 @@ export function ImportDialog({
                 onConfirm={handleConfirmBulk}
                 onCancel={reset}
                 domains={domains}
+              />
+            )}
+
+            {phase === "typespec-review" && typeSpecResult && (
+              <TypeSpecImportReviewScreen
+                importResult={typeSpecResult}
+                domains={domains}
+                suggestedDomainName={typeSpecResult.namespace}
+                onConfirm={handleConfirmTypeSpec}
+                onCancel={reset}
               />
             )}
 

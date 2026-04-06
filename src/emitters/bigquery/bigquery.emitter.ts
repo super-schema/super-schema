@@ -165,13 +165,30 @@ export class BigQueryEmitter implements Emitter {
       clusterClause = `\nCLUSTER BY ${clusterCols}`;
     }
 
+    // Retention policy comment
+    let retentionComment = "";
+    const rp = model.entity.metadata?.retentionPolicy;
+    if (rp) {
+      if (rp.strategy === "age-based" && rp.period && rp.periodUnit) {
+        const ref = rp.referenceField ?? "created_at";
+        retentionComment = `-- RETENTION: ${rp.action} rows where ${ref} > ${rp.period} ${rp.periodUnit}\n`;
+      } else if (rp.strategy === "condition-based" && rp.condition) {
+        retentionComment = `-- RETENTION: ${rp.action} rows where ${rp.condition}\n`;
+      } else if (rp.strategy === "rolling-window" && rp.period && rp.periodUnit) {
+        const ref = rp.referenceField ?? "created_at";
+        retentionComment = `-- RETENTION: keep ${rp.period} ${rp.periodUnit} rolling window on ${ref}\n`;
+      } else if (rp.strategy === "indefinite") {
+        retentionComment = `-- RETENTION: indefinite (${rp.description ?? "no automatic purge"})\n`;
+      }
+    }
+
     // Assemble DDL
     const columnsBlock =
       columnDefs.length > 0
         ? `\n${columnDefs.join(",\n")}\n`
         : "\n";
 
-    const ddl = `CREATE TABLE ${datasetPrefix}${tableName} (${columnsBlock})${partitionClause}${clusterClause};\n`;
+    const ddl = `${retentionComment}CREATE TABLE ${datasetPrefix}${tableName} (${columnsBlock})${partitionClause}${clusterClause};\n`;
 
     return {
       output: ddl,

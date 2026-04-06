@@ -16,7 +16,8 @@ import type {
 import { parseAvroSchema } from "@/lib/importers/avro.importer";
 import { parseBigQueryDDL } from "@/lib/importers/bigquery.importer";
 import { parseProtobufSchema } from "@/lib/importers/protobuf.importer";
-import { parseTypeSpecSchema } from "@/lib/importers/typespec.importer";
+import { parseTypeSpecSchema, parseTypeSpecFullDocument } from "@/lib/importers/typespec.importer";
+import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { detectFormat } from "@/lib/importers/format-detector";
 
 // ---------------------------------------------------------------------------
@@ -132,4 +133,22 @@ export function bulkImport(
   }
 
   return ok({ parsed, errors, warnings });
+}
+
+// ---------------------------------------------------------------------------
+// importTypeSpecDocument — parse a full TypeSpec document with all constructs
+// ---------------------------------------------------------------------------
+
+export function importTypeSpecDocument(
+  content: string
+): Result<TypeSpecImportResult> {
+  if (!content || !content.trim()) {
+    return err({
+      code: "PARSE_ERROR",
+      message: "Empty content",
+      suggestedFix: "Provide TypeSpec content with models, enums, or other constructs.",
+    });
+  }
+
+  return parseTypeSpecFullDocument(content);
 }

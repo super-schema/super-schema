@@ -1,5 +1,5 @@
 # generated: 2026-04-03
-# last_updated: 2026-04-05
+# last_updated: 2026-04-06
 # project: super-schema
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-03
-last_updated: 2026-04-05
+last_updated: 2026-04-06
 project: super-schema
 project_key: NOKEY
 tracking_system: file-system
@@ -52,7 +52,7 @@ development_status:
   1-6-enterprise-sso-integration: ready-for-dev   # deferred — not required for MVP, enterprise feature
   epic-1-retrospective: optional
 
-  # Epic 2: Schema Authoring & Management (13 stories)
+  # Epic 2: Schema Authoring & Management (14 stories)
   # NOTE (2026-04-05): UX restructured to 3-tier editing model:
   #   Tier 1: Inline field cards (field-editor.tsx)
   #   Tier 2: Quick Edit right sidebar with 4 sections (Properties, Constraints, Documentation, Data Governance)
@@ -61,7 +61,7 @@ development_status:
   # Right panel tabs: Quick Edit | TypeSpec Preview (no Emission tab, max width 800px)
   # Human-readable slugs in URLs: /schemas/playground/customer-order
   # Business Concept Registry and Glossary at /glossary
-  epic-2: done                                     # all stories complete
+  epic-2: in-progress
   2-1-database-schema-zod-utilities: done
   2-1b-entity-domain-service-layer: done
   2-1c-field-service-layer: done
@@ -76,10 +76,14 @@ development_status:
   2-9-command-palette-keyboard-shortcuts: done
   2-10-lineage-dag-relationship-graph: done
   2-11-typespec-field-studio: done
+  2-14-inline-entity-metadata: review
+  2-15-condition-based-retention-policies: review
+  2-16-multi-entity-typespec-import: review
+  2-17-typespec-import-decorator-fidelity: review
   epic-2-retrospective: optional
 
-  # Epic 3: Schema Emission, Validation & API (8 stories)
-  epic-3: done
+  # Epic 3: Schema Emission, Validation & API (9 stories)
+  epic-3: in-progress
   3-1-compiler-service-superschemamodel: done
   3-2-type-translation-policies-mapping-engine: done
   3-3-bigquery-ddl-emitter: done
@@ -88,6 +92,7 @@ development_status:
   3-6-emission-pipeline-preview-panel: done
   3-7-type-mapping-overrides-governance: done
   3-8-external-api-orpc-openapi: done
+  3-9-spanner-emitter-syntax-highlighting: review
   epic-3-retrospective: optional
 
   # Epic 4: Schema Versioning & Change Management (4 stories)

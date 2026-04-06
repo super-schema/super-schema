@@ -70,8 +70,8 @@ describe("emission.service", () => {
       expect(result.targets).toHaveProperty("avro");
       expect(result.targets).toHaveProperty("openapi");
 
-      // Summary should reflect 3 targets
-      expect(result.summary.totalTargets).toBe(3);
+      // Summary should reflect all registered targets
+      expect(result.summary.totalTargets).toBe(4);
     });
 
     it("generates TypeSpec source", () => {
@@ -215,7 +215,7 @@ describe("emission.service", () => {
       const result = emitFromData(entity, fields);
 
       // Should still produce results for all targets without crashing
-      expect(result.summary.totalTargets).toBe(3);
+      expect(result.summary.totalTargets).toBe(4);
       expect(result.typespec).toContain("model Customer");
     });
 
@@ -231,7 +231,7 @@ describe("emission.service", () => {
 
       const result = emitFromData(entity, fields);
 
-      expect(result.summary.totalTargets).toBe(3);
+      expect(result.summary.totalTargets).toBe(4);
 
       // BigQuery should contain column names
       const bqOutput = result.targets.bigquery.output;

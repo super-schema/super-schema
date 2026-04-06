@@ -36,6 +36,7 @@ export interface ParsedTypeSpecDecorators {
   maxItems?: number;
   visibility?: string[];
   discriminator?: string;
+  extensions?: Record<string, string>;
 }
 
 export interface ParsedTypeSpecField {
@@ -555,6 +556,10 @@ function parseModelBody(bodyLines: string[]): { fields: ParsedTypeSpecField[]; s
         if (parsed.isKey) {
           pendingIsKey = true;
         } else {
+          // Merge extensions specially to avoid overwriting
+          if (parsed.decorators?.extensions && pendingDecorators.extensions) {
+            parsed.decorators.extensions = { ...pendingDecorators.extensions, ...parsed.decorators.extensions };
+          }
           Object.assign(pendingDecorators, parsed.decorators);
         }
       }
@@ -873,6 +878,12 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
       .map((s) => s.replace(/^Lifecycle\./, ""))
       .filter(Boolean);
     return { decorators: { visibility: phases } };
+  }
+
+  // @extension("key", "value")
+  const extensionMatch = line.match(/^@extension\("([^"]+)"\s*,\s*"([^"]*)"\)$/);
+  if (extensionMatch) {
+    return { decorators: { extensions: { [extensionMatch[1]]: extensionMatch[2] } } };
   }
 
   // Unknown decorator — ignore gracefully

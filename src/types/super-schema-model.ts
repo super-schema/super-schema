@@ -257,6 +257,16 @@ export interface SuperSchemaRelationship {
 // Entity metadata in the IR
 // ---------------------------------------------------------------------------
 
+export interface SuperSchemaRetentionPolicy {
+  strategy: "age-based" | "condition-based" | "rolling-window" | "indefinite";
+  period?: number;
+  periodUnit?: "days" | "months" | "years";
+  referenceField?: string;
+  condition?: string;
+  action: "delete" | "archive" | "anonymize" | "notify-only";
+  description?: string;
+}
+
 export interface SuperSchemaEntityMetadata {
   tags?: string[];
   relationships?: SuperSchemaRelationship[];
@@ -269,6 +279,7 @@ export interface SuperSchemaEntityMetadata {
     migrationNotes?: string;
   };
   custom?: Record<string, unknown>;
+  retentionPolicy?: SuperSchemaRetentionPolicy;
 }
 
 // ---------------------------------------------------------------------------

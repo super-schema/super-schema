@@ -32,7 +32,8 @@ export function validateBigQueryDDL(ddl: string): ValidationResult {
     return { valid: false, errors };
   }
 
-  const trimmed = ddl.trim();
+  // Strip leading SQL comment lines (e.g., -- RETENTION: ...)
+  const trimmed = ddl.trim().split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n").trim();
 
   // 1. Must start with CREATE TABLE
   if (!/^CREATE\s+TABLE\s+/i.test(trimmed)) {

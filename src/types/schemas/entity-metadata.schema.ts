@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RetentionPolicySchema } from "./retention-policy.schema";
 
 export const RelationshipCardinality = z.enum([
   "one-to-one",
@@ -42,6 +43,7 @@ export const EntityMetadataSchema = z
       .optional(),
     custom: z.record(z.string(), z.unknown()).optional(),
     importedFrom: ImportedFromSchema.optional(),
+    retentionPolicy: RetentionPolicySchema.optional(),
   })
   .partial();
 
