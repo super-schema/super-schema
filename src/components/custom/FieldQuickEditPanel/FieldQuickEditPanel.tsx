@@ -1,12 +1,24 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ChevronDown, Loader2, Check, AlertCircle } from "lucide-react";
-import Link from "next/link";
-import { IdentitySection } from "./IdentitySection";
-import { ValidationSection } from "./ValidationSection";
-import { DocumentationSection } from "./DocumentationSection";
-import { GovernanceSection } from "./GovernanceSection";
+import { Input } from "@/components/ui/input";
+import { TypePicker } from "@/components/custom/TypePicker";
+import { getTypeInfo } from "@/lib/data-types";
+
+// Studio-level panels
+import { ValidationPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/ValidationPanel";
+import { WireFormatPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/WireFormatPanel";
+import { VisibilityPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/VisibilityPanel";
+import { ExtensionsPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/ExtensionsPanel";
+import { VersioningPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/VersioningPanel";
+import { GovernancePanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/GovernancePanel";
+
+import type { TypeSpecDecorators } from "@/types/schemas/typespec-decorator.schema";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface FieldData {
   id: string;
@@ -36,50 +48,67 @@ interface FieldQuickEditPanelProps {
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
 }
 
-const SECTION_LABELS = ["Documentation", "Properties", "Validations & Constraints", "Data Classification"] as const;
+// ---------------------------------------------------------------------------
+// Section config
+// ---------------------------------------------------------------------------
+
+const SECTION_LABELS = [
+  "Validations & Constraints",
+  "Serialization",
+  "Access Control",
+  "Extensions",
+  "Data Governance",
+  "Version History",
+] as const;
+
+const STRING_TYPES = new Set(["string", "url"]);
+
+const FORMAT_OPTIONS = [
+  { value: "", label: "None" },
+  { value: "uuid", label: "uuid" },
+  { value: "email", label: "email" },
+  { value: "uri", label: "uri" },
+  { value: "date-time", label: "date-time" },
+  { value: "ipv4", label: "ipv4" },
+  { value: "ipv6", label: "ipv6" },
+];
+
+function getTypeCategory(type: string): string {
+  const info = getTypeInfo(type);
+  return info?.category ?? "String";
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export function FieldQuickEditPanel({
   field,
-  entityId,
-  entitySlug,
-  domainSlug,
   isReadOnly = false,
   onUpdateField,
 }: FieldQuickEditPanelProps) {
-  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0, 1, 2, 3]));
+  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
 
-  // Local state mirrors the field data for fast editing
+  // Core field state (shown in header)
   const [localName, setLocalName] = useState(field.name);
   const [localType, setLocalType] = useState(field.type);
   const [localNullable, setLocalNullable] = useState(field.nullable);
   const [localIsKey, setLocalIsKey] = useState(field.isKey);
   const [localDescription, setLocalDescription] = useState(field.description);
-  const [localClassification, setLocalClassification] = useState(field.classification);
+  const [localClassification, setLocalClassification] = useState<string | null>(field.classification);
+  const [localFieldNumber, setLocalFieldNumber] = useState<number | null>(field.fieldNumber);
 
-  // TypeSpec decorator local state
-  const tsDecorators = (field.decorators?.typespec ?? {}) as Record<string, Record<string, unknown>>;
-  const identity = (tsDecorators.identity ?? {}) as Record<string, unknown>;
-  const validation = (tsDecorators.validation ?? {}) as Record<string, unknown>;
-  const documentation = (tsDecorators.documentation ?? {}) as Record<string, unknown>;
-  const policy = (field.decorators?.policy ?? {}) as Record<string, string>;
+  // TypeSpec decorators — single state object like Field Studio
+  const existingTypespec = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
+  const [typespec, setTypespec] = useState<TypeSpecDecorators>(existingTypespec);
 
-  const [localSecret, setLocalSecret] = useState(!!identity.secret);
-  const [localFormat, setLocalFormat] = useState((identity.format as string) ?? "");
-  const [localDefaultValue, setLocalDefaultValue] = useState((identity.defaultValue as string) ?? "");
-  const [localSummary, setLocalSummary] = useState((documentation.summary as string) ?? "");
-
-  // Validation local state
-  const [localMinValue, setLocalMinValue] = useState<number | null>((validation.minValue as number) ?? null);
-  const [localMaxValue, setLocalMaxValue] = useState<number | null>((validation.maxValue as number) ?? null);
-  const [localMinLength, setLocalMinLength] = useState<number | null>((validation.minLength as number) ?? null);
-  const [localMaxLength, setLocalMaxLength] = useState<number | null>((validation.maxLength as number) ?? null);
-  const [localPattern, setLocalPattern] = useState<string | null>((validation.pattern as string) ?? null);
-  const [localMinItems, setLocalMinItems] = useState<number | null>((validation.minItems as number) ?? null);
-  const [localMaxItems, setLocalMaxItems] = useState<number | null>((validation.maxItems as number) ?? null);
-
-  // Governance local state
-  const [localAnonymization, setLocalAnonymization] = useState(policy.anonymization ?? "");
-  const [localEncryption, setLocalEncryption] = useState(policy.encryption ?? "");
+  // Header identity state derived from typespec
+  const [localSecret, setLocalSecret] = useState(!!typespec.identity?.secret);
+  const [localFormat, setLocalFormat] = useState(typespec.identity?.format ?? "");
+  const [localDefaultValue, setLocalDefaultValue] = useState(
+    typespec.identity?.defaultValue != null ? String(typespec.identity.defaultValue) : ""
+  );
+  const [localSummary, setLocalSummary] = useState(typespec.documentation?.summary ?? "");
 
   // Save machinery
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
@@ -89,53 +118,20 @@ export function FieldQuickEditPanel({
 
   // Current values ref to avoid stale closures
   const currentRef = useRef({
-    localName,
-    localType,
-    localNullable,
-    localIsKey,
-    localDescription,
-    localClassification,
-    localSecret,
-    localFormat,
-    localDefaultValue,
-    localSummary,
-    localMinValue,
-    localMaxValue,
-    localMinLength,
-    localMaxLength,
-    localPattern,
-    localMinItems,
-    localMaxItems,
-    localAnonymization,
-    localEncryption,
+    localName, localType, localNullable, localIsKey, localDescription,
+    localClassification, localFieldNumber, localSecret, localFormat,
+    localDefaultValue, localSummary, typespec,
   });
 
-  // Keep ref in sync
   useEffect(() => {
     currentRef.current = {
-      localName,
-      localType,
-      localNullable,
-      localIsKey,
-      localDescription,
-      localClassification,
-      localSecret,
-      localFormat,
-      localDefaultValue,
-      localSummary,
-      localMinValue,
-      localMaxValue,
-      localMinLength,
-      localMaxLength,
-      localPattern,
-      localMinItems,
-      localMaxItems,
-      localAnonymization,
-      localEncryption,
+      localName, localType, localNullable, localIsKey, localDescription,
+      localClassification, localFieldNumber, localSecret, localFormat,
+      localDefaultValue, localSummary, typespec,
     };
   });
 
-  // Reset local state on field switch
+  // Reset on field switch
   useEffect(() => {
     setLocalName(field.name);
     setLocalType(field.type);
@@ -143,30 +139,19 @@ export function FieldQuickEditPanel({
     setLocalIsKey(field.isKey);
     setLocalDescription(field.description);
     setLocalClassification(field.classification);
+    setLocalFieldNumber(field.fieldNumber);
 
-    const ts = (field.decorators?.typespec ?? {}) as Record<string, Record<string, unknown>>;
-    const id = (ts.identity ?? {}) as Record<string, unknown>;
-    const val = (ts.validation ?? {}) as Record<string, unknown>;
-    const doc = (ts.documentation ?? {}) as Record<string, unknown>;
-    const pol = (field.decorators?.policy ?? {}) as Record<string, string>;
-
-    setLocalSecret(!!id.secret);
-    setLocalFormat((id.format as string) ?? "");
-    setLocalDefaultValue((id.defaultValue as string) ?? "");
-    setLocalSummary((doc.summary as string) ?? "");
-    setLocalMinValue((val.minValue as number) ?? null);
-    setLocalMaxValue((val.maxValue as number) ?? null);
-    setLocalMinLength((val.minLength as number) ?? null);
-    setLocalMaxLength((val.maxLength as number) ?? null);
-    setLocalPattern((val.pattern as string) ?? null);
-    setLocalMinItems((val.minItems as number) ?? null);
-    setLocalMaxItems((val.maxItems as number) ?? null);
-    setLocalAnonymization(pol.anonymization ?? "");
-    setLocalEncryption(pol.encryption ?? "");
+    const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
+    setTypespec(ts);
+    setLocalSecret(!!ts.identity?.secret);
+    setLocalFormat(ts.identity?.format ?? "");
+    setLocalDefaultValue(ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "");
+    setLocalSummary(ts.documentation?.summary ?? "");
 
     setSaveStatus("idle");
   }, [field.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Save function
   const doSave = useCallback(async () => {
     if (savingRef.current) return;
     savingRef.current = true;
@@ -175,44 +160,19 @@ export function FieldQuickEditPanel({
 
     const c = currentRef.current;
 
-    // Build updated decorators
-    const existingDecorators = { ...field.decorators };
-    const existingTs = (existingDecorators.typespec ?? {}) as Record<string, unknown>;
+    // Merge header identity fields back into typespec
+    const mergedTypespec = { ...c.typespec };
+    const identity = { ...(mergedTypespec.identity ?? {}) };
+    if (c.localSecret) identity.secret = true; else delete identity.secret;
+    if (c.localFormat) identity.format = c.localFormat; else identity.format = null;
+    if (c.localDefaultValue) identity.defaultValue = c.localDefaultValue; else delete identity.defaultValue;
+    mergedTypespec.identity = identity;
 
-    // Clean up null/empty values from validation
-    const cleanValidation: Record<string, unknown> = {};
-    if (c.localMinValue != null) cleanValidation.minValue = c.localMinValue;
-    if (c.localMaxValue != null) cleanValidation.maxValue = c.localMaxValue;
-    if (c.localMinLength != null) cleanValidation.minLength = c.localMinLength;
-    if (c.localMaxLength != null) cleanValidation.maxLength = c.localMaxLength;
-    if (c.localPattern) cleanValidation.pattern = c.localPattern;
-    if (c.localMinItems != null) cleanValidation.minItems = c.localMinItems;
-    if (c.localMaxItems != null) cleanValidation.maxItems = c.localMaxItems;
+    const documentation = { ...(mergedTypespec.documentation ?? {}) };
+    if (c.localSummary) documentation.summary = c.localSummary; else delete documentation.summary;
+    mergedTypespec.documentation = documentation;
 
-    const cleanIdentity: Record<string, unknown> = {};
-    if (c.localSecret) cleanIdentity.secret = true;
-    if (c.localFormat) cleanIdentity.format = c.localFormat;
-    if (c.localDefaultValue) cleanIdentity.defaultValue = c.localDefaultValue;
-
-    const cleanDocumentation: Record<string, unknown> = {};
-    if (c.localSummary) cleanDocumentation.summary = c.localSummary;
-
-    const updatedTypespec = {
-      ...existingTs,
-      identity: Object.keys(cleanIdentity).length > 0 ? cleanIdentity : undefined,
-      validation: Object.keys(cleanValidation).length > 0 ? cleanValidation : undefined,
-      documentation: Object.keys(cleanDocumentation).length > 0 ? cleanDocumentation : undefined,
-    };
-
-    const cleanPolicy: Record<string, string> = {};
-    if (c.localAnonymization) cleanPolicy.anonymization = c.localAnonymization;
-    if (c.localEncryption) cleanPolicy.encryption = c.localEncryption;
-
-    const updatedDecorators = {
-      ...existingDecorators,
-      typespec: updatedTypespec,
-      policy: Object.keys(cleanPolicy).length > 0 ? cleanPolicy : undefined,
-    };
+    const decorators = { ...field.decorators, typespec: mergedTypespec };
 
     try {
       await onUpdateField(field.id, {
@@ -222,7 +182,8 @@ export function FieldQuickEditPanel({
         isKey: c.localIsKey,
         description: c.localDescription,
         classification: c.localClassification,
-        decorators: updatedDecorators,
+        fieldNumber: c.localFieldNumber,
+        decorators,
       });
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
@@ -234,14 +195,12 @@ export function FieldQuickEditPanel({
   }, [field.id, field.decorators, onUpdateField]);
 
   const scheduleSave = useCallback(() => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     pendingRef.current = true;
     saveTimeoutRef.current = setTimeout(doSave, 500);
   }, [doSave]);
 
-  // Flush on field switch or unmount
+  // Flush on unmount
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
@@ -250,13 +209,19 @@ export function FieldQuickEditPanel({
       }
       if (pendingRef.current && !savingRef.current) {
         pendingRef.current = false;
-        // Fire-and-forget flush
         doSave();
       }
     };
   }, [field.id, doSave]);
 
-  function handleChange(sectionField: string, value: unknown) {
+  // Typespec sub-object change handler (from studio panels)
+  function handleTypespecChange(key: keyof TypeSpecDecorators, value: unknown) {
+    setTypespec((prev) => ({ ...prev, [key]: value }));
+    scheduleSave();
+  }
+
+  // Header field change handler
+  function handleHeaderChange(sectionField: string, value: unknown) {
     switch (sectionField) {
       case "name": setLocalName(value as string); break;
       case "type": setLocalType(value as string); break;
@@ -267,16 +232,6 @@ export function FieldQuickEditPanel({
       case "defaultValue": setLocalDefaultValue(value as string); break;
       case "description": setLocalDescription(value as string); break;
       case "summary": setLocalSummary(value as string); break;
-      case "classification": setLocalClassification(value as string | null); break;
-      case "minValue": setLocalMinValue(value as number | null); break;
-      case "maxValue": setLocalMaxValue(value as number | null); break;
-      case "minLength": setLocalMinLength(value as number | null); break;
-      case "maxLength": setLocalMaxLength(value as number | null); break;
-      case "pattern": setLocalPattern(value as string | null); break;
-      case "minItems": setLocalMinItems(value as number | null); break;
-      case "maxItems": setLocalMaxItems(value as number | null); break;
-      case "anonymization": setLocalAnonymization(value as string); break;
-      case "encryption": setLocalEncryption(value as string); break;
     }
     scheduleSave();
   }
@@ -284,54 +239,123 @@ export function FieldQuickEditPanel({
   function toggleSection(idx: number) {
     setExpandedSections((prev) => {
       const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
       return next;
     });
   }
 
   const [editingDescription, setEditingDescription] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const typeCategory = getTypeCategory(localType);
 
   return (
     <div className="flex flex-col h-full" data-testid="field-edit-panel">
-      {/* Field name + inline description header */}
-      <div className="px-space-4 py-space-2 border-b border-border/50">
-        <span className="font-mono text-body-small text-foreground font-medium">{localName}</span>
-        {/* Inline description */}
+      {/* Header: core identity fields */}
+      <div className="px-space-4 py-space-3 border-b border-border/50 space-y-2">
+        {/* Field name */}
+        {editingName && !isReadOnly ? (
+          <Input
+            autoFocus
+            value={localName}
+            onChange={(e) => handleHeaderChange("name", e.target.value)}
+            onBlur={() => setEditingName(false)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingName(false); }}
+            className="h-7 font-mono text-body-small font-medium"
+          />
+        ) : (
+          <span
+            className={`font-mono text-body-small text-foreground font-medium block ${!isReadOnly ? "cursor-text hover:text-primary" : ""}`}
+            onClick={() => !isReadOnly && setEditingName(true)}
+          >
+            {localName}
+          </span>
+        )}
+
+        {/* Description */}
         {editingDescription && !isReadOnly ? (
           <textarea
             autoFocus
             value={localDescription}
-            onChange={(e) => handleChange("description", e.target.value)}
+            onChange={(e) => handleHeaderChange("description", e.target.value)}
             onBlur={() => setEditingDescription(false)}
             onKeyDown={(e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                setEditingDescription(false);
-              }
-              if (e.key === "Escape") {
-                setEditingDescription(false);
-              }
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setEditingDescription(false); }
+              if (e.key === "Escape") setEditingDescription(false);
             }}
             rows={2}
-            className="mt-1 w-full rounded border border-border bg-popover px-2 py-1 text-caption text-muted-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-ring resize-none"
+            className="w-full rounded border border-border bg-popover px-2 py-1 text-caption text-muted-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-ring resize-none"
             placeholder="Add description..."
           />
         ) : (
           <p
             onClick={() => !isReadOnly && setEditingDescription(true)}
-            className={`mt-0.5 text-caption line-clamp-1 ${
-              localDescription
-                ? "text-muted-foreground"
-                : "text-muted-foreground/40 italic"
-            } ${!isReadOnly ? "cursor-pointer hover:text-foreground transition-colors" : ""}`}
+            className={`text-caption line-clamp-1 ${localDescription ? "text-muted-foreground" : "text-muted-foreground/40 italic"} ${!isReadOnly ? "cursor-pointer hover:text-foreground transition-colors" : ""}`}
           >
             {localDescription || "Add description..."}
           </p>
         )}
+
+        {/* Summary */}
+        <Input
+          value={localSummary}
+          onChange={(e) => handleHeaderChange("summary", e.target.value)}
+          placeholder="Brief one-line summary"
+          className="h-7 text-caption"
+          disabled={isReadOnly}
+        />
+
+        {/* Type picker */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <TypePicker
+              value={localType}
+              onChange={(t) => handleHeaderChange("type", t)}
+              compact
+              disabled={isReadOnly}
+            />
+          </div>
+        </div>
+
+        {/* Checkboxes + Format (string only) + Default */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-caption text-muted-foreground">
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={localNullable} onChange={(e) => handleHeaderChange("nullable", e.target.checked)} disabled={isReadOnly || localIsKey} className="accent-primary" />
+            Optional
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={localSecret} onChange={(e) => handleHeaderChange("secret", e.target.checked)} disabled={isReadOnly} className="accent-primary" />
+            Secret
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={localIsKey} onChange={(e) => { handleHeaderChange("isKey", e.target.checked); if (e.target.checked) handleHeaderChange("nullable", false); }} disabled={isReadOnly} className="accent-primary" />
+            Key
+          </label>
+        </div>
+
+        <div className={`grid gap-space-2 ${STRING_TYPES.has(localType) ? "grid-cols-2" : "grid-cols-1"}`}>
+          {STRING_TYPES.has(localType) && (
+            <select
+              value={localFormat}
+              onChange={(e) => handleHeaderChange("format", e.target.value)}
+              disabled={isReadOnly}
+              className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption text-foreground disabled:opacity-50"
+            >
+              {FORMAT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          )}
+          <Input
+            value={localDefaultValue}
+            onChange={(e) => handleHeaderChange("defaultValue", e.target.value)}
+            placeholder={typeCategory === "Number" ? "0" : typeCategory === "Boolean" ? "true / false" : '""'}
+            className="h-7 font-mono text-caption"
+            disabled={isReadOnly}
+          />
+        </div>
       </div>
 
-      {/* Scrollable sections */}
+      {/* Scrollable studio-level sections */}
       <div className="flex-1 overflow-y-auto">
         {SECTION_LABELS.map((label, idx) => (
           <div key={label} className="border-b border-border/30">
@@ -340,55 +364,56 @@ export function FieldQuickEditPanel({
               className="flex items-center justify-between w-full px-space-4 py-space-2 text-body-small font-semibold text-foreground/80 hover:text-foreground transition-colors uppercase tracking-wider"
             >
               {label}
-              <ChevronDown
-                className={`w-3.5 h-3.5 transition-transform ${expandedSections.has(idx) ? "" : "-rotate-90"}`}
-              />
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expandedSections.has(idx) ? "" : "-rotate-90"}`} />
             </button>
             {expandedSections.has(idx) && (
               <div className="px-space-4 pb-space-3">
                 {idx === 0 && (
-                  <DocumentationSection
-                    summary={localSummary}
-                    isReadOnly={isReadOnly}
-                    onChange={handleChange}
+                  <ValidationPanel
+                    validation={typespec.validation ?? {}}
+                    typeCategory={typeCategory}
+                    fieldType={localType}
+                    onChange={(v) => handleTypespecChange("validation", v)}
                   />
                 )}
                 {idx === 1 && (
-                  <IdentitySection
-                    name={localName}
-                    type={localType}
-                    nullable={localNullable}
-                    isKey={localIsKey}
-                    secret={localSecret}
-                    format={localFormat}
-                    defaultValue={localDefaultValue}
-                    isReadOnly={isReadOnly}
-                    onChange={handleChange}
+                  <WireFormatPanel
+                    wireFormat={typespec.wireFormat ?? {}}
+                    fieldType={localType}
+                    typeCategory={typeCategory}
+                    fieldNumber={localFieldNumber}
+                    onFieldNumberChange={(fn) => { setLocalFieldNumber(fn); scheduleSave(); }}
+                    onChange={(w) => handleTypespecChange("wireFormat", w)}
                   />
                 )}
                 {idx === 2 && (
-                  <ValidationSection
-                    type={localType}
-                    values={{
-                      minValue: localMinValue,
-                      maxValue: localMaxValue,
-                      minLength: localMinLength,
-                      maxLength: localMaxLength,
-                      pattern: localPattern,
-                      minItems: localMinItems,
-                      maxItems: localMaxItems,
-                    }}
-                    isReadOnly={isReadOnly}
-                    onChange={handleChange}
+                  <VisibilityPanel
+                    visibility={typespec.visibility ?? {}}
+                    onChange={(v) => handleTypespecChange("visibility", v)}
                   />
                 )}
                 {idx === 3 && (
-                  <GovernanceSection
-                    classification={localClassification}
-                    anonymization={localAnonymization}
-                    encryption={localEncryption}
-                    isReadOnly={isReadOnly}
-                    onChange={handleChange}
+                  <ExtensionsPanel
+                    extensions={typespec.extensions ?? {}}
+                    onChange={(e) => handleTypespecChange("extensions", e)}
+                  />
+                )}
+                {idx === 4 && (
+                  <GovernancePanel
+                    governance={(field.decorators as Record<string, unknown>) ?? {}}
+                    fieldClassification={localClassification}
+                    onClassificationChange={(c) => { setLocalClassification(c); scheduleSave(); }}
+                    onChange={(g) => {
+                      // Governance updates go to top-level decorators, not typespec
+                      // This is handled via the save function
+                      scheduleSave();
+                    }}
+                  />
+                )}
+                {idx === 5 && (
+                  <VersioningPanel
+                    versioning={typespec.versioning ?? {}}
+                    onChange={(v) => handleTypespecChange("versioning", v)}
                   />
                 )}
               </div>
@@ -397,23 +422,9 @@ export function FieldQuickEditPanel({
         ))}
       </div>
 
-      {/* Footer */}
-      <div className="border-t border-border/50 px-space-4 py-space-2 space-y-space-2">
-        {/* Save indicator */}
-        <div className="flex items-center justify-between">
-          <SaveIndicator status={saveStatus} />
-        </div>
-        <div>
-          <Link
-            href={`/schemas/${domainSlug}/${entitySlug || entityId}/fields/${field.slug || field.id}`}
-            className="text-caption text-primary hover:underline"
-          >
-            Open Full Field Studio &rarr;
-          </Link>
-          <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-            Serialization, Access Control, Version History, Extensions
-          </p>
-        </div>
+      {/* Footer — save indicator only */}
+      <div className="border-t border-border/50 px-space-4 py-space-2">
+        <SaveIndicator status={saveStatus} />
       </div>
     </div>
   );

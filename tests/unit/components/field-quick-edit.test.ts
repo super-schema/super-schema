@@ -106,11 +106,13 @@ describe("FieldQuickEditPanel", () => {
     // The panel should display the field name in the header
     expect(screen.getByText("customer_email")).toBeDefined();
 
-    // Should have accordion section labels
-    expect(screen.getByText("Properties")).toBeDefined();
-    expect(screen.getByText("Constraints")).toBeDefined();
-    expect(screen.getByText("Documentation")).toBeDefined();
+    // Should have studio-level accordion section labels
+    expect(screen.getByText("Validations & Constraints")).toBeDefined();
+    expect(screen.getByText("Serialization")).toBeDefined();
+    expect(screen.getByText("Access Control")).toBeDefined();
+    expect(screen.getByText("Extensions")).toBeDefined();
     expect(screen.getByText("Data Governance")).toBeDefined();
+    expect(screen.getByText("Version History")).toBeDefined();
   });
 
   it("has the data-testid for quick edit panel", () => {
@@ -123,7 +125,7 @@ describe("FieldQuickEditPanel", () => {
       })
     );
 
-    expect(screen.getByTestId("field-quick-edit-panel")).toBeDefined();
+    expect(screen.getByTestId("field-edit-panel")).toBeDefined();
   });
 });
 
@@ -244,7 +246,7 @@ describe("GovernanceSection", () => {
     expect(piiElements.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders dash for null classification", () => {
+  it("renders Sensitive as default for null classification", () => {
     render(
       createElement(GovernanceSection, {
         classification: null,
@@ -255,10 +257,11 @@ describe("GovernanceSection", () => {
       })
     );
 
-    // "None" appears in classification picker dropdown and in the
-    // Anonymization/Encryption select options — verify at least one exists
-    const noneElements = screen.getAllByText("None");
-    expect(noneElements.length).toBeGreaterThanOrEqual(1);
+    // Null classification renders as "Sensitive" (Class 3 default)
+    const sensitiveElements = screen.getAllByText("Sensitive");
+    expect(sensitiveElements.length).toBeGreaterThanOrEqual(1);
+    // Should show "(default)" indicator
+    expect(screen.getByText("(default)")).toBeDefined();
   });
 });
 
@@ -289,7 +292,7 @@ describe("IdentitySection", () => {
     expect(screen.getByText("Secret")).toBeDefined();
     expect(screen.getByText("Key")).toBeDefined();
     expect(screen.getByText("Format")).toBeDefined();
-    expect(screen.getByText("Default Value")).toBeDefined();
+    expect(screen.getByText("Default")).toBeDefined();
   });
 
   it("disables inputs when isReadOnly is true", () => {
