@@ -9,6 +9,9 @@ import {
   FolderOpen,
   Folder,
   Plus,
+  Database,
+  Hash,
+  Globe,
 } from "lucide-react";
 interface DomainNode {
   id: string;
@@ -21,6 +24,10 @@ interface DomainNode {
     slug: string;
     status: string;
   }[];
+  sharedEnumCount: number;
+  customScalarCount: number;
+  unionTypeCount: number;
+  serviceCount: number;
 }
 
 interface LeftSidebarProps {
@@ -224,25 +231,64 @@ export function LeftSidebar({
                   </button>
                 </div>
 
-                {/* Entity children */}
-                {isExpanded && domain.entities.length > 0 && (
+                {/* Domain categories + entity children */}
+                {isExpanded && (
                   <div className="ml-space-4">
-                    {domain.entities.map((entity) => (
+                    {/* Entities category */}
+                    {domain.entities.length > 0 && (
+                      <>
+                        <div
+                          className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                          onClick={() => router.push(`/schemas/${slug}`)}
+                        >
+                          <Database className="w-3 h-3 shrink-0" />
+                          <span className="text-mono-small truncate flex-1">Entities</span>
+                          <span className="text-[10px] opacity-60">{domain.entities.length}</span>
+                        </div>
+                        {domain.entities.map((entity) => (
+                          <div
+                            key={entity.id}
+                            className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors ml-space-2"
+                            onClick={() =>
+                              router.push(`/schemas/${slug}/${entity.slug}`)
+                            }
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${getStatusColor(entity.status)}`}
+                            />
+                            <span className={`text-mono-small truncate ${entity.status === "RETIRED" ? "line-through" : ""}`}>
+                              {entity.name}
+                            </span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+
+                    {/* Types category */}
+                    {(domain.sharedEnumCount + domain.customScalarCount + domain.unionTypeCount) > 0 && (
                       <div
-                        key={entity.id}
                         className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-                        onClick={() =>
-                          router.push(`/schemas/${slug}/${entity.slug}`)
-                        }
+                        onClick={() => router.push(`/schemas/${slug}?tab=types`)}
                       >
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${getStatusColor(entity.status)}`}
-                        />
-                        <span className={`text-mono-small truncate ${entity.status === "RETIRED" ? "line-through" : ""}`}>
-                          {entity.name}
+                        <Hash className="w-3 h-3 shrink-0" />
+                        <span className="text-mono-small truncate flex-1">Types</span>
+                        <span className="text-[10px] opacity-60">
+                          {domain.sharedEnumCount + domain.customScalarCount + domain.unionTypeCount}
                         </span>
                       </div>
-                    ))}
+                    )}
+
+                    {/* APIs category */}
+                    {domain.serviceCount > 0 && (
+                      <div
+                        className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                        onClick={() => router.push(`/schemas/${slug}?tab=apis`)}
+                      >
+                        <Globe className="w-3 h-3 shrink-0" />
+                        <span className="text-mono-small truncate flex-1">APIs</span>
+                        <span className="text-[10px] opacity-60">{domain.serviceCount}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

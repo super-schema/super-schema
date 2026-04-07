@@ -2,16 +2,15 @@
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronRight,
   Plus,
   LayoutGrid,
   List,
   Database,
-  GitBranch,
-  ShieldCheck,
-  ClipboardCheck,
+  Hash,
+  Globe,
   Trash2,
   Tag,
   FileText,
@@ -27,12 +26,15 @@ import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "./actions";
 import { modKey } from "@/lib/platform";
+import { DomainTypesTab, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
+import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
 
-const domainTabs = [
+type DomainTab = "entities" | "types" | "apis";
+
+const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: Database, label: "Entities", id: "entities" },
-  { icon: GitBranch, label: "Lineage", id: "lineage" },
-  { icon: ShieldCheck, label: "Governance", id: "governance" },
-  { icon: ClipboardCheck, label: "Compliance", id: "compliance" },
+  { icon: Hash, label: "Types", id: "types" },
+  { icon: Globe, label: "APIs", id: "apis" },
 ];
 
 interface EntityData {
@@ -44,7 +46,7 @@ interface EntityData {
   version: number;
   fieldCount: number;
   updatedAt: Date;
-  classifications: { PII: number; SENSITIVE: number; INTERNAL: number; PUBLIC: number };
+  classifications: { NEVER_STORED: number; PII: number; SENSITIVE: number; INTERNAL: number; PUBLIC: number };
 }
 
 interface DomainWorkspaceProps {
@@ -54,6 +56,10 @@ interface DomainWorkspaceProps {
   domainDescription: string;
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
+  sharedEnums: SharedEnumData[];
+  customScalars: CustomScalarData[];
+  unionTypes: UnionTypeData[];
+  services: ServiceData[];
 }
 
 interface InlineField {
@@ -86,8 +92,17 @@ export function DomainWorkspace({
   domainDescription,
   domainPolicy,
   entities,
+  sharedEnums,
+  customScalars,
+  unionTypes,
+  services,
 }: DomainWorkspaceProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialTab = (searchParams.get("tab") as DomainTab) || "entities";
+  const [activeTab, setActiveTab] = useState<DomainTab>(
+    ["entities", "types", "apis"].includes(initialTab) ? initialTab : "entities"
+  );
   const [viewMode, setViewMode] = useState<"tile" | "list">(() => {
     if (typeof window !== "undefined") {
       return (localStorage.getItem("super-schema:view-mode") as "tile" | "list") || "tile";
@@ -302,8 +317,9 @@ export function DomainWorkspace({
         {domainTabs.map((tab) => (
           <button
             key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
             className={`flex items-center gap-space-2 px-space-4 py-space-2 text-body-small transition-colors border-b-2 ${
-              tab.id === "entities"
+              activeTab === tab.id
                 ? "border-primary text-primary font-medium"
                 : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
             }`}
@@ -314,8 +330,22 @@ export function DomainWorkspace({
         ))}
       </div>
 
+      {/* Types tab */}
+      {activeTab === "types" && (
+        <DomainTypesTab
+          sharedEnums={sharedEnums}
+          customScalars={customScalars}
+          unionTypes={unionTypes}
+        />
+      )}
+
+      {/* APIs tab */}
+      {activeTab === "apis" && (
+        <DomainApisTab services={services} />
+      )}
+
       {/* Create Entity inline form */}
-      {showCreate && (
+      {activeTab === "entities" && showCreate && (
         <div className="surface-glass rounded-xl border border-primary/20 p-space-6 mb-space-6">
           <h3 className="text-heading-2 text-foreground mb-space-4">Create New Entity</h3>
 
@@ -580,7 +610,7 @@ export function DomainWorkspace({
       )}
 
       {/* Entity content */}
-      {sortedEntities.length === 0 ? (
+      {activeTab === "entities" && (sortedEntities.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <h2 className="text-heading-1 text-foreground mb-space-2">
             Create your first entity
@@ -695,7 +725,7 @@ export function DomainWorkspace({
             </tbody>
           </table>
         </div>
-      )}
+      ))}
     </div>
   );
 }

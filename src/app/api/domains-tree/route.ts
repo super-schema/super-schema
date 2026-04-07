@@ -15,6 +15,14 @@ export async function GET(request: Request) {
         select: { id: true, name: true, slug: true, status: true },
         orderBy: { name: "asc" },
       },
+      _count: {
+        select: {
+          sharedEnums: true,
+          customScalars: true,
+          unionTypes: true,
+          services: true,
+        },
+      },
     },
   });
 
@@ -25,6 +33,10 @@ export async function GET(request: Request) {
       slug: d.slug,
       isSystem: d.isSystem,
       entities: d.entities,
+      sharedEnumCount: d._count.sharedEnums,
+      customScalarCount: d._count.customScalars,
+      unionTypeCount: d._count.unionTypes,
+      serviceCount: d._count.services,
     }))
   );
 }
