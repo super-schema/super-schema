@@ -9,6 +9,7 @@ import {
   LayoutGrid,
   List,
   Database,
+  Box,
   Hash,
   Globe,
   Trash2,
@@ -26,15 +27,21 @@ import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "./actions";
 import { modKey } from "@/lib/platform";
+import { Upload } from "lucide-react";
+import { ImportDialog } from "@/components/custom/ImportDialog/ImportDialog";
 import { DomainTypesTab, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
+import { DomainModelsTab, type DomainModelData } from "./components/DomainModelsTab";
 import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
+import { DomainDecoratorsTab, type DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
 
-type DomainTab = "entities" | "types" | "apis";
+type DomainTab = "entities" | "models" | "types" | "apis" | "decorators";
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: Database, label: "Entities", id: "entities" },
+  { icon: Box, label: "Models", id: "models" },
   { icon: Hash, label: "Types", id: "types" },
   { icon: Globe, label: "APIs", id: "apis" },
+  { icon: Tag, label: "Decorators", id: "decorators" },
 ];
 
 interface EntityData {
@@ -56,9 +63,11 @@ interface DomainWorkspaceProps {
   domainDescription: string;
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
+  models: DomainModelData[];
   sharedEnums: SharedEnumData[];
   customScalars: CustomScalarData[];
   unionTypes: UnionTypeData[];
+  decoratorDefinitions: DecoratorDefinitionData[];
   services: ServiceData[];
 }
 
@@ -92,16 +101,20 @@ export function DomainWorkspace({
   domainDescription,
   domainPolicy,
   entities,
+  models,
   sharedEnums,
   customScalars,
   unionTypes,
+  decoratorDefinitions,
   services,
 }: DomainWorkspaceProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get("tab") as DomainTab) || "entities";
   const [activeTab, setActiveTab] = useState<DomainTab>(
-    ["entities", "types", "apis"].includes(initialTab) ? initialTab : "entities"
+    ["entities", "models", "types", "apis", "decorators"].includes(initialTab)
+      ? initialTab
+      : "entities"
   );
   const [viewMode, setViewMode] = useState<"tile" | "list">(() => {
     if (typeof window !== "undefined") {
@@ -120,6 +133,8 @@ export function DomainWorkspace({
     return () =>
       document.removeEventListener("super-schema:new-entity", handleNewEntity);
   }, [router, domainSlug]);
+
+  const [showImportDialog, setShowImportDialog] = useState(false);
 
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -305,6 +320,10 @@ export function DomainWorkspace({
               <List className="w-4 h-4" />
             </button>
           </div>
+          <Button variant="outline" onClick={() => setShowImportDialog(true)} className="gap-2">
+            <Upload className="w-4 h-4" />
+            Import Schema
+          </Button>
           <Button onClick={() => router.push(`/schemas/${domainSlug}/new`)} className="gap-2" title={`New Entity (${modKey()}+N)`}>
             <Plus className="w-4 h-4" />
             New Entity
@@ -330,6 +349,9 @@ export function DomainWorkspace({
         ))}
       </div>
 
+      {/* Models tab */}
+      {activeTab === "models" && <DomainModelsTab models={models} />}
+
       {/* Types tab */}
       {activeTab === "types" && (
         <DomainTypesTab
@@ -342,6 +364,11 @@ export function DomainWorkspace({
       {/* APIs tab */}
       {activeTab === "apis" && (
         <DomainApisTab services={services} />
+      )}
+
+      {/* Decorators tab */}
+      {activeTab === "decorators" && (
+        <DomainDecoratorsTab decorators={decoratorDefinitions} />
       )}
 
       {/* Create Entity inline form */}
@@ -726,6 +753,17 @@ export function DomainWorkspace({
           </table>
         </div>
       ))}
+
+      {/* Import Schema Dialog */}
+      <ImportDialog
+        isOpen={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        domains={[{ id: domainId, name: domainName }]}
+        onImported={() => {
+          setShowImportDialog(false);
+          router.refresh();
+        }}
+      />
     </div>
   );
 }
