@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback, useRef } from "react";
-import { Loader2, Save } from "lucide-react";
+import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
+import { Loader2, Save, Zap, Globe } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
@@ -44,10 +44,15 @@ import type { RetentionPolicy } from "@/types/schemas/retention-policy.schema";
 import {
   migrateSimpleRetention,
 } from "@/types/schemas/retention-policy.schema";
+import { generateEntityAlerts } from "@/lib/validation/entity-alerts";
+import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
+import { AlertsTab } from "./components/AlertsTab";
+import { ApiTab } from "./components/ApiTab";
+import { classifyChangeLevel } from "@/lib/validation/change-level";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
-type ViewTab = "editor" | "schemas" | "versions" | "governance";
-type RightPanelTab = "quick-edit" | "typespec-preview";
+type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api";
+type RightPanelTab = "field-edit" | "typespec-preview";
 
 interface FieldData {
   id: string;
@@ -127,19 +132,106 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("typespec-preview");
   const [typeSpecTrigger, setTypeSpecTrigger] = useState(0);
 
+  // Dirty state tracking for field edit panel
+  const [isFieldDirty, setIsFieldDirty] = useState(false);
+  const fieldDirtyRef = useRef(false);
+  const handleFieldDirtyChange = useCallback((dirty: boolean) => {
+    setIsFieldDirty(dirty);
+    fieldDirtyRef.current = dirty;
+  }, []);
+
+  // Refs for keyboard shortcut save/discard delegation
+  const fieldSaveRef = useRef<(() => void) | null>(null);
+  const fieldDiscardRef = useRef<(() => void) | null>(null);
+
   const selectedField = selectedFieldId
     ? fields.find((f) => f.id === selectedFieldId) ?? null
     : null;
 
+  // Navigation guard: check dirty before switching fields
   const handleFieldSelect = useCallback((fieldId: string) => {
+    if (fieldDirtyRef.current) {
+      const confirmed = window.confirm("You have unsaved changes. Discard and continue?");
+      if (!confirmed) return;
+    }
     setSelectedFieldId(fieldId);
-    setRightPanelTab("quick-edit");
+    setRightPanelTab("field-edit");
   }, []);
 
+  // Compute entity alerts from domain completeness requirements
+  const entityAlerts = useMemo(() => {
+    const completenessReqs = (domainPolicy?.completenessRequirements as CompletenessRequirements) ?? undefined;
+    return generateEntityAlerts(entity, fields, completenessReqs);
+  }, [entity, fields, domainPolicy]);
+
+  const alertCount = entityAlerts.length;
+
+  // Helper: bump semantic version in entity metadata
+  const bumpSemanticVersion = useCallback(async (level: "major" | "minor") => {
+    const meta = (entity.metadata ?? {}) as Record<string, unknown>;
+    const sv = (meta.semanticVersion as { major?: number; minor?: number }) ?? {};
+    const currentMajor = sv.major ?? entity.version;
+    const currentMinor = sv.minor ?? 0;
+
+    let newMajor = currentMajor;
+    let newMinor = currentMinor;
+    if (level === "major") {
+      newMajor = currentMajor + 1;
+      newMinor = 0;
+    } else {
+      newMinor = currentMinor + 1;
+    }
+
+    await updateEntityMetadataAction(entity.id, {
+      semanticVersion: { major: newMajor, minor: newMinor },
+    });
+  }, [entity.id, entity.metadata, entity.version]);
+
+  // Field update handler — saves field, creates version, bumps semantic version
   const handleUpdateField = useCallback(async (id: string, data: Record<string, unknown>) => {
+    // Determine which properties changed by comparing to original field
+    const originalField = fields.find((f) => f.id === id);
+    const changedProps: string[] = [];
+    if (originalField) {
+      for (const key of Object.keys(data)) {
+        if (key === "decorators") {
+          const origTs = (originalField.decorators?.typespec ?? {}) as Record<string, unknown>;
+          const newTs = ((data.decorators as Record<string, unknown>)?.typespec ?? {}) as Record<string, unknown>;
+          if (JSON.stringify(origTs) !== JSON.stringify(newTs)) {
+            const origIdentity = (origTs.identity ?? {}) as Record<string, unknown>;
+            const newIdentity = (newTs.identity ?? {}) as Record<string, unknown>;
+            if (JSON.stringify(origIdentity) !== JSON.stringify(newIdentity)) {
+              if (origIdentity.format !== newIdentity.format) changedProps.push("format");
+              if (origIdentity.defaultValue !== newIdentity.defaultValue) changedProps.push("defaultValue");
+              if (origIdentity.secret !== newIdentity.secret) changedProps.push("secret");
+            }
+            if (JSON.stringify(origTs.documentation) !== JSON.stringify(newTs.documentation)) {
+              changedProps.push("summary");
+            }
+          }
+        } else {
+          const origVal = (originalField as unknown as Record<string, unknown>)[key];
+          if (JSON.stringify(origVal) !== JSON.stringify(data[key])) {
+            changedProps.push(key);
+          }
+        }
+      }
+    }
+
     await updateFieldAction(id, data);
     setTypeSpecTrigger((n) => n + 1);
-  }, []);
+
+    // Create version snapshot and bump semantic version
+    const level = classifyChangeLevel(changedProps);
+    try {
+      await createVersionAction(entity.id);
+      await bumpSemanticVersion(level);
+    } catch {
+      // Version creation failure should not block the save
+    }
+
+    flashSaved();
+  }, [entity.id, fields, bumpSemanticVersion, flashSaved]);
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -310,7 +402,30 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
     }
   }, [entity.id]);
 
-  // Keyboard shortcut: Cmd+E / Ctrl+E to emit
+  // Metadata save handler — creates version + bumps minor
+  const handleMetaSaved = useCallback(async () => {
+    try {
+      await createVersionAction(entity.id);
+      await bumpSemanticVersion("minor");
+    } catch {
+      // Version creation failure should not block the save
+    }
+    flashSaved();
+  }, [entity.id, bumpSemanticVersion, flashSaved]);
+
+  // Navigation guard: tab switching
+  const handleTabChange = useCallback((tab: ViewTab) => {
+    if (fieldDirtyRef.current) {
+      const confirmed = window.confirm("You have unsaved changes. Discard and continue?");
+      if (!confirmed) return;
+    }
+    setActiveTab(tab);
+    if (tab === "versions") {
+      handleOpenHistory();
+    }
+  }, [handleOpenHistory]);
+
+  // Keyboard shortcuts: Cmd+E to emit, Cmd+S to save, Escape to discard
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key === "e") {
@@ -319,10 +434,32 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           handleEmit();
         }
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        if (fieldDirtyRef.current && fieldSaveRef.current) {
+          fieldSaveRef.current();
+        }
+      }
+      if (e.key === "Escape") {
+        if (fieldDirtyRef.current && fieldDiscardRef.current) {
+          fieldDiscardRef.current();
+        }
+      }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleEmit, readOnly_, isEmitting]);
+
+  // Navigation guard: beforeunload when dirty
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      if (fieldDirtyRef.current) {
+        e.preventDefault();
+      }
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
 
   return (
     <div className="animate-auth-fade-up">
@@ -342,7 +479,8 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       <InlineEntityMeta
         entity={entity}
         isReadOnly={readOnly_}
-        onGovernanceClick={() => setActiveTab("governance")}
+        onGovernanceClick={() => handleTabChange("governance")}
+        onMetaSaved={handleMetaSaved}
       />
 
       {/* Right panel router (renders nothing itself, pushes content via context) */}
@@ -366,53 +504,61 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           // Trigger page refresh to reload fields from DB
           window.location.reload();
         }}
+        onDirtyChange={handleFieldDirtyChange}
+        fieldSaveRef={fieldSaveRef}
+        fieldDiscardRef={fieldDiscardRef}
       />
 
-      {/* View Tab Bar */}
-      <div className="flex items-center gap-space-1 mb-space-4 border-b border-border/50">
+      {/* View Tab Bar — definition tabs | action tabs */}
+      <div className="flex items-center mb-space-4 border-b border-border/50">
+        {/* Definition tabs */}
+        {(["editor", "versions", "governance", "alerts"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => handleTabChange(tab)}
+            className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === tab
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid={`tab-${tab}`}
+          >
+            {tab === "editor" ? "Editor" : tab === "versions" ? "Versions" : tab === "governance" ? "Governance" : `Alerts${alertCount > 0 ? ` (${alertCount})` : ""}`}
+          </button>
+        ))}
+
+        {/* Dirty indicator */}
+        {isFieldDirty && (
+          <span className="w-2 h-2 rounded-full bg-warning ml-1" title="Unsaved changes" />
+        )}
+
+        {/* Separator between definition and action tabs */}
+        <span className="mx-2 w-px h-4 bg-border/60 self-center" />
+
+        {/* Action tabs — visually distinct with icons and primary accent */}
         <button
-          onClick={() => { setActiveTab("editor"); }}
-          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "editor"
-              ? "border-foreground text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-          data-testid="tab-editor"
-        >
-          Editor
-        </button>
-        <button
-          onClick={() => { setActiveTab("schemas"); }}
-          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+          onClick={() => handleTabChange("schemas")}
+          className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
             activeTab === "schemas"
-              ? "border-foreground text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-primary"
           }`}
           data-testid="tab-schemas"
         >
+          <Zap className="w-3 h-3" />
           Schemas
         </button>
         <button
-          onClick={() => { setActiveTab("versions"); handleOpenHistory(); }}
-          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "versions"
-              ? "border-foreground text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
+          onClick={() => handleTabChange("api")}
+          className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === "api"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-primary"
           }`}
-          data-testid="tab-versions"
+          data-testid="tab-api"
         >
-          Versions
-        </button>
-        <button
-          onClick={() => { setActiveTab("governance"); }}
-          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "governance"
-              ? "border-foreground text-foreground"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-          data-testid="tab-governance"
-        >
-          Governance
+          <Globe className="w-3 h-3" />
+          API
         </button>
       </div>
 
@@ -575,6 +721,31 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
               }}
             />
           </div>
+        )}
+
+        {activeTab === "alerts" && (
+          <div className="space-y-space-6">
+            <h2 className="text-heading-2 text-foreground">Alerts</h2>
+            <AlertsTab
+              alerts={entityAlerts}
+              onNavigateToField={(fieldId) => {
+                handleFieldSelect(fieldId);
+                setActiveTab("editor");
+              }}
+              onNavigateToTab={(tab) => {
+                setActiveTab(tab as ViewTab);
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === "api" && (
+          <ApiTab
+            entityId={entity.id}
+            entityName={entity.name}
+            fields={fields.map((f) => ({ name: f.name, type: f.type }))}
+            isReadOnly={readOnly_}
+          />
         )}
       </div>
 
