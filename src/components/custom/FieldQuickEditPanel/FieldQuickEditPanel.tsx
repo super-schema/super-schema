@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ChevronDown, Loader2, Check, AlertCircle } from "lucide-react";
+import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ChevronDown, Loader2, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { getTypeInfo } from "@/lib/data-types";
 
@@ -37,7 +38,7 @@ interface FieldData {
   sortOrder: number;
 }
 
-type SaveStatus = "idle" | "saving" | "saved" | "error";
+type SaveStatus = "idle" | "saving" | "error";
 
 interface FieldQuickEditPanelProps {
   field: FieldData;
@@ -46,6 +47,7 @@ interface FieldQuickEditPanelProps {
   domainSlug: string;
   isReadOnly?: boolean;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,7 @@ export function FieldQuickEditPanel({
   field,
   isReadOnly = false,
   onUpdateField,
+  onDirtyChange,
 }: FieldQuickEditPanelProps) {
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
 
@@ -110,13 +113,10 @@ export function FieldQuickEditPanel({
   );
   const [localSummary, setLocalSummary] = useState(typespec.documentation?.summary ?? "");
 
-  // Save machinery
+  // Save status
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRef = useRef(false);
-  const savingRef = useRef(false);
 
-  // Current values ref to avoid stale closures
+  // Current values ref to avoid stale closures in doSave
   const currentRef = useRef({
     localName, localType, localNullable, localIsKey, localDescription,
     localClassification, localFieldNumber, localSecret, localFormat,
@@ -130,6 +130,38 @@ export function FieldQuickEditPanel({
       localDefaultValue, localSummary, typespec,
     };
   });
+
+  // Dirty detection — compare local state to original field prop
+  const isDirty = useMemo(() => {
+    const origTs = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
+    if (localName !== field.name) return true;
+    if (localType !== field.type) return true;
+    if (localNullable !== field.nullable) return true;
+    if (localIsKey !== field.isKey) return true;
+    if (localDescription !== field.description) return true;
+    if (localClassification !== field.classification) return true;
+    if (localFieldNumber !== field.fieldNumber) return true;
+    if (localSecret !== !!origTs.identity?.secret) return true;
+    if (localFormat !== (origTs.identity?.format ?? "")) return true;
+    const origDefault = origTs.identity?.defaultValue != null ? String(origTs.identity.defaultValue) : "";
+    if (localDefaultValue !== origDefault) return true;
+    if (localSummary !== (origTs.documentation?.summary ?? "")) return true;
+    if (JSON.stringify(typespec) !== JSON.stringify(origTs)) return true;
+    return false;
+  }, [
+    localName, localType, localNullable, localIsKey, localDescription,
+    localClassification, localFieldNumber, localSecret, localFormat,
+    localDefaultValue, localSummary, typespec, field,
+  ]);
+
+  // Notify parent of dirty state changes
+  const prevDirtyRef = useRef(isDirty);
+  useEffect(() => {
+    if (prevDirtyRef.current !== isDirty) {
+      prevDirtyRef.current = isDirty;
+      onDirtyChange?.(isDirty);
+    }
+  }, [isDirty, onDirtyChange]);
 
   // Reset on field switch
   useEffect(() => {
@@ -151,12 +183,29 @@ export function FieldQuickEditPanel({
     setSaveStatus("idle");
   }, [field.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save function
+  // Discard: reset all local state to field prop values
+  const handleDiscard = useCallback(() => {
+    setLocalName(field.name);
+    setLocalType(field.type);
+    setLocalNullable(field.nullable);
+    setLocalIsKey(field.isKey);
+    setLocalDescription(field.description);
+    setLocalClassification(field.classification);
+    setLocalFieldNumber(field.fieldNumber);
+
+    const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
+    setTypespec(ts);
+    setLocalSecret(!!ts.identity?.secret);
+    setLocalFormat(ts.identity?.format ?? "");
+    setLocalDefaultValue(ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "");
+    setLocalSummary(ts.documentation?.summary ?? "");
+
+    setSaveStatus("idle");
+  }, [field]);
+
+  // Save function — called directly (no debounce)
   const doSave = useCallback(async () => {
-    if (savingRef.current) return;
-    savingRef.current = true;
     setSaveStatus("saving");
-    pendingRef.current = false;
 
     const c = currentRef.current;
 
@@ -185,42 +234,26 @@ export function FieldQuickEditPanel({
         fieldNumber: c.localFieldNumber,
         decorators,
       });
-      setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      setSaveStatus("idle");
     } catch {
       setSaveStatus("error");
-    } finally {
-      savingRef.current = false;
     }
   }, [field.id, field.decorators, onUpdateField]);
 
-  const scheduleSave = useCallback(() => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    pendingRef.current = true;
-    saveTimeoutRef.current = setTimeout(doSave, 500);
-  }, [doSave]);
-
-  // Flush on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = null;
-      }
-      if (pendingRef.current && !savingRef.current) {
-        pendingRef.current = false;
-        doSave();
-      }
-    };
-  }, [field.id, doSave]);
+  // Expose save/discard for keyboard shortcuts via ref-stable callbacks
+  const saveRef = useRef(doSave);
+  saveRef.current = doSave;
+  const discardRef = useRef(handleDiscard);
+  discardRef.current = handleDiscard;
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
 
   // Typespec sub-object change handler (from studio panels)
   function handleTypespecChange(key: keyof TypeSpecDecorators, value: unknown) {
     setTypespec((prev) => ({ ...prev, [key]: value }));
-    scheduleSave();
   }
 
-  // Header field change handler
+  // Header field change handler — only updates local state now (no scheduleSave)
   function handleHeaderChange(sectionField: string, value: unknown) {
     switch (sectionField) {
       case "name": setLocalName(value as string); break;
@@ -233,7 +266,6 @@ export function FieldQuickEditPanel({
       case "description": setLocalDescription(value as string); break;
       case "summary": setLocalSummary(value as string); break;
     }
-    scheduleSave();
   }
 
   function toggleSection(idx: number) {
@@ -250,108 +282,126 @@ export function FieldQuickEditPanel({
 
   return (
     <div className="flex flex-col h-full" data-testid="field-edit-panel">
-      {/* Header: core identity fields */}
-      <div className="px-space-4 py-space-3 border-b border-border/50 space-y-2">
-        {/* Field name */}
-        {editingName && !isReadOnly ? (
-          <Input
-            autoFocus
-            value={localName}
-            onChange={(e) => handleHeaderChange("name", e.target.value)}
-            onBlur={() => setEditingName(false)}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingName(false); }}
-            className="h-7 font-mono text-body-small font-medium"
-          />
-        ) : (
-          <span
-            className={`font-mono text-body-small text-foreground font-medium block ${!isReadOnly ? "cursor-text hover:text-primary" : ""}`}
-            onClick={() => !isReadOnly && setEditingName(true)}
-          >
-            {localName}
-          </span>
-        )}
+      {/* Header: core identity fields with labels */}
+      <div className="px-space-4 py-space-3 border-b border-border/50 space-y-2.5">
+        {/* Field Name */}
+        <div>
+          <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Field Name</label>
+          {editingName && !isReadOnly ? (
+            <Input
+              autoFocus
+              value={localName}
+              onChange={(e) => handleHeaderChange("name", e.target.value)}
+              onBlur={() => setEditingName(false)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setEditingName(false); }}
+              className="h-7 font-mono text-body-small font-medium"
+            />
+          ) : (
+            <span
+              className={`font-mono text-body-small text-foreground font-medium block ${!isReadOnly ? "cursor-text hover:text-primary" : ""}`}
+              onClick={() => !isReadOnly && setEditingName(true)}
+            >
+              {localName}
+            </span>
+          )}
+        </div>
 
         {/* Description */}
-        {editingDescription && !isReadOnly ? (
-          <textarea
-            autoFocus
-            value={localDescription}
-            onChange={(e) => handleHeaderChange("description", e.target.value)}
-            onBlur={() => setEditingDescription(false)}
-            onKeyDown={(e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setEditingDescription(false); }
-              if (e.key === "Escape") setEditingDescription(false);
-            }}
-            rows={2}
-            className="w-full rounded border border-border bg-popover px-2 py-1 text-caption text-muted-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-ring resize-none"
-            placeholder="Add description..."
-          />
-        ) : (
-          <p
-            onClick={() => !isReadOnly && setEditingDescription(true)}
-            className={`text-caption line-clamp-1 ${localDescription ? "text-muted-foreground" : "text-muted-foreground/40 italic"} ${!isReadOnly ? "cursor-pointer hover:text-foreground transition-colors" : ""}`}
-          >
-            {localDescription || "Add description..."}
-          </p>
-        )}
+        <div>
+          <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Description</label>
+          {editingDescription && !isReadOnly ? (
+            <textarea
+              autoFocus
+              value={localDescription}
+              onChange={(e) => handleHeaderChange("description", e.target.value)}
+              onBlur={() => setEditingDescription(false)}
+              onKeyDown={(e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); setEditingDescription(false); }
+                if (e.key === "Escape") setEditingDescription(false);
+              }}
+              rows={2}
+              className="w-full rounded border border-border bg-popover px-2 py-1 text-caption text-muted-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-ring resize-none"
+              placeholder="Add description..."
+            />
+          ) : (
+            <p
+              onClick={() => !isReadOnly && setEditingDescription(true)}
+              className={`text-caption line-clamp-1 ${localDescription ? "text-muted-foreground" : "text-muted-foreground/40 italic"} ${!isReadOnly ? "cursor-pointer hover:text-foreground transition-colors" : ""}`}
+            >
+              {localDescription || "Add description..."}
+            </p>
+          )}
+        </div>
 
         {/* Summary */}
-        <Input
-          value={localSummary}
-          onChange={(e) => handleHeaderChange("summary", e.target.value)}
-          placeholder="Brief one-line summary"
-          className="h-7 text-caption"
-          disabled={isReadOnly}
-        />
+        <div>
+          <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Summary</label>
+          <Input
+            value={localSummary}
+            onChange={(e) => handleHeaderChange("summary", e.target.value)}
+            placeholder="Brief one-line summary"
+            className="h-7 text-caption"
+            disabled={isReadOnly}
+          />
+        </div>
 
-        {/* Type picker */}
-        <div className="flex items-center gap-2">
-          <div className="flex-1">
-            <TypePicker
-              value={localType}
-              onChange={(t) => handleHeaderChange("type", t)}
-              compact
-              disabled={isReadOnly}
-            />
+        {/* Data Type */}
+        <div>
+          <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Data Type</label>
+          <TypePicker
+            value={localType}
+            onChange={(t) => handleHeaderChange("type", t)}
+            compact
+            disabled={isReadOnly}
+          />
+        </div>
+
+        {/* Field Properties */}
+        <div>
+          <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Properties</label>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-caption text-muted-foreground">
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={localNullable} onChange={(e) => handleHeaderChange("nullable", e.target.checked)} disabled={isReadOnly || localIsKey} className="accent-primary" />
+              Optional
+            </label>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={localSecret} onChange={(e) => handleHeaderChange("secret", e.target.checked)} disabled={isReadOnly} className="accent-primary" />
+              Secret
+            </label>
+            <label className="flex items-center gap-1">
+              <input type="checkbox" checked={localIsKey} onChange={(e) => { handleHeaderChange("isKey", e.target.checked); if (e.target.checked) handleHeaderChange("nullable", false); }} disabled={isReadOnly} className="accent-primary" />
+              Key
+            </label>
           </div>
         </div>
 
-        {/* Checkboxes + Format (string only) + Default */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-caption text-muted-foreground">
-          <label className="flex items-center gap-1">
-            <input type="checkbox" checked={localNullable} onChange={(e) => handleHeaderChange("nullable", e.target.checked)} disabled={isReadOnly || localIsKey} className="accent-primary" />
-            Optional
-          </label>
-          <label className="flex items-center gap-1">
-            <input type="checkbox" checked={localSecret} onChange={(e) => handleHeaderChange("secret", e.target.checked)} disabled={isReadOnly} className="accent-primary" />
-            Secret
-          </label>
-          <label className="flex items-center gap-1">
-            <input type="checkbox" checked={localIsKey} onChange={(e) => { handleHeaderChange("isKey", e.target.checked); if (e.target.checked) handleHeaderChange("nullable", false); }} disabled={isReadOnly} className="accent-primary" />
-            Key
-          </label>
-        </div>
-
+        {/* Format + Default Value */}
         <div className={`grid gap-space-2 ${STRING_TYPES.has(localType) ? "grid-cols-2" : "grid-cols-1"}`}>
           {STRING_TYPES.has(localType) && (
-            <select
-              value={localFormat}
-              onChange={(e) => handleHeaderChange("format", e.target.value)}
-              disabled={isReadOnly}
-              className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption text-foreground disabled:opacity-50"
-            >
-              {FORMAT_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
+            <div>
+              <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Format</label>
+              <select
+                value={localFormat}
+                onChange={(e) => handleHeaderChange("format", e.target.value)}
+                disabled={isReadOnly}
+                className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption text-foreground disabled:opacity-50"
+              >
+                {FORMAT_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
+            </div>
           )}
-          <Input
-            value={localDefaultValue}
-            onChange={(e) => handleHeaderChange("defaultValue", e.target.value)}
-            placeholder={typeCategory === "Number" ? "0" : typeCategory === "Boolean" ? "true / false" : '""'}
-            className="h-7 font-mono text-caption"
-            disabled={isReadOnly}
-          />
+          <div>
+            <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Default Value</label>
+            <Input
+              value={localDefaultValue}
+              onChange={(e) => handleHeaderChange("defaultValue", e.target.value)}
+              placeholder={typeCategory === "Number" ? "0" : typeCategory === "Boolean" ? "true / false" : '""'}
+              className="h-7 font-mono text-caption"
+              disabled={isReadOnly}
+            />
+          </div>
         </div>
       </div>
 
@@ -382,7 +432,7 @@ export function FieldQuickEditPanel({
                     fieldType={localType}
                     typeCategory={typeCategory}
                     fieldNumber={localFieldNumber}
-                    onFieldNumberChange={(fn) => { setLocalFieldNumber(fn); scheduleSave(); }}
+                    onFieldNumberChange={(fn) => { setLocalFieldNumber(fn); }}
                     onChange={(w) => handleTypespecChange("wireFormat", w)}
                   />
                 )}
@@ -402,11 +452,9 @@ export function FieldQuickEditPanel({
                   <GovernancePanel
                     governance={(field.decorators as Record<string, unknown>) ?? {}}
                     fieldClassification={localClassification}
-                    onClassificationChange={(c) => { setLocalClassification(c); scheduleSave(); }}
-                    onChange={(g) => {
-                      // Governance updates go to top-level decorators, not typespec
-                      // This is handled via the save function
-                      scheduleSave();
+                    onClassificationChange={(c) => { setLocalClassification(c); }}
+                    onChange={() => {
+                      // Governance updates are tracked via dirty state
                     }}
                   />
                 )}
@@ -422,43 +470,43 @@ export function FieldQuickEditPanel({
         ))}
       </div>
 
-      {/* Footer — save indicator only */}
+      {/* Footer — Save/Discard when dirty, error indicator */}
       <div className="border-t border-border/50 px-space-4 py-space-2">
-        <SaveIndicator status={saveStatus} />
+        {saveStatus === "error" && (
+          <span className="flex items-center gap-1 text-caption text-destructive mb-1">
+            <AlertCircle className="w-3 h-3" />
+            Save failed — try again
+          </span>
+        )}
+        {saveStatus === "saving" && (
+          <span className="flex items-center gap-1 text-caption text-muted-foreground animate-pulse">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Saving&hellip;
+          </span>
+        )}
+        {isDirty && saveStatus === "idle" && !isReadOnly && (
+          <div className="flex items-center gap-2">
+            <span className="text-caption text-warning flex-1">Unsaved changes</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDiscard}
+              className="h-7 text-caption"
+              data-testid="field-discard-btn"
+            >
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              onClick={doSave}
+              className="h-7 text-caption"
+              data-testid="field-save-btn"
+            >
+              Save
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
-}
-
-function SaveIndicator({ status }: { status: SaveStatus }) {
-  switch (status) {
-    case "saving":
-      return (
-        <span className="flex items-center gap-1 text-caption text-muted-foreground animate-pulse">
-          <Loader2 className="w-3 h-3 animate-spin" />
-          Saving&hellip;
-        </span>
-      );
-    case "saved":
-      return (
-        <span className="flex items-center gap-1 text-caption text-success">
-          <Check className="w-3 h-3" />
-          All changes saved
-        </span>
-      );
-    case "error":
-      return (
-        <span className="flex items-center gap-1 text-caption text-destructive">
-          <AlertCircle className="w-3 h-3" />
-          Save failed &mdash; retrying&hellip;
-        </span>
-      );
-    default:
-      return (
-        <span className="flex items-center gap-1 text-caption text-muted-foreground/50">
-          <Check className="w-3 h-3" />
-          Auto-save enabled
-        </span>
-      );
-  }
 }
