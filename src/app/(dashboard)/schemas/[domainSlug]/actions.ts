@@ -133,11 +133,174 @@ export async function createEntityAction(domainId: string, formData: FormData) {
 }
 
 // ---------------------------------------------------------------------------
-// Bulk import: create multiple entities + shared types in one transaction
+// Model field CRUD
 // ---------------------------------------------------------------------------
+
+export async function addModelFieldAction(
+  modelId: string,
+  data: { name: string; type: string; nullable?: boolean; isKey?: boolean; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    const model = await prisma.modelDefinition.findUnique({ where: { id: modelId }, include: { fields: true } });
+    if (!model) return { error: "Model not found" };
+
+    await prisma.modelFieldDefinition.create({
+      data: {
+        modelId,
+        name: data.name,
+        type: data.type,
+        nullable: data.nullable ?? true,
+        isKey: data.isKey ?? false,
+        description: data.description ?? "",
+        sortOrder: model.fields.length,
+      },
+    });
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) {
+      return { error: `Field "${data.name}" already exists` };
+    }
+    return { error: e instanceof Error ? e.message : "Failed to add field" };
+  }
+}
+
+export async function updateModelFieldAction(
+  fieldId: string,
+  data: { name?: string; type?: string; nullable?: boolean; isKey?: boolean; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    await prisma.modelFieldDefinition.update({ where: { id: fieldId }, data });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to update field" };
+  }
+}
+
+export async function deleteModelFieldAction(fieldId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    await prisma.modelFieldDefinition.delete({ where: { id: fieldId } });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to delete field" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared Enum CRUD
+// ---------------------------------------------------------------------------
+
+export async function updateSharedEnumAction(
+  enumId: string,
+  data: { values?: string[]; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    await prisma.sharedEnum.update({ where: { id: enumId }, data });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to update enum" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Custom Scalar CRUD
+// ---------------------------------------------------------------------------
+
+export async function updateCustomScalarAction(
+  scalarId: string,
+  data: { baseType?: string; format?: string | null; pattern?: string | null; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    await prisma.customScalar.update({ where: { id: scalarId }, data });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to update scalar" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Union Type CRUD
+// ---------------------------------------------------------------------------
+
+export async function updateUnionTypeAction(
+  unionId: string,
+  data: { memberTypes?: string[]; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  try {
+    await prisma.unionType.update({ where: { id: unionId }, data });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to update union type" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bulk import: create models, entities, shared types, decorators, and services
+// ---------------------------------------------------------------------------
+
+export interface ImportedOperationPayload {
+  name: string;
+  httpMethod?: string;
+  httpPath?: string;
+  description?: string;
+  returnType?: string;
+  params: Array<{
+    name: string;
+    type: string;
+    location?: string;
+    isOptional: boolean;
+  }>;
+}
+
+export interface ImportedServicePayload {
+  name: string;
+  description?: string;
+  basePath?: string;
+  scope?: "domain" | "entity";
+  entityName?: string;
+  operations: ImportedOperationPayload[];
+}
+
+export interface ImportedDecoratorDefinitionPayload {
+  name: string;
+  description?: string;
+  signature: string;
+  targetTypes: string[];
+}
 
 export interface BulkImportPayload {
   domainId: string;
+  namespace?: string;
+  models: Array<{
+    name: string;
+    description?: string;
+    extends?: string;
+    fields: CreateFieldInput[];
+  }>;
   entities: Array<{
     name: string;
     description?: string;
@@ -145,37 +308,47 @@ export interface BulkImportPayload {
     fields: CreateFieldInput[];
   }>;
   sharedEnums: Array<{ name: string; values: string[]; description?: string }>;
-  customScalars: Array<{ name: string; baseType: string; description?: string }>;
+  customScalars: Array<{
+    name: string;
+    baseType: string;
+    format?: string;
+    pattern?: string;
+    description?: string;
+  }>;
   unionTypes: Array<{ name: string; memberTypes: string[]; description?: string }>;
+  services: ImportedServicePayload[];
+  decoratorDefinitions: ImportedDecoratorDefinitionPayload[];
 }
 
 export interface BulkImportResult {
+  modelsCreated: number;
   entitiesCreated: number;
   enumsCreated: number;
   scalarsCreated: number;
   unionsCreated: number;
+  servicesCreated: number;
+  decoratorsCreated: number;
   entityIds: string[];
+  modelIds: string[];
   errors: string[];
 }
 
-function sortByInheritance(
-  entities: BulkImportPayload["entities"]
-): BulkImportPayload["entities"] {
-  const nameSet = new Set(entities.map((e) => e.name));
-  const sorted: BulkImportPayload["entities"] = [];
+function sortByInheritance<T extends { name: string; extends?: string }>(items: T[]): T[] {
+  const nameSet = new Set(items.map((item) => item.name));
+  const sorted: T[] = [];
   const added = new Set<string>();
-  const remaining = [...entities];
+  const remaining = [...items];
 
-  let maxPasses = entities.length + 1;
+  let maxPasses = items.length + 1;
   while (remaining.length > 0 && maxPasses-- > 0) {
     const nextRemaining: typeof remaining = [];
-    for (const entity of remaining) {
-      const parent = entity.extends;
+    for (const item of remaining) {
+      const parent = item.extends;
       if (!parent || !nameSet.has(parent) || added.has(parent)) {
-        sorted.push(entity);
-        added.add(entity.name);
+        sorted.push(item);
+        added.add(item.name);
       } else {
-        nextRemaining.push(entity);
+        nextRemaining.push(item);
       }
     }
     if (nextRemaining.length === remaining.length) {
@@ -189,53 +362,212 @@ function sortByInheritance(
   return sorted;
 }
 
-export async function createEntitiesFromImportAction(
+function mapFieldCreateInput(
+  field: CreateFieldInput,
+  index: number
+): Prisma.FieldCreateWithoutEntityInput {
+  return {
+    name: field.name,
+    slug: generateSlug(field.name),
+    type: field.type,
+    nullable: field.nullable,
+    isKey: field.isKey,
+    description: field.description,
+    classification: field.classification,
+    precision: field.precision,
+    scale: field.scale,
+    sortOrder: index,
+    ...(field.aliases?.length ? { aliases: field.aliases } : {}),
+    ...(field.decorators && Object.keys(field.decorators).length > 0
+      ? { decorators: field.decorators as Prisma.InputJsonValue }
+      : {}),
+  };
+}
+
+function mapModelFieldCreateInput(
+  field: CreateFieldInput,
+  index: number
+): Prisma.ModelFieldDefinitionCreateWithoutModelInput {
+  return {
+    name: field.name,
+    type: field.type,
+    nullable: field.nullable,
+    isKey: field.isKey,
+    description: field.description,
+    classification: field.classification,
+    precision: field.precision,
+    scale: field.scale,
+    sortOrder: index,
+    ...(field.aliases?.length ? { aliases: field.aliases } : {}),
+    ...(field.decorators && Object.keys(field.decorators).length > 0
+      ? { decorators: field.decorators as Prisma.InputJsonValue }
+      : {}),
+  };
+}
+
+function inferResponseFromReturnType(
+  returnType: string | undefined
+): Prisma.OperationResponseCreateWithoutOperationInput {
+  const normalized = returnType?.trim();
+  if (!normalized || normalized === "void" || normalized === "never") {
+    return {
+      statusCode: 204,
+      type: null,
+      description: "Imported from TypeSpec operation without a response body.",
+    };
+  }
+
+  return {
+    statusCode: 200,
+    type: normalized,
+    description: "Imported from TypeSpec operation return type.",
+  };
+}
+
+export async function createDomainAssetsFromImportAction(
   payload: BulkImportPayload
 ): Promise<BulkImportResult> {
   const session = await auth();
   if (!session?.user?.id) {
-    return { entitiesCreated: 0, enumsCreated: 0, scalarsCreated: 0, unionsCreated: 0, entityIds: [], errors: ["Not authenticated"] };
+    return {
+      modelsCreated: 0,
+      entitiesCreated: 0,
+      enumsCreated: 0,
+      scalarsCreated: 0,
+      unionsCreated: 0,
+      servicesCreated: 0,
+      decoratorsCreated: 0,
+      entityIds: [],
+      modelIds: [],
+      errors: ["Not authenticated"],
+    };
   }
 
   const result: BulkImportResult = {
-    entitiesCreated: 0, enumsCreated: 0, scalarsCreated: 0, unionsCreated: 0, entityIds: [], errors: [],
+    modelsCreated: 0,
+    entitiesCreated: 0,
+    enumsCreated: 0,
+    scalarsCreated: 0,
+    unionsCreated: 0,
+    servicesCreated: 0,
+    decoratorsCreated: 0,
+    entityIds: [],
+    modelIds: [],
+    errors: [],
   };
 
   try {
     await prisma.$transaction(async (tx) => {
-      for (const e of payload.sharedEnums) {
+      const sortedModels = sortByInheritance(payload.models);
+
+      for (const model of sortedModels) {
+        try {
+          const created = await tx.modelDefinition.create({
+            data: {
+              name: model.name.trim(),
+              description: model.description ?? "",
+              domainId: payload.domainId,
+              sourceFormat: "typespec",
+              sourceNamespace: payload.namespace ?? null,
+              extendsModelName: model.extends ?? null,
+              fields: {
+                create: model.fields.map((field, index) =>
+                  mapModelFieldCreateInput(field, index)
+                ),
+              },
+            },
+          });
+          result.modelIds.push(created.id);
+          result.modelsCreated++;
+        } catch (err: unknown) {
+          result.errors.push(
+            err instanceof Error && err.message.includes("Unique constraint")
+              ? `Model "${model.name}" already exists — skipped`
+              : `Failed to create model "${model.name}"`
+          );
+        }
+      }
+
+      for (const decorator of payload.decoratorDefinitions) {
+        try {
+          await tx.decoratorDefinition.create({
+            data: {
+              name: decorator.name,
+              description: decorator.description ?? "",
+              signature: decorator.signature,
+              targetTypes: decorator.targetTypes,
+              domainId: payload.domainId,
+            },
+          });
+          result.decoratorsCreated++;
+        } catch (err: unknown) {
+          result.errors.push(
+            err instanceof Error && err.message.includes("Unique constraint")
+              ? `Decorator "${decorator.name}" already exists — skipped`
+              : `Failed to create decorator "${decorator.name}"`
+          );
+        }
+      }
+
+      for (const sharedEnum of payload.sharedEnums) {
         try {
           await tx.sharedEnum.create({
-            data: { name: e.name, values: e.values, description: e.description ?? "", domainId: payload.domainId },
+            data: {
+              name: sharedEnum.name,
+              values: sharedEnum.values,
+              description: sharedEnum.description ?? "",
+              domainId: payload.domainId,
+            },
           });
           result.enumsCreated++;
         } catch (err: unknown) {
-          result.errors.push(err instanceof Error && err.message.includes("Unique constraint")
-            ? `Enum "${e.name}" already exists — skipped` : `Failed to create enum "${e.name}"`);
+          result.errors.push(
+            err instanceof Error && err.message.includes("Unique constraint")
+              ? `Enum "${sharedEnum.name}" already exists — skipped`
+              : `Failed to create enum "${sharedEnum.name}"`
+          );
         }
       }
 
-      for (const s of payload.customScalars) {
+      for (const scalar of payload.customScalars) {
         try {
           await tx.customScalar.create({
-            data: { name: s.name, baseType: s.baseType, description: s.description ?? "", domainId: payload.domainId },
+            data: {
+              name: scalar.name,
+              baseType: scalar.baseType,
+              format: scalar.format ?? null,
+              pattern: scalar.pattern ?? null,
+              description: scalar.description ?? "",
+              domainId: payload.domainId,
+            },
           });
           result.scalarsCreated++;
         } catch (err: unknown) {
-          result.errors.push(err instanceof Error && err.message.includes("Unique constraint")
-            ? `Scalar "${s.name}" already exists — skipped` : `Failed to create scalar "${s.name}"`);
+          result.errors.push(
+            err instanceof Error && err.message.includes("Unique constraint")
+              ? `Scalar "${scalar.name}" already exists — skipped`
+              : `Failed to create scalar "${scalar.name}"`
+          );
         }
       }
 
-      for (const u of payload.unionTypes) {
+      for (const unionType of payload.unionTypes) {
         try {
           await tx.unionType.create({
-            data: { name: u.name, memberTypes: u.memberTypes, description: u.description ?? "", domainId: payload.domainId },
+            data: {
+              name: unionType.name,
+              memberTypes: unionType.memberTypes,
+              description: unionType.description ?? "",
+              domainId: payload.domainId,
+            },
           });
           result.unionsCreated++;
         } catch (err: unknown) {
-          result.errors.push(err instanceof Error && err.message.includes("Unique constraint")
-            ? `Union "${u.name}" already exists — skipped` : `Failed to create union "${u.name}"`);
+          result.errors.push(
+            err instanceof Error && err.message.includes("Unique constraint")
+              ? `Union "${unionType.name}" already exists — skipped`
+              : `Failed to create union "${unionType.name}"`
+          );
         }
       }
 
@@ -244,10 +576,10 @@ export async function createEntitiesFromImportAction(
 
       for (const entity of sortedEntities) {
         try {
-          let parentEntityId: string | undefined;
-          if (entity.extends && createdEntityMap.has(entity.extends)) {
-            parentEntityId = createdEntityMap.get(entity.extends);
-          }
+          const parentEntityId =
+            entity.extends && createdEntityMap.has(entity.extends)
+              ? createdEntityMap.get(entity.extends)
+              : undefined;
 
           const created = await tx.entity.create({
             data: {
@@ -256,16 +588,11 @@ export async function createEntitiesFromImportAction(
               domainId: payload.domainId,
               description: entity.description ?? "",
               ownerId: session.user!.id!,
-              ...(parentEntityId && { parentEntityId }),
+              ...(parentEntityId ? { parentEntityId } : {}),
               fields: {
-                create: entity.fields.map((f, i) => ({
-                  name: f.name, slug: generateSlug(f.name), type: f.type,
-                  nullable: f.nullable, isKey: f.isKey, description: f.description,
-                  classification: f.classification, precision: f.precision, scale: f.scale,
-                  sortOrder: i,
-                  ...(f.aliases?.length && { aliases: f.aliases }),
-                  ...(f.decorators && Object.keys(f.decorators).length > 0 && { decorators: f.decorators as Prisma.InputJsonValue }),
-                })),
+                create: entity.fields.map((field, index) =>
+                  mapFieldCreateInput(field, index)
+                ),
               },
             },
           });
@@ -274,8 +601,58 @@ export async function createEntitiesFromImportAction(
           result.entityIds.push(created.id);
           result.entitiesCreated++;
         } catch (err: unknown) {
-          result.errors.push(err instanceof Error && err.message.includes("Unique constraint")
-            ? `Entity "${entity.name}" already exists — skipped` : `Failed to create entity "${entity.name}"`);
+          result.errors.push(
+            err instanceof Error && err.message.includes("Unique constraint")
+              ? `Entity "${entity.name}" already exists — skipped`
+              : `Failed to create entity "${entity.name}"`
+          );
+        }
+      }
+
+      for (const service of payload.services) {
+        try {
+          const entityId =
+            service.scope === "entity" && service.entityName
+              ? createdEntityMap.get(service.entityName)
+              : undefined;
+
+          await tx.serviceDefinition.create({
+            data: {
+              name: service.name,
+              description: service.description ?? "",
+              basePath: service.basePath ?? "/",
+              domainId: payload.domainId,
+              scope: service.scope === "entity" && entityId ? "ENTITY" : "DOMAIN",
+              entityId,
+              operations: {
+                create: service.operations.map((operation) => ({
+                  name: operation.name,
+                  httpMethod: operation.httpMethod ?? "GET",
+                  httpPath: operation.httpPath ?? "/",
+                  description: operation.description ?? "",
+                  parameters: {
+                    create: operation.params.map((param) => ({
+                      name: param.name,
+                      type: param.type,
+                      location: param.location ?? "query",
+                      required: !param.isOptional,
+                      description: "",
+                    })),
+                  },
+                  responses: {
+                    create: [inferResponseFromReturnType(operation.returnType)],
+                  },
+                })),
+              },
+            },
+          });
+          result.servicesCreated++;
+        } catch (err: unknown) {
+          result.errors.push(
+            err instanceof Error && err.message.includes("Unique constraint")
+              ? `API "${service.name}" already exists — skipped`
+              : `Failed to create API "${service.name}"`
+          );
         }
       }
     });
@@ -286,4 +663,24 @@ export async function createEntitiesFromImportAction(
   }
 
   return result;
+}
+
+export async function createEntitiesFromImportAction(
+  payload: Omit<
+    BulkImportPayload,
+    "models" | "services" | "decoratorDefinitions" | "namespace"
+  > & {
+    models?: BulkImportPayload["models"];
+    services?: BulkImportPayload["services"];
+    decoratorDefinitions?: BulkImportPayload["decoratorDefinitions"];
+    namespace?: string;
+  }
+): Promise<BulkImportResult> {
+  return createDomainAssetsFromImportAction({
+    namespace: payload.namespace,
+    models: payload.models ?? [],
+    services: payload.services ?? [],
+    decoratorDefinitions: payload.decoratorDefinitions ?? [],
+    ...payload,
+  });
 }

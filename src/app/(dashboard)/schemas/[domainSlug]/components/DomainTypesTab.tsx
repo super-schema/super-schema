@@ -1,8 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Hash, Sigma, GitMerge } from "lucide-react";
+import { ChevronDown, ChevronRight, Hash, Sigma, GitMerge, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import {
+  updateSharedEnumAction,
+  updateUnionTypeAction,
+} from "../actions";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,6 +85,173 @@ function TypeSection({
 }
 
 // ---------------------------------------------------------------------------
+// Editable Enum Card
+// ---------------------------------------------------------------------------
+
+function EnumCard({ e }: { e: SharedEnumData }) {
+  const [values, setValues] = useState(e.values);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newValue, setNewValue] = useState("");
+
+  async function addValue() {
+    const trimmed = newValue.trim();
+    if (!trimmed || values.includes(trimmed)) return;
+    const updated = [...values, trimmed];
+    setValues(updated);
+    setNewValue("");
+    setIsAdding(false);
+    const result = await updateSharedEnumAction(e.id, { values: updated });
+    if (result.error) {
+      toast.error(result.error);
+      setValues(e.values); // revert
+    }
+  }
+
+  async function removeValue(val: string) {
+    const updated = values.filter((v) => v !== val);
+    setValues(updated);
+    const result = await updateSharedEnumAction(e.id, { values: updated });
+    if (result.error) {
+      toast.error(result.error);
+      setValues(e.values); // revert
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors">
+      <div className="flex items-center gap-space-2 mb-1">
+        <span className="font-mono text-body-small text-foreground font-medium">{e.name}</span>
+        <Badge variant="secondary" className="text-[10px] h-4 px-1">
+          {values.length} values
+        </Badge>
+      </div>
+      {e.description && (
+        <p className="text-caption text-muted-foreground mb-1.5">{e.description}</p>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {values.map((v) => (
+          <Badge key={v} variant="outline" className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
+            {v}
+            <button
+              onClick={() => removeValue(v)}
+              className="hover:text-destructive ml-0.5"
+              title={`Remove ${v}`}
+            >
+              <X className="w-2.5 h-2.5" />
+            </button>
+          </Badge>
+        ))}
+        {isAdding ? (
+          <input
+            autoFocus
+            value={newValue}
+            onChange={(e) => setNewValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addValue();
+              if (e.key === "Escape") { setIsAdding(false); setNewValue(""); }
+            }}
+            onBlur={() => { if (newValue.trim()) addValue(); else setIsAdding(false); }}
+            placeholder="value"
+            className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        ) : (
+          <button
+            onClick={() => setIsAdding(true)}
+            className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Plus className="w-2.5 h-2.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Editable Union Card
+// ---------------------------------------------------------------------------
+
+function UnionCard({ u }: { u: UnionTypeData }) {
+  const [members, setMembers] = useState(u.memberTypes);
+  const [isAdding, setIsAdding] = useState(false);
+  const [newMember, setNewMember] = useState("");
+
+  async function addMember() {
+    const trimmed = newMember.trim();
+    if (!trimmed || members.includes(trimmed)) return;
+    const updated = [...members, trimmed];
+    setMembers(updated);
+    setNewMember("");
+    setIsAdding(false);
+    const result = await updateUnionTypeAction(u.id, { memberTypes: updated });
+    if (result.error) {
+      toast.error(result.error);
+      setMembers(u.memberTypes);
+    }
+  }
+
+  async function removeMember(val: string) {
+    const updated = members.filter((m) => m !== val);
+    setMembers(updated);
+    const result = await updateUnionTypeAction(u.id, { memberTypes: updated });
+    if (result.error) {
+      toast.error(result.error);
+      setMembers(u.memberTypes);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors">
+      <div className="flex items-center gap-space-2 mb-1">
+        <span className="font-mono text-body-small text-foreground font-medium">{u.name}</span>
+        <span className="text-caption text-muted-foreground">=</span>
+      </div>
+      {u.description && (
+        <p className="text-caption text-muted-foreground mb-1.5">{u.description}</p>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {members.map((m, i) => (
+          <span key={m} className="flex items-center gap-0.5">
+            {i > 0 && <span className="text-[10px] text-muted-foreground/50 mx-0.5">|</span>}
+            <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
+              {m}
+              <button
+                onClick={() => removeMember(m)}
+                className="hover:text-destructive ml-0.5"
+                title={`Remove ${m}`}
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </Badge>
+          </span>
+        ))}
+        {isAdding ? (
+          <input
+            autoFocus
+            value={newMember}
+            onChange={(e) => setNewMember(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addMember();
+              if (e.key === "Escape") { setIsAdding(false); setNewMember(""); }
+            }}
+            onBlur={() => { if (newMember.trim()) addMember(); else setIsAdding(false); }}
+            placeholder="type"
+            className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        ) : (
+          <button
+            onClick={() => setIsAdding(true)}
+            className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
+          >
+            <Plus className="w-2.5 h-2.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -106,29 +279,7 @@ export function DomainTypesTab({ sharedEnums, customScalars, unionTypes }: Domai
         ) : (
           <div className="space-y-space-2">
             {sharedEnums.map((e) => (
-              <div key={e.id} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors">
-                <div className="flex items-center gap-space-2 mb-1">
-                  <span className="font-mono text-body-small text-foreground font-medium">{e.name}</span>
-                  <Badge variant="secondary" className="text-[10px] h-4 px-1">
-                    {e.values.length} values
-                  </Badge>
-                </div>
-                {e.description && (
-                  <p className="text-caption text-muted-foreground mb-1.5">{e.description}</p>
-                )}
-                <div className="flex flex-wrap gap-1">
-                  {e.values.slice(0, 12).map((v) => (
-                    <Badge key={v} variant="outline" className="text-[10px] h-4 px-1.5 font-mono">
-                      {v}
-                    </Badge>
-                  ))}
-                  {e.values.length > 12 && (
-                    <span className="text-[10px] text-muted-foreground/50">
-                      +{e.values.length - 12} more
-                    </span>
-                  )}
-                </div>
-              </div>
+              <EnumCard key={e.id} e={e} />
             ))}
           </div>
         )}
@@ -175,18 +326,7 @@ export function DomainTypesTab({ sharedEnums, customScalars, unionTypes }: Domai
         ) : (
           <div className="space-y-space-2">
             {unionTypes.map((u) => (
-              <div key={u.id} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors">
-                <div className="flex items-center gap-space-2 mb-1">
-                  <span className="font-mono text-body-small text-foreground font-medium">{u.name}</span>
-                  <span className="text-caption text-muted-foreground">=</span>
-                  <span className="font-mono text-caption text-muted-foreground">
-                    {u.memberTypes.join(" | ")}
-                  </span>
-                </div>
-                {u.description && (
-                  <p className="text-caption text-muted-foreground">{u.description}</p>
-                )}
-              </div>
+              <UnionCard key={u.id} u={u} />
             ))}
           </div>
         )}
