@@ -42,7 +42,7 @@ describe("getFieldCompleteness", () => {
     expect(result.missing).toContain("type");
   });
 
-  it("returns error when classification is missing", () => {
+  it("returns suggestion when classification is missing (defaults to SENSITIVE)", () => {
     const result = getFieldCompleteness({
       name: "email",
       type: "string",
@@ -50,8 +50,8 @@ describe("getFieldCompleteness", () => {
       precision: null,
       scale: null,
     });
-    expect(result.status).toBe("error");
-    expect(result.missing).toContain("classification");
+    expect(result.status).toBe("suggestion");
+    expect(result.suggestions).toContain("classification (defaults to SENSITIVE)");
   });
 
   it("returns error for decimal without precision and scale", () => {
@@ -87,7 +87,8 @@ describe("getFieldCompleteness", () => {
       scale: null,
     });
     expect(result.status).toBe("error");
-    expect(result.missing).toEqual(["name", "type", "classification"]);
+    expect(result.missing).toEqual(["name", "type"]);
+    expect(result.suggestions).toContain("classification (defaults to SENSITIVE)");
   });
 });
 

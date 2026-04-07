@@ -25,8 +25,11 @@ export function getFieldCompleteness(field: FieldInput): FieldCompleteness {
   if (!field.type || field.type.trim() === "") {
     missing.push("type");
   }
+  // Classification has a server-side default (SENSITIVE / Class 3).
+  // No longer treated as a blocking error — fields without explicit
+  // classification inherit the default. Only suggest setting it explicitly.
   if (!field.classification) {
-    missing.push("classification");
+    suggestions.push("classification (defaults to SENSITIVE)");
   }
 
   // Type-specific requirements

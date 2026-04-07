@@ -16,6 +16,11 @@ interface IdentitySectionProps {
   onChange: (field: string, value: unknown) => void;
 }
 
+const STRING_TYPES = new Set(["string", "url"]);
+function isStringType(type: string): boolean {
+  return STRING_TYPES.has(type);
+}
+
 const FORMAT_OPTIONS = [
   { value: "", label: "None" },
   { value: "uuid", label: "uuid" },
@@ -114,31 +119,33 @@ export function IdentitySection({
         </label>
       </div>
 
-      {/* Format */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">Format</label>
-        <select
-          value={format}
-          onChange={(e) => onChange("format", e.target.value)}
-          disabled={isReadOnly}
-          className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground disabled:opacity-50"
-        >
-          {FORMAT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Default value */}
-      <div>
-        <label className="text-caption text-muted-foreground mb-1 block">Default Value</label>
-        <Input
-          value={defaultValue}
-          onChange={(e) => onChange("defaultValue", e.target.value)}
-          placeholder={getDefaultPlaceholder()}
-          className="h-8 font-mono text-body-small"
-          disabled={isReadOnly}
-        />
+      {/* Format (string types only) + Default value */}
+      <div className={`grid gap-space-2 ${isStringType(type) ? "grid-cols-2" : "grid-cols-1"}`}>
+        {isStringType(type) && (
+          <div>
+            <label className="text-caption text-muted-foreground mb-1 block">Format</label>
+            <select
+              value={format}
+              onChange={(e) => onChange("format", e.target.value)}
+              disabled={isReadOnly}
+              className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground disabled:opacity-50"
+            >
+              {FORMAT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="text-caption text-muted-foreground mb-1 block">Default</label>
+          <Input
+            value={defaultValue}
+            onChange={(e) => onChange("defaultValue", e.target.value)}
+            placeholder={getDefaultPlaceholder()}
+            className="h-8 font-mono text-body-small"
+            disabled={isReadOnly}
+          />
+        </div>
       </div>
     </div>
   );

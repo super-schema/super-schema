@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ChevronDown, Loader2, Check, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import { IdentitySection } from "./IdentitySection";
@@ -36,7 +36,7 @@ interface FieldQuickEditPanelProps {
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
 }
 
-const SECTION_LABELS = ["Properties", "Constraints", "Documentation", "Data Governance"] as const;
+const SECTION_LABELS = ["Documentation", "Properties", "Validations & Constraints", "Data Classification"] as const;
 
 export function FieldQuickEditPanel({
   field,
@@ -46,7 +46,7 @@ export function FieldQuickEditPanel({
   isReadOnly = false,
   onUpdateField,
 }: FieldQuickEditPanelProps) {
-  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0, 2]));
+  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0, 1, 2, 3]));
 
   // Local state mirrors the field data for fast editing
   const [localName, setLocalName] = useState(field.name);
@@ -290,11 +290,45 @@ export function FieldQuickEditPanel({
     });
   }
 
+  const [editingDescription, setEditingDescription] = useState(false);
+
   return (
-    <div className="flex flex-col h-full" data-testid="field-quick-edit-panel">
-      {/* Field name header */}
+    <div className="flex flex-col h-full" data-testid="field-edit-panel">
+      {/* Field name + inline description header */}
       <div className="px-space-4 py-space-2 border-b border-border/50">
         <span className="font-mono text-body-small text-foreground font-medium">{localName}</span>
+        {/* Inline description */}
+        {editingDescription && !isReadOnly ? (
+          <textarea
+            autoFocus
+            value={localDescription}
+            onChange={(e) => handleChange("description", e.target.value)}
+            onBlur={() => setEditingDescription(false)}
+            onKeyDown={(e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                setEditingDescription(false);
+              }
+              if (e.key === "Escape") {
+                setEditingDescription(false);
+              }
+            }}
+            rows={2}
+            className="mt-1 w-full rounded border border-border bg-popover px-2 py-1 text-caption text-muted-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-ring resize-none"
+            placeholder="Add description..."
+          />
+        ) : (
+          <p
+            onClick={() => !isReadOnly && setEditingDescription(true)}
+            className={`mt-0.5 text-caption line-clamp-1 ${
+              localDescription
+                ? "text-muted-foreground"
+                : "text-muted-foreground/40 italic"
+            } ${!isReadOnly ? "cursor-pointer hover:text-foreground transition-colors" : ""}`}
+          >
+            {localDescription || "Add description..."}
+          </p>
+        )}
       </div>
 
       {/* Scrollable sections */}
@@ -303,7 +337,7 @@ export function FieldQuickEditPanel({
           <div key={label} className="border-b border-border/30">
             <button
               onClick={() => toggleSection(idx)}
-              className="flex items-center justify-between w-full px-space-4 py-space-2 text-caption font-medium text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center justify-between w-full px-space-4 py-space-2 text-body-small font-semibold text-foreground/80 hover:text-foreground transition-colors uppercase tracking-wider"
             >
               {label}
               <ChevronDown
@@ -313,6 +347,13 @@ export function FieldQuickEditPanel({
             {expandedSections.has(idx) && (
               <div className="px-space-4 pb-space-3">
                 {idx === 0 && (
+                  <DocumentationSection
+                    summary={localSummary}
+                    isReadOnly={isReadOnly}
+                    onChange={handleChange}
+                  />
+                )}
+                {idx === 1 && (
                   <IdentitySection
                     name={localName}
                     type={localType}
@@ -325,7 +366,7 @@ export function FieldQuickEditPanel({
                     onChange={handleChange}
                   />
                 )}
-                {idx === 1 && (
+                {idx === 2 && (
                   <ValidationSection
                     type={localType}
                     values={{
@@ -337,14 +378,6 @@ export function FieldQuickEditPanel({
                       minItems: localMinItems,
                       maxItems: localMaxItems,
                     }}
-                    isReadOnly={isReadOnly}
-                    onChange={handleChange}
-                  />
-                )}
-                {idx === 2 && (
-                  <DocumentationSection
-                    description={localDescription}
-                    summary={localSummary}
                     isReadOnly={isReadOnly}
                     onChange={handleChange}
                   />
