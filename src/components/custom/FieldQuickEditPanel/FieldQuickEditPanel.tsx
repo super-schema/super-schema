@@ -55,7 +55,9 @@ interface FieldQuickEditPanelProps {
 // ---------------------------------------------------------------------------
 
 const SECTION_LABELS = [
-  "Validations & Constraints",
+  "Properties",
+  "Validation",
+  "Constraints",
   "Serialization",
   "Access Control",
   "Extensions",
@@ -361,25 +363,6 @@ export function FieldQuickEditPanel({
           />
         </div>
 
-        {/* Field Properties */}
-        <div>
-          <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Properties</label>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-caption text-muted-foreground">
-            <label className="flex items-center gap-1">
-              <input type="checkbox" checked={localNullable} onChange={(e) => handleHeaderChange("nullable", e.target.checked)} disabled={isReadOnly || localIsKey} className="accent-primary" />
-              Optional
-            </label>
-            <label className="flex items-center gap-1">
-              <input type="checkbox" checked={localSecret} onChange={(e) => handleHeaderChange("secret", e.target.checked)} disabled={isReadOnly} className="accent-primary" />
-              Secret
-            </label>
-            <label className="flex items-center gap-1">
-              <input type="checkbox" checked={localIsKey} onChange={(e) => { handleHeaderChange("isKey", e.target.checked); if (e.target.checked) handleHeaderChange("nullable", false); }} disabled={isReadOnly} className="accent-primary" />
-              Key
-            </label>
-          </div>
-        </div>
-
         {/* Format + Default Value */}
         <div className={`grid gap-space-2 ${STRING_TYPES.has(localType) ? "grid-cols-2" : "grid-cols-1"}`}>
           {STRING_TYPES.has(localType) && (
@@ -423,7 +406,34 @@ export function FieldQuickEditPanel({
             </button>
             {expandedSections.has(idx) && (
               <div className="px-space-4 pb-space-3">
+                {/* 0: Properties — Optional, Secret, Key with descriptions */}
                 {idx === 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2">
+                      <input type="checkbox" checked={localNullable} onChange={(e) => handleHeaderChange("nullable", e.target.checked)} disabled={isReadOnly || localIsKey} className="accent-primary mt-0.5" />
+                      <div>
+                        <span className="text-body-small font-medium text-foreground block">Optional</span>
+                        <span className="text-[11px] text-muted-foreground">Field can be null/undefined. Omitted in required lists.</span>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2">
+                      <input type="checkbox" checked={localSecret} onChange={(e) => handleHeaderChange("secret", e.target.checked)} disabled={isReadOnly} className="accent-primary mt-0.5" />
+                      <div>
+                        <span className="text-body-small font-medium text-foreground block">Secret</span>
+                        <span className="text-[11px] text-muted-foreground">Sensitive value — masked in logs, redacted in responses. Maps to @secret decorator.</span>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2">
+                      <input type="checkbox" checked={localIsKey} onChange={(e) => { handleHeaderChange("isKey", e.target.checked); if (e.target.checked) handleHeaderChange("nullable", false); }} disabled={isReadOnly} className="accent-primary mt-0.5" />
+                      <div>
+                        <span className="text-body-small font-medium text-foreground block">Key</span>
+                        <span className="text-[11px] text-muted-foreground">Primary identifier for this entity. Automatically non-nullable. Maps to @key decorator.</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* 1: Validation — includes quality rules from governance */}
+                {idx === 1 && (
                   <ValidationPanel
                     validation={typespec.validation ?? {}}
                     typeCategory={typeCategory}
@@ -431,7 +441,64 @@ export function FieldQuickEditPanel({
                     onChange={(v) => handleTypespecChange("validation", v)}
                   />
                 )}
-                {idx === 1 && (
+                {/* 2: Constraints — operational hints (partition, index, cluster) */}
+                {idx === 2 && (
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={!!(typespec.governance as Record<string, unknown>)?.operationalHints && ((typespec.governance as Record<string, unknown>).operationalHints as Record<string, boolean>)?.partition}
+                        onChange={(e) => {
+                          const gov = (typespec.governance ?? {}) as Record<string, unknown>;
+                          const hints = ((gov.operationalHints ?? {}) as Record<string, boolean>);
+                          handleTypespecChange("governance", { ...gov, operationalHints: { ...hints, partition: e.target.checked } });
+                        }}
+                        disabled={isReadOnly}
+                        className="accent-primary mt-0.5"
+                      />
+                      <div>
+                        <span className="text-body-small font-medium text-foreground block">Partition Key</span>
+                        <span className="text-[11px] text-muted-foreground">Use this field for table partitioning. Improves query performance on large datasets.</span>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={!!(typespec.governance as Record<string, unknown>)?.operationalHints && ((typespec.governance as Record<string, unknown>).operationalHints as Record<string, boolean>)?.index}
+                        onChange={(e) => {
+                          const gov = (typespec.governance ?? {}) as Record<string, unknown>;
+                          const hints = ((gov.operationalHints ?? {}) as Record<string, boolean>);
+                          handleTypespecChange("governance", { ...gov, operationalHints: { ...hints, index: e.target.checked } });
+                        }}
+                        disabled={isReadOnly}
+                        className="accent-primary mt-0.5"
+                      />
+                      <div>
+                        <span className="text-body-small font-medium text-foreground block">Index</span>
+                        <span className="text-[11px] text-muted-foreground">Create an index on this field for faster lookups and filtering.</span>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 rounded-lg border border-border/30 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={!!(typespec.governance as Record<string, unknown>)?.operationalHints && ((typespec.governance as Record<string, unknown>).operationalHints as Record<string, boolean>)?.cluster}
+                        onChange={(e) => {
+                          const gov = (typespec.governance ?? {}) as Record<string, unknown>;
+                          const hints = ((gov.operationalHints ?? {}) as Record<string, boolean>);
+                          handleTypespecChange("governance", { ...gov, operationalHints: { ...hints, cluster: e.target.checked } });
+                        }}
+                        disabled={isReadOnly}
+                        className="accent-primary mt-0.5"
+                      />
+                      <div>
+                        <span className="text-body-small font-medium text-foreground block">Cluster Key</span>
+                        <span className="text-[11px] text-muted-foreground">Co-locate rows with similar values for this field. Optimizes range queries.</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* 3: Serialization */}
+                {idx === 3 && (
                   <WireFormatPanel
                     wireFormat={typespec.wireFormat ?? {}}
                     fieldType={localType}
@@ -439,19 +506,22 @@ export function FieldQuickEditPanel({
                     onChange={(w) => handleTypespecChange("wireFormat", w)}
                   />
                 )}
-                {idx === 2 && (
+                {/* 4: Access Control */}
+                {idx === 4 && (
                   <VisibilityPanel
                     visibility={typespec.visibility ?? {}}
                     onChange={(v) => handleTypespecChange("visibility", v)}
                   />
                 )}
-                {idx === 3 && (
+                {/* 5: Extensions */}
+                {idx === 5 && (
                   <ExtensionsPanel
                     extensions={typespec.extensions ?? {}}
                     onChange={(e) => handleTypespecChange("extensions", e)}
                   />
                 )}
-                {idx === 4 && (
+                {/* 6: Data Governance — classification, anonymization, encryption */}
+                {idx === 6 && (
                   <GovernancePanel
                     governance={typespec.governance ?? {}}
                     fieldClassification={localClassification}
@@ -459,7 +529,8 @@ export function FieldQuickEditPanel({
                     onChange={(g) => handleTypespecChange("governance", g)}
                   />
                 )}
-                {idx === 5 && (
+                {/* 7: Version History */}
+                {idx === 7 && (
                   <VersioningPanel
                     versioning={typespec.versioning ?? {}}
                     onChange={(v) => handleTypespecChange("versioning", v)}

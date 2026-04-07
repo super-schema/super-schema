@@ -106,8 +106,10 @@ describe("FieldQuickEditPanel", () => {
     // The panel should display the field name in the header
     expect(screen.getByText("customer_email")).toBeDefined();
 
-    // Should have studio-level accordion section labels
-    expect(screen.getByText("Validations & Constraints")).toBeDefined();
+    // Should have reorganized accordion section labels
+    expect(screen.getByText("Properties")).toBeDefined();
+    expect(screen.getByText("Validation")).toBeDefined();
+    expect(screen.getByText("Constraints")).toBeDefined();
     expect(screen.getByText("Serialization")).toBeDefined();
     expect(screen.getByText("Access Control")).toBeDefined();
     expect(screen.getByText("Extensions")).toBeDefined();
