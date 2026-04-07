@@ -28,7 +28,6 @@ import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "./actions";
 import { modKey } from "@/lib/platform";
 import { Upload } from "lucide-react";
-import { ImportDialog } from "@/components/custom/ImportDialog/ImportDialog";
 import { DomainTypesTab, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
 import { DomainModelsTab, type DomainModelData } from "./components/DomainModelsTab";
 import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
@@ -133,8 +132,6 @@ export function DomainWorkspace({
     return () =>
       document.removeEventListener("super-schema:new-entity", handleNewEntity);
   }, [router, domainSlug]);
-
-  const [showImportDialog, setShowImportDialog] = useState(false);
 
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -320,10 +317,6 @@ export function DomainWorkspace({
               <List className="w-4 h-4" />
             </button>
           </div>
-          <Button variant="outline" onClick={() => setShowImportDialog(true)} className="gap-2">
-            <Upload className="w-4 h-4" />
-            Import Schema
-          </Button>
           <Button onClick={() => router.push(`/schemas/${domainSlug}/new`)} className="gap-2" title={`New Entity (${modKey()}+N)`}>
             <Plus className="w-4 h-4" />
             New Entity
@@ -754,16 +747,6 @@ export function DomainWorkspace({
         </div>
       ))}
 
-      {/* Import Schema Dialog */}
-      <ImportDialog
-        isOpen={showImportDialog}
-        onClose={() => setShowImportDialog(false)}
-        domains={[{ id: domainId, name: domainName }]}
-        onImported={() => {
-          setShowImportDialog(false);
-          router.refresh();
-        }}
-      />
     </div>
   );
 }

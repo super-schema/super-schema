@@ -9,12 +9,19 @@ import { ImportUploader } from "./ImportUploader";
 import { FieldPreview, type PreviewField } from "./FieldPreview";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import type { StandardTemplate } from "@/lib/schema-standards";
-import { importSchema } from "@/services/import.service";
+import { importSchema, importTypeSpecDocument } from "@/services/import.service";
 import { detectFormat } from "@/lib/importers/format-detector";
+import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
+import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
+import {
+  TypeSpecImportReviewScreen,
+  type TypeSpecImportSelection,
+} from "@/components/custom/ImportDialog/TypeSpecImportReviewScreen";
+import { toast } from "sonner";
 
 // ── State Machine ────────────────────────────────────────────────────
 
-type WizardStep = "select-method" | "configure" | "preview-fields";
+type WizardStep = "select-method" | "configure" | "preview-fields" | "typespec-review";
 
 interface WizardState {
   step: WizardStep;
@@ -58,6 +65,7 @@ export function EntityCreationWizard({
   const [error, setError] = useState<string | null>(null);
   const [detectedFormat, setDetectedFormat] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [typeSpecResult, setTypeSpecResult] = useState<TypeSpecImportResult | null>(null);
 
   // ── Step transitions ──────────────────────────────────────────────
 
@@ -171,11 +179,26 @@ export function EntityCreationWizard({
       setDetectedFormat(format);
 
       if (!format) {
-        setError("Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, or Protobuf.");
+        setError("Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, Protobuf, or TypeSpec.");
         setIsLoading(false);
         return;
       }
 
+      // TypeSpec: use full document parser for multi-model support
+      if (format === "typespec") {
+        const tsResult = importTypeSpecDocument(content);
+        if (!tsResult.success) {
+          setError(tsResult.error.message);
+          setIsLoading(false);
+          return;
+        }
+        setTypeSpecResult(tsResult.data);
+        setState((prev) => ({ ...prev, step: "typespec-review" }));
+        setIsLoading(false);
+        return;
+      }
+
+      // Other formats: single entity import
       const result = importSchema(content, format);
 
       if (!result.success) {
@@ -199,6 +222,103 @@ export function EntityCreationWizard({
       setError(e instanceof Error ? e.message : "Failed to parse schema");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  // TypeSpec multi-model confirm handler
+  async function handleTypeSpecConfirm(selection: TypeSpecImportSelection) {
+    if (!typeSpecResult) return;
+    setIsCreating(true);
+    setError(null);
+
+    const models = selection.selectedModels.map((idx) => {
+      const model = typeSpecResult.models[idx];
+      return {
+        name: model.name,
+        description: model.description,
+        extends: model.extends,
+        fields: model.fields.map((f) => ({
+          name: f.name,
+          type: f.type,
+          nullable: f.nullable,
+          isKey: f.isKey ?? false,
+          description: f.description ?? "",
+          classification: f.classification ?? null,
+          precision: null,
+          scale: null,
+          decorators: buildDecoratorsFromParsedField(f),
+        })),
+      };
+    });
+
+    const entities = selection.selectedEntities.map((idx) => {
+      const model = typeSpecResult.models[idx];
+      return {
+        name: model.name,
+        description: model.description,
+        extends: model.extends,
+        fields: model.fields.map((f) => ({
+          name: f.name,
+          type: f.type,
+          nullable: f.nullable,
+          isKey: f.isKey ?? false,
+          description: f.description ?? "",
+          classification: f.classification ?? null,
+          precision: null,
+          scale: null,
+          decorators: buildDecoratorsFromParsedField(f),
+        })),
+      };
+    });
+
+    const sharedEnums = selection.selectedEnums.map((idx) => typeSpecResult.sharedEnums[idx]);
+    const customScalars = selection.selectedScalars.map((idx) => typeSpecResult.customScalars[idx]);
+    const unionTypes = selection.selectedUnions.map((idx) => typeSpecResult.unions[idx]);
+    const services = selection.selectedServices.map((idx) => typeSpecResult.services[idx]);
+    const decoratorDefinitions = selection.selectedDecorators.map(
+      (idx) => typeSpecResult.decoratorDefinitions[idx]
+    );
+
+    try {
+      const { createDomainAssetsFromImportAction } = await import(
+        "@/app/(dashboard)/schemas/[domainSlug]/actions"
+      );
+
+      const result = await createDomainAssetsFromImportAction({
+        domainId,
+        namespace: typeSpecResult.namespace,
+        models,
+        entities,
+        sharedEnums,
+        customScalars,
+        unionTypes,
+        services,
+        decoratorDefinitions,
+      });
+
+      const parts: string[] = [];
+      if (result.modelsCreated > 0) parts.push(`${result.modelsCreated} model(s)`);
+      if (result.entitiesCreated > 0) parts.push(`${result.entitiesCreated} entity(ies)`);
+      if (result.enumsCreated > 0) parts.push(`${result.enumsCreated} enum(s)`);
+      if (result.scalarsCreated > 0) parts.push(`${result.scalarsCreated} scalar(s)`);
+      if (result.unionsCreated > 0) parts.push(`${result.unionsCreated} union(s)`);
+
+      if (parts.length > 0) {
+        toast.success(`Created ${parts.join(", ")}`);
+      }
+
+      if (result.errors.length > 0) {
+        for (const err of result.errors) {
+          toast.warning(err);
+        }
+      }
+
+      router.push(`/schemas/${domainSlug}`);
+      router.refresh();
+    } catch {
+      toast.error("Failed to import TypeSpec document");
+    } finally {
+      setIsCreating(false);
     }
   }
 
@@ -343,6 +463,16 @@ export function EntityCreationWizard({
             onConfirm={handleCreateEntity}
             isCreating={isCreating}
             error={error}
+          />
+        )}
+
+        {state.step === "typespec-review" && typeSpecResult && (
+          <TypeSpecImportReviewScreen
+            importResult={typeSpecResult}
+            domains={[{ id: domainId, name: domainName }]}
+            suggestedDomainName={typeSpecResult.namespace}
+            onConfirm={handleTypeSpecConfirm}
+            onCancel={goToSelectMethod}
           />
         )}
       </div>
