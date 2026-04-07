@@ -284,9 +284,14 @@ export function FieldQuickEditPanel({
     <div className="flex flex-col h-full" data-testid="field-edit-panel">
       {/* Header: core identity fields with labels */}
       <div className="px-space-4 py-space-3 border-b border-border/50 space-y-2.5">
-        {/* Field Name */}
+        {/* Field Name + Index */}
         <div>
-          <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Field Name</label>
+          <div className="flex items-center justify-between mb-0.5">
+            <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Field Name</label>
+            <span className="text-[10px] text-muted-foreground/40 font-mono" title="Position in field list (drag to reorder)">
+              #{field.sortOrder + 1}
+            </span>
+          </div>
           {editingName && !isReadOnly ? (
             <Input
               autoFocus
@@ -431,8 +436,6 @@ export function FieldQuickEditPanel({
                     wireFormat={typespec.wireFormat ?? {}}
                     fieldType={localType}
                     typeCategory={typeCategory}
-                    fieldNumber={localFieldNumber}
-                    onFieldNumberChange={(fn) => { setLocalFieldNumber(fn); }}
                     onChange={(w) => handleTypespecChange("wireFormat", w)}
                   />
                 )}
