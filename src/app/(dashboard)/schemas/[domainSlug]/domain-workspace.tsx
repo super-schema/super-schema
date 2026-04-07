@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronRight,
+  ChevronDown,
   Plus,
   LayoutGrid,
   List,
@@ -34,6 +35,82 @@ import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
 import { DomainDecoratorsTab, type DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
 
 type DomainTab = "entities" | "models" | "types" | "apis" | "decorators";
+
+// ---------------------------------------------------------------------------
+// Create dropdown — New Entity + New Model / Enum / Scalar / Union / API
+// ---------------------------------------------------------------------------
+
+function CreateDropdown({
+  onNewEntity,
+  onNewModel,
+  onNewEnum,
+  onNewScalar,
+  onNewUnion,
+  onNewApi,
+}: {
+  onNewEntity: () => void;
+  onNewModel: () => void;
+  onNewEnum: () => void;
+  onNewScalar: () => void;
+  onNewUnion: () => void;
+  onNewApi: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const items = [
+    { label: "New Entity", icon: Database, action: onNewEntity, description: "Schema entity with fields" },
+    { label: "New Model", icon: Box, action: onNewModel, description: "Reusable model definition" },
+    { label: "New Enum", icon: Hash, action: onNewEnum, description: "Shared enum type" },
+    { label: "New Scalar", icon: Hash, action: onNewScalar, description: "Custom scalar type" },
+    { label: "New Union", icon: Hash, action: onNewUnion, description: "Union type (A | B)" },
+    { label: "New API", icon: Globe, action: onNewApi, description: "API service definition" },
+  ];
+
+  return (
+    <div className="relative" ref={ref}>
+      <div className="flex">
+        <Button onClick={onNewEntity} className="gap-2 rounded-r-none" title={`New Entity (${modKey()}+N)`}>
+          <Plus className="w-4 h-4" />
+          New Entity
+        </Button>
+        <Button
+          onClick={() => setOpen(!open)}
+          className="px-1.5 rounded-l-none border-l border-primary-foreground/20"
+          title="More options"
+        >
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+        </Button>
+      </div>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[220px]">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              onClick={() => { item.action(); setOpen(false); }}
+              className="flex items-start gap-2 w-full text-left px-3 py-2 hover:bg-accent transition-colors"
+            >
+              <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+              <div>
+                <div className="text-body-small text-foreground">{item.label}</div>
+                <div className="text-[10px] text-muted-foreground">{item.description}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: Database, label: "Entities", id: "entities" },
@@ -133,6 +210,7 @@ export function DomainWorkspace({
       document.removeEventListener("super-schema:new-entity", handleNewEntity);
   }, [router, domainSlug]);
 
+  const [showInlineCreate, setShowInlineCreate] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
@@ -317,10 +395,14 @@ export function DomainWorkspace({
               <List className="w-4 h-4" />
             </button>
           </div>
-          <Button onClick={() => router.push(`/schemas/${domainSlug}/new`)} className="gap-2" title={`New Entity (${modKey()}+N)`}>
-            <Plus className="w-4 h-4" />
-            New Entity
-          </Button>
+          <CreateDropdown
+            onNewEntity={() => router.push(`/schemas/${domainSlug}/new`)}
+            onNewModel={() => { setActiveTab("models"); setShowInlineCreate("model"); }}
+            onNewEnum={() => { setActiveTab("types"); setShowInlineCreate("enum"); }}
+            onNewScalar={() => { setActiveTab("types"); setShowInlineCreate("scalar"); }}
+            onNewUnion={() => { setActiveTab("types"); setShowInlineCreate("union"); }}
+            onNewApi={() => { setActiveTab("apis"); setShowInlineCreate("api"); }}
+          />
         </div>
       </div>
 
