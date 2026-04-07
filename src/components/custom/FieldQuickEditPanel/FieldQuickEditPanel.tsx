@@ -453,12 +453,10 @@ export function FieldQuickEditPanel({
                 )}
                 {idx === 4 && (
                   <GovernancePanel
-                    governance={(field.decorators as Record<string, unknown>) ?? {}}
+                    governance={typespec.governance ?? {}}
                     fieldClassification={localClassification}
                     onClassificationChange={(c) => { setLocalClassification(c); }}
-                    onChange={() => {
-                      // Governance updates are tracked via dirty state
-                    }}
+                    onChange={(g) => handleTypespecChange("governance", g)}
                   />
                 )}
                 {idx === 5 && (
