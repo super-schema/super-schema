@@ -4,7 +4,7 @@
  * Tests the emitFromData() pure function which:
  * - Compiles entity + fields to SuperSchemaModel IR
  * - Generates TypeSpec source
- * - Runs all registered emitters (BigQuery, Avro, OpenAPI)
+ * - Runs all registered emitters (BigQuery, Avro, Spanner, PostgreSQL, OpenAPI)
  * - Collects per-target results with validation status
  */
 
@@ -55,7 +55,7 @@ function makeField(
 
 describe("emission.service", () => {
   describe("emitFromData", () => {
-    it("runs all three emitters and returns results", () => {
+    it("runs all native schema emitters and returns results", () => {
       const entity = makeEntity();
       const fields = [
         makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
@@ -65,13 +65,15 @@ describe("emission.service", () => {
 
       const result = emitFromData(entity, fields);
 
-      // Should have all three targets
+      // Should have all native schema targets
       expect(result.targets).toHaveProperty("bigquery");
       expect(result.targets).toHaveProperty("avro");
+      expect(result.targets).toHaveProperty("spanner");
+      expect(result.targets).toHaveProperty("postgresql");
       expect(result.targets).toHaveProperty("openapi");
 
       // Summary should reflect all registered targets
-      expect(result.summary.totalTargets).toBe(4);
+      expect(result.summary.totalTargets).toBe(5);
     });
 
     it("generates TypeSpec source", () => {
@@ -215,7 +217,7 @@ describe("emission.service", () => {
       const result = emitFromData(entity, fields);
 
       // Should still produce results for all targets without crashing
-      expect(result.summary.totalTargets).toBe(4);
+      expect(result.summary.totalTargets).toBe(5);
       expect(result.typespec).toContain("model Customer");
     });
 
@@ -231,7 +233,7 @@ describe("emission.service", () => {
 
       const result = emitFromData(entity, fields);
 
-      expect(result.summary.totalTargets).toBe(4);
+      expect(result.summary.totalTargets).toBe(5);
 
       // BigQuery should contain column names
       const bqOutput = result.targets.bigquery.output;
@@ -239,6 +241,10 @@ describe("emission.service", () => {
       expect(bqOutput).toContain("age");
       expect(bqOutput).toContain("balance");
       expect(bqOutput).toContain("active");
+
+      const postgresqlOutput = result.targets.postgresql.output;
+      expect(postgresqlOutput).toContain("CREATE TABLE");
+      expect(postgresqlOutput).toContain("customer");
     });
 
     it("summary counts match target statuses", () => {

@@ -124,13 +124,14 @@ describe("Emission Pipeline - Integration", () => {
   // Run the pipeline once and reuse the result
   const result = emitFromData(customerEntity, customerFields);
 
-  it("pipeline succeeds and emits to all 4 targets", () => {
+  it("pipeline succeeds and emits to all 5 targets", () => {
     expect(result.success).toBe(true);
-    expect(result.summary.totalTargets).toBe(4);
+    expect(result.summary.totalTargets).toBe(5);
     expect(result.targets.bigquery).toBeDefined();
     expect(result.targets.avro).toBeDefined();
     expect(result.targets.openapi).toBeDefined();
     expect(result.targets.spanner).toBeDefined();
+    expect(result.targets.postgresql).toBeDefined();
   });
 
   it("generates valid TypeSpec source", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { Suspense, useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { Clock, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,6 +34,14 @@ interface EntitySummary {
 // ---------------------------------------------------------------------------
 
 export default function RetentionPoliciesPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-center text-caption text-muted-foreground">Loading...</div>}>
+      <RetentionPoliciesContent />
+    </Suspense>
+  );
+}
+
+function RetentionPoliciesContent() {
   const searchParams = useSearchParams();
   const focusEntityId = searchParams.get("entity");
 

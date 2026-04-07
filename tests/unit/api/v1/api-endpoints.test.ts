@@ -158,11 +158,20 @@ const mockEmissionResult = {
       warnings: [],
       errors: [],
     },
+    postgresql: {
+      name: "postgresql",
+      targetFormat: "postgresql-ddl",
+      output: "CREATE TABLE customer (id TEXT NOT NULL PRIMARY KEY);",
+      isValid: true,
+      validationStatus: "VALID" as const,
+      warnings: [],
+      errors: [],
+    },
   },
   success: true,
   summary: {
-    totalTargets: 4,
-    validCount: 4,
+    totalTargets: 5,
+    validCount: 5,
     warningCount: 0,
     invalidCount: 0,
   },
@@ -413,9 +422,9 @@ describe("API v1", () => {
       expect(response.status).toBe(200);
       expect(body.success).toBe(true);
       expect(body.data.entityId).toBe("entity-1");
-      expect(body.data.targets).toHaveLength(4);
+      expect(body.data.targets).toHaveLength(5);
       expect(body.data.typespec).toContain("model Customer");
-      expect(body.summary).toContain("4 targets");
+      expect(body.summary).toContain("5 targets");
     });
 
     it("returns 404 for non-existent entity", async () => {
@@ -491,7 +500,7 @@ describe("API v1", () => {
       expect(body.success).toBe(true);
       expect(body.data.valid).toBe(true);
       expect(body.data.entityId).toBe("entity-1");
-      expect(body.data.targets).toHaveLength(4);
+      expect(body.data.targets).toHaveLength(5);
     });
 
     it("returns ci.pass true when all targets valid", async () => {
@@ -512,7 +521,7 @@ describe("API v1", () => {
       const body = await response.json();
 
       expect(body.data.ci.pass).toBe(true);
-      expect(body.data.ci.summary).toContain("All 4 targets valid");
+      expect(body.data.ci.summary).toContain("All 5 targets valid");
     });
 
     it("returns ci.pass false when a target is invalid", async () => {
@@ -520,7 +529,7 @@ describe("API v1", () => {
         ...mockEmissionResult,
         success: false,
         summary: {
-          totalTargets: 4,
+          totalTargets: 5,
           validCount: 3,
           warningCount: 0,
           invalidCount: 1,
@@ -544,7 +553,7 @@ describe("API v1", () => {
       const body = await response.json();
 
       expect(body.data.ci.pass).toBe(false);
-      expect(body.data.ci.summary).toContain("1 of 4 targets invalid");
+      expect(body.data.ci.summary).toContain("1 of 5 targets invalid");
     });
 
     it("returns 404 for non-existent entity", async () => {
