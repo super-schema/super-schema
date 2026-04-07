@@ -160,8 +160,8 @@ export function FieldCard({
           <GripVertical className="w-4 h-4" />
         </div>
 
-        {/* Name */}
-        <div className="min-w-0 max-w-[120px]">
+        {/* Name — fixed width column for tabular alignment */}
+        <div className="w-[200px] shrink-0">
           {editingField && !isReadOnly ? (
             <Input
               defaultValue={field.name}
@@ -182,6 +182,7 @@ export function FieldCard({
             <span
               className={`font-mono text-body-small text-foreground truncate block ${isReadOnly ? "cursor-default" : "cursor-text"} ${isFieldDeprecated ? "line-through" : ""}`}
               onClick={() => !isReadOnly && setEditingField(true)}
+              title={field.name}
             >
               {field.name}
             </span>

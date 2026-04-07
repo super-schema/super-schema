@@ -38,9 +38,15 @@ import { EntityHeader } from "./components/EntityHeader";
 import { EntityToolbar } from "./components/EntityToolbar";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 import { InlineEntityMeta } from "./components/InlineEntityMeta";
+import { RetentionPolicyEditor } from "@/features/governance/RetentionPolicyEditor/RetentionPolicyEditor";
+import { updateEntityMetadataAction } from "./actions";
+import type { RetentionPolicy } from "@/types/schemas/retention-policy.schema";
+import {
+  migrateSimpleRetention,
+} from "@/types/schemas/retention-policy.schema";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
-type ViewTab = "editor" | "schemas" | "versions";
+type ViewTab = "editor" | "schemas" | "versions" | "governance";
 type RightPanelTab = "quick-edit" | "typespec-preview";
 
 interface FieldData {
@@ -333,7 +339,11 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       />
 
       {/* Inline entity metadata */}
-      <InlineEntityMeta entity={entity} isReadOnly={readOnly_} />
+      <InlineEntityMeta
+        entity={entity}
+        isReadOnly={readOnly_}
+        onGovernanceClick={() => setActiveTab("governance")}
+      />
 
       {/* Right panel router (renders nothing itself, pushes content via context) */}
       <RightPanelRouter
@@ -392,6 +402,17 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           data-testid="tab-versions"
         >
           Versions
+        </button>
+        <button
+          onClick={() => { setActiveTab("governance"); }}
+          className={`px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === "governance"
+              ? "border-foreground text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-governance"
+        >
+          Governance
         </button>
       </div>
 
@@ -529,6 +550,30 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
                 onViewDiff={handleHistoryViewDiff}
               />
             </div>
+          </div>
+        )}
+
+        {activeTab === "governance" && (
+          <div className="space-y-space-6">
+            <h2 className="text-heading-2 text-foreground">Governance</h2>
+            <RetentionPolicyEditor
+              entityId={entity.id}
+              entityName={entity.name}
+              fields={fields.map((f) => ({ name: f.name, type: f.type }))}
+              currentPolicy={(() => {
+                const meta = (entity.metadata ?? {}) as Record<string, unknown>;
+                const raw = meta.retentionPolicy;
+                if (raw && typeof raw === "object") return raw as RetentionPolicy;
+                if (typeof raw === "string" && raw) return migrateSimpleRetention(raw);
+                return null;
+              })()}
+              onSave={async (_entityId, policy) => {
+                await updateEntityMetadataAction(entity.id, {
+                  retentionPolicy: policy as unknown as Record<string, unknown>,
+                });
+                toast.success("Retention policy saved");
+              }}
+            />
           </div>
         )}
       </div>

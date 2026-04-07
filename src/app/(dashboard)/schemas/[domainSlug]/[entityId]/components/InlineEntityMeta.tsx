@@ -4,7 +4,6 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Plus, X, Check, User, Clock, ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { updateEntityMetadataAction, updateEntityDescriptionAction } from "../actions";
-import Link from "next/link";
 import {
   formatRetentionSummary,
   migrateSimpleRetention,
@@ -23,13 +22,14 @@ interface InlineEntityMetaProps {
     metadata: Record<string, unknown> | null;
   };
   isReadOnly: boolean;
+  onGovernanceClick?: () => void;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function InlineEntityMeta({ entity, isReadOnly }: InlineEntityMetaProps) {
+export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick }: InlineEntityMetaProps) {
   const meta = (entity.metadata ?? {}) as Record<string, unknown>;
 
   // Resolve retention policy (migrate old string format if needed)
@@ -337,11 +337,12 @@ export function InlineEntityMeta({ entity, isReadOnly }: InlineEntityMetaProps) 
           )}
         </div>
 
-        {/* Retention — read-only summary, click navigates to governance */}
-        <Link
-          href={`/governance/retention?entity=${entity.id}`}
+        {/* Retention — read-only summary, click switches to Governance tab */}
+        <button
+          onClick={onGovernanceClick}
           className="flex items-center gap-1 group/retention"
           data-testid="inline-retention"
+          title="Edit in Governance tab"
         >
           <Clock className="w-3 h-3 text-muted-foreground/50" />
           <span
@@ -355,7 +356,7 @@ export function InlineEntityMeta({ entity, isReadOnly }: InlineEntityMetaProps) 
               ? formatRetentionSummary(retentionPolicy)
               : "No retention policy"}
           </span>
-        </Link>
+        </button>
 
         {/* Save indicator */}
         {saveStatus !== "idle" && (
