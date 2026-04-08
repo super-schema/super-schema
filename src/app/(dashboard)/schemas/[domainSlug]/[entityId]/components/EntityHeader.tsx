@@ -165,7 +165,13 @@ export function EntityHeader({
           )}
         </div>
 
-        <Badge variant="secondary">v{entity.version}</Badge>
+        <Badge variant="secondary">v{(() => {
+          const meta = (entity.metadata ?? {}) as Record<string, unknown>;
+          const sv = meta.semanticVersion as { major?: number; minor?: number } | undefined;
+          const major = sv?.major ?? entity.version;
+          const minor = sv?.minor ?? 0;
+          return `${major}.${minor}`;
+        })()}</Badge>
 
         {/* Saved flash indicator */}
         {showSaved && (
@@ -246,9 +252,6 @@ export function EntityHeader({
         <RetirementBanner metadata={entity.metadata} />
       )}
 
-      {entity.description && (
-        <p className="text-body text-muted-foreground mb-space-6">{entity.description}</p>
-      )}
     </>
   );
 }
