@@ -199,8 +199,54 @@ export async function deleteModelFieldAction(fieldId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Entity delete
+// ---------------------------------------------------------------------------
+
+export async function deleteEntityAction(entityId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.entity.delete({ where: { id: entityId } });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to delete entity" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Shared Enum CRUD
 // ---------------------------------------------------------------------------
+
+export async function createSharedEnumAction(
+  domainId: string,
+  data: { name: string; values: string[]; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.sharedEnum.create({
+      data: { name: data.name, values: data.values, description: data.description ?? "", domainId },
+    });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) return { error: `Enum "${data.name}" already exists` };
+    return { error: e instanceof Error ? e.message : "Failed to create enum" };
+  }
+}
+
+export async function deleteSharedEnumAction(enumId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.sharedEnum.delete({ where: { id: enumId } });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to delete enum" };
+  }
+}
 
 export async function updateSharedEnumAction(
   enumId: string,
@@ -222,6 +268,36 @@ export async function updateSharedEnumAction(
 // Custom Scalar CRUD
 // ---------------------------------------------------------------------------
 
+export async function createCustomScalarAction(
+  domainId: string,
+  data: { name: string; baseType: string; format?: string; pattern?: string; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.customScalar.create({
+      data: { name: data.name, baseType: data.baseType, format: data.format ?? null, pattern: data.pattern ?? null, description: data.description ?? "", domainId },
+    });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) return { error: `Scalar "${data.name}" already exists` };
+    return { error: e instanceof Error ? e.message : "Failed to create scalar" };
+  }
+}
+
+export async function deleteCustomScalarAction(scalarId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.customScalar.delete({ where: { id: scalarId } });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to delete scalar" };
+  }
+}
+
 export async function updateCustomScalarAction(
   scalarId: string,
   data: { baseType?: string; format?: string | null; pattern?: string | null; description?: string }
@@ -241,6 +317,36 @@ export async function updateCustomScalarAction(
 // ---------------------------------------------------------------------------
 // Union Type CRUD
 // ---------------------------------------------------------------------------
+
+export async function createUnionTypeAction(
+  domainId: string,
+  data: { name: string; memberTypes: string[]; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.unionType.create({
+      data: { name: data.name, memberTypes: data.memberTypes, description: data.description ?? "", domainId },
+    });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) return { error: `Union "${data.name}" already exists` };
+    return { error: e instanceof Error ? e.message : "Failed to create union" };
+  }
+}
+
+export async function deleteUnionTypeAction(unionId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.unionType.delete({ where: { id: unionId } });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to delete union" };
+  }
+}
 
 export async function updateUnionTypeAction(
   unionId: string,

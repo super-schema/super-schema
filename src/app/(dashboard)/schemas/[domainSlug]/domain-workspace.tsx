@@ -20,13 +20,14 @@ import {
   FilePlus2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EntityCard } from "@/components/custom/EntityCard";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
-import { createEntityWithFieldsAction, type CreateFieldInput } from "./actions";
+import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
 import { modKey } from "@/lib/platform";
 import { Upload } from "lucide-react";
 import { DomainTypesTab, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
@@ -206,6 +207,7 @@ export function DomainWorkspace({
   }, [router, domainSlug]);
 
   const [showInlineCreate, setShowInlineCreate] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
@@ -353,8 +355,28 @@ export function DomainWorkspace({
     }
   }
 
+  async function handleDeleteEntity(id: string) {
+    const result = await deleteEntityAction(id);
+    if (result.error) { toast.error(result.error); } else { toast.success("Entity deleted"); }
+    setDeleteConfirm(null);
+  }
+
   return (
     <div className="animate-auth-fade-up">
+      {/* Delete confirmation dialog */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm">
+            <h3 className="text-heading-3 text-foreground mb-2">Delete &ldquo;{deleteConfirm.name}&rdquo;?</h3>
+            <p className="text-body-small text-muted-foreground mb-4">This will permanently delete this {deleteConfirm.type} and all its data. This action cannot be undone.</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+              <Button variant="destructive" size="sm" onClick={() => handleDeleteEntity(deleteConfirm.id)}>Delete</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Breadcrumb */}
       <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
         <Link href="/schemas" className="hover:text-foreground transition-colors">
@@ -421,6 +443,7 @@ export function DomainWorkspace({
       {/* Types tab */}
       {activeTab === "types" && (
         <DomainTypesTab
+          domainId={domainId}
           sharedEnums={sharedEnums}
           customScalars={customScalars}
           unionTypes={unionTypes}
@@ -752,6 +775,7 @@ export function DomainWorkspace({
               {...entity}
               domainName={domainName}
               domainSlug={domainSlug}
+              onDelete={(id, name) => setDeleteConfirm({ id, name, type: "entity" })}
             />
           ))}
         </div>

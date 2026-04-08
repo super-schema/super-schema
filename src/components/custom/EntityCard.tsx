@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 interface EntityCardProps {
   id: string;
@@ -14,11 +15,13 @@ interface EntityCardProps {
   domainSlug: string;
   updatedAt: Date;
   classifications?: {
+    NEVER_STORED: number;
     PII: number;
     SENSITIVE: number;
     INTERNAL: number;
     PUBLIC: number;
   };
+  onDelete?: (id: string, name: string) => void;
 }
 
 export function EntityCard({
@@ -32,6 +35,7 @@ export function EntityCard({
   domainSlug,
   updatedAt,
   classifications,
+  onDelete,
 }: EntityCardProps) {
   const statusColor =
     status === "ACTIVE"
@@ -55,6 +59,15 @@ export function EntityCard({
           <Badge variant="outline" className="text-caption">
             {status}
           </Badge>
+          {onDelete && (
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(id, name); }}
+              className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+              title="Delete entity"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -66,6 +79,11 @@ export function EntityCard({
       {/* Classification badges */}
       {classifications && (
         <div className="flex items-center gap-space-1 mb-space-3 flex-wrap">
+          {classifications.NEVER_STORED > 0 && (
+            <span className="badge-never-stored text-caption px-1.5 py-0.5 rounded">
+              {classifications.NEVER_STORED} Never Stored
+            </span>
+          )}
           {classifications.PII > 0 && (
             <span className="badge-pii text-caption px-1.5 py-0.5 rounded">
               {classifications.PII} PII

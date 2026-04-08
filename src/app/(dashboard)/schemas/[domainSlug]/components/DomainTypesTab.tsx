@@ -1,13 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Hash, Sigma, GitMerge, Plus, X } from "lucide-react";
+import { Hash, Sigma, GitMerge, Plus, X, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import {
+  createSharedEnumAction,
   updateSharedEnumAction,
+  deleteSharedEnumAction,
+  createCustomScalarAction,
+  deleteCustomScalarAction,
+  createUnionTypeAction,
   updateUnionTypeAction,
+  deleteUnionTypeAction,
 } from "../actions";
 
 // ---------------------------------------------------------------------------
@@ -38,57 +45,259 @@ export interface UnionTypeData {
 }
 
 interface DomainTypesTabProps {
+  domainId: string;
   sharedEnums: SharedEnumData[];
   customScalars: CustomScalarData[];
   unionTypes: UnionTypeData[];
 }
 
+type TypeSubTab = "enums" | "scalars" | "unions";
+
 // ---------------------------------------------------------------------------
-// Collapsible section wrapper
+// Confirmation dialog
 // ---------------------------------------------------------------------------
 
-function TypeSection({
-  title,
-  icon: Icon,
-  count,
-  defaultOpen,
-  children,
-}: {
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  count: number;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen ?? count > 0);
+function useConfirmDelete() {
+  const [pending, setPending] = useState<{ name: string; action: () => Promise<void> } | null>(null);
+
+  function ask(name: string, action: () => Promise<void>) {
+    setPending({ name, action });
+  }
+
+  async function confirm() {
+    if (pending) {
+      await pending.action();
+      setPending(null);
+    }
+  }
+
+  function cancel() {
+    setPending(null);
+  }
+
+  return { pending, ask, confirm, cancel };
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export function DomainTypesTab({ domainId, sharedEnums, customScalars, unionTypes }: DomainTypesTabProps) {
+  const [activeSubTab, setActiveSubTab] = useState<TypeSubTab>("enums");
+  const deleteDialog = useConfirmDelete();
+
+  // Create form states
+  const [showCreateEnum, setShowCreateEnum] = useState(false);
+  const [newEnumName, setNewEnumName] = useState("");
+  const [newEnumValues, setNewEnumValues] = useState("");
+
+  const [showCreateScalar, setShowCreateScalar] = useState(false);
+  const [newScalarName, setNewScalarName] = useState("");
+  const [newScalarBase, setNewScalarBase] = useState("string");
+
+  const [showCreateUnion, setShowCreateUnion] = useState(false);
+  const [newUnionName, setNewUnionName] = useState("");
+  const [newUnionMembers, setNewUnionMembers] = useState("");
+
+  async function handleCreateEnum() {
+    if (!newEnumName.trim()) return;
+    const values = newEnumValues.split(",").map((v) => v.trim()).filter(Boolean);
+    const result = await createSharedEnumAction(domainId, { name: newEnumName.trim(), values });
+    if (result.error) { toast.error(result.error); } else { toast.success(`Enum "${newEnumName}" created`); setNewEnumName(""); setNewEnumValues(""); setShowCreateEnum(false); }
+  }
+
+  async function handleCreateScalar() {
+    if (!newScalarName.trim()) return;
+    const result = await createCustomScalarAction(domainId, { name: newScalarName.trim(), baseType: newScalarBase });
+    if (result.error) { toast.error(result.error); } else { toast.success(`Scalar "${newScalarName}" created`); setNewScalarName(""); setNewScalarBase("string"); setShowCreateScalar(false); }
+  }
+
+  async function handleCreateUnion() {
+    if (!newUnionName.trim()) return;
+    const members = newUnionMembers.split("|").map((v) => v.trim()).filter(Boolean);
+    const result = await createUnionTypeAction(domainId, { name: newUnionName.trim(), memberTypes: members });
+    if (result.error) { toast.error(result.error); } else { toast.success(`Union "${newUnionName}" created`); setNewUnionName(""); setNewUnionMembers(""); setShowCreateUnion(false); }
+  }
+
+  const subTabs: { id: TypeSubTab; label: string; icon: typeof Hash; count: number }[] = [
+    { id: "enums", label: "Enums", icon: Hash, count: sharedEnums.length },
+    { id: "scalars", label: "Scalars", icon: Sigma, count: customScalars.length },
+    { id: "unions", label: "Unions", icon: GitMerge, count: unionTypes.length },
+  ];
 
   return (
-    <div className="border border-border/50 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-space-2 w-full px-space-4 py-space-3 hover:bg-muted/30 transition-colors"
-      >
-        {open ? (
-          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-        )}
-        <Icon className="w-4 h-4 text-muted-foreground" />
-        <span className="text-body-small font-medium text-foreground">{title}</span>
-        <Badge variant="secondary" className="text-[10px] h-4 px-1.5 ml-auto">
-          {count}
-        </Badge>
-      </button>
-      {open && <div className="border-t border-border/30 px-space-4 py-space-3">{children}</div>}
+    <div data-testid="domain-types-tab">
+      {/* Delete confirmation dialog */}
+      {deleteDialog.pending && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm">
+            <h3 className="text-heading-3 text-foreground mb-2">Delete "{deleteDialog.pending.name}"?</h3>
+            <p className="text-body-small text-muted-foreground mb-4">This action cannot be undone.</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={deleteDialog.cancel}>Cancel</Button>
+              <Button variant="destructive" size="sm" onClick={deleteDialog.confirm}>Delete</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-space-4">
+        {/* Vertical sub-tabs */}
+        <div className="w-[140px] shrink-0 space-y-1">
+          {subTabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveSubTab(tab.id)}
+              className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-body-small transition-colors ${
+                activeSubTab === tab.id
+                  ? "bg-accent text-foreground font-medium"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+              }`}
+            >
+              <tab.icon className="w-3.5 h-3.5 shrink-0" />
+              {tab.label}
+              <Badge variant="secondary" className="text-[10px] h-4 px-1 ml-auto">{tab.count}</Badge>
+            </button>
+          ))}
+        </div>
+
+        {/* Content area */}
+        <div className="flex-1 min-w-0">
+          {/* Enums */}
+          {activeSubTab === "enums" && (
+            <div className="space-y-space-2">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-body-small font-semibold text-foreground">Shared Enums</h3>
+                <Button size="sm" className="gap-1 h-7 text-[11px]" onClick={() => setShowCreateEnum(true)} disabled={showCreateEnum}>
+                  <Plus className="w-3 h-3" /> New Enum
+                </Button>
+              </div>
+
+              {showCreateEnum && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+                  <Input value={newEnumName} onChange={(e) => setNewEnumName(e.target.value)} placeholder="EnumName" className="h-7 font-mono text-caption" autoFocus />
+                  <Input value={newEnumValues} onChange={(e) => setNewEnumValues(e.target.value)} placeholder="Value1, Value2, Value3" className="h-7 text-caption" />
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowCreateEnum(false)}>Cancel</Button>
+                    <Button size="sm" className="h-6 text-[10px]" onClick={handleCreateEnum} disabled={!newEnumName.trim()}>Create</Button>
+                  </div>
+                </div>
+              )}
+
+              {sharedEnums.length === 0 && !showCreateEnum && (
+                <p className="text-caption text-muted-foreground/60 italic py-4">No shared enums — click "New Enum" to create one</p>
+              )}
+
+              {sharedEnums.map((e) => (
+                <EnumCard key={e.id} e={e} onDelete={(name) => deleteDialog.ask(name, async () => {
+                  const r = await deleteSharedEnumAction(e.id);
+                  if (r.error) toast.error(r.error); else toast.success(`Enum "${name}" deleted`);
+                })} />
+              ))}
+            </div>
+          )}
+
+          {/* Scalars */}
+          {activeSubTab === "scalars" && (
+            <div className="space-y-space-2">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-body-small font-semibold text-foreground">Custom Scalars</h3>
+                <Button size="sm" className="gap-1 h-7 text-[11px]" onClick={() => setShowCreateScalar(true)} disabled={showCreateScalar}>
+                  <Plus className="w-3 h-3" /> New Scalar
+                </Button>
+              </div>
+
+              {showCreateScalar && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+                  <Input value={newScalarName} onChange={(e) => setNewScalarName(e.target.value)} placeholder="ScalarName" className="h-7 font-mono text-caption" autoFocus />
+                  <select value={newScalarBase} onChange={(e) => setNewScalarBase(e.target.value)} className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption">
+                    <option value="string">extends string</option>
+                    <option value="int32">extends int32</option>
+                    <option value="int64">extends int64</option>
+                    <option value="float64">extends float64</option>
+                    <option value="decimal">extends decimal</option>
+                    <option value="utcDateTime">extends utcDateTime</option>
+                    <option value="bytes">extends bytes</option>
+                  </select>
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowCreateScalar(false)}>Cancel</Button>
+                    <Button size="sm" className="h-6 text-[10px]" onClick={handleCreateScalar} disabled={!newScalarName.trim()}>Create</Button>
+                  </div>
+                </div>
+              )}
+
+              {customScalars.length === 0 && !showCreateScalar && (
+                <p className="text-caption text-muted-foreground/60 italic py-4">No custom scalars — click "New Scalar" to create one</p>
+              )}
+
+              {customScalars.map((s) => (
+                <div key={s.id} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/scalar">
+                  <div className="flex items-center gap-space-2">
+                    <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
+                    <span className="text-caption text-muted-foreground">extends</span>
+                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono">{s.baseType}</Badge>
+                    {s.format && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">format: {s.format}</Badge>}
+                    {s.pattern && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">pattern: {s.pattern}</Badge>}
+                    <button
+                      onClick={() => deleteDialog.ask(s.name, async () => {
+                        const r = await deleteCustomScalarAction(s.id);
+                        if (r.error) toast.error(r.error); else toast.success(`Scalar "${s.name}" deleted`);
+                      })}
+                      className="ml-auto opacity-0 group-hover/scalar:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {s.description && <p className="text-caption text-muted-foreground mt-1">{s.description}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Unions */}
+          {activeSubTab === "unions" && (
+            <div className="space-y-space-2">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-body-small font-semibold text-foreground">Union Types</h3>
+                <Button size="sm" className="gap-1 h-7 text-[11px]" onClick={() => setShowCreateUnion(true)} disabled={showCreateUnion}>
+                  <Plus className="w-3 h-3" /> New Union
+                </Button>
+              </div>
+
+              {showCreateUnion && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
+                  <Input value={newUnionName} onChange={(e) => setNewUnionName(e.target.value)} placeholder="UnionName" className="h-7 font-mono text-caption" autoFocus />
+                  <Input value={newUnionMembers} onChange={(e) => setNewUnionMembers(e.target.value)} placeholder="TypeA | TypeB | TypeC" className="h-7 font-mono text-caption" />
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowCreateUnion(false)}>Cancel</Button>
+                    <Button size="sm" className="h-6 text-[10px]" onClick={handleCreateUnion} disabled={!newUnionName.trim()}>Create</Button>
+                  </div>
+                </div>
+              )}
+
+              {unionTypes.length === 0 && !showCreateUnion && (
+                <p className="text-caption text-muted-foreground/60 italic py-4">No union types — click "New Union" to create one</p>
+              )}
+
+              {unionTypes.map((u) => (
+                <UnionCard key={u.id} u={u} onDelete={(name) => deleteDialog.ask(name, async () => {
+                  const r = await deleteUnionTypeAction(u.id);
+                  if (r.error) toast.error(r.error); else toast.success(`Union "${name}" deleted`);
+                })} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Editable Enum Card
+// Editable Enum Card with delete
 // ---------------------------------------------------------------------------
 
-function EnumCard({ e }: { e: SharedEnumData }) {
+function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string) => void }) {
   const [values, setValues] = useState(e.values);
   const [isAdding, setIsAdding] = useState(false);
   const [newValue, setNewValue] = useState("");
@@ -101,64 +310,43 @@ function EnumCard({ e }: { e: SharedEnumData }) {
     setNewValue("");
     setIsAdding(false);
     const result = await updateSharedEnumAction(e.id, { values: updated });
-    if (result.error) {
-      toast.error(result.error);
-      setValues(e.values); // revert
-    }
+    if (result.error) { toast.error(result.error); setValues(e.values); }
   }
 
   async function removeValue(val: string) {
     const updated = values.filter((v) => v !== val);
     setValues(updated);
     const result = await updateSharedEnumAction(e.id, { values: updated });
-    if (result.error) {
-      toast.error(result.error);
-      setValues(e.values); // revert
-    }
+    if (result.error) { toast.error(result.error); setValues(e.values); }
   }
 
   return (
-    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors">
+    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/enum">
       <div className="flex items-center gap-space-2 mb-1">
         <span className="font-mono text-body-small text-foreground font-medium">{e.name}</span>
-        <Badge variant="secondary" className="text-[10px] h-4 px-1">
-          {values.length} values
-        </Badge>
+        <Badge variant="secondary" className="text-[10px] h-4 px-1">{values.length} values</Badge>
+        <button
+          onClick={() => onDelete(e.name)}
+          className="ml-auto opacity-0 group-hover/enum:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
       </div>
-      {e.description && (
-        <p className="text-caption text-muted-foreground mb-1.5">{e.description}</p>
-      )}
+      {e.description && <p className="text-caption text-muted-foreground mb-1.5">{e.description}</p>}
       <div className="flex flex-wrap gap-1">
         {values.map((v) => (
           <Badge key={v} variant="outline" className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
             {v}
-            <button
-              onClick={() => removeValue(v)}
-              className="hover:text-destructive ml-0.5"
-              title={`Remove ${v}`}
-            >
-              <X className="w-2.5 h-2.5" />
-            </button>
+            <button onClick={() => removeValue(v)} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
           </Badge>
         ))}
         {isAdding ? (
-          <input
-            autoFocus
-            value={newValue}
-            onChange={(e) => setNewValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") addValue();
-              if (e.key === "Escape") { setIsAdding(false); setNewValue(""); }
-            }}
+          <input autoFocus value={newValue} onChange={(ev) => setNewValue(ev.target.value)}
+            onKeyDown={(ev) => { if (ev.key === "Enter") addValue(); if (ev.key === "Escape") { setIsAdding(false); setNewValue(""); } }}
             onBlur={() => { if (newValue.trim()) addValue(); else setIsAdding(false); }}
-            placeholder="value"
-            className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring"
-          />
+            placeholder="value" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
         ) : (
-          <button
-            onClick={() => setIsAdding(true)}
-            className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-          >
+          <button onClick={() => setIsAdding(true)} className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
             <Plus className="w-2.5 h-2.5" />
           </button>
         )}
@@ -168,10 +356,10 @@ function EnumCard({ e }: { e: SharedEnumData }) {
 }
 
 // ---------------------------------------------------------------------------
-// Editable Union Card
+// Editable Union Card with delete
 // ---------------------------------------------------------------------------
 
-function UnionCard({ u }: { u: UnionTypeData }) {
+function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string) => void }) {
   const [members, setMembers] = useState(u.memberTypes);
   const [isAdding, setIsAdding] = useState(false);
   const [newMember, setNewMember] = useState("");
@@ -184,153 +372,50 @@ function UnionCard({ u }: { u: UnionTypeData }) {
     setNewMember("");
     setIsAdding(false);
     const result = await updateUnionTypeAction(u.id, { memberTypes: updated });
-    if (result.error) {
-      toast.error(result.error);
-      setMembers(u.memberTypes);
-    }
+    if (result.error) { toast.error(result.error); setMembers(u.memberTypes); }
   }
 
   async function removeMember(val: string) {
     const updated = members.filter((m) => m !== val);
     setMembers(updated);
     const result = await updateUnionTypeAction(u.id, { memberTypes: updated });
-    if (result.error) {
-      toast.error(result.error);
-      setMembers(u.memberTypes);
-    }
+    if (result.error) { toast.error(result.error); setMembers(u.memberTypes); }
   }
 
   return (
-    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors">
+    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/union">
       <div className="flex items-center gap-space-2 mb-1">
         <span className="font-mono text-body-small text-foreground font-medium">{u.name}</span>
         <span className="text-caption text-muted-foreground">=</span>
+        <button
+          onClick={() => onDelete(u.name)}
+          className="ml-auto opacity-0 group-hover/union:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
       </div>
-      {u.description && (
-        <p className="text-caption text-muted-foreground mb-1.5">{u.description}</p>
-      )}
+      {u.description && <p className="text-caption text-muted-foreground mb-1.5">{u.description}</p>}
       <div className="flex flex-wrap gap-1">
         {members.map((m, i) => (
           <span key={m} className="flex items-center gap-0.5">
             {i > 0 && <span className="text-[10px] text-muted-foreground/50 mx-0.5">|</span>}
             <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
               {m}
-              <button
-                onClick={() => removeMember(m)}
-                className="hover:text-destructive ml-0.5"
-                title={`Remove ${m}`}
-              >
-                <X className="w-2.5 h-2.5" />
-              </button>
+              <button onClick={() => removeMember(m)} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
             </Badge>
           </span>
         ))}
         {isAdding ? (
-          <input
-            autoFocus
-            value={newMember}
-            onChange={(e) => setNewMember(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") addMember();
-              if (e.key === "Escape") { setIsAdding(false); setNewMember(""); }
-            }}
+          <input autoFocus value={newMember} onChange={(ev) => setNewMember(ev.target.value)}
+            onKeyDown={(ev) => { if (ev.key === "Enter") addMember(); if (ev.key === "Escape") { setIsAdding(false); setNewMember(""); } }}
             onBlur={() => { if (newMember.trim()) addMember(); else setIsAdding(false); }}
-            placeholder="type"
-            className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring"
-          />
+            placeholder="type" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
         ) : (
-          <button
-            onClick={() => setIsAdding(true)}
-            className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
-          >
+          <button onClick={() => setIsAdding(true)} className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
             <Plus className="w-2.5 h-2.5" />
           </button>
         )}
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export function DomainTypesTab({ sharedEnums, customScalars, unionTypes }: DomainTypesTabProps) {
-  const totalCount = sharedEnums.length + customScalars.length + unionTypes.length;
-
-  if (totalCount === 0) {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <Hash className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-        <p className="text-body-small">No reusable types defined yet</p>
-        <p className="text-caption mt-1">
-          Import a TypeSpec file or create shared enums, scalars, and unions to see them here.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-space-3" data-testid="domain-types-tab">
-      {/* Enums section */}
-      <TypeSection title="Enums" icon={Hash} count={sharedEnums.length}>
-        {sharedEnums.length === 0 ? (
-          <p className="text-caption text-muted-foreground/60 italic">No shared enums</p>
-        ) : (
-          <div className="space-y-space-2">
-            {sharedEnums.map((e) => (
-              <EnumCard key={e.id} e={e} />
-            ))}
-          </div>
-        )}
-      </TypeSection>
-
-      {/* Custom Scalars section */}
-      <TypeSection title="Custom Scalars" icon={Sigma} count={customScalars.length}>
-        {customScalars.length === 0 ? (
-          <p className="text-caption text-muted-foreground/60 italic">No custom scalars</p>
-        ) : (
-          <div className="space-y-space-2">
-            {customScalars.map((s) => (
-              <div key={s.id} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors">
-                <div className="flex items-center gap-space-2 mb-1">
-                  <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
-                  <span className="text-caption text-muted-foreground">extends</span>
-                  <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono">
-                    {s.baseType}
-                  </Badge>
-                  {s.format && (
-                    <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">
-                      format: {s.format}
-                    </Badge>
-                  )}
-                  {s.pattern && (
-                    <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">
-                      pattern: {s.pattern}
-                    </Badge>
-                  )}
-                </div>
-                {s.description && (
-                  <p className="text-caption text-muted-foreground">{s.description}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </TypeSection>
-
-      {/* Unions section */}
-      <TypeSection title="Unions" icon={GitMerge} count={unionTypes.length}>
-        {unionTypes.length === 0 ? (
-          <p className="text-caption text-muted-foreground/60 italic">No union types</p>
-        ) : (
-          <div className="space-y-space-2">
-            {unionTypes.map((u) => (
-              <UnionCard key={u.id} u={u} />
-            ))}
-          </div>
-        )}
-      </TypeSection>
     </div>
   );
 }
