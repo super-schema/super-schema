@@ -226,7 +226,7 @@ export function FieldCard({
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Tags (right side) */}
+        {/* Tags (right side) — classification always last */}
         <div className="flex items-center gap-1 shrink-0">
           {field.isKey && (
             <Badge variant="warning" className="text-[10px] h-4 px-1">KEY</Badge>
@@ -234,10 +234,6 @@ export function FieldCard({
           {!field.nullable && !field.isKey && (
             <Badge variant="outline" className="text-[10px] h-4 px-1">NOT NULL</Badge>
           )}
-          <ClassificationPicker
-            value={field.classification}
-            onChange={(cls) => onUpdateField(field.id, { classification: cls })}
-          />
           {field.aliases.length > 0 &&
             field.aliases.map((alias) => (
               <Badge key={alias} variant="secondary" className="text-[10px] h-4 px-1 font-mono">{alias}</Badge>
@@ -245,6 +241,10 @@ export function FieldCard({
           {decoratorTags.map((tag) => (
             <Badge key={tag} variant="outline" className="text-[10px] h-4 px-1">{tag}</Badge>
           ))}
+          <ClassificationPicker
+            value={field.classification}
+            onChange={(cls) => onUpdateField(field.id, { classification: cls })}
+          />
         </div>
 
         {/* Expand / actions */}
