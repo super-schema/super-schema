@@ -74,7 +74,7 @@ describe("SchemasTab UI", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Generated Schema")).toBeDefined();
-      expect(screen.getByText("Target Type Overrides")).toBeDefined();
+      expect(screen.getByText("Manual Override")).toBeDefined();
     });
   });
 
@@ -87,11 +87,11 @@ describe("SchemasTab UI", () => {
     render(<SchemasTab {...baseProps} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText("Target Type Overrides").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Manual Override").length).toBeGreaterThan(0);
     });
 
     // Click Type Overrides tab (the button element)
-    const overrideButtons = screen.getAllByText("Target Type Overrides");
+    const overrideButtons = screen.getAllByText("Manual Override");
     overrideButtons[0].click();
 
     await waitFor(() => {

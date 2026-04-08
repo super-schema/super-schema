@@ -24,6 +24,7 @@ import {
 } from "@/lib/schema-targets/catalog";
 import type { FieldTypeMapping } from "../actions";
 import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
+import { getTargetTypeOptions } from "@/lib/type-mapping/target-type-catalog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,14 +105,14 @@ function TypeOverrideTable({
   targetKey,
   targetDisplayName,
   fieldTypeMappings,
+  onOverrideChange,
 }: {
   fields: FieldData[];
   targetKey: string;
   targetDisplayName: string;
   fieldTypeMappings?: FieldTypeMapping[];
+  onOverrideChange?: (fieldName: string, newType: string) => void;
 }) {
-  // Use stored mappings from the generated schema version (source of truth)
-  // Fall back to default mapping engine for schemas generated before this feature
   const mappingByField = new Map<string, string>();
   if (fieldTypeMappings) {
     for (const m of fieldTypeMappings) {
@@ -119,11 +120,13 @@ function TypeOverrideTable({
     }
   }
 
+  // Get valid types for this technology from the catalog
+  const validTypes = getTargetTypeOptions(targetKey);
+
   return (
     <div className="space-y-2">
       <p className="text-caption text-muted-foreground">
-        Field type mappings for {targetDisplayName}.
-        {!fieldTypeMappings && " Generate a schema first to see the actual target types."}
+        Select a different {targetDisplayName} data type per field to override the default mapping.
       </p>
       <div className="rounded-lg border border-border/50 overflow-hidden">
         <table className="w-full text-caption">
@@ -131,20 +134,33 @@ function TypeOverrideTable({
             <tr className="bg-muted/30 border-b border-border/50">
               <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">Field</th>
               <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">Super Schema Type</th>
-              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">{targetDisplayName} Type</th>
+              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">{targetDisplayName} Data Type</th>
             </tr>
           </thead>
           <tbody>
             {fields.map((field, i) => {
-              // Stored mapping > default mapping engine > raw type
               const storedType = mappingByField.get(field.name);
               const defaultType = getDefaultMapping(field.type, targetKey)?.mappedType;
-              const targetType = storedType ?? defaultType ?? field.type;
+              const currentType = storedType ?? defaultType ?? field.type;
               return (
                 <tr key={field.id} className={i % 2 === 0 ? "" : "bg-muted/10"}>
                   <td className="px-3 py-1.5 font-mono text-foreground">{field.name}</td>
                   <td className="px-3 py-1.5 font-mono text-muted-foreground">{field.type}</td>
-                  <td className={`px-3 py-1.5 font-mono ${fieldTypeMappings ? "text-primary" : "text-muted-foreground/50 italic"}`}>{targetType}</td>
+                  <td className="px-3 py-1.5">
+                    <select
+                      value={currentType}
+                      onChange={(e) => onOverrideChange?.(field.name, e.target.value)}
+                      className="h-6 w-full rounded border border-border bg-popover px-1.5 text-[11px] font-mono text-primary focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      {/* Current value always shown even if not in catalog */}
+                      {!validTypes.some((t) => t.value === currentType) && (
+                        <option value={currentType}>{currentType}</option>
+                      )}
+                      {validTypes.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </td>
                 </tr>
               );
             })}
@@ -283,7 +299,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                         : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    Target Type Overrides
+                    Manual Override
                   </button>
                 </div>
                 <Button
