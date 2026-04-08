@@ -1128,23 +1128,30 @@ export async function generateSchemaAction(entityId: string, target: string) {
     // Load entity to get current metadata, version, and fields for type mapping
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true, version: true, fields: { select: { name: true, type: true }, orderBy: { sortOrder: "asc" } } },
+      select: { metadata: true, version: true, fields: { select: { id: true, name: true, type: true }, orderBy: { sortOrder: "asc" } } },
     });
     if (!entity) return { error: "Entity not found" };
 
-    // Build field type mappings from the default mapping engine
+    const meta = (entity.metadata as Record<string, unknown>) ?? {};
+
+    // Build field type mappings — includes overrides from entity metadata
     let fieldTypeMappings: FieldTypeMapping[] = [];
     try {
       const { getDefaultMapping } = await import("@/lib/type-mapping/default-mappings");
-      fieldTypeMappings = (entity.fields ?? []).map((f: { name: string; type: string }) => {
+      const overridesRaw = parseSchemaTargetTypeOverrides(meta.schemaTargetTypeOverrides);
+      const targetOverrides = overridesRaw[target] ?? {};
+      fieldTypeMappings = (entity.fields ?? []).map((f: { name: string; type: string; id?: string }) => {
+        // Override takes priority over default mapping
+        const override = f.id ? targetOverrides[f.id] : undefined;
+        if (override?.mappedType) {
+          return { fieldName: f.name, sourceType: f.type, targetType: override.mappedType };
+        }
         const mapping = getDefaultMapping(f.type, target);
         return { fieldName: f.name, sourceType: f.type, targetType: mapping?.mappedType ?? f.type };
       });
     } catch {
       // Mapping engine unavailable — store empty mappings
     }
-
-    const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
     const targetVersions = schemaVersions[target] ?? [];
     const parsedOverrides = parseSchemaTargetTypeOverrides(

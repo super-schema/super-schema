@@ -323,26 +323,31 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
       return next;
     });
 
-    // Find the field ID
     const field = fields.find((f) => f.name === fieldName);
     if (!field) return;
 
-    // Persist the override
-    const saveResult = await saveSchemaFieldTypeOverrideAction({
-      entityId,
-      target: targetKey,
-      fieldId: field.id,
-      mappedType: newType,
-    });
+    // Save action persists override AND regenerates schema internally
+    setIsGenerating(true);
+    try {
+      const saveResult = await saveSchemaFieldTypeOverrideAction({
+        entityId,
+        target: targetKey,
+        fieldId: field.id,
+        mappedType: newType,
+      });
 
-    if (saveResult.error) {
-      toast.error(saveResult.error);
-      return;
+      if (saveResult.error) {
+        toast.error(saveResult.error);
+        return;
+      }
+
+      toast.success("Override applied — schema regenerated");
+      await loadVersions();
+    } catch {
+      toast.error("Failed to apply override");
+    } finally {
+      setIsGenerating(false);
     }
-
-    // Auto-regenerate the schema with the override applied
-    toast.info("Applying override...");
-    await handleGenerate(targetKey);
   }
 
   if (isLoading) {
