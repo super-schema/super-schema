@@ -196,9 +196,8 @@ export function FieldCard({
           </Badge>
         )}
 
-        {/* Tags area */}
-        <div className="flex items-center gap-1 flex-wrap flex-1 min-w-0">
-          {/* Type badge */}
+        {/* Type + precision (left side, next to name) */}
+        <div className="flex items-center gap-1 min-w-0">
           {isComplexType(field.type) ? (
             <TypeDisplay type={field.type} decorators={field.decorators} />
           ) : (
@@ -217,55 +216,35 @@ export function FieldCard({
               />
             </div>
           )}
-
-          {/* Precision/Scale inline */}
           {needsPrecisionScale(field.type) && (
             <span className="text-caption text-muted-foreground font-mono">
               ({field.precision ?? "?"},{field.scale ?? "?"})
             </span>
           )}
+        </div>
 
-          {/* Key badge */}
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Tags (right side) */}
+        <div className="flex items-center gap-1 shrink-0">
           {field.isKey && (
-            <Badge variant="warning" className="text-[10px] h-4 px-1">
-              KEY
-            </Badge>
+            <Badge variant="warning" className="text-[10px] h-4 px-1">KEY</Badge>
           )}
-
-          {/* Nullable badge */}
           {!field.nullable && !field.isKey && (
-            <Badge variant="outline" className="text-[10px] h-4 px-1">
-              NOT NULL
-            </Badge>
+            <Badge variant="outline" className="text-[10px] h-4 px-1">NOT NULL</Badge>
           )}
-
-          {/* Classification */}
           <ClassificationPicker
             value={field.classification}
             onChange={(cls) => onUpdateField(field.id, { classification: cls })}
           />
-
-          {/* Aliases */}
           {field.aliases.length > 0 &&
             field.aliases.map((alias) => (
-              <Badge key={alias} variant="secondary" className="text-[10px] h-4 px-1 font-mono">
-                {alias}
-              </Badge>
+              <Badge key={alias} variant="secondary" className="text-[10px] h-4 px-1 font-mono">{alias}</Badge>
             ))}
-
-          {/* Decorator tags */}
           {decoratorTags.map((tag) => (
-            <Badge key={tag} variant="outline" className="text-[10px] h-4 px-1">
-              {tag}
-            </Badge>
+            <Badge key={tag} variant="outline" className="text-[10px] h-4 px-1">{tag}</Badge>
           ))}
-
-          {/* Description preview */}
-          {field.description && (
-            <span className="text-caption text-muted-foreground/60 truncate max-w-[200px]">
-              {field.description}
-            </span>
-          )}
         </div>
 
         {/* Expand / actions */}
@@ -289,6 +268,14 @@ export function FieldCard({
         </div>
       </div>
 
+      {/* Description — always on its own line, 1-line truncated */}
+      {field.description && (
+        <div className="px-space-3 pb-1.5 -mt-0.5">
+          <p className="text-caption text-muted-foreground/60 line-clamp-1 pl-[72px]" title={field.description}>
+            {field.description}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

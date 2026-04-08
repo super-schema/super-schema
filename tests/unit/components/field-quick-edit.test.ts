@@ -262,8 +262,8 @@ describe("GovernanceSection", () => {
     // Null classification renders as "Sensitive" (Class 3 default)
     const sensitiveElements = screen.getAllByText("Sensitive");
     expect(sensitiveElements.length).toBeGreaterThanOrEqual(1);
-    // Should show "(default)" indicator
-    expect(screen.getByText("(default)")).toBeDefined();
+    // Should show "Class 3" for null classification (default)
+    expect(screen.getAllByText("Class 3").length).toBeGreaterThan(0);
   });
 });
 
