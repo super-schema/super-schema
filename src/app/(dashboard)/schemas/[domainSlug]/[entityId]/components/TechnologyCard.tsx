@@ -39,9 +39,9 @@ function StatusDot({ status }: { status: SchemaVersion["status"] }) {
   };
 
   const labels: Record<string, string> = {
-    draft: "Draft (not yet published)",
-    published: "Published (ready for deployment)",
-    deployed: "Deployed to production",
+    draft: "Draft",
+    published: "Deployed",
+    deployed: "Deployed",
   };
 
   return (
@@ -420,32 +420,6 @@ export function TechnologyCard({
 
   const content = (
     <div className="px-space-4 py-space-4 space-y-space-4">
-      {/* Generate button */}
-      <div className="flex justify-end">
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          disabled={isGenerating || fieldsCount === 0}
-          onClick={() => {
-            void handleGenerate();
-          }}
-          data-testid={`generate-${targetInfo.key}`}
-        >
-          {isGenerating ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              {generatingButtonLabel}
-            </>
-          ) : (
-            <>
-              <Zap className="w-3.5 h-3.5" />
-              {generateButtonLabel}
-            </>
-          )}
-        </Button>
-      </div>
-
       {versions.length === 0 ? (
         <p className="text-body-small text-muted-foreground text-center py-space-6">
           No schemas generated yet. Click Generate to create the first schema.
@@ -480,21 +454,9 @@ export function TechnologyCard({
                 />
               )}
 
-              {(!targetInfo.supportsFieldOverrides || !mappingSupported) && (
-                <div className="rounded-lg border border-border/50 bg-muted/10 px-space-4 py-space-3 text-body-small text-muted-foreground">
-                  <div className="flex items-center gap-space-2 font-medium text-foreground">
-                    <RefreshCw className="h-4 w-4 text-muted-foreground" />
-                    Target type overrides are unavailable
-                  </div>
-                  <p className="mt-1">
-                    {mappingReason ??
-                      "This target does not currently support generated field-level physical type overrides."}
-                  </p>
-                </div>
-              )}
-
               <SchemaCodePreview
                 code={displayVersion.output}
+                language={targetInfo.key === "avro" ? "json" : targetInfo.key === "openapi" ? "yaml" : "sql"}
                 onCopy={() => toast.success("Schema copied to clipboard")}
               />
 
@@ -514,7 +476,7 @@ export function TechnologyCard({
                       ) : (
                         <Send className="w-3.5 h-3.5" />
                       )}
-                      Publish
+                      Mark Deployed
                     </Button>
                   )}
                   {displayVersion.status === "published" && (

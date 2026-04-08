@@ -203,6 +203,30 @@ export function TypePicker({
                     </CommandGroup>
                   );
                 })}
+                {/* Entity types */}
+                {entities && entities.length > 0 && (() => {
+                  const matchingEntities = searchQuery.trim()
+                    ? entities.filter((e) => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    : entities;
+                  if (matchingEntities.length === 0) return null;
+                  return (
+                    <CommandGroup heading="Entities">
+                      {matchingEntities.map((ent) => (
+                        <CommandItem
+                          key={ent.id}
+                          value={ent.name}
+                          onSelect={() => handleSelect(ent.name)}
+                          data-checked={value === ent.name ? "true" : undefined}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-xs">{ent.name}</span>
+                            <span className="text-[10px] text-muted-foreground/60">entity reference</span>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  );
+                })()}
               </CommandList>
             )}
           </Command>

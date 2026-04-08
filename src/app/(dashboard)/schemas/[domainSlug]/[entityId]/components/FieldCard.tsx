@@ -76,6 +76,7 @@ interface FieldCardProps {
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDeleteField: (id: string) => Promise<void>;
   onNavigateStudio: (fieldId: string) => void;
+  entityNames?: { id: string; name: string }[];
 }
 
 export function FieldCard({
@@ -87,6 +88,7 @@ export function FieldCard({
   onUpdateField,
   onDeleteField,
   onNavigateStudio,
+  entityNames,
 }: FieldCardProps) {
   const [editingField, setEditingField] = useState(false);
 
@@ -213,6 +215,7 @@ export function FieldCard({
                   onUpdateField(field.id, update);
                 }}
                 compact
+                entities={entityNames}
               />
             </div>
           )}
@@ -271,7 +274,7 @@ export function FieldCard({
       {/* Description — always on its own line, 1-line truncated */}
       {field.description && (
         <div className="px-space-3 pb-1.5 -mt-0.5">
-          <p className="text-caption text-muted-foreground/60 line-clamp-1 pl-[72px]" title={field.description}>
+          <p className="text-caption text-muted-foreground/60 line-clamp-1 pl-[280px]" title={field.description}>
             {field.description}
           </p>
         </div>

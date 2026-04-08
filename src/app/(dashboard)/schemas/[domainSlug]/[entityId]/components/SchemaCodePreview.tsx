@@ -2,13 +2,15 @@
 
 import { useState, useCallback } from "react";
 import { Copy, Check } from "lucide-react";
+import { highlightLine } from "@/lib/syntax-highlight";
 
 interface SchemaCodePreviewProps {
   code: string;
+  language?: string;
   onCopy: () => void;
 }
 
-export function SchemaCodePreview({ code, onCopy }: SchemaCodePreviewProps) {
+export function SchemaCodePreview({ code, language = "sql", onCopy }: SchemaCodePreviewProps) {
   const [copied, setCopied] = useState(false);
   const lines = code.split("\n");
 
@@ -45,10 +47,10 @@ export function SchemaCodePreview({ code, onCopy }: SchemaCodePreviewProps) {
         <code>
           {lines.map((line, i) => (
             <div key={i} className="flex">
-              <span className="inline-block w-8 text-right pr-3 text-muted-foreground select-none">
+              <span className="inline-block w-8 text-right pr-3 text-muted-foreground/50 select-none">
                 {i + 1}
               </span>
-              <span>{line}</span>
+              <span className="flex-1">{highlightLine(line, language)}</span>
             </div>
           ))}
         </code>
