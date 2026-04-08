@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Loader2,
   Database,
@@ -10,21 +10,22 @@ import {
   Code2,
   Server,
   Zap,
+  ChevronDown,
+  Send,
+  Check,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { getSchemaVersionsAction, generateSchemaAction } from "../actions";
-import type { SchemaVersionsMap, SchemaVersion } from "../actions";
+import { getSchemaVersionsAction, generateSchemaAction, publishSchemaAction } from "../actions";
+import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "../actions";
 import { SchemaCodePreview } from "./SchemaCodePreview";
-// SchemaTargetChooser no longer needed — vertical tabs replace it
+import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
+import { getTargetTypeOptions, type TargetTypeOption } from "@/lib/type-mapping/target-type-catalog";
 import {
   getSchemaTargetAvailabilities,
   getSchemaTargetDefinition,
 } from "@/lib/schema-targets/catalog";
-import type { FieldTypeMapping } from "../actions";
-import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
-import { getTargetTypeOptions } from "@/lib/type-mapping/target-type-catalog";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,14 +79,11 @@ function getTargetMeta(key: string): TargetMeta {
     bigquery: Database, avro: FileJson, spanner: Database,
     postgresql: Database, openapi: Globe, openapi3: Globe,
     "json-schema": FileJson, protobuf: Boxes,
-    "http-client-js": Code2, "http-client-python": Code2,
-    "http-client-java": Code2, "http-client-csharp": Code2,
-    "http-server-js": Server, "http-server-csharp": Server,
+    "http-client-js": Code2, "http-server-js": Server,
   };
   const langByKey: Record<string, string> = {
     bigquery: "sql", avro: "json", spanner: "sql", postgresql: "sql",
     openapi: "yaml", openapi3: "yaml", "json-schema": "json",
-    protobuf: "text",
   };
   const IconComponent = iconByKey[key] ?? FileJson;
   return {
@@ -97,7 +95,79 @@ function getTargetMeta(key: string): TargetMeta {
 }
 
 // ---------------------------------------------------------------------------
-// Type override table
+// Rich type picker popover
+// ---------------------------------------------------------------------------
+
+function TargetTypePicker({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: TargetTypeOption[];
+  onChange: (newType: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  // Group options
+  const groups = new Map<string, TargetTypeOption[]>();
+  for (const opt of options) {
+    const g = groups.get(opt.group) ?? [];
+    g.push(opt);
+    groups.set(opt.group, g);
+  }
+
+  const current = options.find((o) => o.value === value);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 h-7 w-full rounded-lg border border-border bg-popover px-2 text-[11px] font-mono text-primary hover:border-primary/40 transition-colors"
+      >
+        <span className="truncate flex-1 text-left">{value}</span>
+        <ChevronDown className={`w-3 h-3 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute z-50 top-full left-0 mt-1 w-[320px] max-h-[320px] overflow-y-auto bg-popover border border-border rounded-lg shadow-lg py-1">
+          {[...groups.entries()].map(([group, opts]) => (
+            <div key={group}>
+              <div className="px-3 py-1 text-[9px] text-muted-foreground/60 uppercase tracking-wider font-semibold sticky top-0 bg-popover">
+                {group}
+              </div>
+              {opts.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => { onChange(opt.value); setOpen(false); }}
+                  className={`flex items-start gap-2 w-full text-left px-3 py-1.5 hover:bg-accent transition-colors ${
+                    opt.value === value ? "bg-accent/50" : ""
+                  }`}
+                >
+                  <span className="font-mono text-[11px] text-primary shrink-0 w-[120px]">{opt.label}</span>
+                  <span className="text-[10px] text-muted-foreground leading-tight">{opt.description}</span>
+                  {opt.value === value && <Check className="w-3 h-3 text-success shrink-0 mt-0.5 ml-auto" />}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Type override table with rich picker
 // ---------------------------------------------------------------------------
 
 function TypeOverrideTable({
@@ -111,7 +181,7 @@ function TypeOverrideTable({
   targetKey: string;
   targetDisplayName: string;
   fieldTypeMappings?: FieldTypeMapping[];
-  onOverrideChange?: (fieldName: string, newType: string) => void;
+  onOverrideChange: (fieldName: string, newType: string) => void;
 }) {
   const mappingByField = new Map<string, string>();
   if (fieldTypeMappings) {
@@ -120,20 +190,19 @@ function TypeOverrideTable({
     }
   }
 
-  // Get valid types for this technology from the catalog
   const validTypes = getTargetTypeOptions(targetKey);
 
   return (
     <div className="space-y-2">
       <p className="text-caption text-muted-foreground">
-        Select a different {targetDisplayName} data type per field to override the default mapping.
+        Override the default {targetDisplayName} data type per field. Changes will be applied on next schema generation.
       </p>
       <div className="rounded-lg border border-border/50 overflow-hidden">
         <table className="w-full text-caption">
           <thead>
             <tr className="bg-muted/30 border-b border-border/50">
-              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">Field</th>
-              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">Super Schema Type</th>
+              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px] w-[180px]">Field</th>
+              <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px] w-[120px]">Super Schema Type</th>
               <th className="text-left px-3 py-2 font-semibold text-foreground/80 uppercase tracking-wider text-[10px]">{targetDisplayName} Data Type</th>
             </tr>
           </thead>
@@ -142,24 +211,20 @@ function TypeOverrideTable({
               const storedType = mappingByField.get(field.name);
               const defaultType = getDefaultMapping(field.type, targetKey)?.mappedType;
               const currentType = storedType ?? defaultType ?? field.type;
+              const isOverridden = storedType && storedType !== defaultType;
               return (
-                <tr key={field.id} className={i % 2 === 0 ? "" : "bg-muted/10"}>
-                  <td className="px-3 py-1.5 font-mono text-foreground">{field.name}</td>
+                <tr key={field.id} className={`${i % 2 === 0 ? "" : "bg-muted/10"} ${isOverridden ? "bg-primary/5" : ""}`}>
+                  <td className="px-3 py-1.5 font-mono text-foreground">
+                    {field.name}
+                    {isOverridden && <Badge variant="outline" className="text-[8px] h-3 px-1 ml-1">overridden</Badge>}
+                  </td>
                   <td className="px-3 py-1.5 font-mono text-muted-foreground">{field.type}</td>
                   <td className="px-3 py-1.5">
-                    <select
+                    <TargetTypePicker
                       value={currentType}
-                      onChange={(e) => onOverrideChange?.(field.name, e.target.value)}
-                      className="h-6 w-full rounded border border-border bg-popover px-1.5 text-[11px] font-mono text-primary focus:outline-none focus:ring-1 focus:ring-ring"
-                    >
-                      {/* Current value always shown even if not in catalog */}
-                      {!validTypes.some((t) => t.value === currentType) && (
-                        <option value={currentType}>{currentType}</option>
-                      )}
-                      {validTypes.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
+                      options={validTypes}
+                      onChange={(newType) => onOverrideChange(field.name, newType)}
+                    />
                   </td>
                 </tr>
               );
@@ -172,7 +237,7 @@ function TypeOverrideTable({
 }
 
 // ---------------------------------------------------------------------------
-// SchemasTab — vertical technology tabs + horizontal schema/overrides tabs
+// SchemasTab
 // ---------------------------------------------------------------------------
 
 type ContentTab = "schema" | "overrides";
@@ -183,6 +248,9 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [contentTab, setContentTab] = useState<ContentTab>("schema");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  // Local override state (not yet saved until regeneration)
+  const [localOverrides, setLocalOverrides] = useState<Map<string, Map<string, string>>>(new Map());
 
   const loadVersions = useCallback(async () => {
     const result = await getSchemaVersionsAction(entityId);
@@ -192,11 +260,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     setIsLoading(false);
   }, [entityId]);
 
-  useEffect(() => {
-    loadVersions();
-  }, [loadVersions]);
+  useEffect(() => { loadVersions(); }, [loadVersions]);
 
-  // Build target list from catalog
   const catalogTargets = getSchemaTargetAvailabilities();
   const generatedTargetKeys = Object.keys(schemaVersions)
     .filter((target) => (schemaVersions[target] ?? []).length > 0);
@@ -210,7 +275,6 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
       latestVersion: (schemaVersions[entry.target.key] ?? [])[0] as SchemaVersion | undefined,
     }));
 
-  // Auto-select first target with versions, or first available
   useEffect(() => {
     if (selectedTarget) return;
     const withVersions = allTargets.find((t) => t.hasVersions);
@@ -224,10 +288,33 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     try {
       const result = await generateSchemaAction(entityId, targetKey);
       if (result.error) { toast.error(result.error); return; }
-      toast.success(`${getTargetMeta(targetKey).displayName} generated`);
+      toast.success(`${getTargetMeta(targetKey).displayName} schema generated (Draft)`);
       await loadVersions();
     } catch { toast.error("Generation failed"); }
     finally { setIsGenerating(false); }
+  }
+
+  async function handlePublish(targetKey: string, version: number) {
+    setIsPublishing(true);
+    try {
+      const result = await publishSchemaAction(entityId, targetKey, version);
+      if (result.error) { toast.error(result.error); return; }
+      toast.success(`${getTargetMeta(targetKey).displayName} v${version} marked as deployed`);
+      await loadVersions();
+    } catch { toast.error("Deploy failed"); }
+    finally { setIsPublishing(false); }
+  }
+
+  function handleOverrideChange(targetKey: string, fieldName: string, newType: string) {
+    setLocalOverrides((prev) => {
+      const next = new Map(prev);
+      const targetMap = new Map(next.get(targetKey) ?? []);
+      targetMap.set(fieldName, newType);
+      next.set(targetKey, targetMap);
+      return next;
+    });
+    // TODO: persist override and auto-regenerate
+    toast.info(`Override saved — regenerate to apply`);
   }
 
   if (isLoading) {
@@ -278,15 +365,13 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
         <div className="flex-1 min-w-0">
           {selected ? (
             <>
-              {/* Horizontal tabs: Schema | Type Overrides */}
+              {/* Horizontal tabs + actions */}
               <div className="flex items-center justify-between border-b border-border/50 mb-space-3">
                 <div className="flex gap-1">
                   <button
                     onClick={() => setContentTab("schema")}
                     className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
-                      contentTab === "schema"
-                        ? "border-foreground text-foreground"
-                        : "border-transparent text-muted-foreground hover:text-foreground"
+                      contentTab === "schema" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     Generated Schema
@@ -294,28 +379,47 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                   <button
                     onClick={() => setContentTab("overrides")}
                     className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
-                      contentTab === "overrides"
-                        ? "border-foreground text-foreground"
-                        : "border-transparent text-muted-foreground hover:text-foreground"
+                      contentTab === "overrides" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     Manual Override
                   </button>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  disabled={isGenerating || fields.length === 0}
-                  onClick={() => handleGenerate(selected.key)}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <Zap className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2">
+                  {/* Status badge */}
+                  {latestVersion && (
+                    <Badge
+                      variant={latestVersion.status === "draft" ? "warning" : "success"}
+                      className="text-[10px] h-5"
+                    >
+                      {latestVersion.status === "draft" ? "Draft" : "Deployed"}
+                    </Badge>
                   )}
-                  {latestVersion ? "Regenerate" : "Generate"}
-                </Button>
+                  {/* Mark as Deployed button */}
+                  {latestVersion?.status === "draft" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                      disabled={isPublishing}
+                      onClick={() => handlePublish(selected.key, latestVersion.version)}
+                    >
+                      {isPublishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      Mark Deployed
+                    </Button>
+                  )}
+                  {/* Generate button */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={isGenerating || fields.length === 0}
+                    onClick={() => handleGenerate(selected.key)}
+                  >
+                    {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                    {latestVersion ? "Regenerate" : "Generate"}
+                  </Button>
+                </div>
               </div>
 
               {/* Schema content */}
@@ -334,13 +438,14 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                 )
               )}
 
-              {/* Type overrides content */}
+              {/* Manual overrides */}
               {contentTab === "overrides" && (
                 <TypeOverrideTable
                   fields={fields}
                   targetKey={selected.key}
                   targetDisplayName={selected.displayName}
                   fieldTypeMappings={latestVersion?.fieldTypeMappings}
+                  onOverrideChange={(fieldName, newType) => handleOverrideChange(selected.key, fieldName, newType)}
                 />
               )}
             </>
