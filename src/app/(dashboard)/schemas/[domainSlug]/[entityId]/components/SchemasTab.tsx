@@ -17,7 +17,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { getSchemaVersionsAction, generateSchemaAction, publishSchemaAction } from "../actions";
+import { getSchemaVersionsAction, generateSchemaAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
 import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "../actions";
 import { SchemaCodePreview } from "./SchemaCodePreview";
 import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
@@ -309,7 +309,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     finally { setIsPublishing(false); }
   }
 
-  function handleOverrideChange(targetKey: string, fieldName: string, newType: string) {
+  async function handleOverrideChange(targetKey: string, fieldName: string, newType: string) {
+    // Update local state immediately for UI feedback
     setLocalOverrides((prev) => {
       const next = new Map(prev);
       const targetMap = new Map(next.get(targetKey) ?? []);
@@ -317,8 +318,27 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
       next.set(targetKey, targetMap);
       return next;
     });
-    // TODO: persist override and auto-regenerate
-    toast.info(`Override saved — regenerate to apply`);
+
+    // Find the field ID
+    const field = fields.find((f) => f.name === fieldName);
+    if (!field) return;
+
+    // Persist the override
+    const saveResult = await saveSchemaFieldTypeOverrideAction({
+      entityId,
+      target: targetKey,
+      fieldId: field.id,
+      mappedType: newType,
+    });
+
+    if (saveResult.error) {
+      toast.error(saveResult.error);
+      return;
+    }
+
+    // Auto-regenerate the schema with the override applied
+    toast.info("Applying override...");
+    await handleGenerate(targetKey);
   }
 
   if (isLoading) {

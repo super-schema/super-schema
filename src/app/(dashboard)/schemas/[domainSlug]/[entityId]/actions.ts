@@ -1017,12 +1017,6 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
   if (!targetDefinition) {
     return { error: `Unknown schema target "${input.target}"` };
   }
-  if (!targetDefinition.supportsFieldOverrides) {
-    return {
-      error:
-        "This schema target does not currently support generated field-level type overrides.",
-    };
-  }
 
   const result = await getSchemaTargetFieldMappingsInternal(
     input.entityId,
