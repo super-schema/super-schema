@@ -255,6 +255,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   const [isPublishing, setIsPublishing] = useState(false);
   // Local override state (not yet saved until regeneration)
   const [localOverrides, setLocalOverrides] = useState<Map<string, Map<string, string>>>(new Map());
+  const [viewingVersionIdx, setViewingVersionIdx] = useState(0);
 
   const loadVersions = useCallback(async () => {
     const result = await getSchemaVersionsAction(entityId);
@@ -265,6 +266,9 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   }, [entityId]);
 
   useEffect(() => { loadVersions(); }, [loadVersions]);
+
+  // Reset viewing version when switching targets
+  useEffect(() => { setViewingVersionIdx(0); }, [selectedTarget]);
 
   const catalogTargets = getSchemaTargetAvailabilities();
   const generatedTargetKeys = Object.keys(schemaVersions)
@@ -353,6 +357,9 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   const selected = allTargets.find((t) => t.key === selectedTarget);
   const selectedVersions = selectedTarget ? (schemaVersions[selectedTarget] ?? []) : [];
   const latestVersion = selectedVersions[0];
+  const deployedVersion = selectedVersions.find((v) => v.status === "published" || v.status === "deployed");
+  const draftVersion = selectedVersions.find((v) => v.status === "draft");
+  const displayVersion = selectedVersions[viewingVersionIdx] ?? latestVersion;
 
   return (
     <div data-testid="schemas-tab">
@@ -410,28 +417,6 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Status badge */}
-                  {latestVersion && (
-                    <Badge
-                      variant={latestVersion.status === "draft" ? "warning" : "success"}
-                      className="text-[10px] h-5"
-                    >
-                      {latestVersion.status === "draft" ? "Draft" : "Deployed"}
-                    </Badge>
-                  )}
-                  {/* Mark as Deployed button */}
-                  {latestVersion?.status === "draft" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5"
-                      disabled={isPublishing}
-                      onClick={() => handlePublish(selected.key, latestVersion.version)}
-                    >
-                      {isPublishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                      Mark Deployed
-                    </Button>
-                  )}
                   {/* Generate button */}
                   <Button
                     size="sm"
@@ -446,11 +431,56 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                 </div>
               </div>
 
+              {/* Version selector — Draft vs Deployed */}
+              {contentTab === "schema" && selectedVersions.length > 0 && (
+                <div className="flex items-center gap-2 mb-space-3">
+                  {selectedVersions.map((v, idx) => (
+                    <button
+                      key={v.version}
+                      onClick={() => setViewingVersionIdx(idx)}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-caption transition-colors ${
+                        viewingVersionIdx === idx
+                          ? "bg-accent text-foreground font-medium"
+                          : "text-muted-foreground hover:bg-accent/50"
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${
+                        v.status === "draft" ? "bg-amber-500" : "bg-green-500"
+                      }`} />
+                      v{v.version}
+                      <span className="text-[10px]">
+                        {v.status === "draft" ? "Draft" : "Deployed"}
+                      </span>
+                    </button>
+                  ))}
+
+                  {/* Mark as Deployed — only for the currently viewed draft */}
+                  {displayVersion?.status === "draft" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 ml-auto"
+                      disabled={isPublishing}
+                      onClick={() => handlePublish(selected.key, displayVersion.version)}
+                    >
+                      {isPublishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      Mark Deployed
+                    </Button>
+                  )}
+                  {displayVersion?.status !== "draft" && (
+                    <Badge variant="success" className="text-[10px] h-5 ml-auto">
+                      <Check className="w-3 h-3 mr-0.5" />
+                      Deployed
+                    </Badge>
+                  )}
+                </div>
+              )}
+
               {/* Schema content */}
               {contentTab === "schema" && (
-                latestVersion ? (
+                displayVersion ? (
                   <SchemaCodePreview
-                    code={latestVersion.output}
+                    code={displayVersion.output}
                     language={selected.language}
                     onCopy={() => toast.success("Copied to clipboard")}
                   />

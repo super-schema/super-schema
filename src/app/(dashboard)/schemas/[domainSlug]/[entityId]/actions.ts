@@ -1257,7 +1257,12 @@ export async function publishSchemaAction(
       return { error: `Version ${version} is not a draft (current: ${targetVersions[idx].status})` };
     }
 
-    const updated = [...targetVersions];
+    // Enforce single deployed version — un-deploy any existing deployed version
+    const updated = targetVersions.map((v) =>
+      (v.status === "published" || v.status === "deployed")
+        ? { ...v, status: "draft" as const }
+        : v
+    );
     updated[idx] = {
       ...updated[idx],
       status: "published",
