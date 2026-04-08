@@ -10,11 +10,10 @@ import {
   Folder,
   Plus,
   Database,
-  Box,
   Hash,
   Globe,
-  Tag,
 } from "lucide-react";
+
 interface DomainNode {
   id: string;
   name: string;
@@ -51,10 +50,10 @@ export function LeftSidebar({
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [domains, setDomains] = useState<DomainNode[]>([]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expandedDomains, setExpandedDomains] = useState<Set<string>>(new Set());
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
-  // Fetch domains + entities for the tree
   useEffect(() => {
     async function fetchTree() {
       try {
@@ -62,83 +61,80 @@ export function LeftSidebar({
         if (res.ok) {
           const data = await res.json();
           setDomains(data);
-          // Auto-expand system domains
           const systemIds = data
             .filter((d: DomainNode) => d.isSystem)
             .map((d: DomainNode) => d.id);
-          setExpanded(new Set(systemIds));
+          setExpandedDomains(new Set(systemIds));
+          // Auto-expand entities category for system domains
+          setExpandedCategories(new Set(systemIds.map((id: string) => `${id}:entities`)));
         }
       } catch {
-        // Silently fail — tree will show empty
+        // Silently fail
       } finally {
         setLoading(false);
       }
     }
     fetchTree();
-  }, [pathname]); // Refetch when navigating
+  }, [pathname]);
 
-  // Auto-expand the currently active domain from URL
+  // Auto-expand active domain + entities category
   useEffect(() => {
     const match = pathname.match(/^\/schemas\/([^/]+)/);
     if (match) {
       const urlSlug = match[1];
-      const domain = domains.find(
-        (d) => d.slug === urlSlug
-      );
+      const domain = domains.find((d) => d.slug === urlSlug);
       if (domain) {
-        setExpanded((prev) => new Set([...prev, domain.id]));
+        setExpandedDomains((prev) => new Set([...prev, domain.id]));
+        setExpandedCategories((prev) => new Set([...prev, `${domain.id}:entities`]));
       }
     }
   }, [pathname, domains]);
 
-  // Filter tree by search
   const filteredDomains = useMemo(() => {
     if (!search.trim()) return domains;
     const q = search.toLowerCase();
     return domains
       .map((d) => ({
         ...d,
-        entities: d.entities.filter((e) =>
-          e.name.toLowerCase().includes(q)
-        ),
+        entities: d.entities.filter((e) => e.name.toLowerCase().includes(q)),
       }))
-      .filter(
-        (d) =>
-          d.name.toLowerCase().includes(q) || d.entities.length > 0
-      );
+      .filter((d) => d.name.toLowerCase().includes(q) || d.entities.length > 0);
   }, [domains, search]);
 
-  function toggleExpand(id: string) {
-    setExpanded((prev) => {
+  function toggleDomain(id: string) {
+    setExpandedDomains((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleCategory(key: string) {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   }
 
   function getStatusColor(status: string) {
     switch (status) {
-      case "ACTIVE":
-        return "bg-success";
-      case "DRAFT":
-        return "bg-warning";
-      case "DEPRECATED":
-        return "bg-[#e88a3b]";
-      case "RETIRED":
-        return "bg-muted-foreground";
-      default:
-        return "bg-muted-foreground";
+      case "ACTIVE": return "bg-success";
+      case "DRAFT": return "bg-warning";
+      case "DEPRECATED": return "bg-[#e88a3b]";
+      case "RETIRED": return "bg-muted-foreground";
+      default: return "bg-muted-foreground";
     }
   }
 
+  // Check if current path matches a tab
+  const activeTab = new URLSearchParams(
+    typeof window !== "undefined" ? window.location.search : ""
+  ).get("tab");
+
   if (isCollapsed || width === 0) {
     return (
-      <div
-        data-testid="left-sidebar"
-        data-collapsed="true"
-        className="relative"
-      >
+      <div data-testid="left-sidebar" data-collapsed="true" className="relative">
         <div
           data-testid="sidebar-handle"
           className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 animate-field-hover z-10"
@@ -165,69 +161,48 @@ export function LeftSidebar({
             placeholder="Filter..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="bg-transparent text-body-small text-foreground placeholder:text-muted-foreground outline-none w-full"
+            className="bg-transparent text-body-small text-foreground placeholder:text-muted-foreground/40 outline-none w-full"
           />
         </div>
       </div>
 
-      {/* Tree header */}
       <div className="px-space-3 py-space-1">
-        <h3 className="text-caption text-muted-foreground uppercase tracking-wider">
-          Explorer
-        </h3>
+        <h3 className="text-caption text-muted-foreground uppercase tracking-wider">Explorer</h3>
       </div>
 
       {/* Domain tree */}
       <div className="flex-1 overflow-y-auto px-space-1 pb-space-3">
         {loading ? (
-          <p className="text-body-small text-muted-foreground px-space-3 py-space-2">
-            Loading...
-          </p>
+          <p className="text-body-small text-muted-foreground px-space-3 py-space-2">Loading...</p>
         ) : filteredDomains.length === 0 ? (
           <p className="text-body-small text-muted-foreground px-space-3 py-space-2">
             {search ? "No matches" : "No domains yet"}
           </p>
         ) : (
           filteredDomains.map((domain) => {
-            const isExpanded = expanded.has(domain.id);
+            const isDomainExpanded = expandedDomains.has(domain.id);
             const slug = domain.slug;
             const isActive = pathname.startsWith(`/schemas/${slug}`);
+            const typesCount = domain.sharedEnumCount + domain.customScalarCount + domain.unionTypeCount;
+            const isEntitiesExpanded = expandedCategories.has(`${domain.id}:entities`);
 
             return (
-              <div key={domain.id}>
+              <div key={domain.id} className="mb-0.5">
                 {/* Domain node */}
                 <div
                   className={`group flex items-center gap-space-1 px-space-2 py-1 rounded-md cursor-pointer transition-colors ${
-                    isActive
-                      ? "bg-accent text-foreground"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                  }`}
+                    isActive && !pathname.includes("/") ? "bg-accent text-foreground" : ""
+                  } ${isActive ? "text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}
                   onClick={() => {
-                    toggleExpand(domain.id);
+                    toggleDomain(domain.id);
                     router.push(`/schemas/${slug}`);
                   }}
                 >
-                  {isExpanded ? (
-                    <ChevronDown className="w-3 h-3 shrink-0" />
-                  ) : (
-                    <ChevronRight className="w-3 h-3 shrink-0" />
-                  )}
-                  {isExpanded ? (
-                    <FolderOpen className="w-4 h-4 shrink-0 text-primary" />
-                  ) : (
-                    <Folder className="w-4 h-4 shrink-0" />
-                  )}
-                  <span className="text-body-small truncate flex-1">
-                    {domain.name}
-                  </span>
-                  <span className="text-caption opacity-60">
-                    {domain.entities.length}
-                  </span>
+                  {isDomainExpanded ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                  {isDomainExpanded ? <FolderOpen className="w-4 h-4 shrink-0 text-primary" /> : <Folder className="w-4 h-4 shrink-0" />}
+                  <span className="text-body-small truncate flex-1">{domain.name}</span>
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      router.push(`/schemas/${slug}/new`);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); router.push(`/schemas/${slug}/new`); }}
                     className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-accent rounded transition-opacity"
                     title="New Entity"
                   >
@@ -235,60 +210,68 @@ export function LeftSidebar({
                   </button>
                 </div>
 
-                {/* Domain categories + entity children */}
-                {isExpanded && (
-                  <div className="ml-space-4">
-                    {/* Entities category */}
+                {/* Categories */}
+                {isDomainExpanded && (
+                  <div className="ml-3">
+                    {/* Entities category — collapsible */}
                     <div
-                      className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-                      onClick={() => router.push(`/schemas/${slug}`)}
+                      className={`flex items-center gap-1.5 px-space-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                        isActive && !activeTab ? "text-primary font-medium" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                      }`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleCategory(`${domain.id}:entities`);
+                        router.push(`/schemas/${slug}`);
+                      }}
                     >
+                      {isEntitiesExpanded ? <ChevronDown className="w-2.5 h-2.5 shrink-0" /> : <ChevronRight className="w-2.5 h-2.5 shrink-0" />}
                       <Database className="w-3 h-3 shrink-0" />
-                      <span className="text-mono-small truncate flex-1">Entities</span>
-                      <span className="text-[10px] opacity-60">{domain.entities.length}</span>
+                      <span className="text-[11px] truncate flex-1">Entities</span>
+                      <span className="text-[10px] opacity-50">{domain.entities.length}</span>
                     </div>
-                    {domain.entities.map((entity) => (
-                      <div
-                        key={entity.id}
-                        className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors ml-space-2"
-                        onClick={() =>
-                          router.push(`/schemas/${slug}/${entity.slug}`)
-                        }
-                      >
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${getStatusColor(entity.status)}`}
-                        />
-                        <span className={`text-mono-small truncate ${entity.status === "RETIRED" ? "line-through" : ""}`}>
-                          {entity.name}
-                        </span>
-                      </div>
-                    ))}
 
-                    {/* Types category */}
-                    {(domain.sharedEnumCount + domain.customScalarCount + domain.unionTypeCount) > 0 && (
-                      <div
-                        className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-                        onClick={() => router.push(`/schemas/${slug}?tab=types`)}
-                      >
-                        <Hash className="w-3 h-3 shrink-0" />
-                        <span className="text-mono-small truncate flex-1">Types</span>
-                        <span className="text-[10px] opacity-60">
-                          {domain.sharedEnumCount + domain.customScalarCount + domain.unionTypeCount}
-                        </span>
-                      </div>
-                    )}
+                    {/* Entity list — collapsible */}
+                    {isEntitiesExpanded && domain.entities.map((entity) => {
+                      const isEntityActive = pathname === `/schemas/${slug}/${entity.slug}`;
+                      return (
+                        <div
+                          key={entity.id}
+                          className={`flex items-center gap-1.5 px-space-2 py-0.5 rounded-md cursor-pointer transition-colors ml-4 ${
+                            isEntityActive ? "bg-accent text-foreground font-medium" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                          }`}
+                          onClick={() => router.push(`/schemas/${slug}/${entity.slug}`)}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getStatusColor(entity.status)}`} />
+                          <span className={`text-[11px] truncate ${entity.status === "RETIRED" ? "line-through" : ""}`}>
+                            {entity.name}
+                          </span>
+                        </div>
+                      );
+                    })}
 
-                    {/* APIs category */}
-                    {domain.serviceCount > 0 && (
-                      <div
-                        className="flex items-center gap-space-2 px-space-2 py-0.5 rounded-md cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
-                        onClick={() => router.push(`/schemas/${slug}?tab=apis`)}
-                      >
-                        <Globe className="w-3 h-3 shrink-0" />
-                        <span className="text-mono-small truncate flex-1">APIs</span>
-                        <span className="text-[10px] opacity-60">{domain.serviceCount}</span>
-                      </div>
-                    )}
+                    {/* Types category — always visible */}
+                    <div
+                      className={`flex items-center gap-1.5 px-space-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                        isActive && activeTab === "types" ? "text-primary font-medium" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                      }`}
+                      onClick={() => router.push(`/schemas/${slug}?tab=types`)}
+                    >
+                      <Hash className="w-3 h-3 shrink-0 ml-[14px]" />
+                      <span className="text-[11px] truncate flex-1">Types</span>
+                      {typesCount > 0 && <span className="text-[10px] opacity-50">{typesCount}</span>}
+                    </div>
+
+                    {/* APIs category — always visible */}
+                    <div
+                      className={`flex items-center gap-1.5 px-space-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                        isActive && activeTab === "apis" ? "text-primary font-medium" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                      }`}
+                      onClick={() => router.push(`/schemas/${slug}?tab=apis`)}
+                    >
+                      <Globe className="w-3 h-3 shrink-0 ml-[14px]" />
+                      <span className="text-[11px] truncate flex-1">APIs</span>
+                      {domain.serviceCount > 0 && <span className="text-[10px] opacity-50">{domain.serviceCount}</span>}
+                    </div>
                   </div>
                 )}
               </div>
