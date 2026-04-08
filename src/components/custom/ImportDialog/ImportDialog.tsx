@@ -23,7 +23,10 @@ import { detectFormat } from "@/lib/importers/format-detector";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import { ImportReviewScreen } from "./ImportReviewScreen";
 import { BulkImportReviewScreen } from "./BulkImportReviewScreen";
-import { TypeSpecImportReviewScreen } from "./TypeSpecImportReviewScreen";
+import {
+  TypeSpecImportReviewScreen,
+  type TypeSpecImportSelection,
+} from "./TypeSpecImportReviewScreen";
 import { toast } from "sonner";
 
 type ImportTab = "single" | "bulk" | "paste";
@@ -114,7 +117,15 @@ export function ImportDialog({
       const doc = parseTypeSpecDocument(content);
 
       // Check for TypeSpec-specific feedback
-      if (doc.models.length === 0 && !content.includes("model ")) {
+      if (
+        doc.models.length === 0 &&
+        doc.enums.length === 0 &&
+        doc.scalars.length === 0 &&
+        doc.interfaces.length === 0 &&
+        doc.operations.length === 0 &&
+        doc.decorators.length === 0 &&
+        !content.includes("model ")
+      ) {
         // Try other formats
         const result = importSchema(content);
         if (!result.success) {
@@ -145,6 +156,7 @@ export function ImportDialog({
         if (doc.aliases.length > 0) parts.push(`${doc.aliases.length} alias(es)`);
         if (doc.interfaces.length > 0) parts.push(`${doc.interfaces.length} interface(s)`);
         if (doc.operations.length > 0) parts.push(`${doc.operations.length} operation(s)`);
+        if (doc.decorators.length > 0) parts.push(`${doc.decorators.length} decorator definition(s)`);
 
         if (parts.length > 0) {
           setParseSummary(parts.join(", "));
@@ -177,10 +189,17 @@ export function ImportDialog({
           });
         }
 
-        if (doc.models.length === 0 && doc.enums.length === 0) {
+        if (
+          doc.models.length === 0 &&
+          doc.enums.length === 0 &&
+          doc.scalars.length === 0 &&
+          doc.interfaces.length === 0 &&
+          doc.operations.length === 0 &&
+          doc.decorators.length === 0
+        ) {
           items.push({
             type: "warning",
-            message: "No models or enums found. Paste a TypeSpec model definition to import.",
+            message: "No importable TypeSpec assets found. Paste models, types, APIs, or decorator declarations to import.",
           });
         }
       }
@@ -211,19 +230,41 @@ export function ImportDialog({
     });
   }
 
+  function reviewImportedContent(content: string, filename?: string) {
+    const format = detectFormat(content, filename);
+
+    if (format === "typespec") {
+      const tsResult = importTypeSpecDocument(content);
+      if (!tsResult.success) {
+        setError(tsResult.error.message);
+        return;
+      }
+
+      setParsedEntity(null);
+      setWarnings([]);
+      setTypeSpecResult(tsResult.data);
+      setPhase("typespec-review");
+      return;
+    }
+
+    const result = importSchema(content, format ?? undefined);
+    if (!result.success) {
+      setError(result.error.message);
+      return;
+    }
+
+    setTypeSpecResult(null);
+    setParsedEntity(result.data.parsedEntity);
+    setWarnings(result.data.warnings);
+    setPhase("review");
+  }
+
   // Handle single file
   async function handleSingleFile(file: File) {
     setError(null);
     try {
       const content = await readFile(file);
-      const result = importSchema(content);
-      if (!result.success) {
-        setError(result.error.message);
-        return;
-      }
-      setParsedEntity(result.data.parsedEntity);
-      setWarnings(result.data.warnings);
-      setPhase("review");
+      reviewImportedContent(content, file.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to read file");
     }
@@ -237,39 +278,7 @@ export function ImportDialog({
     }
     setError(null);
     const content = pasteContent.trim();
-
-    // Detect format — if TypeSpec, try full document parser for multi-model support
-    const format = detectFormat(content);
-    if (format === "typespec") {
-      const tsResult = importTypeSpecDocument(content);
-      if (!tsResult.success) {
-        setError(tsResult.error.message);
-        return;
-      }
-
-      const data = tsResult.data;
-      const totalConstructs =
-        data.entities.length + data.sharedEnums.length +
-        data.customScalars.length + data.unions.length;
-
-      // If multiple constructs, use TypeSpec review screen
-      if (totalConstructs > 1 || data.sharedEnums.length > 0 ||
-          data.customScalars.length > 0 || data.unions.length > 0) {
-        setTypeSpecResult(data);
-        setPhase("typespec-review");
-        return;
-      }
-    }
-
-    // Fallback: single entity import (any format)
-    const result = importSchema(content);
-    if (!result.success) {
-      setError(result.error.message);
-      return;
-    }
-    setParsedEntity(result.data.parsedEntity);
-    setWarnings(result.data.warnings);
-    setPhase("review");
+    reviewImportedContent(content);
   }
 
   // Handle paste into textarea from file drop
@@ -349,22 +358,16 @@ export function ImportDialog({
     handleClose();
   }
 
-  async function handleConfirmTypeSpec(
-    domainId: string,
-    selectedEntities: number[],
-    selectedEnums: number[],
-    selectedScalars: number[],
-    selectedUnions: number[]
-  ) {
+  async function handleConfirmTypeSpec(selection: TypeSpecImportSelection) {
     if (!typeSpecResult) return;
 
-    // Build payload with only selected items
-    const entities = selectedEntities.map((idx) => {
-      const entity = typeSpecResult.entities[idx];
+    const models = selection.selectedModels.map((idx) => {
+      const model = typeSpecResult.models[idx];
       return {
-        name: entity.name,
-        description: entity.description,
-        fields: entity.fields.map((f) => ({
+        name: model.name,
+        description: model.description,
+        extends: model.extends,
+        fields: model.fields.map((f) => ({
           name: f.name,
           type: f.type,
           nullable: f.nullable,
@@ -378,29 +381,59 @@ export function ImportDialog({
       };
     });
 
-    const sharedEnums = selectedEnums.map((idx) => typeSpecResult.sharedEnums[idx]);
-    const customScalars = selectedScalars.map((idx) => typeSpecResult.customScalars[idx]);
-    const unionTypes = selectedUnions.map((idx) => typeSpecResult.unions[idx]);
+    const entities = selection.selectedEntities.map((idx) => {
+      const model = typeSpecResult.models[idx];
+      return {
+        name: model.name,
+        description: model.description,
+        extends: model.extends,
+        fields: model.fields.map((f) => ({
+          name: f.name,
+          type: f.type,
+          nullable: f.nullable,
+          isKey: f.isKey ?? false,
+          description: f.description ?? "",
+          classification: f.classification ?? null,
+          precision: null,
+          scale: null,
+          decorators: buildDecoratorsFromParsedField(f),
+        })),
+      };
+    });
+
+    const sharedEnums = selection.selectedEnums.map((idx) => typeSpecResult.sharedEnums[idx]);
+    const customScalars = selection.selectedScalars.map((idx) => typeSpecResult.customScalars[idx]);
+    const unionTypes = selection.selectedUnions.map((idx) => typeSpecResult.unions[idx]);
+    const services = selection.selectedServices.map((idx) => typeSpecResult.services[idx]);
+    const decoratorDefinitions = selection.selectedDecorators.map(
+      (idx) => typeSpecResult.decoratorDefinitions[idx]
+    );
 
     try {
-      // Dynamic import to avoid SSR issues with server actions
-      const { createEntitiesFromImportAction } = await import(
+      const { createDomainAssetsFromImportAction } = await import(
         "@/app/(dashboard)/schemas/[domainSlug]/actions"
       );
 
-      const result = await createEntitiesFromImportAction({
-        domainId,
+      const result = await createDomainAssetsFromImportAction({
+        domainId: selection.domainId,
+        namespace: typeSpecResult.namespace,
+        models,
         entities,
         sharedEnums,
         customScalars,
         unionTypes,
+        services,
+        decoratorDefinitions,
       });
 
       const parts: string[] = [];
+      if (result.modelsCreated > 0) parts.push(`${result.modelsCreated} model(s)`);
       if (result.entitiesCreated > 0) parts.push(`${result.entitiesCreated} entity(ies)`);
       if (result.enumsCreated > 0) parts.push(`${result.enumsCreated} enum(s)`);
       if (result.scalarsCreated > 0) parts.push(`${result.scalarsCreated} scalar(s)`);
       if (result.unionsCreated > 0) parts.push(`${result.unionsCreated} union(s)`);
+      if (result.servicesCreated > 0) parts.push(`${result.servicesCreated} API(s)`);
+      if (result.decoratorsCreated > 0) parts.push(`${result.decoratorsCreated} decorator(s)`);
 
       if (parts.length > 0) {
         toast.success(`Created ${parts.join(", ")}`);
@@ -412,7 +445,6 @@ export function ImportDialog({
         }
       }
 
-      // Notify with entity names (consistent with single/bulk flows)
       for (const entity of entities) {
         onImported?.(entity.name);
       }

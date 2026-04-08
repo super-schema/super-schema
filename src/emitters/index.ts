@@ -6,6 +6,7 @@ import type { Emitter } from "@/lib/compiler/types";
 import { openApiEmitter } from "./openapi";
 import { avroEmitter } from "./avro";
 import { BigQueryEmitter } from "./bigquery";
+import { PostgreSqlEmitter } from "./postgresql";
 import { SpannerEmitter } from "./spanner";
 
 // ---------------------------------------------------------------------------
@@ -13,12 +14,14 @@ import { SpannerEmitter } from "./spanner";
 // ---------------------------------------------------------------------------
 
 const bigQueryEmitter = new BigQueryEmitter();
+const postgreSqlEmitter = new PostgreSqlEmitter();
 const spannerEmitter = new SpannerEmitter();
 
 const emitterRegistry: Record<string, Emitter> = {
   openapi: openApiEmitter,
   avro: avroEmitter,
   bigquery: bigQueryEmitter,
+  postgresql: postgreSqlEmitter,
   spanner: spannerEmitter,
 };
 
@@ -39,4 +42,5 @@ export function getAllEmitters(): Emitter[] {
 export { openApiEmitter } from "./openapi";
 export { avroEmitter } from "./avro";
 export { BigQueryEmitter } from "./bigquery";
+export { PostgreSqlEmitter } from "./postgresql";
 export { SpannerEmitter } from "./spanner";

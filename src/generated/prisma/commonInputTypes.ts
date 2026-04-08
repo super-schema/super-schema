@@ -501,6 +501,23 @@ export type EnumDeploymentStatusWithAggregatesFilter<$PrismaModel = never> = {
   _max?: Prisma.NestedEnumDeploymentStatusFilter<$PrismaModel>
 }
 
+export type EnumApiScopeFilter<$PrismaModel = never> = {
+  equals?: $Enums.ApiScope | Prisma.EnumApiScopeFieldRefInput<$PrismaModel>
+  in?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  notIn?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumApiScopeFilter<$PrismaModel> | $Enums.ApiScope
+}
+
+export type EnumApiScopeWithAggregatesFilter<$PrismaModel = never> = {
+  equals?: $Enums.ApiScope | Prisma.EnumApiScopeFieldRefInput<$PrismaModel>
+  in?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  notIn?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumApiScopeWithAggregatesFilter<$PrismaModel> | $Enums.ApiScope
+  _count?: Prisma.NestedIntFilter<$PrismaModel>
+  _min?: Prisma.NestedEnumApiScopeFilter<$PrismaModel>
+  _max?: Prisma.NestedEnumApiScopeFilter<$PrismaModel>
+}
+
 export type NestedStringFilter<$PrismaModel = never> = {
   equals?: string | Prisma.StringFieldRefInput<$PrismaModel>
   in?: string[] | Prisma.ListStringFieldRefInput<$PrismaModel>
@@ -934,6 +951,23 @@ export type NestedEnumDeploymentStatusWithAggregatesFilter<$PrismaModel = never>
   _count?: Prisma.NestedIntFilter<$PrismaModel>
   _min?: Prisma.NestedEnumDeploymentStatusFilter<$PrismaModel>
   _max?: Prisma.NestedEnumDeploymentStatusFilter<$PrismaModel>
+}
+
+export type NestedEnumApiScopeFilter<$PrismaModel = never> = {
+  equals?: $Enums.ApiScope | Prisma.EnumApiScopeFieldRefInput<$PrismaModel>
+  in?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  notIn?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumApiScopeFilter<$PrismaModel> | $Enums.ApiScope
+}
+
+export type NestedEnumApiScopeWithAggregatesFilter<$PrismaModel = never> = {
+  equals?: $Enums.ApiScope | Prisma.EnumApiScopeFieldRefInput<$PrismaModel>
+  in?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  notIn?: $Enums.ApiScope[] | Prisma.ListEnumApiScopeFieldRefInput<$PrismaModel>
+  not?: Prisma.NestedEnumApiScopeWithAggregatesFilter<$PrismaModel> | $Enums.ApiScope
+  _count?: Prisma.NestedIntFilter<$PrismaModel>
+  _min?: Prisma.NestedEnumApiScopeFilter<$PrismaModel>
+  _max?: Prisma.NestedEnumApiScopeFilter<$PrismaModel>
 }
 
 

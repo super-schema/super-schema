@@ -17,7 +17,7 @@ import type { ValidationResult, ValidationError } from "@/lib/compiler/types";
 const VALID_BQ_TYPES = new Set([
   "STRING", "BYTES", "INT64", "FLOAT64", "NUMERIC", "BIGNUMERIC",
   "BOOL", "BOOLEAN", "DATE", "TIME", "DATETIME", "TIMESTAMP",
-  "STRUCT", "ARRAY", "JSON", "GEOGRAPHY",
+  "STRUCT", "ARRAY", "JSON", "GEOGRAPHY", "INTERVAL", "RANGE",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ function validateColumnType(typePart: string): ValidationError[] {
   const arrayMatch = typeStr.match(/^ARRAY\s*<(.+)>\s*$/i);
   if (arrayMatch) {
     const innerType = arrayMatch[1].trim();
-    const baseInner = innerType.split("(")[0].toUpperCase();
+    const baseInner = innerType.split("(")[0].split("<")[0].toUpperCase();
     if (!VALID_BQ_TYPES.has(baseInner)) {
       errors.push({
         message: `Invalid BigQuery array element type: "${innerType}"`,
@@ -175,7 +175,7 @@ function validateColumnType(typePart: string): ValidationError[] {
   }
 
   // Handle base type with optional precision: NUMERIC(19,4)
-  const baseType = typeStr.split("(")[0].toUpperCase().trim();
+  const baseType = typeStr.split("(")[0].split("<")[0].toUpperCase().trim();
   if (!VALID_BQ_TYPES.has(baseType)) {
     errors.push({
       message: `Invalid BigQuery column type: "${typeStr}"`,

@@ -10,6 +10,10 @@ import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compile
 import type { EmissionResult } from "./emission.types";
 import { emitFromData } from "./emit-from-data";
 import { getOverridesForEntity } from "@/services/type-mapping.service";
+import {
+  parseSchemaTargetTypeOverrides,
+  toFieldOverridePolicies,
+} from "@/lib/schema-targets/field-type-overrides";
 import type { ServiceContext } from "@/types/service-context";
 
 // Re-export the pure function for convenience
@@ -78,7 +82,16 @@ export async function emitEntity(entityId: string): Promise<EmissionResult> {
     prisma,
   };
   const overridesResult = await getOverridesForEntity(entityId, serviceCtx);
-  const overridePolicies = overridesResult.success ? overridesResult.data : [];
+  const policyOverrides = overridesResult.success ? overridesResult.data : [];
+  const fieldOverrides = parseSchemaTargetTypeOverrides(
+    (entity.metadata as Record<string, unknown> | null)?.schemaTargetTypeOverrides
+  );
+  const fieldOverridePolicies = Object.keys(fieldOverrides).flatMap((target) =>
+    toFieldOverridePolicies(fieldOverrides, target)
+  );
 
-  return emitFromData(prismaEntity, prismaFields, overridePolicies);
+  return emitFromData(prismaEntity, prismaFields, [
+    ...policyOverrides,
+    ...fieldOverridePolicies,
+  ]);
 }

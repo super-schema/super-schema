@@ -31,33 +31,61 @@ import type { Result } from "@/types/result";
 import type { ParsedEntity, ParsedField, ParsedFieldConstraint } from "./types";
 import { parseTypeSpec, parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
 import type {
+  ParsedTypeSpecDecoratorDefinition,
   ParsedTypeSpecField,
   ParsedTypeSpecDecorators,
   ParsedTypeSpecDocument,
+  ParsedTypeSpecModel,
+  ParsedTypeSpecOperation,
 } from "@/lib/compiler/typespec-parser";
 
 // ---------------------------------------------------------------------------
 // Multi-model import result
 // ---------------------------------------------------------------------------
 
-export interface TypeSpecImportResult {
-  entities: ParsedEntity[];
-  sharedEnums: Array<{ name: string; values: string[]; doc?: string }>;
-  customScalars: Array<{ name: string; baseType: string; doc?: string }>;
-  unions: Array<{ name: string; memberTypes: string[]; doc?: string }>;
-  aliases: Array<{ name: string; type: string }>;
-  interfaces: Array<{
+export interface TypeSpecImportModel extends ParsedEntity {
+  extends?: string;
+  referencedModelNames: string[];
+  referencedByModelNames: string[];
+  recommendedAsEntity: boolean;
+}
+
+export interface TypeSpecImportService {
+  name: string;
+  description?: string;
+  basePath: string;
+  source: "interface" | "standalone-operations";
+  scope: "domain" | "entity";
+  entityName?: string;
+  operations: Array<{
     name: string;
     doc?: string;
-    operations: Array<{
-      name: string;
-      doc?: string;
-      httpMethod?: string;
-      httpPath?: string;
-      returnType: string;
-      params: Array<{ name: string; type: string; location?: string; isOptional: boolean }>;
-    }>;
+    httpMethod?: string;
+    httpPath?: string;
+    returnType: string;
+    params: Array<{ name: string; type: string; location?: string; isOptional: boolean }>;
   }>;
+}
+
+export interface TypeSpecImportResult {
+  models: TypeSpecImportModel[];
+  sharedEnums: Array<{ name: string; values: string[]; description?: string }>;
+  customScalars: Array<{
+    name: string;
+    baseType: string;
+    format?: string;
+    pattern?: string;
+    description?: string;
+  }>;
+  unions: Array<{ name: string; memberTypes: string[]; description?: string }>;
+  aliases: Array<{ name: string; type: string }>;
+  decoratorDefinitions: Array<{
+    name: string;
+    description?: string;
+    signature: string;
+    targetTypes: string[];
+  }>;
+  services: TypeSpecImportService[];
   namespace?: string;
   warnings: string[];
 }
@@ -151,6 +179,141 @@ function mapField(tsField: ParsedTypeSpecField): ParsedField {
   return field;
 }
 
+function collectReferencedModelNames(
+  model: ParsedTypeSpecModel,
+  knownModelNames: Set<string>
+): string[] {
+  const references = new Set<string>();
+
+  for (const field of model.fields) {
+    const candidates = [
+      field.type,
+      field.arrayElementType,
+      ...field.type.split("|").map((part) => part.trim()),
+    ].filter(Boolean) as string[];
+
+    for (const candidate of candidates) {
+      if (candidate !== model.name && knownModelNames.has(candidate)) {
+        references.add(candidate);
+      }
+    }
+  }
+
+  if (model.extends && knownModelNames.has(model.extends)) {
+    references.add(model.extends);
+  }
+
+  return [...references];
+}
+
+function isRecommendedEntityModel(
+  model: ParsedTypeSpecModel,
+  referencedModelNames: string[],
+  referencedByModelNames: string[]
+): boolean {
+  if (model.fields.some((field) => field.isKey)) {
+    return true;
+  }
+
+  const fieldReferenceCount = model.fields.reduce((count, field) => {
+    if (field.type && referencedModelNames.includes(field.type)) {
+      return count + 1;
+    }
+    if (field.arrayElementType && referencedModelNames.includes(field.arrayElementType)) {
+      return count + 1;
+    }
+    return count;
+  }, 0);
+
+  return fieldReferenceCount > 0 && referencedByModelNames.length === 0;
+}
+
+function mapOperation(op: ParsedTypeSpecOperation): TypeSpecImportService["operations"][number] {
+  return {
+    name: op.name,
+    doc: op.doc,
+    httpMethod: op.httpMethod,
+    httpPath: op.httpPath,
+    returnType: op.returnType,
+    params: op.params.map((p) => ({
+      name: p.name,
+      type: p.type,
+      location: p.location,
+      isOptional: p.isOptional,
+    })),
+  };
+}
+
+function inferServiceBasePath(operations: ParsedTypeSpecOperation[]): string {
+  const httpPaths = operations
+    .map((operation) => operation.httpPath?.trim())
+    .filter((path): path is string => !!path && path.startsWith("/"));
+
+  if (httpPaths.length === 0) {
+    return "/";
+  }
+
+  const splitPaths = httpPaths.map((path) => path.split("/").filter(Boolean));
+  const commonSegments: string[] = [];
+  const shortest = Math.min(...splitPaths.map((segments) => segments.length));
+
+  for (let index = 0; index < shortest; index++) {
+    const segment = splitPaths[0][index];
+    if (!segment || segment.startsWith("{")) break;
+    if (splitPaths.every((segments) => segments[index] === segment)) {
+      commonSegments.push(segment);
+      continue;
+    }
+    break;
+  }
+
+  return commonSegments.length > 0 ? `/${commonSegments.join("/")}` : "/";
+}
+
+function buildStandaloneOperationsServiceName(namespace: string | undefined): string {
+  if (!namespace) {
+    return "ImportedOperations";
+  }
+
+  const segments = namespace.split(".");
+  return `${segments[segments.length - 1]}Operations`;
+}
+
+function mapServices(doc: ParsedTypeSpecDocument): TypeSpecImportService[] {
+  const services: TypeSpecImportService[] = doc.interfaces.map((iface) => ({
+    name: iface.name,
+    description: iface.doc,
+    basePath: inferServiceBasePath(iface.operations),
+    source: "interface",
+    scope: "domain",
+    operations: iface.operations.map(mapOperation),
+  }));
+
+  if (doc.operations.length > 0) {
+    services.push({
+      name: buildStandaloneOperationsServiceName(doc.namespace),
+      description: "Imported from standalone TypeSpec operations.",
+      basePath: inferServiceBasePath(doc.operations),
+      source: "standalone-operations",
+      scope: "domain",
+      operations: doc.operations.map(mapOperation),
+    });
+  }
+
+  return services;
+}
+
+function mapDecoratorDefinitions(
+  decorators: ParsedTypeSpecDecoratorDefinition[]
+): TypeSpecImportResult["decoratorDefinitions"] {
+  return decorators.map((decorator) => ({
+    name: decorator.name,
+    description: decorator.doc,
+    signature: decorator.signature,
+    targetTypes: decorator.targetTypes,
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Public API — single entity (backwards compatible)
 // ---------------------------------------------------------------------------
@@ -208,6 +371,7 @@ export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImpor
     doc.enums.length === 0 &&
     doc.scalars.length === 0 &&
     doc.unions.length === 0 &&
+    doc.decorators.length === 0 &&
     doc.interfaces.length === 0 &&
     doc.operations.length === 0
   ) {
@@ -219,14 +383,38 @@ export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImpor
     });
   }
 
-  // Map models to entities
-  const entities: ParsedEntity[] = doc.models.map((model) => ({
-    name: model.name,
-    description: model.doc,
-    fields: model.fields.map(mapField),
-    sourceFormat: "typespec" as const,
-    originalContent: content,
-  }));
+  const modelNameSet = new Set(doc.models.map((model) => model.name));
+  const referencedByMap = new Map<string, Set<string>>();
+
+  for (const model of doc.models) {
+    const references = collectReferencedModelNames(model, modelNameSet);
+    for (const reference of references) {
+      const referencedBy = referencedByMap.get(reference) ?? new Set<string>();
+      referencedBy.add(model.name);
+      referencedByMap.set(reference, referencedBy);
+    }
+  }
+
+  const models: TypeSpecImportModel[] = doc.models.map((model) => {
+    const referencedModelNames = collectReferencedModelNames(model, modelNameSet);
+    const referencedByModelNames = [...(referencedByMap.get(model.name) ?? new Set<string>())];
+
+    return {
+      name: model.name,
+      description: model.doc,
+      fields: model.fields.map(mapField),
+      sourceFormat: "typespec" as const,
+      originalContent: content,
+      extends: model.extends,
+      referencedModelNames,
+      referencedByModelNames,
+      recommendedAsEntity: isRecommendedEntityModel(
+        model,
+        referencedModelNames,
+        referencedByModelNames
+      ),
+    };
+  });
 
   // Note warnings for imports and usings
   for (const imp of doc.imports) {
@@ -241,41 +429,38 @@ export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImpor
     warnings.push(`Const "${c.name}" = ${c.value} noted — stored as metadata.`);
   }
 
+  const services = mapServices(doc);
+
+  for (const service of services) {
+    if (service.source === "standalone-operations") {
+      warnings.push(
+        `Standalone operations were grouped into service "${service.name}" for import review.`
+      );
+    }
+  }
+
   return ok({
-    entities,
+    models,
     sharedEnums: doc.enums.map((e) => ({
       name: e.name,
       values: e.values,
-      doc: e.doc,
+      description: e.doc,
     })),
     customScalars: doc.scalars.map((s) => ({
       name: s.name,
       baseType: s.baseType,
-      doc: s.doc,
+      format: s.format,
+      pattern: s.pattern,
+      description: s.doc,
     })),
     unions: doc.unions.map((u) => ({
       name: u.name,
       memberTypes: u.memberTypes,
-      doc: u.doc,
+      description: u.doc,
     })),
     aliases: doc.aliases,
-    interfaces: doc.interfaces.map((iface) => ({
-      name: iface.name,
-      doc: iface.doc,
-      operations: iface.operations.map((op) => ({
-        name: op.name,
-        doc: op.doc,
-        httpMethod: op.httpMethod,
-        httpPath: op.httpPath,
-        returnType: op.returnType,
-        params: op.params.map((p) => ({
-          name: p.name,
-          type: p.type,
-          location: p.location,
-          isOptional: p.isOptional,
-        })),
-      })),
-    })),
+    decoratorDefinitions: mapDecoratorDefinitions(doc.decorators),
+    services,
     namespace: doc.namespace,
     warnings,
   });

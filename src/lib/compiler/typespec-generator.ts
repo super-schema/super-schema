@@ -257,6 +257,20 @@ function generateModelDecorators(model: SuperSchemaModel): string[] {
     lines.push(`@doc("${escapeString(model.entity.description)}")`);
   }
 
+  if (model.entity.metadata?.isError) {
+    lines.push("@error");
+  }
+
+  if (model.entity.metadata?.friendlyName) {
+    lines.push(`@friendlyName("${escapeString(model.entity.metadata.friendlyName)}")`);
+  }
+
+  if (model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) {
+    for (const tag of model.entity.metadata.tags) {
+      lines.push(`@tag("${escapeString(tag)}")`);
+    }
+  }
+
   return lines;
 }
 
@@ -538,6 +552,11 @@ function generateFieldDecorators(field: SuperSchemaField): string[] {
         decorators.push(`@encode("${escapeString(wireFormat.encode)}")`);
       }
     }
+    if (wireFormat.encodedNames) {
+      for (const [mime, name] of Object.entries(wireFormat.encodedNames)) {
+        decorators.push(`@encodedName("${escapeString(mime)}", "${escapeString(name)}")`);
+      }
+    }
   }
 
   // Visibility decorators
@@ -554,6 +573,9 @@ function generateFieldDecorators(field: SuperSchemaField): string[] {
   if (docs) {
     if (docs.summary) {
       decorators.push(`@summary("${escapeString(docs.summary)}")`);
+    }
+    if (docs.example != null) {
+      decorators.push(`@example(${docs.example})`);
     }
     if (docs.deprecated) {
       decorators.push(`#deprecated "${escapeString(docs.deprecated)}"`);

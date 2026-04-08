@@ -21,6 +21,17 @@ export default async function DomainEntitiesPage({ params }: Props) {
           },
         },
       },
+      modelDefinitions: {
+        orderBy: { name: "asc" },
+        include: {
+          fields: {
+            orderBy: { sortOrder: "asc" },
+          },
+        },
+      },
+      decoratorDefinitions: {
+        orderBy: { name: "asc" },
+      },
       sharedEnums: {
         orderBy: { name: "asc" },
       },
@@ -33,6 +44,13 @@ export default async function DomainEntitiesPage({ params }: Props) {
       services: {
         orderBy: { name: "asc" },
         include: {
+          entity: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
           operations: {
             orderBy: { name: "asc" },
             include: {
@@ -93,11 +111,44 @@ export default async function DomainEntitiesPage({ params }: Props) {
     description: u.description,
   }));
 
+  const models = domain.modelDefinitions.map((model) => ({
+    id: model.id,
+    name: model.name,
+    description: model.description,
+    extendsModelName: model.extendsModelName,
+    fieldCount: model.fields.length,
+    updatedAt: model.updatedAt,
+    fields: model.fields.map((field) => ({
+      id: field.id,
+      name: field.name,
+      type: field.type,
+      nullable: field.nullable,
+      isKey: field.isKey,
+      description: field.description,
+    })),
+  }));
+
+  const decoratorDefinitions = domain.decoratorDefinitions.map((decorator) => ({
+    id: decorator.id,
+    name: decorator.name,
+    description: decorator.description,
+    signature: decorator.signature,
+    targetTypes: decorator.targetTypes,
+  }));
+
   const services = domain.services.map((s) => ({
     id: s.id,
     name: s.name,
     description: s.description,
     basePath: s.basePath,
+    scope: s.scope,
+    entity: s.entity
+      ? {
+          id: s.entity.id,
+          name: s.entity.name,
+          slug: s.entity.slug,
+        }
+      : null,
     operations: s.operations.map((op) => ({
       id: op.id,
       name: op.name,
@@ -129,9 +180,11 @@ export default async function DomainEntitiesPage({ params }: Props) {
       domainDescription={domain.description}
       domainPolicy={domainPolicy as Record<string, unknown> | null}
       entities={entities}
+      models={models}
       sharedEnums={sharedEnums}
       customScalars={customScalars}
       unionTypes={unionTypes}
+      decoratorDefinitions={decoratorDefinitions}
       services={services}
     />
   );

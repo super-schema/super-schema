@@ -72,6 +72,21 @@ export type Domain = Prisma.DomainModel
  */
 export type Entity = Prisma.EntityModel
 /**
+ * Model ModelDefinition
+ * 
+ */
+export type ModelDefinition = Prisma.ModelDefinitionModel
+/**
+ * Model ModelFieldDefinition
+ * 
+ */
+export type ModelFieldDefinition = Prisma.ModelFieldDefinitionModel
+/**
+ * Model DecoratorDefinition
+ * 
+ */
+export type DecoratorDefinition = Prisma.DecoratorDefinitionModel
+/**
  * Model Field
  * 
  */

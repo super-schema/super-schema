@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Plus, X, Check, User, Clock, ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { updateEntityMetadataAction, updateEntityDescriptionAction } from "../actions";
 import {
   formatRetentionSummary,
@@ -23,13 +24,14 @@ interface InlineEntityMetaProps {
   };
   isReadOnly: boolean;
   onGovernanceClick?: () => void;
+  onMetaSaved?: () => void;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick }: InlineEntityMetaProps) {
+export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMetaSaved }: InlineEntityMetaProps) {
   const meta = (entity.metadata ?? {}) as Record<string, unknown>;
 
   // Resolve retention policy (migrate old string format if needed)
@@ -41,10 +43,23 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick }: Inli
         ? migrateSimpleRetention(rawRetention)
         : null;
 
+  // Original values from entity (source of truth for dirty detection)
+  const originalTags = useMemo(() => (meta.tags as string[]) ?? [], [meta.tags]);
+  const originalOwner = useMemo(() => (meta.owner as string) ?? "", [meta.owner]);
+
   // State
-  const [tags, setTags] = useState<string[]>((meta.tags as string[]) ?? []);
-  const [owner, setOwner] = useState<string>((meta.owner as string) ?? "");
+  const [tags, setTags] = useState<string[]>(originalTags);
+  const [owner, setOwner] = useState<string>(originalOwner);
   const [description, setDescription] = useState(entity.description ?? "");
+
+  // Sync state when entity prop changes (e.g. after save + revalidation)
+  useEffect(() => {
+    setTags(originalTags);
+  }, [originalTags]);
+
+  useEffect(() => {
+    setOwner(originalOwner);
+  }, [originalOwner]);
 
   // Inline editing states
   const [isAddingTag, setIsAddingTag] = useState(false);
@@ -55,9 +70,9 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick }: Inli
   const [isEditingDesc, setIsEditingDesc] = useState(false);
   const [descInput, setDescInput] = useState(description);
 
-  // Auto-save
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const saveTimeoutRef = useRef<NodeJS.Timeout>(undefined);
+  // Save status
+  const [isSaving, setIsSaving] = useState(false);
+
   const tagInputRef = useRef<HTMLInputElement>(null);
   const ownerInputRef = useRef<HTMLInputElement>(null);
   const descInputRef = useRef<HTMLTextAreaElement>(null);
@@ -81,62 +96,59 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick }: Inli
     }
   }, [isEditingDesc]);
 
-  // Debounced auto-save (retention is managed in governance, not here)
-  const debouncedSave = useCallback(
-    (newTags: string[], newOwner: string) => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      setSaveStatus("saving");
-      saveTimeoutRef.current = setTimeout(async () => {
-        try {
-          await updateEntityMetadataAction(entity.id, {
-            tags: newTags,
-            owner: newOwner || null,
-          });
-          setSaveStatus("saved");
-          setTimeout(() => setSaveStatus("idle"), 1500);
-        } catch {
-          setSaveStatus("idle");
-        }
-      }, 500);
-    },
-    [entity.id]
-  );
+  // Dirty detection for tags and owner
+  const isMetaDirty = useMemo(() => {
+    if (owner !== originalOwner) return true;
+    if (tags.length !== originalTags.length) return true;
+    for (let i = 0; i < tags.length; i++) {
+      if (tags[i] !== originalTags[i]) return true;
+    }
+    return false;
+  }, [tags, owner, originalTags, originalOwner]);
 
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    };
-  }, []);
+  // Save metadata (tags + owner)
+  async function handleMetaSave() {
+    setIsSaving(true);
+    try {
+      await updateEntityMetadataAction(entity.id, {
+        tags,
+        owner: owner || null,
+      });
+      onMetaSaved?.();
+    } catch {
+      // Error state could be added here
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
-  // Tag handlers
+  // Discard metadata changes
+  function handleMetaDiscard() {
+    setTags(originalTags);
+    setOwner(originalOwner);
+    setOwnerInput(originalOwner);
+  }
+
+  // Tag handlers — only update local state now (no auto-save)
   function addTag(value: string) {
     const trimmed = value.trim().toLowerCase();
     if (trimmed && !tags.includes(trimmed)) {
-      const newTags = [...tags, trimmed];
-      setTags(newTags);
-      debouncedSave(newTags, owner);
+      setTags((prev) => [...prev, trimmed]);
     }
     setTagInput("");
     setIsAddingTag(false);
   }
 
   function removeTag(tag: string) {
-    const newTags = tags.filter((t) => t !== tag);
-    setTags(newTags);
-    debouncedSave(newTags, owner);
+    setTags((prev) => prev.filter((t) => t !== tag));
   }
 
-  // Owner handlers
+  // Owner handlers — only update local state now (no auto-save)
   function commitOwner() {
     const trimmed = ownerInput.trim();
     setOwner(trimmed);
     setIsEditingOwner(false);
-    debouncedSave(tags, trimmed);
   }
-
-  // Description is part of entity, not metadata — handled separately if needed
-  // For now, description editing goes through entity update, not metadata save
 
   const hasDescription = description && description.length > 0;
   const isDescLong = hasDescription && description.length > 100;
@@ -231,7 +243,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick }: Inli
         </div>
       )}
 
-      {/* Meta row: tags + owner + retention + save indicator */}
+      {/* Meta row: tags + owner + retention + save/discard controls */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {/* Tags */}
         <div className="flex flex-wrap items-center gap-1" data-testid="inline-tags">
@@ -358,24 +370,29 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick }: Inli
           </span>
         </button>
 
-        {/* Save indicator */}
-        {saveStatus !== "idle" && (
-          <span
-            className={`text-[10px] transition-opacity ${
-              saveStatus === "saving"
-                ? "text-muted-foreground animate-pulse"
-                : "text-success"
-            }`}
-            data-testid="save-indicator"
-          >
-            {saveStatus === "saving" ? "Saving..." : ""}
-            {saveStatus === "saved" && (
-              <span className="flex items-center gap-0.5">
-                <Check className="w-2.5 h-2.5" />
-                Saved
-              </span>
-            )}
-          </span>
+        {/* Save / Discard controls when dirty */}
+        {isMetaDirty && !isReadOnly && (
+          <div className="flex items-center gap-1" data-testid="meta-save-controls">
+            <span className="text-[10px] text-warning">Unsaved</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleMetaDiscard}
+              className="h-5 px-1.5 text-[10px]"
+              data-testid="meta-discard-btn"
+            >
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleMetaSave}
+              disabled={isSaving}
+              className="h-5 px-1.5 text-[10px]"
+              data-testid="meta-save-btn"
+            >
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
+          </div>
         )}
       </div>
     </div>

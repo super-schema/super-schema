@@ -37,6 +37,10 @@ export interface ParsedTypeSpecDecorators {
   visibility?: string[];
   discriminator?: string;
   extensions?: Record<string, string>;
+  error?: boolean;
+  example?: string;
+  encodedName?: { mimeType: string; name: string };
+  friendlyName?: string;
 }
 
 export interface ParsedTypeSpecField {
@@ -58,6 +62,9 @@ export interface ParsedTypeSpecModel {
   extends?: string;
   spreadFrom?: string[];
   discriminator?: string;
+  isError?: boolean;
+  friendlyName?: string;
+  tags?: string[];
 }
 
 export interface ParsedTypeSpecEnum {
@@ -70,6 +77,8 @@ export interface ParsedTypeSpecScalar {
   name: string;
   doc?: string;
   baseType: string;
+  format?: string;
+  pattern?: string;
 }
 
 export interface ParsedTypeSpecUnion {
@@ -81,6 +90,13 @@ export interface ParsedTypeSpecUnion {
 export interface ParsedTypeSpecAlias {
   name: string;
   type: string;
+}
+
+export interface ParsedTypeSpecDecoratorDefinition {
+  name: string;
+  doc?: string;
+  signature: string;
+  targetTypes: string[];
 }
 
 export interface ParsedTypeSpecOperationParam {
@@ -120,6 +136,7 @@ export interface ParsedTypeSpecDocument {
   scalars: ParsedTypeSpecScalar[];
   unions: ParsedTypeSpecUnion[];
   aliases: ParsedTypeSpecAlias[];
+  decorators: ParsedTypeSpecDecoratorDefinition[];
   operations: ParsedTypeSpecOperation[];
   interfaces: ParsedTypeSpecInterface[];
   consts: ParsedTypeSpecConst[];
@@ -196,6 +213,7 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
     scalars: [],
     unions: [],
     aliases: [],
+    decorators: [],
     operations: [],
     interfaces: [],
     consts: [],
@@ -280,14 +298,31 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
       continue;
     }
 
+    // decorator declaration
+    const decoratorMatch = line.match(/^(?:extern\s+)?dec\s+(\w+)\s*\((.*?)\)\s*;?\s*$/);
+    if (decoratorMatch) {
+      const doc = collectPrecedingDoc(lines, i);
+      const signature = decoratorMatch[2].trim();
+      result.decorators.push({
+        name: decoratorMatch[1],
+        doc: doc || undefined,
+        signature,
+        targetTypes: extractDecoratorTargetTypes(signature),
+      });
+      i++;
+      continue;
+    }
+
     // scalar declaration: `scalar Name extends BaseType;`
     const scalarMatch = line.match(/^scalar\s+(\w+)\s+extends\s+(\w+)\s*;?\s*$/);
     if (scalarMatch) {
-      const doc = collectPrecedingDoc(lines, i);
+      const decorators = collectPrecedingDecorators(lines, i);
       result.scalars.push({
         name: scalarMatch[1],
-        doc: doc || undefined,
+        doc: decorators.doc,
         baseType: scalarMatch[2],
+        format: decorators.format,
+        pattern: decorators.pattern,
       });
       i++;
       continue;
@@ -392,6 +427,9 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
 
       const doc = collectPrecedingDoc(lines, i);
       const discriminator = collectDiscriminator(lines, i);
+      const isError = collectModelIsError(lines, i);
+      const friendlyName = collectModelFriendlyName(lines, i);
+      const tags = collectModelTags(lines, i);
       const { body, endIdx } = extractBlock(lines, i);
       const { fields, spreadFrom } = parseModelBody(body);
 
@@ -402,6 +440,9 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
         extends: modelMatch[2] || undefined,
         spreadFrom: spreadFrom.length > 0 ? spreadFrom : undefined,
         discriminator: discriminator || undefined,
+        isError: isError || undefined,
+        friendlyName: friendlyName || undefined,
+        tags: tags.length > 0 ? tags : undefined,
       });
       i = endIdx + 1;
       continue;
@@ -476,16 +517,42 @@ function extractBlock(lines: string[], startIdx: number): { body: string[]; endI
 }
 
 function collectPrecedingDoc(lines: string[], idx: number): string | undefined {
+  return collectPrecedingDecorators(lines, idx).doc;
+}
+
+function collectPrecedingDecorators(
+  lines: string[],
+  idx: number
+): ParsedTypeSpecDecorators {
+  const decorators: ParsedTypeSpecDecorators = {};
+
   for (let i = idx - 1; i >= 0; i--) {
     const line = lines[i].trim();
     if (line === "") continue;
-    const docMatch = line.match(/^@doc\("(.*)"\)$/);
-    if (docMatch) {
-      return unescapeString(docMatch[1]);
-    }
+
     if (!line.startsWith("@") && !line.startsWith("#")) break;
+
+    const parsed = parseDecoratorLine(line);
+    if (!parsed?.decorators) continue;
+
+    if (parsed.decorators.extensions) {
+      decorators.extensions = decorators.extensions
+        ? {
+            ...parsed.decorators.extensions,
+            ...decorators.extensions,
+          }
+        : parsed.decorators.extensions;
+    }
+
+    for (const [key, value] of Object.entries(parsed.decorators)) {
+      if (key === "extensions") continue;
+      if ((decorators as Record<string, unknown>)[key] === undefined) {
+        (decorators as Record<string, unknown>)[key] = value;
+      }
+    }
   }
-  return undefined;
+
+  return decorators;
 }
 
 function collectDiscriminator(lines: string[], idx: number): string | undefined {
@@ -496,6 +563,41 @@ function collectDiscriminator(lines: string[], idx: number): string | undefined 
     if (discMatch) {
       return discMatch[1];
     }
+    if (!line.startsWith("@") && !line.startsWith("#")) break;
+  }
+  return undefined;
+}
+
+function collectModelTags(lines: string[], idx: number): string[] {
+  const tags: string[] = [];
+  for (let i = idx - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line === "") continue;
+    const tagMatch = line.match(/^@tag\("(.*)"\)$/);
+    if (tagMatch) {
+      tags.push(tagMatch[1]);
+    }
+    if (!line.startsWith("@") && !line.startsWith("#")) break;
+  }
+  return tags;
+}
+
+function collectModelIsError(lines: string[], idx: number): boolean {
+  for (let i = idx - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line === "") continue;
+    if (line === "@error") return true;
+    if (!line.startsWith("@") && !line.startsWith("#")) break;
+  }
+  return false;
+}
+
+function collectModelFriendlyName(lines: string[], idx: number): string | undefined {
+  for (let i = idx - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line === "") continue;
+    const match = line.match(/^@friendlyName\("(.*)"\)$/);
+    if (match) return match[1];
     if (!line.startsWith("@") && !line.startsWith("#")) break;
   }
   return undefined;
@@ -535,23 +637,17 @@ function parseModelBody(bodyLines: string[]): { fields: ParsedTypeSpecField[]; s
   let pendingIsInternal = false;
 
   for (const rawLine of bodyLines) {
-    const line = rawLine.trim();
+    let line = rawLine.trim();
 
     // Skip empty lines and comments
     if (line === "" || line.startsWith("//")) {
       continue;
     }
 
-    // Spread syntax: `...ModelName;`
-    const spreadMatch = line.match(/^\.\.\.\s*(\w+)\s*;?\s*$/);
-    if (spreadMatch) {
-      spreadFrom.push(spreadMatch[1]);
-      continue;
-    }
-
-    // Decorator line
-    if (line.startsWith("@") || line.startsWith("#")) {
-      const parsed = parseDecoratorLine(line);
+    while (line.startsWith("@") || line.startsWith("#")) {
+      const split = splitLeadingDecorator(line);
+      const decoratorLine = split?.decorator ?? line;
+      const parsed = parseDecoratorLine(decoratorLine);
       if (parsed) {
         if (parsed.isKey) {
           pendingIsKey = true;
@@ -563,10 +659,22 @@ function parseModelBody(bodyLines: string[]): { fields: ParsedTypeSpecField[]; s
           Object.assign(pendingDecorators, parsed.decorators);
         }
       }
-      // Check for @internal
-      if (line === "@internal") {
+      if (decoratorLine === "@internal") {
         pendingIsInternal = true;
       }
+
+      line = split?.rest.trim() ?? "";
+      if (!line) break;
+    }
+
+    if (!line) {
+      continue;
+    }
+
+    // Spread syntax: `...ModelName;`
+    const spreadMatch = line.match(/^\.\.\.\s*(\w+)\s*;?\s*$/);
+    if (spreadMatch) {
+      spreadFrom.push(spreadMatch[1]);
       continue;
     }
 
@@ -619,6 +727,27 @@ function parseModelBody(bodyLines: string[]): { fields: ParsedTypeSpecField[]; s
   }
 
   return { fields, spreadFrom };
+}
+
+function splitLeadingDecorator(line: string): { decorator: string; rest: string } | null {
+  if (!line.startsWith("@") && !line.startsWith("#")) return null;
+
+  for (let i = 1; i < line.length; i++) {
+    if (line[i] !== " ") continue;
+
+    const decorator = line.slice(0, i).trim();
+    if (decorator === "@internal" || parseDecoratorLine(decorator)) {
+      return {
+        decorator,
+        rest: line.slice(i + 1),
+      };
+    }
+  }
+
+  return {
+    decorator: line,
+    rest: "",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -724,6 +853,20 @@ function parseOperationParams(paramStr: string): ParsedTypeSpecOperationParam[] 
   return params;
 }
 
+function extractDecoratorTargetTypes(signature: string): string[] {
+  const [firstParam] = splitParams(signature);
+  if (!firstParam) return [];
+
+  const colonIndex = firstParam.indexOf(":");
+  if (colonIndex === -1) return [];
+
+  return firstParam
+    .slice(colonIndex + 1)
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 function splitParams(str: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -793,12 +936,13 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
     return { decorators: { pattern: unescapeString(patternMatch[1]) } };
   }
 
-  // @encode("...") or @encode("...", "...")
-  const encodeMatch = line.match(/^@encode\("([^"]*)"(?:\s*,\s*"([^"]*)")?\)$/);
+  // @encode("...") or @encode("...", "...") or @encode("...", bareType)
+  const encodeMatch = line.match(/^@encode\("([^"]*)"(?:\s*,\s*(?:"([^"]*)"|(\w+)))?\)$/);
   if (encodeMatch) {
     const result: ParsedTypeSpecDecorators = { encode: encodeMatch[1] };
-    if (encodeMatch[2]) {
-      result.encodeSubType = encodeMatch[2];
+    const subType = encodeMatch[2] || encodeMatch[3];
+    if (subType) {
+      result.encodeSubType = subType;
     }
     return { decorators: result };
   }
@@ -886,6 +1030,29 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
     return { decorators: { extensions: { [extensionMatch[1]]: extensionMatch[2] } } };
   }
 
+  // @error
+  if (line === "@error") {
+    return { decorators: { error: true } };
+  }
+
+  // @example(#{...}) or @example(...) — store raw literal string
+  const exampleMatch = line.match(/^@example\((.*)\)$/);
+  if (exampleMatch) {
+    return { decorators: { example: exampleMatch[1] } };
+  }
+
+  // @encodedName("mimeType", "name")
+  const encodedNameMatch = line.match(/^@encodedName\("([^"]+)"\s*,\s*"([^"]+)"\)$/);
+  if (encodedNameMatch) {
+    return { decorators: { encodedName: { mimeType: encodedNameMatch[1], name: encodedNameMatch[2] } } };
+  }
+
+  // @friendlyName("...")
+  const friendlyNameMatch = line.match(/^@friendlyName\("(.*)"\)$/);
+  if (friendlyNameMatch) {
+    return { decorators: { friendlyName: friendlyNameMatch[1] } };
+  }
+
   // Unknown decorator — ignore gracefully
   return null;
 }
@@ -900,6 +1067,77 @@ function unescapeString(str: string): string {
     .replace(/\\r/g, "\r")
     .replace(/\\"/g, '"')
     .replace(/\\\\/g, "\\");
+}
+
+// ---------------------------------------------------------------------------
+// Decorator target validation
+// ---------------------------------------------------------------------------
+
+export interface DecoratorWarning {
+  decorator: string;
+  fieldName: string;
+  fieldType: string;
+  message: string;
+}
+
+const STRING_ONLY_DECORATORS = ["minLength", "maxLength", "pattern", "format"];
+const NUMERIC_ONLY_DECORATORS = ["minValue", "maxValue", "minValueExclusive", "maxValueExclusive"];
+const ARRAY_ONLY_DECORATORS = ["minItems", "maxItems"];
+
+/**
+ * Validate that decorators are applied to appropriate field types.
+ * Returns an array of warnings for mismatched decorator/type combinations.
+ */
+export function validateDecoratorTarget(
+  decorators: ParsedTypeSpecDecorators,
+  fieldName: string,
+  fieldType: string
+): DecoratorWarning[] {
+  const warnings: DecoratorWarning[] = [];
+
+  const isStringType = ["string", "url"].includes(fieldType);
+  const isNumericType = [
+    "integer", "int8", "int16", "int32", "int64", "safeint",
+    "uint8", "uint16", "uint32", "uint64",
+    "numeric", "float", "float32", "float64",
+    "decimal", "decimal128",
+  ].includes(fieldType);
+  const isArrayType = fieldType === "array";
+
+  for (const dec of STRING_ONLY_DECORATORS) {
+    if (decorators[dec as keyof ParsedTypeSpecDecorators] != null && !isStringType) {
+      warnings.push({
+        decorator: `@${dec}`,
+        fieldName,
+        fieldType,
+        message: `@${dec} is intended for string types, but applied to '${fieldType}'`,
+      });
+    }
+  }
+
+  for (const dec of NUMERIC_ONLY_DECORATORS) {
+    if (decorators[dec as keyof ParsedTypeSpecDecorators] != null && !isNumericType) {
+      warnings.push({
+        decorator: `@${dec}`,
+        fieldName,
+        fieldType,
+        message: `@${dec} is intended for numeric types, but applied to '${fieldType}'`,
+      });
+    }
+  }
+
+  for (const dec of ARRAY_ONLY_DECORATORS) {
+    if (decorators[dec as keyof ParsedTypeSpecDecorators] != null && !isArrayType) {
+      warnings.push({
+        decorator: `@${dec}`,
+        fieldName,
+        fieldType,
+        message: `@${dec} is intended for array types, but applied to '${fieldType}'`,
+      });
+    }
+  }
+
+  return warnings;
 }
 
 // ---------------------------------------------------------------------------

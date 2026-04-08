@@ -227,6 +227,7 @@ export interface NestedFieldInfo {
 // ---------------------------------------------------------------------------
 
 export interface SuperSchemaField {
+  id?: string;
   name: string;
   type: LogicalType;
   precision?: number;
@@ -280,6 +281,8 @@ export interface SuperSchemaEntityMetadata {
   };
   custom?: Record<string, unknown>;
   retentionPolicy?: SuperSchemaRetentionPolicy;
+  isError?: boolean;
+  friendlyName?: string;
 }
 
 // ---------------------------------------------------------------------------

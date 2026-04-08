@@ -37,6 +37,12 @@ export interface ServiceData {
   name: string;
   description: string;
   basePath: string;
+  scope: "DOMAIN" | "ENTITY";
+  entity: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
   operations: OperationData[];
 }
 
@@ -77,6 +83,8 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
   }
 
   const totalOps = services.reduce((sum, s) => sum + s.operations.length, 0);
+  const entityServices = services.filter((service) => service.scope === "ENTITY");
+  const domainServices = services.filter((service) => service.scope !== "ENTITY");
 
   return (
     <div className="space-y-space-3" data-testid="domain-apis-tab">
@@ -87,8 +95,21 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
         </span>
       </div>
 
-      {/* Service cards */}
-      {services.map((service) => {
+      {[
+        { title: "Domain APIs", services: domainServices },
+        { title: "Entity APIs", services: entityServices },
+      ].map(({ title, services: groupedServices }) => (
+        <div key={title} className="space-y-space-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-body-small font-medium text-foreground">{title}</h3>
+            <span className="text-caption text-muted-foreground">{groupedServices.length}</span>
+          </div>
+          {groupedServices.length === 0 ? (
+            <p className="text-caption text-muted-foreground/60 italic">
+              No {title.toLowerCase()} yet
+            </p>
+          ) : (
+            groupedServices.map((service) => {
         const isExpanded = expandedService === service.id;
 
         return (
@@ -107,6 +128,14 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
               <span className="font-mono text-body-small text-foreground font-medium">
                 {service.name}
               </span>
+              <Badge variant="outline" className="text-[10px] h-4 px-1.5 uppercase">
+                {service.scope === "ENTITY" ? "entity" : "domain"}
+              </Badge>
+              {service.entity && (
+                <span className="text-caption text-muted-foreground">
+                  {service.entity.name}
+                </span>
+              )}
               {service.basePath !== "/" && (
                 <span className="font-mono text-caption text-muted-foreground">
                   {service.basePath}
@@ -226,7 +255,10 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
             )}
           </div>
         );
-      })}
+            })
+          )}
+        </div>
+      ))}
     </div>
   );
 }

@@ -15,7 +15,7 @@ import type { ValidationResult, ValidationError } from "@/lib/compiler/types";
 
 const VALID_SPANNER_TYPES = new Set([
   "STRING", "BYTES", "INT64", "FLOAT64", "FLOAT32", "NUMERIC",
-  "BOOL", "DATE", "TIMESTAMP", "JSON", "ARRAY",
+  "BOOL", "DATE", "TIMESTAMP", "JSON", "ARRAY", "UUID",
 ]);
 
 // ---------------------------------------------------------------------------

@@ -44,7 +44,10 @@ import type { RetentionPolicy } from "@/types/schemas/retention-policy.schema";
 import {
   migrateSimpleRetention,
 } from "@/types/schemas/retention-policy.schema";
-import { generateEntityAlerts } from "@/lib/validation/entity-alerts";
+import {
+  generateEntityAlerts,
+  generateTargetDriftAlerts,
+} from "@/lib/validation/entity-alerts";
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab } from "./components/ApiTab";
@@ -161,7 +164,10 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
   // Compute entity alerts from domain completeness requirements
   const entityAlerts = useMemo(() => {
     const completenessReqs = (domainPolicy?.completenessRequirements as CompletenessRequirements) ?? undefined;
-    return generateEntityAlerts(entity, fields, completenessReqs);
+    return [
+      ...generateEntityAlerts(entity, fields, completenessReqs),
+      ...generateTargetDriftAlerts(entity, fields),
+    ];
   }, [entity, fields, domainPolicy]);
 
   const alertCount = entityAlerts.length;

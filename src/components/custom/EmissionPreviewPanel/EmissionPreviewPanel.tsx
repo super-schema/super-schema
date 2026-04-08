@@ -37,6 +37,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   avro: "Avro",
   openapi: "OpenAPI",
   spanner: "Spanner",
+  postgresql: "PostgreSQL",
 };
 
 function getDisplayName(name: string): string {
@@ -287,6 +288,7 @@ function getLanguageForTarget(name: string): string {
   switch (name) {
     case "bigquery":
     case "spanner":
+    case "postgresql":
       return "sql";
     case "avro":
       return "json";

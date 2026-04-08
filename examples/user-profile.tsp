@@ -41,7 +41,6 @@ namespace UserProfileService;
 // ═══════════════════════════════════════════════════════════════════════════
 // ENUMERATIONS (Protobuf-compatible numeric values)
 // ═══════════════════════════════════════════════════════════════════════════
-
 @doc("Address type classification")
 enum AddressType {
   ADDRESS_TYPE_UNSPECIFIED : "unspecified",

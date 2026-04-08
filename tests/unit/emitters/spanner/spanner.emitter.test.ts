@@ -7,6 +7,7 @@ import { SpannerEmitter } from "@/emitters/spanner/spanner.emitter";
 import { validateSpannerDDL } from "@/emitters/spanner/spanner.validator";
 import { getDefaultPolicies } from "@/lib/type-mapping/default-mappings";
 import type { SuperSchemaModel, SuperSchemaField } from "@/types/super-schema-model";
+import type { ScopedMappingPolicy } from "@/lib/type-mapping/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -242,6 +243,39 @@ describe("SpannerEmitter nullable", () => {
     ]);
     const result = emitter.emit(model, defaultPolicies);
     expect(result.output).not.toMatch(/name STRING\(MAX\) NOT NULL/);
+  });
+});
+
+describe("SpannerEmitter field overrides", () => {
+  it("uses field-level type overrides and emits the provenance comment", () => {
+    const policies: ScopedMappingPolicy[] = [
+      ...defaultPolicies,
+      {
+        sourceType: "string",
+        targetType: "STRING(36)",
+        targetFormat: "spanner",
+        mappedType: "STRING(36)",
+        isOverride: true,
+        isLossy: false,
+        fieldId: "field-id",
+      },
+    ];
+
+    const result = emitter.emit(
+      makeModel([
+        makeField({
+          id: "field-id",
+          name: "customerId",
+          type: "string",
+          nullable: false,
+          sortOrder: 0,
+        }),
+      ]),
+      policies
+    );
+
+    expect(result.output).toContain("customer_id STRING(36) NOT NULL");
+    expect(result.output).toContain("SUPER SCHEMA TYPE OVERRIDE");
   });
 });
 

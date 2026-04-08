@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
 import { TypeSpecPreview } from "@/components/custom/TypeSpecPreview";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
 import type { ExistingFieldSummary } from "@/lib/compiler/typespec-parser";
 
-type RightPanelTab = "quick-edit" | "typespec-preview";
+type RightPanelTab = "field-edit" | "typespec-preview";
 
 interface FieldData {
   id: string;
@@ -36,10 +36,13 @@ interface RightPanelRouterProps {
   typeSpecTrigger: number;
   existingFields?: ExistingFieldSummary[];
   onTypeSpecApplied?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  fieldSaveRef?: MutableRefObject<(() => void) | null>;
+  fieldDiscardRef?: MutableRefObject<(() => void) | null>;
 }
 
 const TABS: { id: RightPanelTab; label: string }[] = [
-  { id: "quick-edit", label: "Quick Edit" },
+  { id: "field-edit", label: "Field Edit" },
   { id: "typespec-preview", label: "TypeSpec" },
 ];
 
@@ -55,8 +58,15 @@ export function RightPanelRouter({
   typeSpecTrigger,
   existingFields,
   onTypeSpecApplied,
+  onDirtyChange,
+  fieldSaveRef,
+  fieldDiscardRef,
 }: RightPanelRouterProps) {
   const { setContent: setRightPanelContent } = useRightPanelContent();
+
+  // Internal ref to hold the FieldQuickEditPanel's save/discard functions
+  const internalSaveRef = useRef<(() => void) | null>(null);
+  const internalDiscardRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const rightPanelTabBar = (
@@ -65,7 +75,7 @@ export function RightPanelRouter({
           <button
             key={tab.id}
             onClick={() => onTabChange(tab.id)}
-            className={`px-space-2 py-space-2 text-caption font-medium transition-colors border-b-2 -mb-px ${
+            className={`px-space-2 py-space-2.5 text-body-small font-medium transition-colors border-b-2 -mb-px ${
               rightPanelTab === tab.id
                 ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -79,7 +89,7 @@ export function RightPanelRouter({
 
     let tabContent: React.ReactNode = null;
 
-    if (rightPanelTab === "quick-edit") {
+    if (rightPanelTab === "field-edit") {
       if (selectedField) {
         tabContent = (
           <FieldQuickEditPanel
@@ -90,6 +100,7 @@ export function RightPanelRouter({
             domainSlug={domainSlug}
             isReadOnly={isReadOnly}
             onUpdateField={onUpdateField}
+            onDirtyChange={onDirtyChange}
           />
         );
       } else {
@@ -137,6 +148,7 @@ export function RightPanelRouter({
     onTabChange,
     existingFields,
     onTypeSpecApplied,
+    onDirtyChange,
   ]);
 
   // This component renders nothing itself -- it pushes content into the layout's RightPanel via context

@@ -79,7 +79,7 @@ export async function createField(
             fieldNumber: parsed.data.fieldNumber,
             description: parsed.data.description,
             aliases: parsed.data.aliases,
-            classification: parsed.data.classification,
+            classification: parsed.data.classification ?? "SENSITIVE",
             sortOrder: nextSortOrder,
             decorators:
               (parsed.data.decorators as unknown as Prisma.InputJsonValue) ??

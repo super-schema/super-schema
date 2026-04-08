@@ -162,6 +162,44 @@ const SPANNER_MAPPINGS: DefaultMappingEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// PostgreSQL default mappings
+// ---------------------------------------------------------------------------
+
+const POSTGRESQL_MAPPINGS: DefaultMappingEntry[] = [
+  { sourceType: "string", targetFormat: "postgresql", mappedType: "text", isLossy: false },
+  { sourceType: "url", targetFormat: "postgresql", mappedType: "text", isLossy: false },
+  { sourceType: "integer", targetFormat: "postgresql", mappedType: "integer", isLossy: false },
+  { sourceType: "int8", targetFormat: "postgresql", mappedType: "smallint", isLossy: false },
+  { sourceType: "int16", targetFormat: "postgresql", mappedType: "smallint", isLossy: false },
+  { sourceType: "int32", targetFormat: "postgresql", mappedType: "integer", isLossy: false },
+  { sourceType: "int64", targetFormat: "postgresql", mappedType: "bigint", isLossy: false },
+  { sourceType: "safeint", targetFormat: "postgresql", mappedType: "bigint", isLossy: false },
+  { sourceType: "uint8", targetFormat: "postgresql", mappedType: "smallint", isLossy: false },
+  { sourceType: "uint16", targetFormat: "postgresql", mappedType: "integer", isLossy: false },
+  { sourceType: "uint32", targetFormat: "postgresql", mappedType: "bigint", isLossy: false },
+  { sourceType: "uint64", targetFormat: "postgresql", mappedType: "numeric(20,0)", isLossy: false },
+  { sourceType: "numeric", targetFormat: "postgresql", mappedType: "numeric", isLossy: false },
+  { sourceType: "float", targetFormat: "postgresql", mappedType: "double precision", isLossy: false },
+  { sourceType: "float32", targetFormat: "postgresql", mappedType: "real", isLossy: false },
+  { sourceType: "float64", targetFormat: "postgresql", mappedType: "double precision", isLossy: false },
+  { sourceType: "decimal", targetFormat: "postgresql", mappedType: "numeric", isLossy: false },
+  { sourceType: "decimal128", targetFormat: "postgresql", mappedType: "numeric", isLossy: false },
+  { sourceType: "boolean", targetFormat: "postgresql", mappedType: "boolean", isLossy: false },
+  { sourceType: "bytes", targetFormat: "postgresql", mappedType: "bytea", isLossy: false },
+  { sourceType: "plainDate", targetFormat: "postgresql", mappedType: "date", isLossy: false },
+  { sourceType: "plainTime", targetFormat: "postgresql", mappedType: "time", isLossy: false },
+  { sourceType: "utcDateTime", targetFormat: "postgresql", mappedType: "timestamp", isLossy: false },
+  { sourceType: "offsetDateTime", targetFormat: "postgresql", mappedType: "timestamptz", isLossy: false },
+  { sourceType: "duration", targetFormat: "postgresql", mappedType: "interval", isLossy: false },
+  { sourceType: "unixTimestamp32", targetFormat: "postgresql", mappedType: "integer", isLossy: false },
+  { sourceType: "enum", targetFormat: "postgresql", mappedType: "text", isLossy: false },
+  { sourceType: "array", targetFormat: "postgresql", mappedType: "text[]", isLossy: false },
+  { sourceType: "map", targetFormat: "postgresql", mappedType: "jsonb", isLossy: false },
+  { sourceType: "object", targetFormat: "postgresql", mappedType: "jsonb", isLossy: false },
+  { sourceType: "reference", targetFormat: "postgresql", mappedType: "uuid", isLossy: true, lossDescription: "Reference defaults to UUID storage — verify downstream identifier format if references are not UUID-based" },
+];
+
+// ---------------------------------------------------------------------------
 // Combined default mappings
 // ---------------------------------------------------------------------------
 
@@ -170,6 +208,7 @@ export const DEFAULT_MAPPINGS: DefaultMappingEntry[] = [
   ...AVRO_MAPPINGS,
   ...OPENAPI_MAPPINGS,
   ...SPANNER_MAPPINGS,
+  ...POSTGRESQL_MAPPINGS,
 ];
 
 // ---------------------------------------------------------------------------

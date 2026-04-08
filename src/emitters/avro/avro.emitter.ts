@@ -29,6 +29,7 @@ import type {
 } from "@/types/super-schema-model";
 import type { ScopedMappingPolicy } from "@/lib/type-mapping/types";
 import { resolveMapping } from "@/lib/type-mapping/mapping-engine";
+import { getFieldOverrideCommentFromMapping } from "@/lib/schema-targets/field-type-overrides";
 import { validateAvroSchema } from "./avro.validator";
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ interface AvroField {
   doc?: string;
   aliases?: string[];
   default?: null;
+  [key: string]: unknown;
 }
 
 interface AvroRecordSchema {
@@ -143,13 +145,26 @@ function toScopedPolicies(policies: MappingPolicy[]): ScopedMappingPolicy[] {
 function resolveFieldAvroType(
   field: SuperSchemaField,
   policies: ScopedMappingPolicy[],
-  warnings: EmitterWarning[]
+  warnings: EmitterWarning[],
+  entityId: string
 ): AvroType {
+  const directResult = resolveMapping(
+    field.type,
+    "avro",
+    policies,
+    entityId,
+    field.id
+  );
+  const directMapping = directResult.success ? directResult.result : null;
+  const hasFieldOverride = directMapping?.overrideSource === "field";
+
   // Special-case: decimal with precision/scale
   if (
-    (field.type === "decimal" ||
-      field.type === "decimal128" ||
-      field.type === "numeric") &&
+    ((!hasFieldOverride &&
+      (field.type === "decimal" ||
+        field.type === "decimal128" ||
+        field.type === "numeric")) ||
+      directMapping?.mappedType === "bytes/decimal") &&
     field.precision !== undefined &&
     field.scale !== undefined
   ) {
@@ -162,7 +177,7 @@ function resolveFieldAvroType(
   }
 
   // Special-case: enum with values from complexType or decorators
-  if (field.type === "enum") {
+  if ((!hasFieldOverride && field.type === "enum") || directMapping?.mappedType === "enum") {
     const symbols = extractEnumSymbols(field);
     if (symbols.length > 0) {
       return {
@@ -180,7 +195,7 @@ function resolveFieldAvroType(
   }
 
   // Special-case: array with element type
-  if (field.type === "array") {
+  if ((!hasFieldOverride && field.type === "array") || directMapping?.mappedType === "array") {
     const itemType = resolveArrayItemType(field, policies, warnings);
     return {
       type: "array",
@@ -189,7 +204,7 @@ function resolveFieldAvroType(
   }
 
   // Special-case: map with value type
-  if (field.type === "map") {
+  if ((!hasFieldOverride && field.type === "map") || directMapping?.mappedType === "map") {
     const valueType = resolveMapValueType(field, policies, warnings);
     return {
       type: "map",
@@ -198,22 +213,20 @@ function resolveFieldAvroType(
   }
 
   // Use the mapping engine for everything else
-  const result = resolveMapping(field.type, "avro", policies);
-
-  if (!result.success) {
+  if (!directResult.success) {
     warnings.push({
-      message: `Field "${field.name}": ${result.error.message}, defaulting to "string"`,
+      message: `Field "${field.name}": ${directResult.error.message}, defaulting to "string"`,
       fieldName: field.name,
     });
     return "string";
   }
 
-  const mappedType = result.result.mappedType;
+  const mappedType = directResult.result.mappedType;
 
   // Handle lossy mapping warnings
-  if (result.result.isLossy && result.result.lossDescription) {
+  if (directResult.result.isLossy && directResult.result.lossDescription) {
     warnings.push({
-      message: `Field "${field.name}": ${result.result.lossDescription}`,
+      message: `Field "${field.name}": ${directResult.result.lossDescription}`,
       fieldName: field.name,
     });
   }
@@ -351,9 +364,10 @@ function resolveMapValueType(
 function buildAvroField(
   field: SuperSchemaField,
   policies: ScopedMappingPolicy[],
-  warnings: EmitterWarning[]
+  warnings: EmitterWarning[],
+  entityId: string
 ): AvroField {
-  let avroType = resolveFieldAvroType(field, policies, warnings);
+  let avroType = resolveFieldAvroType(field, policies, warnings, entityId);
 
   // Wrap nullable fields in union ["null", type]
   if (field.nullable) {
@@ -391,6 +405,28 @@ function buildAvroField(
     avroField.aliases = aliases;
   }
 
+  const mappingResult = resolveMapping(
+    field.type,
+    "avro",
+    policies,
+    entityId,
+    field.id
+  );
+  if (mappingResult.success) {
+    const overrideNote = getFieldOverrideCommentFromMapping(
+      field.type,
+      mappingResult.result
+    );
+    if (overrideNote) {
+      avroField["x-super-schema-type-override"] = {
+        logicalType: field.type,
+        defaultTargetType: mappingResult.result.defaultMappedType ?? null,
+        targetType: mappingResult.result.mappedType,
+        comment: overrideNote,
+      };
+    }
+  }
+
   return avroField;
 }
 
@@ -414,7 +450,7 @@ export const avroEmitter: Emitter = {
 
     // Build Avro fields
     const avroFields = sortedFields.map((field) =>
-      buildAvroField(field, scopedPolicies, warnings)
+      buildAvroField(field, scopedPolicies, warnings, model.entity.id)
     );
 
     // Build the top-level Avro record schema

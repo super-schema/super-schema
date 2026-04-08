@@ -20,6 +20,7 @@ import type {
   ValidationResult,
 } from "@/lib/compiler/types";
 import { resolveMappingWithPrecision } from "@/lib/type-mapping/mapping-engine";
+import { getFieldOverrideCommentFromMapping } from "@/lib/schema-targets/field-type-overrides";
 import { validateBigQueryDDL } from "./bigquery.validator";
 
 // ---------------------------------------------------------------------------
@@ -216,7 +217,8 @@ export class BigQueryEmitter implements Emitter {
       policies,
       field.precision,
       field.scale,
-      entityId
+      entityId,
+      field.id
     );
     if (!result.success) return null;
     return result.result.mappedType;
@@ -237,17 +239,28 @@ export class BigQueryEmitter implements Emitter {
       policies,
       field.precision,
       field.scale,
-      entityId
+      entityId,
+      field.id
     );
 
     let bqType: string;
     let isLossy = false;
     let lossDescription: string | undefined;
+    let overrideComment = "";
+    const hasFieldOverride =
+      mappingResult.success && mappingResult.result.overrideSource === "field";
 
     if (mappingResult.success) {
       bqType = mappingResult.result.mappedType;
       isLossy = mappingResult.result.isLossy;
       lossDescription = mappingResult.result.lossDescription;
+      const overrideNote = getFieldOverrideCommentFromMapping(
+        field.type,
+        mappingResult.result
+      );
+      if (overrideNote) {
+        overrideComment = `  -- ${overrideNote}\n`;
+      }
     } else {
       bqType = "STRING"; // fallback
       fieldWarnings.push({
@@ -257,7 +270,7 @@ export class BigQueryEmitter implements Emitter {
     }
 
     // Handle complex types
-    if (field.type === "array" && field.complexType?.arrayElementType) {
+    if (!hasFieldOverride && field.type === "array" && field.complexType?.arrayElementType) {
       const elementMapping = resolveMappingWithPrecision(
         field.complexType.arrayElementType,
         "bigquery",
@@ -270,12 +283,12 @@ export class BigQueryEmitter implements Emitter {
         ? elementMapping.result.mappedType
         : "STRING";
       bqType = `ARRAY<${elementType}>`;
-    } else if (field.type === "array") {
+    } else if (!hasFieldOverride && field.type === "array") {
       bqType = "ARRAY<STRING>";
     }
 
     // Map type → STRUCT with lossy warning
-    if (field.type === "map") {
+    if (!hasFieldOverride && field.type === "map") {
       bqType = "STRUCT";
     }
 
@@ -296,7 +309,7 @@ export class BigQueryEmitter implements Emitter {
       });
     }
 
-    const columnDef = `${lossyComment}  ${colName} ${bqType}${nullableClause}${optionsClause}`;
+    const columnDef = `${overrideComment}${lossyComment}  ${colName} ${bqType}${nullableClause}${optionsClause}`;
 
     return { columnDef, fieldWarnings };
   }

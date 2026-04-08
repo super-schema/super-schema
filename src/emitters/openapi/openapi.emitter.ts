@@ -23,6 +23,7 @@ import type {
   ValidationResult,
 } from "@/lib/compiler/types";
 import { resolveMapping } from "@/lib/type-mapping/mapping-engine";
+import { getFieldOverrideCommentFromMapping } from "@/lib/schema-targets/field-type-overrides";
 import type { ScopedMappingPolicy } from "@/lib/type-mapping/types";
 import { validateOpenApiSchema } from "./openapi.validator";
 
@@ -37,6 +38,7 @@ interface OpenApiProperty {
   nullable?: boolean;
   enum?: string[];
   items?: OpenApiProperty | { $ref: string };
+  additionalProperties?: true | OpenApiProperty | { $ref: string };
   $ref?: string;
   minimum?: number;
   maximum?: number;
@@ -45,6 +47,12 @@ interface OpenApiProperty {
   pattern?: string;
   "x-precision"?: number;
   "x-scale"?: number;
+  "x-super-schema-type-override"?: {
+    logicalType: string;
+    defaultTargetType: string | null;
+    targetType: string;
+    comment: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -192,12 +200,19 @@ function applyQualityRules(
 function buildFieldProperty(
   field: SuperSchemaField,
   policies: ScopedMappingPolicy[],
-  warnings: EmitterWarning[]
+  warnings: EmitterWarning[],
+  entityId: string
 ): OpenApiProperty {
   const property: OpenApiProperty = {};
 
   // Resolve the mapping for this field type
-  const mappingResult = resolveMapping(field.type, "openapi", policies);
+  const mappingResult = resolveMapping(
+    field.type,
+    "openapi",
+    policies,
+    entityId,
+    field.id
+  );
 
   if (!mappingResult.success) {
     // Fallback: use string type and add a warning
@@ -207,7 +222,9 @@ function buildFieldProperty(
       fieldName: field.name,
     });
   } else {
-    const { mappedType, isLossy, lossDescription } = mappingResult.result;
+    const { mappedType, isLossy, lossDescription, overrideSource } =
+      mappingResult.result;
+    const hasFieldOverride = overrideSource === "field";
 
     // Handle reference type
     if (mappedType === "$ref") {
@@ -226,7 +243,10 @@ function buildFieldProperty(
     }
 
     // Handle enum type
-    if (mappedType === "string+enum") {
+    if (
+      ((!hasFieldOverride && mappedType === "string+enum") ||
+        mappedType === "string+enum")
+    ) {
       property.type = "string";
       // Get enum values from quality rules or complexType
       const enumRule = field.decorators?.quality?.rules?.find(
@@ -237,7 +257,7 @@ function buildFieldProperty(
       }
     }
     // Handle array type
-    else if (field.type === "array") {
+    else if ((!hasFieldOverride && field.type === "array") || mappedType === "array") {
       property.type = "array";
       if (field.complexType?.arrayElementType) {
         const elementMapping = resolveMapping(
@@ -263,6 +283,38 @@ function buildFieldProperty(
         }
       } else {
         property.items = { type: "string" };
+      }
+    }
+    // Handle map/object type
+    else if (
+      ((!hasFieldOverride && field.type === "map") ||
+        mappedType === "object/additionalProperties")
+    ) {
+      property.type = "object";
+      if (field.complexType?.mapValueType) {
+        const valueMapping = resolveMapping(
+          field.complexType.mapValueType,
+          "openapi",
+          policies
+        );
+        if (valueMapping.success) {
+          const parsedValue = parseMappedType(valueMapping.result.mappedType);
+          if (parsedValue.type === "$ref") {
+            property.additionalProperties = {
+              $ref: `#/components/schemas/${field.complexType.referencedEntityName ?? field.complexType.mapValueType}`,
+            };
+          } else {
+            const additionalProperty: OpenApiProperty = { type: parsedValue.type };
+            if (parsedValue.format) {
+              additionalProperty.format = parsedValue.format;
+            }
+            property.additionalProperties = additionalProperty;
+          }
+        } else {
+          property.additionalProperties = true;
+        }
+      } else {
+        property.additionalProperties = true;
       }
     }
     // Standard type mapping
@@ -293,6 +345,19 @@ function buildFieldProperty(
         message: `Lossy mapping for field "${field.name}": ${lossDescription}`,
         fieldName: field.name,
       });
+    }
+
+    const overrideNote = getFieldOverrideCommentFromMapping(
+      field.type,
+      mappingResult.result
+    );
+    if (overrideNote) {
+      property["x-super-schema-type-override"] = {
+        logicalType: field.type,
+        defaultTargetType: mappingResult.result.defaultMappedType ?? null,
+        targetType: mappedType,
+        comment: overrideNote,
+      };
     }
   }
 
@@ -383,7 +448,8 @@ export const openApiEmitter: Emitter = {
       properties[field.name] = buildFieldProperty(
         field,
         scopedPolicies,
-        warnings
+        warnings,
+        model.entity.id
       );
 
       if (!field.nullable) {

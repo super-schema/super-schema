@@ -53,6 +53,21 @@ model User extends BaseEntity {
     expect(doc.models[1].extends).toBe("BaseEntity");
     expect(doc.models[1].fields).toHaveLength(2);
   });
+
+  it("parses inline field decorators on the same line as the field", () => {
+    const source = `
+model TaxDetails {
+  @secret tax_id: string;
+}
+`;
+    const doc = parseTypeSpecDocument(source);
+    expect(doc.models[0].fields).toHaveLength(1);
+    expect(doc.models[0].fields[0]).toMatchObject({
+      name: "tax_id",
+      type: "string",
+      decorators: { secret: true },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -158,6 +173,21 @@ scalar Money extends decimal;
     const doc = parseTypeSpecDocument(source);
     expect(doc.scalars[0].doc).toBe("A monetary amount");
     expect(doc.scalars[0].baseType).toBe("decimal");
+  });
+
+  it("parses scalar decorators used by shared domain types", () => {
+    const source = `
+@doc("ISO 3166-1 alpha-2 country code")
+@pattern("^[A-Z]{2}$")
+scalar CountryCode extends string;
+`;
+    const doc = parseTypeSpecDocument(source);
+    expect(doc.scalars[0]).toMatchObject({
+      name: "CountryCode",
+      baseType: "string",
+      doc: "ISO 3166-1 alpha-2 country code",
+      pattern: "^[A-Z]{2}$",
+    });
   });
 });
 

@@ -238,6 +238,61 @@ describe("OpenAPI Emitter", () => {
       expect(props.scores.items).toEqual({ type: "integer", format: "int64" });
     });
 
+    it("should let a field-level override replace array special-casing", () => {
+      const policies: ScopedMappingPolicy[] = [
+        ...defaultPolicies,
+        {
+          sourceType: "array",
+          targetType: "string/uuid",
+          targetFormat: "openapi",
+          mappedType: "string/uuid",
+          isOverride: true,
+          isLossy: false,
+          fieldId: "field-tags",
+        },
+      ];
+
+      const model = makeModel([
+        makeField({
+          id: "field-tags",
+          name: "tags",
+          type: "array",
+          sortOrder: 0,
+          complexType: { arrayElementType: "string" },
+        }),
+      ]);
+
+      const { parsed } = emitAndParse(model, policies);
+      const props = parsed.components.schemas.TestEntity.properties as Record<
+        string,
+        Record<string, unknown>
+      >;
+
+      expect(props.tags.type).toBe("string");
+      expect(props.tags.format).toBe("uuid");
+      expect(props.tags["x-super-schema-type-override"]).toBeDefined();
+    });
+
+    it("should render additionalProperties for map fields", () => {
+      const model = makeModel([
+        makeField({
+          name: "metadata",
+          type: "map",
+          sortOrder: 0,
+          complexType: { mapValueType: "string" },
+        }),
+      ]);
+
+      const { parsed } = emitAndParse(model);
+      const props = parsed.components.schemas.TestEntity.properties as Record<
+        string,
+        Record<string, unknown>
+      >;
+
+      expect(props.metadata.type).toBe("object");
+      expect(props.metadata.additionalProperties).toEqual({ type: "string" });
+    });
+
     it("should map plainDate to string/date", () => {
       const model = makeModel([
         makeField({ name: "birth_date", type: "plainDate", sortOrder: 0 }),

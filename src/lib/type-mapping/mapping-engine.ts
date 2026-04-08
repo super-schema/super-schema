@@ -39,7 +39,8 @@ export function resolveMapping(
   sourceType: string,
   targetFormat: string,
   policies: ScopedMappingPolicy[],
-  entityId?: string
+  entityId?: string,
+  fieldId?: string
 ): ResolveMappingResult {
   // Filter policies matching this source type and target format
   const candidates = policies.filter(
@@ -65,18 +66,26 @@ export function resolveMapping(
   // 3. Default mapping (lowest priority)
 
   let selected: ScopedMappingPolicy | undefined;
+  const defaultPolicy = candidates.find(
+    (p) => !p.isOverride && !p.entityId && !p.fieldId
+  );
+
+  // 0. Field-level override
+  if (fieldId) {
+    selected = candidates.find((p) => p.isOverride && p.fieldId === fieldId);
+  }
 
   // 1. Per-entity override
-  if (entityId) {
+  if (!selected && entityId) {
     selected = candidates.find(
-      (p) => p.isOverride && p.entityId === entityId
+      (p) => p.isOverride && p.entityId === entityId && !p.fieldId
     );
   }
 
   // 2. Global override (isOverride = true, no entityId)
   if (!selected) {
     selected = candidates.find(
-      (p) => p.isOverride && !p.entityId
+      (p) => p.isOverride && !p.entityId && !p.fieldId
     );
   }
 
@@ -105,8 +114,11 @@ export function resolveMapping(
       isLossy: selected.isLossy,
       lossDescription: selected.lossDescription,
       isOverride: selected.isOverride,
+      defaultMappedType: defaultPolicy?.mappedType,
       overrideSource: selected.isOverride
-        ? selected.entityId
+        ? selected.fieldId
+          ? "field"
+          : selected.entityId
           ? "per-entity"
           : "global"
         : undefined,
@@ -131,9 +143,10 @@ export function resolveMappingWithPrecision(
   policies: ScopedMappingPolicy[],
   precision?: number,
   scale?: number,
-  entityId?: string
+  entityId?: string,
+  fieldId?: string
 ): ResolveMappingResult {
-  const result = resolveMapping(sourceType, targetFormat, policies, entityId);
+  const result = resolveMapping(sourceType, targetFormat, policies, entityId, fieldId);
 
   if (!result.success) {
     return result;
@@ -186,6 +199,12 @@ function interpolatePrecisionScale(
       // number/double doesn't support precision in the type name
       return mappedType;
 
+    case "postgresql":
+      if (mappedType === "numeric" || mappedType === "decimal") {
+        return `${mappedType}(${precision},${scale})`;
+      }
+      return mappedType;
+
     default:
       return mappedType;
   }
@@ -206,6 +225,7 @@ export interface BatchMappingResult {
  */
 export function resolveMappingsForFields(
   fields: Array<{
+    id?: string;
     name: string;
     type: string;
     precision?: number;
@@ -224,7 +244,8 @@ export function resolveMappingsForFields(
       policies,
       field.precision,
       field.scale,
-      entityId
+      entityId,
+      field.id
     ),
   }));
 }

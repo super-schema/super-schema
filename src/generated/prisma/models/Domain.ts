@@ -203,6 +203,8 @@ export type DomainWhereInput = {
   createdAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   entities?: Prisma.EntityListRelationFilter
+  modelDefinitions?: Prisma.ModelDefinitionListRelationFilter
+  decoratorDefinitions?: Prisma.DecoratorDefinitionListRelationFilter
   userRoles?: Prisma.UserRoleListRelationFilter
   sharedEnums?: Prisma.SharedEnumListRelationFilter
   customScalars?: Prisma.CustomScalarListRelationFilter
@@ -221,6 +223,8 @@ export type DomainOrderByWithRelationInput = {
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   entities?: Prisma.EntityOrderByRelationAggregateInput
+  modelDefinitions?: Prisma.ModelDefinitionOrderByRelationAggregateInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionOrderByRelationAggregateInput
   userRoles?: Prisma.UserRoleOrderByRelationAggregateInput
   sharedEnums?: Prisma.SharedEnumOrderByRelationAggregateInput
   customScalars?: Prisma.CustomScalarOrderByRelationAggregateInput
@@ -242,6 +246,8 @@ export type DomainWhereUniqueInput = Prisma.AtLeast<{
   createdAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   entities?: Prisma.EntityListRelationFilter
+  modelDefinitions?: Prisma.ModelDefinitionListRelationFilter
+  decoratorDefinitions?: Prisma.DecoratorDefinitionListRelationFilter
   userRoles?: Prisma.UserRoleListRelationFilter
   sharedEnums?: Prisma.SharedEnumListRelationFilter
   customScalars?: Prisma.CustomScalarListRelationFilter
@@ -288,6 +294,8 @@ export type DomainCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
@@ -306,6 +314,8 @@ export type DomainUncheckedCreateInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
@@ -324,6 +334,8 @@ export type DomainUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
@@ -342,6 +354,8 @@ export type DomainUncheckedUpdateInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
@@ -442,6 +456,34 @@ export type DomainUpdateOneRequiredWithoutEntitiesNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutEntitiesInput, Prisma.DomainUpdateWithoutEntitiesInput>, Prisma.DomainUncheckedUpdateWithoutEntitiesInput>
 }
 
+export type DomainCreateNestedOneWithoutModelDefinitionsInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutModelDefinitionsInput, Prisma.DomainUncheckedCreateWithoutModelDefinitionsInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutModelDefinitionsInput
+  connect?: Prisma.DomainWhereUniqueInput
+}
+
+export type DomainUpdateOneRequiredWithoutModelDefinitionsNestedInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutModelDefinitionsInput, Prisma.DomainUncheckedCreateWithoutModelDefinitionsInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutModelDefinitionsInput
+  upsert?: Prisma.DomainUpsertWithoutModelDefinitionsInput
+  connect?: Prisma.DomainWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutModelDefinitionsInput, Prisma.DomainUpdateWithoutModelDefinitionsInput>, Prisma.DomainUncheckedUpdateWithoutModelDefinitionsInput>
+}
+
+export type DomainCreateNestedOneWithoutDecoratorDefinitionsInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutDecoratorDefinitionsInput, Prisma.DomainUncheckedCreateWithoutDecoratorDefinitionsInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutDecoratorDefinitionsInput
+  connect?: Prisma.DomainWhereUniqueInput
+}
+
+export type DomainUpdateOneRequiredWithoutDecoratorDefinitionsNestedInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutDecoratorDefinitionsInput, Prisma.DomainUncheckedCreateWithoutDecoratorDefinitionsInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutDecoratorDefinitionsInput
+  upsert?: Prisma.DomainUpsertWithoutDecoratorDefinitionsInput
+  connect?: Prisma.DomainWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutDecoratorDefinitionsInput, Prisma.DomainUpdateWithoutDecoratorDefinitionsInput>, Prisma.DomainUncheckedUpdateWithoutDecoratorDefinitionsInput>
+}
+
 export type DomainCreateNestedOneWithoutUserRolesInput = {
   create?: Prisma.XOR<Prisma.DomainCreateWithoutUserRolesInput, Prisma.DomainUncheckedCreateWithoutUserRolesInput>
   connectOrCreate?: Prisma.DomainCreateOrConnectWithoutUserRolesInput
@@ -537,6 +579,8 @@ export type DomainCreateWithoutEntitiesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
@@ -554,6 +598,8 @@ export type DomainUncheckedCreateWithoutEntitiesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
@@ -587,6 +633,8 @@ export type DomainUpdateWithoutEntitiesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
@@ -604,6 +652,192 @@ export type DomainUncheckedUpdateWithoutEntitiesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUncheckedUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainCreateWithoutModelDefinitionsInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionCreateNestedManyWithoutDomainInput
+}
+
+export type DomainUncheckedCreateWithoutModelDefinitionsInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeUncheckedCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+}
+
+export type DomainCreateOrConnectWithoutModelDefinitionsInput = {
+  where: Prisma.DomainWhereUniqueInput
+  create: Prisma.XOR<Prisma.DomainCreateWithoutModelDefinitionsInput, Prisma.DomainUncheckedCreateWithoutModelDefinitionsInput>
+}
+
+export type DomainUpsertWithoutModelDefinitionsInput = {
+  update: Prisma.XOR<Prisma.DomainUpdateWithoutModelDefinitionsInput, Prisma.DomainUncheckedUpdateWithoutModelDefinitionsInput>
+  create: Prisma.XOR<Prisma.DomainCreateWithoutModelDefinitionsInput, Prisma.DomainUncheckedCreateWithoutModelDefinitionsInput>
+  where?: Prisma.DomainWhereInput
+}
+
+export type DomainUpdateToOneWithWhereWithoutModelDefinitionsInput = {
+  where?: Prisma.DomainWhereInput
+  data: Prisma.XOR<Prisma.DomainUpdateWithoutModelDefinitionsInput, Prisma.DomainUncheckedUpdateWithoutModelDefinitionsInput>
+}
+
+export type DomainUpdateWithoutModelDefinitionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainUncheckedUpdateWithoutModelDefinitionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUncheckedUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainCreateWithoutDecoratorDefinitionsInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionCreateNestedManyWithoutDomainInput
+}
+
+export type DomainUncheckedCreateWithoutDecoratorDefinitionsInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeUncheckedCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+}
+
+export type DomainCreateOrConnectWithoutDecoratorDefinitionsInput = {
+  where: Prisma.DomainWhereUniqueInput
+  create: Prisma.XOR<Prisma.DomainCreateWithoutDecoratorDefinitionsInput, Prisma.DomainUncheckedCreateWithoutDecoratorDefinitionsInput>
+}
+
+export type DomainUpsertWithoutDecoratorDefinitionsInput = {
+  update: Prisma.XOR<Prisma.DomainUpdateWithoutDecoratorDefinitionsInput, Prisma.DomainUncheckedUpdateWithoutDecoratorDefinitionsInput>
+  create: Prisma.XOR<Prisma.DomainCreateWithoutDecoratorDefinitionsInput, Prisma.DomainUncheckedCreateWithoutDecoratorDefinitionsInput>
+  where?: Prisma.DomainWhereInput
+}
+
+export type DomainUpdateToOneWithWhereWithoutDecoratorDefinitionsInput = {
+  where?: Prisma.DomainWhereInput
+  data: Prisma.XOR<Prisma.DomainUpdateWithoutDecoratorDefinitionsInput, Prisma.DomainUncheckedUpdateWithoutDecoratorDefinitionsInput>
+}
+
+export type DomainUpdateWithoutDecoratorDefinitionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainUncheckedUpdateWithoutDecoratorDefinitionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
@@ -622,6 +856,8 @@ export type DomainCreateWithoutUserRolesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
   unionTypes?: Prisma.UnionTypeCreateNestedManyWithoutDomainInput
@@ -639,6 +875,8 @@ export type DomainUncheckedCreateWithoutUserRolesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
   unionTypes?: Prisma.UnionTypeUncheckedCreateNestedManyWithoutDomainInput
@@ -672,6 +910,8 @@ export type DomainUpdateWithoutUserRolesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
   unionTypes?: Prisma.UnionTypeUpdateManyWithoutDomainNestedInput
@@ -689,6 +929,8 @@ export type DomainUncheckedUpdateWithoutUserRolesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
   unionTypes?: Prisma.UnionTypeUncheckedUpdateManyWithoutDomainNestedInput
@@ -706,6 +948,8 @@ export type DomainCreateWithoutSharedEnumsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
   unionTypes?: Prisma.UnionTypeCreateNestedManyWithoutDomainInput
@@ -723,6 +967,8 @@ export type DomainUncheckedCreateWithoutSharedEnumsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
   unionTypes?: Prisma.UnionTypeUncheckedCreateNestedManyWithoutDomainInput
@@ -756,6 +1002,8 @@ export type DomainUpdateWithoutSharedEnumsInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
   unionTypes?: Prisma.UnionTypeUpdateManyWithoutDomainNestedInput
@@ -773,6 +1021,8 @@ export type DomainUncheckedUpdateWithoutSharedEnumsInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
   unionTypes?: Prisma.UnionTypeUncheckedUpdateManyWithoutDomainNestedInput
@@ -790,6 +1040,8 @@ export type DomainCreateWithoutCustomScalarsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
   unionTypes?: Prisma.UnionTypeCreateNestedManyWithoutDomainInput
@@ -807,6 +1059,8 @@ export type DomainUncheckedCreateWithoutCustomScalarsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
   unionTypes?: Prisma.UnionTypeUncheckedCreateNestedManyWithoutDomainInput
@@ -840,6 +1094,8 @@ export type DomainUpdateWithoutCustomScalarsInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
   unionTypes?: Prisma.UnionTypeUpdateManyWithoutDomainNestedInput
@@ -857,6 +1113,8 @@ export type DomainUncheckedUpdateWithoutCustomScalarsInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
   unionTypes?: Prisma.UnionTypeUncheckedUpdateManyWithoutDomainNestedInput
@@ -874,6 +1132,8 @@ export type DomainCreateWithoutUnionTypesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
@@ -891,6 +1151,8 @@ export type DomainUncheckedCreateWithoutUnionTypesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
@@ -924,6 +1186,8 @@ export type DomainUpdateWithoutUnionTypesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
@@ -941,6 +1205,8 @@ export type DomainUncheckedUpdateWithoutUnionTypesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
@@ -958,6 +1224,8 @@ export type DomainCreateWithoutServicesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
@@ -975,6 +1243,8 @@ export type DomainUncheckedCreateWithoutServicesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
@@ -1008,6 +1278,8 @@ export type DomainUpdateWithoutServicesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
@@ -1025,6 +1297,8 @@ export type DomainUncheckedUpdateWithoutServicesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
@@ -1042,6 +1316,8 @@ export type DomainCreateWithoutInterfacesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
@@ -1059,6 +1335,8 @@ export type DomainUncheckedCreateWithoutInterfacesInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
   sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
   customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
@@ -1092,6 +1370,8 @@ export type DomainUpdateWithoutInterfacesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
@@ -1109,6 +1389,8 @@ export type DomainUncheckedUpdateWithoutInterfacesInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
   sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
   customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
@@ -1123,6 +1405,8 @@ export type DomainUncheckedUpdateWithoutInterfacesInput = {
 
 export type DomainCountOutputType = {
   entities: number
+  modelDefinitions: number
+  decoratorDefinitions: number
   userRoles: number
   sharedEnums: number
   customScalars: number
@@ -1133,6 +1417,8 @@ export type DomainCountOutputType = {
 
 export type DomainCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entities?: boolean | DomainCountOutputTypeCountEntitiesArgs
+  modelDefinitions?: boolean | DomainCountOutputTypeCountModelDefinitionsArgs
+  decoratorDefinitions?: boolean | DomainCountOutputTypeCountDecoratorDefinitionsArgs
   userRoles?: boolean | DomainCountOutputTypeCountUserRolesArgs
   sharedEnums?: boolean | DomainCountOutputTypeCountSharedEnumsArgs
   customScalars?: boolean | DomainCountOutputTypeCountCustomScalarsArgs
@@ -1156,6 +1442,20 @@ export type DomainCountOutputTypeDefaultArgs<ExtArgs extends runtime.Types.Exten
  */
 export type DomainCountOutputTypeCountEntitiesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   where?: Prisma.EntityWhereInput
+}
+
+/**
+ * DomainCountOutputType without action
+ */
+export type DomainCountOutputTypeCountModelDefinitionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ModelDefinitionWhereInput
+}
+
+/**
+ * DomainCountOutputType without action
+ */
+export type DomainCountOutputTypeCountDecoratorDefinitionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.DecoratorDefinitionWhereInput
 }
 
 /**
@@ -1211,6 +1511,8 @@ export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   createdAt?: boolean
   updatedAt?: boolean
   entities?: boolean | Prisma.Domain$entitiesArgs<ExtArgs>
+  modelDefinitions?: boolean | Prisma.Domain$modelDefinitionsArgs<ExtArgs>
+  decoratorDefinitions?: boolean | Prisma.Domain$decoratorDefinitionsArgs<ExtArgs>
   userRoles?: boolean | Prisma.Domain$userRolesArgs<ExtArgs>
   sharedEnums?: boolean | Prisma.Domain$sharedEnumsArgs<ExtArgs>
   customScalars?: boolean | Prisma.Domain$customScalarsArgs<ExtArgs>
@@ -1256,6 +1558,8 @@ export type DomainSelectScalar = {
 export type DomainOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "slug" | "description" | "policyTemplate" | "isSystem" | "createdAt" | "updatedAt", ExtArgs["result"]["domain"]>
 export type DomainInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   entities?: boolean | Prisma.Domain$entitiesArgs<ExtArgs>
+  modelDefinitions?: boolean | Prisma.Domain$modelDefinitionsArgs<ExtArgs>
+  decoratorDefinitions?: boolean | Prisma.Domain$decoratorDefinitionsArgs<ExtArgs>
   userRoles?: boolean | Prisma.Domain$userRolesArgs<ExtArgs>
   sharedEnums?: boolean | Prisma.Domain$sharedEnumsArgs<ExtArgs>
   customScalars?: boolean | Prisma.Domain$customScalarsArgs<ExtArgs>
@@ -1271,6 +1575,8 @@ export type $DomainPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
   name: "Domain"
   objects: {
     entities: Prisma.$EntityPayload<ExtArgs>[]
+    modelDefinitions: Prisma.$ModelDefinitionPayload<ExtArgs>[]
+    decoratorDefinitions: Prisma.$DecoratorDefinitionPayload<ExtArgs>[]
     userRoles: Prisma.$UserRolePayload<ExtArgs>[]
     sharedEnums: Prisma.$SharedEnumPayload<ExtArgs>[]
     customScalars: Prisma.$CustomScalarPayload<ExtArgs>[]
@@ -1682,6 +1988,8 @@ readonly fields: DomainFieldRefs;
 export interface Prisma__DomainClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
   entities<T extends Prisma.Domain$entitiesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$entitiesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EntityPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  modelDefinitions<T extends Prisma.Domain$modelDefinitionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$modelDefinitionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ModelDefinitionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  decoratorDefinitions<T extends Prisma.Domain$decoratorDefinitionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$decoratorDefinitionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$DecoratorDefinitionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   userRoles<T extends Prisma.Domain$userRolesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$userRolesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$UserRolePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   sharedEnums<T extends Prisma.Domain$sharedEnumsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$sharedEnumsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SharedEnumPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   customScalars<T extends Prisma.Domain$customScalarsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$customScalarsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$CustomScalarPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
@@ -2139,6 +2447,54 @@ export type Domain$entitiesArgs<ExtArgs extends runtime.Types.Extensions.Interna
   take?: number
   skip?: number
   distinct?: Prisma.EntityScalarFieldEnum | Prisma.EntityScalarFieldEnum[]
+}
+
+/**
+ * Domain.modelDefinitions
+ */
+export type Domain$modelDefinitionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ModelDefinition
+   */
+  select?: Prisma.ModelDefinitionSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ModelDefinition
+   */
+  omit?: Prisma.ModelDefinitionOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ModelDefinitionInclude<ExtArgs> | null
+  where?: Prisma.ModelDefinitionWhereInput
+  orderBy?: Prisma.ModelDefinitionOrderByWithRelationInput | Prisma.ModelDefinitionOrderByWithRelationInput[]
+  cursor?: Prisma.ModelDefinitionWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ModelDefinitionScalarFieldEnum | Prisma.ModelDefinitionScalarFieldEnum[]
+}
+
+/**
+ * Domain.decoratorDefinitions
+ */
+export type Domain$decoratorDefinitionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the DecoratorDefinition
+   */
+  select?: Prisma.DecoratorDefinitionSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the DecoratorDefinition
+   */
+  omit?: Prisma.DecoratorDefinitionOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.DecoratorDefinitionInclude<ExtArgs> | null
+  where?: Prisma.DecoratorDefinitionWhereInput
+  orderBy?: Prisma.DecoratorDefinitionOrderByWithRelationInput | Prisma.DecoratorDefinitionOrderByWithRelationInput[]
+  cursor?: Prisma.DecoratorDefinitionWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.DecoratorDefinitionScalarFieldEnum | Prisma.DecoratorDefinitionScalarFieldEnum[]
 }
 
 /**

@@ -82,22 +82,29 @@ enum EntityStatus {
   RETIRED
 }
 
+enum ApiScope {
+  DOMAIN
+  ENTITY
+}
+
 model Domain {
-  id             String   @id @default(cuid())
-  name           String   @unique
-  slug           String   @unique
-  description    String   @default("")
-  policyTemplate Json?
-  isSystem       Boolean  @default(false)
-  entities       Entity[]
-  userRoles      UserRole[]
-  sharedEnums    SharedEnum[]
-  customScalars  CustomScalar[]
-  unionTypes     UnionType[]
-  services       ServiceDefinition[]
-  interfaces     InterfaceDefinition[]
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                   String                @id @default(cuid())
+  name                 String                @unique
+  slug                 String                @unique
+  description          String                @default("")
+  policyTemplate       Json?
+  isSystem             Boolean               @default(false)
+  entities             Entity[]
+  modelDefinitions     ModelDefinition[]
+  decoratorDefinitions DecoratorDefinition[]
+  userRoles            UserRole[]
+  sharedEnums          SharedEnum[]
+  customScalars        CustomScalar[]
+  unionTypes           UnionType[]
+  services             ServiceDefinition[]
+  interfaces           InterfaceDefinition[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
   @@map("domains")
 }
@@ -114,6 +121,7 @@ model Entity {
   metadata       Json?
   parentEntityId String?
   fields         Field[]
+  services       ServiceDefinition[] @relation("EntityServices")
   pullRequests   GitPullRequest[]
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
@@ -126,6 +134,61 @@ model Entity {
   @@unique([slug, domainId])
   @@unique([name, domainId])
   @@map("entities")
+}
+
+model ModelDefinition {
+  id               String                 @id @default(cuid())
+  name             String
+  description      String                 @default("")
+  domainId         String
+  sourceFormat     String                 @default("typespec")
+  sourceNamespace  String?
+  extendsModelName String?
+  metadata         Json?
+  fields           ModelFieldDefinition[]
+  domain           Domain                 @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@unique([name, domainId])
+  @@map("model_definitions")
+}
+
+model ModelFieldDefinition {
+  id             String          @id @default(cuid())
+  modelId        String
+  name           String
+  type           String
+  precision      Int?
+  scale          Int?
+  nullable       Boolean         @default(true)
+  isKey          Boolean         @default(false)
+  description    String          @default("")
+  aliases        String[]
+  classification String?
+  sortOrder      Int
+  decorators     Json            @default("{}")
+  model          ModelDefinition @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([modelId, name])
+  @@map("model_field_definitions")
+}
+
+model DecoratorDefinition {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  signature   String   @default("")
+  targetTypes String[]
+  domainId    String
+  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([name, domainId])
+  @@map("decorator_definitions")
 }
 
 model Field {
@@ -593,7 +656,10 @@ model ServiceDefinition {
   description String      @default("")
   basePath    String      @default("/")
   domainId    String
+  scope       ApiScope    @default(DOMAIN)
+  entityId    String?
   domain      Domain      @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  entity      Entity?     @relation("EntityServices", fields: [entityId], references: [id], onDelete: SetNull)
   operations  Operation[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt

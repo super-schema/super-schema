@@ -57,6 +57,9 @@ export const ModelName = {
   VerificationToken: 'VerificationToken',
   Domain: 'Domain',
   Entity: 'Entity',
+  ModelDefinition: 'ModelDefinition',
+  ModelFieldDefinition: 'ModelFieldDefinition',
+  DecoratorDefinition: 'DecoratorDefinition',
   Field: 'Field',
   BusinessConcept: 'BusinessConcept',
   FieldConceptLink: 'FieldConceptLink',
@@ -182,6 +185,57 @@ export const EntityScalarFieldEnum = {
 } as const
 
 export type EntityScalarFieldEnum = (typeof EntityScalarFieldEnum)[keyof typeof EntityScalarFieldEnum]
+
+
+export const ModelDefinitionScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  description: 'description',
+  domainId: 'domainId',
+  sourceFormat: 'sourceFormat',
+  sourceNamespace: 'sourceNamespace',
+  extendsModelName: 'extendsModelName',
+  metadata: 'metadata',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ModelDefinitionScalarFieldEnum = (typeof ModelDefinitionScalarFieldEnum)[keyof typeof ModelDefinitionScalarFieldEnum]
+
+
+export const ModelFieldDefinitionScalarFieldEnum = {
+  id: 'id',
+  modelId: 'modelId',
+  name: 'name',
+  type: 'type',
+  precision: 'precision',
+  scale: 'scale',
+  nullable: 'nullable',
+  isKey: 'isKey',
+  description: 'description',
+  aliases: 'aliases',
+  classification: 'classification',
+  sortOrder: 'sortOrder',
+  decorators: 'decorators',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ModelFieldDefinitionScalarFieldEnum = (typeof ModelFieldDefinitionScalarFieldEnum)[keyof typeof ModelFieldDefinitionScalarFieldEnum]
+
+
+export const DecoratorDefinitionScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  description: 'description',
+  signature: 'signature',
+  targetTypes: 'targetTypes',
+  domainId: 'domainId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type DecoratorDefinitionScalarFieldEnum = (typeof DecoratorDefinitionScalarFieldEnum)[keyof typeof DecoratorDefinitionScalarFieldEnum]
 
 
 export const FieldScalarFieldEnum = {
@@ -509,6 +563,8 @@ export const ServiceDefinitionScalarFieldEnum = {
   description: 'description',
   basePath: 'basePath',
   domainId: 'domainId',
+  scope: 'scope',
+  entityId: 'entityId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const

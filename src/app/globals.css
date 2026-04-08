@@ -186,6 +186,11 @@
    Classification Badge Colors
    ============================================================ */
 
+.badge-never-stored {
+  background: rgba(153, 27, 27, 0.25);
+  color: #f87171;
+}
+
 .badge-pii {
   background: rgba(229, 91, 91, 0.15);
   color: #e55b5b;

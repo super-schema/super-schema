@@ -6,15 +6,43 @@ export const QualityRuleTemplateSchema = z.object({
   params: z.record(z.string(), z.unknown()),
 });
 
+// ---------------------------------------------------------------------------
+// Completeness Requirements — per-requirement shape
+// ---------------------------------------------------------------------------
+
+export const CompletenessRequirementSchema = z.object({
+  enabled: z.boolean(),
+  severity: z.enum(["error", "warning"]),
+  params: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type CompletenessRequirement = z.infer<typeof CompletenessRequirementSchema>;
+
+export const CompletenessRequirementsSchema = z.object({
+  ownerRequired: CompletenessRequirementSchema.optional(),
+  descriptionRequired: CompletenessRequirementSchema.optional(),
+  tagsMinCount: CompletenessRequirementSchema.optional(),
+  retentionPolicyRequired: CompletenessRequirementSchema.optional(),
+  fieldDescriptionRequired: CompletenessRequirementSchema.optional(),
+  fieldClassificationExplicit: CompletenessRequirementSchema.optional(),
+});
+
+export type CompletenessRequirements = z.infer<typeof CompletenessRequirementsSchema>;
+
+// ---------------------------------------------------------------------------
+// Policy Template
+// ---------------------------------------------------------------------------
+
 export const PolicyTemplateSchema = z
   .object({
     classification: z
-      .enum(["PII", "SENSITIVE", "INTERNAL", "PUBLIC"])
+      .enum(["PII", "SENSITIVE", "INTERNAL", "PUBLIC", "NEVER_STORED"])
       .optional(),
     retention: z.string().optional(),
     retentionPolicy: RetentionPolicySchema.optional(),
     qualityRules: z.array(QualityRuleTemplateSchema).optional(),
     namingConventions: z.string().optional(),
+    completenessRequirements: CompletenessRequirementsSchema.optional(),
   })
   .partial();
 

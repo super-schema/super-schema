@@ -5,6 +5,7 @@
  */
 
 import type { LogicalType, MappingPolicy } from "@/types/super-schema-model";
+import { getValidTargetTypesFor } from "./target-type-catalog";
 
 // Re-export for consumer convenience
 export type { LogicalType, MappingPolicy };
@@ -13,9 +14,26 @@ export type { LogicalType, MappingPolicy };
 // Supported target formats
 // ---------------------------------------------------------------------------
 
-export type TargetFormat = "bigquery" | "avro" | "openapi" | "spanner";
+export type TargetFormat =
+  | "bigquery"
+  | "avro"
+  | "openapi"
+  | "spanner"
+  | "postgresql"
+  | "openapi3"
+  | "json-schema"
+  | "protobuf";
 
-export const TARGET_FORMATS: TargetFormat[] = ["bigquery", "avro", "openapi", "spanner"];
+export const TARGET_FORMATS: TargetFormat[] = [
+  "bigquery",
+  "avro",
+  "openapi",
+  "spanner",
+  "postgresql",
+  "openapi3",
+  "json-schema",
+  "protobuf",
+];
 
 // ---------------------------------------------------------------------------
 // Mapping result — returned by resolveMapping()
@@ -26,37 +44,17 @@ export interface MappingResult {
   isLossy: boolean;
   lossDescription?: string;
   isOverride: boolean;
-  overrideSource?: "global" | "per-entity";
+  overrideSource?: "field" | "global" | "per-entity";
+  defaultMappedType?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Valid target types per format — for override autocomplete
 // ---------------------------------------------------------------------------
 
-export const VALID_TARGET_TYPES: Record<string, string[]> = {
-  bigquery: [
-    "STRING", "INT64", "FLOAT64", "NUMERIC", "BIGNUMERIC", "BOOL",
-    "DATE", "TIME", "DATETIME", "TIMESTAMP", "BYTES", "ARRAY",
-    "STRUCT", "GEOGRAPHY", "JSON",
-  ],
-  avro: [
-    "null", "boolean", "int", "long", "float", "double", "bytes",
-    "string", "enum", "array", "map", "fixed", "record",
-    "bytes/decimal", "int/date", "long/time-micros",
-    "long/timestamp-millis", "fixed/duration",
-  ],
-  openapi: [
-    "string", "number", "integer", "boolean", "array", "object",
-    "string/uri", "string/byte", "string/date", "string/time",
-    "string/date-time", "string/duration", "string+enum",
-    "number/float", "number/double", "integer/int32", "integer/int64",
-    "object/additionalProperties", "$ref",
-  ],
-  spanner: [
-    "STRING", "BYTES", "INT64", "FLOAT64", "NUMERIC", "BOOL",
-    "DATE", "TIMESTAMP", "ARRAY", "JSON",
-  ],
-};
+export const VALID_TARGET_TYPES: Record<string, string[]> = Object.fromEntries(
+  TARGET_FORMATS.map((target) => [target, getValidTargetTypesFor(target)])
+);
 
 // ---------------------------------------------------------------------------
 // Mapping error — returned when no mapping exists
@@ -103,6 +101,8 @@ export interface CreateOverrideInput {
 export interface ScopedMappingPolicy extends MappingPolicy {
   id?: string;
   entityId?: string; // undefined = global, set = per-entity
+  fieldId?: string;
+  fieldName?: string;
   isLossy: boolean;
   lossDescription?: string;
   justification?: string;

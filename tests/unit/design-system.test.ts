@@ -34,6 +34,11 @@ describe("Design System Tokens", () => {
   });
 
   describe("Classification badge colors", () => {
+    it("defines NEVER_STORED badge", () => {
+      expect(globalsCss).toContain("badge-never-stored");
+      expect(globalsCss).toContain("rgba(153, 27, 27, 0.25)");
+    });
+
     it("defines PII badge", () => {
       expect(globalsCss).toContain("badge-pii");
       expect(globalsCss).toContain("rgba(229, 91, 91, 0.15)");

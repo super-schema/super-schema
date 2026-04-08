@@ -19,6 +19,14 @@ export const EntityStatus = {
 export type EntityStatus = (typeof EntityStatus)[keyof typeof EntityStatus]
 
 
+export const ApiScope = {
+  DOMAIN: 'DOMAIN',
+  ENTITY: 'ENTITY'
+} as const
+
+export type ApiScope = (typeof ApiScope)[keyof typeof ApiScope]
+
+
 export const GitAuthMethod = {
   SSH_KEY: 'SSH_KEY',
   PERSONAL_ACCESS_TOKEN: 'PERSONAL_ACCESS_TOKEN',

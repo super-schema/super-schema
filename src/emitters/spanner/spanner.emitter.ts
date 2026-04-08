@@ -27,6 +27,7 @@ import type {
   ValidationResult,
 } from "@/lib/compiler/types";
 import { resolveMappingWithPrecision } from "@/lib/type-mapping/mapping-engine";
+import { getFieldOverrideCommentFromMapping } from "@/lib/schema-targets/field-type-overrides";
 import { validateSpannerDDL } from "./spanner.validator";
 
 // ---------------------------------------------------------------------------
@@ -153,17 +154,28 @@ export class SpannerEmitter implements Emitter {
       policies,
       field.precision,
       field.scale,
-      entityId
+      entityId,
+      field.id
     );
 
     let spannerType: string;
     let isLossy = false;
     let lossDescription: string | undefined;
+    let overrideComment = "";
+    const hasFieldOverride =
+      mappingResult.success && mappingResult.result.overrideSource === "field";
 
     if (mappingResult.success) {
       spannerType = mappingResult.result.mappedType;
       isLossy = mappingResult.result.isLossy;
       lossDescription = mappingResult.result.lossDescription;
+      const overrideNote = getFieldOverrideCommentFromMapping(
+        field.type,
+        mappingResult.result
+      );
+      if (overrideNote) {
+        overrideComment = `  -- ${overrideNote}\n`;
+      }
     } else {
       spannerType = "STRING(MAX)";
       fieldWarnings.push({
@@ -178,7 +190,7 @@ export class SpannerEmitter implements Emitter {
     }
 
     // Handle complex types
-    if (field.type === "array" && field.complexType?.arrayElementType) {
+    if (!hasFieldOverride && field.type === "array" && field.complexType?.arrayElementType) {
       const elementMapping = resolveMappingWithPrecision(
         field.complexType.arrayElementType,
         "spanner",
@@ -191,7 +203,7 @@ export class SpannerEmitter implements Emitter {
         ? elementMapping.result.mappedType
         : "STRING(MAX)";
       spannerType = `ARRAY<${elementType}>`;
-    } else if (field.type === "array") {
+    } else if (!hasFieldOverride && field.type === "array") {
       spannerType = "ARRAY<STRING(MAX)>";
     }
 
@@ -215,7 +227,7 @@ export class SpannerEmitter implements Emitter {
       descComment = `  -- ${description}\n`;
     }
 
-    const columnDef = `${descComment}${lossyComment}  ${colName} ${spannerType}${nullableClause}`;
+    const columnDef = `${descComment}${overrideComment}${lossyComment}  ${colName} ${spannerType}${nullableClause}`;
 
     return { columnDef, fieldWarnings };
   }

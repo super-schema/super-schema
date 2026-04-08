@@ -14,6 +14,11 @@ import type {
   DecoratorSet,
   ComplexTypeInfo,
   LogicalType,
+  SuperSchemaAlias,
+  SuperSchemaCustomScalar,
+  SuperSchemaInterface,
+  SuperSchemaSharedEnum,
+  SuperSchemaUnionType,
 } from "@/types/super-schema-model";
 import { ALL_DATA_TYPES } from "@/lib/data-types";
 
@@ -79,6 +84,12 @@ export function compileEntity(
     },
     fields: compiledFields,
     relationships,
+    aliases: extractCustomArray<SuperSchemaAlias>(metadata.custom, "aliases"),
+    customScalars: extractCustomArray<SuperSchemaCustomScalar>(metadata.custom, "customScalars"),
+    interfaces: extractCustomArray<SuperSchemaInterface>(metadata.custom, "interfaces"),
+    namespace: extractCustomString(metadata.custom, "namespace"),
+    sharedEnums: extractCustomArray<SuperSchemaSharedEnum>(metadata.custom, "sharedEnums"),
+    unionTypes: extractCustomArray<SuperSchemaUnionType>(metadata.custom, "unionTypes"),
   };
 }
 
@@ -93,6 +104,7 @@ function compileField(field: PrismaFieldInput): SuperSchemaField {
   const logicalType = resolveLogicalType(field.type);
 
   return {
+    id: field.id,
     name: field.name,
     type: logicalType,
     precision: field.precision ?? undefined,
@@ -260,4 +272,20 @@ function extractRelationships(
   }
 
   return relationships;
+}
+
+function extractCustomArray<T>(
+  custom: Record<string, unknown> | undefined,
+  key: string
+): T[] | undefined {
+  const value = custom?.[key];
+  return Array.isArray(value) ? (value as T[]) : undefined;
+}
+
+function extractCustomString(
+  custom: Record<string, unknown> | undefined,
+  key: string
+): string | undefined {
+  const value = custom?.[key];
+  return typeof value === "string" ? value : undefined;
 }

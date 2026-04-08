@@ -17,11 +17,11 @@ import { describe, it, expect } from "vitest";
 // The EntityWorkspace uses three key state patterns:
 //   1. activeTab: "editor" | "schemas" | "versions"
 //   2. selectedFieldId: string | null
-//   3. rightPanelTab: "quick-edit" | "typespec-preview"
+//   3. rightPanelTab: "field-edit" | "typespec-preview"
 // ---------------------------------------------------------------------------
 
 type ViewTab = "editor" | "schemas" | "versions";
-type RightPanelTab = "quick-edit" | "typespec-preview";
+type RightPanelTab = "field-edit" | "typespec-preview";
 
 interface WorkspaceState {
   activeTab: ViewTab;
@@ -52,9 +52,9 @@ function createWorkspaceState(): {
       state.activeTab = tab;
     },
     handleFieldSelect(fieldId: string) {
-      // Mirrors: setSelectedFieldId(fieldId); setRightPanelTab("quick-edit");
+      // Mirrors: setSelectedFieldId(fieldId); setRightPanelTab("field-edit");
       state.selectedFieldId = fieldId;
-      state.rightPanelTab = "quick-edit";
+      state.rightPanelTab = "field-edit";
     },
     handleDeleteField(fieldId: string) {
       // Mirrors: if (selectedFieldId === id) { setSelectedFieldId(null); setRightPanelTab("typespec-preview"); }
@@ -162,47 +162,47 @@ describe("EntityWorkspace Tab Logic", () => {
       expect(state.rightPanelTab).toBe("typespec-preview");
     });
 
-    it("switches to quick-edit when a field is selected", () => {
+    it("switches to field-edit when a field is selected", () => {
       const { state, handleFieldSelect } = createWorkspaceState();
       expect(state.rightPanelTab).toBe("typespec-preview");
       handleFieldSelect("field-1");
-      expect(state.rightPanelTab).toBe("quick-edit");
+      expect(state.rightPanelTab).toBe("field-edit");
     });
 
     it("reverts to typespec-preview when selected field is deleted", () => {
       const { state, handleFieldSelect, handleDeleteField } = createWorkspaceState();
       handleFieldSelect("field-1");
-      expect(state.rightPanelTab).toBe("quick-edit");
+      expect(state.rightPanelTab).toBe("field-edit");
       handleDeleteField("field-1");
       expect(state.rightPanelTab).toBe("typespec-preview");
     });
 
-    it("stays on quick-edit when a non-selected field is deleted", () => {
+    it("stays on field-edit when a non-selected field is deleted", () => {
       const { state, handleFieldSelect, handleDeleteField } = createWorkspaceState();
       handleFieldSelect("field-1");
-      expect(state.rightPanelTab).toBe("quick-edit");
+      expect(state.rightPanelTab).toBe("field-edit");
       handleDeleteField("field-2");
-      expect(state.rightPanelTab).toBe("quick-edit");
+      expect(state.rightPanelTab).toBe("field-edit");
     });
 
     it("allows manual tab switching to typespec-preview", () => {
       const { state, handleFieldSelect, setRightPanelTab } = createWorkspaceState();
       handleFieldSelect("field-1");
-      expect(state.rightPanelTab).toBe("quick-edit");
+      expect(state.rightPanelTab).toBe("field-edit");
       setRightPanelTab("typespec-preview");
       expect(state.rightPanelTab).toBe("typespec-preview");
       // Field remains selected even when viewing typespec preview
       expect(state.selectedFieldId).toBe("field-1");
     });
 
-    it("selecting a field always forces quick-edit tab", () => {
+    it("selecting a field always forces field-edit tab", () => {
       const { state, handleFieldSelect, setRightPanelTab } = createWorkspaceState();
       handleFieldSelect("field-1");
       setRightPanelTab("typespec-preview");
       expect(state.rightPanelTab).toBe("typespec-preview");
-      // Selecting another field should switch back to quick-edit
+      // Selecting another field should switch back to field-edit
       handleFieldSelect("field-2");
-      expect(state.rightPanelTab).toBe("quick-edit");
+      expect(state.rightPanelTab).toBe("field-edit");
     });
   });
 });

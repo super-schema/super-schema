@@ -5,14 +5,14 @@ import { getDefaultPolicies } from "@/lib/type-mapping/default-mappings";
 import type {
   SuperSchemaModel,
   SuperSchemaField,
-  MappingPolicy,
 } from "@/types/super-schema-model";
+import type { ScopedMappingPolicy } from "@/lib/type-mapping/types";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const defaultPolicies: MappingPolicy[] = getDefaultPolicies();
+const defaultPolicies = getDefaultPolicies();
 
 function makeField(overrides: Partial<SuperSchemaField>): SuperSchemaField {
   return {
@@ -237,6 +237,40 @@ describe("Avro Emitter — decimal type", () => {
     const result = avroEmitter.emit(model, defaultPolicies);
     const validation = avroEmitter.validate(result.output);
     expect(validation.valid).toBe(true);
+  });
+});
+
+describe("Avro Emitter — field overrides", () => {
+  it("lets a field-level override replace array special-casing", () => {
+    const policies: ScopedMappingPolicy[] = [
+      ...defaultPolicies,
+      {
+        sourceType: "array",
+        targetType: "string",
+        targetFormat: "avro",
+        mappedType: "string",
+        isOverride: true,
+        isLossy: false,
+        fieldId: "field-tags",
+      },
+    ];
+
+    const result = avroEmitter.emit(
+      makeModel([
+        makeField({
+          id: "field-tags",
+          name: "tags",
+          type: "array",
+          complexType: { arrayElementType: "string" },
+        }),
+      ]),
+      policies
+    );
+    const schema = JSON.parse(result.output);
+    const field = (schema.fields as Record<string, unknown>[])[0];
+
+    expect(field.type).toBe("string");
+    expect(field["x-super-schema-type-override"]).toBeDefined();
   });
 });
 

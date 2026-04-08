@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Zap, ZapOff, Clock, Hash, ChevronRight } from "lucide-react";
+import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 
 interface EmitterCard {
   emitterName: string;
@@ -11,37 +12,21 @@ interface EmitterCard {
   description: string;
   lastEmissionAt: string | null;
   totalEmissions: number;
+  sourceLabel: string;
+  stability: string;
 }
 
-const DEFAULT_EMITTERS: EmitterCard[] = [
-  {
-    emitterName: "bigquery",
-    enabled: true,
-    version: "1.0.0",
-    targetFormat: "SQL",
-    description: "Google BigQuery SQL DDL emitter",
-    lastEmissionAt: null,
-    totalEmissions: 0,
-  },
-  {
-    emitterName: "avro",
-    enabled: true,
-    version: "1.0.0",
-    targetFormat: "JSON",
-    description: "Apache Avro schema emitter",
-    lastEmissionAt: null,
-    totalEmissions: 0,
-  },
-  {
-    emitterName: "openapi",
-    enabled: true,
-    version: "1.0.0",
-    targetFormat: "YAML",
-    description: "OpenAPI 3.0 specification emitter",
-    lastEmissionAt: null,
-    totalEmissions: 0,
-  },
-];
+const DEFAULT_EMITTERS: EmitterCard[] = getSchemaTargetCatalog().map((target) => ({
+  emitterName: target.key,
+  enabled: target.enabledInSchemaTab,
+  version: target.packageName ? "npm" : "1.0.0",
+  targetFormat: target.targetFormat,
+  description: target.description,
+  lastEmissionAt: null,
+  totalEmissions: 0,
+  sourceLabel: target.source === "typespec-official" ? "Official TypeSpec" : "Super Schema",
+  stability: target.stability,
+}));
 
 export function EmitterCardGrid() {
   const [emitters, setEmitters] = useState<EmitterCard[]>(DEFAULT_EMITTERS);
@@ -102,6 +87,8 @@ export function EmitterCardGrid() {
           <div className="flex items-center gap-space-4 text-caption text-muted-foreground">
             <span>v{emitter.version}</span>
             <span className="px-1.5 py-0.5 rounded bg-muted">{emitter.targetFormat}</span>
+            <span className="px-1.5 py-0.5 rounded bg-muted/60">{emitter.sourceLabel}</span>
+            <span className="px-1.5 py-0.5 rounded bg-muted/60 uppercase">{emitter.stability}</span>
           </div>
 
           {/* Status badge */}
