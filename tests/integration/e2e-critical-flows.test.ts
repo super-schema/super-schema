@@ -34,6 +34,9 @@ const { mockPrisma } = vi.hoisted(() => {
       auditLog: {
         create: vi.fn().mockResolvedValue({ id: "audit-1" }),
       },
+      typeMappingOverride: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
     },
   };
 });
@@ -171,7 +174,7 @@ describe("E2E Critical Flows", () => {
       // Verify field 1: order_id
       const f1 = createCall.data.fields.create[0];
       expect(f1.name).toBe("order_id");
-      expect(f1.slug).toBe("orderid");
+      expect(f1.slug).toBe("order-id");
       expect(f1.type).toBe("string");
       expect(f1.isKey).toBe(true);
       expect(f1.nullable).toBe(false);
@@ -180,7 +183,7 @@ describe("E2E Critical Flows", () => {
       // Verify field 2: customer_name
       const f2 = createCall.data.fields.create[1];
       expect(f2.name).toBe("customer_name");
-      expect(f2.slug).toBe("customername");
+      expect(f2.slug).toBe("customer-name");
       expect(f2.classification).toBe("PII");
       expect(f2.sortOrder).toBe(1);
 
@@ -230,6 +233,8 @@ describe("E2E Critical Flows", () => {
         id: "ent-e2e-1",
         metadata: {},
       });
+
+      mockPrisma.field.findMany.mockResolvedValue([]);
 
       const result = await generateSchemaAction("ent-e2e-1", "bigquery");
 

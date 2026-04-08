@@ -571,7 +571,9 @@ export async function createDomainAssetsFromImportAction(
         }
       }
 
-      const sortedEntities = sortByInheritance(payload.entities);
+      // Merge models into entities — all models are treated as entities
+      const allEntities = [...payload.entities, ...payload.models];
+      const sortedEntities = sortByInheritance(allEntities);
       const createdEntityMap = new Map<string, string>();
 
       for (const entity of sortedEntities) {

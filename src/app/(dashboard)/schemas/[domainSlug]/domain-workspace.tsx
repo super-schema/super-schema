@@ -30,11 +30,11 @@ import { createEntityWithFieldsAction, type CreateFieldInput } from "./actions";
 import { modKey } from "@/lib/platform";
 import { Upload } from "lucide-react";
 import { DomainTypesTab, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
-import { DomainModelsTab, type DomainModelData } from "./components/DomainModelsTab";
+import type { DomainModelData } from "./components/DomainModelsTab";
 import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
-import { DomainDecoratorsTab, type DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
+import type { DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
 
-type DomainTab = "entities" | "models" | "types" | "apis" | "decorators";
+type DomainTab = "entities" | "types" | "apis";
 
 // ---------------------------------------------------------------------------
 // Create dropdown — New Entity + New Model / Enum / Scalar / Union / API
@@ -42,14 +42,12 @@ type DomainTab = "entities" | "models" | "types" | "apis" | "decorators";
 
 function CreateDropdown({
   onNewEntity,
-  onNewModel,
   onNewEnum,
   onNewScalar,
   onNewUnion,
   onNewApi,
 }: {
   onNewEntity: () => void;
-  onNewModel: () => void;
   onNewEnum: () => void;
   onNewScalar: () => void;
   onNewUnion: () => void;
@@ -69,7 +67,6 @@ function CreateDropdown({
 
   const items = [
     { label: "New Entity", icon: Database, action: onNewEntity, description: "Schema entity with fields" },
-    { label: "New Model", icon: Box, action: onNewModel, description: "Reusable model definition" },
     { label: "New Enum", icon: Hash, action: onNewEnum, description: "Shared enum type" },
     { label: "New Scalar", icon: Hash, action: onNewScalar, description: "Custom scalar type" },
     { label: "New Union", icon: Hash, action: onNewUnion, description: "Union type (A | B)" },
@@ -114,10 +111,8 @@ function CreateDropdown({
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: Database, label: "Entities", id: "entities" },
-  { icon: Box, label: "Models", id: "models" },
   { icon: Hash, label: "Types", id: "types" },
   { icon: Globe, label: "APIs", id: "apis" },
-  { icon: Tag, label: "Decorators", id: "decorators" },
 ];
 
 interface EntityData {
@@ -188,7 +183,7 @@ export function DomainWorkspace({
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get("tab") as DomainTab) || "entities";
   const [activeTab, setActiveTab] = useState<DomainTab>(
-    ["entities", "models", "types", "apis", "decorators"].includes(initialTab)
+    ["entities", "types", "apis"].includes(initialTab)
       ? initialTab
       : "entities"
   );
@@ -397,7 +392,6 @@ export function DomainWorkspace({
           </div>
           <CreateDropdown
             onNewEntity={() => router.push(`/schemas/${domainSlug}/new`)}
-            onNewModel={() => { setActiveTab("models"); setShowInlineCreate("model"); }}
             onNewEnum={() => { setActiveTab("types"); setShowInlineCreate("enum"); }}
             onNewScalar={() => { setActiveTab("types"); setShowInlineCreate("scalar"); }}
             onNewUnion={() => { setActiveTab("types"); setShowInlineCreate("union"); }}
@@ -424,9 +418,6 @@ export function DomainWorkspace({
         ))}
       </div>
 
-      {/* Models tab */}
-      {activeTab === "models" && <DomainModelsTab models={models} />}
-
       {/* Types tab */}
       {activeTab === "types" && (
         <DomainTypesTab
@@ -439,11 +430,6 @@ export function DomainWorkspace({
       {/* APIs tab */}
       {activeTab === "apis" && (
         <DomainApisTab services={services} />
-      )}
-
-      {/* Decorators tab */}
-      {activeTab === "decorators" && (
-        <DomainDecoratorsTab decorators={decoratorDefinitions} />
       )}
 
       {/* Create Entity inline form */}
