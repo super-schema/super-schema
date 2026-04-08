@@ -22,6 +22,7 @@ import {
   getSchemaTargetAvailabilities,
   getSchemaTargetDefinition,
 } from "@/lib/schema-targets/catalog";
+import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -123,13 +124,17 @@ function TypeOverrideTable({
             </tr>
           </thead>
           <tbody>
-            {fields.map((field, i) => (
-              <tr key={field.id} className={i % 2 === 0 ? "" : "bg-muted/10"}>
-                <td className="px-3 py-1.5 font-mono text-foreground">{field.name}</td>
-                <td className="px-3 py-1.5 font-mono text-muted-foreground">{field.type}</td>
-                <td className="px-3 py-1.5 font-mono text-primary">{field.type}</td>
-              </tr>
-            ))}
+            {fields.map((field, i) => {
+              const mapping = getDefaultMapping(field.type, targetKey);
+              const targetType = mapping?.mappedType ?? field.type;
+              return (
+                <tr key={field.id} className={i % 2 === 0 ? "" : "bg-muted/10"}>
+                  <td className="px-3 py-1.5 font-mono text-foreground">{field.name}</td>
+                  <td className="px-3 py-1.5 font-mono text-muted-foreground">{field.type}</td>
+                  <td className="px-3 py-1.5 font-mono text-primary">{targetType}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
