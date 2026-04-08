@@ -857,12 +857,19 @@ function extractClassification(tag: string | undefined): string | null {
 // Schema version management (stored in entity metadata JSONB)
 // ---------------------------------------------------------------------------
 
+export interface FieldTypeMapping {
+  fieldName: string;
+  sourceType: string;
+  targetType: string;
+}
+
 export interface SchemaVersion {
   version: number;
   status: "draft" | "published" | "deployed";
   output: string;
   generatedAt: string;
   entityVersion: number;
+  fieldTypeMappings?: FieldTypeMapping[];
   typeOverrideSnapshot?: FieldTargetTypeOverride[];
   overrideDriftSummary?: {
     activeCount: number;
@@ -1124,12 +1131,24 @@ export async function generateSchemaAction(entityId: string, target: string) {
       targetOutput = officialResult;
     }
 
-    // Load entity to get current metadata and version
+    // Load entity to get current metadata, version, and fields for type mapping
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true, version: true },
+      select: { metadata: true, version: true, fields: { select: { name: true, type: true }, orderBy: { sortOrder: "asc" } } },
     });
     if (!entity) return { error: "Entity not found" };
+
+    // Build field type mappings from the default mapping engine
+    let fieldTypeMappings: FieldTypeMapping[] = [];
+    try {
+      const { getDefaultMapping } = await import("@/lib/type-mapping/default-mappings");
+      fieldTypeMappings = (entity.fields ?? []).map((f: { name: string; type: string }) => {
+        const mapping = getDefaultMapping(f.type, target);
+        return { fieldName: f.name, sourceType: f.type, targetType: mapping?.mappedType ?? f.type };
+      });
+    } catch {
+      // Mapping engine unavailable — store empty mappings
+    }
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1169,6 +1188,7 @@ export async function generateSchemaAction(entityId: string, target: string) {
       output: targetOutput.output,
       generatedAt: new Date().toISOString(),
       entityVersion: entity.version,
+      fieldTypeMappings,
       typeOverrideSnapshot,
       overrideDriftSummary: typeOverrideSnapshot
         ? {

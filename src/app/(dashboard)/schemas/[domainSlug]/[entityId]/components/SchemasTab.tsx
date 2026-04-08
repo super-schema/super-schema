@@ -22,7 +22,7 @@ import {
   getSchemaTargetAvailabilities,
   getSchemaTargetDefinition,
 } from "@/lib/schema-targets/catalog";
-import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
+import type { FieldTypeMapping } from "../actions";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,19 +100,27 @@ function getTargetMeta(key: string): TargetMeta {
 
 function TypeOverrideTable({
   fields,
-  targetKey,
   targetDisplayName,
+  fieldTypeMappings,
 }: {
   fields: FieldData[];
-  targetKey: string;
   targetDisplayName: string;
+  fieldTypeMappings?: FieldTypeMapping[];
 }) {
-  // For now, show all fields with their super schema type and what the target would use
-  // In future, this would be editable with saved overrides
+  // Use stored mappings from the generated schema version (source of truth)
+  // Fall back to showing super schema type if no schema has been generated yet
+  const mappingByField = new Map<string, string>();
+  if (fieldTypeMappings) {
+    for (const m of fieldTypeMappings) {
+      mappingByField.set(m.fieldName, m.targetType);
+    }
+  }
+
   return (
     <div className="space-y-2">
       <p className="text-caption text-muted-foreground">
-        Field type mappings for {targetDisplayName}. Override the default target type if needed.
+        Field type mappings for {targetDisplayName}.
+        {!fieldTypeMappings && " Generate a schema first to see the actual target types."}
       </p>
       <div className="rounded-lg border border-border/50 overflow-hidden">
         <table className="w-full text-caption">
@@ -125,13 +133,12 @@ function TypeOverrideTable({
           </thead>
           <tbody>
             {fields.map((field, i) => {
-              const mapping = getDefaultMapping(field.type, targetKey);
-              const targetType = mapping?.mappedType ?? field.type;
+              const targetType = mappingByField.get(field.name) ?? field.type;
               return (
                 <tr key={field.id} className={i % 2 === 0 ? "" : "bg-muted/10"}>
                   <td className="px-3 py-1.5 font-mono text-foreground">{field.name}</td>
                   <td className="px-3 py-1.5 font-mono text-muted-foreground">{field.type}</td>
-                  <td className="px-3 py-1.5 font-mono text-primary">{targetType}</td>
+                  <td className={`px-3 py-1.5 font-mono ${fieldTypeMappings ? "text-primary" : "text-muted-foreground/50 italic"}`}>{targetType}</td>
                 </tr>
               );
             })}
@@ -309,8 +316,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
               {contentTab === "overrides" && (
                 <TypeOverrideTable
                   fields={fields}
-                  targetKey={selected.key}
                   targetDisplayName={selected.displayName}
+                  fieldTypeMappings={latestVersion?.fieldTypeMappings}
                 />
               )}
             </>

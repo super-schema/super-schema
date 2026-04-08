@@ -35,6 +35,9 @@ const { mockPrisma } = vi.hoisted(() => {
       auditLog: {
         create: vi.fn().mockResolvedValue({ id: "audit-1" }),
       },
+      typeMappingOverride: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
     },
   };
 });
@@ -107,6 +110,10 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+  mockPrisma.field.findMany.mockResolvedValue([]);
+  if (mockPrisma.typeMappingOverride) {
+    mockPrisma.typeMappingOverride.findMany.mockResolvedValue([]);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -124,6 +131,7 @@ describe("SchemasTab Workflow", () => {
         name: "TestEntity",
         version: 1,
         metadata: {},
+        fields: [],
       });
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
 
@@ -319,6 +327,7 @@ describe("SchemasTab Workflow", () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
         metadata: {},
+        fields: [],
       });
 
       const result = await getSchemaVersionsAction("ent-1");
@@ -368,6 +377,7 @@ describe("SchemasTab Workflow", () => {
             ],
           },
         },
+        fields: [],
       });
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
 
@@ -396,6 +406,7 @@ describe("SchemasTab Workflow", () => {
             ],
           },
         },
+        fields: [],
       });
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
 
