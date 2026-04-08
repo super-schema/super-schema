@@ -23,6 +23,7 @@ import {
   getSchemaTargetDefinition,
 } from "@/lib/schema-targets/catalog";
 import type { FieldTypeMapping } from "../actions";
+import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,15 +101,17 @@ function getTargetMeta(key: string): TargetMeta {
 
 function TypeOverrideTable({
   fields,
+  targetKey,
   targetDisplayName,
   fieldTypeMappings,
 }: {
   fields: FieldData[];
+  targetKey: string;
   targetDisplayName: string;
   fieldTypeMappings?: FieldTypeMapping[];
 }) {
   // Use stored mappings from the generated schema version (source of truth)
-  // Fall back to showing super schema type if no schema has been generated yet
+  // Fall back to default mapping engine for schemas generated before this feature
   const mappingByField = new Map<string, string>();
   if (fieldTypeMappings) {
     for (const m of fieldTypeMappings) {
@@ -133,7 +136,10 @@ function TypeOverrideTable({
           </thead>
           <tbody>
             {fields.map((field, i) => {
-              const targetType = mappingByField.get(field.name) ?? field.type;
+              // Stored mapping > default mapping engine > raw type
+              const storedType = mappingByField.get(field.name);
+              const defaultType = getDefaultMapping(field.type, targetKey)?.mappedType;
+              const targetType = storedType ?? defaultType ?? field.type;
               return (
                 <tr key={field.id} className={i % 2 === 0 ? "" : "bg-muted/10"}>
                   <td className="px-3 py-1.5 font-mono text-foreground">{field.name}</td>
@@ -316,6 +322,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
               {contentTab === "overrides" && (
                 <TypeOverrideTable
                   fields={fields}
+                  targetKey={selected.key}
                   targetDisplayName={selected.displayName}
                   fieldTypeMappings={latestVersion?.fieldTypeMappings}
                 />
