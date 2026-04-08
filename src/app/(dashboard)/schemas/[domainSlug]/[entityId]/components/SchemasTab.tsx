@@ -175,12 +175,14 @@ function TypeOverrideTable({
   targetKey,
   targetDisplayName,
   fieldTypeMappings,
+  localOverrides,
   onOverrideChange,
 }: {
   fields: FieldData[];
   targetKey: string;
   targetDisplayName: string;
   fieldTypeMappings?: FieldTypeMapping[];
+  localOverrides?: Map<string, string>;
   onOverrideChange: (fieldName: string, newType: string) => void;
 }) {
   const mappingByField = new Map<string, string>();
@@ -208,10 +210,12 @@ function TypeOverrideTable({
           </thead>
           <tbody>
             {fields.map((field, i) => {
+              // Priority: local override > stored mapping > default engine > raw type
+              const localType = localOverrides?.get(field.name);
               const storedType = mappingByField.get(field.name);
               const defaultType = getDefaultMapping(field.type, targetKey)?.mappedType;
-              const currentType = storedType ?? defaultType ?? field.type;
-              const isOverridden = storedType && storedType !== defaultType;
+              const currentType = localType ?? storedType ?? defaultType ?? field.type;
+              const isOverridden = (localType && localType !== defaultType) || (storedType && storedType !== defaultType);
               return (
                 <tr key={field.id} className={`${i % 2 === 0 ? "" : "bg-muted/10"} ${isOverridden ? "bg-primary/5" : ""}`}>
                   <td className="px-3 py-1.5 font-mono text-foreground">
@@ -445,6 +449,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                   targetKey={selected.key}
                   targetDisplayName={selected.displayName}
                   fieldTypeMappings={latestVersion?.fieldTypeMappings}
+                  localOverrides={localOverrides.get(selected.key)}
                   onOverrideChange={(fieldName, newType) => handleOverrideChange(selected.key, fieldName, newType)}
                 />
               )}
