@@ -1,34 +1,37 @@
 "use client";
 
 import Link from "next/link";
-import { Database, FlaskConical } from "lucide-react";
+import { Database, FlaskConical, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { toSlug } from "@/lib/domain-utils";
+import { formatDateOnly } from "@/lib/date-format";
 
 interface DomainCardProps {
   id: string;
   name: string;
+  slug: string;
   description: string;
   isSystem: boolean;
   entityCount: number;
   createdAt: Date;
+  onRequestDelete?: () => void;
 }
 
 export function DomainCard({
   name,
+  slug,
   description,
   isSystem,
   entityCount,
   createdAt,
+  onRequestDelete,
 }: DomainCardProps) {
-  const slug = toSlug(name);
   const isPublic = name === "Public";
   const isPlayground = name === "Playground";
+  const canDelete = !isSystem && entityCount === 0;
 
   return (
-    <Link
-      href={`/schemas/${slug}`}
-      className={`group block surface-glass rounded-xl border p-space-6 transition-all duration-200 hover:shadow-lg hover:border-primary/40 ${
+    <div
+      className={`group relative surface-glass rounded-xl border transition-all duration-200 hover:shadow-lg hover:border-primary/40 ${
         isPublic
           ? "border-primary/30"
           : isPlayground
@@ -36,47 +39,66 @@ export function DomainCard({
             : "border-border"
       }`}
     >
-      {/* Title */}
-      <div className="flex items-center gap-space-2 mb-space-2">
-        {isPlayground ? (
-          <FlaskConical className="w-5 h-5 text-secondary shrink-0" />
-        ) : (
-          <Database className="w-5 h-5 text-primary shrink-0" />
-        )}
-        <h3 className="text-heading-2 text-foreground group-hover:text-primary transition-colors">
-          {name}
-        </h3>
-      </div>
+      <Link href={`/schemas/${slug}`} className="block p-space-6">
+        {/* Title */}
+        <div className="flex items-center gap-space-2 mb-space-2 pr-9">
+          {isPlayground ? (
+            <FlaskConical className="w-5 h-5 text-secondary shrink-0" />
+          ) : (
+            <Database className="w-5 h-5 text-primary shrink-0" />
+          )}
+          <h3 className="text-heading-2 text-foreground group-hover:text-primary transition-colors truncate">
+            {name}
+          </h3>
+        </div>
 
-      {/* Badges */}
-      <div className="flex items-center gap-space-2 justify-end mb-space-3">
-        {isSystem && (
-          <Badge variant="outline" className="text-caption">
-            System
+        {/* Badges */}
+        <div className="flex items-center gap-space-2 justify-end mb-space-3">
+          {isSystem && (
+            <Badge variant="outline" className="text-caption">
+              System
+            </Badge>
+          )}
+          <Badge variant="secondary" className="text-caption">
+            {entityCount} {entityCount === 1 ? "entity" : "entities"}
           </Badge>
-        )}
-        <Badge variant="secondary" className="text-caption">
-          {entityCount} {entityCount === 1 ? "entity" : "entities"}
-        </Badge>
-      </div>
+        </div>
 
-      {/* Description */}
-      <p className="text-body-small text-muted-foreground line-clamp-2 mb-space-3">
-        {description || "No description"}
-      </p>
-
-      {/* Playground tagline */}
-      {isPlayground && (
-        <p className="text-caption text-secondary/70 italic mb-space-3">
-          Experiment freely — create test entities without affecting production
-          domains
+        {/* Description */}
+        <p className="text-body-small text-muted-foreground line-clamp-2 mb-space-3">
+          {description || "No description"}
         </p>
-      )}
 
-      {/* Footer */}
-      <div className="text-caption text-muted-foreground">
-        Created {new Date(createdAt).toLocaleDateString()}
-      </div>
-    </Link>
+        {/* Playground tagline */}
+        {isPlayground && (
+          <p className="text-caption text-secondary/70 italic mb-space-3">
+            Experiment freely — create test entities without affecting production
+            domains
+          </p>
+        )}
+
+        {/* Footer */}
+        <div className="text-caption text-muted-foreground">
+          Created {formatDateOnly(createdAt)}
+        </div>
+      </Link>
+
+      {!isSystem && (
+        <button
+          type="button"
+          onClick={onRequestDelete}
+          disabled={!canDelete}
+          aria-label={`Delete domain ${name}`}
+          title={
+            canDelete
+              ? `Delete ${name}`
+              : "Delete entities in this domain before removing it"
+          }
+          className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      )}
+    </div>
   );
 }

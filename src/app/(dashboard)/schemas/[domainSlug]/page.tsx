@@ -178,6 +178,7 @@ export default async function DomainEntitiesPage({ params }: Props) {
       domainName={domain.name}
       domainSlug={domainSlug}
       domainDescription={domain.description}
+      isSystemDomain={domain.isSystem}
       domainPolicy={domainPolicy as Record<string, unknown> | null}
       entities={entities}
       models={models}
