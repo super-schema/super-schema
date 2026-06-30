@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Plus, Trash2, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +76,7 @@ export function FieldPreview({
   const [newType, setNewType] = useState("string");
   const [newClassification, setNewClassification] = useState<string | null>(null);
   const [newDescription, setNewDescription] = useState("");
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   function updateField(tempId: string, updates: Partial<PreviewField>) {
     onFieldsChange(
@@ -103,12 +104,15 @@ export function FieldPreview({
     setNewType("string");
     setNewClassification(null);
     setNewDescription("");
-    setShowAddRow(false);
+    // Keep the row open so the user can immediately add another field.
+    // Refocus the name input after state settles.
+    setTimeout(() => nameInputRef.current?.focus(), 0);
   }
 
   return (
     <div className="space-y-space-4">
       <button
+        type="button"
         onClick={onBack}
         className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
       >
@@ -196,6 +200,7 @@ export function FieldPreview({
                 </td>
                 <td className="px-space-2 py-space-2">
                   <button
+                    type="button"
                     onClick={() => removeField(field.tempId)}
                     className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded opacity-0 group-hover:opacity-100"
                     title="Remove field"
@@ -211,14 +216,21 @@ export function FieldPreview({
               <tr className="border-b border-border/50 bg-accent/5">
                 <td className="px-space-3 py-space-2">
                   <Input
+                    ref={nameInputRef}
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     className="h-7 font-mono text-body-small"
                     placeholder="field_name"
                     autoFocus
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && newName.trim()) addField();
-                      if (e.key === "Escape") setShowAddRow(false);
+                      if (e.key === "Enter" && newName.trim()) {
+                        e.preventDefault();
+                        addField();
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        setShowAddRow(false);
+                      }
                     }}
                   />
                 </td>
@@ -247,10 +259,12 @@ export function FieldPreview({
                 <td className="px-space-2 py-space-2">
                   <div className="flex gap-1">
                     <Button
+                      type="button"
                       size="sm"
                       variant="ghost"
                       onClick={addField}
                       disabled={!newName.trim()}
+                      aria-label="Save Field"
                       className="h-6 w-6 p-0"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5 text-success" />
@@ -262,14 +276,16 @@ export function FieldPreview({
           </tbody>
         </table>
 
-        {/* Add field button */}
-        <button
-          onClick={() => setShowAddRow(true)}
-          className="w-full flex items-center justify-center gap-2 py-space-2 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-caption"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add Field
-        </button>
+        {!showAddRow && (
+          <button
+            type="button"
+            onClick={() => setShowAddRow(true)}
+            className="w-full flex items-center justify-center gap-2 py-space-2 border-t border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-caption"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Field
+          </button>
+        )}
       </div>
 
       {error && <p className="text-body-small text-destructive">{error}</p>}
@@ -280,6 +296,7 @@ export function FieldPreview({
           {fields.length} field{fields.length !== 1 ? "s" : ""}
         </span>
         <Button
+          type="button"
           onClick={onConfirm}
           disabled={!entityName.trim() || isCreating}
           className="gap-2"
