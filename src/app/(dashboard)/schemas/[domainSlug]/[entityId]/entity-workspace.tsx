@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, Save, Zap, Globe } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,11 +19,10 @@ import {
   compareVersionsAction,
   getChangeHistoryAction,
 } from "./actions";
+import { deleteEntityAction } from "../actions";
 import { SchemasTab } from "./components/SchemasTab";
 import { DiffViewer } from "@/components/custom/DiffViewer";
 import type { VersionSnapshot, DiffResult } from "@/services/version-history/version.types";
-import type { OverrideMappingInfo } from "@/components/custom/EmissionPreviewPanel";
-import type { EmissionResult } from "@/lib/emission/emission.types";
 import {
   TypeMappingOverrideDialog,
 } from "@/components/custom/TypeMappingOverrideDialog";
@@ -32,6 +32,7 @@ import type {
 } from "@/components/custom/TypeMappingOverrideDialog";
 import { ChangeHistoryView } from "@/components/custom/ChangeHistoryView";
 import type { ChangeHistoryFilters } from "@/types/schemas/change-history";
+import { formatDateTime } from "@/lib/date-format";
 import { isReadOnly } from "@/lib/entity-lifecycle";
 import { trackRecentEntity } from "@/lib/recent-entities";
 import { EntityHeader } from "./components/EntityHeader";
@@ -116,8 +117,12 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
   }, []);
 
   // Emission state
-  const [emissionResult, setEmissionResult] = useState<EmissionResult | null>(null);
   const [isEmitting, setIsEmitting] = useState(false);
+
+  // Entity delete state
+  const router = useRouter();
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeletingEntity, setIsDeletingEntity] = useState(false);
 
   // Version history state
   const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
@@ -241,8 +246,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
-  const [overrideMappingContext, setOverrideMappingContext] = useState<OverrideDialogMappingContext | null>(null);
-  const [overrides, setOverrides] = useState<OverrideMappingInfo[]>([]);
+  const [overrideMappingContext] = useState<OverrideDialogMappingContext | null>(null);
 
   // --- Handlers ---
 
@@ -269,7 +273,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         return;
       }
       if (response.result) {
-        setEmissionResult(response.result);
         const { summary } = response.result;
         if (summary.invalidCount === 0 && summary.warningCount === 0) {
           toast.success(`Emitted to ${summary.totalTargets} targets — all valid`);
@@ -365,16 +368,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
     [handleCompare]
   );
 
-  const handleWarningClick = useCallback((info: OverrideMappingInfo) => {
-    setOverrideMappingContext({
-      sourceType: info.sourceType,
-      targetFormat: info.targetFormat,
-      currentMappedType: info.currentMappedType,
-      lossDescription: info.lossDescription,
-      fieldName: info.fieldName,
-    });
-    setOverrideDialogOpen(true);
-  }, []);
 
   const handleCreateOverride = useCallback(async (data: CreateOverrideData) => {
     const result = await createTypeMappingOverrideAction({
@@ -384,16 +377,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
     if (result.error) {
       throw new Error(result.error);
     }
-    setOverrides((prev) => [
-      ...prev,
-      {
-        sourceType: data.sourceType,
-        targetFormat: data.targetFormat,
-        currentMappedType: data.mappedType,
-        isOverride: true,
-        overrideSource: data.scope === "global" ? "global" : "per-entity",
-      },
-    ]);
     await handleEmit();
   }, [entity.id, handleEmit]);
 
@@ -407,6 +390,24 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       throw new Error(result.error);
     }
   }, [entity.id]);
+
+  const handleDeleteEntity = useCallback(async () => {
+    setIsDeletingEntity(true);
+    try {
+      const result = await deleteEntityAction(entity.id);
+      if (result.error) {
+        toast.error(result.error);
+      } else {
+        toast.success(`"${entity.name}" deleted`);
+        router.push(`/schemas/${entity.domainSlug}`);
+      }
+    } catch {
+      toast.error("Failed to delete entity");
+    } finally {
+      setIsDeletingEntity(false);
+      setDeleteConfirmOpen(false);
+    }
+  }, [entity.id, entity.name, entity.domainSlug, router]);
 
   // Metadata save handler — creates version + bumps minor
   const handleMetaSaved = useCallback(async () => {
@@ -468,6 +469,37 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
   }, []);
 
   return (
+    <>
+    {deleteConfirmOpen && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm w-full mx-4">
+          <h3 className="text-heading-3 text-foreground mb-2">
+            Delete &ldquo;{entity.name}&rdquo;?
+          </h3>
+          <p className="text-body-small text-muted-foreground mb-4">
+            Permanently deletes this entity and all its fields. This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteConfirmOpen(false)}
+              disabled={isDeletingEntity}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleDeleteEntity}
+              disabled={isDeletingEntity}
+            >
+              {isDeletingEntity ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="animate-auth-fade-up">
       <EntityHeader
         entity={entity}
@@ -477,7 +509,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         statusError={statusError}
         showSaved={showSaved}
         toolbar={
-          <EntityToolbar />
+          <EntityToolbar onDelete={() => setDeleteConfirmOpen(true)} />
         }
       />
 
@@ -669,7 +701,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
                         v{v.version}
                       </span>
                       <span className="text-caption text-muted-foreground ml-space-3">
-                        {new Date(v.timestamp).toLocaleString()}
+                        {formatDateTime(v.timestamp)}
                       </span>
                     </div>
                     {idx < versionHistory.length - 1 && (
@@ -766,5 +798,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         onAcknowledge={handleAcknowledge}
       />
     </div>
+    </>
   );
 }
