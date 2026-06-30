@@ -471,9 +471,9 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
   return (
     <>
     {deleteConfirmOpen && (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="entity-delete-confirm-title">
         <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm w-full mx-4">
-          <h3 className="text-heading-3 text-foreground mb-2">
+          <h3 id="entity-delete-confirm-title" className="text-heading-3 text-foreground mb-2">
             Delete &ldquo;{entity.name}&rdquo;?
           </h3>
           <p className="text-body-small text-muted-foreground mb-4">
