@@ -1,15 +1,29 @@
 "use client";
 
-import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
 
-export function EntityToolbar() {
+interface EntityToolbarProps {
+  onDelete?: () => void;
+}
+
+export function EntityToolbar({ onDelete }: EntityToolbarProps) {
   const { togglePanel, isPanelCollapsed: isCollapsed } = useRightPanelContent();
 
   return (
     <div className="flex items-center gap-space-2">
-      {/* Panel toggle button */}
+      {onDelete && (
+        <Button
+          variant="outline"
+          onClick={onDelete}
+          className="gap-1.5 text-muted-foreground hover:text-destructive hover:border-destructive/50"
+          title="Delete entity"
+        >
+          <Trash2 className="w-4 h-4" />
+          Delete
+        </Button>
+      )}
       <Button
         variant="outline"
         onClick={togglePanel}
