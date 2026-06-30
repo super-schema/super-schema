@@ -237,6 +237,17 @@ export function DomainWorkspace({
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
   const [domainDeleteOpen, setDomainDeleteOpen] = useState(false);
   const [isDeletingDomain, setIsDeletingDomain] = useState(false);
+
+  // Escape closes any open delete dialog
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      if (domainDeleteOpen && !isDeletingDomain) setDomainDeleteOpen(false);
+      else if (deleteConfirm && !isDeletingEntity) setDeleteConfirm(null);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [domainDeleteOpen, isDeletingDomain, deleteConfirm, isDeletingEntity]);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
@@ -908,7 +919,7 @@ export function DomainWorkspace({
                 <tr
                   key={entity.id}
                   className="border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
-                  onClick={() => window.location.href = `/schemas/${domainSlug}/${entity.slug}`}
+                  onClick={() => router.push(`/schemas/${domainSlug}/${entity.slug}`)}
                 >
                   <td className="px-space-4 py-space-3 font-mono text-body-small text-foreground">
                     {entity.name}

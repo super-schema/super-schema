@@ -27,7 +27,6 @@ import {
   TypeMappingOverrideDialog,
 } from "@/components/custom/TypeMappingOverrideDialog";
 import type {
-  OverrideDialogMappingContext,
   CreateOverrideData,
 } from "@/components/custom/TypeMappingOverrideDialog";
 import { ChangeHistoryView } from "@/components/custom/ChangeHistoryView";
@@ -246,7 +245,6 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
-  const [overrideMappingContext] = useState<OverrideDialogMappingContext | null>(null);
 
   // --- Handlers ---
 
@@ -448,6 +446,10 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         }
       }
       if (e.key === "Escape") {
+        if (deleteConfirmOpen) {
+          setDeleteConfirmOpen(false);
+          return;
+        }
         if (fieldDirtyRef.current && fieldDiscardRef.current) {
           fieldDiscardRef.current();
         }
@@ -455,7 +457,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleEmit, readOnly_, isEmitting]);
+  }, [handleEmit, readOnly_, isEmitting, deleteConfirmOpen]);
 
   // Navigation guard: beforeunload when dirty
   useEffect(() => {
@@ -791,7 +793,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
       <TypeMappingOverrideDialog
         open={overrideDialogOpen}
         onClose={() => setOverrideDialogOpen(false)}
-        mappingContext={overrideMappingContext}
+        mappingContext={null}
         entityId={entity.id}
         userRole="STEWARD"
         onCreateOverride={handleCreateOverride}

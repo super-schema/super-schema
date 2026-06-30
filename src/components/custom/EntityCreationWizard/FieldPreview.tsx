@@ -30,9 +30,8 @@ interface FieldPreviewProps {
   error?: string | null;
 }
 
-let nextTempId = 0;
 function makeTempId() {
-  return `preview-${++nextTempId}`;
+  return `preview-${crypto.randomUUID()}`;
 }
 
 function getConfidenceBadge(confidence?: number) {

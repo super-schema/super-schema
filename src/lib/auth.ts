@@ -63,8 +63,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
       // Explicitly propagate email so resolveCurrentUserId email-fallback works
       // even when session.user.id is stale (e.g. after DB reset + reseed)
-      if (session.user && token.email) {
-        session.user.email = token.email as string;
+      if (session.user && typeof token.email === "string") {
+        session.user.email = token.email;
       }
       return session;
     },
