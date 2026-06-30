@@ -49,14 +49,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers,
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
+      if (user?.id) {
         token.sub = user.id;
+      }
+      if (user?.email) {
+        token.email = user.email;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user && token.sub) {
         session.user.id = token.sub;
+      }
+      // Explicitly propagate email so resolveCurrentUserId email-fallback works
+      // even when session.user.id is stale (e.g. after DB reset + reseed)
+      if (session.user && token.email) {
+        session.user.email = token.email as string;
       }
       return session;
     },
