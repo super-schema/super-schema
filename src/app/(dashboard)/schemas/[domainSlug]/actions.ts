@@ -3,9 +3,42 @@
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
-import { withAudit } from "@/lib/audit";
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
+
+const STALE_SESSION_IMPORT_ERROR =
+  "Your session is stale. Sign out and sign in again, then retry the import.";
+const STALE_SESSION_ENTITY_ERROR =
+  "Your session is stale. Sign out and sign in again, then create the entity.";
+
+async function resolveCurrentUserId(user: { id?: string | null; email?: string | null }) {
+  if (!user.id) {
+    throw new AuditUserMissingError("unknown");
+  }
+
+  const userById = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { id: true },
+  });
+
+  if (userById) {
+    return userById.id;
+  }
+
+  if (user.email) {
+    const userByEmail = await prisma.user.findUnique({
+      where: { email: user.email },
+      select: { id: true },
+    });
+
+    if (userByEmail) {
+      return userByEmail.id;
+    }
+  }
+
+  throw new AuditUserMissingError(user.id);
+}
 
 export interface CreateFieldInput {
   name: string;
@@ -40,11 +73,13 @@ export async function createEntityWithFieldsAction(
   }
 
   try {
+    const currentUserId = await resolveCurrentUserId(session.user);
+
     const entity = await withAudit({
       action: "CREATE",
       entityType: "Entity",
       entityId: "pending",
-      userId: session.user.id,
+      userId: currentUserId,
       fn: async () => {
         return prisma.entity.create({
           data: {
@@ -52,7 +87,7 @@ export async function createEntityWithFieldsAction(
             slug: generateSlug(name),
             domainId,
             description,
-            ownerId: session.user!.id!,
+            ownerId: currentUserId,
             fields: {
               create: fields.map((f, i) => ({
                 name: f.name,
@@ -77,6 +112,9 @@ export async function createEntityWithFieldsAction(
     revalidatePath("/schemas");
     return { success: true, entityId: entity.id };
   } catch (e: unknown) {
+    if (e instanceof AuditUserMissingError) {
+      return { error: STALE_SESSION_ENTITY_ERROR };
+    }
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `An entity named "${name}" already exists in this domain` };
     }
@@ -103,11 +141,13 @@ export async function createEntityAction(domainId: string, formData: FormData) {
   }
 
   try {
+    const currentUserId = await resolveCurrentUserId(session.user);
+
     await withAudit({
       action: "CREATE",
       entityType: "Entity",
       entityId: "pending",
-      userId: session.user.id,
+      userId: currentUserId,
       fn: async () => {
         return prisma.entity.create({
           data: {
@@ -115,7 +155,7 @@ export async function createEntityAction(domainId: string, formData: FormData) {
             slug: generateSlug(name),
             domainId,
             description,
-            ownerId: session.user!.id!,
+            ownerId: currentUserId,
           },
         });
       },
@@ -124,6 +164,9 @@ export async function createEntityAction(domainId: string, formData: FormData) {
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
+    if (e instanceof AuditUserMissingError) {
+      return { error: STALE_SESSION_ENTITY_ERROR };
+    }
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `An entity named "${name}" already exists in this domain` };
     }
@@ -206,10 +249,32 @@ export async function deleteEntityAction(entityId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    await prisma.entity.delete({ where: { id: entityId } });
+    const currentUserId = await resolveCurrentUserId(session.user);
+
+    // Verify the entity exists before attempting delete
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { id: true, name: true },
+    });
+    if (!entity) return { error: "Entity not found" };
+
+    await withAudit({
+      action: "DELETE",
+      entityType: "Entity",
+      entityId,
+      userId: currentUserId,
+      fn: async () => {
+        await prisma.entity.delete({ where: { id: entityId } });
+        return { id: entityId };
+      },
+    });
+
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
+    if (e instanceof AuditUserMissingError) {
+      return { error: "Your session is stale. Sign out and sign in again, then retry." };
+    }
     return { error: e instanceof Error ? e.message : "Failed to delete entity" };
   }
 }
@@ -563,6 +628,8 @@ export async function createDomainAssetsFromImportAction(
   };
 
   try {
+    const currentUserId = await resolveCurrentUserId(session.user);
+
     await prisma.$transaction(async (tx) => {
       const sortedModels = sortByInheritance(payload.models);
 
@@ -677,9 +744,7 @@ export async function createDomainAssetsFromImportAction(
         }
       }
 
-      // Merge models into entities — all models are treated as entities
-      const allEntities = [...payload.entities, ...payload.models];
-      const sortedEntities = sortByInheritance(allEntities);
+      const sortedEntities = sortByInheritance(payload.entities);
       const createdEntityMap = new Map<string, string>();
 
       for (const entity of sortedEntities) {
@@ -695,7 +760,7 @@ export async function createDomainAssetsFromImportAction(
               slug: generateSlug(entity.name),
               domainId: payload.domainId,
               description: entity.description ?? "",
-              ownerId: session.user!.id!,
+              ownerId: currentUserId,
               ...(parentEntityId ? { parentEntityId } : {}),
               fields: {
                 create: entity.fields.map((field, index) =>
@@ -767,7 +832,13 @@ export async function createDomainAssetsFromImportAction(
 
     revalidatePath("/schemas");
   } catch (e: unknown) {
-    result.errors.push(e instanceof Error ? e.message : "Bulk import failed");
+    result.errors.push(
+      e instanceof AuditUserMissingError
+        ? STALE_SESSION_IMPORT_ERROR
+        : e instanceof Error
+          ? e.message
+          : "Bulk import failed"
+    );
   }
 
   return result;

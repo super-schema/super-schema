@@ -234,6 +234,7 @@ export function DomainWorkspace({
 
   const [typeCreateIntent, setTypeCreateIntent] = useState<DomainTypeCreateIntent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
+  const [isDeletingEntity, setIsDeletingEntity] = useState(false);
   const [domainDeleteOpen, setDomainDeleteOpen] = useState(false);
   const [isDeletingDomain, setIsDeletingDomain] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -384,7 +385,9 @@ export function DomainWorkspace({
   }
 
   async function handleDeleteEntity(id: string) {
+    setIsDeletingEntity(true);
     const result = await deleteEntityAction(id);
+    setIsDeletingEntity(false);
     if (result.error) {
       toast.error(result.error);
     } else {
@@ -398,9 +401,9 @@ export function DomainWorkspace({
     setIsDeletingDomain(true);
     const result = await deleteDomainAction(domainId);
     setIsDeletingDomain(false);
+    setDomainDeleteOpen(false);
     if (result.error) {
       toast.error(result.error);
-      setDomainDeleteOpen(false);
     } else {
       toast.success(`"${domainName}" deleted`);
       router.push("/schemas");
@@ -443,13 +446,15 @@ export function DomainWorkspace({
 
       {/* Entity delete confirmation dialog */}
       {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="domain-delete-confirm-title">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="entity-delete-confirm-title">
           <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm w-full mx-4">
-            <h3 id="domain-delete-confirm-title" className="text-heading-3 text-foreground mb-2">Delete &ldquo;{deleteConfirm.name}&rdquo;?</h3>
+            <h3 id="entity-delete-confirm-title" className="text-heading-3 text-foreground mb-2">Delete &ldquo;{deleteConfirm.name}&rdquo;?</h3>
             <p className="text-body-small text-muted-foreground mb-4">This will permanently delete this {deleteConfirm.type} and all its data. This action cannot be undone.</p>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
-              <Button variant="destructive" size="sm" onClick={() => handleDeleteEntity(deleteConfirm.id)}>Delete</Button>
+              <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)} disabled={isDeletingEntity}>Cancel</Button>
+              <Button variant="destructive" size="sm" onClick={() => handleDeleteEntity(deleteConfirm.id)} disabled={isDeletingEntity}>
+                {isDeletingEntity ? "Deleting..." : "Delete"}
+              </Button>
             </div>
           </div>
         </div>

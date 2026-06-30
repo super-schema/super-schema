@@ -509,7 +509,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
         statusError={statusError}
         showSaved={showSaved}
         toolbar={
-          <EntityToolbar onDelete={() => setDeleteConfirmOpen(true)} />
+          <EntityToolbar onDelete={readOnly_ ? undefined : () => setDeleteConfirmOpen(true)} />
         }
       />
 
