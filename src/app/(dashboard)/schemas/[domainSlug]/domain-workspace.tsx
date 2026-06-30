@@ -380,7 +380,12 @@ export function DomainWorkspace({
 
   async function handleDeleteEntity(id: string) {
     const result = await deleteEntityAction(id);
-    if (result.error) { toast.error(result.error); } else { toast.success("Entity deleted"); }
+    if (result.error) {
+      toast.error(result.error);
+    } else {
+      toast.success("Entity deleted");
+      router.refresh();
+    }
     setDeleteConfirm(null);
   }
 
@@ -388,9 +393,9 @@ export function DomainWorkspace({
     <div className="animate-auth-fade-up">
       {/* Delete confirmation dialog */}
       {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm">
-            <h3 className="text-heading-3 text-foreground mb-2">Delete &ldquo;{deleteConfirm.name}&rdquo;?</h3>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="domain-delete-confirm-title">
+          <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm w-full mx-4">
+            <h3 id="domain-delete-confirm-title" className="text-heading-3 text-foreground mb-2">Delete &ldquo;{deleteConfirm.name}&rdquo;?</h3>
             <p className="text-body-small text-muted-foreground mb-4">This will permanently delete this {deleteConfirm.type} and all its data. This action cannot be undone.</p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
