@@ -62,46 +62,60 @@ function FieldPreviewHarness() {
 }
 
 describe("FieldPreview", () => {
-  it("opens the add row once and commits through the row action", () => {
+  it("Add Field button is always visible — not hidden when add row is open", () => {
+    render(<FieldPreviewHarness />);
+
+    // Button visible initially
+    expect(screen.getByRole("button", { name: /^Add Field$/i })).toBeDefined();
+
+    // Click it to open the row
+    fireEvent.click(screen.getByRole("button", { name: /^Add Field$/i }));
+
+    // Button is STILL visible (no longer hidden by showAddRow)
+    expect(screen.getByRole("button", { name: /^Add Field$/i })).toBeDefined();
+    // Row is now open
+    expect(screen.getByPlaceholderText("field_name")).toBeDefined();
+  });
+
+  it("clicking Add Field with empty name is disabled while row open", () => {
     render(<FieldPreviewHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: /^Add Field$/i }));
 
-    expect(screen.getByPlaceholderText("field_name")).toBeDefined();
-    expect(screen.queryByRole("button", { name: /^Add Field$/i })).toBeNull();
-
-    fireEvent.change(screen.getByPlaceholderText("field_name"), {
-      target: { value: "customer_id" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /Save Field/i }));
-
-    expect(screen.getByDisplayValue("customer_id")).toBeDefined();
-    expect(screen.getByText("1 field")).toBeDefined();
+    // Button disabled when row is open and name is empty
+    const btn = screen.getByRole("button", { name: /^Add Field$/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
   });
 
-  it("add row stays open after saving so user can add another field immediately", () => {
+  it("clicking Add Field with a name filled saves and keeps row open", () => {
     render(<FieldPreviewHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: /^Add Field$/i }));
     fireEvent.change(screen.getByPlaceholderText("field_name"), { target: { value: "order_id" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save Field/i }));
 
-    // Row must still be open with cleared input
-    expect(screen.getByPlaceholderText("field_name")).toBeDefined();
+    // Button enabled when name is filled
+    expect((screen.getByRole("button", { name: /^Add Field$/i }) as HTMLButtonElement).disabled).toBe(false);
+
+    // Click Add Field = saves the field
+    fireEvent.click(screen.getByRole("button", { name: /^Add Field$/i }));
+
+    expect(screen.getByDisplayValue("order_id")).toBeDefined();
+    expect(screen.getByText("1 field")).toBeDefined();
+
+    // Row still open, input cleared
     expect((screen.getByPlaceholderText("field_name") as HTMLInputElement).value).toBe("");
   });
 
-  it("can add multiple fields without re-clicking the Add Field trigger", () => {
+  it("can add multiple fields by typing and clicking Add Field each time", () => {
     render(<FieldPreviewHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: /^Add Field$/i }));
 
     fireEvent.change(screen.getByPlaceholderText("field_name"), { target: { value: "order_id" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save Field/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Add Field$/i }));
 
-    // Second field — no trigger re-click needed
     fireEvent.change(screen.getByPlaceholderText("field_name"), { target: { value: "customer_id" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save Field/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Add Field$/i }));
 
     expect(screen.getByDisplayValue("order_id")).toBeDefined();
     expect(screen.getByDisplayValue("customer_id")).toBeDefined();

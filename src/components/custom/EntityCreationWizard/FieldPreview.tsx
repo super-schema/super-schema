@@ -276,16 +276,22 @@ export function FieldPreview({
           </tbody>
         </table>
 
-        {!showAddRow && (
-          <button
-            type="button"
-            onClick={() => setShowAddRow(true)}
-            className="w-full flex items-center justify-center gap-2 py-space-2 border-t border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-caption"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Field
-          </button>
-        )}
+        {/* Always visible — opens row when closed, saves field when row is open with a name */}
+        <button
+          type="button"
+          onClick={() => {
+            if (showAddRow) {
+              if (newName.trim()) addField();
+            } else {
+              setShowAddRow(true);
+            }
+          }}
+          disabled={showAddRow && !newName.trim()}
+          className="w-full flex items-center justify-center gap-2 py-space-2 border-t border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-caption disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add Field
+        </button>
       </div>
 
       {error && <p className="text-body-small text-destructive">{error}</p>}
