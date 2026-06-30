@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -10,7 +10,6 @@ import {
   LayoutGrid,
   List,
   Database,
-  Box,
   Hash,
   Globe,
   Trash2,
@@ -28,11 +27,11 @@ import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
-import { modKey } from "@/lib/platform";
-import { Upload } from "lucide-react";
-import { DomainTypesTab, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
+import { useModKey } from "@/lib/platform";
+import { DomainTypesTab, type DomainTypeCreateIntent, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
 import type { DomainModelData } from "./components/DomainModelsTab";
 import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
+import { formatDateOnly } from "@/lib/date-format";
 import type { DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
 
 type DomainTab = "entities" | "types" | "apis";
@@ -56,6 +55,7 @@ function CreateDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const mod = useModKey();
 
   useEffect(() => {
     if (!open) return;
@@ -77,7 +77,7 @@ function CreateDropdown({
   return (
     <div className="relative" ref={ref}>
       <div className="flex">
-        <Button onClick={onNewEntity} className="gap-2 rounded-r-none" title={`New Entity (${modKey()}+N)`}>
+        <Button onClick={onNewEntity} className="gap-2 rounded-r-none" title={`New Entity (${mod}+N)`}>
           <Plus className="w-4 h-4" />
           New Entity
         </Button>
@@ -166,6 +166,32 @@ function makeTempId() {
   return `temp-${++nextTempId}`;
 }
 
+const VIEW_MODE_STORAGE_KEY = "super-schema:view-mode";
+const VIEW_MODE_CHANGE_EVENT = "super-schema:view-mode-change";
+
+function getViewModeSnapshot(): "tile" | "list" {
+  if (typeof window === "undefined") return "tile";
+  const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+  return stored === "list" ? "list" : "tile";
+}
+
+function subscribeToViewMode(callback: () => void) {
+  if (typeof window === "undefined") return () => {};
+
+  function handleStorage(event: StorageEvent) {
+    if (event.key === VIEW_MODE_STORAGE_KEY) {
+      callback();
+    }
+  }
+
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(VIEW_MODE_CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(VIEW_MODE_CHANGE_EVENT, callback);
+  };
+}
+
 export function DomainWorkspace({
   domainId,
   domainName,
@@ -173,11 +199,9 @@ export function DomainWorkspace({
   domainDescription,
   domainPolicy,
   entities,
-  models,
   sharedEnums,
   customScalars,
   unionTypes,
-  decoratorDefinitions,
   services,
 }: DomainWorkspaceProps) {
   const router = useRouter();
@@ -188,12 +212,11 @@ export function DomainWorkspace({
       ? initialTab
       : "entities"
   );
-  const [viewMode, setViewMode] = useState<"tile" | "list">(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("super-schema:view-mode") as "tile" | "list") || "tile";
-    }
-    return "tile";
-  });
+  const viewMode = useSyncExternalStore(
+    subscribeToViewMode,
+    getViewModeSnapshot,
+    () => "tile"
+  );
   const [showCreate, setShowCreate] = useState(false);
 
   // Listen for Cmd+N global shortcut to navigate to wizard
@@ -206,7 +229,7 @@ export function DomainWorkspace({
       document.removeEventListener("super-schema:new-entity", handleNewEntity);
   }, [router, domainSlug]);
 
-  const [showInlineCreate, setShowInlineCreate] = useState<string | null>(null);
+  const [typeCreateIntent, setTypeCreateIntent] = useState<DomainTypeCreateIntent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -235,8 +258,8 @@ export function DomainWorkspace({
   const defaultRetention = (domainPolicy?.defaultRetention as string) ?? "";
 
   function toggleView(mode: "tile" | "list") {
-    setViewMode(mode);
-    localStorage.setItem("super-schema:view-mode", mode);
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    window.dispatchEvent(new CustomEvent(VIEW_MODE_CHANGE_EVENT));
   }
 
   function toggleSort(field: string) {
@@ -414,10 +437,10 @@ export function DomainWorkspace({
           </div>
           <CreateDropdown
             onNewEntity={() => router.push(`/schemas/${domainSlug}/new`)}
-            onNewEnum={() => { setActiveTab("types"); setShowInlineCreate("enum"); }}
-            onNewScalar={() => { setActiveTab("types"); setShowInlineCreate("scalar"); }}
-            onNewUnion={() => { setActiveTab("types"); setShowInlineCreate("union"); }}
-            onNewApi={() => { setActiveTab("apis"); setShowInlineCreate("api"); }}
+            onNewEnum={() => { setActiveTab("types"); setTypeCreateIntent("enum"); }}
+            onNewScalar={() => { setActiveTab("types"); setTypeCreateIntent("scalar"); }}
+            onNewUnion={() => { setActiveTab("types"); setTypeCreateIntent("union"); }}
+            onNewApi={() => setActiveTab("apis")}
           />
         </div>
       </div>
@@ -447,6 +470,8 @@ export function DomainWorkspace({
           sharedEnums={sharedEnums}
           customScalars={customScalars}
           unionTypes={unionTypes}
+          createIntent={typeCreateIntent}
+          onCreateIntentConsumed={() => setTypeCreateIntent(null)}
         />
       )}
 
@@ -791,6 +816,7 @@ export function DomainWorkspace({
                   { key: "status", label: "Status" },
                   { key: "fieldCount", label: "Fields" },
                   { key: "updatedAt", label: "Last Modified" },
+                  { key: "actions", label: "" },
                 ].map((col) => (
                   <th
                     key={col.key}
@@ -830,7 +856,21 @@ export function DomainWorkspace({
                     {entity.fieldCount}
                   </td>
                   <td className="px-space-4 py-space-3 text-body-small text-muted-foreground">
-                    {new Date(entity.updatedAt).toLocaleDateString()}
+                    {formatDateOnly(entity.updatedAt)}
+                  </td>
+                  <td className="px-space-4 py-space-3">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteConfirm({ id: entity.id, name: entity.name, type: "entity" });
+                      }}
+                      className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                      title={`Delete entity ${entity.name}`}
+                      aria-label={`Delete entity ${entity.name}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </td>
                 </tr>
               ))}
