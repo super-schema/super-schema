@@ -55,6 +55,10 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions", () => 
   importTypeSpecDocumentAction: importTypeSpecDocumentActionMock,
 }));
 
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions", () => ({
+  importOpenApiDocumentAction: vi.fn(),
+}));
+
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({
   createDomainAssetsFromImportAction: createDomainAssetsFromImportActionMock,
 }));

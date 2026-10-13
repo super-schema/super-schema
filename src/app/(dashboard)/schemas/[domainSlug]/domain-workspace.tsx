@@ -606,7 +606,11 @@ export function DomainWorkspace({
 
       {/* APIs tab */}
       {activeTab === "apis" && (
-        <DomainApisTab services={services} />
+        <DomainApisTab
+          domainId={domainId}
+          services={services}
+          entities={entities.map((e) => ({ id: e.id, name: e.name }))}
+        />
       )}
 
       {/* Create Entity inline form */}

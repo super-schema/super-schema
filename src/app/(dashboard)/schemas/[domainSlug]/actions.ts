@@ -437,6 +437,217 @@ export async function updateUnionTypeAction(
 }
 
 // ---------------------------------------------------------------------------
+// API service / operation CRUD
+// ---------------------------------------------------------------------------
+
+export async function createServiceAction(
+  domainId: string,
+  data: { name: string; description?: string; basePath?: string; scope: "DOMAIN" | "ENTITY"; entityId?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    const created = await prisma.serviceDefinition.create({
+      data: {
+        name: data.name.trim(),
+        description: data.description ?? "",
+        basePath: data.basePath ?? "/",
+        domainId,
+        scope: data.scope,
+        entityId: data.scope === "ENTITY" ? data.entityId : undefined,
+      },
+    });
+    revalidatePath("/schemas");
+    return { success: true, serviceId: created.id };
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) {
+      return { error: `API "${data.name}" already exists in this domain` };
+    }
+    return { error: e instanceof Error ? e.message : "Failed to create API service" };
+  }
+}
+
+// Entity API tab calls this once, on the first operation it adds, so each
+// entity gets a single implicit ENTITY-scoped service to hang operations off.
+export async function getOrCreateEntityServiceAction(domainId: string, entityId: string, entityName: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    const existing = await prisma.serviceDefinition.findFirst({
+      where: { entityId },
+      select: { id: true },
+    });
+    if (existing) return { success: true, serviceId: existing.id };
+
+    const created = await prisma.serviceDefinition.create({
+      data: {
+        name: `${entityName}Api`,
+        basePath: "/",
+        domainId,
+        scope: "ENTITY",
+        entityId,
+      },
+    });
+    revalidatePath("/schemas");
+    return { success: true, serviceId: created.id };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to create API service" };
+  }
+}
+
+export async function deleteServiceAction(serviceId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.serviceDefinition.delete({ where: { id: serviceId } });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to delete API service" };
+  }
+}
+
+export interface OperationParamInput {
+  name: string;
+  type: string;
+  location: string;
+  required: boolean;
+  description?: string;
+}
+
+export interface OperationResponseInput {
+  statusCode: number;
+  type?: string | null;
+  description?: string;
+}
+
+export async function createOperationAction(
+  serviceId: string,
+  data: {
+    name: string;
+    httpMethod: string;
+    httpPath: string;
+    description?: string;
+    parameters?: OperationParamInput[];
+    responses?: OperationResponseInput[];
+  }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    const created = await prisma.operation.create({
+      data: {
+        serviceId,
+        name: data.name.trim(),
+        httpMethod: data.httpMethod,
+        httpPath: data.httpPath,
+        description: data.description ?? "",
+        parameters: {
+          create: (data.parameters ?? []).map((p) => ({
+            name: p.name,
+            type: p.type,
+            location: p.location,
+            required: p.required,
+            description: p.description ?? "",
+          })),
+        },
+        responses: {
+          create: (data.responses ?? []).map((r) => ({
+            statusCode: r.statusCode,
+            type: r.type ?? null,
+            description: r.description ?? "",
+          })),
+        },
+      },
+    });
+    revalidatePath("/schemas");
+    return { success: true, operationId: created.id };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to create operation" };
+  }
+}
+
+export async function updateOperationAction(
+  operationId: string,
+  data: { name?: string; httpMethod?: string; httpPath?: string; description?: string }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.operation.update({ where: { id: operationId }, data });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to update operation" };
+  }
+}
+
+// Replaces an operation's core fields and its full parameter/response list in
+// one transaction — simpler than per-row param/response CRUD actions, and the
+// editor always has the complete lists in hand anyway.
+export async function replaceOperationDetailsAction(
+  operationId: string,
+  data: {
+    name: string;
+    httpMethod: string;
+    httpPath: string;
+    description?: string;
+    parameters: OperationParamInput[];
+    responses: OperationResponseInput[];
+  }
+) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.$transaction([
+      prisma.operationParameter.deleteMany({ where: { operationId } }),
+      prisma.operationResponse.deleteMany({ where: { operationId } }),
+      prisma.operation.update({
+        where: { id: operationId },
+        data: {
+          name: data.name.trim(),
+          httpMethod: data.httpMethod,
+          httpPath: data.httpPath,
+          description: data.description ?? "",
+          parameters: {
+            create: data.parameters.map((p) => ({
+              name: p.name,
+              type: p.type,
+              location: p.location,
+              required: p.required,
+              description: p.description ?? "",
+            })),
+          },
+          responses: {
+            create: data.responses.map((r) => ({
+              statusCode: r.statusCode,
+              type: r.type ?? null,
+              description: r.description ?? "",
+            })),
+          },
+        },
+      }),
+    ]);
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to update operation" };
+  }
+}
+
+export async function deleteOperationAction(operationId: string) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    await prisma.operation.delete({ where: { id: operationId } });
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { error: e instanceof Error ? e.message : "Failed to delete operation" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Bulk import: create models, entities, shared types, decorators, and services
 // ---------------------------------------------------------------------------
 
@@ -790,6 +1001,27 @@ export async function createDomainAssetsFromImportAction(
               ? `Entity "${entity.name}" already exists — skipped`
               : `Failed to create entity "${entity.name}"`
           );
+        }
+      }
+
+      // Entity-scoped services may reference an entity that already existed
+      // before this import (not just one created in this same batch) — e.g.
+      // an OpenAPI import registering a new operation against an entity the
+      // domain already has. Resolve those by name in one query.
+      const unresolvedEntityNames = [
+        ...new Set(
+          payload.services
+            .filter((s) => s.scope === "entity" && s.entityName && !createdEntityMap.has(s.entityName))
+            .map((s) => s.entityName as string)
+        ),
+      ];
+      if (unresolvedEntityNames.length > 0) {
+        const existingEntities = await tx.entity.findMany({
+          where: { domainId: payload.domainId, name: { in: unresolvedEntityNames } },
+          select: { id: true, name: true },
+        });
+        for (const existing of existingEntities) {
+          createdEntityMap.set(existing.name, existing.id);
         }
       }
 

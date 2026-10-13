@@ -14,7 +14,8 @@ export type ImportFormat =
   | "bigquery-ddl"
   | "protobuf"
   | "typespec"
-  | "json-schema";
+  | "json-schema"
+  | "openapi";
 
 // ---------------------------------------------------------------------------
 // Confidence levels for type mappings

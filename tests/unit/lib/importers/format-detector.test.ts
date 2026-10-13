@@ -39,6 +39,31 @@ describe("Format Detector", () => {
       expect(detectFormat(content)).toBe("bigquery-ddl");
     });
 
+    it("detects OpenAPI by content (JSON)", () => {
+      const content = JSON.stringify({
+        openapi: "3.0.0",
+        info: { title: "Test", version: "1.0.0" },
+        paths: { "/users": {} },
+      });
+      expect(detectFormat(content)).toBe("openapi");
+    });
+
+    it("detects OpenAPI by content (YAML)", () => {
+      const content = `openapi: "3.0.0"
+info:
+  title: Test
+  version: "1.0.0"
+paths:
+  /users: {}
+`;
+      expect(detectFormat(content)).toBe("openapi");
+    });
+
+    it("does not misdetect a plain YAML/JSON object without paths as OpenAPI", () => {
+      const content = JSON.stringify({ openapi: "3.0.0", info: {} });
+      expect(detectFormat(content)).not.toBe("openapi");
+    });
+
     it('detects Protobuf by syntax = "proto3"', () => {
       const content = 'syntax = "proto3";\nmessage User {}';
       expect(detectFormat(content)).toBe("protobuf");

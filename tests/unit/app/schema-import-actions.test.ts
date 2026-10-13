@@ -14,9 +14,13 @@ const { mockAuth, mockPrisma, mockTx } = vi.hoisted(() => ({
     },
     entity: {
       create: vi.fn(),
+      findMany: vi.fn(),
     },
     product: {
       findUnique: vi.fn(),
+      create: vi.fn(),
+    },
+    serviceDefinition: {
       create: vi.fn(),
     },
   },
@@ -51,6 +55,10 @@ describe("schema import actions", () => {
     }));
     mockTx.product.findUnique.mockResolvedValue({ id: "prd-default" });
     mockTx.product.create.mockResolvedValue({ id: "prd-default" });
+    mockTx.entity.findMany.mockResolvedValue([]);
+    mockTx.serviceDefinition.create.mockImplementation(async ({ data }) => ({
+      id: `service-${data.name}`,
+    }));
   });
 
   it("rejects imports before opening a transaction when the session user no longer exists", async () => {
@@ -133,6 +141,48 @@ describe("schema import actions", () => {
         data: expect.objectContaining({
           name: "Customer",
           ownerId: "user-1",
+        }),
+      })
+    );
+  });
+
+  it("resolves an entity-scoped service against an entity that already existed before this import", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "user-1", email: "user@example.com" },
+    });
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
+    mockTx.entity.findMany.mockResolvedValue([{ id: "entity-existing-1", name: "Order" }]);
+
+    const result = await createDomainAssetsFromImportAction({
+      domainId: "domain-1",
+      namespace: "Test",
+      models: [],
+      entities: [],
+      sharedEnums: [],
+      customScalars: [],
+      unionTypes: [],
+      services: [
+        {
+          name: "OrderApi",
+          scope: "entity",
+          entityName: "Order",
+          operations: [],
+        },
+      ],
+      decoratorDefinitions: [],
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.servicesCreated).toBe(1);
+    expect(mockTx.entity.findMany).toHaveBeenCalledWith({
+      where: { domainId: "domain-1", name: { in: ["Order"] } },
+      select: { id: true, name: true },
+    });
+    expect(mockTx.serviceDefinition.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          scope: "ENTITY",
+          entityId: "entity-existing-1",
         }),
       })
     );

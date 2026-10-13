@@ -11,37 +11,39 @@ export default async function EntityDetailPage({ params }: Props) {
 
   // Look up entity by slug within its product (human-readable URL),
   // fall back to cuid for backward-compatible / legacy links.
+  const entityInclude = {
+    domain: true,
+    product: { select: { slug: true, name: true } },
+    fields: { orderBy: { sortOrder: "asc" as const } },
+    services: {
+      include: {
+        operations: {
+          include: { parameters: true, responses: true },
+          orderBy: { createdAt: "asc" as const },
+        },
+      },
+    },
+  };
+
   let entity = await prisma.entity.findFirst({
     where: {
       slug: entityId,
       product: { slug: productSlug, domain: { slug: domainSlug } },
     },
-    include: {
-      domain: true,
-      product: { select: { slug: true, name: true } },
-      fields: { orderBy: { sortOrder: "asc" } },
-    },
+    include: entityInclude,
   });
 
   if (!entity) {
     entity = await prisma.entity.findFirst({
       where: { slug: entityId, domain: { slug: domainSlug } },
-      include: {
-        domain: true,
-        product: { select: { slug: true, name: true } },
-        fields: { orderBy: { sortOrder: "asc" } },
-      },
+      include: entityInclude,
     });
   }
 
   if (!entity) {
     entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      include: {
-        domain: true,
-        product: { select: { slug: true, name: true } },
-        fields: { orderBy: { sortOrder: "asc" } },
-      },
+      include: entityInclude,
     });
   }
 
@@ -62,6 +64,7 @@ export default async function EntityDetailPage({ params }: Props) {
         description: entity.description,
         status: entity.status,
         version: entity.version,
+        domainId: entity.domainId,
         domainName: entity.domain.name,
         domainSlug,
         productSlug: entity.product.slug,
@@ -85,6 +88,29 @@ export default async function EntityDetailPage({ params }: Props) {
         decorators: f.decorators as Record<string, unknown>,
         sortOrder: f.sortOrder,
       }))}
+      apiServiceId={entity.services[0]?.id ?? null}
+      apiOperations={entity.services.flatMap((service) =>
+        service.operations.map((op) => ({
+          id: op.id,
+          serviceId: service.id,
+          name: op.name,
+          httpMethod: op.httpMethod,
+          httpPath: op.httpPath,
+          description: op.description,
+          parameters: op.parameters.map((p) => ({
+            name: p.name,
+            type: p.type,
+            location: p.location,
+            required: p.required,
+            description: p.description,
+          })),
+          responses: op.responses.map((r) => ({
+            statusCode: r.statusCode,
+            type: r.type,
+            description: r.description,
+          })),
+        }))
+      )}
     />
   );
 }

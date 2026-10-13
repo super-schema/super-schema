@@ -52,7 +52,7 @@ import {
 } from "@/lib/validation/entity-alerts";
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
-import { ApiTab } from "./components/ApiTab";
+import { ApiTab, type ApiOperationData } from "./components/ApiTab";
 import { classifyChangeLevel } from "@/lib/validation/change-level";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
@@ -84,6 +84,7 @@ interface EntityWorkspaceProps {
     description: string;
     status: string;
     version: number;
+    domainId: string;
     domainName: string;
     domainSlug: string;
     productSlug: string;
@@ -92,9 +93,11 @@ interface EntityWorkspaceProps {
   };
   fields: FieldData[];
   domainPolicy: Record<string, unknown> | null;
+  apiServiceId: string | null;
+  apiOperations: ApiOperationData[];
 }
 
-export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspaceProps) {
+export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, apiOperations }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -822,6 +825,9 @@ export function EntityWorkspace({ entity, fields, domainPolicy }: EntityWorkspac
           <ApiTab
             entityId={entity.id}
             entityName={entity.name}
+            domainId={entity.domainId}
+            serviceId={apiServiceId}
+            initialOperations={apiOperations}
             fields={fields.map((f) => ({ name: f.name, type: f.type }))}
             isReadOnly={readOnly_}
           />

@@ -8,6 +8,7 @@
  * Returns null if format cannot be determined.
  */
 
+import { parse as parseYaml } from "yaml";
 import type { ImportFormat } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,19 @@ const EXTENSION_MAP: Record<string, ImportFormat> = {
 
 function detectByContent(content: string): ImportFormat | null {
   const trimmed = content.trim();
+
+  // Check for OpenAPI (JSON or YAML): has an `openapi: "3.x"` version field
+  // plus a `paths` map. YAML is a superset of JSON, so one parse covers both.
+  if (/"openapi"\s*:\s*"3\./.test(trimmed) || /(^|\n)\s*openapi\s*:\s*["']?3\./m.test(trimmed)) {
+    try {
+      const parsed = parseYaml(trimmed) as Record<string, unknown> | null;
+      if (parsed && typeof parsed === "object" && parsed.paths) {
+        return "openapi";
+      }
+    } catch {
+      // Not valid YAML/JSON, continue checking other formats
+    }
+  }
 
   // Check for Avro JSON: has "type": "record"
   if (trimmed.startsWith("{")) {

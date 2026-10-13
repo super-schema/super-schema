@@ -1,8 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Globe } from "lucide-react";
+import { useState, useTransition } from "react";
+import { ChevronDown, ChevronRight, Globe, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import {
+  createServiceAction,
+  deleteServiceAction,
+  createOperationAction,
+  deleteOperationAction,
+} from "../actions";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,7 +56,9 @@ export interface ServiceData {
 }
 
 interface DomainApisTabProps {
+  domainId: string;
   services: ServiceData[];
+  entities: { id: string; name: string }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -62,24 +73,80 @@ const METHOD_COLORS: Record<string, string> = {
   PATCH: "bg-purple-500/15 text-purple-600 border-purple-500/30",
 };
 
+const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function DomainApisTab({ services }: DomainApisTabProps) {
+export function DomainApisTab({ domainId, services, entities }: DomainApisTabProps) {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedOp, setExpandedOp] = useState<string | null>(null);
+  const [isAddingService, setIsAddingService] = useState(false);
+  const [addingOpFor, setAddingOpFor] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
-  if (services.length === 0) {
-    return (
-      <div className="text-center py-16 text-muted-foreground">
-        <Globe className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-        <p className="text-body-small">No API services defined yet</p>
-        <p className="text-caption mt-1">
-          Import a TypeSpec file with interfaces or create services to see them here.
-        </p>
-      </div>
-    );
+  // New service form state
+  const [newServiceName, setNewServiceName] = useState("");
+  const [newServiceScope, setNewServiceScope] = useState<"DOMAIN" | "ENTITY">("DOMAIN");
+  const [newServiceEntityId, setNewServiceEntityId] = useState(entities[0]?.id ?? "");
+  const [newServiceBasePath, setNewServiceBasePath] = useState("/");
+
+  // New operation form state
+  const [newOpName, setNewOpName] = useState("");
+  const [newOpMethod, setNewOpMethod] = useState("GET");
+  const [newOpPath, setNewOpPath] = useState("/");
+
+  function submitNewService() {
+    if (!newServiceName.trim()) return;
+    startTransition(async () => {
+      const result = await createServiceAction(domainId, {
+        name: newServiceName.trim(),
+        basePath: newServiceBasePath || "/",
+        scope: newServiceScope,
+        entityId: newServiceScope === "ENTITY" ? newServiceEntityId : undefined,
+      });
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      setIsAddingService(false);
+      setNewServiceName("");
+      setNewServiceBasePath("/");
+    });
+  }
+
+  function removeService(serviceId: string) {
+    startTransition(async () => {
+      const result = await deleteServiceAction(serviceId);
+      if ("error" in result) toast.error(result.error);
+    });
+  }
+
+  function submitNewOperation(serviceId: string) {
+    if (!newOpName.trim()) return;
+    startTransition(async () => {
+      const result = await createOperationAction(serviceId, {
+        name: newOpName.trim(),
+        httpMethod: newOpMethod,
+        httpPath: newOpPath || "/",
+      });
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+      setAddingOpFor(null);
+      setNewOpName("");
+      setNewOpMethod("GET");
+      setNewOpPath("/");
+    });
+  }
+
+  function removeOperation(operationId: string) {
+    startTransition(async () => {
+      const result = await deleteOperationAction(operationId);
+      if ("error" in result) toast.error(result.error);
+    });
   }
 
   const totalOps = services.reduce((sum, s) => sum + s.operations.length, 0);
@@ -88,17 +155,76 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
 
   return (
     <div className="space-y-space-3" data-testid="domain-apis-tab">
-      {/* Summary */}
-      <div className="flex items-center gap-space-2 text-caption text-muted-foreground">
-        <span>
+      {/* Summary + create */}
+      <div className="flex items-center justify-between">
+        <span className="text-caption text-muted-foreground">
           {services.length} service{services.length !== 1 ? "s" : ""} with {totalOps} operation{totalOps !== 1 ? "s" : ""}
         </span>
+        <Button size="sm" className="gap-1.5" onClick={() => setIsAddingService(true)} disabled={isAddingService}>
+          <Plus className="w-3.5 h-3.5" />
+          New Service
+        </Button>
       </div>
 
-      {[
-        { title: "Domain APIs", services: domainServices },
-        { title: "Entity APIs", services: entityServices },
-      ].map(({ title, services: groupedServices }) => (
+      {isAddingService && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-space-4 space-y-space-3">
+          <h3 className="text-body-small font-semibold text-foreground">New API Service</h3>
+          <div className="grid grid-cols-2 gap-space-2">
+            <Input
+              value={newServiceName}
+              onChange={(e) => setNewServiceName(e.target.value)}
+              placeholder="Service name"
+              className="h-8"
+              autoFocus
+            />
+            <select
+              value={newServiceScope}
+              onChange={(e) => setNewServiceScope(e.target.value as "DOMAIN" | "ENTITY")}
+              className="h-8 rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
+            >
+              <option value="DOMAIN">Domain-scoped</option>
+              <option value="ENTITY">Entity-scoped</option>
+            </select>
+          </div>
+          {newServiceScope === "ENTITY" && (
+            <select
+              value={newServiceEntityId}
+              onChange={(e) => setNewServiceEntityId(e.target.value)}
+              className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
+            >
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>{e.name}</option>
+              ))}
+            </select>
+          )}
+          <Input
+            value={newServiceBasePath}
+            onChange={(e) => setNewServiceBasePath(e.target.value)}
+            placeholder="/base-path"
+            className="h-8 font-mono"
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setIsAddingService(false)}>Cancel</Button>
+            <Button size="sm" onClick={submitNewService} disabled={!newServiceName.trim() || isPending}>
+              Create Service
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {services.length === 0 && !isAddingService ? (
+        <div className="text-center py-16 text-muted-foreground">
+          <Globe className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+          <p className="text-body-small">No API services defined yet</p>
+          <p className="text-caption mt-1">
+            Import an OpenAPI or TypeSpec file, or create a service to get started.
+          </p>
+        </div>
+      ) : (
+        [
+          { title: "Domain APIs", services: domainServices },
+          { title: "Entity APIs", services: entityServices },
+        ].map(({ title, services: groupedServices }) => (
         <div key={title} className="space-y-space-2">
           <div className="flex items-center justify-between">
             <h3 className="text-body-small font-medium text-foreground">{title}</h3>
@@ -115,36 +241,45 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
         return (
           <div key={service.id} className="border border-border/50 rounded-lg overflow-hidden">
             {/* Service header */}
-            <button
-              onClick={() => setExpandedService(isExpanded ? null : service.id)}
-              className="flex items-center gap-space-2 w-full px-space-4 py-space-3 hover:bg-muted/30 transition-colors"
-            >
-              {isExpanded ? (
-                <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
-              )}
-              <Globe className="w-4 h-4 text-primary" />
-              <span className="font-mono text-body-small text-foreground font-medium">
-                {service.name}
-              </span>
-              <Badge variant="outline" className="text-[10px] h-4 px-1.5 uppercase">
-                {service.scope === "ENTITY" ? "entity" : "domain"}
-              </Badge>
-              {service.entity && (
-                <span className="text-caption text-muted-foreground">
-                  {service.entity.name}
+            <div className="flex items-center gap-space-2 w-full px-space-4 py-space-3 hover:bg-muted/30 transition-colors">
+              <button
+                onClick={() => setExpandedService(isExpanded ? null : service.id)}
+                className="flex items-center gap-space-2 flex-1 min-w-0"
+              >
+                {isExpanded ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                )}
+                <Globe className="w-4 h-4 text-primary" />
+                <span className="font-mono text-body-small text-foreground font-medium">
+                  {service.name}
                 </span>
-              )}
-              {service.basePath !== "/" && (
-                <span className="font-mono text-caption text-muted-foreground">
-                  {service.basePath}
-                </span>
-              )}
-              <Badge variant="secondary" className="text-[10px] h-4 px-1.5 ml-auto">
-                {service.operations.length} op{service.operations.length !== 1 ? "s" : ""}
-              </Badge>
-            </button>
+                <Badge variant="outline" className="text-[10px] h-4 px-1.5 uppercase">
+                  {service.scope === "ENTITY" ? "entity" : "domain"}
+                </Badge>
+                {service.entity && (
+                  <span className="text-caption text-muted-foreground">
+                    {service.entity.name}
+                  </span>
+                )}
+                {service.basePath !== "/" && (
+                  <span className="font-mono text-caption text-muted-foreground">
+                    {service.basePath}
+                  </span>
+                )}
+                <Badge variant="secondary" className="text-[10px] h-4 px-1.5 ml-auto">
+                  {service.operations.length} op{service.operations.length !== 1 ? "s" : ""}
+                </Badge>
+              </button>
+              <button
+                onClick={() => removeService(service.id)}
+                className="text-muted-foreground hover:text-destructive"
+                title="Delete service"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
             {/* Expanded: show operations */}
             {isExpanded && (
@@ -153,6 +288,42 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
                   <p className="text-caption text-muted-foreground px-space-4 py-space-2 border-b border-border/20">
                     {service.description}
                   </p>
+                )}
+
+                <div className="flex justify-end px-space-4 py-space-2 border-b border-border/20">
+                  <button
+                    onClick={() => setAddingOpFor(addingOpFor === service.id ? null : service.id)}
+                    className="text-[11px] text-primary hover:underline flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" /> Add Operation
+                  </button>
+                </div>
+
+                {addingOpFor === service.id && (
+                  <div className="px-space-4 py-space-2 border-b border-border/20 flex items-center gap-2">
+                    <select
+                      value={newOpMethod}
+                      onChange={(e) => setNewOpMethod(e.target.value)}
+                      className="h-7 rounded border border-border bg-popover px-1 text-[11px] font-mono"
+                    >
+                      {METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    <Input
+                      value={newOpPath}
+                      onChange={(e) => setNewOpPath(e.target.value)}
+                      placeholder="/path"
+                      className="h-7 font-mono text-[11px] flex-1"
+                    />
+                    <Input
+                      value={newOpName}
+                      onChange={(e) => setNewOpName(e.target.value)}
+                      placeholder="operationName"
+                      className="h-7 font-mono text-[11px] flex-1"
+                    />
+                    <Button size="sm" className="h-7" onClick={() => submitNewOperation(service.id)} disabled={!newOpName.trim() || isPending}>
+                      Add
+                    </Button>
+                  </div>
                 )}
 
                 {service.operations.length === 0 ? (
@@ -167,28 +338,37 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
 
                       return (
                         <div key={op.id} className="border-b border-border/20 last:border-b-0">
-                          <button
-                            onClick={() => setExpandedOp(isOpExpanded ? null : op.id)}
-                            className="flex items-center gap-2 w-full px-space-4 py-space-2 hover:bg-muted/20 transition-colors"
-                          >
-                            {isOpExpanded ? (
-                              <ChevronDown className="w-3 h-3 text-muted-foreground/50" />
-                            ) : (
-                              <ChevronRight className="w-3 h-3 text-muted-foreground/50" />
-                            )}
-                            <Badge className={`text-[11px] h-5 font-mono font-bold border ${methodColor}`}>
-                              {op.httpMethod}
-                            </Badge>
-                            <span className="font-mono text-body-small text-foreground">
-                              {op.httpPath}
-                            </span>
-                            <span className="text-caption text-muted-foreground flex-1 text-left truncate ml-2">
-                              {op.name}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground/50">
-                              {op.parameters.length}p / {op.responses.length}r
-                            </span>
-                          </button>
+                          <div className="flex items-center gap-2 w-full px-space-4 py-space-2 hover:bg-muted/20 transition-colors">
+                            <button
+                              onClick={() => setExpandedOp(isOpExpanded ? null : op.id)}
+                              className="flex items-center gap-2 flex-1 min-w-0"
+                            >
+                              {isOpExpanded ? (
+                                <ChevronDown className="w-3 h-3 text-muted-foreground/50" />
+                              ) : (
+                                <ChevronRight className="w-3 h-3 text-muted-foreground/50" />
+                              )}
+                              <Badge className={`text-[11px] h-5 font-mono font-bold border ${methodColor}`}>
+                                {op.httpMethod}
+                              </Badge>
+                              <span className="font-mono text-body-small text-foreground">
+                                {op.httpPath}
+                              </span>
+                              <span className="text-caption text-muted-foreground flex-1 text-left truncate ml-2">
+                                {op.name}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground/50">
+                                {op.parameters.length}p / {op.responses.length}r
+                              </span>
+                            </button>
+                            <button
+                              onClick={() => removeOperation(op.id)}
+                              className="text-muted-foreground hover:text-destructive"
+                              title="Delete operation"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
 
                           {/* Operation details */}
                           {isOpExpanded && (
@@ -258,7 +438,9 @@ export function DomainApisTab({ services }: DomainApisTabProps) {
             })
           )}
         </div>
-      ))}
+        ))
+      )}
     </div>
   );
 }
+

@@ -43,6 +43,10 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions", () => 
   importTypeSpecDocumentAction: vi.fn(async () => ({ success: false, error: { code: "PARSE_ERROR", message: "mocked" } })),
 }));
 
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions", () => ({
+  importOpenApiDocumentAction: vi.fn(),
+}));
+
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({
   createDomainAssetsFromImportAction: vi.fn(),
 }));

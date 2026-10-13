@@ -21,6 +21,7 @@ import type { ParsedEntity, ImportFormat } from "@/lib/importers/types";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
+import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
 import { detectFormat } from "@/lib/importers/format-detector";
 import { inferJsonSchema } from "@/lib/importers/jsonschema-infer";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
@@ -271,8 +272,11 @@ export function ImportDialog({
   async function reviewImportedContent(content: string, filename?: string) {
     const format = detectFormat(content, filename);
 
-    if (format === "typespec") {
-      const tsResult = await importTypeSpecDocumentAction(content);
+    if (format === "typespec" || format === "openapi") {
+      const tsResult =
+        format === "openapi"
+          ? await importOpenApiDocumentAction(content)
+          : await importTypeSpecDocumentAction(content);
       if (!tsResult.success) {
         setError(tsResult.error.message);
         return;
@@ -720,7 +724,7 @@ export function ImportDialog({
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-caption text-muted-foreground">
                             <Upload className="w-3 h-3" />
-                            <span>Drop a .tsp, .avsc, .json, .sql, .proto file here</span>
+                            <span>Drop a .tsp, .avsc, .json, .yaml, .sql, .proto file here</span>
                           </div>
                           <button
                             onClick={(e) => {
@@ -739,14 +743,14 @@ export function ImportDialog({
                             Drag and drop a schema file, or paste content below
                           </p>
                           <p className="text-caption text-muted-foreground">
-                            .tsp, .avsc, .avro, .json, .sql, .ddl, .proto
+                            .tsp, .avsc, .avro, .json, .yaml, .yml, .sql, .ddl, .proto
                           </p>
                           <div className="flex items-center gap-2">
                             <label className="px-3 py-1 rounded-lg text-caption bg-muted hover:bg-accent cursor-pointer">
                               Browse
                               <input
                                 type="file"
-                                accept=".tsp,.avsc,.avro,.json,.sql,.ddl,.proto"
+                                accept=".tsp,.avsc,.avro,.json,.yaml,.yml,.sql,.ddl,.proto"
                                 className="hidden"
                                 onChange={(e) => {
                                   if (e.target.files?.[0]) {
@@ -867,13 +871,13 @@ Example JSON Schema:
                       Drag and drop a schema file here
                     </p>
                     <p className="text-caption text-muted-foreground">
-                      .tsp, .avsc, .avro, .json, .sql, .ddl, .proto
+                      .tsp, .avsc, .avro, .json, .yaml, .yml, .sql, .ddl, .proto
                     </p>
                     <label className="px-4 py-1.5 rounded-lg text-body-small bg-muted hover:bg-accent cursor-pointer">
                       Browse Files
                       <input
                         type="file"
-                        accept=".tsp,.avsc,.avro,.json,.sql,.ddl,.proto"
+                        accept=".tsp,.avsc,.avro,.json,.yaml,.yml,.sql,.ddl,.proto"
                         className="hidden"
                         onChange={(e) => {
                           if (e.target.files?.[0]) {
@@ -909,7 +913,7 @@ Example JSON Schema:
                       Browse Files
                       <input
                         type="file"
-                        accept=".tsp,.avsc,.avro,.json,.sql,.ddl,.proto"
+                        accept=".tsp,.avsc,.avro,.json,.yaml,.yml,.sql,.ddl,.proto"
                         multiple
                         className="hidden"
                         onChange={(e) => {
