@@ -71,6 +71,7 @@ export type EmissionTargetStatusCountAggregateOutputType = {
   lastEmittedAt: number
   status: number
   output: number
+  formatOptions: number
   createdAt: number
   updatedAt: number
   _all: number
@@ -122,6 +123,7 @@ export type EmissionTargetStatusCountAggregateInputType = {
   lastEmittedAt?: true
   status?: true
   output?: true
+  formatOptions?: true
   createdAt?: true
   updatedAt?: true
   _all?: true
@@ -222,6 +224,7 @@ export type EmissionTargetStatusGroupByOutputType = {
   lastEmittedAt: Date | null
   status: $Enums.EmissionStatus
   output: string | null
+  formatOptions: runtime.JsonValue | null
   createdAt: Date
   updatedAt: Date
   _count: EmissionTargetStatusCountAggregateOutputType | null
@@ -258,6 +261,7 @@ export type EmissionTargetStatusWhereInput = {
   lastEmittedAt?: Prisma.DateTimeNullableFilter<"EmissionTargetStatus"> | Date | string | null
   status?: Prisma.EnumEmissionStatusFilter<"EmissionTargetStatus"> | $Enums.EmissionStatus
   output?: Prisma.StringNullableFilter<"EmissionTargetStatus"> | string | null
+  formatOptions?: Prisma.JsonNullableFilter<"EmissionTargetStatus">
   createdAt?: Prisma.DateTimeFilter<"EmissionTargetStatus"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"EmissionTargetStatus"> | Date | string
 }
@@ -271,6 +275,7 @@ export type EmissionTargetStatusOrderByWithRelationInput = {
   lastEmittedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   status?: Prisma.SortOrder
   output?: Prisma.SortOrderInput | Prisma.SortOrder
+  formatOptions?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -288,6 +293,7 @@ export type EmissionTargetStatusWhereUniqueInput = Prisma.AtLeast<{
   lastEmittedAt?: Prisma.DateTimeNullableFilter<"EmissionTargetStatus"> | Date | string | null
   status?: Prisma.EnumEmissionStatusFilter<"EmissionTargetStatus"> | $Enums.EmissionStatus
   output?: Prisma.StringNullableFilter<"EmissionTargetStatus"> | string | null
+  formatOptions?: Prisma.JsonNullableFilter<"EmissionTargetStatus">
   createdAt?: Prisma.DateTimeFilter<"EmissionTargetStatus"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"EmissionTargetStatus"> | Date | string
 }, "id" | "entityId_target">
@@ -301,6 +307,7 @@ export type EmissionTargetStatusOrderByWithAggregationInput = {
   lastEmittedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   status?: Prisma.SortOrder
   output?: Prisma.SortOrderInput | Prisma.SortOrder
+  formatOptions?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.EmissionTargetStatusCountOrderByAggregateInput
@@ -322,6 +329,7 @@ export type EmissionTargetStatusScalarWhereWithAggregatesInput = {
   lastEmittedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"EmissionTargetStatus"> | Date | string | null
   status?: Prisma.EnumEmissionStatusWithAggregatesFilter<"EmissionTargetStatus"> | $Enums.EmissionStatus
   output?: Prisma.StringNullableWithAggregatesFilter<"EmissionTargetStatus"> | string | null
+  formatOptions?: Prisma.JsonNullableWithAggregatesFilter<"EmissionTargetStatus">
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"EmissionTargetStatus"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"EmissionTargetStatus"> | Date | string
 }
@@ -335,6 +343,7 @@ export type EmissionTargetStatusCreateInput = {
   lastEmittedAt?: Date | string | null
   status?: $Enums.EmissionStatus
   output?: string | null
+  formatOptions?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -348,6 +357,7 @@ export type EmissionTargetStatusUncheckedCreateInput = {
   lastEmittedAt?: Date | string | null
   status?: $Enums.EmissionStatus
   output?: string | null
+  formatOptions?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -361,6 +371,7 @@ export type EmissionTargetStatusUpdateInput = {
   lastEmittedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   status?: Prisma.EnumEmissionStatusFieldUpdateOperationsInput | $Enums.EmissionStatus
   output?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  formatOptions?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -374,6 +385,7 @@ export type EmissionTargetStatusUncheckedUpdateInput = {
   lastEmittedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   status?: Prisma.EnumEmissionStatusFieldUpdateOperationsInput | $Enums.EmissionStatus
   output?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  formatOptions?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -387,6 +399,7 @@ export type EmissionTargetStatusCreateManyInput = {
   lastEmittedAt?: Date | string | null
   status?: $Enums.EmissionStatus
   output?: string | null
+  formatOptions?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   updatedAt?: Date | string
 }
@@ -400,6 +413,7 @@ export type EmissionTargetStatusUpdateManyMutationInput = {
   lastEmittedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   status?: Prisma.EnumEmissionStatusFieldUpdateOperationsInput | $Enums.EmissionStatus
   output?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  formatOptions?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -413,6 +427,7 @@ export type EmissionTargetStatusUncheckedUpdateManyInput = {
   lastEmittedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   status?: Prisma.EnumEmissionStatusFieldUpdateOperationsInput | $Enums.EmissionStatus
   output?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  formatOptions?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -431,6 +446,7 @@ export type EmissionTargetStatusCountOrderByAggregateInput = {
   lastEmittedAt?: Prisma.SortOrder
   status?: Prisma.SortOrder
   output?: Prisma.SortOrder
+  formatOptions?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
@@ -486,6 +502,7 @@ export type EmissionTargetStatusSelect<ExtArgs extends runtime.Types.Extensions.
   lastEmittedAt?: boolean
   status?: boolean
   output?: boolean
+  formatOptions?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["emissionTargetStatus"]>
@@ -499,6 +516,7 @@ export type EmissionTargetStatusSelectCreateManyAndReturn<ExtArgs extends runtim
   lastEmittedAt?: boolean
   status?: boolean
   output?: boolean
+  formatOptions?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["emissionTargetStatus"]>
@@ -512,6 +530,7 @@ export type EmissionTargetStatusSelectUpdateManyAndReturn<ExtArgs extends runtim
   lastEmittedAt?: boolean
   status?: boolean
   output?: boolean
+  formatOptions?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }, ExtArgs["result"]["emissionTargetStatus"]>
@@ -525,11 +544,12 @@ export type EmissionTargetStatusSelectScalar = {
   lastEmittedAt?: boolean
   status?: boolean
   output?: boolean
+  formatOptions?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type EmissionTargetStatusOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "entityId" | "target" | "emittedVersion" | "stagedVersion" | "lastEmittedAt" | "status" | "output" | "createdAt" | "updatedAt", ExtArgs["result"]["emissionTargetStatus"]>
+export type EmissionTargetStatusOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "entityId" | "target" | "emittedVersion" | "stagedVersion" | "lastEmittedAt" | "status" | "output" | "formatOptions" | "createdAt" | "updatedAt", ExtArgs["result"]["emissionTargetStatus"]>
 
 export type $EmissionTargetStatusPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "EmissionTargetStatus"
@@ -543,6 +563,7 @@ export type $EmissionTargetStatusPayload<ExtArgs extends runtime.Types.Extension
     lastEmittedAt: Date | null
     status: $Enums.EmissionStatus
     output: string | null
+    formatOptions: runtime.JsonValue | null
     createdAt: Date
     updatedAt: Date
   }, ExtArgs["result"]["emissionTargetStatus"]>
@@ -976,6 +997,7 @@ export interface EmissionTargetStatusFieldRefs {
   readonly lastEmittedAt: Prisma.FieldRef<"EmissionTargetStatus", 'DateTime'>
   readonly status: Prisma.FieldRef<"EmissionTargetStatus", 'EmissionStatus'>
   readonly output: Prisma.FieldRef<"EmissionTargetStatus", 'String'>
+  readonly formatOptions: Prisma.FieldRef<"EmissionTargetStatus", 'Json'>
   readonly createdAt: Prisma.FieldRef<"EmissionTargetStatus", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"EmissionTargetStatus", 'DateTime'>
 }

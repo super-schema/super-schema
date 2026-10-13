@@ -101,7 +101,8 @@ import {
   publishSchemaAction,
   deploySchemaAction,
   getSchemaVersionsAction,
-} from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions";
+  saveSchemaFieldTypeOverrideAction,
+} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -151,6 +152,40 @@ describe("SchemasTab Workflow", () => {
       const versions = (meta.schemaVersions as Record<string, unknown[]>).bigquery;
       expect(versions).toHaveLength(1);
       expect((versions[0] as { status: string }).status).toBe("draft");
+    });
+
+    it("stores precision-aware field type mapping snapshots", async () => {
+      const decimalField = {
+        id: "field-amount",
+        name: "amount",
+        type: "decimal",
+        precision: 10,
+        scale: 2,
+        nullable: false,
+        isKey: false,
+        fieldNumber: null,
+        description: "",
+        classification: null,
+        aliases: [],
+        decorators: {},
+        sortOrder: 0,
+      };
+      mockPrisma.entity.findUnique.mockResolvedValue({
+        id: "ent-1",
+        name: "TestEntity",
+        version: 1,
+        metadata: {},
+        fields: [decimalField],
+      });
+      mockPrisma.field.findMany.mockResolvedValue([decimalField]);
+      mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
+
+      const result = await generateSchemaAction("ent-1", "bigquery");
+
+      expect(result.success).toBe(true);
+      expect(result.schemaVersion!.fieldTypeMappings).toEqual([
+        { fieldName: "amount", sourceType: "decimal", targetType: "NUMERIC(10,2)" },
+      ]);
     });
   });
 
@@ -344,6 +379,43 @@ describe("SchemasTab Workflow", () => {
       expect(result.error).toBe("Entity not found");
     });
   });
+
+  describe("saveSchemaFieldTypeOverrideAction", () => {
+    it("rejects physical target types outside the selected target catalog", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue({
+        id: "ent-1",
+        metadata: {},
+      });
+      mockPrisma.field.findMany.mockResolvedValue([
+        {
+          id: "field-1",
+          name: "displayName",
+          type: "string",
+          precision: null,
+          scale: null,
+          nullable: false,
+          isKey: false,
+          fieldNumber: null,
+          description: "",
+          classification: null,
+          aliases: [],
+          decorators: {},
+          sortOrder: 0,
+        },
+      ]);
+
+      const result = await saveSchemaFieldTypeOverrideAction({
+        entityId: "ent-1",
+        target: "bigquery",
+        fieldId: "field-1",
+        mappedType: "STRING); DROP TABLE users; --",
+      });
+
+      expect(result.error).toContain("Invalid BigQuery DDL target type");
+      expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    });
+  });
+
 
   // -------------------------------------------------------------------------
   // 5. Version numbering increments correctly

@@ -7,6 +7,7 @@ export interface EntityData {
   slug: string;
   domainName: string;
   domainSlug: string;
+  productSlug: string;
   status: string;
   fieldCount: number;
   piiCount?: number;
@@ -63,6 +64,7 @@ export function buildNodesAndEdges(entities: EntityData[]): {
         slug: entity.slug,
         domainName: entity.domainName,
         domainSlug: entity.domainSlug,
+        productSlug: entity.productSlug,
         status: entity.status,
         fieldCount: entity.fieldCount,
         piiCount: entity.piiCount ?? 0,

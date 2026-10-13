@@ -14,15 +14,10 @@ import {
 import {
   Database,
   Clock,
-  Plus,
-  Save,
   Zap,
-  FileCode,
-  Download,
   ArrowRight,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { modKey } from "@/lib/platform";
 import {
   getRecentEntityEntries,
   trackRecentEntity,
@@ -39,7 +34,13 @@ interface DomainTreeNode {
   name: string;
   slug: string;
   isSystem: boolean;
-  entities: { id: string; name: string; slug: string; status: string }[];
+  entities: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    productSlug: string;
+  }[];
 }
 
 export function CommandPalette({
@@ -53,14 +54,14 @@ export function CommandPalette({
   const [entities, setEntities] = useState<CommandPaletteEntity[]>([]);
   const [fields, setFields] = useState<CommandPaletteField[]>([]);
   const [recentEntries, setRecentEntries] = useState<RecentEntityEntry[]>([]);
-  const mod = modKey();
 
   // Fetch entity & field data when palette opens
   useEffect(() => {
     if (!isOpen) return;
 
-    // Load recent entries from localStorage
-    setRecentEntries(getRecentEntityEntries());
+    const recentTimer = window.setTimeout(() => {
+      setRecentEntries(getRecentEntityEntries());
+    }, 0);
 
     // Fetch domains tree for entities
     async function fetchData() {
@@ -78,6 +79,7 @@ export function CommandPalette({
               slug: entity.slug,
               domainName: domain.name,
               domainSlug: domain.slug,
+              productSlug: entity.productSlug,
               status: entity.status,
             });
           });
@@ -99,6 +101,8 @@ export function CommandPalette({
       }
     }
     fetchData();
+
+    return () => window.clearTimeout(recentTimer);
   }, [isOpen]);
 
   // Escape to close
@@ -123,7 +127,11 @@ export function CommandPalette({
         entityName: entity.name,
         domainName: entity.domainName,
       });
-      router.push(`/schemas/${entity.domainSlug}/${entity.slug || entity.id}`);
+      router.push(
+        entity.productSlug
+          ? `/schemas/${entity.domainSlug}/${entity.productSlug}/${entity.slug || entity.id}`
+          : `/schemas/${entity.domainSlug}/${entity.slug || entity.id}`
+      );
       onClose();
     },
     [router, onClose]
@@ -132,7 +140,9 @@ export function CommandPalette({
   const navigateToField = useCallback(
     (field: CommandPaletteField) => {
       router.push(
-        `/schemas/${field.domainSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
+        field.productSlug
+          ? `/schemas/${field.domainSlug}/${field.productSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
+          : `/schemas/${field.domainSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
       );
       onClose();
     },

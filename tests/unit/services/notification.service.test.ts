@@ -17,6 +17,18 @@ let idCounter = 0;
 
 vi.mock("@/lib/db", () => ({
   prisma: {
+    entity: {
+      findUnique: vi.fn(async (args: { where: { id: string }; include?: unknown }) => {
+        if (args.where.id !== "entity-1") return null;
+        return {
+          id: "entity-1",
+          slug: "customer",
+          domain: { slug: "crm" },
+          product: { slug: "orders" },
+          fields: [{ id: "field-1", slug: "email" }],
+        };
+      }),
+    },
     notification: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         const row = {
@@ -127,7 +139,13 @@ describe("Notification Service", () => {
         expect(result.data.type).toBe("APPROVAL_REQUEST");
         expect(result.data.title).toBe("Test notification");
         expect(result.data.body).toBe("Test body content");
-        expect(result.data.entityRef).toEqual({ entityId: "entity-1" });
+        expect(result.data.entityRef).toEqual({
+          entityId: "entity-1",
+          domainSlug: "crm",
+          productSlug: "orders",
+          entitySlug: "customer",
+          fieldSlug: undefined,
+        });
         expect(result.data.read).toBe(false);
         expect(result.data.id).toBeDefined();
         expect(result.data.createdAt).toBeInstanceOf(Date);
@@ -150,7 +168,37 @@ describe("Notification Service", () => {
       if (result.success) {
         expect(result.data.entityRef).toEqual({
           entityId: "entity-1",
+          domainSlug: "crm",
+          productSlug: "orders",
+          entitySlug: "customer",
           fieldId: "field-1",
+          fieldSlug: "email",
+          versionId: "v2",
+        });
+      }
+    });
+
+    it("enriches entityRef with route slugs when the entity exists", async () => {
+      const result = await createNotification(
+        makeInput({
+          entityRef: {
+            entityId: "entity-1",
+            fieldId: "field-1",
+            versionId: "v2",
+          },
+        }),
+        mockCtx
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.entityRef).toEqual({
+          entityId: "entity-1",
+          domainSlug: "crm",
+          productSlug: "orders",
+          entitySlug: "customer",
+          fieldId: "field-1",
+          fieldSlug: "email",
           versionId: "v2",
         });
       }

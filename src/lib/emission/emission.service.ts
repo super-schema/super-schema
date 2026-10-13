@@ -1,20 +1,17 @@
 /**
  * Emission service — orchestrates the full emission pipeline.
  *
- * Takes an entity ID, loads entity + fields from Prisma,
- * then delegates to emitFromData() for the pure pipeline.
+ * Takes an entity ID, loads entity + fields from Prisma, then runs every
+ * enabled schema target through the real TypeSpec compiler.
  */
 
 import { prisma } from "@/lib/db";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
-import type { EmissionResult } from "./emission.types";
-import { emitFromData } from "./emit-from-data";
-import { getOverridesForEntity } from "@/services/type-mapping.service";
-import {
-  parseSchemaTargetTypeOverrides,
-  toFieldOverridePolicies,
-} from "@/lib/schema-targets/field-type-overrides";
-import type { ServiceContext } from "@/types/service-context";
+import { compileEntity } from "@/lib/compiler/compiler.service";
+import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import type { EmissionResult, TargetOutput } from "./emission.types";
+import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 
 // Re-export the pure function for convenience
 export { emitFromData } from "./emit-from-data";
@@ -24,10 +21,10 @@ export { emitFromData } from "./emit-from-data";
 // ---------------------------------------------------------------------------
 
 /**
- * Run the full emission pipeline for an entity.
- *
- * 1. Load entity + fields from DB
- * 2. Delegate to emitFromData() for compilation + emission
+ * Run the full emission pipeline for an entity: every enabled schema target,
+ * through the real TypeSpec compiler (every target is `runtime: "typespec-cli"`
+ * as of 2026-10-12 — see src/emitters/index.ts for why the native-only
+ * `emitFromData()` this used to delegate to is no longer sufficient here).
  */
 export async function emitEntity(entityId: string): Promise<EmissionResult> {
   // 1. Load entity + fields
@@ -75,23 +72,39 @@ export async function emitEntity(entityId: string): Promise<EmissionResult> {
     sortOrder: f.sortOrder,
   }));
 
-  // Load any overrides for this entity
-  const serviceCtx: ServiceContext = {
-    userId: "system",
-    userRole: "ADMIN",
-    prisma,
-  };
-  const overridesResult = await getOverridesForEntity(entityId, serviceCtx);
-  const policyOverrides = overridesResult.success ? overridesResult.data : [];
-  const fieldOverrides = parseSchemaTargetTypeOverrides(
-    (entity.metadata as Record<string, unknown> | null)?.schemaTargetTypeOverrides
-  );
-  const fieldOverridePolicies = Object.keys(fieldOverrides).flatMap((target) =>
-    toFieldOverridePolicies(fieldOverrides, target)
+  // 3. Run every enabled target through the real compiler
+  const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
+  const targets: Record<string, TargetOutput> = {};
+
+  await Promise.all(
+    enabledTargets.map(async (target) => {
+      const result = await emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, target.key);
+      targets[target.key] = {
+        name: target.key,
+        targetFormat: target.targetFormat,
+        output: result.output,
+        isValid: result.validationStatus === "VALID",
+        validationStatus: result.validationStatus,
+        warnings: result.warnings.map((message) => ({ message })),
+        errors: result.errors,
+      };
+    })
   );
 
-  return emitFromData(prismaEntity, prismaFields, [
-    ...policyOverrides,
-    ...fieldOverridePolicies,
-  ]);
+  const validCount = Object.values(targets).filter((t) => t.validationStatus === "VALID").length;
+  const invalidCount = Object.values(targets).filter((t) => t.validationStatus === "INVALID").length;
+  const warningCount = enabledTargets.length - validCount - invalidCount;
+
+  return {
+    typespec: generateTypeSpec(compileEntity(prismaEntity, prismaFields)),
+    targets,
+    success: invalidCount === 0,
+    summary: {
+      totalTargets: enabledTargets.length,
+      validCount,
+      warningCount,
+      invalidCount,
+    },
+  };
 }
+

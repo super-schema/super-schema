@@ -15,6 +15,7 @@ function makeEntity(overrides: Partial<EntityData> = {}): EntityData {
     slug: "user",
     domainName: "Identity",
     domainSlug: "identity",
+    productSlug: "core",
     status: "ACTIVE",
     fieldCount: 5,
     piiCount: 2,

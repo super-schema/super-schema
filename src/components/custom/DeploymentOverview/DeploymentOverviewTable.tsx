@@ -10,6 +10,14 @@ interface DeploymentOverviewTableProps {
   targetFormats: string[];
 }
 
+function getEntityHref(row: DeploymentOverviewRow): string {
+  if (!row.domainSlug) {
+    return `/schemas?entityId=${encodeURIComponent(row.entityId)}`;
+  }
+
+  return `/schemas/${row.domainSlug}/${row.entitySlug || row.entityId}`;
+}
+
 export function DeploymentOverviewTable({
   rows,
   targetFormats,
@@ -59,7 +67,7 @@ export function DeploymentOverviewTable({
             >
               <td className="px-space-3 py-2">
                 <Link
-                  href={`/schemas/${row.domainSlug || "_"}/${row.entitySlug || row.entityId}`}
+                  href={getEntityHref(row)}
                   className="text-body-small text-primary hover:underline"
                 >
                   {row.entityName}

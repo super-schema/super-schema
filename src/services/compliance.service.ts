@@ -107,6 +107,7 @@ export async function queryFields(
         entity: {
           include: {
             domain: true,
+            product: true,
           },
         },
       },
@@ -126,6 +127,9 @@ export async function queryFields(
         return {
           entityId: f.entity.id,
           entityName: f.entity.name,
+          entitySlug: f.entity.slug,
+          domainSlug: f.entity.domain.slug,
+          productSlug: f.entity.product.slug,
           fieldId: f.id,
           fieldName: f.name,
           fieldType: f.type,
@@ -264,7 +268,7 @@ export async function detectGaps(
     const allFields = await prisma.field.findMany({
       where,
       include: {
-        entity: { include: { domain: true } },
+        entity: { include: { domain: true, product: true } },
       },
     });
 
@@ -280,11 +284,18 @@ export async function detectGaps(
       const classLevel =
         field.classification || classificationObj.level || null;
 
+      const entityMeta = {
+        entityId: field.entity.id,
+        entityName: field.entity.name,
+        entitySlug: field.entity.slug,
+        domainSlug: field.entity.domain.slug,
+        productSlug: field.entity.product.slug,
+      };
+
       // Unclassified
       if (!classLevel) {
         gaps.push({
-          entityId: field.entity.id,
-          entityName: field.entity.name,
+          ...entityMeta,
           fieldId: field.id,
           fieldName: field.name,
           gapType: "UNCLASSIFIED",
@@ -300,8 +311,7 @@ export async function detectGaps(
         (!policyObj.anonymization || policyObj.anonymization === "none")
       ) {
         gaps.push({
-          entityId: field.entity.id,
-          entityName: field.entity.name,
+          ...entityMeta,
           fieldId: field.id,
           fieldName: field.name,
           gapType: "PII_NO_ANONYMIZATION",
@@ -316,8 +326,7 @@ export async function detectGaps(
         (!policyObj.encryption || policyObj.encryption === "none")
       ) {
         gaps.push({
-          entityId: field.entity.id,
-          entityName: field.entity.name,
+          ...entityMeta,
           fieldId: field.id,
           fieldName: field.name,
           gapType: "SENSITIVE_NO_ENCRYPTION",
@@ -332,8 +341,7 @@ export async function detectGaps(
         !policyObj.retention
       ) {
         gaps.push({
-          entityId: field.entity.id,
-          entityName: field.entity.name,
+          ...entityMeta,
           fieldId: field.id,
           fieldName: field.name,
           gapType: "NO_RETENTION",

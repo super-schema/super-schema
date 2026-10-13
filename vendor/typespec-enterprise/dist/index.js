@@ -1,0 +1,6 @@
+export { $lib } from './lib.js';
+export { $linter } from './linter.js';
+export { $decorators } from './tsp-index.js';
+export * from './decorators.js';
+export * from './rules.js';
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiaW5kZXguanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyIuLi9zcmMvaW5kZXgudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUEsT0FBTyxFQUFFLElBQUksRUFBRSxNQUFNLFVBQVUsQ0FBQztBQUNoQyxPQUFPLEVBQUUsT0FBTyxFQUFFLE1BQU0sYUFBYSxDQUFDO0FBQ3RDLE9BQU8sRUFBRSxXQUFXLEVBQUUsTUFBTSxnQkFBZ0IsQ0FBQztBQUM3QyxjQUFjLGlCQUFpQixDQUFDO0FBQ2hDLGNBQWMsWUFBWSxDQUFDIiwic291cmNlc0NvbnRlbnQiOlsiZXhwb3J0IHsgJGxpYiB9IGZyb20gJy4vbGliLmpzJztcbmV4cG9ydCB7ICRsaW50ZXIgfSBmcm9tICcuL2xpbnRlci5qcyc7XG5leHBvcnQgeyAkZGVjb3JhdG9ycyB9IGZyb20gJy4vdHNwLWluZGV4LmpzJztcbmV4cG9ydCAqIGZyb20gJy4vZGVjb3JhdG9ycy5qcyc7XG5leHBvcnQgKiBmcm9tICcuL3J1bGVzLmpzJztcbiJdfQ==

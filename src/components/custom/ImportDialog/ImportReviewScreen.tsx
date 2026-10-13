@@ -168,6 +168,19 @@ export function ImportReviewScreen({
                     onChange={(e) => updateFieldType(index, e.target.value)}
                     className="bg-transparent text-mono-small text-foreground outline-none w-full"
                   />
+                  {(field.referencedEntityName || field.arrayElementType) && (
+                    <span className="block text-caption text-muted-foreground">
+                      {field.type === "array"
+                        ? `items: ${
+                            field.arrayElementType === "reference"
+                              ? `→ ${field.referencedEntityName ?? "?"}`
+                              : field.arrayElementType ?? "?"
+                          }`
+                        : field.referencedEntityName
+                          ? `→ ${field.referencedEntityName}`
+                          : ""}
+                    </span>
+                  )}
                 </td>
                 <td className="px-space-3 py-1.5 text-center">
                   <input

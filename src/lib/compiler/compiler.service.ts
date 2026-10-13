@@ -187,6 +187,8 @@ function extractComplexTypeInfo(
         arrayElementType: (decorators.arrayElementType as string) ?? undefined,
         arrayElementPrecision: (decorators.arrayElementPrecision as number) ?? undefined,
         arrayElementScale: (decorators.arrayElementScale as number) ?? undefined,
+        // Target entity when the array holds references (items: { $ref }).
+        referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
       };
     case "map":
       return {
@@ -232,6 +234,10 @@ function parseEntityMetadata(raw: unknown): SuperSchemaEntityMetadata {
   }
   if (meta.custom && typeof meta.custom === "object") {
     result.custom = meta.custom as Record<string, unknown>;
+  }
+  if (meta.retentionPolicy && typeof meta.retentionPolicy === "object") {
+    result.retentionPolicy =
+      meta.retentionPolicy as SuperSchemaEntityMetadata["retentionPolicy"];
   }
 
   return result;

@@ -29,7 +29,7 @@
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ParsedEntity, ParsedField, ParsedFieldConstraint } from "./types";
-import { parseTypeSpec, parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
+import { parseTypeSpec } from "@/lib/compiler/typespec-parser";
 import type {
   ParsedTypeSpecDecoratorDefinition,
   ParsedTypeSpecField,
@@ -350,23 +350,15 @@ export function parseTypeSpecSchema(content: string): Result<ParsedEntity> {
 }
 
 // ---------------------------------------------------------------------------
-// Public API — full document import (multi-model)
+// Public API — full document mapping (multi-model)
+//
+// Parsing now happens via the real @typespec/compiler in a server action
+// (typespec-compiler.ts). This function is the PURE mapping from the extracted
+// ParsedTypeSpecDocument to the import pipeline's TypeSpecImportResult.
 // ---------------------------------------------------------------------------
 
-export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImportResult> {
-  if (!content || !content.trim()) {
-    return err({
-      code: "PARSE_ERROR",
-      message: "Empty TypeSpec content",
-      suggestedFix: "Provide TypeSpec content with at least one model, enum, or operation.",
-    });
-  }
-
-  const doc = parseTypeSpecDocument(content);
-  const warnings: string[] = [];
-
-  // If nothing was parsed at all
-  if (
+export function isEmptyTypeSpecDocument(doc: ParsedTypeSpecDocument): boolean {
+  return (
     doc.models.length === 0 &&
     doc.enums.length === 0 &&
     doc.scalars.length === 0 &&
@@ -374,14 +366,14 @@ export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImpor
     doc.decorators.length === 0 &&
     doc.interfaces.length === 0 &&
     doc.operations.length === 0
-  ) {
-    return err({
-      code: "PARSE_ERROR",
-      message: "No TypeSpec constructs found in the document",
-      suggestedFix:
-        "Ensure the content contains TypeSpec constructs like model, enum, scalar, union, interface, or op.",
-    });
-  }
+  );
+}
+
+export function mapDocumentToImportResult(
+  doc: ParsedTypeSpecDocument,
+  content: string
+): TypeSpecImportResult {
+  const warnings: string[] = [];
 
   const modelNameSet = new Set(doc.models.map((model) => model.name));
   const referencedByMap = new Map<string, Set<string>>();
@@ -416,21 +408,17 @@ export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImpor
     };
   });
 
-  // Note warnings for imports and usings
   for (const imp of doc.imports) {
     warnings.push(`Import "${imp}" noted — external imports are not resolved.`);
   }
   for (const using of doc.usings) {
     warnings.push(`Using "${using}" noted — library references are informational only.`);
   }
-
-  // Map consts as warnings
   for (const c of doc.consts) {
     warnings.push(`Const "${c.name}" = ${c.value} noted — stored as metadata.`);
   }
 
   const services = mapServices(doc);
-
   for (const service of services) {
     if (service.source === "standalone-operations") {
       warnings.push(
@@ -439,7 +427,7 @@ export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImpor
     }
   }
 
-  return ok({
+  return {
     models,
     sharedEnums: doc.enums.map((e) => ({
       name: e.name,
@@ -463,5 +451,5 @@ export function parseTypeSpecFullDocument(content: string): Result<TypeSpecImpor
     services,
     namespace: doc.namespace,
     warnings,
-  });
+  };
 }

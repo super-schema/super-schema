@@ -11,24 +11,26 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
-import { modKey } from "@/lib/platform";
+import { useModKey } from "@/lib/platform";
 import { NotificationCenter } from "@/components/custom/NotificationCenter";
+import { TenantSwitcher } from "@/components/layout/TenantSwitcher";
 
 export function TopBar() {
   const { data: session } = useSession();
   const { open: openPalette } = useCommandPalette();
-  const mod = modKey();
+  const mod = useModKey();
 
   return (
     <header
       data-testid="topbar"
       className="h-12 w-full surface-glass flex items-center justify-between px-space-4 border-b border-border z-10"
     >
-      {/* Left: Logo */}
-      <div className="flex items-center gap-space-2">
+      {/* Left: Logo + organization switcher */}
+      <div className="flex items-center gap-space-3">
         <span className="text-heading-3 text-primary font-semibold">
           Super Schema
         </span>
+        <TenantSwitcher />
       </div>
 
       {/* Center: Search — clickable to open command palette */}
@@ -83,7 +85,13 @@ export function TopBar() {
                 <DropdownMenuSeparator />
               </>
             )}
-            <DropdownMenuItem>Profile</DropdownMenuItem>
+            <DropdownMenuItem
+              render={
+                <Link href="/admin/settings">
+                  Profile
+                </Link>
+              }
+            />
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={() => signOut({ callbackUrl: "/login" })}

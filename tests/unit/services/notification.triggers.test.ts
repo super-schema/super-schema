@@ -20,6 +20,13 @@ let webhookDeliveries: Array<Record<string, unknown>> = [];
 
 vi.mock("@/lib/db", () => ({
   prisma: {
+    entity: {
+      findUnique: vi.fn(async (args: { where: { id: string }; select?: unknown }) => ({
+        slug: args.where.id,
+        domain: { slug: "domain-slug" },
+        fields: [{ slug: "field-slug" }],
+      })),
+    },
     notification: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         const row = {

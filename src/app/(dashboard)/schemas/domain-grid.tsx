@@ -1,30 +1,43 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Search, Plus, Database, Sparkles, ArrowRight } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Search, Plus, Database, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DomainCard } from "@/components/custom/DomainCard";
-import { createDomainAction } from "./actions";
+import { DomainDeletionDialog } from "@/components/custom/DomainDeletionDialog";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import type { DomainDeletionImpact } from "@/types/domain-deletion";
+import { createDomainAction, deleteDomainAction } from "./actions";
 
 interface DomainData {
   id: string;
   name: string;
+  slug: string;
   description: string;
   isSystem: boolean;
   entityCount: number;
+  deletionImpact: DomainDeletionImpact;
   createdAt: Date;
 }
 
 interface DomainGridProps {
   domains: DomainData[];
+  canDeleteDomains?: boolean;
 }
 
-export function DomainGrid({ domains }: DomainGridProps) {
+export function DomainGrid({ domains, canDeleteDomains = false }: DomainGridProps) {
+  const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DomainData | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return domains;
@@ -44,12 +57,58 @@ export function DomainGrid({ domains }: DomainGridProps) {
     if (result.error) {
       setCreateError(result.error);
     } else {
+      invalidateDomainsTree();
       setShowCreate(false);
+    }
+  }
+
+  function openDeleteConfirm(domain: DomainData) {
+    setDeleteTarget(domain);
+    setDeleteError(null);
+  }
+
+  async function handleDeleteDomain() {
+    if (!deleteTarget) return;
+
+    setDeleteError(null);
+    setIsDeleting(true);
+    try {
+      const result = await deleteDomainAction(deleteTarget.id);
+
+      if (result.error) {
+        setDeleteError(result.error);
+        return;
+      }
+
+      void invalidateDomainsTree();
+      setDeleteTarget(null);
+      router.refresh();
+    } catch {
+      setDeleteError("Unable to delete the domain. Please try again.");
+    } finally {
+      setIsDeleting(false);
     }
   }
 
   return (
     <div className="animate-auth-fade-up">
+      {deleteTarget ? (
+        <DomainDeletionDialog
+          open
+          domainName={deleteTarget.name}
+          impact={deleteTarget.deletionImpact}
+          isDeleting={isDeleting}
+          error={deleteError}
+          onOpenChange={(open) => {
+            if (!open) {
+              setDeleteTarget(null);
+              setDeleteError(null);
+            }
+          }}
+          onConfirm={handleDeleteDomain}
+        />
+      ) : null}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-space-6">
         <div>
@@ -58,13 +117,22 @@ export function DomainGrid({ domains }: DomainGridProps) {
             Select a domain to manage its logical entities
           </p>
         </div>
-        <Button
-          onClick={() => setShowCreate(true)}
-          className="gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          Create Domain
-        </Button>
+        <div className="flex items-center gap-space-2">
+          <Link
+            href="/schemas/type-mappings"
+            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            <Sparkles className="w-4 h-4" />
+            Type Mapping Reference
+          </Link>
+          <Button
+            onClick={() => setShowCreate(true)}
+            className="gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            Create Domain
+          </Button>
+        </div>
       </div>
 
       {/* Search */}
@@ -192,7 +260,12 @@ export function DomainGrid({ domains }: DomainGridProps) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-space-4">
           {filtered.map((domain) => (
-            <DomainCard key={domain.id} {...domain} />
+            <DomainCard
+              key={domain.id}
+              {...domain}
+              canDeleteDomain={canDeleteDomains}
+              onRequestDelete={() => openDeleteConfirm(domain)}
+            />
           ))}
         </div>
       )}

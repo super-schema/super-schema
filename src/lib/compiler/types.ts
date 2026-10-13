@@ -41,6 +41,10 @@ export interface CompilationResult {
 export interface EmitterWarning {
   message: string;
   fieldName?: string;
+  sourceType?: string;
+  targetFormat?: string;
+  mappedType?: string;
+  lossDescription?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +110,15 @@ export interface Emitter {
   name: string;
   version: string;
   targetFormat: string;
-  emit(model: SuperSchemaModel, policies: MappingPolicy[]): EmitterResult;
+  /**
+   * `formatOptions` is this emitter's own binding-options payload (e.g. Avro's
+   * AvroFormatOptions), opaque to the core IR — never typed here so adding a
+   * new format's options never touches this shared interface.
+   */
+  emit(
+    model: SuperSchemaModel,
+    policies: MappingPolicy[],
+    formatOptions?: Record<string, unknown>
+  ): EmitterResult;
   validate(output: string): ValidationResult;
 }

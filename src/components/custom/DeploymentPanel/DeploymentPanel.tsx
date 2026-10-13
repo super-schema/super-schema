@@ -6,6 +6,7 @@ import { DriftBadge } from "@/components/custom/DriftBadge/DriftBadge";
 import { VersionBadge } from "./VersionBadge";
 import { MarkAsDeployedDialog } from "./MarkAsDeployedDialog";
 import type { DeploymentStatus } from "@/services/deployment.service";
+import { formatDateOnly } from "@/lib/date-format";
 
 interface DeploymentPanelProps {
   entityName: string;
@@ -108,7 +109,7 @@ export function DeploymentPanel({
                   <DriftBadge status={env.driftStatus} compact />
                   {env.lastChecked && (
                     <span className="text-caption text-muted-foreground ml-auto">
-                      {new Date(env.lastChecked).toLocaleDateString()}
+                      {formatDateOnly(env.lastChecked)}
                     </span>
                   )}
                 </div>

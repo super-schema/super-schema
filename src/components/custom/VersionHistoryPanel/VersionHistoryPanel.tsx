@@ -3,8 +3,9 @@
 import { useState, useCallback } from "react";
 import { ChevronDown, ChevronRight, Clock, GitBranch, GitCompare, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { VersionSnapshot, ChangeEntry, DiffResult } from "@/services/version-history/version.types";
+import type { VersionSnapshot, ChangeEntry } from "@/services/version-history/version.types";
 import { summarizeChanges } from "@/lib/diff/field-diff";
+import { formatDateOnly, formatDateTime } from "@/lib/date-format";
 
 interface VersionHistoryPanelProps {
   versions: VersionSnapshot[];
@@ -18,19 +19,7 @@ interface VersionHistoryPanelProps {
 
 /** Format a relative time string from an ISO timestamp */
 function relativeTime(isoTimestamp: string): string {
-  const now = Date.now();
-  const then = new Date(isoTimestamp).getTime();
-  const diffMs = now - then;
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 60) return "just now";
-  if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? "s" : ""} ago`;
-  if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? "s" : ""} ago`;
-  if (diffDay < 30) return `${diffDay} day${diffDay !== 1 ? "s" : ""} ago`;
-  return new Date(isoTimestamp).toLocaleDateString();
+  return formatDateOnly(isoTimestamp);
 }
 
 function ChangeEntryRow({ entry }: { entry: ChangeEntry }) {
@@ -112,7 +101,7 @@ function VersionItem({
               )}
               <span
                 className="text-caption text-muted-foreground shrink-0"
-                title={new Date(version.timestamp).toLocaleString()}
+                title={formatDateTime(version.timestamp)}
               >
                 {relativeTime(version.timestamp)}
               </span>

@@ -16,12 +16,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { mockPrisma } = vi.hoisted(() => {
   return {
     mockPrisma: {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ id: "user-1" }),
+      },
       entity: {
         create: vi.fn(),
         findUnique: vi.fn(),
         findMany: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
+      },
+      product: {
+        findUnique: vi.fn().mockResolvedValue({ id: "prod-default" }),
+        create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
       field: {
         create: vi.fn(),
@@ -84,7 +91,7 @@ import {
   generateSchemaAction,
   publishSchemaAction,
   getSchemaVersionsAction,
-} from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions";
+} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -203,38 +210,30 @@ describe("E2E Critical Flows", () => {
   // -------------------------------------------------------------------------
   describe("Flow 2: Generate schema for bigquery target", () => {
     it("generates DDL output containing CREATE TABLE", async () => {
-      const ddlOutput = "CREATE TABLE `sales.Order` (\n  order_id STRING NOT NULL,\n  customer_name STRING NOT NULL,\n  total_amount NUMERIC(18,2)\n);";
-
-      // Mock emitEntity to return bigquery target output
-      vi.doMock("@/lib/emission/emission.service", () => ({
-        emitEntity: vi.fn().mockResolvedValue({
-          typeSpec: "model Order { ... }",
-          targets: {
-            bigquery: {
-              output: ddlOutput,
-              validationStatus: "valid",
-              warnings: [],
-              errors: [],
-            },
-          },
-          summary: { totalTargets: 1, validCount: 1, invalidCount: 0, warningCount: 0 },
-        }),
-      }));
-
-      // Mock entity lookup for generateSchemaAction
+      // bigquery routes through the TypeSpec emitter (runtime "typespec-cli"),
+      // so generateSchemaAction shells out to the real @typespec/bigquery
+      // emitter. Provide real fields and assert on the genuine DDL output.
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-e2e-1",
         name: "Order",
         slug: "order",
+        description: null,
+        status: "active",
         version: 1,
+        domainId: "dom-sales",
         metadata: {},
+        domain: { id: "dom-sales", name: "sales" },
       });
       mockPrisma.entity.update.mockResolvedValue({
         id: "ent-e2e-1",
         metadata: {},
       });
 
-      mockPrisma.field.findMany.mockResolvedValue([]);
+      mockPrisma.field.findMany.mockResolvedValue([
+        { id: "fo1", name: "orderId", type: "string", precision: null, scale: null, nullable: false, isKey: true, fieldNumber: null, description: "", classification: null, aliases: [], decorators: {}, sortOrder: 0 },
+        { id: "fo2", name: "customerName", type: "string", precision: null, scale: null, nullable: false, isKey: false, fieldNumber: null, description: "", classification: null, aliases: [], decorators: {}, sortOrder: 1 },
+        { id: "fo3", name: "totalAmount", type: "decimal", precision: 18, scale: 2, nullable: true, isKey: false, fieldNumber: null, description: "", classification: null, aliases: [], decorators: {}, sortOrder: 2 },
+      ]);
 
       const result = await generateSchemaAction("ent-e2e-1", "bigquery");
 

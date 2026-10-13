@@ -23,11 +23,14 @@ import type { EmissionResult, TargetOutput, ValidationStatus } from "./emission.
  * 4. Collect and return results
  *
  * @param overridePolicies - Optional override policies to merge with defaults
+ * @param formatOptionsByTarget - Optional per-emitter binding options, keyed
+ *   by emitter name (e.g. `{ avro: { perField: {...} } }`)
  */
 export function emitFromData(
   entity: PrismaEntityInput,
   fields: PrismaFieldInput[],
-  overridePolicies?: ScopedMappingPolicy[]
+  overridePolicies?: ScopedMappingPolicy[],
+  formatOptionsByTarget?: Record<string, Record<string, unknown>>
 ): EmissionResult {
   // Compile to IR
   const model = compileEntity(entity, fields);
@@ -51,7 +54,7 @@ export function emitFromData(
 
   for (const emitter of emitters) {
     // Emit
-    const emitterResult = emitter.emit(model, policies);
+    const emitterResult = emitter.emit(model, policies, formatOptionsByTarget?.[emitter.name]);
 
     // Validate
     const validationResult = emitter.validate(emitterResult.output);

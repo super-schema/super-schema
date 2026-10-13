@@ -9,7 +9,7 @@ import {
   type ParsedTypeSpecField,
   type ExistingFieldSummary,
 } from "@/lib/compiler/typespec-parser";
-import { applyTypeSpecAction } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions";
+import { applyTypeSpecAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
 interface TypeSpecPreviewProps {
   entityId: string;

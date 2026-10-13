@@ -9,6 +9,10 @@ vi.mock("@/lib/db", () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    product: {
+      findUnique: vi.fn().mockResolvedValue({ id: "prd-default" }),
+      create: vi.fn().mockResolvedValue({ id: "prd-default" }),
+    },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
     },

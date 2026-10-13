@@ -2,6 +2,8 @@
 
 Status: review
 
+> **Epic 12 reconciliation note (2026-10-12):** Data-model references here (emission_targets as originally designed, SuperSchemaModel derived from Prisma rows) predate the TypeSpec-as-system-of-record pivot in architecture.md (2026-10-12). See Epic 12, especially Story 12.6 (Emitter Migration) before extending this.
+
 ## Story
 As a **data modeler**,
 I want to see emitted output for all targets side-by-side with live updates as I edit,
@@ -25,6 +27,14 @@ So that I can immediately verify how my logical schema translates to each platfo
 **And** the Emit button is **disabled** when fields are incomplete (tooltip: "X fields need required metadata") or when there are compilation errors
 **And** if emission produces **warnings** (lossy mappings), a summary is shown below the tabs: "2 warnings: decimal→float64 lossy mapping in 'amount', 'price'" — clickable to highlight the affected lines
 **And** if emission produces **errors** (validation failures), the error tab shows in red with error details and `suggestedFix` if available
+**And** the **entity Schemas tab** does **not** render placeholder BigQuery/Avro/OpenAPI cards before any schema exists for that target
+**And** before first generation, the Schemas tab shows a compact **dropdown-based technology chooser** with a single Generate action for the selected target
+**And** after one or more targets have been generated, the Schemas tab shows a clearly labeled **Generated Schemas** section with helper copy stating "These are all generated schemas."
+**And** the generated section uses **horizontal technology tabs** for generated targets instead of a long vertical stack of target cards, so users can move quickly between technologies like BigQuery, Avro, JSON Schema, Spanner, and PostgreSQL
+**And** each generated tab panel contains the target-specific version history, mapping/override controls when supported, emitted output preview, and publish/deploy actions
+**And** generated target panels use context-aware actions: `Update Schema` when the entity has changed since the last generation and `Regenerate` when the latest output is already current
+**And** the Schemas tab target catalog includes the currently supported **Super Schema native emitters** plus the official TypeSpec single-file schema emitters documented by TypeSpec: `@typespec/openapi3`, `@typespec/json-schema`, and preview `@typespec/protobuf`
+**And** the Schemas tab also lists the remaining official TypeSpec client/server generators in a disabled state with an explicit reason when they emit multi-file SDK/server projects that do not fit the current single-artifact schema version model
 **And** unit tests verify: emission pipeline runs all three emitters, results are stored in emission_targets, live preview debounces at 1s, validation status is correctly set
 **And** a Playwright E2E test verifies: creating an entity with 3 fields → emission preview shows all three target tabs with syntax-highlighted output → validation indicators are green → clicking copy copies to clipboard → clicking Emit commits and shows success toast
 
@@ -97,6 +107,18 @@ So that I can immediately verify how my logical schema translates to each platfo
 - [x] Warning section in each target tab with warning count and details
 - [x] Error section in each target tab with error count and details
 - [x] Validation indicators in tab headers reflect status
+
+### 10b. Schemas Tab Pre-Generation UX Correction
+- [ ] Update `src/app/(dashboard)/schemas/[domainSlug]/[entityId]/components/SchemasTab.tsx`
+  - [ ] Split targets into `generated` vs `available to generate`
+  - [ ] Render generated targets as horizontal tabs, not a vertically stacked list of cards
+  - [ ] Render a compact dropdown selector plus Generate action for ungenerated targets
+  - [ ] Add a generated section header/caption so users can distinguish already-generated outputs
+  - [ ] Update generated-tab actions to use `Update Schema` or `Regenerate` based on freshness
+  - [ ] Replace local hard-coded targets with a shared emitter catalog covering native emitters and official TypeSpec schema emitters
+  - [ ] Show disabled catalog entries for multi-file TypeSpec client/server generators with explicit reasons instead of pretending they are single-file schema targets
+  - [ ] Ensure each tab panel keeps the common generated-schema affordances: version history, output preview, supported target overrides, and publish/deploy controls
+- [ ] Add component regression coverage for the chooser-first behavior
 
 ### 11. Integrate with Right Panel
 - [x] EmissionPreviewPanel as a slide-in panel (480px, frosted glass background)
@@ -177,6 +199,14 @@ interface Emitter {
 - **Emit button:** Primary button (amethyst fill, white text) in entity header. Ctrl+E shortcut. "Emitting..." spinner during operation. Disabled when incomplete.
 - **Warning summary:** Below tabs. Clickable to highlight affected lines. Format: "2 warnings: decimal→float64 lossy mapping in 'amount', 'price'".
 - **Error display:** Red tab indicator. Error details + suggestedFix below code viewer.
+
+**Schemas tab correction:** The entity-level Schemas tab should distinguish between **available targets** and **generated outputs**.
+- Before generation: show a compact dropdown chooser with a single Generate action, not empty version-history cards.
+- After generation: show generated technologies as horizontal tabs, each with version history, preview, publish/deploy actions, and target-specific controls grouped under a "Generated Schemas" label with explanatory copy.
+- Mixed state: generated targets move into the tabbed generated workspace; remaining targets stay in the chooser.
+- Generated-target primary action copy should reflect state: `Update Schema` when the entity changed, `Regenerate` when the latest schema is still current.
+- Official TypeSpec single-file schema emitters (`openapi3`, `json-schema`, `protobuf`) belong in this tab and should generate real stored artifacts.
+- Official TypeSpec client/server generators are still part of the visible catalog, but they should stay disabled here until the product supports multi-file artifact browsing, storage, and export.
 
 **Micro-animations:**
 - Emission preview update: 400ms ease-out (flash highlight on changed lines)

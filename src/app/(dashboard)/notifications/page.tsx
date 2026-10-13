@@ -44,6 +44,7 @@ export default function NotificationsPage() {
     []
   );
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>("");
   const [filterRead, setFilterRead] = useState<string>("");
   const [page, setPage] = useState(1);
@@ -51,6 +52,7 @@ export default function NotificationsPage() {
 
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
       params.set("page", String(page));
@@ -59,7 +61,11 @@ export default function NotificationsPage() {
       if (filterRead) params.set("read", filterRead);
 
       const res = await fetch(`/api/v1/notifications?${params.toString()}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        setError(`Failed to load notifications (${res.status})`);
+        setNotifications([]);
+        return;
+      }
       const json = await res.json();
       if (json.success && json.data) {
         setNotifications(
@@ -69,9 +75,13 @@ export default function NotificationsPage() {
             createdAt: new Date(n.createdAt),
           }))
         );
+      } else {
+        setError(json.error?.message ?? "Failed to load notifications");
+        setNotifications([]);
       }
     } catch {
-      // Silently fail
+      setError("Network error — could not load notifications");
+      setNotifications([]);
     } finally {
       setLoading(false);
     }
@@ -86,6 +96,16 @@ export default function NotificationsPage() {
       <h1 className="text-heading-2 font-semibold mb-6">
         Notification History
       </h1>
+
+      {error && (
+        <div
+          role="alert"
+          data-testid="notifications-error"
+          className="mb-4 rounded-lg border border-destructive bg-destructive/5 px-3 py-2 text-sm text-destructive"
+        >
+          {error}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex gap-4 mb-4">

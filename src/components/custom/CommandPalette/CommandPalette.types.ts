@@ -4,6 +4,7 @@ export interface CommandPaletteEntity {
   slug?: string;
   domainName: string;
   domainSlug: string;
+  productSlug?: string;
   status?: string;
   fieldCount?: number;
 }
@@ -17,6 +18,7 @@ export interface CommandPaletteField {
   entitySlug?: string;
   entityName: string;
   domainSlug: string;
+  productSlug?: string;
 }
 
 export interface CommandPaletteAction {

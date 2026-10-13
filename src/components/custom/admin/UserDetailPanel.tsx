@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X, Save } from "lucide-react";
 import { RolesEditor } from "./RolesEditor";
 import type { Role } from "@/types/schemas/rbac";
+import { updateUserNameAction } from "@/app/(dashboard)/admin/actions";
 
 interface UserDetailPanelProps {
   user: {
@@ -13,16 +14,24 @@ interface UserDetailPanelProps {
     roles: { id: string; role: Role; domainId: string | null; domainName?: string }[];
   };
   onClose: () => void;
+  onChanged?: () => void;
 }
 
-export function UserDetailPanel({ user, onClose }: UserDetailPanelProps) {
+export function UserDetailPanel({ user, onClose, onChanged }: UserDetailPanelProps) {
   const [name, setName] = useState(user.name ?? "");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSaveName() {
     setSaving(true);
-    // In production, this would call the oRPC mutation
-    setTimeout(() => setSaving(false), 500);
+    setError(null);
+    const res = await updateUserNameAction(user.id, name);
+    setSaving(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    onChanged?.();
   }
 
   return (
@@ -69,6 +78,7 @@ export function UserDetailPanel({ user, onClose }: UserDetailPanelProps) {
                 <Save className="w-3.5 h-3.5" />
               </button>
             </div>
+            {error && <p className="text-caption text-destructive">{error}</p>}
           </div>
         </section>
 
@@ -80,6 +90,7 @@ export function UserDetailPanel({ user, onClose }: UserDetailPanelProps) {
           <RolesEditor
             userId={user.id}
             roles={user.roles}
+            onChanged={onChanged}
           />
         </section>
       </div>

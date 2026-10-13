@@ -26,6 +26,7 @@ const TABS: { id: TabId; label: string }[] = [
 
 export default function CompliancePage() {
   const [activeTab, setActiveTab] = useState<TabId>("query");
+  const [error, setError] = useState<string | null>(null);
 
   // Query tab state
   const [filters, setFilters] = useState<ComplianceFilter>({});
@@ -81,7 +82,7 @@ export default function CompliancePage() {
     if (activeTab === "gaps") {
       fetchGaps();
     }
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   // Fetch audit trail when switching to audit tab or filters change
   useEffect(() => {
@@ -92,21 +93,22 @@ export default function CompliancePage() {
 
   async function fetchFields() {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/compliance/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filters, pagination: { page, pageSize: 25, sortBy, sortOrder } }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setFields(data.data.fields);
-          setTotal(data.data.total);
-        }
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        setFields(data.data.fields);
+        setTotal(data.data.total);
+      } else {
+        setError(data?.error || `Failed to load compliance data (${res.status})`);
       }
     } catch {
-      // silently fail
+      setError("Network error — could not reach the compliance service.");
     } finally {
       setLoading(false);
     }
@@ -114,21 +116,22 @@ export default function CompliancePage() {
 
   async function fetchGaps() {
     setGapsLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/compliance/gaps", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filters: {} }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setGaps(data.data.gaps);
-          setGapSummary(data.data.summary);
-        }
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        setGaps(data.data.gaps);
+        setGapSummary(data.data.summary);
+      } else {
+        setError(data?.error || `Failed to load gaps (${res.status})`);
       }
     } catch {
-      // silently fail
+      setError("Network error — could not reach the compliance service.");
     } finally {
       setGapsLoading(false);
     }
@@ -136,21 +139,22 @@ export default function CompliancePage() {
 
   async function fetchAuditTrail() {
     setAuditLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/compliance/audit-trail", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filters: auditFilters, pagination: { page: auditPage, pageSize: 50 } }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) {
-          setAuditEntries(data.data.entries);
-          setAuditTotal(data.data.total);
-        }
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        setAuditEntries(data.data.entries);
+        setAuditTotal(data.data.total);
+      } else {
+        setError(data?.error || `Failed to load audit trail (${res.status})`);
       }
     } catch {
-      // silently fail
+      setError("Network error — could not reach the compliance service.");
     } finally {
       setAuditLoading(false);
     }
@@ -244,6 +248,16 @@ export default function CompliancePage() {
         )}
         {activeTab === "audit" && <div />}
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          data-testid="compliance-error"
+          className="mx-space-6 mt-space-4 rounded-md border border-destructive/40 bg-destructive/10 px-space-4 py-space-3 text-body-small text-destructive"
+        >
+          {error}
+        </div>
+      )}
 
       {/* Content area */}
       <div className="flex-1 flex overflow-hidden">

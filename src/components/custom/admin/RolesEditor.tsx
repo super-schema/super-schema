@@ -1,36 +1,61 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, Shield } from "lucide-react";
+import { Plus, Trash2, Shield, Loader2 } from "lucide-react";
 import { ROLE_COLORS, ROLE_HIERARCHY, SYSTEM_ONLY_ROLES, type Role } from "@/types/schemas/rbac";
+import { assignRoleAction, removeRoleAction } from "@/app/(dashboard)/admin/actions";
 
 interface RolesEditorProps {
   userId: string;
   roles: { id: string; role: Role; domainId: string | null; domainName?: string }[];
+  onChanged?: () => void;
 }
 
-export function RolesEditor({ userId, roles }: RolesEditorProps) {
+export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRole, setNewRole] = useState<Role>("VIEWER");
   const [newDomainId, setNewDomainId] = useState("");
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const isSystemRole = SYSTEM_ONLY_ROLES.includes(newRole);
 
-  function handleAddRole() {
+  async function handleAddRole() {
     setError(null);
-    // In production, call oRPC mutation
+    if (!isSystemRole && !newDomainId.trim()) {
+      setError("A domain is required for this role.");
+      return;
+    }
+    setBusy(true);
+    const res = await assignRoleAction({
+      userId,
+      role: newRole,
+      domainId: isSystemRole ? undefined : newDomainId.trim(),
+    });
+    setBusy(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
     setShowAddForm(false);
     setNewRole("VIEWER");
     setNewDomainId("");
+    onChanged?.();
   }
 
-  function handleRemoveRole(roleId: string) {
+  async function handleRemoveRole(roleId: string) {
     setError(null);
-    // In production, call oRPC mutation
-    // Safety check would happen server-side
+    setBusy(true);
+    const res = await removeRoleAction(roleId);
+    setBusy(false);
+    if (res.error) {
+      setError(res.error);
+      setConfirmRemove(null);
+      return;
+    }
     setConfirmRemove(null);
+    onChanged?.();
   }
 
   return (
@@ -138,8 +163,10 @@ export function RolesEditor({ userId, roles }: RolesEditorProps) {
           <div className="flex items-center gap-space-2">
             <button
               onClick={handleAddRole}
-              className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small"
+              disabled={busy}
+              className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50 inline-flex items-center gap-1"
             >
+              {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               Add Role
             </button>
             <button

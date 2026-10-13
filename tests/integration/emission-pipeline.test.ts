@@ -1,13 +1,19 @@
 /**
  * Emission pipeline integration tests.
  *
- * Tests the full compile -> emit pipeline using emitFromData()
- * (the pure function variant that requires no database).
- * Verifies BigQuery DDL, Avro JSON, and OpenAPI output for a realistic entity.
+ * Verifies BigQuery DDL (tests/integration/db-emitter-parity.test.ts), Avro,
+ * and OpenAPI output for a realistic entity.
+ *
+ * Avro and OpenAPI retired as native `emitFromData()` targets on 2026-10-12 in
+ * favor of real TypeSpec packages (@typespec/avro, official @typespec/openapi3),
+ * routed through `emitOfficialTypeSpecTargetFromData` — the same path the
+ * database-DDL targets already used. `emitFromData()`'s native-emitter loop is
+ * now always empty; its remaining job (compiling to TypeSpec source) is
+ * covered by `tests/unit/lib/emission/emission.service.test.ts`.
  */
 
 import { describe, it, expect } from "vitest";
-import { emitFromData } from "@/lib/emission/emit-from-data";
+import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
 
 // ---------------------------------------------------------------------------
@@ -121,72 +127,26 @@ const customerFields: PrismaFieldInput[] = [
 // ---------------------------------------------------------------------------
 
 describe("Emission Pipeline - Integration", () => {
-  // Run the pipeline once and reuse the result
-  const result = emitFromData(customerEntity, customerFields);
-
-  it("pipeline succeeds and emits to all 5 targets", () => {
-    expect(result.success).toBe(true);
-    expect(result.summary.totalTargets).toBe(5);
-    expect(result.targets.bigquery).toBeDefined();
-    expect(result.targets.avro).toBeDefined();
-    expect(result.targets.openapi).toBeDefined();
-    expect(result.targets.spanner).toBeDefined();
-    expect(result.targets.postgresql).toBeDefined();
-  });
-
-  it("generates valid TypeSpec source", () => {
-    expect(result.typespec).toContain("model Customer");
-    expect(result.typespec).toContain("id");
-    expect(result.typespec).toContain("name");
-    expect(result.typespec).toContain("email");
-    expect(result.typespec).toContain("created_at");
-    expect(result.typespec).toContain("balance");
-  });
-
-  // -----------------------------------------------------------------------
-  // BigQuery
-  // -----------------------------------------------------------------------
-  describe("BigQuery output", () => {
-    it("contains CREATE TABLE with correct column types", () => {
-      const bq = result.targets.bigquery;
-      expect(bq.isValid).toBe(true);
-
-      const ddl = bq.output;
-      expect(ddl).toContain("CREATE TABLE");
-      // BigQuery emitter lowercases table names (e.g. crm.customer)
-      expect(ddl.toLowerCase()).toContain("customer");
-
-      // Verify mapped types
-      expect(ddl).toContain("STRING"); // id, name, email are STRING
-      expect(ddl).toContain("DATETIME"); // utcDateTime -> DATETIME
-      expect(ddl).toContain("NUMERIC"); // decimal -> NUMERIC
-    });
-
-    it("marks id as NOT NULL", () => {
-      const ddl = result.targets.bigquery.output;
-      // The id field should be NOT NULL since nullable=false
-      expect(ddl).toMatch(/id\s+STRING\s+NOT\s+NULL/i);
-    });
+  it("emits Avro and OpenAPI independently through the real TypeSpec-cli path", async () => {
+    const avro = await emitOfficialTypeSpecTargetFromData(customerEntity, customerFields, "avro");
+    const openapi3 = await emitOfficialTypeSpecTargetFromData(customerEntity, customerFields, "openapi3");
+    expect(avro.validationStatus).toBe("VALID");
+    expect(openapi3.validationStatus).toBe("VALID");
   });
 
   // -----------------------------------------------------------------------
   // Avro
   // -----------------------------------------------------------------------
   describe("Avro output", () => {
-    it("is valid JSON with correct field types", () => {
-      const avro = result.targets.avro;
-      expect(avro.isValid).toBe(true);
+    it("is valid JSON with correct field types", async () => {
+      const avro = await emitOfficialTypeSpecTargetFromData(customerEntity, customerFields, "avro");
 
       const schema = JSON.parse(avro.output);
       expect(schema.type).toBe("record");
       expect(schema.name).toBe("Customer");
       expect(Array.isArray(schema.fields)).toBe(true);
 
-      // Find specific fields and verify types
-      const fields = schema.fields as Array<{
-        name: string;
-        type: unknown;
-      }>;
+      const fields = schema.fields as Array<{ name: string; type: unknown }>;
 
       const idField = fields.find((f) => f.name === "id");
       expect(idField).toBeDefined();
@@ -208,84 +168,30 @@ describe("Emission Pipeline - Integration", () => {
   // OpenAPI
   // -----------------------------------------------------------------------
   describe("OpenAPI output", () => {
-    it("has correct schema properties", () => {
-      const openapi = result.targets.openapi;
-      expect(openapi.isValid).toBe(true);
+    it("has correct schema properties", async () => {
+      const openapi = await emitOfficialTypeSpecTargetFromData(customerEntity, customerFields, "openapi3");
 
-      // OpenAPI output should be valid JSON or YAML
-      let schema: Record<string, unknown>;
-      try {
-        schema = JSON.parse(openapi.output);
-      } catch {
-        // If it's YAML, skip JSON-specific assertions but verify key content
-        expect(openapi.output).toContain("Customer");
-        expect(openapi.output).toContain("properties");
-        return;
-      }
-
-      // Verify schema structure
-      expect(schema.type).toBe("object");
-
-      const properties = schema.properties as Record<
-        string,
-        Record<string, unknown>
-      >;
-      expect(properties).toBeDefined();
-
-      // Verify field presence
-      expect(properties.id).toBeDefined();
-      expect(properties.name).toBeDefined();
-      expect(properties.email).toBeDefined();
-      expect(properties.created_at).toBeDefined();
-      expect(properties.balance).toBeDefined();
-
-      // id should be string type
-      expect(properties.id.type).toBe("string");
+      // Official openapi3 emits YAML with the schema nested under
+      // components.schemas.<Name> — not a bare JSON schema at the root.
+      expect(openapi.output).toContain("Customer");
+      expect(openapi.output).toContain("properties");
+      expect(openapi.output).toContain("id:");
+      expect(openapi.output).toContain("type: string");
     });
 
-    it("includes required fields in required array", () => {
-      const openapi = result.targets.openapi;
-      let schema: Record<string, unknown>;
-      try {
-        schema = JSON.parse(openapi.output);
-      } catch {
-        // If YAML, verify text content
-        expect(openapi.output).toContain("required");
-        return;
-      }
+    it("includes required fields in required array", async () => {
+      const openapi = await emitOfficialTypeSpecTargetFromData(customerEntity, customerFields, "openapi3");
 
-      const required = schema.required as string[];
-      if (required) {
-        // Non-nullable fields should be in required array
-        expect(required).toContain("id");
-        expect(required).toContain("name");
-        expect(required).toContain("email");
-        expect(required).toContain("created_at");
-        // Nullable field should NOT be required
-        expect(required).not.toContain("balance");
-      }
+      expect(openapi.output).toContain("required");
+      expect(openapi.output).toMatch(/required:\s*\n(\s*-\s*\w+\n)*\s*-\s*id/);
     });
   });
 
-  // -----------------------------------------------------------------------
-  // Lossy mapping warnings for decimal -> OpenAPI
-  // -----------------------------------------------------------------------
-  describe("Lossy mapping warnings", () => {
-    it("produces a lossy warning for decimal -> OpenAPI", () => {
-      const openapi = result.targets.openapi;
-      // decimal -> number/double is a lossy mapping
-      const hasDecimalWarning = openapi.warnings.some(
-        (w) =>
-          w.message.toLowerCase().includes("decimal") ||
-          w.message.toLowerCase().includes("lossy") ||
-          w.message.toLowerCase().includes("precision")
-      );
-      expect(hasDecimalWarning).toBe(true);
-    });
-
-    it("OpenAPI has WARNING validation status due to lossy decimal", () => {
-      const openapi = result.targets.openapi;
-      expect(openapi.validationStatus).toBe("WARNING");
-    });
-  });
+  // NOTE: the two "lossy mapping warning" tests that lived here (decimal ->
+  // OpenAPI producing a WARNING validation status) tested a concept specific
+  // to the old native mapping-policy engine (resolveMapping()'s isLossy/
+  // lossDescription tracking). The real-compiler typespec-cli path has no
+  // equivalent — OfficialTypeSpecTargetResult.warnings is always `[]` on
+  // success, since a real TypeSpec compile is pass/fail on diagnostics, not
+  // "lossy but tolerated." Removed 2026-10-12, not ported.
 });

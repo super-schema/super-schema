@@ -10,7 +10,8 @@ import {
   type CreateDomainInput,
 } from "@/types/schemas/domain.schema";
 import type { Prisma } from "@/generated/prisma/client";
-import { generateSlug } from "@/lib/slug";
+import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
+import { ensureDefaultTenantId } from "@/lib/org-defaults";
 
 export async function createDomain(
   input: CreateDomainInput,
@@ -22,6 +23,15 @@ export async function createDomain(
       code: "VALIDATION_ERROR",
       message: parsed.error.issues[0].message,
       suggestedFix: "Check the domain input fields and try again.",
+    });
+  }
+
+  const domainSlug = generateSlug(parsed.data.name);
+  if (isReservedSchemaRouteSlug(domainSlug)) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: `"${domainSlug}" is reserved for a schemas utility page.`,
+      suggestedFix: "Choose a different domain name.",
     });
   }
 
@@ -45,10 +55,12 @@ export async function createDomain(
       entityId: "pending",
       userId: ctx.userId,
       fn: async () => {
+        const tenantId = await ensureDefaultTenantId();
         return prisma.domain.create({
           data: {
             name: parsed.data.name,
-            slug: generateSlug(parsed.data.name),
+            slug: domainSlug,
+            tenantId,
             description: parsed.data.description,
             policyTemplate:
               (parsed.data.policyTemplate as Prisma.InputJsonValue) ??
@@ -74,9 +86,9 @@ export async function createDomain(
 }
 
 export async function getDomains(
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<Domain[]>> {
-  const domains = await prisma.domain.findMany({
+  const domains = await ctx.prisma.domain.findMany({
     orderBy: [{ isSystem: "desc" }, { name: "asc" }],
   });
   return ok(domains);
@@ -84,9 +96,9 @@ export async function getDomains(
 
 export async function getDomainById(
   id: string,
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<Domain>> {
-  const domain = await prisma.domain.findUnique({ where: { id } });
+  const domain = await ctx.prisma.domain.findUnique({ where: { id } });
   if (!domain) {
     return err({
       code: "NOT_FOUND",

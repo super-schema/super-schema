@@ -1,192 +1,84 @@
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
-import { DomainWorkspace } from "./domain-workspace";
+import { getActiveTenantId } from "@/lib/active-tenant";
+import { ProductGrid } from "./product-grid";
 
 interface Props {
   params: Promise<{ domainSlug: string }>;
 }
 
-export default async function DomainEntitiesPage({ params }: Props) {
+export default async function DomainProductsPage({ params }: Props) {
   const { domainSlug } = await params;
+  const tenantId = await getActiveTenantId();
 
   const domain = await prisma.domain.findFirst({
-    where: { slug: domainSlug },
+    where: { slug: domainSlug, tenantId },
     include: {
-      entities: {
-        orderBy: { updatedAt: "desc" },
+      products: {
+        orderBy: [{ isSystem: "desc" }, { name: "asc" }],
         include: {
-          _count: { select: { fields: true } },
-          fields: {
-            select: { classification: true },
-          },
-        },
-      },
-      modelDefinitions: {
-        orderBy: { name: "asc" },
-        include: {
-          fields: {
-            orderBy: { sortOrder: "asc" },
-          },
-        },
-      },
-      decoratorDefinitions: {
-        orderBy: { name: "asc" },
-      },
-      sharedEnums: {
-        orderBy: { name: "asc" },
-      },
-      customScalars: {
-        orderBy: { name: "asc" },
-      },
-      unionTypes: {
-        orderBy: { name: "asc" },
-      },
-      services: {
-        orderBy: { name: "asc" },
-        include: {
-          entity: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-          operations: {
-            orderBy: { name: "asc" },
-            include: {
-              parameters: true,
-              responses: true,
-            },
-          },
+          tier: true,
+          _count: { select: { entities: true } },
         },
       },
     },
   });
 
-  if (!domain) {
+  // Fall back to a tenant-agnostic lookup (handles stale cookie / shared slugs)
+  const resolved =
+    domain ??
+    (await prisma.domain.findFirst({
+      where: { slug: domainSlug },
+      include: {
+        products: {
+          orderBy: [{ isSystem: "desc" }, { name: "asc" }],
+          include: {
+            tier: true,
+            _count: { select: { entities: true } },
+          },
+        },
+      },
+    }));
+
+  if (!resolved) {
     notFound();
   }
 
-  const entities = domain.entities.map((e) => {
-    const classifications = { NEVER_STORED: 0, PII: 0, SENSITIVE: 0, INTERNAL: 0, PUBLIC: 0 };
-    for (const f of e.fields) {
-      const cls = f.classification ?? "SENSITIVE";
-      if (cls in classifications) {
-        classifications[cls as keyof typeof classifications]++;
-      }
-    }
-    return {
-      id: e.id,
-      name: e.name,
-      slug: e.slug,
-      description: e.description,
-      status: e.status,
-      version: e.version,
-      fieldCount: e._count.fields,
-      updatedAt: e.updatedAt,
-      classifications,
-    };
+  const tiers = await prisma.productTier.findMany({
+    orderBy: { sortOrder: "asc" },
   });
 
-  const sharedEnums = domain.sharedEnums.map((e) => ({
-    id: e.id,
-    name: e.name,
-    values: e.values,
-    description: e.description,
-  }));
-
-  const customScalars = domain.customScalars.map((s) => ({
-    id: s.id,
-    name: s.name,
-    baseType: s.baseType,
-    format: s.format,
-    pattern: s.pattern,
-    description: s.description,
-  }));
-
-  const unionTypes = domain.unionTypes.map((u) => ({
-    id: u.id,
-    name: u.name,
-    memberTypes: u.memberTypes,
-    description: u.description,
-  }));
-
-  const models = domain.modelDefinitions.map((model) => ({
-    id: model.id,
-    name: model.name,
-    description: model.description,
-    extendsModelName: model.extendsModelName,
-    fieldCount: model.fields.length,
-    updatedAt: model.updatedAt,
-    fields: model.fields.map((field) => ({
-      id: field.id,
-      name: field.name,
-      type: field.type,
-      nullable: field.nullable,
-      isKey: field.isKey,
-      description: field.description,
-    })),
-  }));
-
-  const decoratorDefinitions = domain.decoratorDefinitions.map((decorator) => ({
-    id: decorator.id,
-    name: decorator.name,
-    description: decorator.description,
-    signature: decorator.signature,
-    targetTypes: decorator.targetTypes,
-  }));
-
-  const services = domain.services.map((s) => ({
-    id: s.id,
-    name: s.name,
-    description: s.description,
-    basePath: s.basePath,
-    scope: s.scope,
-    entity: s.entity
-      ? {
-          id: s.entity.id,
-          name: s.entity.name,
-          slug: s.entity.slug,
-        }
-      : null,
-    operations: s.operations.map((op) => ({
-      id: op.id,
-      name: op.name,
-      httpMethod: op.httpMethod,
-      httpPath: op.httpPath,
-      description: op.description,
-      parameters: op.parameters.map((p) => ({
-        name: p.name,
-        type: p.type,
-        location: p.location,
-        required: p.required,
-        description: p.description,
-      })),
-      responses: op.responses.map((r) => ({
-        statusCode: r.statusCode,
-        type: r.type,
-        description: r.description,
-      })),
-    })),
-  }));
-
-  const domainPolicy = (domain as { policyTemplate?: Record<string, unknown> }).policyTemplate ?? null;
-
   return (
-    <DomainWorkspace
-      domainId={domain.id}
-      domainName={domain.name}
+    <ProductGrid
+      domainId={resolved.id}
+      domainName={resolved.name}
       domainSlug={domainSlug}
-      domainDescription={domain.description}
-      isSystemDomain={domain.isSystem}
-      domainPolicy={domainPolicy as Record<string, unknown> | null}
-      entities={entities}
-      models={models}
-      sharedEnums={sharedEnums}
-      customScalars={customScalars}
-      unionTypes={unionTypes}
-      decoratorDefinitions={decoratorDefinitions}
-      services={services}
+      domainDescription={resolved.description}
+      products={resolved.products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
+        description: p.description,
+        ownerTeam: p.ownerTeam,
+        isSystem: p.isSystem,
+        entityCount: p._count.entities,
+        updatedAt: p.updatedAt,
+        tier: p.tier
+          ? {
+              id: p.tier.id,
+              name: p.tier.name,
+              displayColor: p.tier.displayColor,
+              bgColor: p.tier.bgColor,
+              textColor: p.tier.textColor,
+            }
+          : null,
+      }))}
+      tiers={tiers.map((t) => ({
+        id: t.id,
+        name: t.name,
+        bgColor: t.bgColor,
+        textColor: t.textColor,
+      }))}
     />
   );
 }

@@ -593,7 +593,16 @@ function generateFieldDecorators(field: SuperSchemaField): string[] {
     }
   }
 
-  // Classification decorator (custom annotation via @tag)
+  // Classification decorator (custom annotation via @tag). NOTE: real TypeSpec's
+  // `@tag` only accepts Namespace | Interface | Operation — applying it to a
+  // field is invalid TypeSpec and fails a real `tsp compile` (confirmed
+  // 2026-10-12: the old native avro/openapi emitters never actually compiled
+  // this text, so the bug was latent until a real-compiler typespec-cli
+  // target exercised a classified field). Kept here because
+  // `typespec.importer.ts#extractClassification` still parses this exact
+  // `classification:` prefix back out for the regex-based Paste-Import round
+  // trip — stripped instead at the real-compile boundary, in
+  // `emitter.service.ts#buildSourceForTarget`, for every typespec-cli target.
   if (field.classification) {
     decorators.push(`@tag("classification:${escapeString(field.classification)}")`);
   }

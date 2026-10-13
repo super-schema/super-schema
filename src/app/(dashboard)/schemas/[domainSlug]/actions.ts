@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
+import { ensureDefaultProductId } from "@/lib/org-defaults";
 
 const STALE_SESSION_IMPORT_ERROR =
   "Your session is stale. Sign out and sign in again, then retry the import.";
@@ -55,7 +56,8 @@ export interface CreateFieldInput {
 
 export async function createEntityWithFieldsAction(
   domainId: string,
-  data: { name: string; description: string; fields: CreateFieldInput[] }
+  data: { name: string; description: string; fields: CreateFieldInput[] },
+  productId?: string
 ) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -81,11 +83,14 @@ export async function createEntityWithFieldsAction(
       entityId: "pending",
       userId: currentUserId,
       fn: async () => {
+        const effectiveProductId =
+          productId ?? (await ensureDefaultProductId(domainId));
         return prisma.entity.create({
           data: {
             name: name.trim(),
             slug: generateSlug(name),
             domainId,
+            productId: effectiveProductId,
             description,
             ownerId: currentUserId,
             fields: {
@@ -149,11 +154,13 @@ export async function createEntityAction(domainId: string, formData: FormData) {
       entityId: "pending",
       userId: currentUserId,
       fn: async () => {
+        const productId = await ensureDefaultProductId(domainId);
         return prisma.entity.create({
           data: {
             name: name.trim(),
             slug: generateSlug(name),
             domainId,
+            productId,
             description,
             ownerId: currentUserId,
           },
@@ -465,6 +472,7 @@ export interface ImportedDecoratorDefinitionPayload {
 
 export interface BulkImportPayload {
   domainId: string;
+  productId?: string;
   namespace?: string;
   models: Array<{
     name: string;
@@ -746,6 +754,8 @@ export async function createDomainAssetsFromImportAction(
 
       const sortedEntities = sortByInheritance(payload.entities);
       const createdEntityMap = new Map<string, string>();
+      const importProductId =
+        payload.productId ?? (await ensureDefaultProductId(payload.domainId, tx));
 
       for (const entity of sortedEntities) {
         try {
@@ -759,6 +769,7 @@ export async function createDomainAssetsFromImportAction(
               name: entity.name.trim(),
               slug: generateSlug(entity.name),
               domainId: payload.domainId,
+              productId: importProductId,
               description: entity.description ?? "",
               ownerId: currentUserId,
               ...(parentEntityId ? { parentEntityId } : {}),

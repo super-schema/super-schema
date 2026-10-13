@@ -6,6 +6,7 @@ export default async function LineagePage() {
   const entities = await prisma.entity.findMany({
     include: {
       domain: true,
+      product: true,
       fields: {
         select: {
           name: true,
@@ -38,6 +39,7 @@ export default async function LineagePage() {
       description: (e as Record<string, unknown>).description as string ?? "",
       domainName: e.domain.name,
       domainSlug: e.domain.slug,
+      productSlug: e.product.slug,
       status: e.status,
       fieldCount: e._count.fields,
       piiCount,

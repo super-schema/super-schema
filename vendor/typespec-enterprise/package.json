@@ -1,0 +1,22 @@
+{
+  "name": "@superschema/typespec-enterprise",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "tspMain": "./lib/main.tsp",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typespec/compiler": "^1.10.0",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "@typespec/compiler": ">=0.55.0"
+  }
+}
+

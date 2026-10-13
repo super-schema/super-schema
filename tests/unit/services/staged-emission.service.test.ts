@@ -13,6 +13,7 @@ let emissionRows: Array<{
   lastEmittedAt: Date | null;
   status: "CURRENT" | "STAGED" | "BEHIND";
   output: string | null;
+  formatOptions: unknown;
   createdAt: Date;
   updatedAt: Date;
 }> = [];

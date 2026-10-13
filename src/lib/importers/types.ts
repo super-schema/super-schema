@@ -9,7 +9,12 @@
 // Import format enum
 // ---------------------------------------------------------------------------
 
-export type ImportFormat = "avro" | "bigquery-ddl" | "protobuf" | "typespec";
+export type ImportFormat =
+  | "avro"
+  | "bigquery-ddl"
+  | "protobuf"
+  | "typespec"
+  | "json-schema";
 
 // ---------------------------------------------------------------------------
 // Confidence levels for type mappings
@@ -70,6 +75,10 @@ export interface ParsedField {
   secret?: boolean;
   /** Discriminator field name */
   discriminator?: string;
+  /** Target entity name for a reference field (from a JSON Schema $ref) */
+  referencedEntityName?: string;
+  /** Array element logical type (e.g. "string", or "reference" for an array of refs) */
+  arrayElementType?: string;
 }
 
 // ---------------------------------------------------------------------------

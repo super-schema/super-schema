@@ -49,7 +49,9 @@ function makeField(overrides: Record<string, unknown> = {}) {
     entity: {
       id: "ent-1",
       name: "Customer",
-      domain: { id: "dom-1", name: "Commerce" },
+      slug: "customer",
+      domain: { id: "dom-1", name: "Commerce", slug: "commerce" },
+      product: { slug: "orders" },
     },
     ...overrides,
   };
@@ -439,19 +441,19 @@ describe("Compliance Service", () => {
           id: "fld-1",
           classification: null,
           decorators: {},
-          entity: { id: "ent-1", name: "Customer", domain: { id: "dom-1", name: "Commerce" } },
+          entity: { id: "ent-1", name: "Customer", slug: "customer", domain: { id: "dom-1", name: "Commerce", slug: "commerce" }, product: { slug: "orders" } },
         }),
         makeField({
           id: "fld-2",
           classification: "PII",
           decorators: { classification: { level: "PII" }, policy: {} },
-          entity: { id: "ent-2", name: "Order", domain: { id: "dom-1", name: "Commerce" } },
+          entity: { id: "ent-2", name: "Order", slug: "order", domain: { id: "dom-1", name: "Commerce", slug: "commerce" }, product: { slug: "orders" } },
         }),
         makeField({
           id: "fld-3",
           classification: "SENSITIVE",
           decorators: { classification: { level: "SENSITIVE" }, policy: {} },
-          entity: { id: "ent-2", name: "Order", domain: { id: "dom-1", name: "Commerce" } },
+          entity: { id: "ent-2", name: "Order", slug: "order", domain: { id: "dom-1", name: "Commerce", slug: "commerce" }, product: { slug: "orders" } },
         }),
       ] as never);
 

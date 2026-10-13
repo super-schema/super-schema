@@ -5,11 +5,25 @@ import { PrismaPg } from "@prisma/adapter-pg";
 
 let prisma: PrismaClient;
 
+const TEST_TENANT_ID = "tenant_default";
+
+async function makeProduct(domainId: string): Promise<string> {
+  const product = await prisma.product.create({
+    data: { domainId, name: "Default", slug: "default", description: "Test product" },
+  });
+  return product.id;
+}
+
 beforeAll(async () => {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL not set");
   const adapter = new PrismaPg({ connectionString });
   prisma = new PrismaClient({ adapter });
+  await prisma.tenant.upsert({
+    where: { id: TEST_TENANT_ID },
+    update: {},
+    create: { id: TEST_TENANT_ID, name: "Default Tenant", slug: "default", isSystem: true },
+  });
 });
 
 afterAll(async () => {
@@ -19,7 +33,7 @@ afterAll(async () => {
 describe("Database Schema", () => {
   it("domains table exists and supports CRUD", async () => {
     const domain = await prisma.domain.create({
-      data: { name: `test-domain-${Date.now()}`, slug: `test-domain-${Date.now()}`, description: "Test domain" },
+      data: { name: `test-domain-${Date.now()}`, slug: `test-domain-${Date.now()}`, description: "Test domain", tenantId: TEST_TENANT_ID },
     });
     expect(domain.id).toBeDefined();
     expect(domain.name).toContain("test-domain-");
@@ -29,16 +43,18 @@ describe("Database Schema", () => {
 
   it("entities table exists with unique constraint on (name, domainId)", async () => {
     const domain = await prisma.domain.create({
-      data: { name: `ent-test-${Date.now()}`, slug: `ent-test-${Date.now()}`, description: "Test" },
+      data: { name: `ent-test-${Date.now()}`, slug: `ent-test-${Date.now()}`, description: "Test", tenantId: TEST_TENANT_ID },
     });
     const user = await prisma.user.findFirst();
     if (!user) throw new Error("No user found — register a user first");
+    const productId = await makeProduct(domain.id);
 
     const entity = await prisma.entity.create({
       data: {
         name: "Customer",
         slug: "customer",
         domainId: domain.id,
+        productId,
         ownerId: user.id,
         description: "Customer entity",
       },
@@ -53,6 +69,7 @@ describe("Database Schema", () => {
           name: "Customer",
           slug: "customer",
           domainId: domain.id,
+          productId,
           ownerId: user.id,
         },
       })
@@ -64,7 +81,7 @@ describe("Database Schema", () => {
 
   it("fields table exists with unique constraint on (entityId, name)", async () => {
     const domain = await prisma.domain.create({
-      data: { name: `field-test-${Date.now()}`, slug: `field-test-${Date.now()}`, description: "Test" },
+      data: { name: `field-test-${Date.now()}`, slug: `field-test-${Date.now()}`, description: "Test", tenantId: TEST_TENANT_ID },
     });
     const user = await prisma.user.findFirst();
     if (!user) throw new Error("No user found");
@@ -74,6 +91,7 @@ describe("Database Schema", () => {
         name: "Order",
         slug: "order",
         domainId: domain.id,
+        productId: await makeProduct(domain.id),
         ownerId: user.id,
       },
     });
@@ -111,7 +129,7 @@ describe("Database Schema", () => {
 
   it("cascade delete: deleting domain deletes its entities and fields", async () => {
     const domain = await prisma.domain.create({
-      data: { name: `cascade-test-${Date.now()}`, slug: `cascade-test-${Date.now()}`, description: "Test" },
+      data: { name: `cascade-test-${Date.now()}`, slug: `cascade-test-${Date.now()}`, description: "Test", tenantId: TEST_TENANT_ID },
     });
     const user = await prisma.user.findFirst();
     if (!user) throw new Error("No user found");
@@ -121,6 +139,7 @@ describe("Database Schema", () => {
         name: "Product",
         slug: "product",
         domainId: domain.id,
+        productId: await makeProduct(domain.id),
         ownerId: user.id,
       },
     });

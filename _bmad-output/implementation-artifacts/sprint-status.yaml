@@ -1,5 +1,5 @@
 # generated: 2026-04-03
-# last_updated: 2026-04-06
+# last_updated: 2026-04-07
 # project: super-schema
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-03
-last_updated: 2026-04-06
+last_updated: 2026-04-07
 project: super-schema
 project_key: NOKEY
 tracking_system: file-system
@@ -55,10 +55,11 @@ development_status:
   # Epic 2: Schema Authoring & Management (14 stories)
   # NOTE (2026-04-05): UX restructured to 3-tier editing model:
   #   Tier 1: Inline field cards (field-editor.tsx)
-  #   Tier 2: Quick Edit right sidebar with 4 sections (Properties, Constraints, Documentation, Data Governance)
-  #   Tier 3: Field Studio full-page editor with 8 panels (Properties, Constraints, Serialization, Access Control, Documentation, Version History, Extensions, Data Governance)
+  #   Tier 2: Field Edit right sidebar with 4 sections (Properties, Validations & Constraints, Data Classification, Documentation)
+  #   Tier 3: Field Studio full-page editor with 8 panels (Properties, Validations & Constraints, Serialization, Access Control, Documentation, Version History, Extensions, Data Classification)
   # Entity workspace tabs: Editor | Emit | Versions (no top-level History/Create Version/Emit buttons)
-  # Right panel tabs: Quick Edit | TypeSpec Preview (no Emission tab, max width 800px)
+  # Right panel tabs: Field Edit | TypeSpec Preview (no Emission tab, max width 800px)
+  # Classification: 5-tier system (Class 1: Never Stored → Class 5: Public), default = Class 3 (Sensitive)
   # Human-readable slugs in URLs: /schemas/playground/customer-order
   # Business Concept Registry and Glossary at /glossary
   epic-2: in-progress
@@ -80,6 +81,14 @@ development_status:
   2-15-condition-based-retention-policies: review
   2-16-multi-entity-typespec-import: review
   2-17-typespec-import-decorator-fidelity: review
+  2-18-field-list-tabular-alignment: done                # already implemented in FieldCard.tsx
+  2-19-field-edit-panel-reorganization: review
+  2-20-five-tier-data-classification: review
+  2-21-entity-alerts-tab-completeness-template: review
+  2-22-explicit-save-semantic-versioning: review
+  2-23-typespec-decorator-compliance-audit: review
+  2-24-api-operations-tab: review
+  2-25-domain-shared-types-browser: review
   epic-2-retrospective: optional
 
   # Epic 3: Schema Emission, Validation & API (9 stories)
@@ -93,6 +102,7 @@ development_status:
   3-7-type-mapping-overrides-governance: done
   3-8-external-api-orpc-openapi: done
   3-9-spanner-emitter-syntax-highlighting: review
+  3-10-generated-schema-type-overrides-alert-drift: review
   epic-3-retrospective: optional
 
   # Epic 4: Schema Versioning & Change Management (4 stories)
@@ -156,6 +166,22 @@ development_status:
   11-3-ai-assisted-field-suggestions-domain-context: done
   11-4-ai-enhanced-schema-import-confidence-scoring: done
   epic-11-retrospective: optional
+
+  # Epic 12: TypeSpec System of Record Migration (8 stories) — added 2026-10-12
+  # Foundation epic: redefines MVP's IR per the architecture pivot documented
+  # in architecture.md / prd.md same date. Everything else in this file was
+  # planned against the superseded Prisma-row-canonical design — see Story
+  # 12.8 for which existing docs need reconciliation.
+  epic-12: in-progress
+  12-1-governance-decorator-package-completion: ready-for-dev
+  12-2-real-compiler-service: ready-for-dev
+  12-3-prisma-schema-migration-typespec-source: ready-for-dev
+  12-4-surgical-field-edit-save-path: ready-for-dev
+  12-5-typespec-source-view-and-edit: ready-for-dev
+  12-6-emitter-migration: ready-for-dev
+  12-7-one-time-data-migration: ready-for-dev
+  12-8-reconcile-stale-implementation-artifacts: ready-for-dev
+  epic-12-retrospective: optional
 
 # ---------------------------------------------------------------------------
 # QUALITY NOTES: UI coverage by epic

@@ -21,7 +21,7 @@ const {
   saveSchemaFieldTypeOverrideActionMock: vi.fn(),
 }));
 
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions", () => ({
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions", () => ({
   generateSchemaAction: generateSchemaActionMock,
   publishSchemaAction: publishSchemaActionMock,
   deploySchemaAction: deploySchemaActionMock,
@@ -37,7 +37,7 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock(
-  "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/components/SchemaVersionList",
+  "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemaVersionList",
   () => ({
     StatusBadge: ({ status }: { status: string }) => <span>{status}</span>,
     SchemaVersionList: () => <div data-testid="schema-version-list" />,
@@ -45,13 +45,13 @@ vi.mock(
 );
 
 vi.mock(
-  "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/components/SchemaCodePreview",
+  "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemaCodePreview",
   () => ({
     SchemaCodePreview: ({ code }: { code: string }) => <pre>{code}</pre>,
   })
 );
 
-import { TechnologyCard } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/components/TechnologyCard";
+import { TechnologyCard } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/TechnologyCard";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -182,5 +182,72 @@ describe("TechnologyCard", () => {
         mappedType: "STRING(36)",
       });
     });
+  });
+  it("surfaces mapping health and opens an example-driven risk detail panel", async () => {
+    getSchemaTargetFieldMappingsActionMock.mockResolvedValue({
+      success: true,
+      supported: true,
+      reason: null,
+      typeCatalog: {
+        key: "openapi",
+        displayName: "OpenAPI (Super Schema)",
+        docsUrl: "https://spec.openapis.org/oas/v3.0.0.html",
+        docsSource: "OpenAPI Specification data type formats",
+        supportsGeneratedOverrides: true,
+        options: [
+          {
+            value: "number/double",
+            label: "number/double",
+            description: "Double precision floating point",
+            group: "Numeric formats",
+          },
+          {
+            value: "string",
+            label: "string",
+            description: "Plain string",
+            group: "Core",
+          },
+        ],
+      },
+      mappings: [
+        {
+          fieldId: "field-amount",
+          fieldName: "amount",
+          sourceType: "decimal",
+          precision: 19,
+          scale: 4,
+          defaultMappedType: "number/double",
+          effectiveMappedType: "number/double",
+          overrideSource: undefined,
+          isOverride: false,
+          isStale: false,
+          isLossy: true,
+          lossDescription:
+            "Decimal precision reduced to float64 — values beyond 15 significant digits will be rounded",
+        },
+      ],
+    });
+
+    render(
+      <TechnologyCard
+        {...baseProps}
+        targetInfo={{
+          key: "openapi",
+          displayName: "OpenAPI",
+          icon: <span>api</span>,
+          supportsFieldOverrides: true,
+        }}
+        entityVersion={2}
+      />
+    );
+
+    expect(await screen.findByText("Mapping health")).toBeDefined();
+    expect(screen.getByText("1 risky")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: /review amount mapping/i }));
+
+    expect(screen.getByText("Example values")).toBeDefined();
+    expect(screen.getByText(/123456789012345\.6789/)).toBeDefined();
+    expect(screen.getByText(/Financial totals/)).toBeDefined();
   });
 });

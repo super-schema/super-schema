@@ -59,6 +59,7 @@ export type ComplianceFieldResult = {
   entityName: string;
   entitySlug?: string;
   domainSlug?: string;
+  productSlug?: string;
   fieldId: string;
   fieldName: string;
   fieldType: string;
@@ -91,6 +92,7 @@ export type ComplianceGap = {
   entityName: string;
   entitySlug?: string;
   domainSlug?: string;
+  productSlug?: string;
   fieldId: string;
   fieldName: string;
   gapType: GapType;

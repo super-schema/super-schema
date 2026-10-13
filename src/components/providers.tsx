@@ -1,22 +1,19 @@
 "use client";
 
-import { ThemeProvider } from "next-themes";
+import { QueryProvider } from "@/components/QueryProvider";
+import { ThemeProvider } from "@/lib/theme";
+import { useFontSize } from "@/lib/font-size";
 
 /**
- * App-level providers.
- *
- * Wraps children with next-themes ThemeProvider so that useTheme() works
- * throughout the component tree.
+ * Applies the app theme and font scale without rendering inline hydration
+ * scripts from a client component.
  */
 export function Providers({ children }: { children: React.ReactNode }) {
+  useFontSize();
+
   return (
-    <ThemeProvider
-      attribute="class"
-      defaultTheme="dark"
-      enableSystem
-      disableTransitionOnChange
-    >
-      {children}
-    </ThemeProvider>
+    <QueryProvider>
+      <ThemeProvider>{children}</ThemeProvider>
+    </QueryProvider>
   );
 }

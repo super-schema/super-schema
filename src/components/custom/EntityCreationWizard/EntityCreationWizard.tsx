@@ -2,14 +2,17 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowLeft, AlertCircle } from "lucide-react";
 import { TemplateSelector, type CreationMethod } from "./TemplateSelector";
 import { StandardsBrowser } from "./StandardsBrowser";
 import { NaturalLanguageInput } from "./NaturalLanguageInput";
 import { ImportUploader } from "./ImportUploader";
+import { VisualSchemaBuilder } from "@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder";
 import { FieldPreview, type PreviewField } from "./FieldPreview";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import type { StandardTemplate } from "@/lib/schema-standards";
-import { importSchema, importTypeSpecDocument } from "@/services/import.service";
+import { importSchema } from "@/services/import.service";
+import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { detectFormat } from "@/lib/importers/format-detector";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
@@ -18,6 +21,7 @@ import {
   type TypeSpecImportSelection,
 } from "@/components/custom/ImportDialog/TypeSpecImportReviewScreen";
 import { toast } from "sonner";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 
 // ── State Machine ────────────────────────────────────────────────────
 
@@ -45,7 +49,11 @@ interface EntityCreationWizardProps {
   domainId: string;
   domainName: string;
   domainSlug: string;
+  productId: string;
+  productSlug: string;
   isAiConfigured?: boolean;
+  /** Existing entities in the domain, offered as $ref targets in the visual builder. */
+  referenceTargets?: { id?: string; name: string }[];
 }
 
 let tempIdCounter = 0;
@@ -57,9 +65,13 @@ export function EntityCreationWizard({
   domainId,
   domainName,
   domainSlug,
+  productId,
+  productSlug,
   isAiConfigured = false,
+  referenceTargets = [],
 }: EntityCreationWizardProps) {
   const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -174,55 +186,54 @@ export function EntityCreationWizard({
     setIsLoading(true);
     setError(null);
 
-    try {
-      const format = detectFormat(content, filename);
-      setDetectedFormat(format);
+    void (async () => {
+      try {
+        const format = detectFormat(content, filename);
+        setDetectedFormat(format);
 
-      if (!format) {
-        setError("Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, Protobuf, or TypeSpec.");
-        setIsLoading(false);
-        return;
-      }
-
-      // TypeSpec: use full document parser for multi-model support
-      if (format === "typespec") {
-        const tsResult = importTypeSpecDocument(content);
-        if (!tsResult.success) {
-          setError(tsResult.error.message);
-          setIsLoading(false);
+        if (!format) {
+          setError("Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, Protobuf, JSON Schema, or TypeSpec.");
           return;
         }
-        setTypeSpecResult(tsResult.data);
-        setState((prev) => ({ ...prev, step: "typespec-review" }));
+
+        // TypeSpec: compile with the real @typespec/compiler (server action).
+        if (format === "typespec") {
+          const tsResult = await importTypeSpecDocumentAction(content);
+          if (!tsResult.success) {
+            setError(tsResult.error.message);
+            return;
+          }
+          setTypeSpecResult(tsResult.data);
+          setState((prev) => ({ ...prev, step: "typespec-review" }));
+          return;
+        }
+
+        // Other formats: single entity import
+        const result = importSchema(content, format);
+        if (!result.success) {
+          setError(result.error.message);
+          return;
+        }
+
+        const { parsedEntity } = result.data;
+        const fields: PreviewField[] = parsedEntity.fields.map((f) => ({
+          tempId: makeTempId(),
+          name: f.name,
+          type: f.type,
+          classification: null,
+          description: f.description ?? "",
+          confidence: f.confidence === "high" ? 0.95 : f.confidence === "medium" ? 0.7 : 0.4,
+          referencedEntityName: f.referencedEntityName,
+          arrayElementType: f.arrayElementType,
+        }));
+
+        goToPreview(parsedEntity.name, "", fields);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to parse schema");
+      } finally {
         setIsLoading(false);
-        return;
       }
-
-      // Other formats: single entity import
-      const result = importSchema(content, format);
-
-      if (!result.success) {
-        setError(result.error.message);
-        setIsLoading(false);
-        return;
-      }
-
-      const { parsedEntity } = result.data;
-      const fields: PreviewField[] = parsedEntity.fields.map((f) => ({
-        tempId: makeTempId(),
-        name: f.name,
-        type: f.type,
-        classification: null,
-        description: f.description ?? "",
-        confidence: f.confidence === "high" ? 0.95 : f.confidence === "medium" ? 0.7 : 0.4,
-      }));
-
-      goToPreview(parsedEntity.name, "", fields);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to parse schema");
-    } finally {
-      setIsLoading(false);
-    }
+    })();
   }
 
   // TypeSpec multi-model confirm handler
@@ -286,6 +297,7 @@ export function EntityCreationWizard({
 
       const result = await createDomainAssetsFromImportAction({
         domainId,
+        productId,
         namespace: typeSpecResult.namespace,
         models,
         entities,
@@ -303,6 +315,23 @@ export function EntityCreationWizard({
       if (result.scalarsCreated > 0) parts.push(`${result.scalarsCreated} scalar(s)`);
       if (result.unionsCreated > 0) parts.push(`${result.unionsCreated} union(s)`);
 
+      const createdCount =
+        result.modelsCreated +
+        result.entitiesCreated +
+        result.enumsCreated +
+        result.scalarsCreated +
+        result.unionsCreated +
+        result.servicesCreated +
+        result.decoratorsCreated;
+      const blockingErrors = result.errors.filter(
+        (err) => !err.includes("already exists")
+      );
+
+      if (createdCount === 0 && blockingErrors.length > 0) {
+        toast.error(blockingErrors[0]);
+        return;
+      }
+
       if (parts.length > 0) {
         toast.success(`Created ${parts.join(", ")}`);
       }
@@ -313,7 +342,7 @@ export function EntityCreationWizard({
         }
       }
 
-      router.push(`/schemas/${domainSlug}`);
+      router.push(`/schemas/${domainSlug}/${productSlug}`);
       router.refresh();
     } catch {
       toast.error("Failed to import TypeSpec document");
@@ -333,30 +362,44 @@ export function EntityCreationWizard({
     setIsCreating(true);
     setError(null);
 
-    const fields: CreateFieldInput[] = state.fields.map((f, i) => ({
-      name: f.name,
-      type: f.type,
-      nullable: true,
-      isKey: false,
-      description: f.description,
-      classification: f.classification,
-      precision: null,
-      scale: null,
-    }));
+    const fields: CreateFieldInput[] = state.fields.map((f) => {
+      // Preserve complex-type metadata (reference target, array element type)
+      // so references/arrays resolve in the IR.
+      const decorators: Record<string, unknown> = {};
+      if (f.referencedEntityName) decorators.referencedEntityName = f.referencedEntityName;
+      if (f.arrayElementType) decorators.arrayElementType = f.arrayElementType;
 
-    const result = await createEntityWithFieldsAction(domainId, {
-      name: state.entityName.trim(),
-      description: state.entityDescription,
-      fields,
+      return {
+        name: f.name,
+        type: f.type,
+        nullable: true,
+        isKey: false,
+        description: f.description,
+        classification: f.classification,
+        precision: null,
+        scale: null,
+        ...(Object.keys(decorators).length > 0 ? { decorators } : {}),
+      };
     });
+
+    const result = await createEntityWithFieldsAction(
+      domainId,
+      {
+        name: state.entityName.trim(),
+        description: state.entityDescription,
+        fields,
+      },
+      productId
+    );
 
     setIsCreating(false);
 
     if (result?.error) {
       setError(result.error);
     } else {
+      invalidateDomainsTree();
       // Navigate back to domain page
-      router.push(`/schemas/${domainSlug}`);
+      router.push(`/schemas/${domainSlug}/${productSlug}`);
       router.refresh();
     }
   }
@@ -443,6 +486,37 @@ export function EntityCreationWizard({
             error={error}
             detectedFormat={detectedFormat}
           />
+        )}
+
+        {state.step === "configure" && state.method === "visual" && (
+          <div className="space-y-space-4">
+            <button
+              onClick={goToSelectMethod}
+              className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </button>
+            <div>
+              <h3 className="text-heading-2 text-foreground mb-space-2">
+                Build Schema Visually
+              </h3>
+              <p className="text-body-small text-muted-foreground mb-space-4">
+                Add fields and pick types. We generate a JSON Schema and take you
+                to review before creating the entity.
+              </p>
+            </div>
+            {error && (
+              <div className="flex items-start gap-space-2 p-space-3 rounded-lg border border-destructive/30 bg-destructive/5">
+                <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                <p className="text-body-small text-destructive">{error}</p>
+              </div>
+            )}
+            <VisualSchemaBuilder
+              onImport={(content) => handleImportSubmit(content)}
+              referenceTargets={referenceTargets}
+            />
+          </div>
         )}
 
         {state.step === "preview-fields" && (

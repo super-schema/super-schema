@@ -14,6 +14,7 @@ interface EntityCardProps {
   fieldCount: number;
   domainName: string;
   domainSlug: string;
+  productSlug: string;
   updatedAt: Date;
   classifications?: {
     NEVER_STORED: number;
@@ -34,6 +35,7 @@ export function EntityCard({
   version,
   fieldCount,
   domainSlug,
+  productSlug,
   updatedAt,
   classifications,
   onDelete,
@@ -59,7 +61,7 @@ export function EntityCard({
         </button>
       )}
 
-      <Link href={`/schemas/${domainSlug}/${slug}`} className="block">
+      <Link href={`/schemas/${domainSlug}/${productSlug}/${slug}`} className="block">
         {/* Header */}
         <div className="flex items-start justify-between mb-space-2 pr-space-8">
           <h3 className="text-heading-3 text-foreground font-mono group-hover:text-primary transition-colors">

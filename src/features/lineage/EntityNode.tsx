@@ -10,6 +10,7 @@ export interface EntityNodeData {
   slug: string;
   domainName: string;
   domainSlug: string;
+  productSlug: string;
   status: string;
   fieldCount: number;
   piiCount: number;
@@ -41,8 +42,11 @@ function EntityNodeInner({ data, id }: NodeProps) {
   );
 
   const handleOpenEditor = useCallback(() => {
-    router.push(`/schemas/${nodeData.domainSlug}/${nodeData.slug || id}`);
-  }, [router, nodeData.domainSlug, nodeData.slug, id]);
+    const base = nodeData.productSlug
+      ? `/schemas/${nodeData.domainSlug}/${nodeData.productSlug}/${nodeData.slug || id}`
+      : `/schemas?entityId=${encodeURIComponent(id)}`;
+    router.push(base);
+  }, [router, nodeData.domainSlug, nodeData.productSlug, nodeData.slug, id]);
 
   const displayFields = nodeData.fields?.slice(0, 10) ?? [];
   const remainingFields = Math.max(0, (nodeData.fields?.length ?? 0) - 10);

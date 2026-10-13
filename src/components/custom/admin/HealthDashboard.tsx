@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   RefreshCw,
   Activity,
@@ -13,7 +13,13 @@ import {
   FileText,
   AlertTriangle,
 } from "lucide-react";
-import type { ComponentStatus } from "@/types/schemas/health";
+import type {
+  ComponentStatus,
+  UsageMetrics,
+  ActivityMetrics,
+  ErrorSummary,
+} from "@/types/schemas/health";
+import { getHealthAction } from "@/app/(dashboard)/admin/actions";
 
 type StatusColor = "green" | "amber" | "red";
 
@@ -35,35 +41,78 @@ function StatusIndicator({ status }: { status: StatusColor }) {
 }
 
 export function HealthDashboard() {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [components, setComponents] = useState<{
     database: ComponentStatus;
     compiler: ComponentStatus;
     emitters: ComponentStatus;
-  }>({
-    database: { name: "Database", status: "healthy", message: "Connected", latencyMs: 5 },
-    compiler: { name: "TypeSpec Compiler", status: "healthy", message: "Ready", latencyMs: 12 },
-    emitters: { name: "Emitters", status: "healthy", message: "All operational" },
-  });
+  } | null>(null);
+  const [usage, setUsage] = useState<UsageMetrics | null>(null);
+  const [activity, setActivity] = useState<ActivityMetrics | null>(null);
+  const [errors, setErrors] = useState<ErrorSummary | null>(null);
 
-  async function handleRefresh() {
+  const load = useCallback(async () => {
+    const res = await getHealthAction();
+    if ("error" in res) {
+      setError(res.error ?? "Request failed");
+      setLoading(false);
+      return;
+    }
+    setError(null);
+    setComponents(res.data.health.components);
+    setUsage(res.data.usage);
+    setActivity(res.data.activity);
+    setErrors(res.data.errors);
+    setLoading(false);
+  }, []);
+
+  function refresh() {
     setLoading(true);
-    // In production, call oRPC queries
-    setTimeout(() => setLoading(false), 1000);
+    setError(null);
+    void load();
   }
 
-  async function handleRunHealthCheck() {
-    setLoading(true);
-    // In production, call oRPC health.runCheck
-    setTimeout(() => setLoading(false), 1500);
-  }
+  useEffect(() => {
+    // Fetch once on mount; state updates occur after the async result resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+  }, [load]);
+
+  const usageCards = [
+    { label: "Total Entities", value: usage?.totalEntities ?? 0, icon: Layers },
+    { label: "Total Fields", value: usage?.totalFields ?? 0, icon: FileText },
+    { label: "Total Domains", value: usage?.totalDomains ?? 0, icon: Globe },
+    { label: "Total Users", value: usage?.totalUsers ?? 0, icon: Users },
+    { label: "Total Emissions", value: usage?.totalEmissions ?? 0, icon: Zap },
+  ];
+  const activityCards = [
+    { label: "Active Users", value: activity?.activeUsers24h ?? 0 },
+    { label: "Emissions Today", value: activity?.emissionsToday ?? 0 },
+    { label: "Schema Changes", value: activity?.schemaChangesToday ?? 0 },
+    { label: "Pending Governance", value: activity?.governanceRequestsPending ?? 0, highlight: true },
+  ];
+  const errorCards = [
+    { label: "Compilation Errors", value: errors?.compilationErrors24h ?? 0 },
+    { label: "Emission Failures", value: errors?.emissionValidationFailures24h ?? 0 },
+    { label: "API Errors", value: errors?.apiErrors24h ?? 0 },
+  ];
 
   return (
     <div className="space-y-space-6">
+      {error && (
+        <div
+          role="alert"
+          data-testid="health-error"
+          className="rounded-md border border-destructive bg-destructive/5 px-space-3 py-space-2 text-body-small text-destructive"
+        >
+          {error}
+        </div>
+      )}
       {/* Actions */}
       <div className="flex items-center gap-space-3">
         <button
-          onClick={handleRunHealthCheck}
+          onClick={refresh}
           disabled={loading}
           className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50"
         >
@@ -71,7 +120,7 @@ export function HealthDashboard() {
           Run Health Check
         </button>
         <button
-          onClick={handleRefresh}
+          onClick={refresh}
           disabled={loading}
           className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md border border-border text-body-small text-foreground hover:bg-muted disabled:opacity-50"
         >
@@ -89,7 +138,11 @@ export function HealthDashboard() {
             { key: "compiler" as const, icon: Cpu, label: "TypeSpec Compiler" },
             { key: "emitters" as const, icon: Zap, label: "Emitters" },
           ].map(({ key, icon: Icon, label }) => {
-            const comp = components[key];
+            const comp = components?.[key] ?? {
+              name: label,
+              status: loading ? "degraded" : "unhealthy",
+              message: loading ? "Checking\u2026" : "Unknown",
+            };
             return (
               <div key={key} className="border border-border rounded-lg p-space-4">
                 <div className="flex items-center justify-between mb-space-2">
@@ -113,13 +166,7 @@ export function HealthDashboard() {
       <section>
         <h3 className="text-heading-4 text-foreground mb-space-3">Usage Metrics</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-space-4">
-          {[
-            { label: "Total Entities", value: 0, icon: Layers },
-            { label: "Total Fields", value: 0, icon: FileText },
-            { label: "Total Domains", value: 0, icon: Globe },
-            { label: "Total Users", value: 0, icon: Users },
-            { label: "Total Emissions", value: 0, icon: Zap },
-          ].map(({ label, value, icon: Icon }) => (
+          {usageCards.map(({ label, value, icon: Icon }) => (
             <div key={label} className="border border-border rounded-lg p-space-4 text-center">
               <Icon className="w-5 h-5 text-muted-foreground mx-auto mb-space-2" />
               <p className="text-heading-2 text-foreground">{value}</p>
@@ -133,12 +180,7 @@ export function HealthDashboard() {
       <section>
         <h3 className="text-heading-4 text-foreground mb-space-3">Activity (24h)</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-space-4">
-          {[
-            { label: "Active Users", value: 0 },
-            { label: "Emissions Today", value: 0 },
-            { label: "Schema Changes", value: 0 },
-            { label: "Pending Governance", value: 0, highlight: true },
-          ].map(({ label, value, highlight }) => (
+          {activityCards.map(({ label, value, highlight }) => (
             <div
               key={label}
               className={`border rounded-lg p-space-4 text-center ${
@@ -158,11 +200,7 @@ export function HealthDashboard() {
       <section>
         <h3 className="text-heading-4 text-foreground mb-space-3">Errors (24h)</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-space-4">
-          {[
-            { label: "Compilation Errors", value: 0 },
-            { label: "Emission Failures", value: 0 },
-            { label: "API Errors", value: 0 },
-          ].map(({ label, value }) => (
+          {errorCards.map(({ label, value }) => (
             <div
               key={label}
               className={`border rounded-lg p-space-4 text-center cursor-pointer hover:border-primary/30 transition-colors ${

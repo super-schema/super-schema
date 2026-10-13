@@ -13,7 +13,33 @@
       "WebFetch(domain:playwright.dev)",
       "WebFetch(domain:microsoft.github.io)",
       "WebFetch(domain:typespec.io)",
-      "Bash(npx create-next-app@latest:*)"
+      "Bash(npx create-next-app@latest:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx next:*)",
+      "Bash(node:*)",
+      "Bash(npx tsx:*)",
+      "Bash(curl:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "Bash(find:*)",
+      "Bash(git stash:*)",
+      "Bash(pi:*)",
+      "Bash(rtk read:*)",
+      "Bash(rtk:*)",
+      "Bash(brew reinstall:*)",
+      "Bash(npm show:*)",
+      "Bash(npm install:*)",
+      "Bash(npm search:*)",
+      "Bash(npm:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "gortex"
+  ],
+  "enableAllProjectMcpServers": true
 }

@@ -131,10 +131,12 @@ So that I can control how specific types map to targets with full audit trail.
 
 **Override precedence chain:**
 ```
-per-entity override > global override > default mapping
+field-level generated-schema override > per-entity override > global override > default mapping
 ```
 
-The `resolveMapping()` function applies this precedence. When an override is active, the `MappingResult` includes `isOverride: true` and `overrideSource: 'global' | 'per-entity'`.
+The `resolveMapping()` function applies this precedence. When an override is active, the `MappingResult` includes `isOverride: true` and `overrideSource: 'field' | 'global' | 'per-entity'`.
+
+**Boundary clarification:** Story 3.7 remains the governed mapping-policy workflow. Field-level target overrides chosen from generated schema cards are persisted with the entity/schema metadata layer and sit above the policy overrides during generation.
 
 **RBAC for overrides:**
 

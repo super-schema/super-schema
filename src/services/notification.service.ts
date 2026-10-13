@@ -70,6 +70,45 @@ function toNotification(row: PrismaNotification): Notification {
   };
 }
 
+async function enrichEntityRef(entityRef: EntityRef): Promise<EntityRef> {
+  if (
+    entityRef.domainSlug &&
+    entityRef.productSlug &&
+    entityRef.entitySlug &&
+    (!entityRef.fieldId || entityRef.fieldSlug)
+  ) {
+    return entityRef;
+  }
+
+  const entity = await prisma.entity.findUnique({
+    where: { id: entityRef.entityId },
+    select: {
+      slug: true,
+      domain: { select: { slug: true } },
+      product: { select: { slug: true } },
+      fields: entityRef.fieldId
+        ? {
+            where: { id: entityRef.fieldId },
+            select: { slug: true },
+            take: 1,
+          }
+        : false,
+    },
+  });
+
+  if (!entity) return entityRef;
+
+  return {
+    ...entityRef,
+    domainSlug: entityRef.domainSlug ?? entity.domain.slug,
+    productSlug: entityRef.productSlug ?? entity.product?.slug,
+    entitySlug: entityRef.entitySlug ?? entity.slug,
+    fieldSlug: entityRef.fieldId
+      ? entityRef.fieldSlug ?? (entity.fields ? entity.fields[0]?.slug : undefined)
+      : entityRef.fieldSlug,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Service functions
 // ---------------------------------------------------------------------------
@@ -87,13 +126,15 @@ export async function createNotification(
     });
   }
 
+  const entityRef = await enrichEntityRef(parsed.data.entityRef);
+
   const row = await prisma.notification.create({
     data: {
       userId: parsed.data.userId,
       type: parsed.data.type as PrismaNotification["type"],
       title: parsed.data.title,
       body: parsed.data.body,
-      entityId: JSON.stringify(parsed.data.entityRef),
+      entityId: JSON.stringify(entityRef),
       read: false,
     },
   });

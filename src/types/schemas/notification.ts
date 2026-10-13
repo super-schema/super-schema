@@ -14,7 +14,11 @@ export type NotificationType = z.infer<typeof NotificationType>;
 
 export const EntityRefSchema = z.object({
   entityId: z.string().min(1),
+  domainSlug: z.string().min(1).optional(),
+  productSlug: z.string().min(1).optional(),
+  entitySlug: z.string().min(1).optional(),
   fieldId: z.string().optional(),
+  fieldSlug: z.string().min(1).optional(),
   versionId: z.string().optional(),
 });
 

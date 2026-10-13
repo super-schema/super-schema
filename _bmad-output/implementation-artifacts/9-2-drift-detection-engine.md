@@ -2,6 +2,8 @@
 
 Status: review
 
+> **Epic 12 reconciliation note (2026-10-12):** Drift comparison here predates the TypeSpec-as-system-of-record pivot (see architecture.md). The 2026-10-08 investigation found two disconnected implementations: a dormant field-level diff engine (drift.service.ts, zero live callers) and the live path (checkTargetDriftAction, crude string equality). That discrepancy is independent of this epic and still needs its own resolution. Once Epic 12 Stories 12.2-12.4 land, drift comparison should move to diffing typespec_source text/AST directly rather than comparing emitted-output strings.
+
 ## Story
 As a **data engineer**, I want to detect drift between my logical schema and registered implementation schemas, so that I know when production schemas have diverged from the source of truth.
 
@@ -206,6 +208,7 @@ As a **data engineer**, I want to detect drift between my logical schema and reg
 - **Notification integration**: Drift detection creates DRIFT_ALERT notifications using the existing notification service (Epic 7). If webhook infrastructure exists (Story 7.3), it also dispatches `drift.detected` webhook events.
 - **RBAC**: Author role required to trigger drift detection (write operation). Viewer role sufficient to read drift status (read-only). Admin role required for detectAll (system-wide operation). Enforced via `protectedProcedure` and `adminProcedure` in oRPC middleware.
 - **Caching**: `getDriftStatus` returns the most recent stored drift report without re-running detection. Detection is always on-demand — no background polling for MVP.
+- **Target override drift addition**: generated-schema field-level target overrides introduce a second drift concept distinct from imported-schema drift. Override drift should be surfaced in the entity Alerts UX as actionable target-drift items when a user override diverges from the default mapping, when the logical field/default mapping changed after the override was created, or when a generated target carrying overrides is behind the current entity version.
 
 ### UX/Design Requirements
 - Drift badges follow the same color system as confidence badges from Story 9.1: green (in-sync), amber (drifted), gray (unknown)

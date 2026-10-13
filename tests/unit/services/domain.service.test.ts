@@ -7,8 +7,14 @@ vi.mock("@/lib/db", () => ({
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
+    tenant: {
+      upsert: vi.fn().mockResolvedValue({ id: "tenant_default" }),
+    },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
+    },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({ id: "user-1" }),
     },
   },
 }));
@@ -54,6 +60,20 @@ describe("Domain Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("VALIDATION_ERROR");
       }
+    });
+
+    it("rejects names that collide with schema utility routes", async () => {
+      const result = await createDomain(
+        { name: "Type Mappings", description: "Reserved route" },
+        mockCtx
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+        expect(result.error.message).toContain("reserved");
+      }
+      expect(prisma.domain.create).not.toHaveBeenCalled();
     });
 
     it("returns error for invalid policyTemplate JSONB", async () => {

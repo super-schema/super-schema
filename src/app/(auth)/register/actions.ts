@@ -2,8 +2,10 @@
 
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { signIn } from "@/lib/auth";
+import { ensureFirstAdminAssignment } from "@/lib/admin-bootstrap";
 
 const registerSchema = z
   .object({
@@ -57,9 +59,15 @@ export async function registerAction(
   const hashedPassword = await bcrypt.hash(password, 12);
 
   try {
-    await prisma.user.create({
-      data: { email, password: hashedPassword },
-    });
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.user.create({
+          data: { email, password: hashedPassword },
+        });
+        await ensureFirstAdminAssignment(tx);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
   } catch (e: unknown) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { fieldErrors: { email: "An account with this email already exists" } };

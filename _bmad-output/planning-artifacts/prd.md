@@ -1,5 +1,5 @@
 ---
-stepsCompleted: [step-01-init, step-02-discovery, step-02b-vision, step-02c-executive-summary, step-03-success, step-04-journeys, step-05-domain, step-06-innovation, step-07-project-type, step-08-scoping, step-09-functional, step-10-nonfunctional, step-11-polish, step-12-complete]
+stepsCompleted: [step-01-init, step-02-discovery, step-02b-vision, step-02c-executive-summary, step-03-success, step-04-journeys, step-05-domain, step-06-innovation, step-07-project-type, step-08-scoping, step-09-functional, step-10-nonfunctional, step-11-polish, step-12-complete, step-e-01-discovery, step-e-02-review, step-e-03-edit]
 inputDocuments:
   - '_bmad-output/planning-artifacts/product-brief-super-schema.md'
   - '_bmad-output/planning-artifacts/product-brief-super-schema-distillate.md'
@@ -15,6 +15,10 @@ classification:
   domain: data_infrastructure
   complexity: high
   projectContext: greenfield
+lastEdited: '2026-10-12'
+editHistory:
+  - date: '2026-10-12'
+    changes: 'TypeSpec-as-system-of-record architecture pivot — supersedes the original "TypeSpec as invisible intermediate representation" design. Redefines MVP: Phase 1 ships on TypeSpec source as the captured, canonical representation (governance decorator package for classification/retention/PII/etc., relational projection for fast queries, RBAC/audit/drift stay relational). Added Journey 7 (direct TypeSpec capture + bidirectional edit, also the e2e test case). Added FR73-77. Updated Performance/Reliability NFRs, added Concurrency and Versioning NFR sections.'
 ---
 
 # Product Requirements Document - Super Schema
@@ -24,7 +28,9 @@ classification:
 
 ## Executive Summary
 
-Super Schema is a full-stack web application that provides a visual, interactive interface for defining universal logical data schemas — eliminating the need for data teams to learn TypeSpec, Avro, Protobuf, or any platform-specific schema syntax. Users create and manage entity definitions through an intuitive UI with full governance metadata (data classification, retention policies, quality rules, lineage), while the system generates TypeSpec as an invisible intermediate representation and automatically emits implementation-specific schemas to 15+ target platforms including BigQuery, Avro, Protobuf, OpenAPI, Spanner, and dbt.
+Super Schema is a full-stack web application that provides a visual, interactive interface for defining universal logical data schemas — eliminating the need for data teams to hand-write TypeSpec, Avro, Protobuf, or any platform-specific schema syntax, while every entry they make is captured directly as TypeSpec, the open, platform-agnostic modeling language. Users create and manage entity definitions through an intuitive UI with full governance metadata (data classification, retention policies, quality rules, lineage) expressed through a Super Schema governance decorator package, and the system automatically emits implementation-specific schemas to 15+ target platforms including BigQuery, Avro, Protobuf, OpenAPI, Spanner, and dbt.
+
+> **Architecture note (2026-10-12):** This supersedes the original "TypeSpec as invisible intermediate representation" design (see Product Scope → Risk Mitigation and Domain-Specific Requirements → Risk Mitigations below for the superseded language and the reasoning for the change).
 
 The core problem: schema definitions in modern enterprises are scattered across 6-10+ teams and tools, each maintained independently, each drifting silently. A single entity like "Customer" exists as Avro in Kafka, DDL in BigQuery, Protobuf for gRPC, OpenAPI for REST, and a row in a governance spreadsheet — with no single source of truth. The result is silent revenue leakage from precision loss, governance chaos where PII classification takes weeks to audit, and feature velocity collapse where engineers are blocked weeks waiting for cross-team schema alignment.
 
@@ -32,7 +38,7 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 ### What Makes This Special
 
-**UI-first schema authoring over invisible IR.** No other tool provides a visual interface for defining logical schemas that automatically emit to all major data platforms. Existing tools are either code-only (TypeSpec, Protobuf, Buf) or read-only catalogs (Atlan, Collibra, DataHub). Super Schema bridges the gap — the UI captures intent, TypeSpec is generated behind the scenes, and emitters translate to platform idiom. TypeSpec is open-source and forkable, ensuring zero vendor lock-in.
+**UI-first schema authoring, TypeSpec as the captured representation.** No other tool provides a visual interface for defining logical schemas that automatically emit to all major data platforms. Existing tools are either code-only (TypeSpec, Protobuf, Buf) or read-only catalogs (Atlan, Collibra, DataHub). Super Schema bridges the gap — the UI captures intent directly into TypeSpec source, governance metadata attaches through a custom decorator package, and emitters compile that TypeSpec to platform idiom. Because the captured representation is TypeSpec itself — not a proprietary internal format — any entity's definition is a portable, standards-compliant specification usable outside the platform. TypeSpec is open-source and forkable, ensuring zero vendor lock-in.
 
 **Zero-disruption enterprise adoption.** Migration is registration, not regeneration. Existing production schemas (Avro files, BigQuery DDL, Protobuf definitions) get registered and mapped to logical schemas with progressive drift detection — no big-bang cutover. Day 1: register. Day 2: detect drift. Day 90: first entity fully governed.
 
@@ -52,6 +58,7 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 ### User Success
 
 - **Instant emission:** A data modeler defines an entity in the UI and immediately sees valid, platform-specific schemas generated side by side — no waiting, no manual translation
+- **Schema portability:** Any entity's definition can be exported as standards-compliant TypeSpec source, usable outside the platform with TypeSpec's own tooling (CLI, editor extensions, other TypeSpec-consuming systems) — no proprietary export format
 - **Change management:** Users create change records comparing current and previous schema versions, with auto-generated migration artifacts (ALTER statements, evolution compatibility checks)
 - **Full schema lifecycle in one place:** Create, browse, edit, version, and retire schemas entirely within the UI — no context-switching to separate tools
 - **Deployment tracking:** Users see at a glance which schemas are generated, which systems they're deployed or staged to, and the current drift status across all registered implementations
@@ -81,7 +88,9 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 ### MVP Strategy
 
-**Approach:** Platform MVP — prove "define once, emit everywhere" end-to-end with a complete vertical slice. The UI must feel production-ready for schema authoring, and the 3 core emitters must produce correct, validated output.
+**Approach:** Platform MVP — prove "define once, emit everywhere" end-to-end with a complete vertical slice, built on TypeSpec as the captured, canonical representation from day one (not layered in later). The UI must feel production-ready for schema authoring, and the 3 core emitters must produce correct, validated output.
+
+> **Scope decision (2026-10-12):** The TypeSpec-as-system-of-record architecture redefines MVP itself — Phase 1 ships on this model, full stop. It does not land as a later migration phase behind the original Prisma-row-based design.
 
 **Resource Requirements:** Full-stack team with Node.js backend expertise (TypeSpec compiler is Node-based), frontend SPA expertise, and data engineering domain knowledge for emitter validation.
 
@@ -94,8 +103,9 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 - Journey 6 (API Consumer): Partial — core API for validation and emission
 
 **Must-Have Capabilities:**
-- UI for schema authoring with all 8 decorator categories and enforced completeness
-- TypeSpec generation from UI interactions (invisible to users)
+- UI for schema authoring with all 8 decorator categories and enforced completeness, captured directly as TypeSpec source extended by the Super Schema governance decorator package
+- Real-time TypeSpec compilation and validation on every save — no proprietary intermediate step
+- Direct TypeSpec source viewing and editing for any entity, with changes reflected in the UI and vice versa
 - 3 core emitters: Avro, BigQuery DDL, OpenAPI — with built-in syntactic validation
 - Type translation policies — visible, configurable mapping rules with override mechanism
 - Schema versioning with diff comparison
@@ -131,11 +141,13 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 ### Risk Mitigation
 
-**Technical:** Emitter correctness across 15+ targets is the hardest challenge. Mitigated by starting with 3 well-understood targets and validating thoroughly. TypeSpec IR limitations mitigated by custom decorators and abstraction layer.
+**Technical:** Emitter correctness across 15+ targets is the hardest challenge. Mitigated by starting with 3 well-understood targets and validating thoroughly.
+
+> **Superseded (2026-10-12):** The original mitigation read *"TypeSpec IR limitations mitigated by custom decorators and abstraction layer"* — i.e., TypeSpec was kept invisible and swappable specifically to contain its limitations. That framing is reversed: TypeSpec is now the accepted, permanent captured representation, not something to abstract away. The real risks this uncovers — and how they're contained — are: (1) governance/audit/RBAC/drift data that TypeSpec's document model has no primitive for stays in a relational layer, never forced into decorators (see Domain-Specific Requirements → Technical Constraints); (2) concurrent edits to the same entity are handled with optimistic-locking conflict detection, not true merge, for MVP; (3) every compiler upgrade is a controlled, tested event because TypeSpec is now load-bearing, not a disposable export step.
 
 **Market:** Teams may resist centralizing schema authoring. Mitigated by "one team, no org buy-in" adoption track. Competitive window from catalog vendors mitigated by shipping core value proposition first.
 
-**Resource:** TypeSpec expertise is scarcest skill — mitigated by keeping it behind an abstraction layer. Reduced scope fallback: ship with 2 emitters (Avro + BigQuery), deferring OpenAPI to early Phase 2.
+**Resource:** TypeSpec expertise is the scarcest skill — mitigated by the visual UI being the primary authoring surface for most users; direct TypeSpec editing is available but optional. Reduced scope fallback: ship with 2 emitters (Avro + BigQuery), deferring OpenAPI to early Phase 2.
 
 ## User Journeys
 
@@ -223,6 +235,36 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 ---
 
+### Journey 7: Priya, Staff Data Engineer — Direct TypeSpec Capture and Bidirectional Edit
+
+**Opening Scene:** Priya has been using Super Schema's visual editor for a month. Her team's DevOps lead asks whether the "Transaction" entity can be reviewed the same way they review code — as a diffable text file in a PR — rather than only through the UI.
+
+**Rising Action:** Priya opens the "Transaction" entity and switches to the TypeSpec source view. She sees the exact `.tsp` document the platform has been building from her UI actions all along — not a generated preview, the actual stored representation:
+```tsp
+@businessOwner("payments-team")
+model Transaction {
+  @key id: string;
+
+  @dataClassification(DataClassification.FINANCIAL)
+  @precision(19, 4)
+  amount: decimal;
+
+  @dataClassification(DataClassification.PII)
+  @pii
+  @anonymization(AnonymizationStrategy.tokenize)
+  cardNumber: string;
+}
+```
+She edits the text directly, adding a `risk_score` field with a decimal type but no `@precision`. She saves.
+
+**Climax:** The real TypeSpec compiler rejects the save inline, in under 2 seconds: "`decimal-requires-precision`: Property 'risk_score' appears to be decimal/numeric but has no `@precision` specified" — a governance-package linter diagnostic, not a generic parse error. The entity's last valid version remains untouched; nothing corrupts. Priya adds `@precision(5, 4)`, saves again — this time it compiles clean, and the visual field editor instantly reflects the new `risk_score` field with its precision already populated, as if she'd added it through the form.
+
+**Resolution:** Priya exports the entity's TypeSpec source and hands it to the DevOps lead, who reviews it in a PR alongside a generated diff, with no knowledge of Super Schema's UI required. Two days later, a teammate edits `cardNumber`'s classification through the visual UI; Priya's next text-view load shows that change already merged into the source — same document, two authoring surfaces, no divergence.
+
+**Requirements revealed:** Direct TypeSpec source view/edit per entity, real-compiler validation on save (not just syntax — governance-package lint rules), bidirectional consistency between the visual UI and the text view, portable export for external review, last-known-good preserved on a failed save.
+
+---
+
 ### Journey Requirements Summary
 
 | Capability Area | Journeys |
@@ -245,6 +287,9 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 | RESTful API for programmatic access | 6 |
 | CI/CD integration | 6 |
 | Governed overrides | 2 |
+| Direct TypeSpec source view/edit | 7 |
+| Real-compiler validation with governance lint rules | 7 |
+| Portable TypeSpec export | 7 |
 
 ## Domain-Specific Requirements
 
@@ -258,9 +303,10 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 - **Emitter correctness is existential:** A subtly wrong emitted schema that corrupts production data destroys platform credibility permanently. All emitter output must be syntactically validated within the platform before delivery.
 - **On-premise with zero external dependencies:** No cloud service calls, no telemetry, no license servers at runtime. Fully self-contained behind a firewall.
-- **TypeSpec compiler runs server-side:** Node.js runtime required. The compilation pipeline must be abstracted behind an internal API so the compiler is swappable without affecting UI or external API.
-- **Concurrent schema editing:** Multiple teams editing different entities (or the same entity) simultaneously. Versioning and conflict resolution must handle concurrent edits without data loss.
-- **Schema volume:** Must support thousands of entities across dozens of domains without performance degradation.
+- **TypeSpec compiler runs server-side, in the critical path of every save:** Node.js runtime required. Unlike a purely emission-time compile, the compiler now validates every entity edit before it persists — this is the real-time authoring loop, not a background batch step.
+- **Governance, audit, and operational state stay relational, by design:** Role assignments, the immutable audit trail, deployment/drift tracking, and session state are not representable as TypeSpec document content — they describe facts about users, history, and external systems, not about the schema itself. These remain in the relational database alongside the TypeSpec source; they are never forced into decorators.
+- **Concurrent schema editing:** Multiple teams editing different entities simultaneously is unconstrained. Two edits to the *same* entity at once are resolved via optimistic version checking — the second save is rejected with a conflict notice, not silently overwritten and not automatically merged, for MVP.
+- **Schema volume:** Must support thousands of entities across dozens of domains without performance degradation. A relational projection of each entity's fields, regenerated from its TypeSpec source on every save, keeps governance queries and list views fast without re-parsing TypeSpec per request.
 
 ### Integration Requirements
 
@@ -271,7 +317,8 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 ### Risk Mitigations
 
-- **TypeSpec dependency:** Open-source (MIT), forkable. IR layer abstracted — swapping TypeSpec is feasible without changing UI or external API.
+> **Superseded (2026-10-12):** *"TypeSpec dependency: Open-source (MIT), forkable. IR layer abstracted — swapping TypeSpec is feasible without changing UI or external API."* TypeSpec is no longer swapped-away-from; it is the permanent captured representation. The vendor/project-risk mitigation now rests on TypeSpec being an open specification and a forkable compiler — if the upstream project stalled, every entity's data remains a readable, portable `.tsp` file, not a proprietary blob locked to a specific compiler build.
+
 - **Emitter maintenance:** Community contribution model with stability contracts. Core emitters (Avro, BigQuery, OpenAPI) project-maintained; extended emitters community-maintained.
 - **Schema migration safety:** Registration never modifies or deletes existing production schemas. Read-only mapping with drift reporting. The system only generates artifacts.
 - **Data sovereignty:** All data remains within customer infrastructure. No data leaves the deployment perimeter.
@@ -288,6 +335,8 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 **4. Migration by Registration.** Zero-disruption adoption: register existing schemas, detect drift progressively, never force regeneration. Every competitor requires "migrate everything first." This eliminates the biggest enterprise adoption blocker.
 
+**5. The UI's Output Is the Portable Artifact.** Every other visual schema tool produces a proprietary export or a read-only snapshot. Super Schema's visual editor writes directly into TypeSpec source — what the UI produces *is* a standards-compliant specification file, reviewable, diffable, and usable with TypeSpec's own ecosystem outside the platform, not an internal format translated into TypeSpec as an afterthought.
+
 ### Market Context
 
 - No direct competitor combines UI-based authoring + multi-format emission + governance
@@ -303,8 +352,7 @@ Super Schema solves this by making schema definition a UX problem, not a syntax 
 
 ### Risk Mitigation
 
-- **UI doesn't resonate:** API remains available for code-first users — the UI is a layer, not a lock-in
-- **TypeSpec IR limiting:** Abstracted behind internal API — swappable without changing UI or external API
+- **UI doesn't resonate:** API remains available for code-first users — the UI is a layer, not a lock-in. Direct TypeSpec editing is also always available as a second authoring surface.
 - **Emitter correctness issues:** Built-in validation catches structural errors; governed overrides handle edge cases
 - **Slow adoption:** "One team, no org buy-in" track lets individual teams get value independently
 
@@ -316,7 +364,7 @@ Super Schema is a single-page application (SPA) with a RESTful API backend, depl
 
 **Frontend:** SPA architecture for complex interactive state (schema editor, multi-panel emission preview, governance dashboards, diff views). Modern evergreen browsers only (Chrome, Edge, Firefox). Technology stack TBD — framework choice should optimize for form-heavy interactive UIs with complex state management. Data refresh via polling.
 
-**Backend:** RESTful API serving the SPA and programmatic access. TypeSpec compiler as a server-side service (Node.js). Emitter execution pipeline: TypeSpec compilation → type mapping → emission → syntactic validation. Database for schemas, versions, governance records, audit trails, deployment tracking, and notifications. Authentication via local user management (email/password), Google (Gmail) sign-in, and enterprise SSO (SAML 2.0 / OIDC).
+**Backend:** RESTful API serving the SPA and programmatic access. TypeSpec compiler as a server-side service (Node.js), invoked synchronously on every entity save for parsing, typechecking, and governance lint validation — not only at emission time. Emitter execution pipeline: TypeSpec compilation → type mapping → emission → syntactic validation. Database holds TypeSpec source per entity, a derived relational projection of fields for fast querying, versions, governance records, audit trails, deployment tracking, and notifications. Authentication via local user management (email/password), Google (Gmail) sign-in, and enterprise SSO (SAML 2.0 / OIDC).
 
 **Deployment:** Containerized (Docker/Kubernetes). Zero external runtime dependencies. Configuration-driven emitter availability and type mapping policies.
 
@@ -352,6 +400,13 @@ Super Schema is a single-page application (SPA) with a RESTful API backend, depl
 - **FR7:** Data modelers can set field aliases to address naming drift across systems
 - **FR8:** Data modelers can assign permanent field numbers for Protobuf compatibility
 - **FR9:** Data modelers can retire/deprecate entities and fields with replacement references
+
+### TypeSpec Authoring & Portability
+
+- **FR73:** Data modelers can view and directly edit the TypeSpec source for any entity, with edits reflected in the visual UI and vice versa
+- **FR74:** The system validates hand-edited TypeSpec source against the real TypeSpec compiler and the governance decorator package's lint rules before accepting a save, surfacing diagnostics inline
+- **FR75:** A failed TypeSpec source save never corrupts or partially persists the entity — the last valid version remains intact until a valid edit is saved
+- **FR76:** Users can export any entity's TypeSpec source as a portable, standards-compliant `.tsp` file usable outside the platform
 
 ### Schema Emission & Validation
 
@@ -389,6 +444,7 @@ Super Schema is a single-page application (SPA) with a RESTful API backend, depl
 - **FR32:** The system can export compliance reports as auditable artifacts
 - **FR33:** Users can add inline annotations and tag other users on entities and fields
 - **FR34:** The system maintains an immutable audit trail of all schema changes, overrides, approvals, and governance decisions
+- **FR77:** Role assignments, the audit trail, deployment/drift tracking, and active-session state are maintained in the relational database, independent of any entity's TypeSpec source — they are never encoded as TypeSpec decorators
 
 ### Deployment Tracking
 
@@ -443,9 +499,10 @@ Super Schema is a single-page application (SPA) with a RESTful API backend, depl
 
 ### Performance
 
-- Schema authoring UI interactions (field add, edit, decorator change): under 200ms response
+- Schema authoring UI reflects a field edit locally: under 200ms
+- TypeSpec compilation and validation confirms a saved edit: under 2 seconds at the 95th percentile, measured server-side from save request to accept/reject response
 - Emission pipeline (entity → emitted schemas for 3 targets): under 30 seconds
-- Schema list and browse (up to 1,000 entities): under 2 seconds
+- Schema list and browse (up to 1,000 entities): under 2 seconds, served from the relational field projection without re-parsing TypeSpec source per request
 - Schema diff and change record generation: under 5 seconds
 - Compliance queries across full entity corpus: under 10 seconds
 - API validation and compatibility check responses: under 500ms
@@ -474,9 +531,20 @@ Super Schema is a single-page application (SPA) with a RESTful API backend, depl
 
 - Data integrity for all schema definitions, version history, and audit trails — no silent data loss
 - Deterministic emitter output — same input always produces same output
-- Graceful handling of TypeSpec compilation failures — clear error messages without corrupting state
+- Graceful handling of TypeSpec compilation failures — a save that fails to parse, typecheck, or pass governance lint rules is rejected in full; the entity's last valid TypeSpec source is never partially overwritten or left in an uncompilable state
 - Transactional database operations — schema saves, version creation, and emission succeed or fail atomically
 - Recovery from container restarts without data loss or inconsistent state
+
+### Concurrency
+
+- Concurrent edits to different entities never conflict, by construction (independent documents)
+- A concurrent edit to the same entity as another in-flight save is detected via optimistic version checking and rejected with an explicit conflict response within 500ms — never silently overwritten and never auto-merged, for MVP
+- Conflict rate under normal usage (distinct entities per user) is not expected to measurably affect the 50-concurrent-user target above
+
+### Versioning
+
+- Entity version history is retained indefinitely without degrading list, diff, or compile performance for the current version
+- A stored historical TypeSpec source version remains readable as plain text indefinitely, independent of the currently-running compiler version; re-compiling a historical version against a newer compiler is a best-effort operation, not a guarantee
 
 ### Integration
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 /** Available font-size scale labels. */
 export type FontScale = "small" | "medium" | "large";
@@ -15,12 +15,38 @@ export const fontScaleValues: Record<FontScale, number> = {
 export const FONT_SCALE_STORAGE_KEY = "super-schema:font-scale";
 
 const CSS_VAR = "--font-scale";
+const FONT_SCALE_CHANGE_EVENT = "super-schema:font-scale-change";
+
 
 function getStoredScale(): FontScale {
   if (typeof window === "undefined") return "medium";
   const stored = localStorage.getItem(FONT_SCALE_STORAGE_KEY);
-  if (stored && stored in fontScaleValues) return stored as FontScale;
+  return isFontScale(stored) ? stored : "medium";
+}
+
+function getServerScale(): FontScale {
   return "medium";
+}
+
+function isFontScale(value: string | null): value is FontScale {
+  return value != null && value in fontScaleValues;
+}
+
+function subscribeToFontScale(callback: () => void) {
+  if (typeof window === "undefined") return () => {};
+
+  function handleStorage(event: StorageEvent) {
+    if (event.key === FONT_SCALE_STORAGE_KEY) {
+      callback();
+    }
+  }
+
+  window.addEventListener("storage", handleStorage);
+  window.addEventListener(FONT_SCALE_CHANGE_EVENT, callback);
+  return () => {
+    window.removeEventListener("storage", handleStorage);
+    window.removeEventListener(FONT_SCALE_CHANGE_EVENT, callback);
+  };
 }
 
 function applyScale(scale: FontScale) {
@@ -38,36 +64,20 @@ function applyScale(scale: FontScale) {
  * scales all rem-based dimensions proportionally.
  */
 export function useFontSize() {
-  const [scale, setScaleState] = useState<FontScale>("medium");
+  const scale = useSyncExternalStore(
+    subscribeToFontScale,
+    getStoredScale,
+    getServerScale
+  );
 
-  // Hydrate on mount
   useEffect(() => {
-    const stored = getStoredScale();
-    setScaleState(stored);
-    applyScale(stored);
-
-    function onFontChange(e: Event) {
-      const detail = (e as CustomEvent<FontScale>).detail;
-      if (detail in fontScaleValues) {
-        setScaleState(detail);
-        applyScale(detail);
-      }
-    }
-    window.addEventListener("super-schema:font-scale-change", onFontChange);
-    return () =>
-      window.removeEventListener(
-        "super-schema:font-scale-change",
-        onFontChange
-      );
-  }, []);
+    applyScale(scale);
+  }, [scale]);
 
   const setScale = useCallback((next: FontScale) => {
     localStorage.setItem(FONT_SCALE_STORAGE_KEY, next);
-    setScaleState(next);
     applyScale(next);
-    window.dispatchEvent(
-      new CustomEvent("super-schema:font-scale-change", { detail: next })
-    );
+    window.dispatchEvent(new CustomEvent(FONT_SCALE_CHANGE_EVENT));
   }, []);
 
   return { scale, setScale };

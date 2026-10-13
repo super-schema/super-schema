@@ -1786,3 +1786,129 @@ So that ambiguous type mappings and field matches are resolved intelligently rat
 **And** unit tests verify: AI-enhanced import produces higher confidence scores than deterministic-only for ambiguous types, AI suggestions are correctly merged with parser output, graceful fallback when AI is not configured
 **And** a Playwright E2E test (with mocked AI backend): importing an ambiguous schema → AI-enhanced confidence scores are displayed → AI type suggestions differ from deterministic defaults → accepting AI suggestions creates correct fields
 
+## Epic 12: TypeSpec System of Record Migration
+
+**Added 2026-10-12.** Replaces the Prisma-row-canonical IR with TypeSpec source as the canonical, captured representation per entity, per the architecture pivot documented in `architecture.md` (TypeSpec Integration section) and `prd.md` (Executive Summary, superseding the original "invisible IR" design). This is a foundation epic — FR1-FR9, FR73-77, and every downstream emitter/governance FR depend on it. Existing entities migrate once (Story 12.7); all authoring flows through this path going forward.
+
+### Story 12.1: Governance Decorator Package Completion
+
+As a **developer**,
+I want `@superschema/typespec-enterprise` extended with Avro/Protobuf binding decorators and the remaining governance categories,
+So that every decorator concept the platform needs has a real TypeSpec equivalent before migration begins.
+
+**Acceptance Criteria:**
+
+**Given** the package already implements `@dataClassification`, `@pii`, `@businessOwner`, `@steward`, `@retentionPolicy`, `@anonymization`, `@qualityRule`, `@key`, `@precision`, `@sourceMapping` (verified against `@typespec/compiler` 0.60.1 as of 2026-10-12)
+**When** extended
+**Then** it additionally exports `@avro.logicalType`, `@avro.fixedSize`, `@avro.defaultValue`, `@avro.order` and `@protobuf.fieldNumber`, `@protobuf.oneofGroup` decorators, with accessor functions and linter rules mirroring the validation already built for the superseded `EmissionTargetStatus.formatOptions` path: fixed-size required when `logicalType` is `fixed`, decimal `logicalType` requires `@precision`, default value type must match the field's scalar type
+**And** `operationalHints` (partition/index/cluster) and `evolution` (deprecated/since/replacement) categories are added as decorators with accessor functions
+**And** `npx tsc --noEmit` passes clean and a Node ESM import of the built package resolves every `$decoratorName` export
+**And** unit tests verify each new decorator's accessor function and each new linter rule's pass/fail cases
+
+### Story 12.2: Real Compiler Service
+
+As a **developer**,
+I want `ICompilerService` backed by the real `@typespec/compiler` instead of the regex parser,
+So that every save is genuinely parsed, typechecked, and governance-linted.
+
+**Acceptance Criteria:**
+
+**Given** an entity's `typespec_source` text and a proposed edit
+**When** `compile()` is called
+**Then** it returns success with the compiled `Program`, or a structured diagnostic list (never a thrown exception) including `@superschema/typespec-enterprise` lint findings alongside native compiler errors
+**And** compiling a syntactically invalid document never persists any state change
+**And** unit tests cover: valid compile, syntax error, type error, each governance lint rule firing, and a compile that succeeds with warnings-only
+
+### Story 12.3: Prisma Schema Migration — `typespec_source` as Canonical
+
+As a **developer**,
+I want `entities.typespec_source` added as the canonical column and the `fields` table repurposed as a derived projection,
+So that the data model matches the architecture document.
+
+**Acceptance Criteria:**
+
+**Given** the current `Entity`/`Field` Prisma tables
+**When** migrated (authored against PostgreSQL per project convention, applied via the dual-provider deploy path)
+**Then** `entities.typespec_source` (text, nullable during migration, required after Story 12.7) exists, `entity_versions` gains `typespec_source_snapshot` (text)
+**And** the `fields` table is documented and service-layer-guarded as a read-only regenerated projection — no code path writes to it except the projection-rebuild step that runs after a successful compile
+**And** `EmissionTargetStatus.formatOptions` (column, and the `getAvroFormatOptions`/`saveAvroFieldOptions`/`saveAvroEntityOptions` service functions and UI panels added 2026-10-08) are removed, superseded by Story 12.1's decorators
+**And** existing tests referencing the removed Avro-options code path are removed or updated, not left failing
+
+### Story 12.4: Surgical Field-Edit Save Path
+
+As a **data modeler**,
+I want editing one field in Field Studio to compile-validate-and-splice just that field's declaration,
+So that saves stay fast and unrelated fields are never touched.
+
+**Acceptance Criteria:**
+
+**Given** an entity with existing `typespec_source` and a field edit submitted from Field Studio
+**When** saved
+**Then** only that field's declaration's byte range changes in the persisted source — the rest of the document is byte-for-byte identical to before the save
+**And** a concurrent save to the same entity (any field) that started after this save's load but completed before it commits is rejected with an explicit version-conflict response, never silently overwritten and never auto-merged
+**And** on successful save, the derived `fields` projection row for the edited field (and only that field, unless the edit affected others) is regenerated from the newly compiled `Program`
+**And** on a rejected save (compile failure or conflict), the UI surfaces the specific diagnostic and the entity's `typespec_source` is unchanged
+
+### Story 12.5: TypeSpec Source View & Edit
+
+As a **data modeler**,
+I want to view and directly edit an entity's real TypeSpec source,
+So that I can review it as text, hand-edit it, and export it for use outside the platform.
+
+**Acceptance Criteria (covers PRD FR73-76 and Journey 7):**
+
+**Given** an entity with a compiled `typespec_source`
+**When** I open the TypeSpec source view
+**Then** I see the actual stored source — not a regenerated preview — and can toggle to the existing visual field editor, which reflects the same underlying state
+**And** editing the raw text and saving routes through the same compile-validate-reject gate as Story 12.4 (whole-document replace instead of a single-field splice)
+**And** a failed save surfaces the governance lint or compiler diagnostic inline, at the relevant line, and leaves the prior valid version fully intact and visible
+**And** an "Export" action downloads the exact current `typespec_source` as a `.tsp` file, byte-for-byte
+**And** a Playwright E2E test covers: edit text with a missing `@precision` on a decimal field → save rejected with the `decimal-requires-precision` diagnostic → add `@precision` → save succeeds → visual field editor shows the new field
+
+### Story 12.6: Emitter Migration
+
+As a **developer**,
+I want Avro and Java POJO emission to run through real TypeSpec packages (not custom code over a hand-built IR), joining the database-DDL targets that already made this move,
+So that every schema target reflects actually-compiled TypeSpec, with no remaining parallel reimplementation of the compiler's own semantics.
+
+**Acceptance Criteria:**
+
+**Given** a successfully compiled entity `Program`
+**When** emission runs for any schema target
+**Then** every target is either a real TypeSpec package (`@typespec/{spanner,postgres,bigquery,mysql,oracle,iceberg,parquet,openapi3,json-schema,protobuf,avro}`, walking the compiled `Program` directly) or the new `@typespec/java-pojo` package — no `SuperSchemaModel`-consuming native emitter remains in `src/emitters/`
+**And** `@typespec/avro` matches `src/emitters/avro/avro.emitter.ts`'s existing base type-mapping output for every field type it currently supports, and additionally honors the `@superschema/typespec-enterprise` Avro-specific decorators (`avroLogicalType`/`avroFixedSize`/`avroOrder`/`avroNamespace`/`avroRecordAliases`) where present — read directly off the AST by decorator name, no npm dependency between the two packages — while the old `AvroFormatOptions`/`avro-options.ts` UI-driven binding layer is retired, not ported
+**And** native `openapi` is removed from the catalog; `openapi3` is the only OpenAPI target going forward
+**And** Spanner, BigQuery, PostgreSQL, MySQL, Oracle, Iceberg, and Parquet targets route to the upstream TypeSpec packages confirmed built and compiling clean at `~/src/my/typespec` commit `79f2d429c` as of 2026-10-12
+**Resolved:** packages are consumed the same way the DB-DDL tier already is — packed as tarballs from `~/src/my/typespec` and installed into this repo's `node_modules/@typespec/*`, not a live symlink or published-registry dependency
+**And** existing emitter unit/integration tests are updated to compile real TypeSpec fixtures rather than constructing a `SuperSchemaModel` by hand, where feasible
+
+### Story 12.7: One-Time Data Migration
+
+As an **administrator**,
+I want existing entities migrated to `typespec_source` without data loss,
+So that the cutover preserves every entity and field created before this epic.
+
+**Acceptance Criteria:**
+
+**Given** entities currently represented only as Prisma `Entity`/`Field` rows (7 entities / 171 fields in the current dev database as of 2026-10-08)
+**When** the migration job runs
+**Then** each entity's existing `compileEntity()` + `generateTypeSpec()` output (both already exist, reused unchanged) becomes its `typespec_source`
+**And** each generated source is verified to round-trip — parse and typecheck clean under Story 12.2's real compiler service — before the cutover is considered complete for that entity
+**And** any entity that fails to round-trip is flagged for manual review and left on the old path rather than silently dropped or corrupted
+**And** the migration is idempotent — safe to re-run on entities already migrated, a no-op for them
+
+### Story 12.8: Reconcile Stale Implementation Artifacts
+
+As the **team**,
+We want implementation-artifact docs that assumed the superseded architecture clearly flagged,
+So that future work doesn't get built against a design this epic replaces.
+
+**Acceptance Criteria:**
+
+**Given** `9-2-drift-detection-engine.md` (status: review; investigation on 2026-10-08 found two disconnected implementations — a dormant field-level diff engine and the live crude string-equality check — neither `typespec_source`-aware)
+**When** reconciled
+**Then** it gets a note pointing to Epic 12, flagging that drift comparison should move to diffing `typespec_source` text/AST directly once Stories 12.2-12.4 land, and that the two-implementations discrepancy still needs its own resolution regardless of this epic
+**And** `3-6-emission-pipeline-preview-panel.md`, `5-4-per-target-staged-emission.md`, `8-3-emitter-configuration-type-mapping-administration.md` each get a note that their data-model references (`EmissionTargetStatus` as a bare per-target status row, the pre-Story-12.6 emitter contract) predate this epic
+**And** `2-11-typespec-field-studio.md`, `2-12-bidirectional-typespec-editing.md`, `2-13-typespec-import.md`, `2-16-multi-entity-typespec-import.md` each get a note that the regex-based `typespec-parser.ts` they depend on is superseded by Story 12.2's real compiler service, and their decorator coverage should be reconciled against Story 12.1's package
+
+

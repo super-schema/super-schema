@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { generateTypeSpecPreviewAction } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions";
+import { generateTypeSpecPreviewAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
 interface UseTypeSpecGenerationOptions {
   entityId: string;

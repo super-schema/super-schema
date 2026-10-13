@@ -74,6 +74,14 @@ export function buildDecoratorsFromParsedField(
     decorators.classification = { level: field.classification };
   }
 
+  // --- complex type: reference target (top-level; read by compiler.service) ---
+  if (field.referencedEntityName) {
+    decorators.referencedEntityName = field.referencedEntityName;
+  }
+  if (field.arrayElementType) {
+    decorators.arrayElementType = field.arrayElementType;
+  }
+
   // --- semantics ---
   if (field.description) {
     decorators.semantics = { description: field.description };

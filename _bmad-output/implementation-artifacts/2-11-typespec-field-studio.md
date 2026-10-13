@@ -2,6 +2,8 @@
 
 Status: done
 
+> **Epic 12 reconciliation note (2026-10-12):** This story's JSONB decorator panels (decorators.typespec.*) are the validated spec for which governance concepts matter — directly reused as input to Epic 12 Story 12.1's decorator package — but the storage mechanism (JSONB column) is superseded by typespec_source as of the 2026-10-12 architecture pivot. See architecture.md.
+
 ## Story
 
 As a **data modeler**,

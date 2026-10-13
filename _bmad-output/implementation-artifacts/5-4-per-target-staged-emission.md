@@ -2,6 +2,8 @@
 
 Status: review
 
+> **Epic 12 reconciliation note (2026-10-12):** References the pre-Epic-12 emission contract (SuperSchemaModel built from Prisma rows, in-memory staging). See architecture.md TypeSpec Integration (2026-10-12) and Epic 12 Story 12.6 before extending this — staged emission will need to key off typespec_source versions, not just entity version numbers.
+
 ## Story
 As a **data steward**, I want to emit a schema change to some targets while holding others pending approval or readiness, so that I can stage deployments progressively without blocking all targets.
 
@@ -17,6 +19,9 @@ As a **data steward**, I want to emit a schema change to some targets while hold
 **And** the entity's **deployment tracking** (Status Bar and entity header) shows a per-target status: "v3 emitted" (green), "v2 current, v3 staged" (amber), helping the user see which targets have the latest version
 **And** a **"Stage for Later"** option allows the user to mark a target for deferred emission — this creates a record indicating the target is awaiting readiness, and the governance request remains open for that target
 **And** when a staged target is later ready, the user can return to the Emit dialog and emit to the remaining targets — the emission uses the same version snapshot (not the current entity state, which may have changed further)
+**And** the entity **Schemas tab** reflects that same target state model: only targets with emitted/generated versions render inside a labeled generated section as **horizontal technology tabs**; targets with no generated output remain in a compact dropdown chooser with a single Generate action
+**And** each generated technology tab reuses the shared generated-schema workspace pattern: version history, target-specific controls, emitted output preview, and lifecycle actions for that target
+**And** the Schemas tab target model is driven by a shared emitter catalog, so native emitters and official TypeSpec single-file schema emitters follow the same per-target lifecycle while official multi-file code generators remain visible but disabled in this view
 **And** unit tests verify: partial emission only writes to selected targets, unselected targets retain previous output, staged emission stores the version snapshot for later use, emitting staged targets uses the correct snapshot
 **And** a Playwright E2E test verifies: breaking change → Emit shows per-target checklist → unchecking one target → emitting → checked targets show v3 → unchecked target shows v2 → returning later and emitting the remaining target
 
@@ -126,6 +131,14 @@ entity_versions     — id, entity_id, version_number, snapshot (JSONB), ...
 - Green dot: latest version emitted
 - Amber dot: staged, awaiting emission
 - Muted dot: behind, no staged version
+
+**Schemas tab target surfacing:**
+- Do not render empty “no schema generated yet” cards for every supported target.
+- Show a compact dropdown-based "Generate schema" chooser for targets that have no generated output yet.
+- Present generated targets as horizontal tabs so users can switch technologies directly without scrolling through a tall stack.
+- Label the generated area clearly so users understand those tabs are already-generated outputs.
+- Use one catalog/source-of-truth for target definitions so the staged-emission view, schema chooser, and admin emitter management do not drift apart.
+- Keep official TypeSpec client/server generators visible as disabled entries here until artifact storage supports multi-file outputs.
 
 **Status Bar:** Show aggregated per-target status. e.g., "BQ: v3 | Avro: v2 (staged) | OpenAPI: v3"
 

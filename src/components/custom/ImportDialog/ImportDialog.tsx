@@ -14,28 +14,56 @@ import {
   Lightbulb,
   Maximize2,
   Minimize2,
+  Sparkles,
 } from "lucide-react";
-import { importSchema, bulkImport, importTypeSpecDocument } from "@/services/import.service";
-import type { ParsedEntity } from "@/lib/importers/types";
+import { importSchema, bulkImport } from "@/services/import.service";
+import type { ParsedEntity, ImportFormat } from "@/lib/importers/types";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
+import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { detectFormat } from "@/lib/importers/format-detector";
+import { inferJsonSchema } from "@/lib/importers/jsonschema-infer";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import { ImportReviewScreen } from "./ImportReviewScreen";
 import { BulkImportReviewScreen } from "./BulkImportReviewScreen";
+import { VisualSchemaBuilder } from "@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder";
 import {
   TypeSpecImportReviewScreen,
   type TypeSpecImportSelection,
 } from "./TypeSpecImportReviewScreen";
 import { toast } from "sonner";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 
-type ImportTab = "single" | "bulk" | "paste";
+type ImportTab = "single" | "bulk" | "paste" | "build";
 type ImportPhase = "input" | "review" | "bulk-review" | "typespec-review";
 
 interface DiagnosticItem {
   type: "error" | "warning" | "info";
   message: string;
   line?: number;
+}
+
+/**
+ * Attempt to treat raw content as a sample JSON document (an event payload,
+ * not a schema) and infer a JSON Schema from it. Returns a JSON Schema string,
+ * or null when the content isn't plain JSON data or already looks like a schema.
+ */
+function tryInferSampleToJsonSchema(content: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  // Already schema-shaped — let the normal JSON Schema path handle it.
+  const obj = parsed as Record<string, unknown>;
+  if (obj.$schema || obj.properties || obj.$defs || obj.type === "record") {
+    return null;
+  }
+
+  return JSON.stringify(inferJsonSchema(parsed));
 }
 
 interface ImportDialogProps {
@@ -51,6 +79,7 @@ export function ImportDialog({
   domains,
   onImported,
 }: ImportDialogProps) {
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [activeTab, setActiveTab] = useState<ImportTab>("paste");
   const [phase, setPhase] = useState<ImportPhase>("input");
   const [pasteContent, setPasteContent] = useState("");
@@ -129,15 +158,24 @@ export function ImportDialog({
         // Try other formats
         const result = importSchema(content);
         if (!result.success) {
-          items.push({
-            type: "error",
-            message: result.error.message,
-          });
-          if (result.error.suggestedFix) {
+          const inferred = tryInferSampleToJsonSchema(content);
+          const inferredResult = inferred ? importSchema(inferred, "json-schema") : null;
+          if (inferredResult?.success) {
             items.push({
               type: "info",
-              message: result.error.suggestedFix,
+              message: `Sample JSON detected — a schema with ${inferredResult.data.parsedEntity.fields.length} field(s) will be inferred.`,
             });
+          } else {
+            items.push({
+              type: "error",
+              message: result.error.message,
+            });
+            if (result.error.suggestedFix) {
+              items.push({
+                type: "info",
+                message: result.error.suggestedFix,
+              });
+            }
           }
         } else {
           items.push({
@@ -230,11 +268,11 @@ export function ImportDialog({
     });
   }
 
-  function reviewImportedContent(content: string, filename?: string) {
+  async function reviewImportedContent(content: string, filename?: string) {
     const format = detectFormat(content, filename);
 
     if (format === "typespec") {
-      const tsResult = importTypeSpecDocument(content);
+      const tsResult = await importTypeSpecDocumentAction(content);
       if (!tsResult.success) {
         setError(tsResult.error.message);
         return;
@@ -249,6 +287,24 @@ export function ImportDialog({
 
     const result = importSchema(content, format ?? undefined);
     if (!result.success) {
+      // Fallback: when the content isn't a recognized schema, treat it as a
+      // sample JSON *event* and infer a JSON Schema from it, then re-import.
+      if (!format) {
+        const inferred = tryInferSampleToJsonSchema(content);
+        if (inferred) {
+          const inferredResult = importSchema(inferred, "json-schema");
+          if (inferredResult.success) {
+            setTypeSpecResult(null);
+            setParsedEntity(inferredResult.data.parsedEntity);
+            setWarnings([
+              "Schema was inferred from a sample JSON document — review types and nullability before importing.",
+              ...inferredResult.data.warnings,
+            ]);
+            setPhase("review");
+            return;
+          }
+        }
+      }
       setError(result.error.message);
       return;
     }
@@ -264,7 +320,7 @@ export function ImportDialog({
     setError(null);
     try {
       const content = await readFile(file);
-      reviewImportedContent(content, file.name);
+      await reviewImportedContent(content, file.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to read file");
     }
@@ -278,7 +334,21 @@ export function ImportDialog({
     }
     setError(null);
     const content = pasteContent.trim();
-    reviewImportedContent(content);
+    void reviewImportedContent(content);
+  }
+
+  // Handle visual builder → review
+  function handleVisualImport(content: string, format: ImportFormat) {
+    setError(null);
+    const result = importSchema(content, format);
+    if (!result.success) {
+      setError(result.error.message);
+      return;
+    }
+    setTypeSpecResult(null);
+    setParsedEntity(result.data.parsedEntity);
+    setWarnings(result.data.warnings);
+    setPhase("review");
   }
 
   // Handle paste into textarea from file drop
@@ -346,12 +416,69 @@ export function ImportDialog({
   }
 
   // Confirm handlers
-  function handleConfirmSingle(entity: ParsedEntity, _domainId: string) {
-    onImported?.(entity.name);
-    handleClose();
+  async function handleConfirmSingle(entity: ParsedEntity, domainId: string) {
+    if (!domainId) {
+      toast.error("Select a domain for the imported entity");
+      return;
+    }
+
+    try {
+      const { createDomainAssetsFromImportAction } = await import(
+        "@/app/(dashboard)/schemas/[domainSlug]/actions"
+      );
+
+      const result = await createDomainAssetsFromImportAction({
+        domainId,
+        models: [],
+        entities: [
+          {
+            name: entity.name,
+            description: entity.description,
+            fields: entity.fields.map((f) => ({
+              name: f.name,
+              type: f.type,
+              nullable: f.nullable,
+              isKey: f.isKey ?? false,
+              description: f.description ?? "",
+              classification: f.classification ?? null,
+              precision: null,
+              scale: null,
+              decorators: buildDecoratorsFromParsedField(f),
+            })),
+          },
+        ],
+        sharedEnums: [],
+        customScalars: [],
+        unionTypes: [],
+        services: [],
+        decoratorDefinitions: [],
+      });
+
+      const blockingErrors = result.errors.filter(
+        (e) => !e.includes("already exists")
+      );
+      if (result.entitiesCreated === 0 && blockingErrors.length > 0) {
+        toast.error(blockingErrors[0]);
+        return;
+      }
+
+      if (result.entitiesCreated > 0) {
+        toast.success(`Created ${result.entitiesCreated} entity(ies)`);
+      }
+      for (const e of result.errors) {
+        toast.warning(e);
+      }
+
+      invalidateDomainsTree();
+      onImported?.(entity.name);
+      handleClose();
+    } catch {
+      toast.error("Failed to import schema");
+      // Don't close — let user retry
+    }
   }
 
-  function handleConfirmBulk(entities: ParsedEntity[], _domainId: string) {
+  function handleConfirmBulk(entities: ParsedEntity[]) {
     for (const entity of entities) {
       onImported?.(entity.name);
     }
@@ -435,6 +562,23 @@ export function ImportDialog({
       if (result.servicesCreated > 0) parts.push(`${result.servicesCreated} API(s)`);
       if (result.decoratorsCreated > 0) parts.push(`${result.decoratorsCreated} decorator(s)`);
 
+      const createdCount =
+        result.modelsCreated +
+        result.entitiesCreated +
+        result.enumsCreated +
+        result.scalarsCreated +
+        result.unionsCreated +
+        result.servicesCreated +
+        result.decoratorsCreated;
+      const blockingErrors = result.errors.filter(
+        (err) => !err.includes("already exists")
+      );
+
+      if (createdCount === 0 && blockingErrors.length > 0) {
+        toast.error(blockingErrors[0]);
+        return;
+      }
+
       if (parts.length > 0) {
         toast.success(`Created ${parts.join(", ")}`);
       }
@@ -444,6 +588,8 @@ export function ImportDialog({
           toast.warning(err);
         }
       }
+
+      invalidateDomainsTree();
 
       for (const entity of entities) {
         onImported?.(entity.name);
@@ -524,6 +670,7 @@ export function ImportDialog({
                 <div className="flex gap-1 mb-space-4 border-b border-border">
                   {([
                     { id: "paste" as const, label: "Paste Schema", icon: ClipboardPaste },
+                    { id: "build" as const, label: "Build Visually", icon: Sparkles },
                     { id: "single" as const, label: "Upload File", icon: FileText },
                     { id: "bulk" as const, label: "Bulk Import", icon: Upload },
                   ]).map((tab) => (
@@ -649,19 +796,18 @@ export function ImportDialog({
                         data-testid="paste-textarea"
                         value={pasteContent}
                         onChange={(e) => setPasteContent(e.target.value)}
-                        placeholder={`Paste your TypeSpec, Avro JSON, BigQuery DDL, or Protobuf schema here...
+                        placeholder={`Paste TypeSpec, JSON Schema, Avro, BigQuery DDL, Protobuf — or a sample JSON event to infer a schema...
 
-Example TypeSpec:
-model User {
-  @key
-  id: string;
-  name: string;
-  email?: string;
-}
-
-enum Status {
-  Active,
-  Inactive,
+Example JSON Schema:
+{
+  "title": "User",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "email": { "type": "string", "format": "email" },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
 }`}
                         className={`w-full bg-muted rounded-lg p-space-3 text-mono-small text-foreground placeholder:text-muted-foreground outline-none border border-border focus:border-primary resize-y transition-all ${
                           isTextareaExpanded ? "h-[50vh]" : "h-64"
@@ -696,6 +842,11 @@ enum Status {
                       </button>
                     </div>
                   </div>
+                )}
+
+                {/* Build visually tab */}
+                {activeTab === "build" && (
+                  <VisualSchemaBuilder onImport={handleVisualImport} />
                 )}
 
                 {/* Single file tab */}

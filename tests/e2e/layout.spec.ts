@@ -39,7 +39,7 @@ test.describe("IDE Layout", () => {
     await page.getByTestId("nav-schemas").click();
     await expect(page).toHaveURL(/\/schemas/);
     await expect(
-      page.getByRole("heading", { name: "Create your first entity" })
+      page.getByRole("heading", { name: "Domains" })
     ).toBeVisible();
   });
 

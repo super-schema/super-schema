@@ -43,9 +43,10 @@ vi.mock("@/services/entity.service", () => ({
   getEntityById: vi.fn(),
 }));
 
-// Mock emission
-vi.mock("@/lib/emission/emit-from-data", () => ({
-  emitFromData: vi.fn(),
+// Mock emission — every schema target is typespec-cli as of 2026-10-12;
+// mock the real-compiler shell-out boundary to keep this a fast, isolated unit test.
+vi.mock("@/lib/typespec-official/emitter.service", () => ({
+  emitOfficialTypeSpecTargetFromData: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -59,7 +60,8 @@ import { POST as emitPost } from "@/app/api/v1/schemas/[id]/emit/route";
 import { POST as validatePost } from "@/app/api/v1/schemas/[id]/validate/route";
 import { GET as docsGet } from "@/app/api/v1/docs/route";
 import { getEntities, getEntityById } from "@/services/entity.service";
-import { emitFromData } from "@/lib/emission/emit-from-data";
+import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { prisma } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
@@ -119,63 +121,21 @@ const mockEntity = {
   ],
 };
 
-const mockEmissionResult = {
-  typespec: "model Customer { id: string; }",
-  targets: {
-    bigquery: {
-      name: "bigquery",
-      targetFormat: "bigquery-ddl",
-      output: "CREATE TABLE customer (id STRING NOT NULL)",
-      isValid: true,
-      validationStatus: "VALID" as const,
-      warnings: [],
-      errors: [],
-    },
-    avro: {
-      name: "avro",
-      targetFormat: "avro-schema",
-      output: '{"type":"record","name":"Customer","fields":[]}',
-      isValid: true,
-      validationStatus: "VALID" as const,
-      warnings: [],
-      errors: [],
-    },
-    openapi: {
-      name: "openapi",
-      targetFormat: "openapi-3.1",
-      output: "openapi: 3.1.0",
-      isValid: true,
-      validationStatus: "VALID" as const,
-      warnings: [],
-      errors: [],
-    },
-    spanner: {
-      name: "spanner",
-      targetFormat: "spanner-ddl",
-      output: "CREATE TABLE customer (id STRING(MAX) NOT NULL) PRIMARY KEY (id);",
-      isValid: true,
-      validationStatus: "VALID" as const,
-      warnings: [],
-      errors: [],
-    },
-    postgresql: {
-      name: "postgresql",
-      targetFormat: "postgresql-ddl",
-      output: "CREATE TABLE customer (id TEXT NOT NULL PRIMARY KEY);",
-      isValid: true,
-      validationStatus: "VALID" as const,
-      warnings: [],
-      errors: [],
-    },
-  },
-  success: true,
-  summary: {
-    totalTargets: 5,
-    validCount: 5,
-    warningCount: 0,
-    invalidCount: 0,
-  },
-};
+// `emitOfficialTypeSpecTargetFromData` is called once per enabled catalog
+// target (see src/lib/schema-targets/catalog.ts) — the mock below returns a
+// generic VALID result regardless of which target it's called for, since
+// these tests are about the route's orchestration, not per-target output
+// shape (that's covered by each target's own test suite).
+const ENABLED_TARGET_COUNT = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab).length;
+
+function mockTargetResult(targetKey: string) {
+  return {
+    output: `mock output for ${targetKey}`,
+    validationStatus: "VALID" as const,
+    warnings: [],
+    errors: [],
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -408,7 +368,9 @@ describe("API v1", () => {
       vi.mocked(prisma.field.findMany).mockResolvedValue(
         mockEntity.fields as never
       );
-      vi.mocked(emitFromData).mockReturnValue(mockEmissionResult);
+      vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
+        (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
+      );
 
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas/entity-1",
@@ -422,9 +384,9 @@ describe("API v1", () => {
       expect(response.status).toBe(200);
       expect(body.success).toBe(true);
       expect(body.data.entityId).toBe("entity-1");
-      expect(body.data.targets).toHaveLength(5);
+      expect(body.data.targets).toHaveLength(ENABLED_TARGET_COUNT);
       expect(body.data.typespec).toContain("model Customer");
-      expect(body.summary).toContain("5 targets");
+      expect(body.summary).toContain(`${ENABLED_TARGET_COUNT} targets`);
     });
 
     it("returns 404 for non-existent entity", async () => {
@@ -453,7 +415,9 @@ describe("API v1", () => {
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
-      vi.mocked(emitFromData).mockReturnValue(mockEmissionResult);
+      vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
+        (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
+      );
 
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas/entity-1",
@@ -485,7 +449,9 @@ describe("API v1", () => {
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
-      vi.mocked(emitFromData).mockReturnValue(mockEmissionResult);
+      vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
+        (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
+      );
 
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas/entity-1",
@@ -500,7 +466,7 @@ describe("API v1", () => {
       expect(body.success).toBe(true);
       expect(body.data.valid).toBe(true);
       expect(body.data.entityId).toBe("entity-1");
-      expect(body.data.targets).toHaveLength(5);
+      expect(body.data.targets).toHaveLength(ENABLED_TARGET_COUNT);
     });
 
     it("returns ci.pass true when all targets valid", async () => {
@@ -509,7 +475,9 @@ describe("API v1", () => {
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
-      vi.mocked(emitFromData).mockReturnValue(mockEmissionResult);
+      vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
+        (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
+      );
 
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas/entity-1",
@@ -521,27 +489,27 @@ describe("API v1", () => {
       const body = await response.json();
 
       expect(body.data.ci.pass).toBe(true);
-      expect(body.data.ci.summary).toContain("All 5 targets valid");
+      expect(body.data.ci.summary).toContain(`All ${ENABLED_TARGET_COUNT} targets valid`);
     });
 
     it("returns ci.pass false when a target is invalid", async () => {
-      const invalidResult = {
-        ...mockEmissionResult,
-        success: false,
-        summary: {
-          totalTargets: 5,
-          validCount: 3,
-          warningCount: 0,
-          invalidCount: 1,
-        },
-      };
-
       vi.mocked(getEntityById).mockResolvedValue({
         success: true,
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
-      vi.mocked(emitFromData).mockReturnValue(invalidResult);
+      vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
+        (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
+      );
+      // Make exactly one target invalid regardless of call order.
+      vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementationOnce(() =>
+        Promise.resolve({
+          output: "",
+          validationStatus: "INVALID" as const,
+          warnings: [],
+          errors: [{ message: "compile error" }],
+        })
+      );
 
       const request = makeAuthenticatedRequest(
         "http://localhost/api/v1/schemas/entity-1",
@@ -553,7 +521,7 @@ describe("API v1", () => {
       const body = await response.json();
 
       expect(body.data.ci.pass).toBe(false);
-      expect(body.data.ci.summary).toContain("1 of 5 targets invalid");
+      expect(body.data.ci.summary).toContain(`1 of ${ENABLED_TARGET_COUNT} targets invalid`);
     });
 
     it("returns 404 for non-existent entity", async () => {

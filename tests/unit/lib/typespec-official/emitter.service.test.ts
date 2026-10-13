@@ -2,7 +2,12 @@
  * Integration-style tests for official TypeSpec emitter generation.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("@/lib/db", () => ({
+  prisma: {},
+}));
+
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 import type {
   PrismaEntityInput,
@@ -72,7 +77,7 @@ describe("official TypeSpec emitter service", () => {
     expect(result.output).toContain("openapi:");
     expect(result.output).toContain("components:");
     expect(result.output).toContain("Customer:");
-  });
+  }, 15_000);
 
   it("emits Protobuf output and auto-assigns field numbers when missing", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(

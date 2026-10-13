@@ -4,6 +4,7 @@ import {
   type NotificationItemData,
   type NotificationGroup,
 } from "@/components/custom/NotificationCenter/NotificationCenter.types";
+import { getNotificationNavigationUrl } from "@/components/custom/NotificationCenter/useNotificationCenter";
 import type { NotificationType } from "@/types/schemas/notification";
 
 // Helper to build a notification
@@ -36,20 +37,6 @@ function groupNotifications(
   })).filter((group) => group.notifications.length > 0);
 }
 
-// Reproduce the navigation URL builder
-function getNavigationUrl(notification: NotificationItemData): string {
-  const { entityRef, type } = notification;
-  let url = `/schemas/${entityRef.entityId}`;
-  const params = new URLSearchParams();
-
-  if (entityRef.fieldId) params.set("fieldId", entityRef.fieldId);
-  if (entityRef.versionId) params.set("version", entityRef.versionId);
-  if (type === "APPROVAL_REQUEST") params.set("panel", "governance");
-
-  const qs = params.toString();
-  if (qs) url += `?${qs}`;
-  return url;
-}
 
 describe("Notification Center Logic", () => {
   describe("Badge count", () => {
@@ -126,34 +113,54 @@ describe("Notification Center Logic", () => {
   });
 
   describe("Click-to-navigate", () => {
-    it("navigates to entity page for entityId only", () => {
+    it("falls back to the schemas index when the notification lacks route slugs", () => {
       const notification = makeNotification({
         type: "CHANGE_COMPLETE",
         entityRef: { entityId: "entity-1" },
       });
 
-      const url = getNavigationUrl(notification);
-      expect(url).toBe("/schemas/entity-1");
+      const url = getNotificationNavigationUrl(notification);
+      expect(url).toBe("/schemas?entityId=entity-1");
     });
 
-    it("navigates with fieldId query param", () => {
+    it("navigates to the entity route when domain, product and entity slugs are available", () => {
       const notification = makeNotification({
-        type: "ANNOTATION_TAG",
-        entityRef: { entityId: "entity-1", fieldId: "field-1" },
+        type: "CHANGE_COMPLETE",
+        entityRef: { entityId: "entity-1", entitySlug: "customer", domainSlug: "crm", productSlug: "orders" },
       });
 
-      const url = getNavigationUrl(notification);
-      expect(url).toBe("/schemas/entity-1?fieldId=field-1");
+      const url = getNotificationNavigationUrl(notification);
+      expect(url).toBe("/schemas/crm/orders/customer");
     });
 
-    it("navigates with version query param", () => {
+    it("falls back to the schemas index when productSlug is missing", () => {
+      const notification = makeNotification({
+        type: "CHANGE_COMPLETE",
+        entityRef: { entityId: "entity-1", entitySlug: "customer", domainSlug: "crm" },
+      });
+
+      const url = getNotificationNavigationUrl(notification);
+      expect(url).toBe("/schemas?entityId=entity-1");
+    });
+
+    it("navigates to field studio when field route data is available", () => {
+      const notification = makeNotification({
+        type: "ANNOTATION_TAG",
+        entityRef: { entityId: "entity-1", entitySlug: "customer", domainSlug: "crm", productSlug: "orders", fieldId: "field-1", fieldSlug: "email" },
+      });
+
+      const url = getNotificationNavigationUrl(notification);
+      expect(url).toBe("/schemas/crm/orders/customer/fields/email");
+    });
+
+    it("preserves version query params on the safe fallback route", () => {
       const notification = makeNotification({
         type: "CHANGE_COMPLETE",
         entityRef: { entityId: "entity-1", versionId: "v3" },
       });
 
-      const url = getNavigationUrl(notification);
-      expect(url).toBe("/schemas/entity-1?version=v3");
+      const url = getNotificationNavigationUrl(notification);
+      expect(url).toBe("/schemas?entityId=entity-1&version=v3");
     });
 
     it("adds governance panel param for APPROVAL_REQUEST", () => {
@@ -162,7 +169,7 @@ describe("Notification Center Logic", () => {
         entityRef: { entityId: "entity-1", versionId: "v2" },
       });
 
-      const url = getNavigationUrl(notification);
+      const url = getNotificationNavigationUrl(notification);
       expect(url).toContain("panel=governance");
       expect(url).toContain("version=v2");
     });

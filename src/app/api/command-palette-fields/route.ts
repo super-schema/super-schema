@@ -20,6 +20,7 @@ export async function GET(request: Request) {
             id: true,
             name: true,
             slug: true,
+            product: { select: { slug: true } },
             domain: {
               select: { name: true, slug: true },
             },
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
         entitySlug: f.entity.slug,
         entityName: f.entity.name,
         domainSlug: f.entity.domain.slug,
+        productSlug: f.entity.product?.slug ?? "default",
       }))
     );
   } catch {

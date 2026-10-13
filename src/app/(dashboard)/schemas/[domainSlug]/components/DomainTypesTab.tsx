@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Hash, Sigma, GitMerge, Plus, X, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,11 +44,15 @@ export interface UnionTypeData {
   description: string;
 }
 
+export type DomainTypeCreateIntent = "enum" | "scalar" | "union";
+
 interface DomainTypesTabProps {
   domainId: string;
   sharedEnums: SharedEnumData[];
   customScalars: CustomScalarData[];
   unionTypes: UnionTypeData[];
+  createIntent?: DomainTypeCreateIntent | null;
+  onCreateIntentConsumed?: () => void;
 }
 
 type TypeSubTab = "enums" | "scalars" | "unions";
@@ -82,7 +86,7 @@ function useConfirmDelete() {
 // Component
 // ---------------------------------------------------------------------------
 
-export function DomainTypesTab({ domainId, sharedEnums, customScalars, unionTypes }: DomainTypesTabProps) {
+export function DomainTypesTab({ domainId, sharedEnums, customScalars, unionTypes, createIntent, onCreateIntentConsumed }: DomainTypesTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<TypeSubTab>("enums");
   const deleteDialog = useConfirmDelete();
 
@@ -98,6 +102,23 @@ export function DomainTypesTab({ domainId, sharedEnums, customScalars, unionType
   const [showCreateUnion, setShowCreateUnion] = useState(false);
   const [newUnionName, setNewUnionName] = useState("");
   const [newUnionMembers, setNewUnionMembers] = useState("");
+
+  useEffect(() => {
+    if (!createIntent) return;
+
+    if (createIntent === "enum") {
+      setActiveSubTab("enums");
+      setShowCreateEnum(true);
+    } else if (createIntent === "scalar") {
+      setActiveSubTab("scalars");
+      setShowCreateScalar(true);
+    } else {
+      setActiveSubTab("unions");
+      setShowCreateUnion(true);
+    }
+
+    onCreateIntentConsumed?.();
+  }, [createIntent, onCreateIntentConsumed]);
 
   async function handleCreateEnum() {
     if (!newEnumName.trim()) return;

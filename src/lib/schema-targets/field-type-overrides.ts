@@ -2,6 +2,8 @@ import type { PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { getDefaultPolicies } from "@/lib/type-mapping/default-mappings";
 import { resolveMappingWithPrecision } from "@/lib/type-mapping/mapping-engine";
 import type { MappingResult, ScopedMappingPolicy } from "@/lib/type-mapping/types";
+import { getMappingIntelligence } from "@/lib/type-mapping/mapping-intelligence";
+import { getTargetTypeCatalogEntry } from "@/lib/type-mapping/target-type-catalog";
 
 export interface FieldTargetTypeOverride {
   fieldId: string;
@@ -33,6 +35,8 @@ export interface SchemaTargetFieldMappingRow {
   isOverride: boolean;
   isStale: boolean;
   comment?: string;
+  isLossy: boolean;
+  lossDescription?: string;
 }
 
 export function parseSchemaTargetTypeOverrides(raw: unknown): SchemaTargetTypeOverrides {
@@ -66,11 +70,24 @@ export function parseSchemaTargetTypeOverrides(raw: unknown): SchemaTargetTypeOv
         continue;
       }
 
+      const resolvedTarget = typeof override.target === "string" ? override.target : target;
+      const targetCatalog = getTargetTypeCatalogEntry(resolvedTarget);
+      // Only drop an override when the catalog KNOWS this target and the
+      // mappedType is not one of its valid options. If the target is absent
+      // from the catalog we cannot validate it — preserve the stored override
+      // rather than silently discarding user data.
+      if (
+        targetCatalog &&
+        !targetCatalog.options.some((option) => option.value === override.mappedType)
+      ) {
+        continue;
+      }
+
       targetOverrides[fieldId] = {
         fieldId: override.fieldId,
         fieldName: override.fieldName,
         sourceType: override.sourceType,
-        target: typeof override.target === "string" ? override.target : target,
+        target: resolvedTarget,
         defaultMappedType:
           typeof override.defaultMappedType === "string"
             ? override.defaultMappedType
@@ -140,16 +157,28 @@ export function toFieldOverridePolicies(
 ): ScopedMappingPolicy[] {
   const targetOverrides = overrides[target] ?? {};
 
-  return Object.values(targetOverrides).map((override) => ({
-    sourceType: override.sourceType,
-    targetType: override.mappedType,
-    targetFormat: target,
-    mappedType: override.mappedType,
-    isOverride: true,
-    isLossy: false,
-    fieldId: override.fieldId,
-    fieldName: override.fieldName,
-  }));
+  return Object.values(targetOverrides).map((override) => {
+    const intelligence = getMappingIntelligence({
+      sourceType: override.sourceType,
+      targetFormat: target,
+      mappedType: override.mappedType,
+      defaultMappedType: override.defaultMappedType,
+      isOverride: true,
+      overrideSource: "field",
+    });
+
+    return {
+      sourceType: override.sourceType,
+      targetType: override.mappedType,
+      targetFormat: target,
+      mappedType: override.mappedType,
+      isOverride: true,
+      isLossy: intelligence.mapping.isLossy,
+      lossDescription: intelligence.mapping.lossDescription,
+      fieldId: override.fieldId,
+      fieldName: override.fieldName,
+    };
+  });
 }
 
 export function buildSchemaTargetFieldMappings(
@@ -210,6 +239,12 @@ export function buildSchemaTargetFieldMappings(
         : Boolean(parsedOverride),
       isStale,
       comment: parsedOverride?.comment,
+      isLossy: effectiveResult.success
+        ? effectiveResult.result.isLossy
+        : false,
+      lossDescription: effectiveResult.success
+        ? effectiveResult.result.lossDescription
+        : undefined,
     };
   });
 }

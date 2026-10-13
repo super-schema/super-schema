@@ -2,6 +2,8 @@
 
 Status: review
 
+> **Epic 12 reconciliation note (2026-10-12):** The regex-based typespec-parser.ts this story depends on is superseded by Epic 12 Story 12.2's real @typespec/compiler integration. The diff/apply UX pattern in TypeSpecPreview.tsx (parse pasted text, diff against DB rows) is conceptually reusable for Epic 12 Story 12.5, but under the new architecture there are no DB rows to diff against — the whole document is replaced and recompiled, not diffed-and-patched.
+
 ## Story
 
 As a **data modeler**,

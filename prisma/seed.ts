@@ -1,23 +1,11 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createDbAdapter } from "../src/lib/db-adapter";
 import { hashSync } from "bcryptjs";
-
-function generateSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+import { ensureFirstAdminAssignment } from "../src/lib/admin-bootstrap";
 
 async function main() {
-  const adapter = new PrismaPg({
-    connectionString: process.env.DATABASE_URL!,
-  });
-  const prisma = new PrismaClient({ adapter });
+  const prisma = new PrismaClient({ adapter: createDbAdapter() });
 
   // Seed test admin user (idempotent)
   const testUser = await prisma.user.findUnique({
@@ -35,6 +23,8 @@ async function main() {
   } else {
     console.log("Test user already exists: admin@admin.com");
   }
+
+  await ensureFirstAdminAssignment(prisma);
 
   // Seed system domains (idempotent)
   const systemDomains = [
@@ -54,12 +44,28 @@ async function main() {
     },
   ];
 
+  // Ensure the default tenant exists (root of the org hierarchy).
+  const DEFAULT_TENANT_ID = "tenant_default";
+  await prisma.tenant.upsert({
+    where: { id: DEFAULT_TENANT_ID },
+    update: {},
+    create: {
+      id: DEFAULT_TENANT_ID,
+      name: "Default Tenant",
+      slug: "default",
+      description: "Auto-created default tenant",
+      isSystem: true,
+    },
+  });
+
   for (const domain of systemDomains) {
     const existing = await prisma.domain.findUnique({
-      where: { name: domain.name },
+      where: { name_tenantId: { name: domain.name, tenantId: DEFAULT_TENANT_ID } },
     });
     if (!existing) {
-      await prisma.domain.create({ data: domain });
+      await prisma.domain.create({
+        data: { ...domain, tenantId: DEFAULT_TENANT_ID },
+      });
       console.log(`Created system domain: ${domain.name}`);
     } else {
       console.log(`System domain already exists: ${domain.name}`);

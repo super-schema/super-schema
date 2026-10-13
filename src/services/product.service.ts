@@ -1,0 +1,225 @@
+import { prisma } from "@/lib/db";
+import { withAudit } from "@/lib/audit";
+import { ok, err } from "@/types/result";
+import type { Result } from "@/types/result";
+import type { Product, ProductTier } from "@/generated/prisma/client";
+import type { ServiceContext } from "@/types/service-context";
+import { generateSlug } from "@/lib/slug";
+
+export interface ProductListItem {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  ownerTeam: string | null;
+  isSystem: boolean;
+  tier: {
+    id: string;
+    name: string;
+    displayColor: string;
+    bgColor: string;
+    textColor: string;
+  } | null;
+  entityCount: number;
+  updatedAt: Date;
+}
+
+export interface CreateProductInput {
+  domainId: string;
+  name: string;
+  description?: string;
+  tierId?: string | null;
+  ownerTeam?: string | null;
+}
+
+export interface UpdateProductInput {
+  name?: string;
+  description?: string;
+  tierId?: string | null;
+  ownerTeam?: string | null;
+}
+
+export async function getProductTiers(
+  ctx: ServiceContext
+): Promise<Result<ProductTier[]>> {
+  const tiers = await ctx.prisma.productTier.findMany({
+    orderBy: { sortOrder: "asc" },
+  });
+  return ok(tiers);
+}
+
+export async function getProductsByDomain(
+  domainId: string,
+  ctx: ServiceContext
+): Promise<Result<ProductListItem[]>> {
+  const products = await ctx.prisma.product.findMany({
+    where: { domainId },
+    orderBy: [{ isSystem: "desc" }, { name: "asc" }],
+    include: {
+      tier: true,
+      _count: { select: { entities: true } },
+    },
+  });
+
+  return ok(products.map(toListItem));
+}
+
+function toListItem(p: {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  ownerTeam: string | null;
+  isSystem: boolean;
+  updatedAt: Date;
+  tier: ProductTier | null;
+  _count: { entities: number };
+}): ProductListItem {
+  return {
+    id: p.id,
+    name: p.name,
+    slug: p.slug,
+    description: p.description,
+    ownerTeam: p.ownerTeam,
+    isSystem: p.isSystem,
+    tier: p.tier
+      ? {
+          id: p.tier.id,
+          name: p.tier.name,
+          displayColor: p.tier.displayColor,
+          bgColor: p.tier.bgColor,
+          textColor: p.tier.textColor,
+        }
+      : null,
+    entityCount: p._count.entities,
+    updatedAt: p.updatedAt,
+  };
+}
+
+export async function createProduct(
+  input: CreateProductInput,
+  ctx: ServiceContext
+): Promise<Result<Product>> {
+  const name = input.name?.trim();
+  if (!name) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "Product name is required",
+      suggestedFix: "Enter a product name.",
+    });
+  }
+  if (name.length > 64) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "Product name must be 64 characters or less",
+    });
+  }
+
+  try {
+    const product = await withAudit({
+      action: "CREATE",
+      entityType: "Product",
+      entityId: "pending",
+      userId: ctx.userId,
+      fn: async () =>
+        prisma.product.create({
+          data: {
+            domainId: input.domainId,
+            name,
+            slug: generateSlug(name),
+            description: input.description ?? "",
+            tierId: input.tierId ?? null,
+            ownerTeam: input.ownerTeam ?? null,
+          },
+        }),
+    });
+    return ok(product);
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) {
+      return err({
+        code: "DUPLICATE",
+        message: `A product named "${name}" already exists in this domain`,
+        suggestedFix: "Choose a different product name.",
+      });
+    }
+    throw e;
+  }
+}
+
+export async function updateProduct(
+  id: string,
+  input: UpdateProductInput,
+  ctx: ServiceContext
+): Promise<Result<Product>> {
+  const existing = await ctx.prisma.product.findUnique({ where: { id } });
+  if (!existing) {
+    return err({ code: "NOT_FOUND", message: `Product "${id}" not found` });
+  }
+
+  const data: Record<string, unknown> = {};
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name) {
+      return err({ code: "VALIDATION_ERROR", message: "Product name is required" });
+    }
+    data.name = name;
+    data.slug = generateSlug(name);
+  }
+  if (input.description !== undefined) data.description = input.description;
+  if (input.tierId !== undefined) data.tierId = input.tierId;
+  if (input.ownerTeam !== undefined) data.ownerTeam = input.ownerTeam;
+
+  try {
+    const product = await withAudit({
+      action: "UPDATE",
+      entityType: "Product",
+      entityId: id,
+      userId: ctx.userId,
+      fn: async () => prisma.product.update({ where: { id }, data }),
+    });
+    return ok(product);
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message.includes("Unique constraint")) {
+      return err({
+        code: "DUPLICATE",
+        message: "A product with that name already exists in this domain",
+      });
+    }
+    throw e;
+  }
+}
+
+export async function deleteProduct(
+  id: string,
+  ctx: ServiceContext
+): Promise<Result<{ id: string }>> {
+  const existing = await ctx.prisma.product.findUnique({
+    where: { id },
+    include: { _count: { select: { entities: true } } },
+  });
+  if (!existing) {
+    return err({ code: "NOT_FOUND", message: `Product "${id}" not found` });
+  }
+  if (existing.isSystem) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "System products cannot be deleted",
+    });
+  }
+  if (existing._count.entities > 0) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "Delete the product's entities before removing it",
+      suggestedFix: "Remove or move all entities, then delete the product.",
+    });
+  }
+
+  await withAudit({
+    action: "DELETE",
+    entityType: "Product",
+    entityId: id,
+    userId: ctx.userId,
+    fn: async () => prisma.product.delete({ where: { id } }),
+  });
+  return ok({ id });
+}

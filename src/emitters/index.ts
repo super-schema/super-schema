@@ -3,27 +3,20 @@
  */
 
 import type { Emitter } from "@/lib/compiler/types";
-import { openApiEmitter } from "./openapi";
-import { avroEmitter } from "./avro";
-import { BigQueryEmitter } from "./bigquery";
-import { PostgreSqlEmitter } from "./postgresql";
-import { SpannerEmitter } from "./spanner";
 
 // ---------------------------------------------------------------------------
 // Emitter registry
+//
+// Empty as of 2026-10-12: the last two native emitters (avro, openapi) were
+// retired in favor of real TypeSpec packages (@typespec/avro, official
+// @typespec/openapi3), routed via src/lib/typespec-official/ like the
+// database-DDL targets (spanner/postgresql/bigquery) before them. Every
+// schema target in catalog.ts is now `runtime: "typespec-cli"` — none remain
+// `"native"`. Kept as a stable extension point rather than deleted outright,
+// in case a future target genuinely has no suitable TypeSpec emitter.
 // ---------------------------------------------------------------------------
 
-const bigQueryEmitter = new BigQueryEmitter();
-const postgreSqlEmitter = new PostgreSqlEmitter();
-const spannerEmitter = new SpannerEmitter();
-
-const emitterRegistry: Record<string, Emitter> = {
-  openapi: openApiEmitter,
-  avro: avroEmitter,
-  bigquery: bigQueryEmitter,
-  postgresql: postgreSqlEmitter,
-  spanner: spannerEmitter,
-};
+const emitterRegistry: Record<string, Emitter> = {};
 
 /**
  * Get an emitter by target format name.
@@ -38,9 +31,3 @@ export function getEmitter(targetFormat: string): Emitter | undefined {
 export function getAllEmitters(): Emitter[] {
   return Object.values(emitterRegistry);
 }
-
-export { openApiEmitter } from "./openapi";
-export { avroEmitter } from "./avro";
-export { BigQueryEmitter } from "./bigquery";
-export { PostgreSqlEmitter } from "./postgresql";
-export { SpannerEmitter } from "./spanner";

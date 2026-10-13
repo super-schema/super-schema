@@ -52,3 +52,18 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# embedded database (PGlite)
+/data
+
+# scratch dir for real @typespec/compiler compilation (needs to be inside the
+# project tree so node_modules resolution finds custom decorator packages)
+/.typespec-work
+
+# scratch/tool output — regenerated, never source
+/.codex-tmp
+/.playwright-mcp
+/.tgrep
+/test-results
+/playwright-report
+

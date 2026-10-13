@@ -37,6 +37,18 @@ function detectByContent(content: string): ImportFormat | null {
       if (parsed.type === "record" && parsed.fields) {
         return "avro";
       }
+      // JSON Schema: $schema points at json-schema.org, or it is an object
+      // schema (has properties/$defs). Checked after Avro so records win.
+      const schemaUrl = typeof parsed.$schema === "string" ? parsed.$schema : "";
+      if (
+        schemaUrl.includes("json-schema.org") ||
+        (parsed.type === "object" && parsed.properties) ||
+        (parsed.properties && typeof parsed.properties === "object") ||
+        parsed.$defs ||
+        parsed.definitions
+      ) {
+        return "json-schema";
+      }
     } catch {
       // Not valid JSON, continue checking
     }

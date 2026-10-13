@@ -1,11 +1,22 @@
 /**
  * Unit tests for the emission service orchestration.
  *
- * Tests the emitFromData() pure function which:
+ * Tests the emitFromData() pure function, which:
  * - Compiles entity + fields to SuperSchemaModel IR
  * - Generates TypeSpec source
- * - Runs all registered emitters (BigQuery, Avro, Spanner, PostgreSQL, OpenAPI)
- * - Collects per-target results with validation status
+ * - Runs all registered NATIVE emitters
+ *
+ * The native emitter registry is empty as of 2026-10-12 — the last two native
+ * emitters (avro, openapi) retired in favor of real TypeSpec packages
+ * (@typespec/avro, official @typespec/openapi3), joining the database-DDL
+ * targets (spanner/postgresql/bigquery) that made the same move earlier.
+ * Their output-correctness coverage now lives in:
+ * - ~/src/my/typespec/packages/avro/test/avro.test.ts (avro)
+ * - tests/integration/db-emitter-parity.test.ts (DB-DDL targets, as before)
+ * - official @typespec/openapi3's own test suite (openapi3)
+ * What's left to verify here is only what `emitFromData` itself still does:
+ * compile to TypeSpec source and return a well-formed (now-empty) result
+ * shape without crashing.
  */
 
 import { describe, it, expect } from "vitest";
@@ -55,7 +66,7 @@ function makeField(
 
 describe("emission.service", () => {
   describe("emitFromData", () => {
-    it("runs all native schema emitters and returns results", () => {
+    it("returns an empty native-targets map now that the native registry is empty", () => {
       const entity = makeEntity();
       const fields = [
         makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
@@ -65,18 +76,14 @@ describe("emission.service", () => {
 
       const result = emitFromData(entity, fields);
 
-      // Should have all native schema targets
-      expect(result.targets).toHaveProperty("bigquery");
-      expect(result.targets).toHaveProperty("avro");
-      expect(result.targets).toHaveProperty("spanner");
-      expect(result.targets).toHaveProperty("postgresql");
-      expect(result.targets).toHaveProperty("openapi");
-
-      // Summary should reflect all registered targets
-      expect(result.summary.totalTargets).toBe(5);
+      expect(result.targets).toEqual({});
+      expect(result.summary.totalTargets).toBe(0);
+      expect(result.summary.validCount).toBe(0);
+      expect(result.summary.warningCount).toBe(0);
+      expect(result.summary.invalidCount).toBe(0);
     });
 
-    it("generates TypeSpec source", () => {
+    it("generates TypeSpec source regardless of the native registry", () => {
       const entity = makeEntity();
       const fields = [
         makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
@@ -89,65 +96,7 @@ describe("emission.service", () => {
       expect(result.typespec).toContain("id");
     });
 
-    it("sets VALID status for targets with no warnings or errors", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-        makeField({ name: "name", type: "string", sortOrder: 1 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      // All string fields should map without lossy warnings
-      for (const [, target] of Object.entries(result.targets)) {
-        if (target.warnings.length === 0 && target.isValid) {
-          expect(target.validationStatus).toBe("VALID");
-        }
-      }
-    });
-
-    it("sets WARNING status for targets with lossy mappings", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-        makeField({
-          name: "amount",
-          type: "decimal",
-          sortOrder: 1,
-          precision: 10,
-          scale: 2,
-        }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      // OpenAPI maps decimal to number/double which is lossy
-      const openapi = result.targets.openapi;
-      expect(openapi).toBeDefined();
-      if (openapi.warnings.length > 0) {
-        expect(openapi.validationStatus).toBe("WARNING");
-      }
-    });
-
-    it("collects warnings from lossy mappings", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-        makeField({ name: "timestamp", type: "offsetDateTime", sortOrder: 1 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      // offsetDateTime is lossy in BigQuery and Avro
-      const bq = result.targets.bigquery;
-      const avro = result.targets.avro;
-
-      // At least one should have warnings about lossy mapping
-      const totalWarnings = bq.warnings.length + avro.warnings.length;
-      expect(totalWarnings).toBeGreaterThan(0);
-    });
-
-    it("returns success=true when all targets are valid", () => {
+    it("succeeds trivially with zero targets to fail", () => {
       const entity = makeEntity();
       const fields = [
         makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
@@ -159,69 +108,17 @@ describe("emission.service", () => {
       expect(result.summary.invalidCount).toBe(0);
     });
 
-    it("produces non-empty output for each target", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-        makeField({ name: "name", type: "string", sortOrder: 1 }),
-        makeField({ name: "active", type: "boolean", sortOrder: 2 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      for (const [, target] of Object.entries(result.targets)) {
-        expect(target.output).toBeTruthy();
-        expect(target.output.length).toBeGreaterThan(0);
-      }
-    });
-
-    it("BigQuery output contains CREATE TABLE DDL", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      expect(result.targets.bigquery.output).toContain("CREATE TABLE");
-      expect(result.targets.bigquery.output).toContain("customer");
-    });
-
-    it("Avro output contains valid JSON schema", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      // Avro output should be parseable JSON
-      expect(() => JSON.parse(result.targets.avro.output)).not.toThrow();
-    });
-
-    it("OpenAPI output is non-empty", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      expect(result.targets.openapi.output.length).toBeGreaterThan(0);
-    });
-
-    it("handles entity with no fields", () => {
+    it("handles an entity with no fields without crashing", () => {
       const entity = makeEntity();
       const fields: PrismaFieldInput[] = [];
 
       const result = emitFromData(entity, fields);
 
-      // Should still produce results for all targets without crashing
-      expect(result.summary.totalTargets).toBe(5);
+      expect(result.targets).toEqual({});
       expect(result.typespec).toContain("model Customer");
     });
 
-    it("handles multiple field types correctly", () => {
+    it("handles multiple field types without crashing", () => {
       const entity = makeEntity();
       const fields = [
         makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
@@ -233,56 +130,9 @@ describe("emission.service", () => {
 
       const result = emitFromData(entity, fields);
 
-      expect(result.summary.totalTargets).toBe(5);
-
-      // BigQuery should contain column names
-      const bqOutput = result.targets.bigquery.output;
-      expect(bqOutput).toContain("id");
-      expect(bqOutput).toContain("age");
-      expect(bqOutput).toContain("balance");
-      expect(bqOutput).toContain("active");
-
-      const postgresqlOutput = result.targets.postgresql.output;
-      expect(postgresqlOutput).toContain("CREATE TABLE");
-      expect(postgresqlOutput).toContain("customer");
-    });
-
-    it("summary counts match target statuses", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-        makeField({ name: "amount", type: "decimal", sortOrder: 1 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      const targets = Object.values(result.targets);
-      const validCount = targets.filter((t) => t.validationStatus === "VALID").length;
-      const warningCount = targets.filter((t) => t.validationStatus === "WARNING").length;
-      const invalidCount = targets.filter((t) => t.validationStatus === "INVALID").length;
-
-      expect(result.summary.validCount).toBe(validCount);
-      expect(result.summary.warningCount).toBe(warningCount);
-      expect(result.summary.invalidCount).toBe(invalidCount);
-      expect(result.summary.totalTargets).toBe(validCount + warningCount + invalidCount);
-    });
-
-    it("each target has correct name and targetFormat", () => {
-      const entity = makeEntity();
-      const fields = [
-        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
-      ];
-
-      const result = emitFromData(entity, fields);
-
-      expect(result.targets.bigquery.name).toBe("bigquery");
-      expect(result.targets.avro.name).toBe("avro");
-      expect(result.targets.openapi.name).toBe("openapi");
-
-      // Each should have a non-empty targetFormat
-      for (const [, target] of Object.entries(result.targets)) {
-        expect(target.targetFormat).toBeTruthy();
-      }
+      expect(result.targets).toEqual({});
+      expect(result.typespec).toContain("age");
+      expect(result.typespec).toContain("balance");
     });
   });
 });

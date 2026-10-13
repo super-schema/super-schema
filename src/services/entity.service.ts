@@ -14,7 +14,8 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
-import { generateSlug } from "@/lib/slug";
+import { generateSlug, isReservedEntityRouteSlug } from "@/lib/slug";
+import { ensureDefaultProductId } from "@/lib/org-defaults";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -42,6 +43,15 @@ export async function createEntity(
     }
   }
 
+  const entitySlug = generateSlug(parsed.data.name);
+  if (isReservedEntityRouteSlug(entitySlug)) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: `"${entitySlug}" is reserved for a schemas utility page.`,
+      suggestedFix: "Choose a different entity name.",
+    });
+  }
+
   try {
     const entity = await withAudit({
       action: "CREATE",
@@ -49,11 +59,13 @@ export async function createEntity(
       entityId: "pending",
       userId: ctx.userId,
       fn: async () => {
+        const productId = await ensureDefaultProductId(parsed.data.domainId);
         return prisma.entity.create({
           data: {
             name: parsed.data.name,
-            slug: generateSlug(parsed.data.name),
+            slug: entitySlug,
             domainId: parsed.data.domainId,
+            productId,
             description: parsed.data.description,
             ownerId: ctx.userId,
             metadata:

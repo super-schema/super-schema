@@ -44,7 +44,7 @@ export function DeprecationBanner({
           <span className="text-foreground">
             {" "}Replacement:{" "}
             <Link
-              href={`/schemas/${domainSlug}/${replId}`}
+              href={`/schemas?entityId=${encodeURIComponent(replId)}`}
               className="font-medium underline"
               style={{ color: "#6ba3e8" }}
             >

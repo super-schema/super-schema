@@ -1,8 +1,10 @@
 /**
  * POST /api/v1/schemas/:id/validate — Validate entity completeness.
  *
- * Runs the emission pipeline and returns per-target validation status.
- * Includes a `ci` field for CI/CD pipeline integration.
+ * Runs the emission pipeline across every enabled schema target and returns
+ * per-target validation status. Includes a `ci` field for CI/CD pipeline
+ * integration. Every target is `runtime: "typespec-cli"` as of 2026-10-12 —
+ * see the emit route's doc comment for why this no longer calls `emitFromData`.
  */
 
 import { authenticateRequest } from "@/app/api/v1/middleware";
@@ -15,7 +17,8 @@ import {
 } from "@/app/api/v1/error-handler";
 import { getEntityById } from "@/services/entity.service";
 import { prisma } from "@/lib/db";
-import { emitFromData } from "@/lib/emission/emit-from-data";
+import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import type {
   PrismaEntityInput,
   PrismaFieldInput,
@@ -52,23 +55,28 @@ export async function POST(
       orderBy: { sortOrder: "asc" },
     });
 
+    const prismaEntity = entity as unknown as PrismaEntityInput;
+    const prismaFields = fields as unknown as PrismaFieldInput[];
+
     // Run emission pipeline (validation is part of emission)
-    const emissionResult = emitFromData(
-      entity as unknown as PrismaEntityInput,
-      fields as unknown as PrismaFieldInput[]
+    const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
+    const results = await Promise.all(
+      enabledTargets.map(async (target) => {
+        const result = await emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, target.key);
+        return {
+          target: target.key,
+          status: result.validationStatus,
+          errors: result.errors.map((e) => e.message),
+          warnings: result.warnings,
+        };
+      })
     );
 
-    // Format per-target validation results
-    const targets = Object.values(emissionResult.targets).map((t) => ({
-      target: t.name,
-      status: t.validationStatus,
-      errors: t.errors.map((e) => e.message),
-      warnings: t.warnings.map((w) => w.message),
-    }));
-
-    const valid = emissionResult.success;
-    const { totalTargets, validCount, warningCount, invalidCount } =
-      emissionResult.summary;
+    const totalTargets = results.length;
+    const validCount = results.filter((r) => r.status === "VALID").length;
+    const invalidCount = results.filter((r) => r.status === "INVALID").length;
+    const warningCount = totalTargets - validCount - invalidCount;
+    const valid = invalidCount === 0;
 
     // CI-friendly summary
     const ciSummary = valid
@@ -79,8 +87,8 @@ export async function POST(
       valid,
       entityId: id,
       entityName: entity.name,
-      targets,
-      summary: emissionResult.summary,
+      targets: results,
+      summary: { totalTargets, validCount, warningCount, invalidCount },
       ci: {
         pass: valid,
         summary: ciSummary,
@@ -91,3 +99,4 @@ export async function POST(
     return apiServerError();
   }
 }
+

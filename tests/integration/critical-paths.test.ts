@@ -14,12 +14,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { mockPrisma } = vi.hoisted(() => {
   return {
     mockPrisma: {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({ id: "user-1" }),
+      },
       entity: {
         create: vi.fn(),
         findUnique: vi.fn(),
         findMany: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
+      },
+      product: {
+        findUnique: vi.fn().mockResolvedValue({ id: "prod-default" }),
+        create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
       field: {
         create: vi.fn(),
@@ -77,7 +84,7 @@ import {
   deleteFieldAction,
   updateEntityStatusAction,
   generateTypeSpecPreviewAction,
-} from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions";
+} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
 // ---------------------------------------------------------------------------
 // Helpers

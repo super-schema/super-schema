@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { Search, Shield } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Search, Shield, Loader2 } from "lucide-react";
 import { ROLE_COLORS, type Role } from "@/types/schemas/rbac";
 import { UserDetailPanel } from "./UserDetailPanel";
+import { getUsersAction } from "@/app/(dashboard)/admin/actions";
 
 interface UserRow {
   id: string;
@@ -14,21 +15,48 @@ interface UserRow {
   status: string;
 }
 
-// Mock data for initial display
-const MOCK_USERS: UserRow[] = [
-  {
-    id: "user-1",
-    email: "admin@example.com",
-    name: "Admin User",
-    roles: [{ id: "r1", role: "ADMIN", domainId: null }],
-    status: "active",
-  },
-];
-
 export function UserDataTable() {
   const [search, setSearch] = useState("");
   const [selectedUser, setSelectedUser] = useState<UserRow | null>(null);
-  const users = MOCK_USERS;
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const res = await getUsersAction();
+    if (res.error) {
+      setError(res.error);
+      setUsers([]);
+    } else if (res.data) {
+      setUsers(
+        res.data.map((u) => ({
+          id: u.id,
+          email: u.email,
+          name: u.name,
+          roles: u.roles ?? [],
+          status: "active",
+        }))
+      );
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    // Fetch once on mount; state updates occur after the async result resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
+
+  // Keep the open detail panel in sync after a refetch.
+  useEffect(() => {
+    if (!selectedUser) return;
+    const fresh = users.find((u) => u.id === selectedUser.id);
+    // Re-sync the open detail panel to the freshly loaded record.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (fresh && fresh !== selectedUser) setSelectedUser(fresh);
+  }, [users]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = users.filter(
     (u) =>
@@ -53,6 +81,15 @@ export function UserDataTable() {
         </div>
       </div>
 
+      {error && (
+        <div
+          role="alert"
+          className="rounded-md border border-destructive/40 bg-destructive/10 px-space-4 py-space-3 text-body-small text-destructive"
+        >
+          {error}
+        </div>
+      )}
+
       {/* Table */}
       <div className="border border-border rounded-lg overflow-hidden">
         <table className="w-full text-body-small">
@@ -65,47 +102,62 @@ export function UserDataTable() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((user) => (
-              <tr
-                key={user.id}
-                className="border-b border-border last:border-0 hover:bg-accent/50 cursor-pointer transition-colors"
-                onClick={() => setSelectedUser(user)}
-              >
-                <td className="px-space-4 py-space-3 text-foreground">{user.email}</td>
-                <td className="px-space-4 py-space-3 text-foreground">{user.name ?? "—"}</td>
-                <td className="px-space-4 py-space-3">
-                  <div className="flex flex-wrap gap-1">
-                    {user.roles.map((r) => {
-                      const colors = ROLE_COLORS[r.role];
-                      return (
-                        <span
-                          key={r.id}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption ${colors.bg} ${colors.text}`}
-                        >
-                          <Shield className="w-3 h-3" />
-                          {r.role}
-                          {r.domainName && (
-                            <span className="opacity-70">({r.domainName})</span>
-                          )}
-                          {!r.domainId && r.role !== "ADMIN" && r.role !== "COMPLIANCE_OFFICER" && (
-                            <span className="opacity-70">(System)</span>
-                          )}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </td>
-                <td className="px-space-4 py-space-3">
-                  <span className={`inline-flex px-2 py-0.5 rounded-full text-caption ${
-                    user.status === "active"
-                      ? "bg-success/20 text-success"
-                      : "bg-muted text-muted-foreground"
-                  }`}>
-                    {user.status}
-                  </span>
+            {loading ? (
+              <tr>
+                <td colSpan={4} className="px-space-4 py-space-8 text-center text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin inline mr-space-2" />
+                  Loading users…
                 </td>
               </tr>
-            ))}
+            ) : filtered.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-space-4 py-space-8 text-center text-muted-foreground">
+                  {search.trim() ? "No users match your filter." : "No users found."}
+                </td>
+              </tr>
+            ) : (
+              filtered.map((user) => (
+                <tr
+                  key={user.id}
+                  className="border-b border-border last:border-0 hover:bg-accent/50 cursor-pointer transition-colors"
+                  onClick={() => setSelectedUser(user)}
+                >
+                  <td className="px-space-4 py-space-3 text-foreground">{user.email}</td>
+                  <td className="px-space-4 py-space-3 text-foreground">{user.name ?? "\u2014"}</td>
+                  <td className="px-space-4 py-space-3">
+                    <div className="flex flex-wrap gap-1">
+                      {user.roles.map((r) => {
+                        const colors = ROLE_COLORS[r.role];
+                        return (
+                          <span
+                            key={r.id}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption ${colors.bg} ${colors.text}`}
+                          >
+                            <Shield className="w-3 h-3" />
+                            {r.role}
+                            {r.domainName && (
+                              <span className="opacity-70">({r.domainName})</span>
+                            )}
+                            {!r.domainId && r.role !== "ADMIN" && r.role !== "COMPLIANCE_OFFICER" && (
+                              <span className="opacity-70">(System)</span>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </td>
+                  <td className="px-space-4 py-space-3">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-caption ${
+                      user.status === "active"
+                        ? "bg-success/20 text-success"
+                        : "bg-muted text-muted-foreground"
+                    }`}>
+                      {user.status}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -115,6 +167,7 @@ export function UserDataTable() {
         <UserDetailPanel
           user={selectedUser}
           onClose={() => setSelectedUser(null)}
+          onChanged={load}
         />
       )}
     </div>

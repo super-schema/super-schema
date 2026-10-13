@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [pglite, postgresql]
+    env:
+      DB_PROVIDER: ${{ matrix.provider }}
+      NEXTAUTH_SECRET: ci-secret
+      NEXTAUTH_URL: http://localhost:3000
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: superschema
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: superschema
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U superschema"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Deploy migrations
+        run: npm run db:deploy
+        env:
+          DATABASE_URL: postgresql://superschema:password@localhost:5432/superschema
+      - name: Test
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://superschema:password@localhost:5432/superschema

@@ -15,6 +15,10 @@ export interface PreviewField {
   classification: string | null;
   description: string;
   confidence?: number;
+  /** Target entity for a `reference` field (preserved through to persistence). */
+  referencedEntityName?: string;
+  /** Array element logical type (preserved through to persistence). */
+  arrayElementType?: string;
 }
 
 interface FieldPreviewProps {

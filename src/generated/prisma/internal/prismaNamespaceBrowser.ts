@@ -55,7 +55,10 @@ export const ModelName = {
   Account: 'Account',
   Session: 'Session',
   VerificationToken: 'VerificationToken',
+  Tenant: 'Tenant',
   Domain: 'Domain',
+  ProductTier: 'ProductTier',
+  Product: 'Product',
   Entity: 'Entity',
   ModelDefinition: 'ModelDefinition',
   ModelFieldDefinition: 'ModelFieldDefinition',
@@ -155,8 +158,23 @@ export const VerificationTokenScalarFieldEnum = {
 export type VerificationTokenScalarFieldEnum = (typeof VerificationTokenScalarFieldEnum)[keyof typeof VerificationTokenScalarFieldEnum]
 
 
+export const TenantScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  slug: 'slug',
+  description: 'description',
+  isActive: 'isActive',
+  isSystem: 'isSystem',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type TenantScalarFieldEnum = (typeof TenantScalarFieldEnum)[keyof typeof TenantScalarFieldEnum]
+
+
 export const DomainScalarFieldEnum = {
   id: 'id',
+  tenantId: 'tenantId',
   name: 'name',
   slug: 'slug',
   description: 'description',
@@ -169,16 +187,50 @@ export const DomainScalarFieldEnum = {
 export type DomainScalarFieldEnum = (typeof DomainScalarFieldEnum)[keyof typeof DomainScalarFieldEnum]
 
 
+export const ProductTierScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  displayColor: 'displayColor',
+  bgColor: 'bgColor',
+  textColor: 'textColor',
+  description: 'description',
+  sortOrder: 'sortOrder',
+  isSystem: 'isSystem',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ProductTierScalarFieldEnum = (typeof ProductTierScalarFieldEnum)[keyof typeof ProductTierScalarFieldEnum]
+
+
+export const ProductScalarFieldEnum = {
+  id: 'id',
+  domainId: 'domainId',
+  name: 'name',
+  slug: 'slug',
+  description: 'description',
+  tierId: 'tierId',
+  ownerTeam: 'ownerTeam',
+  isSystem: 'isSystem',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ProductScalarFieldEnum = (typeof ProductScalarFieldEnum)[keyof typeof ProductScalarFieldEnum]
+
+
 export const EntityScalarFieldEnum = {
   id: 'id',
   name: 'name',
   slug: 'slug',
   domainId: 'domainId',
+  productId: 'productId',
   version: 'version',
   status: 'status',
   ownerId: 'ownerId',
   description: 'description',
   metadata: 'metadata',
+  typespecSource: 'typespecSource',
   parentEntityId: 'parentEntityId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
@@ -342,7 +394,9 @@ export const UserRoleScalarFieldEnum = {
   id: 'id',
   userId: 'userId',
   role: 'role',
+  tenantId: 'tenantId',
   domainId: 'domainId',
+  productId: 'productId',
   createdAt: 'createdAt'
 } as const
 
@@ -492,6 +546,7 @@ export const EmissionTargetStatusScalarFieldEnum = {
   lastEmittedAt: 'lastEmittedAt',
   status: 'status',
   output: 'output',
+  formatOptions: 'formatOptions',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const

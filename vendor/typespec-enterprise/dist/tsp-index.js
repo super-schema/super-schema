@@ -1,0 +1,30 @@
+// This is the file @typespec/compiler actually loads to bind `extern dec`
+// declarations in lib/main.tsp to their JS implementations — the namespace
+// key below ("Enterprise") must match `namespace Enterprise;` in main.tsp,
+// and every key inside must match a decorator name declared there exactly.
+import { $dataClassification, $pii, $businessOwner, $steward, $retentionPolicy, $anonymization, $qualityRule, $precision, $sourceMapping, $avroLogicalType, $avroFixedSize, $avroOrder, $avroNamespace, $avroRecordAliases, $protobufFieldNumber, $protobufOneofGroup, $partitionHint, $indexHint, $clusterHint, $deprecation, } from './decorators.js';
+export const $decorators = {
+    Enterprise: {
+        dataClassification: $dataClassification,
+        pii: $pii,
+        businessOwner: $businessOwner,
+        steward: $steward,
+        retentionPolicy: $retentionPolicy,
+        anonymization: $anonymization,
+        qualityRule: $qualityRule,
+        precision: $precision,
+        sourceMapping: $sourceMapping,
+        avroLogicalType: $avroLogicalType,
+        avroFixedSize: $avroFixedSize,
+        avroOrder: $avroOrder,
+        avroNamespace: $avroNamespace,
+        avroRecordAliases: $avroRecordAliases,
+        protobufFieldNumber: $protobufFieldNumber,
+        protobufOneofGroup: $protobufOneofGroup,
+        partitionHint: $partitionHint,
+        indexHint: $indexHint,
+        clusterHint: $clusterHint,
+        deprecation: $deprecation,
+    },
+};
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoidHNwLWluZGV4LmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiLi4vc3JjL3RzcC1pbmRleC50cyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFBQSwwRUFBMEU7QUFDMUUsMkVBQTJFO0FBQzNFLDJFQUEyRTtBQUMzRSwyRUFBMkU7QUFDM0UsT0FBTyxFQUNMLG1CQUFtQixFQUNuQixJQUFJLEVBQ0osY0FBYyxFQUNkLFFBQVEsRUFDUixnQkFBZ0IsRUFDaEIsY0FBYyxFQUNkLFlBQVksRUFDWixVQUFVLEVBQ1YsY0FBYyxFQUNkLGdCQUFnQixFQUNoQixjQUFjLEVBQ2QsVUFBVSxFQUNWLGNBQWMsRUFDZCxrQkFBa0IsRUFDbEIsb0JBQW9CLEVBQ3BCLG1CQUFtQixFQUNuQixjQUFjLEVBQ2QsVUFBVSxFQUNWLFlBQVksRUFDWixZQUFZLEdBQ2IsTUFBTSxpQkFBaUIsQ0FBQztBQUV6QixNQUFNLENBQUMsTUFBTSxXQUFXLEdBQUc7SUFDekIsVUFBVSxFQUFFO1FBQ1Ysa0JBQWtCLEVBQUUsbUJBQW1CO1FBQ3ZDLEdBQUcsRUFBRSxJQUFJO1FBQ1QsYUFBYSxFQUFFLGNBQWM7UUFDN0IsT0FBTyxFQUFFLFFBQVE7UUFDakIsZUFBZSxFQUFFLGdCQUFnQjtRQUNqQyxhQUFhLEVBQUUsY0FBYztRQUM3QixXQUFXLEVBQUUsWUFBWTtRQUN6QixTQUFTLEVBQUUsVUFBVTtRQUNyQixhQUFhLEVBQUUsY0FBYztRQUM3QixlQUFlLEVBQUUsZ0JBQWdCO1FBQ2pDLGFBQWEsRUFBRSxjQUFjO1FBQzdCLFNBQVMsRUFBRSxVQUFVO1FBQ3JCLGFBQWEsRUFBRSxjQUFjO1FBQzdCLGlCQUFpQixFQUFFLGtCQUFrQjtRQUNyQyxtQkFBbUIsRUFBRSxvQkFBb0I7UUFDekMsa0JBQWtCLEVBQUUsbUJBQW1CO1FBQ3ZDLGFBQWEsRUFBRSxjQUFjO1FBQzdCLFNBQVMsRUFBRSxVQUFVO1FBQ3JCLFdBQVcsRUFBRSxZQUFZO1FBQ3pCLFdBQVcsRUFBRSxZQUFZO0tBQzFCO0NBQ0YsQ0FBQyIsInNvdXJjZXNDb250ZW50IjpbIi8vIFRoaXMgaXMgdGhlIGZpbGUgQHR5cGVzcGVjL2NvbXBpbGVyIGFjdHVhbGx5IGxvYWRzIHRvIGJpbmQgYGV4dGVybiBkZWNgXG4vLyBkZWNsYXJhdGlvbnMgaW4gbGliL21haW4udHNwIHRvIHRoZWlyIEpTIGltcGxlbWVudGF0aW9ucyDigJQgdGhlIG5hbWVzcGFjZVxuLy8ga2V5IGJlbG93IChcIkVudGVycHJpc2VcIikgbXVzdCBtYXRjaCBgbmFtZXNwYWNlIEVudGVycHJpc2U7YCBpbiBtYWluLnRzcCxcbi8vIGFuZCBldmVyeSBrZXkgaW5zaWRlIG11c3QgbWF0Y2ggYSBkZWNvcmF0b3IgbmFtZSBkZWNsYXJlZCB0aGVyZSBleGFjdGx5LlxuaW1wb3J0IHtcbiAgJGRhdGFDbGFzc2lmaWNhdGlvbixcbiAgJHBpaSxcbiAgJGJ1c2luZXNzT3duZXIsXG4gICRzdGV3YXJkLFxuICAkcmV0ZW50aW9uUG9saWN5LFxuICAkYW5vbnltaXphdGlvbixcbiAgJHF1YWxpdHlSdWxlLFxuICAkcHJlY2lzaW9uLFxuICAkc291cmNlTWFwcGluZyxcbiAgJGF2cm9Mb2dpY2FsVHlwZSxcbiAgJGF2cm9GaXhlZFNpemUsXG4gICRhdnJvT3JkZXIsXG4gICRhdnJvTmFtZXNwYWNlLFxuICAkYXZyb1JlY29yZEFsaWFzZXMsXG4gICRwcm90b2J1ZkZpZWxkTnVtYmVyLFxuICAkcHJvdG9idWZPbmVvZkdyb3VwLFxuICAkcGFydGl0aW9uSGludCxcbiAgJGluZGV4SGludCxcbiAgJGNsdXN0ZXJIaW50LFxuICAkZGVwcmVjYXRpb24sXG59IGZyb20gJy4vZGVjb3JhdG9ycy5qcyc7XG5cbmV4cG9ydCBjb25zdCAkZGVjb3JhdG9ycyA9IHtcbiAgRW50ZXJwcmlzZToge1xuICAgIGRhdGFDbGFzc2lmaWNhdGlvbjogJGRhdGFDbGFzc2lmaWNhdGlvbixcbiAgICBwaWk6ICRwaWksXG4gICAgYnVzaW5lc3NPd25lcjogJGJ1c2luZXNzT3duZXIsXG4gICAgc3Rld2FyZDogJHN0ZXdhcmQsXG4gICAgcmV0ZW50aW9uUG9saWN5OiAkcmV0ZW50aW9uUG9saWN5LFxuICAgIGFub255bWl6YXRpb246ICRhbm9ueW1pemF0aW9uLFxuICAgIHF1YWxpdHlSdWxlOiAkcXVhbGl0eVJ1bGUsXG4gICAgcHJlY2lzaW9uOiAkcHJlY2lzaW9uLFxuICAgIHNvdXJjZU1hcHBpbmc6ICRzb3VyY2VNYXBwaW5nLFxuICAgIGF2cm9Mb2dpY2FsVHlwZTogJGF2cm9Mb2dpY2FsVHlwZSxcbiAgICBhdnJvRml4ZWRTaXplOiAkYXZyb0ZpeGVkU2l6ZSxcbiAgICBhdnJvT3JkZXI6ICRhdnJvT3JkZXIsXG4gICAgYXZyb05hbWVzcGFjZTogJGF2cm9OYW1lc3BhY2UsXG4gICAgYXZyb1JlY29yZEFsaWFzZXM6ICRhdnJvUmVjb3JkQWxpYXNlcyxcbiAgICBwcm90b2J1ZkZpZWxkTnVtYmVyOiAkcHJvdG9idWZGaWVsZE51bWJlcixcbiAgICBwcm90b2J1Zk9uZW9mR3JvdXA6ICRwcm90b2J1Zk9uZW9mR3JvdXAsXG4gICAgcGFydGl0aW9uSGludDogJHBhcnRpdGlvbkhpbnQsXG4gICAgaW5kZXhIaW50OiAkaW5kZXhIaW50LFxuICAgIGNsdXN0ZXJIaW50OiAkY2x1c3RlckhpbnQsXG4gICAgZGVwcmVjYXRpb246ICRkZXByZWNhdGlvbixcbiAgfSxcbn07XG4iXX0=

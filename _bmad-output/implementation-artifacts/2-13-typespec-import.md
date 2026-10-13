@@ -2,6 +2,8 @@
 
 Status: review
 
+> **Epic 12 reconciliation note (2026-10-12):** One-shot create-new-entity import via the regex parser — superseded by Epic 12 Story 12.2 (real compiler) for the parsing step. Once Epic 12 lands, import becomes closer to 'compile this text as a new entity's typespec_source' than 'parse and populate Prisma rows.'
+
 ## Story
 
 As a **data modeler**,

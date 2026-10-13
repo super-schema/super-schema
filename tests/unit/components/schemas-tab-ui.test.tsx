@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { SchemasTab } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/components/SchemasTab";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { SchemasTab } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab";
 
 // Mock the actions
 vi.mock(
-  "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions",
+  "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions",
   () => ({
     getSchemaVersionsAction: vi.fn(),
     generateSchemaAction: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock("@/lib/schema-targets/catalog", () => ({
 }));
 
 const { getSchemaVersionsAction: getSchemaVersionsActionMock } = await import(
-  "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/actions"
+  "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions"
 );
 
 const baseProps = {
@@ -42,6 +42,10 @@ const baseProps = {
 describe("SchemasTab UI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it("renders vertical technology tabs", async () => {
@@ -98,5 +102,36 @@ describe("SchemasTab UI", () => {
       expect(screen.getByText("Field")).toBeDefined();
       expect(screen.getByText("Super Schema Type")).toBeDefined();
     });
+  });
+
+  it("shows a cross-target mapping matrix with examples and risk badges", async () => {
+    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      schemaVersions: {},
+    });
+
+    render(
+      <SchemasTab
+        {...baseProps}
+        fields={[
+          { ...baseProps.fields[0], id: "amount", name: "amount", type: "decimal", precision: 19, scale: 4 },
+          { ...baseProps.fields[1], id: "externalId", name: "externalId", type: "uint64", precision: null, scale: null },
+        ]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Mapping Matrix").length).toBeGreaterThan(0);
+    });
+
+    screen.getAllByText("Mapping Matrix")[0].click();
+
+    await waitFor(() => {
+      expect(screen.getByText("amount")).toBeDefined();
+      expect(screen.getByText("externalId")).toBeDefined();
+    });
+    expect(screen.getAllByText("INT64").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Range risk").length).toBeGreaterThan(0);
+    expect(screen.getByText(/0 … 1\.8 × 10¹⁹/)).toBeDefined();
   });
 });

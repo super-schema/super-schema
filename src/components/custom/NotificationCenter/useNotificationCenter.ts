@@ -11,6 +11,34 @@ import type { NotificationType } from "@/types/schemas/notification";
 const POLL_INTERVAL_MS = 30_000;
 const MAX_NOTIFICATIONS = 50;
 
+export function getNotificationNavigationUrl(
+  notification: NotificationItemData
+): string {
+  const { entityRef, type } = notification;
+  const params = new URLSearchParams();
+
+  if (!entityRef.domainSlug || !entityRef.productSlug) {
+    params.set("entityId", entityRef.entityId);
+    if (entityRef.versionId) params.set("version", entityRef.versionId);
+    if (type === "APPROVAL_REQUEST") params.set("panel", "governance");
+    return `/schemas?${params.toString()}`;
+  }
+
+  if (entityRef.versionId) params.set("version", entityRef.versionId);
+  if (type === "APPROVAL_REQUEST") params.set("panel", "governance");
+
+  const entitySegment = entityRef.entitySlug ?? entityRef.entityId;
+  let url = `/schemas/${entityRef.domainSlug}/${entityRef.productSlug}/${entitySegment}`;
+
+  if (entityRef.fieldId) {
+    url += `/fields/${entityRef.fieldSlug ?? entityRef.fieldId}`;
+  }
+
+  const qs = params.toString();
+  if (qs) url += `?${qs}`;
+  return url;
+}
+
 /**
  * Hook that manages notification center state, polling, and actions.
  *
@@ -142,22 +170,7 @@ export function useNotificationCenter() {
   // Navigation URL builder
   // -------------------------------------------------------------------------
 
-  const getNavigationUrl = useCallback(
-    (notification: NotificationItemData): string => {
-      const { entityRef, type } = notification;
-      let url = `/schemas/${entityRef.entityId}`;
-      const params = new URLSearchParams();
-
-      if (entityRef.fieldId) params.set("fieldId", entityRef.fieldId);
-      if (entityRef.versionId) params.set("version", entityRef.versionId);
-      if (type === "APPROVAL_REQUEST") params.set("panel", "governance");
-
-      const qs = params.toString();
-      if (qs) url += `?${qs}`;
-      return url;
-    },
-    []
-  );
+  const getNavigationUrl = useCallback(getNotificationNavigationUrl, []);
 
   return {
     notifications,

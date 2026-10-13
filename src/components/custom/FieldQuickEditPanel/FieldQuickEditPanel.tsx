@@ -17,12 +17,12 @@ import { getTypeInfo } from "@/lib/data-types";
 import { cn } from "@/lib/utils";
 
 // Studio-level panels
-import { ValidationPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/ValidationPanel";
-import { WireFormatPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/WireFormatPanel";
-import { VisibilityPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/VisibilityPanel";
-import { ExtensionsPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/ExtensionsPanel";
-import { VersioningPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/VersioningPanel";
-import { GovernancePanel } from "@/app/(dashboard)/schemas/[domainSlug]/[entityId]/fields/[fieldId]/panels/GovernancePanel";
+import { ValidationPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/panels/ValidationPanel";
+import { WireFormatPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/panels/WireFormatPanel";
+import { VisibilityPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/panels/VisibilityPanel";
+import { ExtensionsPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/panels/ExtensionsPanel";
+import { VersioningPanel } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/panels/VersioningPanel";
+import { GovernancePanel } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/panels/GovernancePanel";
 
 import type { TypeSpecDecorators } from "@/types/schemas/typespec-decorator.schema";
 

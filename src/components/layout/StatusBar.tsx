@@ -1,9 +1,28 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { usePathname } from "next/navigation";
+
+// Map the leading path segment to a human-readable section label so the status
+// bar reflects real navigation state instead of hardcoded placeholder text.
+function sectionLabel(pathname: string): string {
+  const seg = pathname.split("/").filter(Boolean)[0];
+  if (!seg) return "Home";
+  const labels: Record<string, string> = {
+    schemas: "Schemas",
+    compliance: "Compliance",
+    deployments: "Deployments",
+    notifications: "Notifications",
+    admin: "Administration",
+    glossary: "Glossary",
+    governance: "Governance",
+  };
+  return labels[seg] ?? seg.charAt(0).toUpperCase() + seg.slice(1);
+}
 
 export function StatusBar() {
   const [saveFlash, setSaveFlash] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     function handleSaveFlash() {
@@ -21,15 +40,11 @@ export function StatusBar() {
       className="h-6 w-full surface-1 border-t border-border flex items-center px-space-3 gap-space-3 text-caption text-muted-foreground"
     >
       <span className="border-r border-border pr-space-3">
-        No domain selected
+        {sectionLabel(pathname ?? "")}
       </span>
-      <span className="border-r border-border pr-space-3">
-        0 errors, 0 warnings
+      <span className="text-mono-small truncate max-w-xs" title={pathname ?? ""}>
+        {pathname ?? ""}
       </span>
-      <span className="text-mono-small border-r border-border pr-space-3">
-        v0
-      </span>
-      <span>Not connected</span>
 
       {/* Save flash indicator */}
       {saveFlash && (

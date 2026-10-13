@@ -201,12 +201,13 @@ export async function getDeploymentStatus(
         name: rec.environment,
         deployedVersion: rec.deployedVersionId,
         status: rec.status,
-        driftStatus:
-          rec.status === "DRIFTED"
-            ? ("drifted" as const)
-            : rec.status === "DEPLOYED"
-              ? ("in-sync" as const)
-              : ("unknown" as const),
+        // Drift is tracked on the isDrifted flag (set by updateDriftStatus); the
+        // status enum has no DRIFTED member, so derive the badge from the flag.
+        driftStatus: row.isDrifted
+          ? ("drifted" as const)
+          : rec.status === "DEPLOYED"
+            ? ("in-sync" as const)
+            : ("unknown" as const),
         lastChecked: rec.checkedAt,
         markedDeployedAt: rec.markedDeployedAt,
       };
@@ -280,7 +281,7 @@ export async function getDeploymentOverview(
       return {
         format: target.format,
         deployedVersion: rec?.deployedVersionId || null,
-        driftStatus: (rec?.status === "DRIFTED"
+        driftStatus: (latestRecord?.isDrifted
           ? "drifted"
           : rec?.status === "DEPLOYED"
             ? "in-sync"

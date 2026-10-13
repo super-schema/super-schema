@@ -13,6 +13,7 @@ interface DomainCardProps {
   isSystem: boolean;
   entityCount: number;
   createdAt: Date;
+  canDeleteDomain?: boolean;
   onRequestDelete?: () => void;
 }
 
@@ -23,11 +24,12 @@ export function DomainCard({
   isSystem,
   entityCount,
   createdAt,
+  canDeleteDomain = false,
   onRequestDelete,
 }: DomainCardProps) {
   const isPublic = name === "Public";
   const isPlayground = name === "Playground";
-  const canDelete = !isSystem && entityCount === 0;
+  const canDelete = canDeleteDomain && !isSystem && entityCount === 0;
 
   return (
     <div
@@ -83,7 +85,7 @@ export function DomainCard({
         </div>
       </Link>
 
-      {!isSystem && (
+      {canDeleteDomain && !isSystem ? (
         <button
           type="button"
           onClick={onRequestDelete}
@@ -98,7 +100,7 @@ export function DomainCard({
         >
           <Trash2 className="w-4 h-4" />
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

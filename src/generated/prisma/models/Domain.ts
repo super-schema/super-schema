@@ -26,6 +26,7 @@ export type AggregateDomain = {
 
 export type DomainMinAggregateOutputType = {
   id: string | null
+  tenantId: string | null
   name: string | null
   slug: string | null
   description: string | null
@@ -36,6 +37,7 @@ export type DomainMinAggregateOutputType = {
 
 export type DomainMaxAggregateOutputType = {
   id: string | null
+  tenantId: string | null
   name: string | null
   slug: string | null
   description: string | null
@@ -46,6 +48,7 @@ export type DomainMaxAggregateOutputType = {
 
 export type DomainCountAggregateOutputType = {
   id: number
+  tenantId: number
   name: number
   slug: number
   description: number
@@ -59,6 +62,7 @@ export type DomainCountAggregateOutputType = {
 
 export type DomainMinAggregateInputType = {
   id?: true
+  tenantId?: true
   name?: true
   slug?: true
   description?: true
@@ -69,6 +73,7 @@ export type DomainMinAggregateInputType = {
 
 export type DomainMaxAggregateInputType = {
   id?: true
+  tenantId?: true
   name?: true
   slug?: true
   description?: true
@@ -79,6 +84,7 @@ export type DomainMaxAggregateInputType = {
 
 export type DomainCountAggregateInputType = {
   id?: true
+  tenantId?: true
   name?: true
   slug?: true
   description?: true
@@ -163,6 +169,7 @@ export type DomainGroupByArgs<ExtArgs extends runtime.Types.Extensions.InternalA
 
 export type DomainGroupByOutputType = {
   id: string
+  tenantId: string
   name: string
   slug: string
   description: string
@@ -195,6 +202,7 @@ export type DomainWhereInput = {
   OR?: Prisma.DomainWhereInput[]
   NOT?: Prisma.DomainWhereInput | Prisma.DomainWhereInput[]
   id?: Prisma.StringFilter<"Domain"> | string
+  tenantId?: Prisma.StringFilter<"Domain"> | string
   name?: Prisma.StringFilter<"Domain"> | string
   slug?: Prisma.StringFilter<"Domain"> | string
   description?: Prisma.StringFilter<"Domain"> | string
@@ -202,6 +210,8 @@ export type DomainWhereInput = {
   isSystem?: Prisma.BoolFilter<"Domain"> | boolean
   createdAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
+  tenant?: Prisma.XOR<Prisma.TenantScalarRelationFilter, Prisma.TenantWhereInput>
+  products?: Prisma.ProductListRelationFilter
   entities?: Prisma.EntityListRelationFilter
   modelDefinitions?: Prisma.ModelDefinitionListRelationFilter
   decoratorDefinitions?: Prisma.DecoratorDefinitionListRelationFilter
@@ -215,6 +225,7 @@ export type DomainWhereInput = {
 
 export type DomainOrderByWithRelationInput = {
   id?: Prisma.SortOrder
+  tenantId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
@@ -222,6 +233,8 @@ export type DomainOrderByWithRelationInput = {
   isSystem?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  tenant?: Prisma.TenantOrderByWithRelationInput
+  products?: Prisma.ProductOrderByRelationAggregateInput
   entities?: Prisma.EntityOrderByRelationAggregateInput
   modelDefinitions?: Prisma.ModelDefinitionOrderByRelationAggregateInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionOrderByRelationAggregateInput
@@ -235,16 +248,21 @@ export type DomainOrderByWithRelationInput = {
 
 export type DomainWhereUniqueInput = Prisma.AtLeast<{
   id?: string
-  name?: string
-  slug?: string
+  slug_tenantId?: Prisma.DomainSlugTenantIdCompoundUniqueInput
+  name_tenantId?: Prisma.DomainNameTenantIdCompoundUniqueInput
   AND?: Prisma.DomainWhereInput | Prisma.DomainWhereInput[]
   OR?: Prisma.DomainWhereInput[]
   NOT?: Prisma.DomainWhereInput | Prisma.DomainWhereInput[]
+  tenantId?: Prisma.StringFilter<"Domain"> | string
+  name?: Prisma.StringFilter<"Domain"> | string
+  slug?: Prisma.StringFilter<"Domain"> | string
   description?: Prisma.StringFilter<"Domain"> | string
   policyTemplate?: Prisma.JsonNullableFilter<"Domain">
   isSystem?: Prisma.BoolFilter<"Domain"> | boolean
   createdAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
+  tenant?: Prisma.XOR<Prisma.TenantScalarRelationFilter, Prisma.TenantWhereInput>
+  products?: Prisma.ProductListRelationFilter
   entities?: Prisma.EntityListRelationFilter
   modelDefinitions?: Prisma.ModelDefinitionListRelationFilter
   decoratorDefinitions?: Prisma.DecoratorDefinitionListRelationFilter
@@ -254,10 +272,11 @@ export type DomainWhereUniqueInput = Prisma.AtLeast<{
   unionTypes?: Prisma.UnionTypeListRelationFilter
   services?: Prisma.ServiceDefinitionListRelationFilter
   interfaces?: Prisma.InterfaceDefinitionListRelationFilter
-}, "id" | "name" | "slug">
+}, "id" | "slug_tenantId" | "name_tenantId">
 
 export type DomainOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
+  tenantId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
@@ -275,6 +294,7 @@ export type DomainScalarWhereWithAggregatesInput = {
   OR?: Prisma.DomainScalarWhereWithAggregatesInput[]
   NOT?: Prisma.DomainScalarWhereWithAggregatesInput | Prisma.DomainScalarWhereWithAggregatesInput[]
   id?: Prisma.StringWithAggregatesFilter<"Domain"> | string
+  tenantId?: Prisma.StringWithAggregatesFilter<"Domain"> | string
   name?: Prisma.StringWithAggregatesFilter<"Domain"> | string
   slug?: Prisma.StringWithAggregatesFilter<"Domain"> | string
   description?: Prisma.StringWithAggregatesFilter<"Domain"> | string
@@ -293,6 +313,8 @@ export type DomainCreateInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
@@ -306,6 +328,7 @@ export type DomainCreateInput = {
 
 export type DomainUncheckedCreateInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -313,6 +336,7 @@ export type DomainUncheckedCreateInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
@@ -333,6 +357,8 @@ export type DomainUpdateInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
@@ -346,6 +372,7 @@ export type DomainUpdateInput = {
 
 export type DomainUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -353,6 +380,7 @@ export type DomainUncheckedUpdateInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
@@ -366,6 +394,7 @@ export type DomainUncheckedUpdateInput = {
 
 export type DomainCreateManyInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -388,6 +417,7 @@ export type DomainUpdateManyMutationInput = {
 
 export type DomainUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -397,8 +427,29 @@ export type DomainUncheckedUpdateManyInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
+export type DomainListRelationFilter = {
+  every?: Prisma.DomainWhereInput
+  some?: Prisma.DomainWhereInput
+  none?: Prisma.DomainWhereInput
+}
+
+export type DomainOrderByRelationAggregateInput = {
+  _count?: Prisma.SortOrder
+}
+
+export type DomainSlugTenantIdCompoundUniqueInput = {
+  slug: string
+  tenantId: string
+}
+
+export type DomainNameTenantIdCompoundUniqueInput = {
+  name: string
+  tenantId: string
+}
+
 export type DomainCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  tenantId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
@@ -410,6 +461,7 @@ export type DomainCountOrderByAggregateInput = {
 
 export type DomainMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  tenantId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
@@ -420,6 +472,7 @@ export type DomainMaxOrderByAggregateInput = {
 
 export type DomainMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  tenantId?: Prisma.SortOrder
   name?: Prisma.SortOrder
   slug?: Prisma.SortOrder
   description?: Prisma.SortOrder
@@ -438,8 +491,60 @@ export type DomainNullableScalarRelationFilter = {
   isNot?: Prisma.DomainWhereInput | null
 }
 
-export type BoolFieldUpdateOperationsInput = {
-  set?: boolean
+export type DomainCreateNestedManyWithoutTenantInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutTenantInput, Prisma.DomainUncheckedCreateWithoutTenantInput> | Prisma.DomainCreateWithoutTenantInput[] | Prisma.DomainUncheckedCreateWithoutTenantInput[]
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutTenantInput | Prisma.DomainCreateOrConnectWithoutTenantInput[]
+  createMany?: Prisma.DomainCreateManyTenantInputEnvelope
+  connect?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+}
+
+export type DomainUncheckedCreateNestedManyWithoutTenantInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutTenantInput, Prisma.DomainUncheckedCreateWithoutTenantInput> | Prisma.DomainCreateWithoutTenantInput[] | Prisma.DomainUncheckedCreateWithoutTenantInput[]
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutTenantInput | Prisma.DomainCreateOrConnectWithoutTenantInput[]
+  createMany?: Prisma.DomainCreateManyTenantInputEnvelope
+  connect?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+}
+
+export type DomainUpdateManyWithoutTenantNestedInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutTenantInput, Prisma.DomainUncheckedCreateWithoutTenantInput> | Prisma.DomainCreateWithoutTenantInput[] | Prisma.DomainUncheckedCreateWithoutTenantInput[]
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutTenantInput | Prisma.DomainCreateOrConnectWithoutTenantInput[]
+  upsert?: Prisma.DomainUpsertWithWhereUniqueWithoutTenantInput | Prisma.DomainUpsertWithWhereUniqueWithoutTenantInput[]
+  createMany?: Prisma.DomainCreateManyTenantInputEnvelope
+  set?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  disconnect?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  delete?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  connect?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  update?: Prisma.DomainUpdateWithWhereUniqueWithoutTenantInput | Prisma.DomainUpdateWithWhereUniqueWithoutTenantInput[]
+  updateMany?: Prisma.DomainUpdateManyWithWhereWithoutTenantInput | Prisma.DomainUpdateManyWithWhereWithoutTenantInput[]
+  deleteMany?: Prisma.DomainScalarWhereInput | Prisma.DomainScalarWhereInput[]
+}
+
+export type DomainUncheckedUpdateManyWithoutTenantNestedInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutTenantInput, Prisma.DomainUncheckedCreateWithoutTenantInput> | Prisma.DomainCreateWithoutTenantInput[] | Prisma.DomainUncheckedCreateWithoutTenantInput[]
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutTenantInput | Prisma.DomainCreateOrConnectWithoutTenantInput[]
+  upsert?: Prisma.DomainUpsertWithWhereUniqueWithoutTenantInput | Prisma.DomainUpsertWithWhereUniqueWithoutTenantInput[]
+  createMany?: Prisma.DomainCreateManyTenantInputEnvelope
+  set?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  disconnect?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  delete?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  connect?: Prisma.DomainWhereUniqueInput | Prisma.DomainWhereUniqueInput[]
+  update?: Prisma.DomainUpdateWithWhereUniqueWithoutTenantInput | Prisma.DomainUpdateWithWhereUniqueWithoutTenantInput[]
+  updateMany?: Prisma.DomainUpdateManyWithWhereWithoutTenantInput | Prisma.DomainUpdateManyWithWhereWithoutTenantInput[]
+  deleteMany?: Prisma.DomainScalarWhereInput | Prisma.DomainScalarWhereInput[]
+}
+
+export type DomainCreateNestedOneWithoutProductsInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutProductsInput, Prisma.DomainUncheckedCreateWithoutProductsInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutProductsInput
+  connect?: Prisma.DomainWhereUniqueInput
+}
+
+export type DomainUpdateOneRequiredWithoutProductsNestedInput = {
+  create?: Prisma.XOR<Prisma.DomainCreateWithoutProductsInput, Prisma.DomainUncheckedCreateWithoutProductsInput>
+  connectOrCreate?: Prisma.DomainCreateOrConnectWithoutProductsInput
+  upsert?: Prisma.DomainUpsertWithoutProductsInput
+  connect?: Prisma.DomainWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutProductsInput, Prisma.DomainUpdateWithoutProductsInput>, Prisma.DomainUncheckedUpdateWithoutProductsInput>
 }
 
 export type DomainCreateNestedOneWithoutEntitiesInput = {
@@ -570,6 +675,189 @@ export type DomainUpdateOneRequiredWithoutInterfacesNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutInterfacesInput, Prisma.DomainUpdateWithoutInterfacesInput>, Prisma.DomainUncheckedUpdateWithoutInterfacesInput>
 }
 
+export type DomainCreateWithoutTenantInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
+  entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionCreateNestedManyWithoutDomainInput
+}
+
+export type DomainUncheckedCreateWithoutTenantInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
+  entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeUncheckedCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+}
+
+export type DomainCreateOrConnectWithoutTenantInput = {
+  where: Prisma.DomainWhereUniqueInput
+  create: Prisma.XOR<Prisma.DomainCreateWithoutTenantInput, Prisma.DomainUncheckedCreateWithoutTenantInput>
+}
+
+export type DomainCreateManyTenantInputEnvelope = {
+  data: Prisma.DomainCreateManyTenantInput | Prisma.DomainCreateManyTenantInput[]
+  skipDuplicates?: boolean
+}
+
+export type DomainUpsertWithWhereUniqueWithoutTenantInput = {
+  where: Prisma.DomainWhereUniqueInput
+  update: Prisma.XOR<Prisma.DomainUpdateWithoutTenantInput, Prisma.DomainUncheckedUpdateWithoutTenantInput>
+  create: Prisma.XOR<Prisma.DomainCreateWithoutTenantInput, Prisma.DomainUncheckedCreateWithoutTenantInput>
+}
+
+export type DomainUpdateWithWhereUniqueWithoutTenantInput = {
+  where: Prisma.DomainWhereUniqueInput
+  data: Prisma.XOR<Prisma.DomainUpdateWithoutTenantInput, Prisma.DomainUncheckedUpdateWithoutTenantInput>
+}
+
+export type DomainUpdateManyWithWhereWithoutTenantInput = {
+  where: Prisma.DomainScalarWhereInput
+  data: Prisma.XOR<Prisma.DomainUpdateManyMutationInput, Prisma.DomainUncheckedUpdateManyWithoutTenantInput>
+}
+
+export type DomainScalarWhereInput = {
+  AND?: Prisma.DomainScalarWhereInput | Prisma.DomainScalarWhereInput[]
+  OR?: Prisma.DomainScalarWhereInput[]
+  NOT?: Prisma.DomainScalarWhereInput | Prisma.DomainScalarWhereInput[]
+  id?: Prisma.StringFilter<"Domain"> | string
+  tenantId?: Prisma.StringFilter<"Domain"> | string
+  name?: Prisma.StringFilter<"Domain"> | string
+  slug?: Prisma.StringFilter<"Domain"> | string
+  description?: Prisma.StringFilter<"Domain"> | string
+  policyTemplate?: Prisma.JsonNullableFilter<"Domain">
+  isSystem?: Prisma.BoolFilter<"Domain"> | boolean
+  createdAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
+  updatedAt?: Prisma.DateTimeFilter<"Domain"> | Date | string
+}
+
+export type DomainCreateWithoutProductsInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionCreateNestedManyWithoutDomainInput
+}
+
+export type DomainUncheckedCreateWithoutProductsInput = {
+  id?: string
+  tenantId: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
+  sharedEnums?: Prisma.SharedEnumUncheckedCreateNestedManyWithoutDomainInput
+  customScalars?: Prisma.CustomScalarUncheckedCreateNestedManyWithoutDomainInput
+  unionTypes?: Prisma.UnionTypeUncheckedCreateNestedManyWithoutDomainInput
+  services?: Prisma.ServiceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedCreateNestedManyWithoutDomainInput
+}
+
+export type DomainCreateOrConnectWithoutProductsInput = {
+  where: Prisma.DomainWhereUniqueInput
+  create: Prisma.XOR<Prisma.DomainCreateWithoutProductsInput, Prisma.DomainUncheckedCreateWithoutProductsInput>
+}
+
+export type DomainUpsertWithoutProductsInput = {
+  update: Prisma.XOR<Prisma.DomainUpdateWithoutProductsInput, Prisma.DomainUncheckedUpdateWithoutProductsInput>
+  create: Prisma.XOR<Prisma.DomainCreateWithoutProductsInput, Prisma.DomainUncheckedCreateWithoutProductsInput>
+  where?: Prisma.DomainWhereInput
+}
+
+export type DomainUpdateToOneWithWhereWithoutProductsInput = {
+  where?: Prisma.DomainWhereInput
+  data: Prisma.XOR<Prisma.DomainUpdateWithoutProductsInput, Prisma.DomainUncheckedUpdateWithoutProductsInput>
+}
+
+export type DomainUpdateWithoutProductsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainUncheckedUpdateWithoutProductsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUncheckedUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+}
+
 export type DomainCreateWithoutEntitiesInput = {
   id?: string
   name: string
@@ -579,6 +867,8 @@ export type DomainCreateWithoutEntitiesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
@@ -591,6 +881,7 @@ export type DomainCreateWithoutEntitiesInput = {
 
 export type DomainUncheckedCreateWithoutEntitiesInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -598,6 +889,7 @@ export type DomainUncheckedCreateWithoutEntitiesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
@@ -633,6 +925,8 @@ export type DomainUpdateWithoutEntitiesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
@@ -645,6 +939,7 @@ export type DomainUpdateWithoutEntitiesInput = {
 
 export type DomainUncheckedUpdateWithoutEntitiesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -652,6 +947,7 @@ export type DomainUncheckedUpdateWithoutEntitiesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
@@ -671,6 +967,8 @@ export type DomainCreateWithoutModelDefinitionsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
@@ -683,6 +981,7 @@ export type DomainCreateWithoutModelDefinitionsInput = {
 
 export type DomainUncheckedCreateWithoutModelDefinitionsInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -690,6 +989,7 @@ export type DomainUncheckedCreateWithoutModelDefinitionsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
@@ -725,6 +1025,8 @@ export type DomainUpdateWithoutModelDefinitionsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
@@ -737,6 +1039,7 @@ export type DomainUpdateWithoutModelDefinitionsInput = {
 
 export type DomainUncheckedUpdateWithoutModelDefinitionsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -744,6 +1047,7 @@ export type DomainUncheckedUpdateWithoutModelDefinitionsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
@@ -763,6 +1067,8 @@ export type DomainCreateWithoutDecoratorDefinitionsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleCreateNestedManyWithoutDomainInput
@@ -775,6 +1081,7 @@ export type DomainCreateWithoutDecoratorDefinitionsInput = {
 
 export type DomainUncheckedCreateWithoutDecoratorDefinitionsInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -782,6 +1089,7 @@ export type DomainUncheckedCreateWithoutDecoratorDefinitionsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   userRoles?: Prisma.UserRoleUncheckedCreateNestedManyWithoutDomainInput
@@ -817,6 +1125,8 @@ export type DomainUpdateWithoutDecoratorDefinitionsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
@@ -829,6 +1139,7 @@ export type DomainUpdateWithoutDecoratorDefinitionsInput = {
 
 export type DomainUncheckedUpdateWithoutDecoratorDefinitionsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -836,6 +1147,7 @@ export type DomainUncheckedUpdateWithoutDecoratorDefinitionsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
@@ -855,6 +1167,8 @@ export type DomainCreateWithoutUserRolesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
@@ -867,6 +1181,7 @@ export type DomainCreateWithoutUserRolesInput = {
 
 export type DomainUncheckedCreateWithoutUserRolesInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -874,6 +1189,7 @@ export type DomainUncheckedCreateWithoutUserRolesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
@@ -909,6 +1225,8 @@ export type DomainUpdateWithoutUserRolesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
@@ -921,6 +1239,7 @@ export type DomainUpdateWithoutUserRolesInput = {
 
 export type DomainUncheckedUpdateWithoutUserRolesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -928,6 +1247,7 @@ export type DomainUncheckedUpdateWithoutUserRolesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
@@ -947,6 +1267,8 @@ export type DomainCreateWithoutSharedEnumsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
@@ -959,6 +1281,7 @@ export type DomainCreateWithoutSharedEnumsInput = {
 
 export type DomainUncheckedCreateWithoutSharedEnumsInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -966,6 +1289,7 @@ export type DomainUncheckedCreateWithoutSharedEnumsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
@@ -1001,6 +1325,8 @@ export type DomainUpdateWithoutSharedEnumsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
@@ -1013,6 +1339,7 @@ export type DomainUpdateWithoutSharedEnumsInput = {
 
 export type DomainUncheckedUpdateWithoutSharedEnumsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1020,6 +1347,7 @@ export type DomainUncheckedUpdateWithoutSharedEnumsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
@@ -1039,6 +1367,8 @@ export type DomainCreateWithoutCustomScalarsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
@@ -1051,6 +1381,7 @@ export type DomainCreateWithoutCustomScalarsInput = {
 
 export type DomainUncheckedCreateWithoutCustomScalarsInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -1058,6 +1389,7 @@ export type DomainUncheckedCreateWithoutCustomScalarsInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
@@ -1093,6 +1425,8 @@ export type DomainUpdateWithoutCustomScalarsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
@@ -1105,6 +1439,7 @@ export type DomainUpdateWithoutCustomScalarsInput = {
 
 export type DomainUncheckedUpdateWithoutCustomScalarsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1112,6 +1447,7 @@ export type DomainUncheckedUpdateWithoutCustomScalarsInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
@@ -1131,6 +1467,8 @@ export type DomainCreateWithoutUnionTypesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
@@ -1143,6 +1481,7 @@ export type DomainCreateWithoutUnionTypesInput = {
 
 export type DomainUncheckedCreateWithoutUnionTypesInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -1150,6 +1489,7 @@ export type DomainUncheckedCreateWithoutUnionTypesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
@@ -1185,6 +1525,8 @@ export type DomainUpdateWithoutUnionTypesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
@@ -1197,6 +1539,7 @@ export type DomainUpdateWithoutUnionTypesInput = {
 
 export type DomainUncheckedUpdateWithoutUnionTypesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1204,6 +1547,7 @@ export type DomainUncheckedUpdateWithoutUnionTypesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
@@ -1223,6 +1567,8 @@ export type DomainCreateWithoutServicesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
@@ -1235,6 +1581,7 @@ export type DomainCreateWithoutServicesInput = {
 
 export type DomainUncheckedCreateWithoutServicesInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -1242,6 +1589,7 @@ export type DomainUncheckedCreateWithoutServicesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
@@ -1277,6 +1625,8 @@ export type DomainUpdateWithoutServicesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
@@ -1289,6 +1639,7 @@ export type DomainUpdateWithoutServicesInput = {
 
 export type DomainUncheckedUpdateWithoutServicesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1296,6 +1647,7 @@ export type DomainUncheckedUpdateWithoutServicesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
@@ -1315,6 +1667,8 @@ export type DomainCreateWithoutInterfacesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  tenant: Prisma.TenantCreateNestedOneWithoutDomainsInput
+  products?: Prisma.ProductCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionCreateNestedManyWithoutDomainInput
@@ -1327,6 +1681,7 @@ export type DomainCreateWithoutInterfacesInput = {
 
 export type DomainUncheckedCreateWithoutInterfacesInput = {
   id?: string
+  tenantId: string
   name: string
   slug: string
   description?: string
@@ -1334,6 +1689,7 @@ export type DomainUncheckedCreateWithoutInterfacesInput = {
   isSystem?: boolean
   createdAt?: Date | string
   updatedAt?: Date | string
+  products?: Prisma.ProductUncheckedCreateNestedManyWithoutDomainInput
   entities?: Prisma.EntityUncheckedCreateNestedManyWithoutDomainInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedCreateNestedManyWithoutDomainInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedCreateNestedManyWithoutDomainInput
@@ -1369,6 +1725,8 @@ export type DomainUpdateWithoutInterfacesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  tenant?: Prisma.TenantUpdateOneRequiredWithoutDomainsNestedInput
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
@@ -1381,6 +1739,7 @@ export type DomainUpdateWithoutInterfacesInput = {
 
 export type DomainUncheckedUpdateWithoutInterfacesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  tenantId?: Prisma.StringFieldUpdateOperationsInput | string
   name?: Prisma.StringFieldUpdateOperationsInput | string
   slug?: Prisma.StringFieldUpdateOperationsInput | string
   description?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1388,6 +1747,7 @@ export type DomainUncheckedUpdateWithoutInterfacesInput = {
   isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
   entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
   modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
   decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
@@ -1398,12 +1758,77 @@ export type DomainUncheckedUpdateWithoutInterfacesInput = {
   services?: Prisma.ServiceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
 }
 
+export type DomainCreateManyTenantInput = {
+  id?: string
+  name: string
+  slug: string
+  description?: string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: boolean
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type DomainUpdateWithoutTenantInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUpdateManyWithoutDomainNestedInput
+  entities?: Prisma.EntityUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainUncheckedUpdateWithoutTenantInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  products?: Prisma.ProductUncheckedUpdateManyWithoutDomainNestedInput
+  entities?: Prisma.EntityUncheckedUpdateManyWithoutDomainNestedInput
+  modelDefinitions?: Prisma.ModelDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  decoratorDefinitions?: Prisma.DecoratorDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  userRoles?: Prisma.UserRoleUncheckedUpdateManyWithoutDomainNestedInput
+  sharedEnums?: Prisma.SharedEnumUncheckedUpdateManyWithoutDomainNestedInput
+  customScalars?: Prisma.CustomScalarUncheckedUpdateManyWithoutDomainNestedInput
+  unionTypes?: Prisma.UnionTypeUncheckedUpdateManyWithoutDomainNestedInput
+  services?: Prisma.ServiceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+  interfaces?: Prisma.InterfaceDefinitionUncheckedUpdateManyWithoutDomainNestedInput
+}
+
+export type DomainUncheckedUpdateManyWithoutTenantInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  slug?: Prisma.StringFieldUpdateOperationsInput | string
+  description?: Prisma.StringFieldUpdateOperationsInput | string
+  policyTemplate?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  isSystem?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
 
 /**
  * Count Type DomainCountOutputType
  */
 
 export type DomainCountOutputType = {
+  products: number
   entities: number
   modelDefinitions: number
   decoratorDefinitions: number
@@ -1416,6 +1841,7 @@ export type DomainCountOutputType = {
 }
 
 export type DomainCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  products?: boolean | DomainCountOutputTypeCountProductsArgs
   entities?: boolean | DomainCountOutputTypeCountEntitiesArgs
   modelDefinitions?: boolean | DomainCountOutputTypeCountModelDefinitionsArgs
   decoratorDefinitions?: boolean | DomainCountOutputTypeCountDecoratorDefinitionsArgs
@@ -1435,6 +1861,13 @@ export type DomainCountOutputTypeDefaultArgs<ExtArgs extends runtime.Types.Exten
    * Select specific fields to fetch from the DomainCountOutputType
    */
   select?: Prisma.DomainCountOutputTypeSelect<ExtArgs> | null
+}
+
+/**
+ * DomainCountOutputType without action
+ */
+export type DomainCountOutputTypeCountProductsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ProductWhereInput
 }
 
 /**
@@ -1503,6 +1936,7 @@ export type DomainCountOutputTypeCountInterfacesArgs<ExtArgs extends runtime.Typ
 
 export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  tenantId?: boolean
   name?: boolean
   slug?: boolean
   description?: boolean
@@ -1510,6 +1944,8 @@ export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   isSystem?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  tenant?: boolean | Prisma.TenantDefaultArgs<ExtArgs>
+  products?: boolean | Prisma.Domain$productsArgs<ExtArgs>
   entities?: boolean | Prisma.Domain$entitiesArgs<ExtArgs>
   modelDefinitions?: boolean | Prisma.Domain$modelDefinitionsArgs<ExtArgs>
   decoratorDefinitions?: boolean | Prisma.Domain$decoratorDefinitionsArgs<ExtArgs>
@@ -1524,6 +1960,7 @@ export type DomainSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
 
 export type DomainSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  tenantId?: boolean
   name?: boolean
   slug?: boolean
   description?: boolean
@@ -1531,10 +1968,12 @@ export type DomainSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extens
   isSystem?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  tenant?: boolean | Prisma.TenantDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["domain"]>
 
 export type DomainSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  tenantId?: boolean
   name?: boolean
   slug?: boolean
   description?: boolean
@@ -1542,10 +1981,12 @@ export type DomainSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extens
   isSystem?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  tenant?: boolean | Prisma.TenantDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["domain"]>
 
 export type DomainSelectScalar = {
   id?: boolean
+  tenantId?: boolean
   name?: boolean
   slug?: boolean
   description?: boolean
@@ -1555,8 +1996,10 @@ export type DomainSelectScalar = {
   updatedAt?: boolean
 }
 
-export type DomainOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "slug" | "description" | "policyTemplate" | "isSystem" | "createdAt" | "updatedAt", ExtArgs["result"]["domain"]>
+export type DomainOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "tenantId" | "name" | "slug" | "description" | "policyTemplate" | "isSystem" | "createdAt" | "updatedAt", ExtArgs["result"]["domain"]>
 export type DomainInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  tenant?: boolean | Prisma.TenantDefaultArgs<ExtArgs>
+  products?: boolean | Prisma.Domain$productsArgs<ExtArgs>
   entities?: boolean | Prisma.Domain$entitiesArgs<ExtArgs>
   modelDefinitions?: boolean | Prisma.Domain$modelDefinitionsArgs<ExtArgs>
   decoratorDefinitions?: boolean | Prisma.Domain$decoratorDefinitionsArgs<ExtArgs>
@@ -1568,12 +2011,18 @@ export type DomainInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   interfaces?: boolean | Prisma.Domain$interfacesArgs<ExtArgs>
   _count?: boolean | Prisma.DomainCountOutputTypeDefaultArgs<ExtArgs>
 }
-export type DomainIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
-export type DomainIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
+export type DomainIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  tenant?: boolean | Prisma.TenantDefaultArgs<ExtArgs>
+}
+export type DomainIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  tenant?: boolean | Prisma.TenantDefaultArgs<ExtArgs>
+}
 
 export type $DomainPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "Domain"
   objects: {
+    tenant: Prisma.$TenantPayload<ExtArgs>
+    products: Prisma.$ProductPayload<ExtArgs>[]
     entities: Prisma.$EntityPayload<ExtArgs>[]
     modelDefinitions: Prisma.$ModelDefinitionPayload<ExtArgs>[]
     decoratorDefinitions: Prisma.$DecoratorDefinitionPayload<ExtArgs>[]
@@ -1586,6 +2035,7 @@ export type $DomainPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
+    tenantId: string
     name: string
     slug: string
     description: string
@@ -1987,6 +2437,8 @@ readonly fields: DomainFieldRefs;
  */
 export interface Prisma__DomainClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
+  tenant<T extends Prisma.TenantDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.TenantDefaultArgs<ExtArgs>>): Prisma.Prisma__TenantClient<runtime.Types.Result.GetResult<Prisma.$TenantPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
+  products<T extends Prisma.Domain$productsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$productsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ProductPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   entities<T extends Prisma.Domain$entitiesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$entitiesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$EntityPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   modelDefinitions<T extends Prisma.Domain$modelDefinitionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$modelDefinitionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ModelDefinitionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   decoratorDefinitions<T extends Prisma.Domain$decoratorDefinitionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Domain$decoratorDefinitionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$DecoratorDefinitionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
@@ -2026,6 +2478,7 @@ export interface Prisma__DomainClient<T, Null = never, ExtArgs extends runtime.T
  */
 export interface DomainFieldRefs {
   readonly id: Prisma.FieldRef<"Domain", 'String'>
+  readonly tenantId: Prisma.FieldRef<"Domain", 'String'>
   readonly name: Prisma.FieldRef<"Domain", 'String'>
   readonly slug: Prisma.FieldRef<"Domain", 'String'>
   readonly description: Prisma.FieldRef<"Domain", 'String'>
@@ -2287,6 +2740,10 @@ export type DomainCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Extensio
    */
   data: Prisma.DomainCreateManyInput | Prisma.DomainCreateManyInput[]
   skipDuplicates?: boolean
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.DomainIncludeCreateManyAndReturn<ExtArgs> | null
 }
 
 /**
@@ -2357,6 +2814,10 @@ export type DomainUpdateManyAndReturnArgs<ExtArgs extends runtime.Types.Extensio
    * Limit how many Domains to update.
    */
   limit?: number
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.DomainIncludeUpdateManyAndReturn<ExtArgs> | null
 }
 
 /**
@@ -2423,6 +2884,30 @@ export type DomainDeleteManyArgs<ExtArgs extends runtime.Types.Extensions.Intern
    * Limit how many Domains to delete.
    */
   limit?: number
+}
+
+/**
+ * Domain.products
+ */
+export type Domain$productsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Product
+   */
+  select?: Prisma.ProductSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Product
+   */
+  omit?: Prisma.ProductOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProductInclude<ExtArgs> | null
+  where?: Prisma.ProductWhereInput
+  orderBy?: Prisma.ProductOrderByWithRelationInput | Prisma.ProductOrderByWithRelationInput[]
+  cursor?: Prisma.ProductWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ProductScalarFieldEnum | Prisma.ProductScalarFieldEnum[]
 }
 
 /**

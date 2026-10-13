@@ -19,10 +19,20 @@ import {
   FilePlus2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EntityCard } from "@/components/custom/EntityCard";
+import { DomainDeletionDialog } from "@/components/custom/DomainDeletionDialog";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
@@ -33,7 +43,9 @@ import { DomainTypesTab, type DomainTypeCreateIntent, type SharedEnumData, type 
 import type { DomainModelData } from "./components/DomainModelsTab";
 import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
 import { formatDateOnly } from "@/lib/date-format";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
+import type { DomainDeletionImpact } from "@/types/domain-deletion";
 
 type DomainTab = "entities" | "types" | "apis";
 
@@ -133,8 +145,13 @@ interface DomainWorkspaceProps {
   domainId: string;
   domainName: string;
   domainSlug: string;
+  productId: string;
+  productSlug: string;
+  productName: string;
   domainDescription: string;
   isSystemDomain?: boolean;
+  canDeleteDomain?: boolean;
+  deletionImpact: DomainDeletionImpact;
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
   models: DomainModelData[];
@@ -198,8 +215,13 @@ export function DomainWorkspace({
   domainId,
   domainName,
   domainSlug,
+  productId,
+  productSlug,
+  productName,
   domainDescription,
   isSystemDomain = false,
+  canDeleteDomain = false,
+  deletionImpact,
   domainPolicy,
   entities,
   sharedEnums,
@@ -208,6 +230,7 @@ export function DomainWorkspace({
   services,
 }: DomainWorkspaceProps) {
   const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get("tab") as DomainTab) || "entities";
   const [activeTab, setActiveTab] = useState<DomainTab>(
@@ -225,7 +248,7 @@ export function DomainWorkspace({
   // Listen for Cmd+N global shortcut to navigate to wizard
   useEffect(() => {
     function handleNewEntity() {
-      router.push(`/schemas/${domainSlug}/new`);
+      router.push(`/schemas/${domainSlug}/${productSlug}/new`);
     }
     document.addEventListener("super-schema:new-entity", handleNewEntity);
     return () =>
@@ -237,17 +260,7 @@ export function DomainWorkspace({
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
   const [domainDeleteOpen, setDomainDeleteOpen] = useState(false);
   const [isDeletingDomain, setIsDeletingDomain] = useState(false);
-
-  // Escape closes any open delete dialog
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
-      if (domainDeleteOpen && !isDeletingDomain) setDomainDeleteOpen(false);
-      else if (deleteConfirm && !isDeletingEntity) setDeleteConfirm(null);
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [domainDeleteOpen, isDeletingDomain, deleteConfirm, isDeletingEntity]);
+  const [domainDeleteError, setDomainDeleteError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
@@ -380,96 +393,119 @@ export function DomainWorkspace({
       };
     });
 
-    const result = await createEntityWithFieldsAction(domainId, {
-      name: createName.trim(),
-      description: createDescription,
-      fields,
-    });
+    const result = await createEntityWithFieldsAction(
+      domainId,
+      {
+        name: createName.trim(),
+        description: createDescription,
+        fields,
+      },
+      productId
+    );
 
     setIsCreating(false);
 
     if (result?.error) {
       setCreateError(result.error);
     } else {
+      invalidateDomainsTree();
       resetCreateForm();
     }
   }
 
   async function handleDeleteEntity(id: string) {
     setIsDeletingEntity(true);
-    const result = await deleteEntityAction(id);
-    setIsDeletingEntity(false);
-    if (result.error) {
-      toast.error(result.error);
-    } else {
+    try {
+      const result = await deleteEntityAction(id);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+
       toast.success("Entity deleted");
+      void invalidateDomainsTree();
+      setDeleteConfirm(null);
       router.refresh();
+    } catch {
+      toast.error("Unable to delete the entity. Please try again.");
+    } finally {
+      setIsDeletingEntity(false);
     }
-    setDeleteConfirm(null);
   }
 
   async function handleDeleteDomain() {
+    setDomainDeleteError(null);
     setIsDeletingDomain(true);
-    const result = await deleteDomainAction(domainId);
-    setIsDeletingDomain(false);
-    setDomainDeleteOpen(false);
-    if (result.error) {
-      toast.error(result.error);
-    } else {
+    try {
+      const result = await deleteDomainAction(domainId);
+      if (result.error) {
+        setDomainDeleteError(result.error);
+        return;
+      }
+
       toast.success(`"${domainName}" deleted`);
+      void invalidateDomainsTree();
+      setDomainDeleteOpen(false);
       router.push("/schemas");
+    } catch {
+      setDomainDeleteError("Unable to delete the domain. Please try again.");
+    } finally {
+      setIsDeletingDomain(false);
     }
   }
 
   return (
     <div className="animate-auth-fade-up">
-      {/* Domain delete confirmation dialog */}
-      {domainDeleteOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="domain-self-delete-title">
-          <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm w-full mx-4">
-            <h3 id="domain-self-delete-title" className="text-heading-3 text-foreground mb-2">
-              Delete &ldquo;{domainName}&rdquo;?
-            </h3>
-            <p className="text-body-small text-muted-foreground mb-4">
-              Permanently deletes this domain and all its data. This action cannot be undone.
-            </p>
-            {entities.length > 0 && (
-              <p className="text-body-small text-destructive mb-4">
-                This domain has {entities.length} {entities.length === 1 ? "entity" : "entities"}. Delete all entities first.
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setDomainDeleteOpen(false)} disabled={isDeletingDomain}>
+      <DomainDeletionDialog
+        open={domainDeleteOpen}
+        domainName={domainName}
+        impact={deletionImpact}
+        isDeleting={isDeletingDomain}
+        error={domainDeleteError}
+        onOpenChange={(open) => {
+          setDomainDeleteOpen(open);
+          if (!open) setDomainDeleteError(null);
+        }}
+        onConfirm={handleDeleteDomain}
+      />
+
+      {/* Entity delete confirmation dialog */}
+      <Dialog
+        open={deleteConfirm !== null}
+        modal
+        disablePointerDismissal={isDeletingEntity}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingEntity) setDeleteConfirm(null);
+        }}
+      >
+        {deleteConfirm ? (
+          <DialogContent showCloseButton={!isDeletingEntity}>
+            <DialogHeader>
+              <DialogTitle>Delete &ldquo;{deleteConfirm.name}&rdquo;?</DialogTitle>
+              <DialogDescription>
+                This permanently deletes this {deleteConfirm.type} and all its data.
+                This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose
+                render={<Button variant="outline" size="sm" />}
+                disabled={isDeletingEntity}
+              >
                 Cancel
-              </Button>
+              </DialogClose>
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={handleDeleteDomain}
-                disabled={isDeletingDomain || entities.length > 0}
+                onClick={() => handleDeleteEntity(deleteConfirm.id)}
+                disabled={isDeletingEntity}
               >
-                {isDeletingDomain ? "Deleting..." : "Delete Domain"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Entity delete confirmation dialog */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="entity-delete-confirm-title">
-          <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm w-full mx-4">
-            <h3 id="entity-delete-confirm-title" className="text-heading-3 text-foreground mb-2">Delete &ldquo;{deleteConfirm.name}&rdquo;?</h3>
-            <p className="text-body-small text-muted-foreground mb-4">This will permanently delete this {deleteConfirm.type} and all its data. This action cannot be undone.</p>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setDeleteConfirm(null)} disabled={isDeletingEntity}>Cancel</Button>
-              <Button variant="destructive" size="sm" onClick={() => handleDeleteEntity(deleteConfirm.id)} disabled={isDeletingEntity}>
                 {isDeletingEntity ? "Deleting..." : "Delete"}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
 
       {/* Breadcrumb */}
       <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
@@ -477,7 +513,14 @@ export function DomainWorkspace({
           Domains
         </Link>
         <ChevronRight className="w-3 h-3" />
-        <span className="text-foreground font-medium">{domainName}</span>
+        <Link
+          href={`/schemas/${domainSlug}`}
+          className="hover:text-foreground transition-colors"
+        >
+          {domainName}
+        </Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-medium">{productName}</span>
       </nav>
 
       {/* Header */}
@@ -507,24 +550,27 @@ export function DomainWorkspace({
             </button>
           </div>
           <CreateDropdown
-            onNewEntity={() => router.push(`/schemas/${domainSlug}/new`)}
+            onNewEntity={() => router.push(`/schemas/${domainSlug}/${productSlug}/new`)}
             onNewEnum={() => { setActiveTab("types"); setTypeCreateIntent("enum"); }}
             onNewScalar={() => { setActiveTab("types"); setTypeCreateIntent("scalar"); }}
             onNewUnion={() => { setActiveTab("types"); setTypeCreateIntent("union"); }}
             onNewApi={() => setActiveTab("apis")}
           />
-          {!isSystemDomain && (
+          {canDeleteDomain && !isSystemDomain ? (
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setDomainDeleteOpen(true)}
+              onClick={() => {
+                setDomainDeleteError(null);
+                setDomainDeleteOpen(true);
+              }}
               className="gap-1.5 text-muted-foreground hover:text-destructive hover:border-destructive/50"
               title="Delete domain"
             >
               <Trash2 className="w-4 h-4" />
               Delete
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -840,7 +886,7 @@ export function DomainWorkspace({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-space-4 w-full max-w-2xl">
             {/* Standards Template */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/new?template=standards`)}
+              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new?template=standards`)}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <FileText className="w-8 h-8 text-primary mb-space-3 group-hover:scale-110 transition-transform" />
@@ -852,7 +898,7 @@ export function DomainWorkspace({
 
             {/* Describe with AI */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/new?mode=ai`)}
+              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new?mode=ai`)}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <Sparkles className="w-8 h-8 text-warning mb-space-3 group-hover:scale-110 transition-transform" />
@@ -864,7 +910,7 @@ export function DomainWorkspace({
 
             {/* Start Blank */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/new`)}
+              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new`)}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <FilePlus2 className="w-8 h-8 text-muted-foreground mb-space-3 group-hover:text-foreground group-hover:scale-110 transition-all" />
@@ -883,6 +929,7 @@ export function DomainWorkspace({
               {...entity}
               domainName={domainName}
               domainSlug={domainSlug}
+              productSlug={productSlug}
               onDelete={(id, name) => setDeleteConfirm({ id, name, type: "entity" })}
             />
           ))}
@@ -919,7 +966,7 @@ export function DomainWorkspace({
                 <tr
                   key={entity.id}
                   className="border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/schemas/${domainSlug}/${entity.slug}`)}
+                  onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/${entity.slug}`)}
                 >
                   <td className="px-space-4 py-space-3 font-mono text-body-small text-foreground">
                     {entity.name}

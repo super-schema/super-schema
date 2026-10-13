@@ -2,6 +2,8 @@
 
 Status: review
 
+> **Epic 12 reconciliation note (2026-10-12):** EmitterConfig/type-mapping administration here is largely orthogonal to the TypeSpec pivot and likely needs little change, but the underlying Emitter contract it configures is being extended in Epic 12 Story 12.6 — reconcile before assuming this doc's examples still match the Emitter interface exactly.
+
 ## Story
 As an **administrator**, I want to enable/disable emitter targets and configure type mapping policies, so that I can control which emission formats are available and how types translate.
 
@@ -10,6 +12,7 @@ As an **administrator**, I want to enable/disable emitter targets and configure 
 **Given** emitters and type mapping exist (Epic 3 complete)
 **When** emitter administration is implemented
 **Then** the **Admin Panel** includes an **Emitters tab** displaying all available emitters in a card grid: emitter name, version, target format, status (badge: Enabled/Disabled), last emission timestamp, total emission count
+**And** the emitter catalog includes both the product's native emitters and the official TypeSpec emitters documented by TypeSpec, with source/stability metadata visible to admins
 **And** each emitter card has an **Enable/Disable toggle** — toggling changes the emitter's availability immediately (zero-downtime, FR44); disabled emitters do not appear in the emission preview tabs or the Emit dialog
 **And** clicking an emitter card opens a detail panel showing:
 **And** **Emitter info**: name, version, target format, description
@@ -17,6 +20,7 @@ As an **administrator**, I want to enable/disable emitter targets and configure 
 **And** an "**Add Override**" button that allows creating a new global type mapping override (same form as Story 3.7 but accessible from admin without needing a specific entity context)
 **And** a "**Test Emitter**" button that runs the emitter against a sample entity (user selects from existing entities via dropdown) and displays the output with validation result — this lets admins verify the emitter works before enabling it for all users
 **And** emitter enable/disable state is stored in a `emitter_config` table: `id`, `emitterName`, `enabled` (boolean), `configOverrides` (JSONB), `updatedBy`, `updatedAt`
+**And** emitters that generate multi-file SDK/server projects are classified distinctly from single-file schema emitters so the product can keep them visible in admin configuration while disabling them in the current entity Schemas tab
 **And** configuration changes are recorded in the audit trail
 **And** changes take effect immediately — no restart required (FR44)
 **And** unit tests verify: enabling/disabling emitter changes availability in emission service, type mapping admin edits are persisted, test emitter runs and returns output, config changes are audited
@@ -112,6 +116,7 @@ As an **administrator**, I want to enable/disable emitter targets and configure 
 - [x] Create `src/components/custom/admin/EmitterCardGrid.tsx`:
   - Card grid layout displaying all emitters
   - Each card shows: emitter name, version, target format, status badge (Enabled green / Disabled gray), last emission timestamp, total emission count
+  - Include source/stability metadata so admins can distinguish native emitters from official TypeSpec preview/alpha generators
   - Enable/Disable toggle on each card (inline, immediate effect)
   - Card click opens emitter detail panel
 - [x] Create `src/components/custom/admin/EmitterDetailPanel.tsx`:
@@ -173,6 +178,8 @@ As an **administrator**, I want to enable/disable emitter targets and configure 
 - **RBAC**: Only Admin role can manage emitter configuration. Enforced via `adminProcedure` in oRPC middleware.
 - **Test emitter**: Uses the existing emission pipeline but does not persist results. Useful for validation before enabling an emitter for all users.
 - **Emitter registry**: The system knows about available emitters from the `src/emitters/` directory. The `emitter_config` table controls which are enabled — if an emitter exists in code but has no config row, it defaults to enabled (seed data creates rows for all built-in emitters).
+- **Emitter catalog correction**: the product should maintain a shared catalog that covers both native emitters and official TypeSpec emitters. Native emitters and TypeSpec single-file schema emitters can participate directly in the current schema version flow; official TypeSpec multi-file code generators must stay visible to admins but be treated separately from the single-file Schemas tab UX.
+- **Target type catalog correction**: the product should also maintain a shared **target type catalog** for generated-schema override UIs and admin mapping tools. The same canonical type lists and documentation provenance should drive both admin policy editing and end-user generated-schema field overrides so the two surfaces never drift apart.
 
 ### UX/Design Requirements
 - Emitters tab is the third tab in the Admin Panel

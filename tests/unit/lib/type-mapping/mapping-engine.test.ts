@@ -53,7 +53,7 @@ describe("BigQuery default mappings", () => {
     ["unixTimestamp32", "TIMESTAMP"],
     ["enum", "STRING"],
     ["array", "ARRAY"],
-    ["map", "STRUCT"],
+    ["map", "JSON"],
     ["object", "STRUCT"],
   ];
 
@@ -176,12 +176,12 @@ describe("OpenAPI default mappings", () => {
 // ---------------------------------------------------------------------------
 
 describe("Lossy mapping detection", () => {
-  it("flags map → STRUCT as lossy in BigQuery", () => {
+  it("flags map → JSON as queryability risk in BigQuery", () => {
     const result = resolveMapping("map", "bigquery", allPolicies);
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.result.isLossy).toBe(true);
-      expect(result.result.lossDescription).toContain("key ordering");
+      expect(result.result.lossDescription).toContain("JSON");
     }
   });
 

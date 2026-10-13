@@ -38,6 +38,7 @@ interface LineagePageClientProps {
     description: string;
     domainName: string;
     domainSlug: string;
+    productSlug: string;
     status: string;
     fieldCount: number;
     piiCount: number;

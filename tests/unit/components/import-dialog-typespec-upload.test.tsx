@@ -1,27 +1,30 @@
 /**
- * ImportDialog regression tests for uploaded TypeSpec documents.
+ * ImportDialog — TypeSpec upload → review → confirm wiring.
+ *
+ * Parsing now happens in a server action backed by @typespec/compiler
+ * (covered by tests/unit/lib/compiler/*). Here we mock the action with a
+ * fixture result and verify the dialog's review → persist wiring.
  *
  * @vitest-environment jsdom
  */
 
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import type { ReactNode } from "react";
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 
-const { createDomainAssetsFromImportActionMock } = vi.hoisted(() => ({
-  createDomainAssetsFromImportActionMock: vi.fn(),
-}));
+const { createDomainAssetsFromImportActionMock, importTypeSpecDocumentActionMock } = vi.hoisted(
+  () => ({
+    createDomainAssetsFromImportActionMock: vi.fn(),
+    importTypeSpecDocumentActionMock: vi.fn(),
+  })
+);
 
 vi.mock("@/components/ui/badge", () => ({
-  Badge: ({
-    children,
-    className,
-  }: {
-    children: ReactNode;
-    className?: string;
-  }) => <span className={className}>{children}</span>,
+  Badge: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <span className={className}>{children}</span>
+  ),
 }));
 
 vi.mock("@/components/ui/button", () => ({
@@ -45,11 +48,11 @@ vi.mock("@/components/ui/button", () => ({
 }));
 
 vi.mock("sonner", () => ({
-  toast: {
-    success: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-  },
+  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions", () => ({
+  importTypeSpecDocumentAction: importTypeSpecDocumentActionMock,
 }));
 
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({
@@ -58,58 +61,76 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({
 
 import { ImportDialog } from "@/components/custom/ImportDialog";
 
+function fixtureResult(): TypeSpecImportResult {
+  return {
+    models: [
+      {
+        name: "Customer",
+        description: "A customer",
+        fields: [
+          { name: "id", type: "string", nullable: false, confidence: "high", originalType: "string", isKey: true },
+          { name: "email", type: "string", nullable: false, confidence: "high", originalType: "string", format: "email" },
+        ],
+        sourceFormat: "typespec",
+        originalContent: "",
+        referencedModelNames: [],
+        referencedByModelNames: [],
+        recommendedAsEntity: true,
+      },
+    ],
+    sharedEnums: [{ name: "Status", values: ["Active", "Inactive"] }],
+    customScalars: [],
+    unions: [],
+    aliases: [],
+    decoratorDefinitions: [],
+    services: [],
+    namespace: "MyApp",
+    warnings: [],
+  };
+}
+
+function renderWithQueryClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
+async function uploadTsp(container: HTMLElement) {
+  fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
+  const input = container.querySelector(
+    '[data-testid="drop-zone-single"] input[type="file"]'
+  ) as HTMLInputElement | null;
+  expect(input).toBeTruthy();
+  const file = new File(["model Customer { id: string; }"], "customer.tsp", { type: "text/plain" });
+  fireEvent.change(input!, { target: { files: [file] } });
+}
+
 afterEach(() => {
   vi.clearAllMocks();
   cleanup();
 });
 
-describe("ImportDialog", () => {
-  it("routes uploaded .tsp files with many models to the TypeSpec review flow", async () => {
-    const content = readFileSync(
-      path.resolve(process.cwd(), "examples/cds/temp/customer_1.tsp"),
-      "utf8"
+describe("ImportDialog — TypeSpec upload wiring", () => {
+  it("routes an uploaded .tsp through the compiler action to the review screen", async () => {
+    importTypeSpecDocumentActionMock.mockResolvedValue({ success: true, data: fixtureResult() });
+
+    const { container } = renderWithQueryClient(
+      <ImportDialog isOpen onClose={vi.fn()} domains={[{ id: "domain-1", name: "Domain" }]} />
     );
 
-    const file = new File([content], "customer_1.tsp", { type: "text/plain" });
+    await uploadTsp(container);
 
-    const { container } = render(
-      <ImportDialog
-        isOpen={true}
-        onClose={vi.fn()}
-        domains={[{ id: "domain-1", name: "Customer Data Store" }]}
-      />
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
-
-    const input = container.querySelector(
-      '[data-testid="drop-zone-single"] input[type="file"]'
-    ) as HTMLInputElement | null;
-
-    expect(input).toBeTruthy();
-    if (!input) return;
-
-    fireEvent.change(input, { target: { files: [file] } });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("typespec-import-review")).toBeDefined();
-    });
-
-    expect(
-      screen.getByText(
-        /11 model\(s\),\s*5 enum\(s\),\s*4 scalar\(s\),\s*0 union\(s\),\s*0 API service\(s\),\s*0 decorator definition\(s\)/
-      )
-    ).toBeDefined();
+    await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());
+    expect(importTypeSpecDocumentActionMock).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Customer")).toBeDefined();
-    expect(screen.getByText("Locale")).toBeDefined();
   });
 
-  it("submits models plus the recommended entity registration from customer_1.tsp", async () => {
+  it("confirms the import via createDomainAssetsFromImportAction", async () => {
+    importTypeSpecDocumentActionMock.mockResolvedValue({ success: true, data: fixtureResult() });
     createDomainAssetsFromImportActionMock.mockResolvedValue({
-      modelsCreated: 11,
+      modelsCreated: 0,
       entitiesCreated: 1,
-      enumsCreated: 5,
-      scalarsCreated: 4,
+      enumsCreated: 1,
+      scalarsCreated: 0,
       unionsCreated: 0,
       servicesCreated: 0,
       decoratorsCreated: 0,
@@ -118,137 +139,35 @@ describe("ImportDialog", () => {
       errors: [],
     });
 
-    const content = readFileSync(
-      path.resolve(process.cwd(), "examples/cds/temp/customer_1.tsp"),
-      "utf8"
+    const { container } = renderWithQueryClient(
+      <ImportDialog isOpen onClose={vi.fn()} domains={[{ id: "domain-1", name: "Domain" }]} />
     );
 
-    const file = new File([content], "customer_1.tsp", { type: "text/plain" });
+    await uploadTsp(container);
+    await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());
 
-    const { container } = render(
-      <ImportDialog
-        isOpen={true}
-        onClose={vi.fn()}
-        domains={[{ id: "domain-1", name: "PayPal.CustomerDataStore" }]}
-      />
+    fireEvent.click(screen.getByRole("button", { name: /Import \d+ Asset\(s\)/ }));
+
+    await waitFor(() =>
+      expect(createDomainAssetsFromImportActionMock).toHaveBeenCalledTimes(1)
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
-
-    const input = container.querySelector(
-      '[data-testid="drop-zone-single"] input[type="file"]'
-    ) as HTMLInputElement | null;
-
-    expect(input).toBeTruthy();
-    if (!input) return;
-
-    fireEvent.change(input, { target: { files: [file] } });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("typespec-import-review")).toBeDefined();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: /Import 21 Asset\(s\)/ }));
-
-    await waitFor(() => {
-      expect(createDomainAssetsFromImportActionMock).toHaveBeenCalledTimes(1);
-    });
-
     const payload = createDomainAssetsFromImportActionMock.mock.calls[0][0];
-
     expect(payload.domainId).toBe("domain-1");
-    expect(payload.namespace).toBe("PayPal.CustomerDataStore");
-    expect(payload.models).toHaveLength(11);
-    expect(payload.entities).toHaveLength(1);
-    expect(payload.entities[0].name).toBe("Customer");
-    expect(payload.sharedEnums).toHaveLength(5);
-    expect(payload.customScalars).toHaveLength(4);
-    expect(payload.unionTypes).toHaveLength(0);
-    expect(payload.services).toHaveLength(0);
-    expect(payload.decoratorDefinitions).toHaveLength(0);
-
-    expect(
-      payload.sharedEnums.find((sharedEnum: { name: string }) => sharedEnum.name === "Brand")
-    ).toMatchObject({
-      name: "Brand",
-      description: "Brand namespace for customer. Normalized to UPPERCASE.",
-    });
-
-    expect(
-      payload.customScalars.find((scalar: { name: string }) => scalar.name === "uuid")
-    ).toMatchObject({
-      name: "uuid",
-      baseType: "string",
-      format: "uuid",
-    });
-
-    expect(
-      payload.customScalars.find(
-        (scalar: { name: string }) => scalar.name === "CountryCode"
-      )
-    ).toMatchObject({
-      name: "CountryCode",
-      baseType: "string",
-      pattern: "^[A-Z]{2}$",
-      description: "ISO 3166-1 alpha-2 country code",
-    });
+    expect(payload.namespace).toBe("MyApp");
   });
 
-  it("lets the user opt additional imported models into entity registration", async () => {
-    createDomainAssetsFromImportActionMock.mockResolvedValue({
-      modelsCreated: 11,
-      entitiesCreated: 2,
-      enumsCreated: 5,
-      scalarsCreated: 4,
-      unionsCreated: 0,
-      servicesCreated: 0,
-      decoratorsCreated: 0,
-      entityIds: [],
-      modelIds: [],
-      errors: [],
+  it("shows an error when the compiler action fails", async () => {
+    importTypeSpecDocumentActionMock.mockResolvedValue({
+      success: false,
+      error: { code: "PARSE_ERROR", message: "bad syntax" },
     });
 
-    const content = readFileSync(
-      path.resolve(process.cwd(), "examples/cds/temp/customer_1.tsp"),
-      "utf8"
+    const { container } = renderWithQueryClient(
+      <ImportDialog isOpen onClose={vi.fn()} domains={[{ id: "domain-1", name: "Domain" }]} />
     );
 
-    const file = new File([content], "customer_1.tsp", { type: "text/plain" });
+    await uploadTsp(container);
 
-    const { container } = render(
-      <ImportDialog
-        isOpen={true}
-        onClose={vi.fn()}
-        domains={[{ id: "domain-1", name: "PayPal.CustomerDataStore" }]}
-      />
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Upload File" }));
-
-    const input = container.querySelector(
-      '[data-testid="drop-zone-single"] input[type="file"]'
-    ) as HTMLInputElement | null;
-
-    expect(input).toBeTruthy();
-    if (!input) return;
-
-    fireEvent.change(input, { target: { files: [file] } });
-
-    await waitFor(() => {
-      expect(screen.getByTestId("typespec-import-review")).toBeDefined();
-    });
-
-    fireEvent.click(screen.getByLabelText("TaxDetails entity"));
-    fireEvent.click(screen.getByRole("button", { name: /Import 22 Asset\(s\)/ }));
-
-    await waitFor(() => {
-      expect(createDomainAssetsFromImportActionMock).toHaveBeenCalledTimes(1);
-    });
-
-    const payload = createDomainAssetsFromImportActionMock.mock.calls[0][0];
-    expect(payload.entities.map((entity: { name: string }) => entity.name)).toEqual(
-      expect.arrayContaining(["TaxDetails", "Customer"])
-    );
-    expect(payload.entities).toHaveLength(2);
+    await waitFor(() => expect(screen.getByText("bad syntax")).toBeDefined());
   });
 });

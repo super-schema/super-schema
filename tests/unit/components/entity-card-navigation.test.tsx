@@ -28,6 +28,7 @@ describe("EntityCard navigation", () => {
     fieldCount: 3,
     domainName: "Customer Data",
     domainSlug: "customer-data",
+    productSlug: "default",
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   };
 
@@ -37,7 +38,7 @@ describe("EntityCard navigation", () => {
     render(<EntityCard {...defaultProps} onDelete={onDelete} />);
 
     expect(screen.getByRole("link", { name: /Customer/i }).getAttribute("href")).toBe(
-      "/schemas/customer-data/customer"
+      "/schemas/customer-data/default/customer"
     );
 
     const deleteButton = screen.getByRole("button", { name: /Delete entity Customer/i });

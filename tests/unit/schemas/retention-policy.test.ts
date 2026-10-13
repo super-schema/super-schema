@@ -264,91 +264,17 @@ describe("retentionPolicyToYears", () => {
 // Emitter retention comments
 // ---------------------------------------------------------------------------
 
-describe("Emitter retention output", () => {
-  it("BigQuery emitter includes retention comment for age-based policy", async () => {
-    const { BigQueryEmitter } = await import("@/emitters/bigquery/bigquery.emitter");
-    const { getDefaultPolicies } = await import("@/lib/type-mapping/default-mappings");
+// ---------------------------------------------------------------------------
+// Emitter retention comments
+//
+// NOTE: BigQuery retention-comment test removed — DDL emission migrated to
+// @typespec/bigquery (see tests/integration/db-emitter-parity.test.ts).
+// NOTE: OpenAPI retention-comment test removed 2026-10-12 — native `openapi`
+// emitter retired in favor of the official `openapi3` TypeSpec emitter,
+// which doesn't carry Super Schema's custom `x-retention` extension. Native
+// `avro` was retired the same day in favor of @typespec/avro (see
+// ~/src/my/typespec/packages/avro/test/avro.test.ts for its coverage).
+// No native emitters remain to test retention-comment output for here.
+// ---------------------------------------------------------------------------
 
-    const emitter = new BigQueryEmitter();
-    const policies = getDefaultPolicies();
-    const model = {
-      entity: {
-        id: "e1",
-        name: "TestEntity",
-        domain: "test",
-        domainId: "d1",
-        description: "",
-        status: "DRAFT",
-        version: 1,
-        metadata: {
-          retentionPolicy: {
-            strategy: "age-based" as const,
-            period: 90,
-            periodUnit: "days" as const,
-            referenceField: "created_at",
-            action: "delete" as const,
-          },
-        },
-      },
-      fields: [
-        {
-          name: "id",
-          type: "string" as const,
-          nullable: false,
-          isKey: true,
-          description: "",
-          aliases: [],
-          decorators: {},
-          sortOrder: 0,
-        },
-      ],
-      relationships: [],
-    };
 
-    const result = emitter.emit(model, policies);
-    expect(result.output).toContain("-- RETENTION: delete rows where created_at > 90 days");
-  });
-
-  it("OpenAPI emitter includes x-retention for condition-based policy", async () => {
-    const { openApiEmitter } = await import("@/emitters/openapi");
-    const { getDefaultPolicies } = await import("@/lib/type-mapping/default-mappings");
-
-    const policies = getDefaultPolicies();
-    const model = {
-      entity: {
-        id: "e1",
-        name: "TestEntity",
-        domain: "test",
-        domainId: "d1",
-        description: "",
-        status: "DRAFT",
-        version: 1,
-        metadata: {
-          retentionPolicy: {
-            strategy: "condition-based" as const,
-            condition: "status = 'DELETED'",
-            action: "archive" as const,
-          },
-        },
-      },
-      fields: [
-        {
-          name: "id",
-          type: "string" as const,
-          nullable: false,
-          isKey: true,
-          description: "",
-          aliases: [],
-          decorators: {},
-          sortOrder: 0,
-        },
-      ],
-      relationships: [],
-    };
-
-    const result = openApiEmitter.emit(model, policies);
-    expect(result.output).toContain("x-retention");
-    expect(result.output).toContain("condition-based");
-    expect(result.output).toContain("archive");
-  });
-});

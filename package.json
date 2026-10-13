@@ -9,7 +9,14 @@
     "lint": "eslint",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "db:generate": "prisma generate",
+    "predev": "npm run db:generate && tsx scripts/db.ts ensure",
+    "prebuild": "npm run db:generate && tsx scripts/db.ts ensure",
+    "db:deploy": "tsx scripts/db.ts deploy",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
@@ -18,6 +25,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@electric-sql/pglite": "^0.4.1",
     "@orpc/client": "^1.13.13",
     "@orpc/openapi": "^1.13.13",
     "@orpc/react": "^1.13.13",
@@ -25,6 +33,7 @@
     "@prisma/adapter-pg": "^7.6.0",
     "@prisma/client": "^7.6.0",
     "@t3-oss/env-nextjs": "^0.13.11",
+    "@tanstack/react-query": "^5.101.2",
     "@types/dagre": "^0.7.54",
     "@xyflow/react": "^12.10.2",
     "bcryptjs": "^3.0.3",
@@ -46,6 +55,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@superschema/typespec-enterprise": "file:vendor/typespec-enterprise",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -53,7 +63,9 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@typespec/bigquery": "file:../typespec/packages/bigquery",
     "@typespec/compiler": "^1.10.0",
+    "@typespec/db": "file:../typespec/packages/db",
     "@typespec/http-client-csharp": "^1.0.0-alpha.20260407.1",
     "@typespec/http-client-java": "^0.6.1",
     "@typespec/http-client-js": "^0.14.1",
@@ -62,7 +74,9 @@
     "@typespec/http-server-js": "^0.58.0-alpha.25",
     "@typespec/json-schema": "^1.10.0",
     "@typespec/openapi3": "^1.10.0",
+    "@typespec/postgres": "file:../typespec/packages/postgres",
     "@typespec/protobuf": "^0.80.0",
+    "@typespec/spanner": "file:../typespec/packages/spanner",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.1.2",
     "dotenv": "^17.4.0",
@@ -72,6 +86,7 @@
     "prisma": "^7.6.0",
     "shadcn": "^4.1.2",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.2"
   }

@@ -223,25 +223,37 @@ function TargetTabContent({
             <AlertTriangle className="w-3.5 h-3.5" />
             {target.warnings.length} warning{target.warnings.length !== 1 ? "s" : ""}
           </div>
-          {target.warnings.map((w, i) => (
-            <button
-              key={i}
-              className="w-full text-left text-caption text-muted-foreground pl-5 hover:text-foreground transition-colors cursor-pointer rounded px-1 py-0.5 hover:bg-warning/10"
-              onClick={() =>
-                onWarningClick?.({
-                  sourceType: w.fieldName ?? "",
-                  targetFormat: target.name,
-                  currentMappedType: "",
-                  lossDescription: w.message,
-                  fieldName: w.fieldName,
-                })
-              }
-              title="Click to create override"
-            >
-              {w.fieldName ? `${w.fieldName}: ` : ""}
-              {w.message}
-            </button>
-          ))}
+          {target.warnings.map((w, i) => {
+            const canOpenMappingWarning =
+              Boolean(w.sourceType) &&
+              Boolean(w.targetFormat) &&
+              Boolean(w.mappedType) &&
+              Boolean(w.lossDescription);
+            const warningText = `${w.fieldName ? `${w.fieldName}: ` : ""}${w.message}`;
+
+            return canOpenMappingWarning ? (
+              <button
+                key={i}
+                className="w-full text-left text-caption text-muted-foreground pl-5 hover:text-foreground transition-colors cursor-pointer rounded px-1 py-0.5 hover:bg-warning/10"
+                onClick={() =>
+                  onWarningClick?.({
+                    sourceType: w.sourceType ?? "",
+                    targetFormat: w.targetFormat ?? target.targetFormat ?? target.name,
+                    currentMappedType: w.mappedType ?? "",
+                    lossDescription: w.lossDescription ?? "",
+                    fieldName: w.fieldName,
+                  })
+                }
+                title="Click to create override"
+              >
+                {warningText}
+              </button>
+            ) : (
+              <p key={i} className="text-caption text-muted-foreground pl-5 px-1 py-0.5">
+                {warningText}
+              </p>
+            );
+          })}
         </div>
       )}
 
@@ -343,7 +355,10 @@ export function EmissionPreviewPanel({
   const defaultTab = targetEntries.length > 0 ? targetEntries[0][0] : "typespec";
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-[480px] max-w-full border-l border-border bg-popover/95 backdrop-blur-md shadow-lg flex flex-col animate-auth-fade-up">
+    <div
+      data-testid="emission-preview-panel"
+      className="fixed inset-y-0 right-0 z-40 w-[480px] max-w-full border-l border-border bg-popover/95 backdrop-blur-md shadow-lg flex flex-col animate-auth-fade-up"
+    >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
@@ -411,7 +426,7 @@ export function EmissionPreviewPanel({
         <Tabs defaultValue={defaultTab}>
           <TabsList className="mb-3">
             {targetEntries.map(([key, target]) => (
-              <TabsTrigger key={key} value={key}>
+              <TabsTrigger key={key} value={key} data-testid={`emit-tab-${key}`}>
                 <span className="flex items-center gap-1.5">
                   <ValidationIndicator status={target.validationStatus} />
                   {getDisplayName(key)}
@@ -427,7 +442,7 @@ export function EmissionPreviewPanel({
           </TabsList>
 
           {targetEntries.map(([key, target]) => (
-            <TabsContent key={key} value={key}>
+            <TabsContent key={key} value={key} data-testid={`emit-output-${key}`}>
               <TargetTabContent
                 target={target}
                 overrides={overrides}

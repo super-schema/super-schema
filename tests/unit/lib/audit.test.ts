@@ -7,10 +7,13 @@ vi.mock("@/lib/db", () => ({
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "mock-audit-id" }),
     },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({ id: "user-1" }),
+    },
   },
 }));
 
-import { withAudit } from "@/lib/audit";
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { prisma } from "@/lib/db";
 
 describe("withAudit", () => {
@@ -107,5 +110,23 @@ describe("withAudit", () => {
         },
       })
     ).rejects.toThrow("DB connection failed");
+  });
+
+  it("fails before the wrapped write when the audit user is missing", async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+    const fn = vi.fn().mockResolvedValue({ id: "entity-1" });
+
+    await expect(
+      withAudit({
+        action: "CREATE",
+        entityType: "Entity",
+        entityId: "entity-1",
+        userId: "missing-user",
+        fn,
+      })
+    ).rejects.toBeInstanceOf(AuditUserMissingError);
+
+    expect(fn).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 });

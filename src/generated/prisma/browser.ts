@@ -38,10 +38,25 @@ export type Session = Prisma.SessionModel
  */
 export type VerificationToken = Prisma.VerificationTokenModel
 /**
+ * Model Tenant
+ * 
+ */
+export type Tenant = Prisma.TenantModel
+/**
  * Model Domain
  * 
  */
 export type Domain = Prisma.DomainModel
+/**
+ * Model ProductTier
+ * 
+ */
+export type ProductTier = Prisma.ProductTierModel
+/**
+ * Model Product
+ * 
+ */
+export type Product = Prisma.ProductModel
 /**
  * Model Entity
  * 

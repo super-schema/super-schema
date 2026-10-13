@@ -1,8 +1,10 @@
 /**
- * POST /api/v1/schemas/:id/emit — Emit entity to all targets.
+ * POST /api/v1/schemas/:id/emit — Emit entity to every enabled schema target.
  *
- * Runs the emission pipeline (compile + emit to BigQuery, Avro, OpenAPI)
- * and returns per-target results.
+ * Runs the emission pipeline and returns per-target results. Every target is
+ * now `runtime: "typespec-cli"` (real TypeSpec packages) as of 2026-10-12 —
+ * the native registry `emitFromData()` used to loop is permanently empty, so
+ * this route no longer calls it for per-target output.
  */
 
 import { authenticateRequest } from "@/app/api/v1/middleware";
@@ -15,7 +17,10 @@ import {
 } from "@/app/api/v1/error-handler";
 import { getEntityById } from "@/services/entity.service";
 import { prisma } from "@/lib/db";
-import { emitFromData } from "@/lib/emission/emit-from-data";
+import { compileEntity } from "@/lib/compiler/compiler.service";
+import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import type {
   PrismaEntityInput,
   PrismaFieldInput,
@@ -52,32 +57,39 @@ export async function POST(
       orderBy: { sortOrder: "asc" },
     });
 
-    // Run emission pipeline
-    const emissionResult = emitFromData(
-      entity as unknown as PrismaEntityInput,
-      fields as unknown as PrismaFieldInput[]
+    const prismaEntity = entity as unknown as PrismaEntityInput;
+    const prismaFields = fields as unknown as PrismaFieldInput[];
+
+    const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
+    const results = await Promise.all(
+      enabledTargets.map(async (target) => {
+        const result = await emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, target.key);
+        return {
+          target: target.key,
+          output: result.output,
+          validationStatus: result.validationStatus,
+          warnings: result.warnings,
+        };
+      })
     );
 
-    // Format per-target results
-    const targets = Object.values(emissionResult.targets).map((t) => ({
-      target: t.name,
-      output: t.output,
-      validationStatus: t.validationStatus,
-      warnings: t.warnings.map((w) => w.message),
-    }));
+    const validCount = results.filter((r) => r.validationStatus === "VALID").length;
+    const invalidCount = results.filter((r) => r.validationStatus === "INVALID").length;
+    const warningCount = results.length - validCount - invalidCount;
 
     return apiSuccess(
       {
         entityId: id,
         entityName: entity.name,
         version: entity.version,
-        typespec: emissionResult.typespec,
-        targets,
+        typespec: generateTypeSpec(compileEntity(prismaEntity, prismaFields)),
+        targets: results,
       },
-      `Emitted to ${targets.length} targets — ${emissionResult.summary.validCount} valid, ${emissionResult.summary.warningCount} warnings, ${emissionResult.summary.invalidCount} invalid`
+      `Emitted to ${results.length} targets — ${validCount} valid, ${warningCount} warnings, ${invalidCount} invalid`
     );
   } catch (e) {
     console.error("POST /api/v1/schemas/:id/emit error:", e);
     return apiServerError();
   }
 }
+

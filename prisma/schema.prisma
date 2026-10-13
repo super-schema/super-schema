@@ -87,13 +87,31 @@ enum ApiScope {
   ENTITY
 }
 
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String   @unique // "PayPal", "Venmo", "Xoom"
+  slug      String   @unique
+  description String  @default("")
+  isActive  Boolean  @default(true)
+  isSystem  Boolean  @default(false)
+  domains   Domain[]
+  userRoles UserRole[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("tenants")
+}
+
 model Domain {
   id                   String                @id @default(cuid())
-  name                 String                @unique
-  slug                 String                @unique
+  tenantId             String
+  name                 String
+  slug                 String
   description          String                @default("")
   policyTemplate       Json?
   isSystem             Boolean               @default(false)
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products             Product[]
   entities             Entity[]
   modelDefinitions     ModelDefinition[]
   decoratorDefinitions DecoratorDefinition[]
@@ -106,7 +124,46 @@ model Domain {
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
 
+  @@unique([slug, tenantId])
+  @@unique([name, tenantId])
   @@map("domains")
+}
+
+model ProductTier {
+  id           String    @id @default(cuid())
+  name         String    @unique // "TIER_1", "TIER_2", "TIER_3"
+  displayColor String    @default("#6b7280")
+  bgColor      String    @default("#f3f4f6")
+  textColor    String    @default("#111827")
+  description  String    @default("")
+  sortOrder    Int       @default(0)
+  isSystem     Boolean   @default(false)
+  products     Product[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("product_tiers")
+}
+
+model Product {
+  id          String       @id @default(cuid())
+  domainId    String
+  name        String // "OneSCM", "bank"
+  slug        String
+  description String       @default("")
+  tierId      String?
+  ownerTeam   String?
+  isSystem    Boolean      @default(false)
+  domain      Domain       @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  tier        ProductTier? @relation(fields: [tierId], references: [id])
+  entities    Entity[]
+  userRoles   UserRole[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([slug, domainId])
+  @@unique([name, domainId])
+  @@map("products")
 }
 
 model Entity {
@@ -114,11 +171,13 @@ model Entity {
   name           String
   slug           String
   domainId       String
+  productId      String
   version        Int              @default(1)
   status         EntityStatus     @default(DRAFT)
   ownerId        String
   description    String           @default("")
   metadata       Json?
+  typespecSource String?
   parentEntityId String?
   fields         Field[]
   services       ServiceDefinition[] @relation("EntityServices")
@@ -127,12 +186,13 @@ model Entity {
   updatedAt      DateTime         @updatedAt
 
   domain        Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   owner         User     @relation(fields: [ownerId], references: [id])
   parentEntity  Entity?  @relation("EntityInheritance", fields: [parentEntityId], references: [id])
   childEntities Entity[] @relation("EntityInheritance")
 
-  @@unique([slug, domainId])
-  @@unique([name, domainId])
+  @@unique([slug, productId])
+  @@unique([name, productId])
   @@map("entities")
 }
 
@@ -341,13 +401,17 @@ model UserRole {
   id        String   @id @default(cuid())
   userId    String
   role      String
+  tenantId  String?
   domainId  String?
+  productId String?
   createdAt DateTime @default(now())
 
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  domain Domain? @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain  Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, role, domainId])
+  @@unique([userId, role, tenantId, domainId, productId])
   @@map("user_roles")
 }
 
@@ -556,6 +620,7 @@ model EmissionTargetStatus {
   lastEmittedAt   DateTime?
   status          EmissionStatus @default(BEHIND)
   output          String?
+  formatOptions   Json?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 

@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { stringify as stringifyYaml } from "yaml";
-import { prisma } from "@/lib/db";
 import { compileEntity } from "@/lib/compiler/compiler.service";
 import type {
   PrismaEntityInput,
@@ -15,6 +14,7 @@ import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
 
 const execFileAsync = promisify(execFile);
 
@@ -29,6 +29,8 @@ export async function emitOfficialTypeSpecTargetForEntity(
   entityId: string,
   targetKey: string
 ): Promise<OfficialTypeSpecTargetResult> {
+  // Lazy import so the module can be used (FromData path) without a DATABASE_URL.
+  const { prisma } = await import("@/lib/db");
   const entity = await prisma.entity.findUnique({
     where: { id: entityId },
     include: { domain: true },
@@ -125,13 +127,24 @@ function buildEmitterOptions(
       };
     case "protobuf":
       return {};
+    case "avro":
+    case "java-pojo":
+      return {};
+    case "spanner":
+    case "postgresql":
+    case "bigquery":
+      return { "naming-convention": "snake_case" };
     default:
       return {};
   }
 }
 
 function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): string {
-  const baseSource = generateTypeSpec(model).trim();
+  if (isDbTypeSpecTarget(targetKey)) {
+    return buildDbTypeSpecSource(model, targetKey);
+  }
+
+  const baseSource = stripRealCompileInvalidDecorators(generateTypeSpec(model).trim());
 
   switch (targetKey) {
     case "json-schema":
@@ -143,6 +156,20 @@ function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): strin
     default:
       return baseSource;
   }
+}
+
+/**
+ * `generateTypeSpec()` emits `@tag("classification:...")` on fields so the
+ * regex-based Paste-Import round trip (`typespec.importer.ts#extractClassification`)
+ * can read it back. Real TypeSpec's `@tag` only accepts Namespace | Interface |
+ * Operation targets, so a real `tsp compile` (every typespec-cli target routed
+ * through this file) rejects it outright with `decorator-wrong-target`. Strip
+ * it here, at the real-compile boundary, rather than stop emitting it —
+ * that would silently break the paste-import round trip, which never goes
+ * through a real compile and has no other way to carry classification today.
+ */
+function stripRealCompileInvalidDecorators(source: string): string {
+  return source.replace(/^[ \t]*@tag\("classification:[^"]*"\)\n/gm, "");
 }
 
 function buildOpenApi3Source(baseSource: string, model: SuperSchemaModel): string {
