@@ -6,7 +6,8 @@ import {
   rebaseLocalRefs,
   selectArtifact,
 } from "@/lib/event-specs/message-schemas";
-import type { SchemaArtifact } from "@/lib/event-specs/types";
+import type { JsonObject, SchemaArtifact } from "@/lib/event-specs/types";
+import { deepFreeze } from "./fixtures/builders";
 
 const avro: SchemaArtifact = { format: "avro", schema: { type: "record", name: "Order", fields: [] } };
 const json07: SchemaArtifact = { format: "json-schema", dialect: "draft-07", schema: { type: "object" } };
@@ -136,5 +137,137 @@ describe("rebaseLocalRefs", () => {
       properties: { a: { $ref: "#/components/messages/M/payload/schema/definitions/A" }, b: { $ref: "other.json#/x" } },
       default: { $ref: "#/keep" },
     });
+  });
+
+  const BASE = "/components/messages/M/payload/schema";
+  const LOCAL = "#/definitions/A";
+  const REBASED = `#${BASE}/definitions/A`;
+
+  it("rebases refs under properties/definitions named like data keywords (names are not keywords)", () => {
+    const input = {
+      type: "object",
+      properties: {
+        default: { $ref: LOCAL },
+        enum: { $ref: LOCAL },
+        const: { $ref: LOCAL },
+        examples: { $ref: LOCAL },
+        ok: { $ref: LOCAL },
+      },
+      patternProperties: { "^default$": { $ref: LOCAL } },
+      definitions: { default: { $ref: LOCAL }, A: { type: "string" } },
+      $defs: { enum: { $ref: LOCAL } },
+      dependentSchemas: { default: { $ref: LOCAL } },
+      dependencies: { enum: { $ref: LOCAL }, plain: ["x"] },
+    };
+    expect(rebaseLocalRefs(input, BASE)).toEqual({
+      type: "object",
+      properties: {
+        default: { $ref: REBASED },
+        enum: { $ref: REBASED },
+        const: { $ref: REBASED },
+        examples: { $ref: REBASED },
+        ok: { $ref: REBASED },
+      },
+      patternProperties: { "^default$": { $ref: REBASED } },
+      definitions: { default: { $ref: REBASED }, A: { type: "string" } },
+      $defs: { enum: { $ref: REBASED } },
+      dependentSchemas: { default: { $ref: REBASED } },
+      dependencies: { enum: { $ref: REBASED }, plain: ["x"] },
+    });
+  });
+
+  it("walks every schema position (items in both forms, allOf, if/then, not, additionalProperties)", () => {
+    const ref = { $ref: LOCAL };
+    const rebased = { $ref: REBASED };
+    expect(
+      rebaseLocalRefs(
+        {
+          items: ref,
+          allOf: [ref],
+          prefixItems: [ref],
+          if: ref,
+          then: ref,
+          else: ref,
+          not: ref,
+          additionalProperties: ref,
+          properties: { list: { items: [ref], contains: ref } },
+        },
+        BASE,
+      ),
+    ).toEqual({
+      items: rebased,
+      allOf: [rebased],
+      prefixItems: [rebased],
+      if: rebased,
+      then: rebased,
+      else: rebased,
+      not: rebased,
+      additionalProperties: rebased,
+      properties: { list: { items: [rebased], contains: rebased } },
+    });
+  });
+
+  it("copies data keywords in schema position and unknown keywords verbatim, and never mutates its input", () => {
+    const input = deepFreeze<JsonObject>({
+      const: { $ref: LOCAL },
+      enum: [{ $ref: LOCAL }],
+      default: { $ref: LOCAL },
+      examples: [{ $ref: LOCAL }],
+      "x-custom": { $ref: LOCAL },
+      properties: { p: { default: { $ref: LOCAL }, examples: [{ $ref: LOCAL }] } },
+    });
+    expect(rebaseLocalRefs(input, BASE)).toEqual(input);
+  });
+});
+
+describe("rebasing through selectArtifact / headersSchema", () => {
+  const withNamedProperties = {
+    type: "object",
+    properties: { default: { $ref: "#/definitions/A" }, enum: { $ref: "#/definitions/A" }, ok: { $ref: "#/definitions/A" } },
+    definitions: { A: { type: "string" } },
+  };
+  const rebased = { $ref: "#/components/messages/M/headers/definitions/A" };
+
+  it("rebases headers whose properties are named like data keywords", () => {
+    const res = headersSchema({ format: "json-schema", schema: withNamedProperties }, "/components/messages/M/headers");
+    expect(res.diagnostics).toEqual([]);
+    expect(res.schema?.properties).toEqual({ default: rebased, enum: rebased, ok: rebased });
+  });
+
+  it("rebases payloads whose properties are named like data keywords", () => {
+    const res = selectArtifact(
+      [{ format: "json-schema", dialect: "draft-07", schema: withNamedProperties }],
+      { format: "json-schema", dialect: "draft-07" },
+      "payload",
+      "/components/messages/M/headers",
+    );
+    expect((res.schema as JsonObject).properties).toEqual({ default: rebased, enum: rebased, ok: rebased });
+  });
+
+  it("reports a $ref sibling rewrite from the down-converter as its own warning code", () => {
+    const res = selectArtifact(
+      [
+        {
+          format: "json-schema",
+          dialect: "2020-12",
+          schema: { type: "object", properties: { a: { $ref: "#/$defs/A", maxLength: 3 } }, $defs: { A: { type: "string" } } },
+        },
+      ],
+      { format: "json-schema", dialect: "draft-07" },
+      "payload",
+      "/components/messages/M/payload/schema",
+    );
+    expect((res.schema as JsonObject).properties).toEqual({
+      a: { allOf: [{ $ref: "#/components/messages/M/payload/schema/definitions/A" }, { maxLength: 3 }] },
+    });
+    expect(res.diagnostics).toEqual([
+      {
+        severity: "warning",
+        code: "SCHEMA_REF_SIBLINGS_WRAPPED",
+        message:
+          'Down-converting to draft-07: "$ref" siblings (maxLength) are ignored in draft-07; wrapped as allOf: [{ $ref }, { ...siblings }]',
+        pointer: "/components/messages/M/payload/schema/properties/a/$ref",
+      },
+    ]);
   });
 });

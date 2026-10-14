@@ -455,7 +455,13 @@ describe("message contentType follows the emitted format (R28)", () => {
   ];
 
   it("derives each per-format copy's contentType from its format when emitted in several formats", () => {
-    const msg = message({ id: "m", name: "OrderCreated", contentType: "avro/binary", payloads: everyFormat });
+    // a value that differs from every derived default, so "explicit ignored" is observable on each copy
+    const msg = message({
+      id: "m",
+      name: "OrderCreated",
+      contentType: "application/vnd.acme.order+avro",
+      payloads: everyFormat,
+    });
     const { document } = assembleAsyncApi3(
       spec({
         channels: [ordersChannel, jsonChannel, json2020Channel, protoChannel],
@@ -508,6 +514,20 @@ describe("message contentType follows the emitted format (R28)", () => {
     );
     expect(at(document, "components", "messages", "OrderCreated", "contentType")).toBe(
       "application/vnd.acme.order+json",
+    );
+  });
+
+  it("keeps a distinct explicit contentType on an Avro channel too (it is not the derived avro/binary)", () => {
+    const msg = message({ id: "m", name: "OrderCreated", contentType: "application/vnd.acme.order+avro" });
+    const { document } = assembleAsyncApi3(
+      spec({
+        channels: [ordersChannel],
+        messages: [msg],
+        operations: [operation({ key: "a", channelRef: ordersChannel.id, messageRefs: ["m"] })],
+      }),
+    );
+    expect(at(document, "components", "messages", "OrderCreated", "contentType")).toBe(
+      "application/vnd.acme.order+avro",
     );
   });
 

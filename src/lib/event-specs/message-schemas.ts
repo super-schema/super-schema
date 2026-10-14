@@ -1,6 +1,7 @@
-import type { Diagnostic, FormatProfile, JsonObject, JsonValue, SchemaArtifact } from "./types";
+import type { Diagnostic, FormatProfile, JsonObject, SchemaArtifact } from "./types";
 import { diagnostic } from "./diagnostics";
 import { downConvertToDraft07 } from "./json-schema-downconvert";
+import { mapSchemaRefs } from "./json-schema-keywords";
 import { normalizeProfile, sameProfile } from "./schema-format";
 
 /**
@@ -24,8 +25,6 @@ const MISSING_CODE: Record<SchemaRole, string> = {
   key: "KEY_ARTIFACT_MISSING",
 };
 
-const DATA_KEYWORDS = new Set(["const", "enum", "default", "examples"]);
-
 const isObject = (v: unknown): v is JsonObject => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function describe(profile: FormatProfile): string {
@@ -37,24 +36,14 @@ function shapeIsValid(artifact: SchemaArtifact): boolean {
   return artifact.format === "protobuf" ? typeof artifact.schema === "string" : isObject(artifact.schema);
 }
 
-/** Rewrite local refs (`#/definitions/X`) to absolute document refs (`#<basePointer>/definitions/X`). */
+/**
+ * Rewrite local refs (`#/definitions/X`) to absolute document refs (`#<basePointer>/definitions/X`).
+ * Schema-position aware (see `json-schema-keywords.ts`): only `$ref`s in schema positions are
+ * rebased, so a property called `default` / `enum` / `const` / `examples` is rebased like any
+ * other property, while data keywords (`const`, `enum`, `default`, `examples`) are left untouched.
+ */
 export function rebaseLocalRefs(schema: JsonObject, basePointer: string): JsonObject {
-  const walk = (node: JsonValue): JsonValue => {
-    if (Array.isArray(node)) return node.map(walk);
-    if (!isObject(node)) return node;
-    const out: JsonObject = {};
-    for (const [key, value] of Object.entries(node)) {
-      if (key === "$ref" && typeof value === "string" && value.startsWith("#")) {
-        out[key] = `#${basePointer}${value.slice(1)}`;
-      } else if (DATA_KEYWORDS.has(key)) {
-        out[key] = structuredClone(value);
-      } else {
-        out[key] = walk(value);
-      }
-    }
-    return out;
-  };
-  return walk(schema) as JsonObject;
+  return mapSchemaRefs(schema, (ref) => (ref.startsWith("#") ? `#${basePointer}${ref.slice(1)}` : ref));
 }
 
 function downConverted(schema: JsonObject, pointer: string): { schema: JsonObject; diagnostics: Diagnostic[] } {
@@ -64,7 +53,7 @@ function downConverted(schema: JsonObject, pointer: string): { schema: JsonObjec
     diagnostics: result.warnings.map((w) =>
       diagnostic(
         "warning",
-        "SCHEMA_KEYWORD_DROPPED",
+        w.kind === "rewritten" ? "SCHEMA_REF_SIBLINGS_WRAPPED" : "SCHEMA_KEYWORD_DROPPED",
         `Down-converting to draft-07: ${w.message}`,
         `${pointer}${w.pointer}`,
       ),
