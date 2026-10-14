@@ -17,6 +17,7 @@ import type { ServiceData } from "@/app/(dashboard)/schemas/[domainSlug]/compone
 const nav = vi.hoisted(() => ({
   search: "tab=data-types",
   push: vi.fn(),
+  replace: vi.fn(),
 }));
 
 const actions = vi.hoisted(() => ({
@@ -37,7 +38,7 @@ const actions = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: nav.push, replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ push: nav.push, replace: nav.replace, refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
@@ -116,13 +117,18 @@ function domainService(over: Partial<ServiceData> = {}): ServiceData {
   };
 }
 
-function renderWorkspace(overrides: Partial<React.ComponentProps<typeof DomainWorkspace>> = {}) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+function workspaceTree(overrides: Partial<React.ComponentProps<typeof DomainWorkspace>> = {}) {
+  return (
     <QueryClientProvider client={queryClient}>
       <DomainWorkspace {...BASE_PROPS} {...overrides} />
     </QueryClientProvider>
   );
+}
+
+function renderWorkspace(overrides: Partial<React.ComponentProps<typeof DomainWorkspace>> = {}) {
+  return render(workspaceTree(overrides));
 }
 
 function installLocalStorage(initial: Record<string, string> = {}) {
@@ -425,6 +431,58 @@ describe("DomainWorkspace — APIs tab", () => {
       inheritedServices: buildProductInheritedServices({ domainSlug: "payments", domain: [] }),
     });
     expect(screen.queryByTestId("inherited-services")).toBeNull();
+  });
+});
+
+describe("DomainWorkspace — ?tab= and the URL stay in sync", () => {
+  it("follows ?tab= changes after mount (sidebar leaf links)", () => {
+    nav.search = "";
+    const { rerender } = renderWorkspace();
+    expect(screen.queryByTestId("domain-types-tab")).toBeNull();
+
+    nav.search = "tab=data-types";
+    rerender(workspaceTree());
+    expect(screen.getByTestId("domain-types-tab")).toBeDefined();
+
+    nav.search = "tab=apis";
+    rerender(workspaceTree());
+    expect(screen.queryByTestId("domain-types-tab")).toBeNull();
+    expect(screen.getByTestId("domain-apis-tab")).toBeDefined();
+
+    nav.search = "";
+    rerender(workspaceTree());
+    expect(screen.queryByTestId("domain-apis-tab")).toBeNull();
+  });
+
+  it("clicking a tab writes the matching URL with router.replace", () => {
+    nav.search = "";
+    renderWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "APIs" }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=apis", { scroll: false });
+    expect(screen.getByTestId("domain-apis-tab")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Data Types" }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=data-types", { scroll: false });
+    expect(screen.getByTestId("domain-types-tab")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Entities" }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout", { scroll: false });
+  });
+
+  it("New Custom Data Type and New API write their tab to the URL", () => {
+    nav.search = "";
+    renderWorkspace();
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Custom Data Type/ }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=data-types", { scroll: false });
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New API/ }));
+    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=apis", { scroll: false });
+  });
+
+  it("New Entity does not rewrite the tab", () => {
+    nav.search = "";
+    renderWorkspace();
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Entity/ }));
+    expect(nav.replace).not.toHaveBeenCalled();
   });
 });
 

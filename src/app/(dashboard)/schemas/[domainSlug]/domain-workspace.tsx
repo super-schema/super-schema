@@ -274,9 +274,25 @@ export function DomainWorkspace({
   const router = useRouter();
   const invalidateDomainsTree = useInvalidateDomainsTree();
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<DomainTab>(
-    normalizeWorkspaceTab(searchParams.get("tab"))
-  );
+  const tabParam = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState<DomainTab>(normalizeWorkspaceTab(tabParam));
+
+  // Follow external URL changes (sidebar leaf links, back/forward).
+  useEffect(() => {
+    setActiveTab(normalizeWorkspaceTab(tabParam));
+  }, [tabParam]);
+
+  function tabHref(tab: DomainTab) {
+    if (tab === "data-types") return assetHref({ kind: "dataTypes", domainSlug, productSlug });
+    if (tab === "apis") return assetHref({ kind: "apis", domainSlug, productSlug });
+    return assetHref({ kind: "product", domainSlug, productSlug });
+  }
+
+  // Every tab switch writes the URL so the address bar and visible tab agree.
+  function selectTab(tab: DomainTab) {
+    setActiveTab(tab);
+    router.replace(tabHref(tab), { scroll: false });
+  }
   const viewMode = useSyncExternalStore(
     subscribeToViewMode,
     getViewModeSnapshot,
@@ -593,8 +609,8 @@ export function DomainWorkspace({
           </div>
           <CreateDropdown
             onNewEntity={() => router.push(newEntityHref)}
-            onNewCustomDataType={() => { setActiveTab("data-types"); setTypeCreateIntent("choose"); }}
-            onNewApi={() => setActiveTab("apis")}
+            onNewCustomDataType={() => { selectTab("data-types"); setTypeCreateIntent("choose"); }}
+            onNewApi={() => selectTab("apis")}
           />
           {canDeleteDomain && !isSystemDomain ? (
             <Button
@@ -619,7 +635,7 @@ export function DomainWorkspace({
         {domainTabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => selectTab(tab.id)}
             className={`flex items-center gap-space-2 px-space-4 py-space-2 text-body-small transition-colors border-b-2 ${
               activeTab === tab.id
                 ? "border-primary text-primary font-medium"
