@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import { GripVertical, Trash2, Settings2, Link2 } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -79,7 +79,11 @@ interface FieldCardProps {
   entityNames?: { id: string; name: string }[];
 }
 
-export function FieldCard({
+/**
+ * Memoized: a workspace re-render (tab change, meta edit, save flash) must not
+ * re-render every field row. Callers pass stable callbacks.
+ */
+export const FieldCard = memo(function FieldCard({
   field,
   index,
   isSelected,
@@ -281,4 +285,4 @@ export function FieldCard({
       )}
     </div>
   );
-}
+});

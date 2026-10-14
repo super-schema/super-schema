@@ -25,6 +25,39 @@ interface ClassificationPickerProps {
   onChange: (value: string | null) => void;
 }
 
+/**
+ * The option list is its own component so its elements are only created while
+ * the popover is open (a field list mounts one picker per row).
+ */
+function ClassificationOptions({
+  current,
+  onSelect,
+}: {
+  current: string;
+  onSelect: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      {CLASSIFICATIONS.map((cls) => (
+        <button
+          key={cls.value}
+          onClick={() => onSelect(cls.value)}
+          className={`flex items-center gap-2 px-2 py-1.5 rounded text-caption hover:bg-accent/50 transition-colors text-left w-full ${
+            current === cls.value ? "bg-accent/30" : ""
+          }`}
+        >
+          <span className={`${cls.badgeClass} px-1.5 py-0.5 rounded text-[11px]`}>
+            {cls.shortLabel}
+          </span>
+          <span className="text-muted-foreground/70 text-[10px]">
+            {cls.label.split(" — ")[0]}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ClassificationPicker({ value, onChange }: ClassificationPickerProps) {
   const [open, setOpen] = useState(false);
 
@@ -39,27 +72,13 @@ export function ClassificationPicker({ value, onChange }: ClassificationPickerPr
         </span>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-52 p-1">
-        <div className="flex flex-col gap-0.5">
-          {CLASSIFICATIONS.map((cls) => (
-            <button
-              key={cls.value}
-              onClick={() => {
-                onChange(cls.value);
-                setOpen(false);
-              }}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded text-caption hover:bg-accent/50 transition-colors text-left w-full ${
-                current.value === cls.value ? "bg-accent/30" : ""
-              }`}
-            >
-              <span className={`${cls.badgeClass} px-1.5 py-0.5 rounded text-[11px]`}>
-                {cls.shortLabel}
-              </span>
-              <span className="text-muted-foreground/70 text-[10px]">
-                {cls.label.split(" — ")[0]}
-              </span>
-            </button>
-          ))}
-        </div>
+        <ClassificationOptions
+          current={current.value}
+          onSelect={(next) => {
+            onChange(next);
+            setOpen(false);
+          }}
+        />
       </PopoverContent>
     </Popover>
   );

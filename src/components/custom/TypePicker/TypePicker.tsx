@@ -36,6 +36,143 @@ interface TypePickerProps {
 
 type PickerView = "grid" | "search" | "complex";
 
+/**
+ * The popup body is its own component so the type list (and its elements) is
+ * only built while the popover is open; a field list mounts one picker per row.
+ */
+function TypePickerBody({
+  view,
+  complexType,
+  value,
+  searchQuery,
+  onSearchQueryChange,
+  excludeComplex,
+  entities,
+  onSelect,
+  onComplexConfirm,
+  onComplexBack,
+}: {
+  view: PickerView;
+  complexType: "array" | "map" | "reference" | "enum" | null;
+  value: string;
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
+  excludeComplex?: boolean;
+  entities?: { id: string; name: string }[];
+  onSelect: (typeId: string) => void;
+  onComplexConfirm: (config: ComplexTypeConfig) => void;
+  onComplexBack: () => void;
+}) {
+  const categories = getTypesByCategory();
+
+  function getIndent(type: DataType): string {
+    if (!type.parent) return "";
+    const parentType = getTypeInfo(type.parent);
+    if (parentType?.parent) return "pl-6";
+    return "pl-3";
+  }
+
+  return view === "complex" && complexType ? (
+    <ComplexTypePrompt
+      complexType={complexType}
+      onConfirm={onComplexConfirm}
+      onBack={onComplexBack}
+      entities={entities}
+    />
+  ) : (
+    <Command shouldFilter={false}>
+      <CommandInput
+        placeholder="Search types..."
+        value={searchQuery}
+        onValueChange={onSearchQueryChange}
+      />
+      {view === "grid" && !searchQuery.trim() ? (
+        <div className="max-h-[480px] overflow-y-auto">
+          <TypeGrid
+            value={value}
+            onSelect={onSelect}
+            excludeComplex={excludeComplex}
+          />
+        </div>
+      ) : (
+        <CommandList>
+          <CommandEmpty>No type found.</CommandEmpty>
+          {categories.map(({ category, types }) => {
+            const filteredTypes = excludeComplex
+              ? types.filter((t) => !isComplexType(t.id))
+              : types;
+
+            // Filter by search query
+            const matchingTypes = searchQuery.trim()
+              ? filteredTypes.filter(
+                  (t) =>
+                    t.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    t.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    t.typespecScalar.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    t.description.toLowerCase().includes(searchQuery.toLowerCase())
+                )
+              : filteredTypes;
+
+            if (matchingTypes.length === 0) return null;
+
+            return (
+              <CommandGroup key={category} heading={category}>
+                {matchingTypes.map((type) => (
+                  <CommandItem
+                    key={type.id}
+                    value={`${type.id} ${type.label} ${type.typespecScalar}`}
+                    onSelect={() => onSelect(type.id)}
+                    data-checked={value === type.id ? "true" : undefined}
+                    className={getIndent(type)}
+                  >
+                    <div className="flex flex-col gap-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs">{type.label}</span>
+                        {type.typespecScalar !== type.id && (
+                          <span className="text-[10px] text-muted-foreground/60">
+                            {type.typespecScalar}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground/50 leading-tight">
+                        {type.description}
+                      </span>
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            );
+          })}
+          {/* Entity types */}
+          {entities && entities.length > 0 && (() => {
+            const matchingEntities = searchQuery.trim()
+              ? entities.filter((e) => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              : entities;
+            if (matchingEntities.length === 0) return null;
+            return (
+              <CommandGroup heading="Entities">
+                {matchingEntities.map((ent) => (
+                  <CommandItem
+                    key={ent.id}
+                    value={ent.name}
+                    onSelect={() => onSelect(ent.name)}
+                    data-checked={value === ent.name ? "true" : undefined}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs">{ent.name}</span>
+                      <span className="text-[10px] text-muted-foreground/60">entity reference</span>
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            );
+          })()}
+        </CommandList>
+      )}
+    </Command>
+  );
+}
+
 export function TypePicker({
   value,
   onChange,
@@ -52,7 +189,6 @@ export function TypePicker({
   const [complexType, setComplexType] = useState<"array" | "map" | "reference" | "enum" | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  const categories = getTypesByCategory();
   const selectedType = getTypeInfo(value);
 
   // Reset view when popover opens/closes
@@ -109,13 +245,6 @@ export function TypePicker({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
-  function getIndent(type: DataType): string {
-    if (!type.parent) return "";
-    const parentType = getTypeInfo(type.parent);
-    if (parentType?.parent) return "pl-6";
-    return "pl-3";
-  }
-
   return (
     <Popover open={open} onOpenChange={disabled ? undefined : setOpen}>
       <PopoverTrigger
@@ -132,105 +261,18 @@ export function TypePicker({
         align="start"
         className={`p-0 ${view === "complex" ? "w-80" : "w-[420px]"}`}
       >
-        {view === "complex" && complexType ? (
-          <ComplexTypePrompt
-            complexType={complexType}
-            onConfirm={handleComplexConfirm}
-            onBack={handleComplexBack}
-            entities={entities}
-          />
-        ) : (
-          <Command shouldFilter={false}>
-            <CommandInput
-              placeholder="Search types..."
-              value={searchQuery}
-              onValueChange={setSearchQuery}
-            />
-            {view === "grid" && !searchQuery.trim() ? (
-              <div className="max-h-[480px] overflow-y-auto">
-                <TypeGrid
-                  value={value}
-                  onSelect={handleSelect}
-                  excludeComplex={excludeComplex}
-                />
-              </div>
-            ) : (
-              <CommandList>
-                <CommandEmpty>No type found.</CommandEmpty>
-                {categories.map(({ category, types }) => {
-                  const filteredTypes = excludeComplex
-                    ? types.filter((t) => !isComplexType(t.id))
-                    : types;
-
-                  // Filter by search query
-                  const matchingTypes = searchQuery.trim()
-                    ? filteredTypes.filter(
-                        (t) =>
-                          t.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          t.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          t.typespecScalar.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          t.description.toLowerCase().includes(searchQuery.toLowerCase())
-                      )
-                    : filteredTypes;
-
-                  if (matchingTypes.length === 0) return null;
-
-                  return (
-                    <CommandGroup key={category} heading={category}>
-                      {matchingTypes.map((type) => (
-                        <CommandItem
-                          key={type.id}
-                          value={`${type.id} ${type.label} ${type.typespecScalar}`}
-                          onSelect={() => handleSelect(type.id)}
-                          data-checked={value === type.id ? "true" : undefined}
-                          className={getIndent(type)}
-                        >
-                          <div className="flex flex-col gap-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-xs">{type.label}</span>
-                              {type.typespecScalar !== type.id && (
-                                <span className="text-[10px] text-muted-foreground/60">
-                                  {type.typespecScalar}
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[10px] text-muted-foreground/50 leading-tight">
-                              {type.description}
-                            </span>
-                          </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  );
-                })}
-                {/* Entity types */}
-                {entities && entities.length > 0 && (() => {
-                  const matchingEntities = searchQuery.trim()
-                    ? entities.filter((e) => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                    : entities;
-                  if (matchingEntities.length === 0) return null;
-                  return (
-                    <CommandGroup heading="Entities">
-                      {matchingEntities.map((ent) => (
-                        <CommandItem
-                          key={ent.id}
-                          value={ent.name}
-                          onSelect={() => handleSelect(ent.name)}
-                          data-checked={value === ent.name ? "true" : undefined}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs">{ent.name}</span>
-                            <span className="text-[10px] text-muted-foreground/60">entity reference</span>
-                          </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  );
-                })()}
-              </CommandList>
-            )}
-          </Command>
-        )}
+        <TypePickerBody
+          view={view}
+          complexType={complexType}
+          value={value}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          excludeComplex={excludeComplex}
+          entities={entities}
+          onSelect={handleSelect}
+          onComplexConfirm={handleComplexConfirm}
+          onComplexBack={handleComplexBack}
+        />
       </PopoverContent>
     </Popover>
   );

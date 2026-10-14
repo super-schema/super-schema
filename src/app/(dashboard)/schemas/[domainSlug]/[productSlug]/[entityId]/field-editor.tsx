@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, ExternalLink, X, Search } from "lucide-react";
 import {
@@ -51,6 +51,9 @@ interface FieldData {
   decorators: Record<string, unknown>;
   sortOrder: number;
 }
+
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 5 } };
+const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
 
 interface FieldEditorProps {
   entityId: string;
@@ -158,9 +161,32 @@ export function FieldEditor({
     return result;
   }, [fields, searchQuery, typeFilter, classificationFilter, completenessFilter]);
 
-  function navigateToFieldStudio(fieldId: string) {
-    router.push(assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId, domainSlug, productSlug }));
-  }
+  const navigateToFieldStudio = useCallback(
+    (fieldId: string) => {
+      router.push(assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId, domainSlug, productSlug }));
+    },
+    [router, entitySlug, entityId, domainSlug, productSlug]
+  );
+
+  // Parents hand over fresh inline handlers on every render, but FieldCard is
+  // memoized. Rows get wrappers whose identity never changes and which always
+  // call the latest handler, so a workspace re-render doesn't re-render every row.
+  const latestHandlers = useRef({ onUpdateField, onDeleteField, onFieldSelect });
+  useEffect(() => {
+    latestHandlers.current = { onUpdateField, onDeleteField, onFieldSelect };
+  });
+  const updateFieldStable = useCallback(
+    (id: string, data: Partial<FieldData>) => latestHandlers.current.onUpdateField(id, data),
+    []
+  );
+  const deleteFieldStable = useCallback(
+    (id: string) => latestHandlers.current.onDeleteField(id),
+    []
+  );
+  const selectFieldStable = useCallback(
+    (fieldId: string) => latestHandlers.current.onFieldSelect?.(fieldId),
+    []
+  );
 
   // Listen for "/" slash command from global keyboard shortcuts
   useEffect(() => {
@@ -261,13 +287,15 @@ export function FieldEditor({
 
   const completeness = getEntityCompleteness(fields);
 
-  // Drag-and-drop sensors
+  // Drag-and-drop sensors. Stable option objects + a memoized id list keep the
+  // dnd-kit contexts from changing on every render (they would otherwise
+  // re-render every memoized FieldCard, because each row subscribes to them).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS)
   );
 
-  const fieldIds = fields.map((f) => f.id);
+  const fieldIds = useMemo(() => fields.map((f) => f.id), [fields]);
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
@@ -397,9 +425,9 @@ export function FieldEditor({
                 index={index}
                 isSelected={selectedFieldId === field.id}
                 isReadOnly={isReadOnly}
-                onFieldSelect={onFieldSelect}
-                onUpdateField={onUpdateField}
-                onDeleteField={onDeleteField}
+                onFieldSelect={selectFieldStable}
+                onUpdateField={updateFieldStable}
+                onDeleteField={deleteFieldStable}
                 onNavigateStudio={navigateToFieldStudio}
               />
             ))}
