@@ -92,4 +92,41 @@ paths:
       expect(detectFormat("CREATE TABLE foo ()", "schema.avsc")).toBe("avro");
     });
   });
+
+  // Story 15.6: .json / .yaml / .yml carry several formats, so they are sniffed by content.
+  describe(".json / .yaml / .yml files are sniffed by content", () => {
+    const avro = JSON.stringify({ type: "record", name: "User", fields: [{ name: "id", type: "string" }] });
+    const jsonSchema = JSON.stringify({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: { id: { type: "string" } },
+    });
+    const openApiYaml = `openapi: "3.1.0"\ninfo:\n  title: T\n  version: "1"\npaths:\n  /a: {}\n`;
+    const jsonSchemaYaml = `$schema: https://json-schema.org/draft/2020-12/schema\ntitle: Order\ntype: object\nproperties:\n  id:\n    type: string\n`;
+
+    it("detects Avro in a .json file", () => {
+      expect(detectFormat(avro, "user.json")).toBe("avro");
+    });
+
+    it("detects JSON Schema in a .json file", () => {
+      expect(detectFormat(jsonSchema, "user.schema.json")).toBe("json-schema");
+    });
+
+    it("detects OpenAPI in a .yaml / .yml file", () => {
+      expect(detectFormat(openApiYaml, "api.yaml")).toBe("openapi");
+      expect(detectFormat(openApiYaml, "api.yml")).toBe("openapi");
+    });
+
+    it("detects a YAML JSON Schema, with or without a file name", () => {
+      expect(detectFormat(jsonSchemaYaml, "order.yml")).toBe("json-schema");
+      expect(detectFormat(jsonSchemaYaml)).toBe("json-schema");
+      expect(detectFormat("type: object\nproperties:\n  id:\n    type: string\n", "order.yaml")).toBe(
+        "json-schema"
+      );
+    });
+
+    it("does not treat arbitrary YAML as a schema", () => {
+      expect(detectFormat("name: my-service\nreplicas: 3\n", "deploy.yaml")).toBeNull();
+    });
+  });
 });

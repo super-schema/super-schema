@@ -94,6 +94,8 @@ describe("OpenAPI import action (real converter + compiler)", () => {
 
     const allOps = result.data.services.flatMap((s) => s.operations);
     expect(allOps.some((op) => op.name === "getPet")).toBe(true);
+    // Story 15.8: assets record that they came from OpenAPI, not TypeSpec.
+    expect(result.data.sourceFormat).toBe("openapi");
   });
 
   it("imports an entity and operation from an OpenAPI YAML document", async () => {

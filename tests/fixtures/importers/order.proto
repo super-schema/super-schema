@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package shop.orders.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+import "shop/common/v1/money.proto";
+
+// Lifecycle of an order.
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  PAID = 2;
+  SHIPPED = 3;
+}
+
+/** A customer order. */
+message Order {
+  string id = 1; // Order identifier
+  OrderStatus status = 2;
+  repeated LineItem items = 3;
+  map<string, string> labels = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Duration fulfillment_sla = 6;
+  repeated string tags = 7;
+
+  oneof payment {
+    Card card = 8;
+    string voucher_code = 9;
+  }
+
+  optional string note = 10;
+  google.protobuf.StringValue gift_message = 11;
+  map<string, LineItem> items_by_sku = 12;
+  Customer customer = 13;
+  reserved 14, 15;
+
+  // One purchasable line.
+  message LineItem {
+    string sku = 1;
+    int32 quantity = 2;
+    Kind kind = 3;
+    shop.common.v1.Money unit_price = 4;
+
+    enum Kind {
+      KIND_UNSPECIFIED = 0;
+      PHYSICAL = 1;
+      DIGITAL = 2;
+    }
+  }
+}
+
+message Card {
+  string number = 1;
+  int32 expiry_month = 2;
+  Order.LineItem last_item = 3;
+}
+
+message Customer {
+  string id = 1;
+  string email = 2;
+}
+
+service OrderService {
+  rpc GetOrder(Card) returns (Order);
+  rpc ListOrders(Customer) returns (stream Order);
+}

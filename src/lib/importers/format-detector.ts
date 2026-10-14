@@ -24,6 +24,27 @@ const EXTENSION_MAP: Record<string, ImportFormat> = {
   ".tsp": "typespec",
 };
 
+/**
+ * Extensions shared by several formats (Avro / JSON Schema / OpenAPI in .json,
+ * JSON Schema / OpenAPI in .yaml/.yml): always decided by content.
+ */
+const CONTENT_SNIFFED_EXTENSIONS = new Set([".json", ".yaml", ".yml"]);
+
+/** JSON Schema shape: $schema points at json-schema.org, or an object schema / definitions bundle. */
+function looksLikeJsonSchema(parsed: Record<string, unknown>): boolean {
+  const schemaUrl = typeof parsed.$schema === "string" ? parsed.$schema : "";
+  return Boolean(
+    schemaUrl.includes("json-schema.org") ||
+      (parsed.type === "object" && parsed.properties) ||
+      (parsed.properties && typeof parsed.properties === "object") ||
+      parsed.$defs ||
+      parsed.definitions
+  );
+}
+
+/** Top-level YAML keys a JSON Schema document starts with. */
+const YAML_JSON_SCHEMA_KEYS = /(^|\n)(\$schema|properties|\$defs|definitions)\s*:/;
+
 // ---------------------------------------------------------------------------
 // Content-based detection
 // ---------------------------------------------------------------------------
@@ -51,20 +72,22 @@ function detectByContent(content: string): ImportFormat | null {
       if (parsed.type === "record" && parsed.fields) {
         return "avro";
       }
-      // JSON Schema: $schema points at json-schema.org, or it is an object
-      // schema (has properties/$defs). Checked after Avro so records win.
-      const schemaUrl = typeof parsed.$schema === "string" ? parsed.$schema : "";
-      if (
-        schemaUrl.includes("json-schema.org") ||
-        (parsed.type === "object" && parsed.properties) ||
-        (parsed.properties && typeof parsed.properties === "object") ||
-        parsed.$defs ||
-        parsed.definitions
-      ) {
+      // JSON Schema — checked after Avro so records win.
+      if (looksLikeJsonSchema(parsed)) {
         return "json-schema";
       }
     } catch {
       // Not valid JSON, continue checking
+    }
+  } else if (YAML_JSON_SCHEMA_KEYS.test(trimmed)) {
+    // JSON Schema authored in YAML (top-level `properties:` / `$schema:` / `$defs:`).
+    try {
+      const parsed = parseYaml(trimmed) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        if (looksLikeJsonSchema(parsed as Record<string, unknown>)) return "json-schema";
+      }
+    } catch {
+      // Not valid YAML, continue checking
     }
   }
 
@@ -106,10 +129,10 @@ export function detectFormat(
   content: string,
   filename?: string
 ): ImportFormat | null {
-  // Try extension first
+  // Try extension first (.json / .yaml / .yml carry several formats → content)
   if (filename) {
     const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
-    const byExt = EXTENSION_MAP[ext];
+    const byExt = CONTENT_SNIFFED_EXTENSIONS.has(ext) ? undefined : EXTENSION_MAP[ext];
     if (byExt) {
       return byExt;
     }

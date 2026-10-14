@@ -80,6 +80,23 @@ export interface ParsedField {
   referencedEntityName?: string;
   /** Array element logical type (e.g. "string", or "reference" for an array of refs) */
   arrayElementType?: string;
+  /** Map key logical type (`map` fields) */
+  mapKeyType?: string;
+  /** Map value logical type (`map` fields; "reference" + referencedEntityName for a map of entities) */
+  mapValueType?: string;
+  /** Shared enum this `enum` field uses (an imported `ParsedEnum` name) */
+  enumName?: string;
+  /** Enum symbols of an `enum` field */
+  enumValues?: string[];
+  /** Format-binding facts kept under `decorators.governance` (same keys the TypeSpec governance path stores) */
+  governance?: ParsedFieldGovernance;
+}
+
+export interface ParsedFieldGovernance {
+  /** Protobuf `oneof` group this field belongs to */
+  protobufOneofGroup?: string;
+  /** Avro `fixed` byte size */
+  avroFixedSize?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +122,46 @@ export interface ParsedEntity {
 
 export interface ImportResult {
   parsedEntity: ParsedEntity;
+  warnings: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Multi-entity import result (format-neutral)
+//
+// One schema document can define several assets: every Protobuf message
+// (incl. nested), every Avro named record/enum/fixed, every JSON Schema
+// `$defs` entry. Importers return all of them here; fields point at each
+// other by name (`referencedEntityName`, `enumName`).
+// ---------------------------------------------------------------------------
+
+/** A named enum defined by the imported document (persisted as a SharedEnum). */
+export interface ParsedEnum {
+  name: string;
+  values: string[];
+  description?: string;
+}
+
+/** A named scalar defined by the imported document (persisted as a CustomScalar), e.g. Avro `fixed`. */
+export interface ParsedScalar {
+  name: string;
+  baseType: string;
+  description?: string;
+}
+
+export interface MultiEntityImportResult {
+  sourceFormat: ImportFormat;
+  /** Entities in document order. */
+  entities: ParsedEntity[];
+  /**
+   * The document's own root entity, when the format has one (the Avro root
+   * record, a JSON Schema root object). Otherwise the root is inferred — see
+   * `pickRootEntity` in multi-asset.ts.
+   */
+  rootEntityName?: string;
+  enums: ParsedEnum[];
+  scalars: ParsedScalar[];
+  /** Package / namespace declared by the document, if any */
+  namespace?: string;
   warnings: string[];
 }
 

@@ -79,5 +79,5 @@ export async function importOpenApiDocumentAction(
     });
   }
 
-  return ok(mapDocumentToImportResult(doc, tspSource));
+  return ok({ ...mapDocumentToImportResult(doc, tspSource), sourceFormat: "openapi" });
 }
