@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shop.example.com/schemas/order.json",
+  "title": "Order",
+  "description": "A customer order.",
+  "type": "object",
+  "required": ["id", "customer", "items"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "status": { "$ref": "#/$defs/OrderStatus" },
+    "customer": { "$ref": "#/$defs/Customer" },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/LineItem" },
+      "minItems": 1
+    },
+    "shipping_address": { "$ref": "#/$defs/Address" },
+    "contact_email": { "$ref": "#/$defs/Email" },
+    "parent_order": { "$ref": "#" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "OrderStatus": {
+      "type": "string",
+      "enum": ["PENDING", "PAID", "SHIPPED"],
+      "description": "Lifecycle of an order."
+    },
+    "Email": { "type": "string", "format": "email" },
+    "Customer": {
+      "type": "object",
+      "description": "Who placed the order.",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "$ref": "#/$defs/Email" },
+        "addresses": { "type": "array", "items": { "$ref": "#/$defs/Address" } }
+      }
+    },
+    "Address": {
+      "type": "object",
+      "properties": {
+        "street": { "type": "string" },
+        "city": { "type": "string" },
+        "country": { "type": "string", "enum": ["US", "DE", "IN"] }
+      }
+    },
+    "LineItem": {
+      "type": "object",
+      "required": ["sku", "quantity"],
+      "properties": {
+        "sku": { "type": "string" },
+        "quantity": { "type": "integer", "minimum": 1 },
+        "status": { "$ref": "#/$defs/OrderStatus" }
+      }
+    }
+  }
+}
