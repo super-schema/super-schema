@@ -35,7 +35,7 @@ import {
   type GovernanceDiagnostic,
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
-import { compileEntity } from "@/lib/compiler/compiler.service";
+import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 
 /**
  * Look up the effective role for the current user.
@@ -1628,42 +1628,10 @@ export async function getTypeSpecSourceAction(entityId: string) {
 
   // Lazy-generate from current field rows — this entity hasn't been opened
   // in the TypeSpec Source tab since this feature shipped.
-  const fields = await prisma.field.findMany({
-    where: { entityId },
-    orderBy: { sortOrder: "asc" },
-  });
+  const model = await loadEntityModel(prisma, entityId);
+  if (!model.success) return { error: model.error.message };
 
-  const model = compileEntity(
-    {
-      id: entity.id,
-      name: entity.name,
-      description: entity.description,
-      status: entity.status,
-      version: entity.version,
-      domainId: entity.domainId,
-      metadata: entity.metadata,
-      domain: entity.domain
-        ? { id: entity.domain.id, name: entity.domain.name, slug: entity.domain.name.toLowerCase().replace(/\s+/g, "-") }
-        : null,
-    },
-    fields.map((f) => ({
-      id: f.id,
-      name: f.name,
-      type: f.type,
-      precision: f.precision,
-      scale: f.scale,
-      nullable: f.nullable,
-      isKey: f.isKey,
-      fieldNumber: f.fieldNumber,
-      description: f.description,
-      classification: f.classification,
-      aliases: f.aliases,
-      decorators: f.decorators,
-      sortOrder: f.sortOrder,
-    }))
-  );
-
-  const source = generateTypeSpec(model);
+  const source = generateTypeSpec(model.data);
   return { success: true as const, source, generated: true };
 }
 
