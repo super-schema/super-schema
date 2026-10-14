@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Zap, Globe, Rocket, FileCode } from "lucide-react";
+import { Zap, Globe, Rocket, FileCode, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
@@ -53,7 +53,12 @@ import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
 import { assetHref } from "@/lib/navigation/asset-href";
-
+import { getPublishPreviewAction, publishEntityAction, listEntityVersionsAction } from "./version-actions";
+import { PublishEntityDialog } from "./components/PublishEntityDialog";
+import { EntityVersionList } from "./components/EntityVersionList";
+import type { PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
+import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
+import type { DraftVersionState } from "@/lib/entity-versioning/draft-label";
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api" | "deployments" | "typespec";
 type RightPanelTab = "field-edit" | "typespec-preview";
@@ -98,6 +103,9 @@ export interface EntityWorkspaceProps {
     /** null for tenant-level entities (no product placement). */
     productName: string | null;
     metadata: Record<string, unknown> | null;
+    /** Draft + Publish state (spec §5.3). Optional so loaders that predate Phase 2a still compile. */
+    hasUnpublishedChanges?: boolean;
+    latestVersionLabel?: string | null;
   };
   fields: FieldData[];
   domainPolicy: Record<string, unknown> | null;
@@ -150,6 +158,34 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   // View tab state
   const [activeTab, setActiveTab] = useState<ViewTab>("editor");
 
+  // Draft + Publish state (spec §5.3). Server props are the source of truth;
+  // saves flip the local copy until the next server render (React "adjust
+  // state when props change" pattern — no effect).
+  const serverVersionKey = `${entity.latestVersionLabel ?? ""}|${entity.hasUnpublishedChanges ?? true}`;
+  const [versionStateKey, setVersionStateKey] = useState(serverVersionKey);
+  const [versionState, setVersionState] = useState<DraftVersionState>({
+    latestVersionLabel: entity.latestVersionLabel ?? null,
+    hasUnpublishedChanges: entity.hasUnpublishedChanges ?? true,
+  });
+  if (versionStateKey !== serverVersionKey) {
+    setVersionStateKey(serverVersionKey);
+    setVersionState({
+      latestVersionLabel: entity.latestVersionLabel ?? null,
+      hasUnpublishedChanges: entity.hasUnpublishedChanges ?? true,
+    });
+  }
+  const markDraftDirty = useCallback(() => {
+    setVersionState((s) => (s.hasUnpublishedChanges ? s : { ...s, hasUnpublishedChanges: true }));
+  }, []);
+
+  // Publish dialog + published versions
+  const [publishedVersions, setPublishedVersions] = useState<EntityVersionSummary[]>([]);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishPreview, setPublishPreview] = useState<PublishAnalysis | null>(null);
+  const [publishLoadError, setPublishLoadError] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
   // Right panel state
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("typespec-preview");
@@ -201,8 +237,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
       toast.error(result.error);
       return;
     }
+    markDraftDirty();
     flashSaved();
-  }, [flashSaved]);
+  }, [flashSaved, markDraftDirty]);
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -253,11 +290,50 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   }, [entity.id]);
 
   const handleOpenHistory = useCallback(async () => {
-    const response = await getVersionHistoryAction(entity.id);
-    if (response.versions) {
-      setVersionHistory(response.versions as VersionSnapshot[]);
+    const [published, legacy] = await Promise.all([
+      listEntityVersionsAction(entity.id),
+      getVersionHistoryAction(entity.id),
+    ]);
+    if (!("error" in published)) {
+      setPublishedVersions(published.versions);
+    }
+    if (legacy.versions) {
+      setVersionHistory(legacy.versions as VersionSnapshot[]);
     }
   }, [entity.id]);
+
+  const handleOpenPublish = useCallback(async () => {
+    if (fieldDirtyRef.current) {
+      const confirmed = window.confirm("You have unsaved field edits. Publish the last saved draft without them?");
+      if (!confirmed) return;
+    }
+    setPublishOpen(true);
+    setPublishPreview(null);
+    setPublishLoadError(null);
+    setPublishError(null);
+    const res = await getPublishPreviewAction(entity.id);
+    if ("error" in res) setPublishLoadError(res.error);
+    else setPublishPreview(res.preview);
+  }, [entity.id]);
+
+  const handleConfirmPublish = useCallback(async (input: PublishInput) => {
+    setIsPublishing(true);
+    setPublishError(null);
+    try {
+      const res = await publishEntityAction(entity.id, input);
+      if ("error" in res) {
+        setPublishError(res.error);
+        return;
+      }
+      setVersionState({ latestVersionLabel: res.version.label, hasUnpublishedChanges: false });
+      setPublishedVersions((prev) => [res.version, ...prev]);
+      setPublishOpen(false);
+      toast.success(`Published ${entity.name} v${res.version.label}`);
+      router.refresh();
+    } finally {
+      setIsPublishing(false);
+    }
+  }, [entity.id, entity.name, router]);
 
   const handleCompare = useCallback(async (versionA: number, versionB: number) => {
     const response = await compareVersionsAction(entity.id, versionA, versionB);
@@ -354,8 +430,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   // Metadata save (tags / owner) — updates the draft only (spec D1).
   const handleMetaSaved = useCallback(() => {
+    markDraftDirty();
     flashSaved();
-  }, [flashSaved]);
+  }, [flashSaved, markDraftDirty]);
 
   // Navigation guard: tab switching
   const handleTabChange = useCallback((tab: ViewTab) => {
@@ -450,6 +527,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         isPending={isPending}
         statusError={statusError}
         showSaved={showSaved}
+        versionState={versionState}
+        onPublish={readOnly_ ? undefined : handleOpenPublish}
         toolbar={
           <EntityToolbar
             onDelete={readOnly_ ? undefined : () => setDeleteConfirmOpen(true)}
@@ -593,19 +672,22 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 onAddField={async (name, type, opts) => {
                   const result = await addFieldAction(entity.id, name, type, opts);
                   setTypeSpecTrigger((n) => n + 1);
+                  if (!result?.error) markDraftDirty();
                   return result;
                 }}
                 onUpdateField={async (id, data) => {
-                  await updateFieldAction(id, data);
+                  const result = await updateFieldAction(id, data);
                   setTypeSpecTrigger((n) => n + 1);
+                  if (!result?.error) markDraftDirty();
                 }}
                 onDeleteField={async (id) => {
-                  await deleteFieldAction(id);
+                  const result = await deleteFieldAction(id);
                   if (selectedFieldId === id) {
                     setSelectedFieldId(null);
                     setRightPanelTab("typespec-preview");
                   }
                   setTypeSpecTrigger((n) => n + 1);
+                  if (!result?.error) markDraftDirty();
                 }}
               />
             </>
@@ -633,54 +715,66 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         )}
 
         {activeTab === "typespec" && (
-          <TypeSpecSourceTab entityId={entity.id} entityName={entity.name} readOnly={readOnly_} />
+          <TypeSpecSourceTab entityId={entity.id} entityName={entity.name} readOnly={readOnly_} onSaved={markDraftDirty} />
         )}
 
         {activeTab === "versions" && (
           <div className="space-y-space-6">
-            <h2 className="text-heading-2 text-foreground">Legacy history (read-only)</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-heading-2 text-foreground">Published Versions</h2>
+              {!readOnly_ && (
+                <Button
+                  variant="outline"
+                  onClick={handleOpenPublish}
+                  className="gap-1.5"
+                  data-testid="versions-publish-button"
+                >
+                  <Upload className="w-4 h-4" />
+                  Publish
+                </Button>
+              )}
+            </div>
+            <EntityVersionList versions={publishedVersions} />
 
-            {/* Diff viewer */}
-            {showDiff && diffResult && (
-              <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
-            )}
-
-            {/* Version list */}
-            {versionHistory.length > 0 ? (
-              <div className="space-y-space-2">
-                {versionHistory.map((v, idx) => (
-                  <div
-                    key={v.version}
-                    className="flex items-center justify-between rounded-lg border border-border/50 px-space-4 py-space-3"
-                  >
-                    <div>
-                      <span className="text-body-small font-medium text-foreground">
-                        v{v.version}
-                      </span>
-                      <span className="text-caption text-muted-foreground ml-space-3">
-                        {formatDateTime(v.timestamp)}
-                      </span>
+            <div className="border-t border-border/50 pt-space-4 space-y-space-3">
+              <h3 className="text-heading-3 text-foreground">Legacy history (read-only)</h3>
+              {showDiff && diffResult && (
+                <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
+              )}
+              {versionHistory.length > 0 ? (
+                <div className="space-y-space-2">
+                  {versionHistory.map((v, idx) => (
+                    <div
+                      key={v.version}
+                      className="flex items-center justify-between rounded-lg border border-border/50 px-space-4 py-space-3"
+                    >
+                      <div>
+                        <span className="text-body-small font-medium text-foreground">
+                          v{v.version}
+                        </span>
+                        <span className="text-caption text-muted-foreground ml-space-3">
+                          {formatDateTime(v.timestamp)}
+                        </span>
+                      </div>
+                      {idx < versionHistory.length - 1 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            handleViewDiff(v.version, versionHistory[idx + 1].version)
+                          }
+                          className="text-caption"
+                        >
+                          View Diff
+                        </Button>
+                      )}
                     </div>
-                    {idx < versionHistory.length - 1 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          handleViewDiff(v.version, versionHistory[idx + 1].version)
-                        }
-                        className="text-caption"
-                      >
-                        View Diff
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-body-small text-muted-foreground">
-                No legacy snapshots.
-              </p>
-            )}
+                  ))}
+                </div>
+              ) : (
+                <p className="text-body-small text-muted-foreground">No legacy snapshots.</p>
+              )}
+            </div>
 
             {/* Change log */}
             <div className="border-t border-border/50 pt-space-4">
@@ -746,6 +840,17 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
           />
         )}
       </div>
+
+      <PublishEntityDialog
+        open={publishOpen}
+        entityName={entity.name}
+        preview={publishPreview}
+        loadError={publishLoadError}
+        isPublishing={isPublishing}
+        publishError={publishError}
+        onOpenChange={setPublishOpen}
+        onConfirm={handleConfirmPublish}
+      />
 
       {/* Type Mapping Override Dialog */}
       <TypeMappingOverrideDialog

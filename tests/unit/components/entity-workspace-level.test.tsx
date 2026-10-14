@@ -16,6 +16,11 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/recent-entities", () => ({ trackRecentEntity: mocks.trackRecentEntity }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions", () => ({}));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/version-actions", () => ({
+  getPublishPreviewAction: vi.fn(),
+  publishEntityAction: vi.fn(),
+  listEntityVersionsAction: vi.fn(),
+}));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({ deleteEntityAction: vi.fn() }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/field-editor", () => ({ FieldEditor: () => <div>field-editor</div> }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab", () => ({ SchemasTab: () => null }));
@@ -108,5 +113,37 @@ describe("EntityWorkspace level", () => {
     expect(crumbs.getByRole("link", { name: "Domains" }).getAttribute("href")).toBe("/schemas");
     expect(crumbs.getByRole("link", { name: "Payments" }).getAttribute("href")).toBe("/schemas/payments");
     expect(crumbs.getByRole("link", { name: "Checkout" }).getAttribute("href")).toBe("/schemas/payments/checkout");
+  });
+});
+
+describe("EntityWorkspace draft + publish header", () => {
+  const productEntity = props({}).entity;
+
+  it("shows 'Never published' and a Publish button for an unpublished draft", () => {
+    render(<EntityWorkspace {...props({})} />);
+    expect(screen.getByTestId("entity-version-state").textContent).toBe("Never published");
+    expect(screen.getByTestId("publish-entity-button")).toBeDefined();
+  });
+
+  it("shows the latest version with unpublished changes from the loader", () => {
+    render(
+      <EntityWorkspace {...props({ entity: { ...productEntity, latestVersionLabel: "2.1", hasUnpublishedChanges: true } })} />
+    );
+    expect(screen.getByTestId("entity-version-state").textContent).toBe("Draft · unpublished changes · latest v2.1");
+  });
+
+  it("offers Publish on an Enterprise entity too", () => {
+    render(<EntityWorkspace {...TENANT_PROPS} />);
+    expect(screen.getByTestId("publish-entity-button")).toBeDefined();
+  });
+
+  it("hides Publish for a retired entity", () => {
+    render(
+      <EntityWorkspace
+        {...props({ entity: { ...productEntity, status: "RETIRED", latestVersionLabel: "1.0", hasUnpublishedChanges: false } })}
+      />
+    );
+    expect(screen.getByTestId("entity-version-state").textContent).toBe("Published · v1.0");
+    expect(screen.queryByTestId("publish-entity-button")).toBeNull();
   });
 });

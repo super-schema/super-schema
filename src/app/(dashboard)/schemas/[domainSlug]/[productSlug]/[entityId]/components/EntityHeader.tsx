@@ -3,14 +3,14 @@
 import type React from "react";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ChevronRight, Check } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ChevronRight, Check, Upload } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
 import { RetirementBanner } from "@/components/custom/RetirementBanner";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { levelLabel } from "@/lib/levels";
+import { describeDraftState, type DraftVersionState } from "@/lib/entity-versioning/draft-label";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 
@@ -48,6 +48,10 @@ interface EntityHeaderProps {
   statusError: string | null;
   toolbar?: React.ReactNode;
   showSaved?: boolean;
+  /** Draft + Publish state (spec §5.3). */
+  versionState: DraftVersionState;
+  /** Opens the publish dialog; omit for read-only entities. */
+  onPublish?: () => void;
 }
 
 export function EntityHeader({
@@ -59,6 +63,8 @@ export function EntityHeader({
   statusError,
   toolbar,
   showSaved = false,
+  versionState,
+  onPublish,
 }: EntityHeaderProps) {
   const currentStatus = getStatusOption(entity.status);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -200,13 +206,16 @@ export function EntityHeader({
           )}
         </div>
 
-        <Badge variant="secondary">v{(() => {
-          const meta = (entity.metadata ?? {}) as Record<string, unknown>;
-          const sv = meta.semanticVersion as { major?: number; minor?: number } | undefined;
-          const major = sv?.major ?? entity.version;
-          const minor = sv?.minor ?? 0;
-          return `${major}.${minor}`;
-        })()}</Badge>
+        <span
+          data-testid="entity-version-state"
+          className={`rounded-md border px-2 py-0.5 text-caption ${
+            versionState.hasUnpublishedChanges && versionState.latestVersionLabel
+              ? "border-warning/50 text-warning"
+              : "border-border text-muted-foreground"
+          }`}
+        >
+          {describeDraftState(versionState)}
+        </span>
 
         {/* Saved flash indicator */}
         {showSaved && (
@@ -216,7 +225,15 @@ export function EntityHeader({
         )}
         </div>
 
-        {toolbar}
+        <div className="flex items-center gap-space-2">
+          {onPublish && (
+            <Button size="sm" onClick={onPublish} className="gap-1.5" data-testid="publish-entity-button">
+              <Upload className="w-3.5 h-3.5" />
+              Publish
+            </Button>
+          )}
+          {toolbar}
+        </div>
       </div>
 
       {/* Status transition error */}
