@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { EntityWorkspace } from "./entity-workspace";
-import { domainLabel, productSegment } from "@/lib/entity-placement";
+import { loadEntityWorkspace } from "./load-entity-workspace";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string; entityId: string }>;
@@ -9,110 +10,50 @@ interface Props {
 
 export default async function EntityDetailPage({ params }: Props) {
   const { domainSlug, productSlug, entityId } = await params;
+  const activeTenantId = await getActiveTenantId();
 
-  // Look up entity by slug within its product (human-readable URL),
-  // fall back to cuid for backward-compatible / legacy links.
-  const entityInclude = {
-    domain: true,
-    product: { select: { slug: true, name: true } },
-    fields: { orderBy: { sortOrder: "asc" as const } },
-    services: {
-      include: {
-        operations: {
-          include: { parameters: true, responses: true },
-          orderBy: { createdAt: "asc" as const },
-        },
+  // Resolve the URL's domain and product (tenant-scoped, then tenant-agnostic to
+  // tolerate a stale tenant cookie), then load the entity within that product.
+  const domain =
+    (await prisma.domain.findFirst({ where: { slug: domainSlug, tenantId: activeTenantId } })) ??
+    (await prisma.domain.findFirst({ where: { slug: domainSlug } }));
+  const product = domain
+    ? await prisma.product.findFirst({
+        where: { slug: productSlug, domainId: domain.id },
+        select: { id: true },
+      })
+    : null;
+
+  let data =
+    domain && product
+      ? await loadEntityWorkspace({
+          slugOrId: entityId,
+          productId: product.id,
+          tenantId: domain.tenantId,
+        })
+      : null;
+
+  // Legacy links: an id (or slug) link under a stale domain/product segment still
+  // resolves to the entity's real placement, so old URLs keep working.
+  if (!data) {
+    const placed = await prisma.entity.findFirst({
+      where: {
+        OR: [{ id: entityId }, ...(domain ? [{ slug: entityId, domainId: domain.id }] : [])],
       },
-    },
-  };
-
-  let entity = await prisma.entity.findFirst({
-    where: {
-      slug: entityId,
-      product: { slug: productSlug, domain: { slug: domainSlug } },
-    },
-    include: entityInclude,
-  });
-
-  if (!entity) {
-    entity = await prisma.entity.findFirst({
-      where: { slug: entityId, domain: { slug: domainSlug } },
-      include: entityInclude,
+      select: { productId: true, tenantId: true },
     });
+    if (placed) {
+      data = await loadEntityWorkspace({
+        slugOrId: entityId,
+        productId: placed.productId,
+        tenantId: placed.tenantId,
+      });
+    }
   }
 
-  if (!entity) {
-    entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      include: entityInclude,
-    });
-  }
-
-  if (!entity) {
+  if (!data) {
     notFound();
   }
 
-  // Tenant-level entities have no domain and therefore no domain policy.
-  const domainPolicy =
-    (entity.domain as { policyTemplate?: Record<string, unknown> } | null)
-      ?.policyTemplate ?? null;
-
-  return (
-    <EntityWorkspace
-      entity={{
-        id: entity.id,
-        name: entity.name,
-        slug: entity.slug,
-        description: entity.description,
-        status: entity.status,
-        version: entity.version,
-        domainId: entity.domainId,
-        domainName: domainLabel(entity.domain),
-        domainSlug,
-        productSlug: productSegment(entity.product),
-        productName: entity.product?.name ?? null,
-        metadata: entity.metadata as Record<string, unknown> | null,
-      }}
-      domainPolicy={domainPolicy as Record<string, unknown> | null}
-      fields={entity.fields.map((f) => ({
-        id: f.id,
-        slug: f.slug,
-        name: f.name,
-        type: f.type,
-        precision: f.precision,
-        scale: f.scale,
-        nullable: f.nullable,
-        isKey: f.isKey,
-        fieldNumber: f.fieldNumber,
-        description: f.description,
-        classification: f.classification,
-        aliases: f.aliases,
-        decorators: f.decorators as Record<string, unknown>,
-        sortOrder: f.sortOrder,
-      }))}
-      apiServiceId={entity.services[0]?.id ?? null}
-      apiOperations={entity.services.flatMap((service) =>
-        service.operations.map((op) => ({
-          id: op.id,
-          serviceId: service.id,
-          name: op.name,
-          httpMethod: op.httpMethod,
-          httpPath: op.httpPath,
-          description: op.description,
-          parameters: op.parameters.map((p) => ({
-            name: p.name,
-            type: p.type,
-            location: p.location,
-            required: p.required,
-            description: p.description,
-          })),
-          responses: op.responses.map((r) => ({
-            statusCode: r.statusCode,
-            type: r.type,
-            description: r.description,
-          })),
-        }))
-      )}
-    />
-  );
+  return <EntityWorkspace {...data.props} />;
 }

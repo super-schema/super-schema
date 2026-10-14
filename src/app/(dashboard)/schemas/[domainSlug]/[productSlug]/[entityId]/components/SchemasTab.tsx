@@ -63,7 +63,7 @@ export interface SchemasTabProps {
     id: string;
     name: string;
     slug: string;
-    domainSlug: string;
+    domainSlug: string | null;
     version: number;
     metadata: Record<string, unknown> | null;
   };

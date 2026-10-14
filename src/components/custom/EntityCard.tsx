@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatDateOnly } from "@/lib/date-format";
+import { assetHref } from "@/lib/navigation/asset-href";
 interface EntityCardProps {
   id: string;
   name: string;
@@ -13,8 +14,10 @@ interface EntityCardProps {
   version: number;
   fieldCount: number;
   domainName: string;
-  domainSlug: string;
-  productSlug: string;
+  /** null for tenant-level (Enterprise) entities. */
+  domainSlug: string | null;
+  /** null for tenant-level (Enterprise) entities. */
+  productSlug: string | null;
   updatedAt: Date;
   classifications?: {
     NEVER_STORED: number;
@@ -61,7 +64,7 @@ export function EntityCard({
         </button>
       )}
 
-      <Link href={`/schemas/${domainSlug}/${productSlug}/${slug}`} className="block">
+      <Link href={assetHref({ kind: "entity", slug, domainSlug, productSlug })} className="block">
         {/* Header */}
         <div className="flex items-start justify-between mb-space-2 pr-space-8">
           <h3 className="text-heading-3 text-foreground font-mono group-hover:text-primary transition-colors">

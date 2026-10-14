@@ -70,7 +70,8 @@ export interface InheritedDataTypes {
 }
 
 interface DomainTypesTabProps {
-  domainId: string;
+  /** null at the Enterprise level, where there is no domain; `target` carries the scope. */
+  domainId: string | null;
   /** Level the "New ..." forms create at (domain page, product page, ...). */
   target: ScopeTarget;
   sharedEnums: SharedEnumData[];

@@ -51,18 +51,14 @@ vi.mock("next/link", () => ({
 
 vi.mock("@/components/custom/EntityCreationWizard", () => ({
   EntityCreationWizard: ({
-    domainId,
-    productId,
-    productSlug,
+    target,
   }: {
-    domainId: string;
-    productId: string;
-    productSlug: string;
+    target: { domainId: string; productId: string; productSlug: string };
   }) =>
     React.createElement("div", {
-      "data-domain-id": domainId,
-      "data-product-id": productId,
-      "data-product-slug": productSlug,
+      "data-domain-id": target.domainId,
+      "data-product-id": target.productId,
+      "data-product-slug": target.productSlug,
     }),
 }));
 
@@ -110,4 +106,37 @@ describe("NewEntityPage", () => {
       where: { slug: "default", domainId: "domain-1" },
     });
   });
+
+  it("hands the wizard a PRODUCT target carrying the domain and product placement", async () => {
+    const page = await NewEntityPage({
+      params: Promise.resolve({
+        domainSlug: "cascade-test-1782425718902",
+        productSlug: "default",
+      }),
+    });
+
+    const wizard = findElement(page, "EntityCreationWizard");
+    expect(wizard?.props.target).toEqual({
+      level: "PRODUCT",
+      productId: "product-1",
+      domainId: "domain-1",
+      domainName: "cascade-test-1782425718902",
+      domainSlug: "cascade-test-1782425718902",
+      productSlug: "default",
+    });
+  });
 });
+
+function findElement(
+  node: React.ReactNode,
+  name: string
+): React.ReactElement<{ target: unknown }> | null {
+  if (!React.isValidElement(node)) return null;
+  const element = node as React.ReactElement<{ target: unknown; children?: React.ReactNode }>;
+  if (typeof element.type === "function" && element.type.name === name) return element;
+  for (const child of React.Children.toArray(element.props.children)) {
+    const found = findElement(child, name);
+    if (found) return found;
+  }
+  return null;
+}

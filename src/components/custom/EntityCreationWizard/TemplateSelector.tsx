@@ -11,6 +11,8 @@ export type CreationMethod =
 
 interface TemplateSelectorProps {
   onSelect: (method: CreationMethod) => void;
+  /** Methods that do not apply to the current target (e.g. AI generation needs a domain). */
+  hiddenMethods?: readonly CreationMethod[];
 }
 
 const METHODS = [
@@ -56,10 +58,10 @@ const METHODS = [
   },
 ] as const;
 
-export function TemplateSelector({ onSelect }: TemplateSelectorProps) {
+export function TemplateSelector({ onSelect, hiddenMethods = [] }: TemplateSelectorProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-space-4">
-      {METHODS.map((method) => {
+      {METHODS.filter((method) => !hiddenMethods.includes(method.id)).map((method) => {
         const Icon = method.icon;
         return (
           <button

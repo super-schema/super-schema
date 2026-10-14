@@ -7,6 +7,8 @@ import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
+import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
+import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
@@ -16,8 +18,6 @@ import type { ServiceError } from "@/types/result";
 
 const STALE_SESSION_IMPORT_ERROR =
   "Your session is stale. Sign out and sign in again, then retry the import.";
-const STALE_SESSION_ENTITY_ERROR =
-  "Your session is stale. Sign out and sign in again, then create the entity.";
 
 /**
  * `validateScope("api", …)` guarantees an API carries a domain; this narrows the
@@ -45,32 +45,15 @@ async function resolveEntityApiTarget(
   return { target: { level: "PRODUCT", productId: entity.productId } };
 }
 
-async function resolveCurrentUserId(user: { id?: string | null; email?: string | null }) {
-  if (!user.id) {
-    throw new AuditUserMissingError("unknown");
-  }
+const DATA_TYPE_TARGET_REQUIRED = "A domain or scope target is required";
 
-  const userById = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: { id: true },
-  });
-
-  if (userById) {
-    return userById.id;
-  }
-
-  if (user.email) {
-    const userByEmail = await prisma.user.findUnique({
-      where: { email: user.email },
-      select: { id: true },
-    });
-
-    if (userByEmail) {
-      return userByEmail.id;
-    }
-  }
-
-  throw new AuditUserMissingError(user.id);
+/**
+ * Data types are created at an explicit `target`; the original call shape passes
+ * only a domain. Enterprise (TENANT) callers have no domain and always pass a target.
+ */
+function dataTypeTarget(domainId: string | null, target: ScopeTarget | undefined): ScopeTarget | null {
+  if (target) return target;
+  return domainId ? { level: "DOMAIN", domainId } : null;
 }
 
 export interface CreateFieldInput {
@@ -346,16 +329,18 @@ export async function deleteEntityAction(entityId: string) {
 // ---------------------------------------------------------------------------
 
 export async function createSharedEnumAction(
-  domainId: string,
+  domainId: string | null,
   data: { name: string; values: string[]; description?: string },
-  target: ScopeTarget = { level: "DOMAIN", domainId }
+  target?: ScopeTarget
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const scopeTarget = dataTypeTarget(domainId, target);
+  if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
   try {
     const result = await createInScope(prisma, {
       kind: "dataType",
-      target,
+      target: scopeTarget,
       name: data.name,
       write: (tx, scope) =>
         tx.sharedEnum.create({
@@ -403,16 +388,18 @@ export async function updateSharedEnumAction(
 // ---------------------------------------------------------------------------
 
 export async function createCustomScalarAction(
-  domainId: string,
+  domainId: string | null,
   data: { name: string; baseType: string; format?: string; pattern?: string; description?: string },
-  target: ScopeTarget = { level: "DOMAIN", domainId }
+  target?: ScopeTarget
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const scopeTarget = dataTypeTarget(domainId, target);
+  if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
   try {
     const result = await createInScope(prisma, {
       kind: "dataType",
-      target,
+      target: scopeTarget,
       name: data.name,
       write: (tx, scope) =>
         tx.customScalar.create({
@@ -467,16 +454,18 @@ export async function updateCustomScalarAction(
 // ---------------------------------------------------------------------------
 
 export async function createUnionTypeAction(
-  domainId: string,
+  domainId: string | null,
   data: { name: string; memberTypes: string[]; description?: string },
-  target: ScopeTarget = { level: "DOMAIN", domainId }
+  target?: ScopeTarget
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const scopeTarget = dataTypeTarget(domainId, target);
+  if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
   try {
     const result = await createInScope(prisma, {
       kind: "dataType",
-      target,
+      target: scopeTarget,
       name: data.name,
       write: (tx, scope) =>
         tx.unionType.create({
@@ -854,28 +843,6 @@ function sortByInheritance<T extends { name: string; extends?: string }>(items: 
   }
 
   return sorted;
-}
-
-function mapFieldCreateInput(
-  field: CreateFieldInput,
-  index: number
-): Prisma.FieldCreateWithoutEntityInput {
-  return {
-    name: field.name,
-    slug: generateSlug(field.name),
-    type: field.type,
-    nullable: field.nullable,
-    isKey: field.isKey,
-    description: field.description,
-    classification: field.classification,
-    precision: field.precision,
-    scale: field.scale,
-    sortOrder: index,
-    ...(field.aliases?.length ? { aliases: field.aliases } : {}),
-    ...(field.decorators && Object.keys(field.decorators).length > 0
-      ? { decorators: field.decorators as Prisma.InputJsonValue }
-      : {}),
-  };
 }
 
 function mapModelFieldCreateInput(

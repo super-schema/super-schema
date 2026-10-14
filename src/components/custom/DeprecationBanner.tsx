@@ -5,7 +5,7 @@ import { AlertTriangle } from "lucide-react";
 
 interface DeprecationBannerProps {
   metadata: Record<string, unknown> | null;
-  domainSlug: string;
+  domainSlug: string | null;
   replacementEntityName?: string;
   replacementEntityId?: string;
 }

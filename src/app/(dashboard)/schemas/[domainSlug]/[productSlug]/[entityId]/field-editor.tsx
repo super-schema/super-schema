@@ -26,6 +26,7 @@ import {
   getFieldCompleteness,
 } from "@/lib/validation/field-completeness";
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
+import { assetHref } from "@/lib/navigation/asset-href";
 import {
   getFieldNameSuggestions,
   type AutocompleteSuggestion,
@@ -54,8 +55,10 @@ interface FieldData {
 interface FieldEditorProps {
   entityId: string;
   entitySlug?: string;
-  domainSlug: string;
-  productSlug: string;
+  /** null for tenant-level (Enterprise) entities. */
+  domainSlug: string | null;
+  /** null for tenant-level (Enterprise) entities. */
+  productSlug: string | null;
   fields: FieldData[];
   domainFields?: DomainField[];
   domainPolicy: Record<string, unknown> | null;
@@ -156,7 +159,7 @@ export function FieldEditor({
   }, [fields, searchQuery, typeFilter, classificationFilter, completenessFilter]);
 
   function navigateToFieldStudio(fieldId: string) {
-    router.push(`/schemas/${domainSlug}/${productSlug}/${entitySlug || entityId}/fields/${fieldId}`);
+    router.push(assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId, domainSlug, productSlug }));
   }
 
   // Listen for "/" slash command from global keyboard shortcuts
@@ -233,7 +236,7 @@ export function FieldEditor({
       if (fieldSlugOrId) {
         // Use window.location for hard navigation — router.push gets killed by
         // revalidatePath re-rendering the parent server component
-        window.location.href = `/schemas/${domainSlug}/${productSlug}/${entitySlug || entityId}/fields/${fieldSlugOrId}`;
+        window.location.href = assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId: fieldSlugOrId, domainSlug, productSlug });
         return; // Don't reset isCreating — we're navigating away
       }
     } catch {

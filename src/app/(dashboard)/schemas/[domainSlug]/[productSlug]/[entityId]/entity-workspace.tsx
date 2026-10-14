@@ -54,6 +54,7 @@ import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
 import { classifyChangeLevel } from "@/lib/validation/change-level";
+import { assetHref } from "@/lib/navigation/asset-href";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api" | "deployments" | "typespec";
@@ -76,7 +77,12 @@ interface FieldData {
   sortOrder: number;
 }
 
-interface EntityWorkspaceProps {
+export interface EntityWorkspaceProps {
+  /**
+   * Where the entity lives. TENANT (Enterprise) entities have no domain or
+   * product, so features that need one (the APIs tab) are hidden.
+   */
+  level: "TENANT" | "PRODUCT";
   entity: {
     id: string;
     name: string;
@@ -87,8 +93,10 @@ interface EntityWorkspaceProps {
     /** null for tenant-level entities (no domain placement). */
     domainId: string | null;
     domainName: string;
-    domainSlug: string;
-    productSlug: string;
+    /** null for tenant-level entities (no domain placement). */
+    domainSlug: string | null;
+    /** null for tenant-level entities (no product placement). */
+    productSlug: string | null;
     /** null for tenant-level entities (no product placement). */
     productName: string | null;
     metadata: Record<string, unknown> | null;
@@ -99,7 +107,7 @@ interface EntityWorkspaceProps {
   apiOperations: ApiOperationData[];
 }
 
-export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, apiOperations }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -408,7 +416,11 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
         toast.error(result.error);
       } else {
         toast.success(`"${entity.name}" deleted`);
-        router.push(`/schemas/${entity.domainSlug}/${entity.productSlug}`);
+        router.push(
+          entity.domainSlug && entity.productSlug
+            ? assetHref({ kind: "product", domainSlug: entity.domainSlug, productSlug: entity.productSlug })
+            : assetHref({ kind: "enterprise" })
+        );
       }
     } catch {
       toast.error("Failed to delete entity");
@@ -515,6 +527,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
     )}
     <div className="animate-auth-fade-up">
       <EntityHeader
+        level={level}
         entity={entity}
         onStatusChange={handleStatusChange}
         readOnly={readOnly_}
@@ -601,18 +614,20 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
           <Zap className="w-3 h-3" />
           Schemas
         </button>
-        <button
-          onClick={() => handleTabChange("api")}
-          className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "api"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-primary"
-          }`}
-          data-testid="tab-api"
-        >
-          <Globe className="w-3 h-3" />
-          API
-        </button>
+        {level === "PRODUCT" && (
+          <button
+            onClick={() => handleTabChange("api")}
+            className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === "api"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-primary"
+            }`}
+            data-testid="tab-api"
+          >
+            <Globe className="w-3 h-3" />
+            API
+          </button>
+        )}
         <button
           onClick={() => handleTabChange("deployments")}
           className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
@@ -825,7 +840,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
           </div>
         )}
 
-        {activeTab === "api" && (
+        {level === "PRODUCT" && activeTab === "api" && (
           <ApiTab
             entityId={entity.id}
             entityName={entity.name}

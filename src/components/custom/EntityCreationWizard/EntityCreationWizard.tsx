@@ -10,6 +10,7 @@ import { ImportUploader } from "./ImportUploader";
 import { VisualSchemaBuilder } from "@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder";
 import { FieldPreview, type PreviewField } from "./FieldPreview";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
+import { createTenantEntityAction } from "@/app/(dashboard)/schemas/enterprise/actions";
 import type { StandardTemplate } from "@/lib/schema-standards";
 import { importSchema } from "@/services/import.service";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
@@ -22,6 +23,8 @@ import {
 } from "@/components/custom/ImportDialog/TypeSpecImportReviewScreen";
 import { toast } from "sonner";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import { assetHref } from "@/lib/navigation/asset-href";
+import { levelLabel } from "@/lib/levels";
 
 // ── State Machine ────────────────────────────────────────────────────
 
@@ -45,12 +48,27 @@ const INITIAL_STATE: WizardState = {
 
 // ── Props ────────────────────────────────────────────────────────────
 
+/**
+ * Where the wizard creates the entity. A PRODUCT target is a superset of the
+ * `ScopeTarget` shape (it also carries the domain/product names and slugs the
+ * wizard shows and links to); a TENANT target creates an Enterprise entity.
+ */
+export type EntityWizardTarget =
+  | { level: "TENANT"; tenantId: string }
+  | {
+      level: "PRODUCT";
+      productId: string;
+      domainId: string;
+      domainName: string;
+      domainSlug: string;
+      productSlug: string;
+    };
+
+/** Methods that need a domain: AI generation reads the domain's entities for context. */
+const TENANT_HIDDEN_METHODS: readonly CreationMethod[] = ["natural-language"];
+
 interface EntityCreationWizardProps {
-  domainId: string;
-  domainName: string;
-  domainSlug: string;
-  productId: string;
-  productSlug: string;
+  target: EntityWizardTarget;
   isAiConfigured?: boolean;
   /** Existing entities in the domain, offered as $ref targets in the visual builder. */
   referenceTargets?: { id?: string; name: string }[];
@@ -62,15 +80,13 @@ function makeTempId() {
 }
 
 export function EntityCreationWizard({
-  domainId,
-  domainName,
-  domainSlug,
-  productId,
-  productSlug,
+  target,
   isAiConfigured = false,
   referenceTargets = [],
 }: EntityCreationWizardProps) {
   const router = useRouter();
+  const product = target.level === "PRODUCT" ? target : null;
+  const scopeName = product ? product.domainName : levelLabel("TENANT");
   const invalidateDomainsTree = useInvalidateDomainsTree();
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
   const [isLoading, setIsLoading] = useState(false);
@@ -132,6 +148,7 @@ export function EntityCreationWizard({
   // ── NL handler ────────────────────────────────────────────────────
 
   async function handleNaturalLanguageSubmit(description: string) {
+    if (!product) return;
     setIsLoading(true);
     setError(null);
 
@@ -141,7 +158,7 @@ export function EntityCreationWizard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           description,
-          domainId,
+          domainId: product.domainId,
         }),
       });
 
@@ -198,6 +215,12 @@ export function EntityCreationWizard({
 
         // TypeSpec: compile with the real @typespec/compiler (server action).
         if (format === "typespec") {
+          if (!product) {
+            setError(
+              "TypeSpec documents can define several assets and need a domain. Import this one from a domain or product page."
+            );
+            return;
+          }
           const tsResult = await importTypeSpecDocumentAction(content);
           if (!tsResult.success) {
             setError(tsResult.error.message);
@@ -238,7 +261,7 @@ export function EntityCreationWizard({
 
   // TypeSpec multi-model confirm handler
   async function handleTypeSpecConfirm(selection: TypeSpecImportSelection) {
-    if (!typeSpecResult) return;
+    if (!typeSpecResult || !product) return;
     setIsCreating(true);
     setError(null);
 
@@ -296,8 +319,8 @@ export function EntityCreationWizard({
       );
 
       const result = await createDomainAssetsFromImportAction({
-        domainId,
-        productId,
+        domainId: product.domainId,
+        productId: product.productId,
         namespace: typeSpecResult.namespace,
         models,
         entities,
@@ -342,7 +365,9 @@ export function EntityCreationWizard({
         }
       }
 
-      router.push(`/schemas/${domainSlug}/${productSlug}`);
+      router.push(
+        assetHref({ kind: "product", domainSlug: product.domainSlug, productSlug: product.productSlug })
+      );
       router.refresh();
     } catch {
       toast.error("Failed to import TypeSpec document");
@@ -382,15 +407,30 @@ export function EntityCreationWizard({
       };
     });
 
-    const result = await createEntityWithFieldsAction(
-      domainId,
-      {
-        name: state.entityName.trim(),
-        description: state.entityDescription,
-        fields,
-      },
-      productId
-    );
+    const entityInput = {
+      name: state.entityName.trim(),
+      description: state.entityDescription,
+      fields,
+    };
+
+    // Enterprise entities go straight to their own page; product entities return
+    // to the product they were created in.
+    if (!product) {
+      const result = await createTenantEntityAction(entityInput);
+      setIsCreating(false);
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      invalidateDomainsTree();
+      router.push(
+        assetHref({ kind: "entity", slug: result.entity.slug, domainSlug: null, productSlug: null })
+      );
+      router.refresh();
+      return;
+    }
+
+    const result = await createEntityWithFieldsAction(product.domainId, entityInput, product.productId);
 
     setIsCreating(false);
 
@@ -398,8 +438,10 @@ export function EntityCreationWizard({
       setError(result.error);
     } else {
       invalidateDomainsTree();
-      // Navigate back to domain page
-      router.push(`/schemas/${domainSlug}/${productSlug}`);
+      // Navigate back to the product page
+      router.push(
+        assetHref({ kind: "product", domainSlug: product.domainSlug, productSlug: product.productSlug })
+      );
       router.refresh();
     }
   }
@@ -455,9 +497,12 @@ export function EntityCreationWizard({
               Create New Entity
             </h2>
             <p className="text-body text-muted-foreground mb-space-6">
-              Choose how you want to create your entity in <strong>{domainName}</strong>.
+              Choose how you want to create your entity in <strong>{scopeName}</strong>.
             </p>
-            <TemplateSelector onSelect={goToConfigure} />
+            <TemplateSelector
+              onSelect={goToConfigure}
+              hiddenMethods={product ? [] : TENANT_HIDDEN_METHODS}
+            />
           </div>
         )}
 
@@ -540,10 +585,10 @@ export function EntityCreationWizard({
           />
         )}
 
-        {state.step === "typespec-review" && typeSpecResult && (
+        {state.step === "typespec-review" && typeSpecResult && product && (
           <TypeSpecImportReviewScreen
             importResult={typeSpecResult}
-            domains={[{ id: domainId, name: domainName }]}
+            domains={[{ id: product.domainId, name: product.domainName }]}
             suggestedDomainName={typeSpecResult.namespace}
             onConfirm={handleTypeSpecConfirm}
             onCancel={goToSelectMethod}

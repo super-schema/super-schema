@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
 import { RetirementBanner } from "@/components/custom/RetirementBanner";
+import { assetHref } from "@/lib/navigation/asset-href";
+import { levelLabel } from "@/lib/levels";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 
@@ -24,6 +26,8 @@ function getStatusOption(status: string) {
 }
 
 interface EntityHeaderProps {
+  /** TENANT entities get an "Enterprise › <Entity>" breadcrumb. */
+  level: "TENANT" | "PRODUCT";
   entity: {
     id: string;
     name: string;
@@ -31,9 +35,10 @@ interface EntityHeaderProps {
     status: string;
     version: number;
     domainName: string;
-    domainSlug: string;
-    productSlug: string;
-    /** null for tenant-level entities — the breadcrumb omits the product crumb. */
+    /** null for tenant-level entities. */
+    domainSlug: string | null;
+    /** null for tenant-level entities. */
+    productSlug: string | null;
     productName: string | null;
     metadata: Record<string, unknown> | null;
   };
@@ -46,6 +51,7 @@ interface EntityHeaderProps {
 }
 
 export function EntityHeader({
+  level,
   entity,
   onStatusChange,
   readOnly,
@@ -113,26 +119,41 @@ export function EntityHeader({
   return (
     <>
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
-        <Link href="/schemas" className="hover:text-foreground transition-colors">
-          Domains
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <Link
-          href={`/schemas/${entity.domainSlug}`}
-          className="hover:text-foreground transition-colors"
-        >
-          {entity.domainName}
-        </Link>
-        {entity.productName !== null && (
+      <nav aria-label="Breadcrumb" className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
+        {level === "TENANT" || !entity.domainSlug ? (
+          <Link
+            href={assetHref({ kind: "enterprise" })}
+            className="hover:text-foreground transition-colors"
+          >
+            {levelLabel("TENANT")}
+          </Link>
+        ) : (
           <>
+            <Link href="/schemas" className="hover:text-foreground transition-colors">
+              Domains
+            </Link>
             <ChevronRight className="w-3 h-3" />
             <Link
-              href={`/schemas/${entity.domainSlug}/${entity.productSlug}`}
+              href={assetHref({ kind: "domain", domainSlug: entity.domainSlug })}
               className="hover:text-foreground transition-colors"
             >
-              {entity.productName}
+              {entity.domainName}
             </Link>
+            {entity.productSlug && entity.productName !== null && (
+              <>
+                <ChevronRight className="w-3 h-3" />
+                <Link
+                  href={assetHref({
+                    kind: "product",
+                    domainSlug: entity.domainSlug,
+                    productSlug: entity.productSlug,
+                  })}
+                  className="hover:text-foreground transition-colors"
+                >
+                  {entity.productName}
+                </Link>
+              </>
+            )}
           </>
         )}
         <ChevronRight className="w-3 h-3" />

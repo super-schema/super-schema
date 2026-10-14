@@ -65,11 +65,14 @@ export default async function NewEntityPage({ params }: Props) {
       </nav>
 
       <EntityCreationWizard
-        domainId={domain.id}
-        domainName={domain.name}
-        domainSlug={domainSlug}
-        productId={product.id}
-        productSlug={productSlug}
+        target={{
+          level: "PRODUCT",
+          productId: product.id,
+          domainId: domain.id,
+          domainName: domain.name,
+          domainSlug,
+          productSlug,
+        }}
         isAiConfigured={aiConfigured}
         referenceTargets={referenceTargets}
       />
