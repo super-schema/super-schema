@@ -422,6 +422,27 @@ describe("schema import actions", () => {
       );
     });
 
+    it("skips an entity with a reserved URL segment slug (e.g., Specs) and creates others", async () => {
+      mockTx.entity.findFirst.mockResolvedValue(null);
+
+      const result = await createDomainAssetsFromImportAction({
+        ...emptyPayload,
+        entities: [
+          { name: "Specs", fields: [] }, // reserved slug "specs"
+          { name: "Order", fields: [] }, // OK
+        ],
+      });
+
+      expect(result.errors).toEqual([
+        expect.stringContaining("specs"),
+      ]);
+      expect(result.entitiesCreated).toBe(1);
+      expect(mockTx.entity.create).toHaveBeenCalledTimes(1);
+      expect(mockTx.entity.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ name: "Order" }) })
+      );
+    });
+
     it("reports a cross-kind or cross-level conflict with the registry message and keeps importing", async () => {
       mockAssertNameAvailable.mockImplementation(async (_tx, candidate) =>
         candidate.name === "Customer"

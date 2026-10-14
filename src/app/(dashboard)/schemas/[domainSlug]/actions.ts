@@ -102,12 +102,13 @@ async function createProductEntity(params: {
 }): Promise<{ entityId: string } | { error: string }> {
   const { userId, domainId, description, fields } = params;
   const name = params.name.trim();
-  const productId = params.productId ?? (await ensureDefaultProductId(domainId));
 
   const reservedMsg = reservedEntitySlugMessage(name);
   if (reservedMsg) {
     return { error: reservedMsg };
   }
+
+  const productId = params.productId ?? (await ensureDefaultProductId(domainId));
 
   try {
     const entity = await withAudit({

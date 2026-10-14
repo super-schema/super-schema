@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() => ({
+const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockEnsureDefaultProductId } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockPrisma: {
     user: {
@@ -20,6 +20,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() 
     },
   },
   mockAssertNameAvailable: vi.fn(),
+  mockEnsureDefaultProductId: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -32,6 +33,10 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
+}));
+
+vi.mock("@/lib/org-defaults", () => ({
+  ensureDefaultProductId: mockEnsureDefaultProductId,
 }));
 
 vi.mock("@/services/name-registry.service", () => ({
@@ -58,6 +63,7 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
     mockPrisma.product.create.mockResolvedValue({ id: "prd-default" });
     mockAssertNameAvailable.mockResolvedValue({ success: true, data: undefined });
     mockTx.entity.create.mockResolvedValue({ id: "entity-1" });
+    mockEnsureDefaultProductId.mockResolvedValue("prd-default");
   });
 
   it("uses the current user row when the session id is stale but email still matches", async () => {
@@ -172,6 +178,7 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
       expect(result).toEqual({
         error: expect.stringContaining("events"),
       });
+      expect(mockEnsureDefaultProductId).not.toHaveBeenCalled();
       expect(mockTx.entity.create).not.toHaveBeenCalled();
       expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
     });
