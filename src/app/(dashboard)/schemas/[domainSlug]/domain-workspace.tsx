@@ -39,12 +39,10 @@ import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput
 import { deleteDomainAction } from "../actions";
 import { CreateDropdown } from "./components/CreateDropdown";
 import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
-import type { DomainModelData } from "./components/DomainModelsTab";
 import { DomainApisTab, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { formatDateOnly } from "@/lib/date-format";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
-import type { DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
 import type { DomainDeletionImpact } from "@/types/domain-deletion";
 
 export type DomainTab = "entities" | "data-types" | "apis";
@@ -86,16 +84,18 @@ interface DomainWorkspaceProps {
   productName: string;
   domainDescription: string;
   isSystemDomain?: boolean;
+  /**
+   * Domain deletion is only offered when this is true AND `deletionImpact` is
+   * provided; callers that disable deletion can skip computing the impact.
+   */
   canDeleteDomain?: boolean;
-  deletionImpact: DomainDeletionImpact;
+  deletionImpact?: DomainDeletionImpact;
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
-  models: DomainModelData[];
   /** Product-level data types (managed here). */
   sharedEnums: SharedEnumData[];
   customScalars: CustomScalarData[];
   unionTypes: UnionTypeData[];
-  decoratorDefinitions: DecoratorDefinitionData[];
   /** Product-level API services (managed here). */
   services: ServiceData[];
   /** Data types owned by the domain / Enterprise, shown read-only. */
@@ -191,9 +191,11 @@ export function DomainWorkspace({
   }
 
   // Every tab switch writes the URL so the address bar and visible tab agree.
+  // History API, not `router.replace`: Next syncs `useSearchParams` with it and
+  // no server re-render is needed to switch a client tab.
   function selectTab(tab: DomainTab) {
     setActiveTab(tab);
-    router.replace(tabHref(tab), { scroll: false });
+    window.history.replaceState(null, "", tabHref(tab));
   }
   const viewMode = useSyncExternalStore(
     subscribeToViewMode,
@@ -414,20 +416,24 @@ export function DomainWorkspace({
     }
   }
 
+  const deletionEnabled = canDeleteDomain && !isSystemDomain && deletionImpact !== undefined;
+
   return (
     <div className="animate-auth-fade-up">
-      <DomainDeletionDialog
-        open={domainDeleteOpen}
-        domainName={domainName}
-        impact={deletionImpact}
-        isDeleting={isDeletingDomain}
-        error={domainDeleteError}
-        onOpenChange={(open) => {
-          setDomainDeleteOpen(open);
-          if (!open) setDomainDeleteError(null);
-        }}
-        onConfirm={handleDeleteDomain}
-      />
+      {deletionEnabled && (
+        <DomainDeletionDialog
+          open={domainDeleteOpen}
+          domainName={domainName}
+          impact={deletionImpact}
+          isDeleting={isDeletingDomain}
+          error={domainDeleteError}
+          onOpenChange={(open) => {
+            setDomainDeleteOpen(open);
+            if (!open) setDomainDeleteError(null);
+          }}
+          onConfirm={handleDeleteDomain}
+        />
+      )}
 
       {/* Entity delete confirmation dialog */}
       <Dialog
@@ -514,7 +520,7 @@ export function DomainWorkspace({
             onNewCustomDataType={() => { selectTab("data-types"); setTypeCreateIntent("choose"); }}
             onNewApi={() => selectTab("apis")}
           />
-          {canDeleteDomain && !isSystemDomain ? (
+          {deletionEnabled ? (
             <Button
               variant="outline"
               size="sm"

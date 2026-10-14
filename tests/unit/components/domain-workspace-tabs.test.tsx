@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   DomainWorkspace,
@@ -48,18 +48,6 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));
 vi.mock("@/components/custom/ClassificationPicker", () => ({ ClassificationPicker: () => null }));
 
-const EMPTY_IMPACT = {
-  entities: 0,
-  modelDefinitions: 0,
-  decoratorDefinitions: 0,
-  sharedEnums: 0,
-  customScalars: 0,
-  unionTypes: 0,
-  services: 0,
-  interfaces: 0,
-  userRoles: 0,
-};
-
 const ENTITY = {
   id: "ent-1",
   name: "Order",
@@ -80,14 +68,11 @@ const BASE_PROPS = {
   productSlug: "checkout",
   productName: "Checkout",
   domainDescription: "",
-  deletionImpact: EMPTY_IMPACT,
   domainPolicy: null,
   entities: [ENTITY],
-  models: [],
   sharedEnums: [],
   customScalars: [],
   unionTypes: [],
-  decoratorDefinitions: [],
   services: [],
 };
 
@@ -153,10 +138,13 @@ function openNewMenu() {
   return screen.getByRole("menu");
 }
 
+let replaceState: MockInstance<History["replaceState"]>;
+
 beforeEach(() => {
   nav.search = "tab=data-types";
   installLocalStorage();
   vi.clearAllMocks();
+  replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
   actions.createSharedEnumAction.mockResolvedValue({ success: true });
   actions.createCustomScalarAction.mockResolvedValue({ success: true });
   actions.createUnionTypeAction.mockResolvedValue({ success: true });
@@ -165,6 +153,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  replaceState.mockRestore();
 });
 
 describe("normalizeWorkspaceTab", () => {
@@ -454,34 +443,36 @@ describe("DomainWorkspace — ?tab= and the URL stay in sync", () => {
     expect(screen.queryByTestId("domain-apis-tab")).toBeNull();
   });
 
-  it("clicking a tab writes the matching URL with router.replace", () => {
+  it("clicking a tab writes the matching URL with history.replaceState, not router.replace", () => {
     nav.search = "";
     renderWorkspace();
     fireEvent.click(screen.getByRole("button", { name: "APIs" }));
-    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=apis", { scroll: false });
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=apis");
     expect(screen.getByTestId("domain-apis-tab")).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Data Types" }));
-    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=data-types", { scroll: false });
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=data-types");
     expect(screen.getByTestId("domain-types-tab")).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Entities" }));
-    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout", { scroll: false });
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout");
+    expect(nav.replace).not.toHaveBeenCalled();
   });
 
   it("New Custom Data Type and New API write their tab to the URL", () => {
     nav.search = "";
     renderWorkspace();
     fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Custom Data Type/ }));
-    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=data-types", { scroll: false });
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=data-types");
     fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New API/ }));
-    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=apis", { scroll: false });
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=apis");
   });
 
   it("New Entity does not rewrite the tab", () => {
     nav.search = "";
     renderWorkspace();
     fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Entity/ }));
+    expect(replaceState).not.toHaveBeenCalled();
     expect(nav.replace).not.toHaveBeenCalled();
   });
 });

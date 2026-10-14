@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   DomainTabs,
@@ -65,15 +65,19 @@ function renderTabs(overrides: Partial<React.ComponentProps<typeof DomainTabs>> 
   );
 }
 
+let replaceState: MockInstance<History["replaceState"]>;
+
 beforeEach(() => {
   nav.search = "tab=data-types";
   vi.clearAllMocks();
+  replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
   actions.createSharedEnumAction.mockResolvedValue({ success: true });
   actions.createServiceAction.mockResolvedValue({ success: true });
 });
 
 afterEach(() => {
   cleanup();
+  replaceState.mockRestore();
 });
 
 describe("normalizeDomainTab", () => {
@@ -132,14 +136,16 @@ describe("DomainTabs", () => {
     expect(screen.getAllByRole("heading", { level: 1, name: "Payments" })).toHaveLength(1);
   });
 
-  it("syncs the selected tab to ?tab= via router.replace", () => {
+  it("syncs the selected tab to ?tab= via history.replaceState, without a server round trip", () => {
     renderTabs();
     fireEvent.click(screen.getByRole("tab", { name: "APIs" }));
-    expect(nav.replace).toHaveBeenCalledWith("/schemas/payments?tab=apis", { scroll: false });
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/schemas/payments?tab=apis");
     expect(screen.getByRole("tab", { name: "APIs", selected: true })).toBeDefined();
 
     fireEvent.click(screen.getByRole("tab", { name: "Products" }));
-    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/payments", { scroll: false });
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments");
+    expect(nav.replace).not.toHaveBeenCalled();
+    expect(nav.push).not.toHaveBeenCalled();
   });
 
   it("hides an inherited group that has no items", () => {

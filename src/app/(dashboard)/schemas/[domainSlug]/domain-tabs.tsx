@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { ChevronRight, Globe, Layers, Package } from "lucide-react";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { ProductGrid, type ProductGridItem, type TierOption } from "./product-grid";
@@ -64,7 +64,6 @@ export function DomainTabs({
   inheritedDataTypes,
   services,
 }: DomainTabsProps) {
-  const router = useRouter();
   const tabParam = useSearchParams().get("tab");
   const [activeTab, setActiveTab] = useState<DomainPageTab>(normalizeDomainTab(tabParam));
 
@@ -83,9 +82,12 @@ export function DomainTabs({
     return assetHref({ kind: "domain", domainSlug: domain.slug });
   }
 
+  // The tab is client state: write the URL with the History API (Next syncs
+  // `useSearchParams` with it) instead of `router.replace`, which would
+  // re-render the whole page on the server just to switch a tab.
   function selectTab(tab: DomainPageTab) {
     setActiveTab(tab);
-    router.replace(hrefFor(tab), { scroll: false });
+    window.history.replaceState(null, "", hrefFor(tab));
   }
 
   function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
