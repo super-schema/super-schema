@@ -42,6 +42,7 @@ import {
   isSourceStale,
   withSourceStale,
   CLEAR_SOURCE_STALE_SQL,
+  MARK_DRAFT_CHANGED_SQL,
 } from "@/lib/entity-versioning/draft-state";
 
 /**
@@ -1443,13 +1444,15 @@ export async function updateEntityDescriptionAction(
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
-    // The description is rendered into the TypeSpec source (@doc): mark the draft changed and the
-    // stored source stale (R45).
-    await prisma.entity.update({
-      where: { id: entityId },
-      data: { description },
-    });
-    await markEntityDraftChanged(prisma, entityId);
+    // The description is rendered into the TypeSpec source (@doc): the write and the draft + stale-source
+    // mark are one atomic batch, so the description can never land without the mark (R45).
+    await prisma.$transaction([
+      prisma.entity.update({
+        where: { id: entityId },
+        data: { description },
+      }),
+      prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+    ]);
 
     revalidatePath("/schemas");
     return { success: true };

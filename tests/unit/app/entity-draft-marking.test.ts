@@ -80,13 +80,16 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
     expectFieldsEdited();
   });
 
-  it("updateEntityDescriptionAction writes the description, then marks the draft changed and the source stale (R45)", async () => {
+  it("updateEntityDescriptionAction writes the description and marks the draft changed + source stale in ONE $transaction batch (R45)", async () => {
     await updateEntityDescriptionAction("ent-1", "Orders placed online");
     expect(mockPrisma.entity.update).toHaveBeenCalledWith({
       where: { id: "ent-1" },
       data: { description: "Orders placed online" },
     });
     expectFieldsEdited();
+    // One atomic batch of exactly those two operations: the description can never land without the mark.
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$transaction.mock.calls[0][0]).toHaveLength(2);
   });
 
   it("updateEntityRelationshipsAction writes the relationships with the draft flag and sourceStale in one update", async () => {
