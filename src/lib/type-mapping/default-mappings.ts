@@ -2,7 +2,7 @@
  * Default type mapping policies — static TypeScript configuration.
  *
  * These define how each LogicalType maps to platform-specific types
- * for BigQuery, Avro, and OpenAPI targets.
+ * for BigQuery, Avro, OpenAPI, Spanner, PostgreSQL and Protobuf targets.
  *
  * No Prisma dependency — pure data.
  */
@@ -200,6 +200,50 @@ const POSTGRESQL_MAPPINGS: DefaultMappingEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Protobuf (proto3) default mappings
+//
+// Mirrors what the official @typespec/protobuf emitter actually produces after
+// the protobuf-target source projection
+// (src/lib/typespec-official/protobuf-source.ts) — pinned by
+// tests/integration/protobuf-all-types.test.ts, which asserts every scalar's
+// emitted proto type equals the mappedType below.
+// ---------------------------------------------------------------------------
+
+const PROTOBUF_MAPPINGS: DefaultMappingEntry[] = [
+  { sourceType: "string", targetFormat: "protobuf", mappedType: "string", isLossy: false },
+  { sourceType: "url", targetFormat: "protobuf", mappedType: "string", isLossy: false },
+  { sourceType: "integer", targetFormat: "protobuf", mappedType: "int64", isLossy: false },
+  { sourceType: "int8", targetFormat: "protobuf", mappedType: "int32", isLossy: false },
+  { sourceType: "int16", targetFormat: "protobuf", mappedType: "int32", isLossy: false },
+  { sourceType: "int32", targetFormat: "protobuf", mappedType: "int32", isLossy: false },
+  { sourceType: "int64", targetFormat: "protobuf", mappedType: "int64", isLossy: false },
+  { sourceType: "safeint", targetFormat: "protobuf", mappedType: "int64", isLossy: false },
+  { sourceType: "uint8", targetFormat: "protobuf", mappedType: "uint32", isLossy: false },
+  { sourceType: "uint16", targetFormat: "protobuf", mappedType: "uint32", isLossy: false },
+  { sourceType: "uint32", targetFormat: "protobuf", mappedType: "uint32", isLossy: false },
+  { sourceType: "uint64", targetFormat: "protobuf", mappedType: "uint64", isLossy: false },
+  { sourceType: "numeric", targetFormat: "protobuf", mappedType: "string", isLossy: true, lossDescription: "proto3 has no arbitrary-precision numeric type — value is carried as decimal text in a string; consumers must parse it and no numeric range is enforced" },
+  { sourceType: "float", targetFormat: "protobuf", mappedType: "double", isLossy: false },
+  { sourceType: "float32", targetFormat: "protobuf", mappedType: "float", isLossy: false },
+  { sourceType: "float64", targetFormat: "protobuf", mappedType: "double", isLossy: false },
+  { sourceType: "decimal", targetFormat: "protobuf", mappedType: "string", isLossy: true, lossDescription: "proto3 has no decimal type — exact decimal is carried as decimal text in a string (same encoding as google.type.Decimal); precision/scale are not enforced by the schema" },
+  { sourceType: "decimal128", targetFormat: "protobuf", mappedType: "string", isLossy: true, lossDescription: "proto3 has no decimal type — decimal128 is carried as decimal text in a string (same encoding as google.type.Decimal); precision/scale are not enforced by the schema" },
+  { sourceType: "boolean", targetFormat: "protobuf", mappedType: "bool", isLossy: false },
+  { sourceType: "bytes", targetFormat: "protobuf", mappedType: "bytes", isLossy: false },
+  { sourceType: "plainDate", targetFormat: "protobuf", mappedType: "google.type.Date", isLossy: false },
+  { sourceType: "plainTime", targetFormat: "protobuf", mappedType: "google.type.TimeOfDay", isLossy: false },
+  { sourceType: "utcDateTime", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: false },
+  { sourceType: "offsetDateTime", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: true, lossDescription: "UTC offset information is lost — google.protobuf.Timestamp is an absolute UTC instant" },
+  { sourceType: "duration", targetFormat: "protobuf", mappedType: "google.protobuf.Duration", isLossy: true, lossDescription: "google.protobuf.Duration is an exact seconds+nanos span — calendar components of an ISO 8601 duration (years, months, days) have no fixed length and must be normalized to seconds" },
+  { sourceType: "unixTimestamp32", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: false },
+  { sourceType: "enum", targetFormat: "protobuf", mappedType: "enum", isLossy: false },
+  { sourceType: "array", targetFormat: "protobuf", mappedType: "repeated", isLossy: false },
+  { sourceType: "map", targetFormat: "protobuf", mappedType: "map", isLossy: false },
+  { sourceType: "object", targetFormat: "protobuf", mappedType: "google.protobuf.Struct", isLossy: true, lossDescription: "Nested object emitted as dynamic google.protobuf.Struct — nested field types are not preserved" },
+  { sourceType: "reference", targetFormat: "protobuf", mappedType: "message", isLossy: false },
+];
+
+// ---------------------------------------------------------------------------
 // Combined default mappings
 // ---------------------------------------------------------------------------
 
@@ -209,6 +253,7 @@ export const DEFAULT_MAPPINGS: DefaultMappingEntry[] = [
   ...OPENAPI_MAPPINGS,
   ...SPANNER_MAPPINGS,
   ...POSTGRESQL_MAPPINGS,
+  ...PROTOBUF_MAPPINGS,
 ];
 
 // ---------------------------------------------------------------------------

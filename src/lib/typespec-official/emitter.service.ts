@@ -15,6 +15,7 @@ import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
+import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 
 const execFileAsync = promisify(execFile);
 
@@ -191,8 +192,16 @@ function buildOpenApi3Source(baseSource: string, model: SuperSchemaModel): strin
   ].join("\n");
 }
 
+/**
+ * The canonical source uses TypeSpec stdlib scalars (decimal, utcDateTime,
+ * plainDate, duration, …), `Record<…>` and value-less enums that the official
+ * protobuf emitter rejects. `projectTypeSpecSourceForProtobuf` substitutes the
+ * proto representations (google.protobuf.Timestamp, decimal text, map<>, …)
+ * for this target only — every other target still compiles the canonical text.
+ */
 function buildProtobufSource(baseSource: string, model: SuperSchemaModel): string {
-  const withNamespace = ensureNamespace(baseSource, deriveNamespace(model), "@package");
+  const protobufSource = projectTypeSpecSourceForProtobuf(baseSource);
+  const withNamespace = ensureNamespace(protobufSource, deriveNamespace(model), "@package");
   const withFieldNumbers = injectProtobufFieldDecorators(withNamespace, model);
 
   return [

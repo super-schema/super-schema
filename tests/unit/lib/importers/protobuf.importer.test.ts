@@ -131,6 +131,24 @@ message Event {
       expect(result.data.fields[0].type).toBe("utcDateTime");
       expect(result.data.fields[0].confidence).toBe("high");
     });
+
+    it("maps the google.type civil-time messages the protobuf target emits back to plainDate / plainTime", () => {
+      const proto = `syntax = "proto3";
+import "google/type/date.proto";
+import "google/type/timeofday.proto";
+message Shift {
+  google.type.Date work_day = 1;
+  google.type.TimeOfDay starts_at = 2;
+}`;
+      const result = parseProtobufSchema(proto);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.fields.map((f) => [f.name, f.type, f.confidence])).toEqual([
+        ["work_day", "plainDate", "high"],
+        ["starts_at", "plainTime", "high"],
+      ]);
+    });
   });
 
   describe("low confidence types", () => {

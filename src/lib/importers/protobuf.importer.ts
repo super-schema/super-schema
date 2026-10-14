@@ -5,7 +5,7 @@
  * - syntax = "proto3" detection
  * - message MessageName { ... } extraction
  * - Scalar types: string, int32, int64, float, double, bool, bytes, etc.
- * - Well-known types: google.protobuf.Timestamp
+ * - Well-known types: google.protobuf.Timestamp / Duration, google.type.Date / TimeOfDay
  * - Field numbers preservation
  * - optional keyword in proto3
  * - map<K,V> and oneof (flagged as low confidence)
@@ -37,6 +37,10 @@ const PROTO_TYPE_MAP: Record<string, { type: string; confidence: ImportConfidenc
   bytes: { type: "bytes", confidence: "high" },
   "google.protobuf.Timestamp": { type: "utcDateTime", confidence: "high" },
   "google.protobuf.Duration": { type: "duration", confidence: "high" },
+  // Civil date/time messages — what the protobuf target emits for plainDate /
+  // plainTime, so a re-import of our own .proto keeps the logical type.
+  "google.type.Date": { type: "plainDate", confidence: "high" },
+  "google.type.TimeOfDay": { type: "plainTime", confidence: "high" },
   "google.protobuf.Any": { type: "string", confidence: "low" },
 };
 

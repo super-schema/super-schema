@@ -15,7 +15,7 @@ import { DATA_TYPE_HIERARCHY, isComplexType } from "@/lib/data-types";
 import { getDefaultPolicies } from "@/lib/type-mapping/default-mappings";
 import { resolveMapping } from "@/lib/type-mapping/mapping-engine";
 
-const TARGETS = ["avro", "bigquery", "openapi", "postgresql", "spanner"] as const;
+const TARGETS = ["avro", "bigquery", "openapi", "postgresql", "spanner", "protobuf"] as const;
 
 // enum maps structurally in most targets; exclude it with the other complex types.
 const SCALAR_TYPES = DATA_TYPE_HIERARCHY.map((t) => t.id).filter(
