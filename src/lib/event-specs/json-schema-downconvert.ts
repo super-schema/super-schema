@@ -1,13 +1,16 @@
 import type { JsonObject, JsonValue } from "./types";
-import { escapePointerSegment } from "./json-pointer";
+import { escapePointerSegment, unescapePointerSegment } from "./json-pointer";
+import { SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } from "./json-schema-keywords";
 
 /**
  * Spec §7.3 / Story 16.2 pure core: down-convert a JSON Schema 2020-12 document
  * to draft-07 for channels whose format profile asks for it.
  *
- * - `$defs` → `definitions`, and every `$ref` fragment segment `$defs` → `definitions`
+ * - `$defs` → `definitions`, and the `$defs` KEYWORD segments of every `$ref` fragment → `definitions`
+ *   (a property or definition that happens to be called `$defs` is a name and is left alone)
  * - `prefixItems` → `items` (array form); a sibling 2020-12 `items` → `additionalItems`
  * - `dependentRequired` / `dependentSchemas` → `dependencies`
+ * - `$ref` with validating siblings (ignored by draft-07) → `allOf: [{ $ref }, { …siblings }]`, with a warning
  * - keywords with no draft-07 equivalent are dropped, each with a warning
  *
  * Only schema positions are walked; data keywords (`const`, `enum`, `default`,
@@ -30,21 +33,25 @@ export const UNSUPPORTED_IN_DRAFT_07: readonly string[] = [
   "contentSchema",
 ];
 
-export type DownConvertWarning = { pointer: string; keyword: string; message: string };
+/** `dropped`: a keyword (or definition) was lost; `rewritten`: the schema was restructured, nothing was lost. */
+export type DownConvertWarning = { pointer: string; keyword: string; message: string; kind: "dropped" | "rewritten" };
 export type DownConvertResult = { schema: JsonObject; warnings: DownConvertWarning[] };
 
 const DROPPED = new Set(UNSUPPORTED_IN_DRAFT_07);
-const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties"]);
-const SCHEMA_ARRAY_KEYWORDS = new Set(["allOf", "anyOf", "oneOf"]);
-const SINGLE_SCHEMA_KEYWORDS = new Set([
-  "additionalProperties",
-  "additionalItems",
-  "contains",
-  "propertyNames",
-  "if",
-  "then",
-  "else",
-  "not",
+
+/** Siblings of a wrapped `$ref` that stay on the outer object: annotations, and `definitions` (pointers target it). */
+const KEEP_OUTSIDE_REF_WRAPPER = new Set([
+  "$schema",
+  "$id",
+  "$comment",
+  "definitions",
+  "title",
+  "description",
+  "default",
+  "examples",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
 ]);
 
 const isObject = (v: JsonValue | undefined): v is JsonObject =>
@@ -55,16 +62,56 @@ export function downConvertToDraft07(schema: JsonObject): DownConvertResult {
   return { schema: convertSchema(schema, "", warnings), warnings };
 }
 
-/** Rewrite `$defs` segments in the fragment of a `$ref` (`a.json#/$defs/X` → `a.json#/definitions/X`). */
+const decodeSegment = (raw: string): string => {
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    // keep the raw segment when it is not valid percent-encoding
+  }
+  return unescapePointerSegment(decoded);
+};
+
+const ARRAY_INDEX = /^(0|[1-9][0-9]*)$/;
+
+/**
+ * Rewrite the `$defs` KEYWORD segments in the fragment of a `$ref`
+ * (`a.json#/$defs/X` → `a.json#/definitions/X`). The fragment is a path through a
+ * schema, so the walk tracks what each segment is: after `properties` / `$defs` /
+ * `definitions` / … the next segment is a free-text NAME (never rewritten), after
+ * `allOf` / `prefixItems` … an index, after `not` / `items` / … a keyword again. Once the
+ * path leaves schema space (`default`, `const`, unknown keywords) nothing is rewritten.
+ * Percent-encoded keywords (`%24defs`) are recognised.
+ */
 export function rewriteDefsRef(ref: string): string {
   const hash = ref.indexOf("#");
   if (hash < 0) return ref;
-  const fragment = ref
-    .slice(hash + 1)
+  const fragment = ref.slice(hash + 1);
+  if (!fragment.startsWith("/")) return ref;
+
+  let position: "schema" | "name" | "index" | "opaque" = "schema";
+  const segments = fragment
+    .slice(1)
     .split("/")
-    .map((s) => (s === "$defs" ? "definitions" : s))
-    .join("/");
-  return `${ref.slice(0, hash)}#${fragment}`;
+    .map((raw) => {
+      if (position === "name" || position === "index") {
+        position = "schema";
+        return raw;
+      }
+      if (position === "opaque") return raw;
+      const keyword = decodeSegment(raw);
+      if (ARRAY_INDEX.test(keyword)) return raw; // index into the draft-07 array form of `items`
+      if (keyword === "$defs") {
+        position = "name";
+        return "definitions";
+      }
+      if (SCHEMA_MAP_KEYWORDS.has(keyword) || keyword === "dependencies") position = "name";
+      else if (SCHEMA_ARRAY_KEYWORDS.has(keyword)) position = "index";
+      else if (keyword === "items" || SINGLE_SCHEMA_KEYWORDS.has(keyword)) position = "schema";
+      else position = "opaque";
+      return raw;
+    });
+  return `${ref.slice(0, hash)}#/${segments.join("/")}`;
 }
 
 function at(pointer: string, key: string): string {
@@ -97,6 +144,7 @@ function mergeDefinitions(out: JsonObject, incoming: JsonValue, pointer: string,
       warnings.push({
         pointer: at(pointer, name),
         keyword: "definitions",
+        kind: "dropped",
         message: `definition "${name}" exists in both $defs and definitions; the first one was kept`,
       });
       continue;
@@ -123,6 +171,30 @@ function mergeDependencies(out: JsonObject, incoming: JsonValue): void {
   out.dependencies = target;
 }
 
+/**
+ * draft-07 ignores every sibling of `$ref`; 2020-12 applies them. Move the validating
+ * siblings next to the `$ref` inside `allOf` so they keep their meaning. Annotations and
+ * `definitions` stay on the outer object. Nothing is wrapped when no validating sibling is left.
+ */
+function wrapRefSiblings(out: JsonObject, pointer: string, warnings: DownConvertWarning[]): JsonObject {
+  if (typeof out.$ref !== "string") return out;
+  const outer: JsonObject = {};
+  const siblings: JsonObject = {};
+  for (const [key, value] of Object.entries(out)) {
+    if (key === "$ref") continue;
+    (KEEP_OUTSIDE_REF_WRAPPER.has(key) ? outer : siblings)[key] = value;
+  }
+  const names = Object.keys(siblings);
+  if (names.length === 0) return out;
+  warnings.push({
+    pointer: at(pointer, "$ref"),
+    keyword: "$ref",
+    kind: "rewritten",
+    message: `"$ref" siblings (${names.join(", ")}) are ignored in draft-07; wrapped as allOf: [{ $ref }, { ...siblings }]`,
+  });
+  return { ...outer, allOf: [{ $ref: out.$ref }, siblings] };
+}
+
 function convertSchema(node: JsonObject, pointer: string, warnings: DownConvertWarning[]): JsonObject {
   const out: JsonObject = {};
   const hasPrefixItems = Array.isArray(node.prefixItems);
@@ -131,7 +203,12 @@ function convertSchema(node: JsonObject, pointer: string, warnings: DownConvertW
     const here = at(pointer, key);
 
     if (DROPPED.has(key)) {
-      warnings.push({ pointer: here, keyword: key, message: `"${key}" has no draft-07 equivalent and was dropped` });
+      warnings.push({
+        pointer: here,
+        keyword: key,
+        kind: "dropped",
+        message: `"${key}" has no draft-07 equivalent and was dropped`,
+      });
       continue;
     }
 
@@ -182,5 +259,5 @@ function convertSchema(node: JsonObject, pointer: string, warnings: DownConvertW
         else out[key] = structuredClone(value);
     }
   }
-  return out;
+  return wrapRefSiblings(out, pointer, warnings);
 }
