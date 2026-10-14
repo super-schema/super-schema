@@ -7,6 +7,7 @@ import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
@@ -49,9 +50,15 @@ const DATA_TYPE_TARGET_REQUIRED = "A domain or scope target is required";
 
 /**
  * Data types are created at an explicit `target`; the original call shape passes
- * only a domain. Enterprise (TENANT) callers have no domain and always pass a target.
+ * only a domain. Enterprise (TENANT) callers have no domain and always pass a target,
+ * but the tenant is never taken from the client: a TENANT target is created under the
+ * server-resolved active tenant, whatever `tenantId` the caller supplied.
  */
-function dataTypeTarget(domainId: string | null, target: ScopeTarget | undefined): ScopeTarget | null {
+async function dataTypeTarget(
+  domainId: string | null,
+  target: ScopeTarget | undefined
+): Promise<ScopeTarget | null> {
+  if (target?.level === "TENANT") return { level: "TENANT", tenantId: await getActiveTenantId() };
   if (target) return target;
   return domainId ? { level: "DOMAIN", domainId } : null;
 }
@@ -335,7 +342,7 @@ export async function createSharedEnumAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
-  const scopeTarget = dataTypeTarget(domainId, target);
+  const scopeTarget = await dataTypeTarget(domainId, target);
   if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
   try {
     const result = await createInScope(prisma, {
@@ -394,7 +401,7 @@ export async function createCustomScalarAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
-  const scopeTarget = dataTypeTarget(domainId, target);
+  const scopeTarget = await dataTypeTarget(domainId, target);
   if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
   try {
     const result = await createInScope(prisma, {
@@ -460,7 +467,7 @@ export async function createUnionTypeAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
-  const scopeTarget = dataTypeTarget(domainId, target);
+  const scopeTarget = await dataTypeTarget(domainId, target);
   if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
   try {
     const result = await createInScope(prisma, {

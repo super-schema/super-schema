@@ -121,7 +121,7 @@ describe("loadEntityWorkspace", () => {
     const data = await loadEntityWorkspace({ slugOrId: "order", productId: null, tenantId: "tenant-1" });
 
     expect(mockEntityFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { slug: "order", productId: null, tenantId: "tenant-1" } })
+      expect.objectContaining({ where: { slug: "order", productId: null, domainId: null, tenantId: "tenant-1" } })
     );
     expect(data?.props.level).toBe("TENANT");
     expect(data?.props.entity).toMatchObject({
@@ -134,5 +134,16 @@ describe("loadEntityWorkspace", () => {
     expect(data?.props.domainPolicy).toBeNull();
     expect(data?.props.apiServiceId).toBeNull();
     expect(data?.props.apiOperations).toEqual([]);
+  });
+
+  it("also scopes the tenant id fallback to domainId null", async () => {
+    mockEntityFindFirst.mockResolvedValue(null);
+
+    await loadEntityWorkspace({ slugOrId: "cuid-123", productId: null, tenantId: "tenant-1" });
+
+    expect(mockEntityFindFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ where: { id: "cuid-123", productId: null, domainId: null, tenantId: "tenant-1" } })
+    );
   });
 });

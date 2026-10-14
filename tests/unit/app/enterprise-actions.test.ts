@@ -75,6 +75,22 @@ describe("createTenantEntityAction", () => {
     );
   });
 
+  it("ignores any client-supplied tenantId and creates under the server-resolved active tenant", async () => {
+    mockGetActiveTenantId.mockResolvedValue("tenant-1");
+
+    await createTenantEntityAction({
+      name: "Customer",
+      description: "",
+      fields: [],
+      tenantId: "foreign-tenant",
+    } as never);
+
+    expect(mockAssertNameAvailable).toHaveBeenCalledWith(mockTx, { name: "Customer", ...TENANT_SCOPE });
+    expect(mockTx.entity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ tenantId: "tenant-1", domainId: null, productId: null }),
+    });
+  });
+
   it("rejects an entity named 'Events' (reserved URL segment) before any database work", async () => {
     const result = await createTenantEntityAction({ name: "Events", description: "", fields: [] });
 

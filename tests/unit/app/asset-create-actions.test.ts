@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() => ({
+const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockGetActiveTenantId } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
+  mockGetActiveTenantId: vi.fn(),
   mockPrisma: {
     domain: { findUnique: vi.fn() },
     product: { findUnique: vi.fn() },
@@ -20,6 +21,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() 
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mockGetActiveTenantId }));
 vi.mock("@/services/name-registry.service", () => ({
   assertNameAvailable: mockAssertNameAvailable,
   withTenantNameLock: (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) => fn(mockTx),
@@ -41,6 +43,7 @@ describe("level-aware data type and API creates", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
+    mockGetActiveTenantId.mockResolvedValue("tenant-1");
     mockPrisma.domain.findUnique.mockResolvedValue({ id: "domain-1", tenantId: "tenant-1" });
     mockPrisma.product.findUnique.mockResolvedValue({
       id: "prd-1",
@@ -75,6 +78,19 @@ describe("level-aware data type and API creates", () => {
     it("creates at tenant level without any domain lookup", async () => {
       await createSharedEnumAction("domain-1", { name: "Status", values: [] }, { level: "TENANT", tenantId: "tenant-1" });
       expect(mockPrisma.domain.findUnique).not.toHaveBeenCalled();
+      expect(mockTx.sharedEnum.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ tenantId: "tenant-1", domainId: null, productId: null }),
+      });
+    });
+
+    it("ignores a client-supplied tenantId on a TENANT target and uses the active tenant", async () => {
+      await createSharedEnumAction(null, { name: "Status", values: [] }, { level: "TENANT", tenantId: "foreign-tenant" });
+      expect(mockAssertNameAvailable).toHaveBeenCalledWith(mockTx, {
+        name: "Status",
+        tenantId: "tenant-1",
+        domainId: null,
+        productId: null,
+      });
       expect(mockTx.sharedEnum.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ tenantId: "tenant-1", domainId: null, productId: null }),
       });
@@ -259,6 +275,28 @@ describe("level-aware data type and API creates", () => {
       mockPrisma.entity.findUnique.mockResolvedValue(null);
       const result = await getOrCreateEntityServiceAction("domain-1", "ent-1", "Order");
       expect(result).toEqual({ error: "Entity not found" });
+    });
+  });
+
+  describe("TENANT targets always use the active tenant (never a client-supplied tenantId)", () => {
+    it("createCustomScalarAction", async () => {
+      await createCustomScalarAction(null, { name: "Money", baseType: "decimal" }, { level: "TENANT", tenantId: "foreign-tenant" });
+      expect(mockTx.customScalar.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ tenantId: "tenant-1", domainId: null, productId: null }),
+      });
+    });
+
+    it("createUnionTypeAction", async () => {
+      await createUnionTypeAction(null, { name: "Id", memberTypes: ["string", "int32"] }, { level: "TENANT", tenantId: "foreign-tenant" });
+      expect(mockTx.unionType.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ tenantId: "tenant-1", domainId: null, productId: null }),
+      });
+    });
+
+    it("does not consult the active tenant for DOMAIN and PRODUCT targets", async () => {
+      await createSharedEnumAction("domain-1", { name: "Status", values: [] });
+      await createSharedEnumAction("domain-1", { name: "Status2", values: [] }, { level: "PRODUCT", productId: "prd-1" });
+      expect(mockGetActiveTenantId).not.toHaveBeenCalled();
     });
   });
 });

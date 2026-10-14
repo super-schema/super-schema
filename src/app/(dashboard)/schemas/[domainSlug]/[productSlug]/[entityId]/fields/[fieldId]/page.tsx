@@ -2,21 +2,47 @@ import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { FieldStudio } from "./field-studio";
 import { domainLabel } from "@/lib/entity-placement";
+import { getActiveTenantId } from "@/lib/active-tenant";
+import { findEntityInScope } from "../../load-entity-workspace";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string; entityId: string; fieldId: string }>;
 }
 
+// assetHref puts a tenant-level (Enterprise) entity's fields under these URL segments.
+const ENTERPRISE_DOMAIN_SEGMENT = "enterprise";
+const ENTERPRISE_ENTITIES_SEGMENT = "entities";
+
 export default async function FieldDetailPage({ params }: Props) {
   const { domainSlug, productSlug, entityId, fieldId } = await params;
+  const activeTenantId = await getActiveTenantId();
 
-  // Resolve the entity first (param may be slug or cuid)
-  const entity = await prisma.entity.findFirst({
-    where: {
-      OR: [{ id: entityId }, { slug: entityId }],
-    },
-    include: { domain: true },
-  });
+  // Resolve the entity within its placement (slug first, then cuid). Slugs repeat
+  // across products and tenants, so the lookup is never unscoped.
+  let entity: { id: string } | null = null;
+  if (domainSlug === ENTERPRISE_DOMAIN_SEGMENT && productSlug === ENTERPRISE_ENTITIES_SEGMENT) {
+    entity = await findEntityInScope(
+      { slugOrId: entityId, productId: null, tenantId: activeTenantId },
+      {}
+    );
+  } else {
+    // Tenant-scoped domain first, then tenant-agnostic to tolerate a stale tenant cookie.
+    const domain =
+      (await prisma.domain.findFirst({ where: { slug: domainSlug, tenantId: activeTenantId } })) ??
+      (await prisma.domain.findFirst({ where: { slug: domainSlug } }));
+    const product = domain
+      ? await prisma.product.findFirst({
+          where: { slug: productSlug, domainId: domain.id },
+          select: { id: true },
+        })
+      : null;
+    if (domain && product) {
+      entity = await findEntityInScope(
+        { slugOrId: entityId, productId: product.id, tenantId: domain.tenantId },
+        {}
+      );
+    }
+  }
   if (!entity) notFound();
 
   // Try slug-based lookup first, fall back to id-based lookup
