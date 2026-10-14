@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { authenticateRequest } from "../v1/middleware";
-import { domainSegment, productSegment } from "@/lib/entity-placement";
 
 export async function GET(request: Request) {
   const authResult = await authenticateRequest(request);
@@ -41,8 +40,9 @@ export async function GET(request: Request) {
         entityId: f.entity.id,
         entitySlug: f.entity.slug,
         entityName: f.entity.name,
-        domainSlug: domainSegment(f.entity.domain),
-        productSlug: productSegment(f.entity.product),
+        // null for a tenant-level entity; the client builds links with assetHref.
+        domainSlug: f.entity.domain?.slug ?? null,
+        productSlug: f.entity.product?.slug ?? null,
       }))
     );
   } catch {

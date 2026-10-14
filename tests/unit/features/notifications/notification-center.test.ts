@@ -143,6 +143,34 @@ describe("Notification Center Logic", () => {
       expect(url).toBe("/schemas?entityId=entity-1");
     });
 
+    it("navigates a tenant-level entity (null slugs) to its Enterprise route", () => {
+      const notification = makeNotification({
+        type: "CHANGE_COMPLETE",
+        entityRef: { entityId: "entity-1", entitySlug: "customer", domainSlug: null, productSlug: null },
+      });
+
+      expect(getNotificationNavigationUrl(notification)).toBe("/schemas/enterprise/entities/customer");
+    });
+
+    it("navigates a tenant-level field to field studio with version and panel params", () => {
+      const notification = makeNotification({
+        type: "APPROVAL_REQUEST",
+        entityRef: {
+          entityId: "entity-1",
+          entitySlug: "customer",
+          domainSlug: null,
+          productSlug: null,
+          fieldId: "field-1",
+          fieldSlug: "email",
+          versionId: "v2",
+        },
+      });
+
+      expect(getNotificationNavigationUrl(notification)).toBe(
+        "/schemas/enterprise/entities/customer/fields/email?version=v2&panel=governance"
+      );
+    });
+
     it("navigates to field studio when field route data is available", () => {
       const notification = makeNotification({
         type: "ANNOTATION_TAG",

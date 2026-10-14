@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { ShieldAlert, CheckCircle } from "lucide-react";
+import { assetHref } from "@/lib/navigation/asset-href";
 import type { ComplianceGap, GapSummary } from "@/types/schemas/compliance";
 
 interface ComplianceGapsViewProps {
@@ -41,6 +42,25 @@ function GapPanelForType(gapType: string): string {
     default:
       return "classification";
   }
+}
+
+/** Entity deep link that opens the panel matching the gap. null slugs = tenant-level entity. */
+export function gapHref(gap: ComplianceGap): string {
+  const panel = GapPanelForType(gap.gapType);
+  // undefined (not null) means the row was never resolved to route slugs.
+  if (gap.domainSlug === undefined || gap.productSlug === undefined) {
+    const params = new URLSearchParams({ entityId: gap.entityId, fieldId: gap.fieldId, panel });
+    return `/schemas?${params.toString()}`;
+  }
+  return assetHref(
+    {
+      kind: "entity",
+      slug: gap.entitySlug || gap.entityId,
+      domainSlug: gap.domainSlug,
+      productSlug: gap.productSlug,
+    },
+    { query: { fieldId: gap.fieldId, panel } }
+  );
 }
 
 export function ComplianceGapsView({
@@ -134,13 +154,7 @@ export function ComplianceGapsView({
               <tr
                 key={`${gap.fieldId}-${gap.gapType}-${i}`}
                 className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
-                onClick={() =>
-                  router.push(
-                    gap.domainSlug && gap.productSlug
-                      ? `/schemas/${gap.domainSlug}/${gap.productSlug}/${gap.entitySlug || gap.entityId}?fieldId=${gap.fieldId}&panel=${GapPanelForType(gap.gapType)}`
-                      : `/schemas?entityId=${encodeURIComponent(gap.entityId)}&fieldId=${gap.fieldId}&panel=${GapPanelForType(gap.gapType)}`
-                  )
-                }
+                onClick={() => router.push(gapHref(gap))}
               >
                 <td className="px-space-3 py-space-2 font-mono text-primary">
                   {gap.entityName}

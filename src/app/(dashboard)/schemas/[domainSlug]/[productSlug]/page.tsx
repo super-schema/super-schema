@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { notFound, redirect } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
-import { productSegment } from "@/lib/entity-placement";
+import { assetHref } from "@/lib/navigation/asset-href";
 import {
   classificationCountsFromGroups,
   emptyClassificationCounts,
@@ -73,11 +73,15 @@ export default async function ProductWorkspacePage({
         }
       }
       const suffix = qs.toString();
-      redirect(
-        `/schemas/${domainSlug}/${productSegment(legacyEntity.product)}/${legacyEntity.slug}${
-          suffix ? `?${suffix}` : ""
-        }`
-      );
+      // The query is forwarded verbatim (it may repeat a key), so it is appended
+      // to the assetHref path rather than passed through assetHref's single-value query.
+      const canonical = assetHref({
+        kind: "entity",
+        slug: legacyEntity.slug,
+        domainSlug,
+        productSlug: legacyEntity.product?.slug ?? null,
+      });
+      redirect(suffix ? `${canonical}?${suffix}` : canonical);
     }
     notFound();
   }

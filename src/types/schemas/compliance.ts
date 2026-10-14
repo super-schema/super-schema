@@ -58,8 +58,9 @@ export type ComplianceFieldResult = {
   entityId: string;
   entityName: string;
   entitySlug?: string;
-  domainSlug?: string;
-  productSlug?: string;
+  /** Route slugs for links. `null` = tenant-level (Enterprise) entity; `undefined` = unknown. */
+  domainSlug?: string | null;
+  productSlug?: string | null;
   fieldId: string;
   fieldName: string;
   fieldType: string;
@@ -92,8 +93,9 @@ export type ComplianceGap = {
   entityId: string;
   entityName: string;
   entitySlug?: string;
-  domainSlug?: string;
-  productSlug?: string;
+  /** Route slugs for links. `null` = tenant-level (Enterprise) entity; `undefined` = unknown. */
+  domainSlug?: string | null;
+  productSlug?: string | null;
   fieldId: string;
   fieldName: string;
   gapType: GapType;

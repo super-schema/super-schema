@@ -6,7 +6,21 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import { assetHref } from "@/lib/navigation/asset-href";
 import type { ComplianceFieldResult } from "@/types/schemas/compliance";
+
+/** undefined slugs = unresolved row; null slugs = tenant-level entity (assetHref handles it). */
+export function entityHref(field: ComplianceFieldResult): string {
+  if (field.domainSlug === undefined || field.productSlug === undefined) {
+    return `/schemas?entityId=${encodeURIComponent(field.entityId)}`;
+  }
+  return assetHref({
+    kind: "entity",
+    slug: field.entitySlug || field.entityId,
+    domainSlug: field.domainSlug,
+    productSlug: field.productSlug,
+  });
+}
 
 interface ComplianceResultsTableProps {
   fields: ComplianceFieldResult[];
@@ -127,11 +141,7 @@ export function ComplianceResultsTable({
                   key={field.fieldId}
                   className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
                   onClick={() =>
-                    router.push(
-                      field.domainSlug && field.productSlug
-                        ? `/schemas/${field.domainSlug}/${field.productSlug}/${field.entitySlug || field.entityId}`
-                        : `/schemas?entityId=${encodeURIComponent(field.entityId)}`
-                    )
+                    router.push(entityHref(field))
                   }
                 >
                   <td className="px-space-3 py-space-2 text-primary hover:underline font-mono">

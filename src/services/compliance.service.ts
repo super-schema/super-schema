@@ -13,7 +13,7 @@ import type {
   AuditPagination,
   AuditTrailEntry,
 } from "@/types/schemas/compliance";
-import { domainLabel, domainSegment, productSegment } from "@/lib/entity-placement";
+import { domainLabel } from "@/lib/entity-placement";
 
 // ============================================================
 // RBAC helpers
@@ -129,8 +129,8 @@ export async function queryFields(
           entityId: f.entity.id,
           entityName: f.entity.name,
           entitySlug: f.entity.slug,
-          domainSlug: domainSegment(f.entity.domain),
-          productSlug: productSegment(f.entity.product),
+          domainSlug: f.entity.domain?.slug ?? null,
+          productSlug: f.entity.product?.slug ?? null,
           fieldId: f.id,
           fieldName: f.name,
           fieldType: f.type,
@@ -289,8 +289,8 @@ export async function detectGaps(
         entityId: field.entity.id,
         entityName: field.entity.name,
         entitySlug: field.entity.slug,
-        domainSlug: domainSegment(field.entity.domain),
-        productSlug: productSegment(field.entity.product),
+        domainSlug: field.entity.domain?.slug ?? null,
+        productSlug: field.entity.product?.slug ?? null,
       };
 
       // Unclassified

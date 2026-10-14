@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { DriftBadge } from "@/components/custom/DriftBadge/DriftBadge";
 import { VersionBadge } from "@/components/custom/DeploymentPanel/VersionBadge";
+import { assetHref } from "@/lib/navigation/asset-href";
 import type { DeploymentOverviewRow } from "@/services/deployment.service";
 
 interface DeploymentOverviewTableProps {
@@ -11,11 +12,18 @@ interface DeploymentOverviewTableProps {
 }
 
 function getEntityHref(row: DeploymentOverviewRow): string {
-  if (!row.domainSlug) {
+  // Rows that were not enriched with route slugs (undefined, as opposed to the
+  // null of a tenant-level entity) cannot be linked to an entity route.
+  if (!row.entitySlug || row.domainSlug === undefined || row.productSlug === undefined) {
     return `/schemas?entityId=${encodeURIComponent(row.entityId)}`;
   }
 
-  return `/schemas/${row.domainSlug}/${row.entitySlug || row.entityId}`;
+  return assetHref({
+    kind: "entity",
+    slug: row.entitySlug,
+    domainSlug: row.domainSlug,
+    productSlug: row.productSlug,
+  });
 }
 
 export function DeploymentOverviewTable({

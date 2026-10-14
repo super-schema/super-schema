@@ -17,6 +17,7 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 import { getTypeInfo } from "@/lib/data-types";
+import { assetHref } from "@/lib/navigation/asset-href";
 import { updateFieldAction } from "../../actions";
 import type { TypeSpecDecorators } from "@/types/schemas/typespec-decorator.schema";
 import { IdentityPanel } from "./panels/IdentityPanel";
@@ -49,8 +50,9 @@ interface FieldStudioProps {
     id: string;
     name: string;
     slug: string;
-    domainSlug: string;
-    productSlug: string;
+    /** null for a tenant-level (Enterprise) entity. */
+    domainSlug: string | null;
+    productSlug: string | null;
   };
   domain: {
     name: string;
@@ -65,6 +67,15 @@ const PANEL_STORAGE_KEY = (fieldId: string) =>
 
 export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
   const router = useRouter();
+  const entityHref = assetHref({
+    kind: "entity",
+    slug: entity.slug,
+    domainSlug: entity.domainSlug,
+    productSlug: entity.productSlug,
+  });
+  const domainHref = entity.domainSlug
+    ? assetHref({ kind: "domain", domainSlug: entity.domainSlug })
+    : assetHref({ kind: "enterprise" });
   const [fieldName, setFieldName] = useState(field.name);
   const [fieldType, setFieldType] = useState(field.type);
   const [isOptional, setIsOptional] = useState(field.nullable);
@@ -169,8 +180,8 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
     if (pendingRef.current || savingRef.current) {
       await doSave();
     }
-    router.push(`/schemas/${entity.domainSlug}/${entity.productSlug}/${entity.slug}`);
-  }, [doSave, router, entity.domainSlug, entity.productSlug, entity.slug]);
+    router.push(entityHref);
+  }, [doSave, router, entityHref]);
 
   // Cmd+S / Ctrl+S immediate save
   useEffect(() => {
@@ -281,14 +292,14 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           </Link>
           <ChevronRight className="w-3 h-3" />
           <Link
-            href={`/schemas/${entity.domainSlug}`}
+            href={domainHref}
             className="hover:text-foreground transition-colors"
           >
             {domain.name}
           </Link>
           <ChevronRight className="w-3 h-3" />
           <Link
-            href={`/schemas/${entity.domainSlug}/${entity.productSlug}/${entity.slug}`}
+            href={entityHref}
             className="hover:text-foreground transition-colors"
           >
             {entity.name}

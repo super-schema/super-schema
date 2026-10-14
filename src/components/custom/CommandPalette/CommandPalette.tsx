@@ -154,9 +154,13 @@ export function CommandPalette({
   const navigateToField = useCallback(
     (field: CommandPaletteField) => {
       router.push(
-        field.productSlug
-          ? `/schemas/${field.domainSlug}/${field.productSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
-          : `/schemas/${field.domainSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
+        assetHref({
+          kind: "field",
+          entitySlug: field.entitySlug || field.entityId,
+          fieldId: field.slug || field.id,
+          domainSlug: field.domainSlug,
+          productSlug: field.productSlug,
+        })
       );
       onClose();
     },

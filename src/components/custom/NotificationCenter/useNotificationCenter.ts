@@ -7,6 +7,7 @@ import type {
 } from "./NotificationCenter.types";
 import { NOTIFICATION_GROUPS } from "./NotificationCenter.types";
 import type { NotificationType } from "@/types/schemas/notification";
+import { assetHref } from "@/lib/navigation/asset-href";
 
 const POLL_INTERVAL_MS = 30_000;
 const MAX_NOTIFICATIONS = 50;
@@ -15,28 +16,32 @@ export function getNotificationNavigationUrl(
   notification: NotificationItemData
 ): string {
   const { entityRef, type } = notification;
-  const params = new URLSearchParams();
+  const query: Record<string, string> = {};
+  if (entityRef.versionId) query.version = entityRef.versionId;
+  if (type === "APPROVAL_REQUEST") query.panel = "governance";
 
-  if (!entityRef.domainSlug || !entityRef.productSlug) {
-    params.set("entityId", entityRef.entityId);
-    if (entityRef.versionId) params.set("version", entityRef.versionId);
-    if (type === "APPROVAL_REQUEST") params.set("panel", "governance");
+  const { domainSlug, productSlug } = entityRef;
+  // undefined = the notification was never resolved to route slugs (null is a
+  // resolved tenant-level entity), so there is no entity route to build.
+  if (domainSlug === undefined || productSlug === undefined) {
+    const params = new URLSearchParams({ entityId: entityRef.entityId, ...query });
     return `/schemas?${params.toString()}`;
   }
 
-  if (entityRef.versionId) params.set("version", entityRef.versionId);
-  if (type === "APPROVAL_REQUEST") params.set("panel", "governance");
-
-  const entitySegment = entityRef.entitySlug ?? entityRef.entityId;
-  let url = `/schemas/${entityRef.domainSlug}/${entityRef.productSlug}/${entitySegment}`;
-
+  const entitySlug = entityRef.entitySlug ?? entityRef.entityId;
   if (entityRef.fieldId) {
-    url += `/fields/${entityRef.fieldSlug ?? entityRef.fieldId}`;
+    return assetHref(
+      {
+        kind: "field",
+        entitySlug,
+        fieldId: entityRef.fieldSlug ?? entityRef.fieldId,
+        domainSlug,
+        productSlug,
+      },
+      { query }
+    );
   }
-
-  const qs = params.toString();
-  if (qs) url += `?${qs}`;
-  return url;
+  return assetHref({ kind: "entity", slug: entitySlug, domainSlug, productSlug }, { query });
 }
 
 /**

@@ -28,6 +28,7 @@ describe("DeploymentOverviewTable navigation", () => {
             entitySlug: "customer",
             domain: "CRM",
             domainSlug: "crm",
+            productSlug: "accounts",
             currentVersion: "v1",
             targets: [],
           },
@@ -36,7 +37,31 @@ describe("DeploymentOverviewTable navigation", () => {
     );
 
     expect(screen.getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
-      "/schemas/crm/customer"
+      "/schemas/crm/accounts/customer"
+    );
+  });
+
+  it("links a tenant-level entity (null slugs) to its Enterprise route", () => {
+    render(
+      <DeploymentOverviewTable
+        targetFormats={["typescript"]}
+        rows={[
+          {
+            entityId: "entity-1",
+            entityName: "Customer",
+            entitySlug: "customer",
+            domain: "Enterprise",
+            domainSlug: null,
+            productSlug: null,
+            currentVersion: "v1",
+            targets: [],
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
+      "/schemas/enterprise/entities/customer"
     );
   });
 

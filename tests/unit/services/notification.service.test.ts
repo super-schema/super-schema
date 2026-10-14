@@ -19,6 +19,10 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     entity: {
       findUnique: vi.fn(async (args: { where: { id: string }; include?: unknown }) => {
+        if (args.where.id === "entity-tenant") {
+          // Tenant-level (Enterprise) entity: not placed in a domain or product.
+          return { id: "entity-tenant", slug: "customer", domain: null, product: null, fields: [] };
+        }
         if (args.where.id !== "entity-1") return null;
         return {
           id: "entity-1",
@@ -200,6 +204,24 @@ describe("Notification Service", () => {
           fieldId: "field-1",
           fieldSlug: "email",
           versionId: "v2",
+        });
+      }
+    });
+
+    it("enriches a tenant-level entity with null slugs, not URL sentinels", async () => {
+      const result = await createNotification(
+        makeInput({ entityRef: { entityId: "entity-tenant" } }),
+        mockCtx
+      );
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.entityRef).toEqual({
+          entityId: "entity-tenant",
+          domainSlug: null,
+          productSlug: null,
+          entitySlug: "customer",
+          fieldSlug: undefined,
         });
       }
     });

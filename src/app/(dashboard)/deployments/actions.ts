@@ -53,13 +53,25 @@ export async function getDeploymentOverviewAction() {
   if (!overview.success) return { error: overview.error.message };
 
   // Enrich rows with slugs for entity links (service does not carry them).
+  const productIds = [...new Set(entitiesRes.data.flatMap((e) => (e.productId ? [e.productId] : [])))];
+  const productSlugById = new Map(
+    (productIds.length
+      ? await prisma.product.findMany({
+          where: { id: { in: productIds } },
+          select: { id: true, slug: true },
+        })
+      : []
+    ).map((p) => [p.id, p.slug])
+  );
   const slugById = new Map(
     entitiesRes.data.map((e) => [
       e.id,
       {
         entitySlug: e.slug,
-        // Tenant-level entities have no domain slug; the table links them by id.
-        domainSlug: e.domainId ? domainById.get(e.domainId)?.slug : undefined,
+        // Tenant-level entities have no domain or product: null slugs make assetHref
+        // emit their /schemas/enterprise/entities/<slug> URL.
+        domainSlug: e.domainId ? domainById.get(e.domainId)?.slug : null,
+        productSlug: e.productId ? productSlugById.get(e.productId) : null,
       },
     ])
   );
@@ -67,6 +79,7 @@ export async function getDeploymentOverviewAction() {
     ...r,
     entitySlug: slugById.get(r.entityId)?.entitySlug,
     domainSlug: slugById.get(r.entityId)?.domainSlug,
+    productSlug: slugById.get(r.entityId)?.productSlug,
   }));
 
   return { success: true as const, data: { rows, targetFormats } };

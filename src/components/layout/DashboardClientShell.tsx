@@ -21,6 +21,7 @@ import {
   RightPanelContentProvider,
   useRightPanelContent,
 } from "@/hooks/useRightPanelContent";
+import { assetHref } from "@/lib/navigation/asset-href";
 import { useModKey } from "@/lib/platform";
 
 type PaletteAction = {
@@ -79,7 +80,7 @@ export function DashboardClientShell({ children }: { children: React.ReactNode }
     const [, domainSlug, productSlug] = match;
     document.dispatchEvent(new CustomEvent("super-schema:new-entity"));
 
-    const target = `/schemas/${domainSlug}/${productSlug}/new`;
+    const target = assetHref({ kind: "newEntity", domainSlug, productSlug });
     if (pathname !== target) {
       router.push(target);
     }

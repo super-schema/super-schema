@@ -113,7 +113,14 @@ describe("FieldDetailPage for an Enterprise (tenant-level) entity", () => {
     const element = await FieldDetailPage({ params: params(...ENTERPRISE, "customer", "email") });
 
     expect(element.props.field.id).toBe("f-t1");
-    expect(element.props.entity).toMatchObject({ id: "ent-t1", slug: "customer" });
+    // Tenant-level: null slugs (not the URL's "enterprise"/"entities" segments), so the
+    // client builds its links with assetHref.
+    expect(element.props.entity).toMatchObject({
+      id: "ent-t1",
+      slug: "customer",
+      domainSlug: null,
+      productSlug: null,
+    });
     expect(mocks.entityFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { slug: "customer", productId: null, domainId: null, tenantId: "tenant-1" },
