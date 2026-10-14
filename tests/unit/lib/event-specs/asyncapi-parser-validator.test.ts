@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DiagnosticSeverity, Parser } from "@asyncapi/parser";
 import { AsyncApi3Adapter } from "@/lib/event-specs/adapter";
 import { assembleAsyncApi3 } from "@/lib/event-specs/assemble";
-import { StructuralAsyncApi3Validator } from "@/lib/event-specs/validator";
+import { StructuralAsyncApi3Validator, validateAsyncApi3Structure } from "@/lib/event-specs/validator";
 import {
   AsyncApiParserValidator,
   createAsyncApiParser,
@@ -84,6 +84,7 @@ describe("AsyncApiParserValidator (real @asyncapi/parser)", { timeout: 60_000 },
     it.each(["checkout-service", "fraud-scorer"])("%s validates with zero error diagnostics", async (name) => {
       const diagnostics = await validate(golden(name));
       expect(errorsOf(diagnostics)).toEqual([]);
+      expect(diagnostics.filter((d) => d.code === "PAYLOAD_NOT_VALIDATED")).toEqual([]);
       for (const d of diagnostics) expect(d.pointer === "" || d.pointer.startsWith("/")).toBe(true);
     });
 
@@ -126,6 +127,85 @@ describe("AsyncApiParserValidator (real @asyncapi/parser)", { timeout: 60_000 },
     });
   });
 
+  describe("$ref rebasing is schema-position aware (properties named like data keywords)", () => {
+    const REF = { $ref: "#/definitions/A" };
+    const NAMED_PROPERTIES: SchemaArtifact = {
+      format: "json-schema",
+      dialect: "draft-07",
+      schema: {
+        type: "object",
+        properties: { default: REF, enum: REF, ok: REF },
+        definitions: { A: { type: "string" } },
+      },
+    };
+    const NAMED_HEADERS: SchemaArtifact = {
+      format: "json-schema",
+      dialect: "draft-07",
+      schema: {
+        type: "object",
+        properties: { default: { $ref: "#/definitions/H" }, const: { $ref: "#/definitions/H" } },
+        definitions: { H: { type: "string" } },
+      },
+    };
+
+    function namedPropertiesDocument(): JsonObject {
+      return assembleAsyncApi3(
+        spec({
+          channels: [jsonDraft07Channel],
+          messages: [message({ id: "m", name: "M", payloads: [NAMED_PROPERTIES], headers: NAMED_HEADERS })],
+          operations: [operation({ key: "o", channelRef: jsonDraft07Channel.id, messageRefs: ["m"] })],
+        }),
+      ).document;
+    }
+
+    it("rebases the $ref of properties called default / enum / const as it does any other", () => {
+      const message = (namedPropertiesDocument().components as { messages: { M: JsonObject } }).messages.M;
+      const rebased = { $ref: "#/components/messages/M/payload/schema/definitions/A" };
+      expect((message.payload as { schema: JsonObject }).schema.properties).toEqual({
+        default: rebased,
+        enum: rebased,
+        ok: rebased,
+      });
+      const headerRef = { $ref: "#/components/messages/M/headers/definitions/H" };
+      expect((message.headers as JsonObject).properties).toEqual({ default: headerRef, const: headerRef });
+    });
+
+    it("the assembled document passes the structural validator (no UNRESOLVED_REF)", () => {
+      expect(validateAsyncApi3Structure(namedPropertiesDocument())).toEqual([]);
+    });
+
+    it("the assembled document passes the real parser with zero errors and resolves the refs", async () => {
+      const document = namedPropertiesDocument();
+      expect(errorsOf(await validate(document))).toEqual([]);
+      const output = await createAsyncApiParser().parse(JSON.stringify(document));
+      const parsed = output.document?.json() as unknown as {
+        components: { messages: { M: { payload: { schema: { properties: Record<string, JsonObject> } } } } };
+      };
+      const properties = parsed.components.messages.M.payload.schema.properties;
+      for (const name of ["default", "enum", "ok"]) expect(properties[name]).toMatchObject({ type: "string" });
+    });
+
+    it("a $ref sibling wrapped for draft-07 still resolves and validates (structural + parser)", async () => {
+      const document = jsonPayloadDocument({
+        format: "json-schema",
+        dialect: "2020-12",
+        schema: {
+          type: "object",
+          properties: { name: { $ref: "#/$defs/Name", maxLength: 3, description: "Short name" } },
+          $defs: { Name: { type: "string" } },
+        },
+      });
+      const schema = (document.components as { messages: { M: { payload: { schema: JsonObject } } } }).messages.M
+        .payload.schema;
+      expect((schema.properties as { name: JsonObject }).name).toEqual({
+        description: "Short name",
+        allOf: [{ $ref: "#/components/messages/M/payload/schema/definitions/Name" }, { maxLength: 3 }],
+      });
+      expect(validateAsyncApi3Structure(document)).toEqual([]);
+      expect(errorsOf(await validate(document))).toEqual([]);
+    });
+  });
+
   describe("every payload format in one document", () => {
     it("validates Avro, JSON Schema (both dialects) and Protobuf copies of one message", async () => {
       const everyFormat: SchemaArtifact[] = [
@@ -157,7 +237,81 @@ describe("AsyncApiParserValidator (real @asyncapi/parser)", { timeout: 60_000 },
         "OrderCreated_json2020",
         "OrderCreated_proto",
       ]);
-      expect(errorsOf(await validate(document))).toEqual([]);
+      const diagnostics = await validate(document);
+      expect(errorsOf(diagnostics)).toEqual([]);
+      // the 2020-12 copy is the only one the parser cannot look at — and it says so
+      expect(diagnostics.filter((d) => d.code === "PAYLOAD_NOT_VALIDATED").map((d) => [d.severity, d.pointer])).toEqual([
+        ["warning", "/components/messages/OrderCreated_json2020/payload"],
+      ]);
+    });
+  });
+
+  describe("JSON Schema 2020-12 payloads (no schema parser in @asyncapi/parser)", () => {
+    const channel2020 = channel({
+      id: "ch-2020",
+      name: "orders-2020",
+      profile: { format: "json-schema", dialect: "2020-12" },
+    });
+    const documentWith2020Payload = (schema: JsonObject): JsonObject =>
+      assembleAsyncApi3(
+        spec({
+          channels: [channel2020],
+          messages: [message({ id: "m", name: "M", payloads: [{ format: "json-schema", dialect: "2020-12", schema }] })],
+          operations: [operation({ key: "o", channelRef: channel2020.id, messageRefs: ["m"] })],
+        }),
+      ).document;
+    const notValidated = (list: Diagnostic[]) => list.filter((d) => d.code === "PAYLOAD_NOT_VALIDATED");
+
+    it("a valid 2020-12 payload is not reported as clean: PAYLOAD_NOT_VALIDATED warning at the payload", async () => {
+      const diagnostics = await validate(
+        documentWith2020Payload({
+          type: "object",
+          properties: { a: { $ref: "#/$defs/A" } },
+          $defs: { A: { type: "string" } },
+          unevaluatedProperties: false,
+        }),
+      );
+      expect(errorsOf(diagnostics)).toEqual([]);
+      expect(notValidated(diagnostics)).toEqual([
+        expect.objectContaining({ severity: "warning", pointer: "/components/messages/M/payload" }),
+      ]);
+      expect(notValidated(diagnostics)[0].message).toContain("NOT validated");
+    });
+
+    it("an invalid 2020-12 payload is flagged the same way (the warning is the only claim: it was not checked)", async () => {
+      const diagnostics = await validate(documentWith2020Payload({ type: "strng", minLength: -1 }));
+      expect(errorsOf(diagnostics)).toEqual([]);
+      expect(notValidated(diagnostics).map((d) => [d.severity, d.pointer])).toEqual([
+        ["warning", "/components/messages/M/payload"],
+      ]);
+    });
+
+    it("contrast: the same broken schema in draft-07 IS rejected by the parser", async () => {
+      const document = jsonPayloadDocument({
+        format: "json-schema",
+        dialect: "draft-07",
+        schema: { type: "strng", minLength: -1 },
+      });
+      expect(errorsOf(await validate(document)).length).toBeGreaterThan(0);
+      expect(notValidated(await validate(document))).toEqual([]);
+    });
+
+    it("2020-12 headers in a hand-written document are reported too, with the headers pointer", async () => {
+      const document = documentWith2020Payload({ type: "object" });
+      const msg = (document.components as { messages: { M: JsonObject } }).messages.M;
+      msg.headers = {
+        schemaFormat: "application/schema+json;version=2020-12",
+        schema: { type: "object", properties: {} },
+      };
+      expect(notValidated(await validate(document)).map((d) => d.pointer)).toEqual([
+        "/components/messages/M/headers",
+        "/components/messages/M/payload",
+      ]);
+    });
+
+    it("draft-07, Avro and Protobuf payloads never get the warning", async () => {
+      expect(notValidated(await validate(jsonPayloadDocument(DRAFT_07_WITH_DEFINITIONS)))).toEqual([]);
+      expect(notValidated(await validate(golden("checkout-service")))).toEqual([]);
     });
   });
 
