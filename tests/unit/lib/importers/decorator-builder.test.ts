@@ -46,6 +46,14 @@ describe("buildDecoratorsFromParsedField — multi-entity import metadata", () =
     expect(decorators.typespec).toMatchObject({ validation: { pattern: "PENDING|SHIPPED" } });
   });
 
+  it("carries the symbols of an enum array element / map value for the generator, without a pattern", () => {
+    const decorators = buildDecoratorsFromParsedField(
+      field({ type: "array", arrayElementType: "enum", enumName: "Kind", enumValues: ["A", "B"] })
+    );
+    expect(decorators).toMatchObject({ arrayElementType: "enum", enumName: "Kind", enumValues: ["A", "B"] });
+    expect(decorators.typespec).toBeUndefined();
+  });
+
   it("does not overwrite an explicit pattern constraint with enum values", () => {
     const decorators = buildDecoratorsFromParsedField(
       field({

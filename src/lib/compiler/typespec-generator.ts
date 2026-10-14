@@ -76,7 +76,7 @@ export function generateTypeSpec(model: SuperSchemaModel): string {
 
   // Emit inline enum definitions (for enum-type fields not in shared enums)
   const sharedEnumNames = new Set(model.sharedEnums?.map((e) => e.name) ?? []);
-  const enumFields = model.fields.filter((f) => f.type === "enum");
+  const enumFields = model.fields.filter(needsInlineEnum);
   for (const field of enumFields) {
     // Only emit inline enum if it's not a shared enum reference
     const enumName = `${sanitizeIdentifier(model.entity.name)}_${sanitizeIdentifier(field.name)}`;
@@ -192,7 +192,7 @@ export function generateTypeSpecWithSourceMap(
 
   // Emit inline enum definitions first
   const sharedEnumNames = new Set(model.sharedEnums?.map((e) => e.name) ?? []);
-  const enumFields = model.fields.filter((f) => f.type === "enum");
+  const enumFields = model.fields.filter(needsInlineEnum);
   for (const field of enumFields) {
     const enumName = `${sanitizeIdentifier(model.entity.name)}_${sanitizeIdentifier(field.name)}`;
     if (!sharedEnumNames.has(enumName)) {
@@ -302,11 +302,30 @@ function generateSharedEnumDefinition(sharedEnum: SuperSchemaSharedEnum): string
 // Inline enum definition (field-scoped)
 // ---------------------------------------------------------------------------
 
+function inlineEnumName(entityName: string, field: SuperSchemaField): string {
+  return `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`;
+}
+
+/**
+ * Fields that get a field-scoped enum: every `enum` field, plus arrays / maps
+ * whose element / value is an enum with known symbols.
+ */
+function needsInlineEnum(field: SuperSchemaField): boolean {
+  if (field.type === "enum") return true;
+  const member =
+    field.type === "array"
+      ? field.complexType?.arrayElementType
+      : field.type === "map"
+        ? field.complexType?.mapValueType
+        : undefined;
+  return member === "enum" && extractEnumValues(field).length > 0;
+}
+
 function generateInlineEnumDefinition(
   field: SuperSchemaField,
   entityName: string
 ): string[] {
-  const enumName = `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`;
+  const enumName = inlineEnumName(entityName, field);
   const lines: string[] = [];
 
   // Extract enum values from decorators or aliases
@@ -331,6 +350,11 @@ function generateInlineEnumDefinition(
 }
 
 function extractEnumValues(field: SuperSchemaField): string[] {
+  // Array element / map value enums carry their symbols in complexType.
+  if (field.type !== "enum") {
+    return field.complexType?.enumValues ?? [];
+  }
+
   // Check typespec validation for enum hints
   const validation = field.decorators.typespec?.validation;
   if (validation && "pattern" in validation && validation.pattern) {
@@ -614,6 +638,36 @@ function generateFieldDecorators(field: SuperSchemaField): string[] {
 // Type resolution — LogicalType -> TypeSpec type expression
 // ---------------------------------------------------------------------------
 
+/** Structured logical types as a collection member (their `typespecScalar` is not a type). */
+const STRUCTURED_MEMBER_TYPES: Record<string, string> = {
+  object: "Record<unknown>",
+  map: "Record<unknown>",
+  array: "unknown[]",
+};
+
+/**
+ * TypeSpec type of an array element / map value: a reference resolves to the
+ * referenced entity, an enum to the field's generated enum, structured types to
+ * their generic form; anything else as before (scalar, or a declared type name).
+ */
+function resolveCollectionMemberType(
+  memberType: string,
+  field: SuperSchemaField,
+  entityName: string
+): string {
+  if (memberType === "reference") {
+    const refName = field.complexType?.referencedEntityName;
+    return refName ? sanitizeIdentifier(refName) : "string";
+  }
+  if (memberType === "enum") {
+    return extractEnumValues(field).length > 0 ? inlineEnumName(entityName, field) : "string";
+  }
+  if (STRUCTURED_MEMBER_TYPES[memberType]) {
+    return STRUCTURED_MEMBER_TYPES[memberType];
+  }
+  return getTypeInfo(memberType)?.typespecScalar ?? memberType;
+}
+
 function resolveTypeSpecType(
   field: SuperSchemaField,
   entityName: string
@@ -623,25 +677,17 @@ function resolveTypeSpecType(
 
   switch (field.type as LogicalType) {
     case "enum": {
-      return `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`;
+      return inlineEnumName(entityName, field);
     }
     case "array": {
       const elementType = field.complexType?.arrayElementType ?? "string";
-      const elementTypeInfo = getTypeInfo(elementType);
-      const elementTypeSpec = elementTypeInfo?.typespecScalar ?? elementType;
-      return `${elementTypeSpec}[]`;
+      return `${resolveCollectionMemberType(elementType, field, entityName)}[]`;
     }
     case "map": {
-      const keyType = field.complexType?.mapKeyType ?? "string";
+      // TypeSpec `Record<T>` is string-keyed only (a key type argument does not
+      // compile), so the key type stays in the IR (complexType.mapKeyType).
       const valueType = field.complexType?.mapValueType ?? "string";
-      const keyTypeInfo = getTypeInfo(keyType);
-      const valueTypeInfo = getTypeInfo(valueType);
-      const keyTypeSpec = keyTypeInfo?.typespecScalar ?? keyType;
-      const valueTypeSpec = valueTypeInfo?.typespecScalar ?? valueType;
-      if (keyTypeSpec !== "string") {
-        return `Record<${keyTypeSpec}, ${valueTypeSpec}>`;
-      }
-      return `Record<${valueTypeSpec}>`;
+      return `Record<${resolveCollectionMemberType(valueType, field, entityName)}>`;
     }
     case "object": {
       // Inline model or reference to a nested model

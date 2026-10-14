@@ -207,6 +207,8 @@ export interface ComplexTypeInfo {
   // Map
   mapKeyType?: string;
   mapValueType?: string;
+  // Enum symbols of an array element / map value of type "enum"
+  enumValues?: string[];
   // Object/nested
   nestedFields?: NestedFieldInfo[];
   // Reference
