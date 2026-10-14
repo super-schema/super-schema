@@ -36,7 +36,12 @@ import {
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
-import { markEntityDraftChanged, metadataChangesDraft } from "@/lib/entity-versioning/draft-state";
+import {
+  markEntityFieldsEdited,
+  metadataChangesDraft,
+  isSourceStale,
+  CLEAR_SOURCE_STALE_SQL,
+} from "@/lib/entity-versioning/draft-state";
 
 /**
  * Look up the effective role for the current user.
@@ -142,7 +147,7 @@ export async function addFieldAction(
             ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
           },
         });
-        await markEntityDraftChanged(prisma, entityId);
+        await markEntityFieldsEdited(prisma, entityId);
         return created;
       },
     });
@@ -224,7 +229,7 @@ export async function updateFieldAction(
             ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
           },
         });
-        await markEntityDraftChanged(prisma, existing.entityId);
+        await markEntityFieldsEdited(prisma, existing.entityId);
         return updated;
       },
     });
@@ -609,7 +614,7 @@ export async function deleteFieldAction(fieldId: string) {
       beforeState: existing as unknown as object,
       fn: async () => {
         await prisma.field.delete({ where: { id: fieldId } });
-        await markEntityDraftChanged(prisma, existing.entityId);
+        await markEntityFieldsEdited(prisma, existing.entityId);
         return null;
       },
     });
@@ -774,7 +779,7 @@ export async function applyTypeSpecAction(
     }
 
     if (addedCount + updatedCount + removedNames.length > 0) {
-      await markEntityDraftChanged(prisma, entityId);
+      await markEntityFieldsEdited(prisma, entityId);
     }
 
     revalidatePath("/schemas");
@@ -1596,6 +1601,10 @@ export async function checkTargetDriftAction(
  * field rows on first access (Story 12.7, incremental rather than a big
  * upfront migration job) — existing entities get a typespecSource the first
  * time anyone opens the TypeSpec Source tab, not before.
+ *
+ * A stored source flagged `metadata.sourceStale` (field rows were edited
+ * outside this tab since it was written, R42) is regenerated the same way, so
+ * the tab never shows — or re-saves — a source that lacks those edits.
  */
 export async function getTypeSpecSourceAction(entityId: string) {
   const session = await auth();
@@ -1607,7 +1616,7 @@ export async function getTypeSpecSourceAction(entityId: string) {
   });
   if (!entity) return { error: "Entity not found" };
 
-  if (entity.typespecSource) {
+  if (entity.typespecSource && !isSourceStale(entity.metadata)) {
     return { success: true as const, source: entity.typespecSource, generated: false };
   }
 
@@ -1705,11 +1714,18 @@ export async function compileAndApplyTypeSpecSourceAction(
     entityId,
     userId: session.user.id,
     beforeState: { typespecSource: entity.typespecSource } as unknown as object,
-    fn: () =>
-      prisma.entity.update({
-        where: { id: entityId },
-        data: { typespecSource: source, hasUnpublishedChanges: true },
-      }),
+    fn: async () => {
+      // Source + fields were just written consistently: save the source and clear
+      // `sourceStale` (set by applyTypeSpecAction above) in one atomic batch.
+      const [updated] = await prisma.$transaction([
+        prisma.entity.update({
+          where: { id: entityId },
+          data: { typespecSource: source, hasUnpublishedChanges: true },
+        }),
+        prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, entityId),
+      ]);
+      return updated;
+    },
   });
 
   revalidatePath("/schemas");

@@ -14,7 +14,7 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
-import { entityUpdateTouchesDraft } from "@/lib/entity-versioning/draft-state";
+import { entityUpdateTouchesDraft, isSourceStale } from "@/lib/entity-versioning/draft-state";
 import { generateSlug, isReservedEntityRouteSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -234,14 +234,17 @@ export async function updateEntity(
       beforeState: existing as unknown as object,
       fn: async () => {
         const touchesDraft = entityUpdateTouchesDraft(existing, parsed.data);
+        // Callers send a whole metadata copy (and the schema strips unknown keys), so the
+        // server-owned stale-source marker must be carried over or the replace would clear it (R42).
+        const nextMetadata =
+          parsed.data.metadata !== undefined
+            ? { ...parsed.data.metadata, ...(isSourceStale(existing.metadata) && { sourceStale: true }) }
+            : undefined;
         const update = {
           where: { id },
           data: {
             ...parsed.data,
-            metadata:
-              parsed.data.metadata !== undefined
-                ? (parsed.data.metadata as unknown as Prisma.InputJsonValue)
-                : undefined,
+            metadata: nextMetadata as unknown as Prisma.InputJsonValue | undefined,
             ...(touchesDraft && { hasUnpublishedChanges: true }),
           },
           include: { domain: true },

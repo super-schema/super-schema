@@ -318,6 +318,28 @@ describe("Entity Service", () => {
       const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: Record<string, unknown> };
       expect(call.data).not.toHaveProperty("hasUnpublishedChanges");
     });
+
+    it("keeps metadata.sourceStale when the caller replaces metadata with a copy that lacks it", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({
+        ...existing, description: "", metadata: { tags: [], sourceStale: true },
+      } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "DEPRECATED" } as never);
+
+      await updateEntity("ent-1", { metadata: { tags: ["sales"] } }, mockCtx);
+
+      const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: { metadata: Record<string, unknown> } };
+      expect(call.data.metadata).toEqual({ tags: ["sales"], sourceStale: true });
+    });
+
+    it("does not invent sourceStale when the stored metadata is not stale", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: { tags: [] } } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "DEPRECATED" } as never);
+
+      await updateEntity("ent-1", { metadata: { tags: ["sales"] } }, mockCtx);
+
+      const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: { metadata: Record<string, unknown> } };
+      expect(call.data.metadata).toEqual({ tags: ["sales"] });
+    });
   });
 
   describe("deleteEntity", () => {

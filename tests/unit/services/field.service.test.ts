@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/db", () => ({
   prisma: {
     entity: { findUnique: vi.fn(), update: vi.fn() },
+    $executeRawUnsafe: vi.fn(),
     field: {
       create: vi.fn(),
       findFirst: vi.fn(),
@@ -23,6 +24,7 @@ import {
   reorderFields,
 } from "@/services/field.service";
 import { prisma } from "@/lib/db";
+import { MARK_FIELDS_EDITED_SQL } from "@/lib/entity-versioning/draft-state";
 import type { ServiceContext } from "@/types/service-context";
 
 const mockCtx: ServiceContext = {
@@ -188,35 +190,33 @@ describe("Field Service", () => {
   });
 
   describe("draft tracking", () => {
-    const MARK = { where: { id: "ent-1" }, data: { hasUnpublishedChanges: true }, select: { id: true } };
-
-    it("createField marks the entity draft as changed", async () => {
+    it("createField marks the draft changed and the source stale", async () => {
       vi.mocked(prisma.entity.findUnique).mockResolvedValue({ id: "ent-1" } as never);
       vi.mocked(prisma.field.findFirst).mockResolvedValue(null);
       vi.mocked(prisma.field.create).mockResolvedValue({ id: "fld-1", entityId: "ent-1" } as never);
       await createField("ent-1", { name: "email", type: "string" }, mockCtx);
-      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
+      expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_FIELDS_EDITED_SQL, "ent-1");
     });
 
-    it("updateField marks the owning entity", async () => {
+    it("updateField marks the draft changed and the source stale", async () => {
       vi.mocked(prisma.field.findUnique).mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email" } as never);
       vi.mocked(prisma.field.update).mockResolvedValue({ id: "fld-1" } as never);
       await updateField("fld-1", { description: "Primary email" }, mockCtx);
-      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
+      expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_FIELDS_EDITED_SQL, "ent-1");
     });
 
-    it("deleteField marks the owning entity", async () => {
+    it("deleteField marks the draft changed and the source stale", async () => {
       vi.mocked(prisma.field.findUnique).mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email" } as never);
       vi.mocked(prisma.field.delete).mockResolvedValue({ id: "fld-1" } as never);
       await deleteField("fld-1", mockCtx);
-      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
+      expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_FIELDS_EDITED_SQL, "ent-1");
     });
 
-    it("reorderFields marks the entity", async () => {
+    it("reorderFields marks the draft changed and the source stale", async () => {
       vi.mocked(prisma.field.findMany).mockResolvedValue([{ id: "fld-1", sortOrder: 0 }] as never);
       vi.mocked(prisma.$transaction).mockResolvedValue([]);
       await reorderFields("ent-1", ["fld-1"], mockCtx);
-      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
+      expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_FIELDS_EDITED_SQL, "ent-1");
     });
   });
 });

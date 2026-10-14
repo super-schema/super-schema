@@ -21,8 +21,8 @@ import { collectReferencedEntityIds } from "@/lib/entity-versioning/reference-ta
 import { analyzePublish, planPublish, type PublishAnalysis, type PublishState } from "@/lib/entity-versioning/publish-plan";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
-import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
-import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { isSourceStale, WRITE_BACK_SOURCE_SQL } from "@/lib/entity-versioning/draft-state";
+import { resolveDraftSource } from "@/lib/entity-versioning/resolve-source";
 import { ServiceErrorRejection } from "@/services/scoped-create.service";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -70,7 +70,10 @@ function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
 }
 
-async function loadPublishState(db: Db, entityId: string): Promise<Result<PublishState>> {
+/** The planner's state plus whether the stored source lags the field rows (R42). */
+type LoadedPublishState = PublishState & { sourceStale: boolean };
+
+async function loadPublishState(db: Db, entityId: string): Promise<Result<LoadedPublishState>> {
   const entity = await db.entity.findUnique({
     where: { id: entityId },
     include: {
@@ -88,6 +91,7 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Publis
   const byId = new Map(targets.map((t) => [t.id, t]));
 
   return ok({
+    sourceStale: isSourceStale(entity.metadata),
     entity: {
       id: entity.id,
       name: entity.name,
@@ -111,14 +115,6 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Publis
       return { entityId: id, entityName: t?.name ?? null, latestVersionId: t?.latestVersionId ?? null };
     }),
   });
-}
-
-/** Phase 2a resolvedSource: the stored canonical source, else source generated from the field rows. */
-async function draftSource(db: Db, entityId: string, stored: string | null): Promise<Result<string>> {
-  if (stored) return ok(stored);
-  const model = await loadEntityModel(db, entityId);
-  if (!model.success) return model;
-  return ok(generateTypeSpec(model.data));
 }
 
 /** What the publish dialog shows: suggested bump, next labels, reasons, blockers, pins. */
@@ -152,7 +148,14 @@ export async function publishEntity(
             if (!state.success) throw new ServiceErrorRejection(state.error);
             const plan = planPublish(state.data, opts.bump);
             if (!plan.success) throw new ServiceErrorRejection(plan.error);
-            const source = await draftSource(tx, entityId, state.data.entity.typespecSource);
+            // R42: a stale or missing stored source is regenerated from the field rows and gated with
+            // the real compiler; the publish is blocked (with the diagnostics) if it does not compile.
+            const source = await resolveDraftSource(
+              tx,
+              entityId,
+              state.data.entity.typespecSource,
+              state.data.sourceStale
+            );
             if (!source.success) throw new ServiceErrorRejection(source.error);
 
             const version = await tx.entityVersion.create({
@@ -161,7 +164,7 @@ export async function publishEntity(
                 major: plan.data.version.major,
                 minor: plan.data.version.minor,
                 sequence: plan.data.sequence,
-                resolvedSource: source.data,
+                resolvedSource: source.data.source,
                 fieldSnapshot: state.data.currentFields as unknown as Prisma.InputJsonValue,
                 changeKind: plan.data.changeKind,
                 compatReport: {},
@@ -185,6 +188,12 @@ export async function publishEntity(
               });
             }
 
+            // A regenerated source is written back (and sourceStale cleared) in this same transaction,
+            // so the entity's canonical source matches what was just frozen.
+            if (source.data.regenerated) {
+              await tx.$executeRawUnsafe(WRITE_BACK_SOURCE_SQL, entityId, source.data.source);
+            }
+
             await tx.entity.update({
               where: { id: entityId },
               data: { latestVersionId: version.id, hasUnpublishedChanges: false, version: version.sequence },
@@ -192,7 +201,8 @@ export async function publishEntity(
             });
             return version;
           },
-          { timeout: 15_000 }
+          // Regenerating source runs the real TypeSpec compiler inside the transaction.
+          { timeout: 30_000 }
         ),
     });
     return ok(toSummary(created));

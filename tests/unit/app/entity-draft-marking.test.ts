@@ -12,6 +12,8 @@ const { mockPrisma, mockCompile } = vi.hoisted(() => ({
       delete: vi.fn(),
     },
     auditLog: { create: vi.fn() },
+    $executeRawUnsafe: vi.fn(),
+    $transaction: vi.fn(),
   },
   mockCompile: vi.fn(),
 }));
@@ -21,6 +23,7 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "us
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: mockCompile }));
 
+import { MARK_FIELDS_EDITED_SQL, CLEAR_SOURCE_STALE_SQL } from "@/lib/entity-versioning/draft-state";
 import {
   addFieldAction,
   updateFieldAction,
@@ -30,9 +33,12 @@ import {
   updateEntityMetadataAction,
   updateEntityRelationshipsAction,
   compileAndApplyTypeSpecSourceAction,
+  getTypeSpecSourceAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
-const MARK = { where: { id: "ent-1" }, data: { hasUnpublishedChanges: true }, select: { id: true } };
+/** Field-row paths flag the draft changed AND the stored typespecSource stale in one statement. */
+const expectFieldsEdited = () =>
+  expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_FIELDS_EDITED_SQL, "ent-1");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,36 +46,38 @@ beforeEach(() => {
   mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
   mockPrisma.field.findFirst.mockResolvedValue(null);
   mockPrisma.field.findMany.mockResolvedValue([]);
+  // $transaction([...]) batch form: resolve every operation.
+  mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
 });
 
 describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
-  it("addFieldAction", async () => {
+  it("addFieldAction marks the draft changed and the source stale", async () => {
     mockPrisma.field.create.mockResolvedValue({ id: "fld-1", entityId: "ent-1" });
     expect(await addFieldAction("ent-1", "email", "string")).toMatchObject({ success: true });
-    expect(mockPrisma.entity.update).toHaveBeenCalledWith(MARK);
+    expectFieldsEdited();
   });
 
-  it("updateFieldAction", async () => {
+  it("updateFieldAction marks the draft changed and the source stale", async () => {
     mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email" });
     mockPrisma.field.update.mockResolvedValue({ id: "fld-1" });
     expect(await updateFieldAction("fld-1", { description: "Primary email" })).toEqual({ success: true });
-    expect(mockPrisma.entity.update).toHaveBeenCalledWith(MARK);
+    expectFieldsEdited();
   });
 
-  it("deleteFieldAction", async () => {
+  it("deleteFieldAction marks the draft changed and the source stale", async () => {
     mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email", type: "string" });
     mockPrisma.field.delete.mockResolvedValue({ id: "fld-1" });
     expect(await deleteFieldAction("fld-1")).toEqual({ success: true });
-    expect(mockPrisma.entity.update).toHaveBeenCalledWith(MARK);
+    expectFieldsEdited();
   });
 
-  it("applyTypeSpecAction marks only when something changed", async () => {
+  it("applyTypeSpecAction (preview apply) marks the source stale only when something changed", async () => {
     await applyTypeSpecAction("ent-1", []);
-    expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
 
     mockPrisma.field.create.mockResolvedValue({ id: "fld-2" });
     await applyTypeSpecAction("ent-1", [{ name: "phone", type: "string", isOptional: true, isKey: false, decorators: {} }]);
-    expect(mockPrisma.entity.update).toHaveBeenCalledWith(MARK);
+    expectFieldsEdited();
   });
 
   it("updateEntityDescriptionAction writes the flag with the description", async () => {
@@ -105,7 +113,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
     });
   });
 
-  it("compileAndApplyTypeSpecSourceAction saves source and flag together", async () => {
+  it("compileAndApplyTypeSpecSourceAction saves source + draft flag and clears sourceStale atomically", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null });
     mockCompile.mockResolvedValue({
       success: true,
@@ -119,5 +127,44 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
       where: { id: "ent-1" },
       data: { typespecSource: "model Order {}", hasUnpublishedChanges: true },
     });
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(CLEAR_SOURCE_STALE_SQL, "ent-1");
+    // Both writes go through one $transaction([...]) batch, and the clear runs after any stale marking.
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$transaction.mock.calls[0][0]).toHaveLength(2);
+  });
+
+  it("compileAndApplyTypeSpecSourceAction leaves sourceStale alone when the source does not compile", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null });
+    mockCompile.mockResolvedValue({ success: false, diagnostics: [{ severity: "error", code: "x", message: "bad" }] });
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model {");
+    expect(res.success).toBe(false);
+    expect(mockPrisma.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("getTypeSpecSourceAction", () => {
+  const entityRow = (over: Record<string, unknown>) => ({
+    id: "ent-1", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null, domain: null,
+    metadata: null, typespecSource: "model Order { hand: string; }", ...over,
+  });
+
+  it("returns the stored source as-is when it is fresh", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue(entityRow({}));
+    expect(await getTypeSpecSourceAction("ent-1")).toEqual({
+      success: true, source: "model Order { hand: string; }", generated: false,
+    });
+  });
+
+  it("regenerates from the field rows when sourceStale, so the tab never shows (or re-saves) a source that lacks field-editor edits", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue(entityRow({ metadata: { sourceStale: true } }));
+    mockPrisma.field.findMany.mockResolvedValue([
+      { id: "f1", name: "note", type: "string", precision: null, scale: null, nullable: true, isKey: false,
+        fieldNumber: null, description: "", classification: null, aliases: [], decorators: {}, sortOrder: 0 },
+    ]);
+    const res = await getTypeSpecSourceAction("ent-1");
+    expect(res).toMatchObject({ success: true, generated: true });
+    expect("source" in res && res.source).toContain("note");
+    expect("source" in res && res.source).not.toContain("hand");
   });
 });

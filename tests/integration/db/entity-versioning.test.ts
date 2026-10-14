@@ -1,9 +1,14 @@
 import "dotenv/config";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { PrismaClient, type Prisma } from "@/generated/prisma/client";
+import { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  markEntityFieldsEdited,
+  CLEAR_SOURCE_STALE_SQL,
+  WRITE_BACK_SOURCE_SQL,
+} from "@/lib/entity-versioning/draft-state";
 
 let prisma: PrismaClient;
 const TENANT = "tenant_default";
@@ -114,6 +119,54 @@ describe("entity versioning schema", () => {
       // Circular FK (entities.latestVersionId ↔ entity_versions.entityId) must not block the delete.
       await prisma.entity.delete({ where: { id: e.id } });
       expect(await prisma.entityVersion.count({ where: { id: v.id } })).toBe(0);
+    } finally {
+      if (domainId) await prisma.domain.deleteMany({ where: { id: domainId } });
+    }
+  });
+
+  it("marks the stored source stale, keeps other metadata, copes with NULL metadata, and clears the marker (R42)", async () => {
+    let domainId: string | undefined;
+    try {
+      const user = await prisma.user.findFirstOrThrow();
+      const s = stamp();
+      const d = await prisma.domain.create({ data: { name: `stale-${s}`, slug: `stale-${s}`, tenantId: TENANT } });
+      domainId = d.id;
+      const p = await prisma.product.create({ data: { domainId: d.id, name: "P", slug: `p-${s}` } });
+      const e = await prisma.entity.create({
+        data: { name: "Stale", slug: `stale-${s}`, tenantId: TENANT, domainId: d.id, productId: p.id, ownerId: user.id },
+      });
+      const meta = async () => (await prisma.entity.findUniqueOrThrow({ where: { id: e.id } })).metadata;
+
+      // NULL metadata becomes { sourceStale: true } and the draft flag is set.
+      await prisma.entity.update({ where: { id: e.id }, data: { hasUnpublishedChanges: false } });
+      await markEntityFieldsEdited(prisma, e.id);
+      expect(await prisma.entity.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+        hasUnpublishedChanges: true,
+        metadata: { sourceStale: true },
+      });
+
+      // Other metadata keys survive both the mark and the clear.
+      await prisma.entity.update({ where: { id: e.id }, data: { metadata: { tags: ["a"], schemaVersions: { avro: [] } } } });
+      await markEntityFieldsEdited(prisma, e.id);
+      expect(await meta()).toEqual({ tags: ["a"], schemaVersions: { avro: [] }, sourceStale: true });
+      await prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, e.id);
+      expect(await meta()).toEqual({ tags: ["a"], schemaVersions: { avro: [] } });
+
+      // Write-back stores the source and drops sourceStale and the 12.7 flag, keeping the rest.
+      await prisma.entity.update({
+        where: { id: e.id },
+        data: { metadata: { tags: ["a"], sourceStale: true, typespecMigration: { status: "FLAGGED" } } },
+      });
+      await prisma.$executeRawUnsafe(WRITE_BACK_SOURCE_SQL, e.id, "model Stale {}");
+      expect(await prisma.entity.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
+        typespecSource: "model Stale {}",
+        metadata: { tags: ["a"] },
+      });
+
+      // Clearing an entity with NULL metadata is a harmless no-op.
+      await prisma.entity.update({ where: { id: e.id }, data: { metadata: Prisma.DbNull } });
+      await prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, e.id);
+      expect(await meta()).toBeNull();
     } finally {
       if (domainId) await prisma.domain.deleteMany({ where: { id: domainId } });
     }
