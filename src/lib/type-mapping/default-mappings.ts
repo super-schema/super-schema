@@ -236,11 +236,13 @@ const PROTOBUF_MAPPINGS: DefaultMappingEntry[] = [
   { sourceType: "offsetDateTime", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: true, lossDescription: "UTC offset information is lost — google.protobuf.Timestamp is an absolute UTC instant" },
   { sourceType: "duration", targetFormat: "protobuf", mappedType: "google.protobuf.Duration", isLossy: true, lossDescription: "google.protobuf.Duration is an exact seconds+nanos span — calendar components of an ISO 8601 duration (years, months, days) have no fixed length and must be normalized to seconds" },
   { sourceType: "unixTimestamp32", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: false },
-  { sourceType: "enum", targetFormat: "protobuf", mappedType: "enum", isLossy: false },
+  // isLossy: true on the next two rows is what makes the mapping UI surface
+  // the note (mapping-intelligence only shows a lossDescription when isLossy).
+  { sourceType: "enum", targetFormat: "protobuf", mappedType: "enum", isLossy: true, lossDescription: "Proto enum ordinals are positional: a <ENUM>_UNSPECIFIED = 0 sentinel is added and members are numbered 1..n in their current order, with no persisted numbers. Inserting, removing or reordering a member renumbers later members — a wire-breaking change for existing consumers (Buf breaking / Schema Registry compatibility). Only append new members at the end." },
   { sourceType: "array", targetFormat: "protobuf", mappedType: "repeated", isLossy: false },
   { sourceType: "map", targetFormat: "protobuf", mappedType: "map", isLossy: false },
   { sourceType: "object", targetFormat: "protobuf", mappedType: "google.protobuf.Struct", isLossy: true, lossDescription: "Nested object emitted as dynamic google.protobuf.Struct — nested field types are not preserved" },
-  { sourceType: "reference", targetFormat: "protobuf", mappedType: "message", isLossy: false },
+  { sourceType: "reference", targetFormat: "protobuf", mappedType: "message", isLossy: true, lossDescription: "Cross-entity references are not emitted yet: the referenced entity's message is not in the same compile unit, so protobuf emission fails with \"Unknown identifier\" (multi-model emission gap). The intended mapping is a reference to the referenced entity's message." },
 ];
 
 // ---------------------------------------------------------------------------

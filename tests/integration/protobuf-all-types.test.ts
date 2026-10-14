@@ -59,7 +59,8 @@ function decoratorsFor(typeId: string): Record<string, unknown> {
  * tests/integration/all-types-roundtrip.test.ts).
  */
 function allTypesFields(): PrismaFieldInput[] {
-  return DATA_TYPE_HIERARCHY.filter((dt) => dt.id !== "reference").map((dt, i) => {
+  const types = DATA_TYPE_HIERARCHY.filter((dt) => dt.id !== "reference");
+  return types.map((dt, i) => {
     const isDecimal = dt.id === "decimal" || dt.id === "decimal128";
     return {
       id: `f-${dt.id}`,
@@ -69,13 +70,16 @@ function allTypesFields(): PrismaFieldInput[] {
       scale: isDecimal ? 9 : null,
       nullable: i % 2 === 0,
       isKey: false,
-      fieldNumber: i + 1,
+      // De-sequenced on purpose: field numbers are neither the declaration
+      // position (sortOrder, reversed below) nor contiguous, so a regression
+      // to position-based numbering fails "keeps field numbers from the model".
+      fieldNumber: (i + 1) * 2,
       description: `A ${dt.id} field`,
       classification: null,
       // The generator reads inline enum members from the field aliases.
       aliases: dt.id === "enum" ? ["ALPHA", "BETA"] : [],
       decorators: decoratorsFor(dt.id),
-      sortOrder: i,
+      sortOrder: types.length - 1 - i,
     } satisfies PrismaFieldInput;
   });
 }
@@ -179,9 +183,18 @@ describe("protobuf target: every logical type emits a valid .proto", () => {
 
   it("keeps field numbers from the model", () => {
     const { message } = parseEmittedProto(result);
-    fields.forEach((field) => {
-      expect(message.fields[field.name].id, field.name).toBe(field.fieldNumber);
+    const byDeclarationOrder = [...fields].sort((a, b) => a.sortOrder - b.sortOrder);
+    // Guard: the fixture must not coincide with position-based numbering,
+    // otherwise this test could not detect a numbering regression.
+    byDeclarationOrder.forEach((field, position) => {
+      expect(field.fieldNumber, field.name).not.toBe(position + 1);
     });
+
+    const emitted = Object.fromEntries(
+      Object.values(message.fields).map((protoField) => [protoField.name, protoField.id])
+    );
+    const expected = Object.fromEntries(fields.map((field) => [field.name, field.fieldNumber]));
+    expect(emitted).toEqual(expected);
   });
 
   it("does not change the canonical TypeSpec used by every other target", () => {

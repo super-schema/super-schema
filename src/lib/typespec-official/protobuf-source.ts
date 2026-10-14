@@ -33,7 +33,9 @@
  *   `google.protobuf.Struct`; map (`Record<V>`) → `map<string, V>`.
  * - enums get an `<ENUM>_UNSPECIFIED = 0` sentinel (AIP-126 / Buf
  *   ENUM_ZERO_VALUE_SUFFIX) unless the first member already is a zero-style
- *   value, then members are numbered in declaration order.
+ *   value, then members are numbered in declaration order. Those ordinals are
+ *   positional (not persisted), so reordering members is wire-breaking — see
+ *   `normalizeEnumsForProtobuf`.
  *
  * Pure functions — no side effects, no I/O.
  */
@@ -176,6 +178,14 @@ function normalizeEnumsForProtobuf(source: string): string {
         ? [sentinel, ...members]
         : [members[existingZero], ...members.filter((_, i) => i !== existingZero)];
 
+    // WIRE-COMPATIBILITY HAZARD: ordinals are POSITIONAL. The logical model
+    // stores enum members as an ordered name list with no persisted number,
+    // so each member's proto value is its index here. Inserting, removing or
+    // reordering a logical member silently renumbers every later member — a
+    // breaking wire change for existing consumers (and a Buf breaking /
+    // Schema Registry compatibility failure). Documented on the `enum` →
+    // protobuf row in default-mappings.ts; stable, persisted, append-only
+    // ordinals are a follow-up story.
     const memberLines = ordered.map((member, value) => `${indent}  ${member}: ${value},`);
     return [`${indent}enum ${enumName} {`, ...memberLines, `${indent}}`].join("\n");
   });

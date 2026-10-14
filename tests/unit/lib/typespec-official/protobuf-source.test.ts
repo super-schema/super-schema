@@ -8,6 +8,7 @@ import {
   projectTypeSpecSourceForProtobuf,
   rewriteTypeExpressionForProtobuf,
 } from "@/lib/typespec-official/protobuf-source";
+import { getDefaultMapping } from "@/lib/type-mapping/default-mappings";
 
 const TIMESTAMP = "TypeSpec.Protobuf.WellKnown.Timestamp";
 
@@ -133,5 +134,22 @@ describe("projectTypeSpecSourceForProtobuf", () => {
     expect(projectTypeSpecSourceForProtobuf(source)).toBe(
       ["enum HTTPStatus {", "  HTTP_STATUS_UNSPECIFIED: 0,", "}"].join("\n")
     );
+  });
+});
+
+describe("protobuf mapping-table notes for hazards the projection cannot remove", () => {
+  it("flags enum ordinals as positional, so reordering members is wire-breaking", () => {
+    const row = getDefaultMapping("enum", "protobuf");
+    expect(row?.isLossy).toBe(true);
+    expect(row?.lossDescription).toMatch(/positional/i);
+    expect(row?.lossDescription).toMatch(/reordering/i);
+    expect(row?.lossDescription).toMatch(/wire-breaking/i);
+  });
+
+  it("flags reference as not emitted yet because of the cross-entity gap", () => {
+    const row = getDefaultMapping("reference", "protobuf");
+    expect(row?.isLossy).toBe(true);
+    expect(row?.lossDescription).toMatch(/cross-entity/i);
+    expect(row?.lossDescription).toMatch(/Unknown identifier/);
   });
 });
