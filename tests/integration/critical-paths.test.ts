@@ -38,6 +38,7 @@ const { mockPrisma } = vi.hoisted(() => {
       unionType: { findMany: vi.fn().mockResolvedValue([]) },
       serviceDefinition: { findMany: vi.fn().mockResolvedValue([]) },
       $executeRaw: vi.fn(),
+      $executeRawUnsafe: vi.fn(),
       $transaction: vi.fn(),
       field: {
         create: vi.fn(),
