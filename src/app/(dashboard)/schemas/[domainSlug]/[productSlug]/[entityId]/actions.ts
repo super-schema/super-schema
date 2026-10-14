@@ -374,6 +374,7 @@ export async function createTypeMappingOverrideAction(input: {
       ctx
     );
     if (!result.success) return { error: result.error.message };
+    revalidatePath("/schemas", "layout");
     return { success: true, override: result.data };
   } else {
     const result = await createEntityOverride(
@@ -388,6 +389,7 @@ export async function createTypeMappingOverrideAction(input: {
       ctx
     );
     if (!result.success) return { error: result.error.message };
+    revalidatePath("/schemas", "layout");
     return { success: true, override: result.data };
   }
 }
@@ -415,6 +417,7 @@ export async function acknowledgeLossyMappingAction(input: {
   });
 
   if (!result.success) return { error: result.error.message };
+  revalidatePath("/schemas", "layout");
   return { success: true };
 }
 

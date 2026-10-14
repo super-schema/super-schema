@@ -18,6 +18,7 @@ export function mapFieldCreateInput(
     precision: field.precision,
     scale: field.scale,
     sortOrder: index,
+    ...(field.fieldNumber != null ? { fieldNumber: field.fieldNumber } : {}),
     ...(field.aliases?.length ? { aliases: field.aliases } : {}),
     ...(field.decorators && Object.keys(field.decorators).length > 0
       ? { decorators: field.decorators as Prisma.InputJsonValue }

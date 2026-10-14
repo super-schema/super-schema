@@ -16,8 +16,17 @@ export type AssetRef =
   | { kind: "field"; entitySlug: string; fieldId: string; domainSlug: string | null; productSlug: string | null }
   | { kind: "newEntity"; domainSlug: string | null; productSlug: string | null };
 
+/**
+ * URL segments of the tenant-level (Enterprise) scope. A route that receives
+ * `[domainSlug]=ENTERPRISE_ROUTE_SEGMENT` and `[productSlug]=ENTERPRISE_ENTITIES_SEGMENT`
+ * is a tenant-level entity URL. They are exported so route code that must detect
+ * that shape reads the literals from here, never re-declares them.
+ */
+export const ENTERPRISE_ROUTE_SEGMENT = "enterprise";
+export const ENTERPRISE_ENTITIES_SEGMENT = "entities";
+
 const ROOT = "/schemas";
-const ENTERPRISE = `${ROOT}/enterprise`;
+const ENTERPRISE = `${ROOT}/${ENTERPRISE_ROUTE_SEGMENT}`;
 const enc = encodeURIComponent;
 
 function levelBase(domainSlug: string | null, productSlug: string | null): string {
@@ -27,7 +36,7 @@ function levelBase(domainSlug: string | null, productSlug: string | null): strin
 }
 
 function entityBase(slug: string, domainSlug: string | null, productSlug: string | null): string {
-  if (!domainSlug || !productSlug) return `${ENTERPRISE}/entities/${enc(slug)}`;
+  if (!domainSlug || !productSlug) return `${ENTERPRISE}/${ENTERPRISE_ENTITIES_SEGMENT}/${enc(slug)}`;
   return `${levelBase(domainSlug, productSlug)}/${enc(slug)}`;
 }
 

@@ -127,11 +127,9 @@ const BASE_PROPS = {
   },
   domainPolicy: null,
   entities: [],
-  models: [],
   sharedEnums: [],
   customScalars: [],
   unionTypes: [],
-  decoratorDefinitions: [],
   services: [],
 };
 
@@ -154,6 +152,21 @@ describe("DomainWorkspace — domain delete button", () => {
         isSystemDomain={false}
       />
     );
+    expect(screen.queryByTitle("Delete domain")).toBeNull();
+  });
+
+  it("offers no delete UI when deletion is enabled but no deletionImpact was computed", () => {
+    const { deletionImpact: _unused, ...withoutImpact } = BASE_PROPS;
+    void _unused;
+    renderWithQueryClient(<DomainWorkspace {...withoutImpact} isSystemDomain={false} />);
+    expect(screen.queryByTitle("Delete domain")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("renders without deletionImpact when deletion is disabled", () => {
+    const { deletionImpact: _unused, ...withoutImpact } = BASE_PROPS;
+    void _unused;
+    renderWithQueryClient(<DomainWorkspace {...withoutImpact} canDeleteDomain={false} />);
     expect(screen.queryByTitle("Delete domain")).toBeNull();
   });
 

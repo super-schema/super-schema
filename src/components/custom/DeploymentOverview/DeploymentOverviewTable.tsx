@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { DriftBadge } from "@/components/custom/DriftBadge/DriftBadge";
 import { VersionBadge } from "@/components/custom/DeploymentPanel/VersionBadge";
+import { assetHref } from "@/lib/navigation/asset-href";
 import type { DeploymentOverviewRow } from "@/services/deployment.service";
 
 interface DeploymentOverviewTableProps {
@@ -10,12 +11,35 @@ interface DeploymentOverviewTableProps {
   targetFormats: string[];
 }
 
-function getEntityHref(row: DeploymentOverviewRow): string {
-  if (!row.domainSlug) {
-    return `/schemas?entityId=${encodeURIComponent(row.entityId)}`;
+/**
+ * The entity route of a row, or null when the row was never enriched with route
+ * slugs (undefined, as opposed to the null of a tenant-level entity). Nothing
+ * locates an entity by id alone, so such a row is not linked.
+ */
+function getEntityHref(row: DeploymentOverviewRow): string | null {
+  if (!row.entitySlug || row.domainSlug === undefined || row.productSlug === undefined) {
+    return null;
   }
 
-  return `/schemas/${row.domainSlug}/${row.entitySlug || row.entityId}`;
+  return assetHref({
+    kind: "entity",
+    slug: row.entitySlug,
+    domainSlug: row.domainSlug,
+    productSlug: row.productSlug,
+  });
+}
+
+/** The entity name, linked when the row resolves to an entity route, else plain text. */
+function EntityName({ row }: { row: DeploymentOverviewRow }) {
+  const href = getEntityHref(row);
+  if (!href) {
+    return <span className="text-body-small text-foreground">{row.entityName}</span>;
+  }
+  return (
+    <Link href={href} className="text-body-small text-primary hover:underline">
+      {row.entityName}
+    </Link>
+  );
 }
 
 export function DeploymentOverviewTable({
@@ -66,12 +90,7 @@ export function DeploymentOverviewTable({
               className="border-b border-border last:border-0 hover:bg-accent/30"
             >
               <td className="px-space-3 py-2">
-                <Link
-                  href={getEntityHref(row)}
-                  className="text-body-small text-primary hover:underline"
-                >
-                  {row.entityName}
-                </Link>
+                <EntityName row={row} />
               </td>
               <td className="px-space-3 py-2 text-caption text-muted-foreground">
                 {row.domain}

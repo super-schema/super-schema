@@ -3,15 +3,12 @@ import { notFound } from "next/navigation";
 import { FieldStudio } from "./field-studio";
 import { domainLabel } from "@/lib/entity-placement";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT } from "@/lib/navigation/asset-href";
 import { findEntityInScope } from "../../load-entity-workspace";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string; entityId: string; fieldId: string }>;
 }
-
-// assetHref puts a tenant-level (Enterprise) entity's fields under these URL segments.
-const ENTERPRISE_DOMAIN_SEGMENT = "enterprise";
-const ENTERPRISE_ENTITIES_SEGMENT = "entities";
 
 export default async function FieldDetailPage({ params }: Props) {
   const { domainSlug, productSlug, entityId, fieldId } = await params;
@@ -19,8 +16,11 @@ export default async function FieldDetailPage({ params }: Props) {
 
   // Resolve the entity within its placement (slug first, then cuid). Slugs repeat
   // across products and tenants, so the lookup is never unscoped.
+  // assetHref puts a tenant-level (Enterprise) entity's fields under the enterprise/entities segments.
+  const isTenantLevel =
+    domainSlug === ENTERPRISE_ROUTE_SEGMENT && productSlug === ENTERPRISE_ENTITIES_SEGMENT;
   let entity: { id: string } | null = null;
-  if (domainSlug === ENTERPRISE_DOMAIN_SEGMENT && productSlug === ENTERPRISE_ENTITIES_SEGMENT) {
+  if (isTenantLevel) {
     entity = await findEntityInScope(
       { slugOrId: entityId, productId: null, tenantId: activeTenantId },
       {}
@@ -95,8 +95,9 @@ export default async function FieldDetailPage({ params }: Props) {
         id: field.entity.id,
         name: field.entity.name,
         slug: field.entity.slug,
-        domainSlug,
-        productSlug,
+        // null for a tenant-level entity, so FieldStudio links through assetHref.
+        domainSlug: isTenantLevel ? null : domainSlug,
+        productSlug: isTenantLevel ? null : productSlug,
       }}
       domain={{
         name: domainLabel(domain),

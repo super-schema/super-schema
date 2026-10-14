@@ -6,8 +6,9 @@ export interface EntityData {
   name: string;
   slug: string;
   domainName: string;
-  domainSlug: string;
-  productSlug: string;
+  /** null for a tenant-level (Enterprise) entity. */
+  domainSlug: string | null;
+  productSlug: string | null;
   status: string;
   fieldCount: number;
   piiCount?: number;
@@ -153,23 +154,34 @@ export function applyDagreLayout(
   return { nodes: layoutedNodes, edges };
 }
 
+/**
+ * Domain-filter key of tenant-level entities. A UI filter value only — never a
+ * URL segment (links go through assetHref) — and not a possible domain slug.
+ */
+export const TENANT_LEVEL_FILTER_KEY = "~tenant";
+
+function domainFilterKey(e: EntityData): string {
+  return e.domainSlug ?? TENANT_LEVEL_FILTER_KEY;
+}
+
 /** Filter entities by domain. "all" or empty means no filter. */
 export function filterByDomain(
   entities: EntityData[],
   domain: string
 ): EntityData[] {
   if (!domain || domain === "all") return entities;
-  return entities.filter((e) => e.domainSlug === domain);
+  return entities.filter((e) => domainFilterKey(e) === domain);
 }
 
-/** Extract unique domains from entity list */
+/** Extract unique domains from entity list. `slug` is the filter key (see `filterByDomain`). */
 export function getUniqueDomains(
   entities: EntityData[]
 ): { slug: string; name: string }[] {
   const map = new Map<string, string>();
   for (const e of entities) {
-    if (!map.has(e.domainSlug)) {
-      map.set(e.domainSlug, e.domainName);
+    const key = domainFilterKey(e);
+    if (!map.has(key)) {
+      map.set(key, e.domainName);
     }
   }
   return Array.from(map.entries())

@@ -140,12 +140,17 @@ describe("VisualSchemaBuilder avro-serialize", () => {
         confidence: "high",
         originalType: "bytes/decimal(12,4)",
       });
-      // avro.importer.ts has no concept of cross-entity references (unlike the
-      // JSON Schema importer's $ref handling) — an unrecognized named type
-      // falls back to a low-confidence string, which is the accepted/designed
-      // behavior here, not a bug.
-      expect(byName.customer).toBeDefined();
-      expect(byName.customer.confidence).toBe("low");
+      // Epic 15.3: a named type the document does not define ("Customer")
+      // imports as a low-confidence reference by its short name.
+      expect(byName.customer).toMatchObject({
+        type: "reference",
+        referencedEntityName: "Customer",
+        confidence: "low",
+      });
+      expect(byName.status).toMatchObject({
+        enumName: "Status",
+        enumValues: ["ACTIVE", "INACTIVE", "PENDING"],
+      });
     });
 
     it("date/time/timestamp/duration/uuid logical types round-trip to their high-confidence logical mapping", () => {

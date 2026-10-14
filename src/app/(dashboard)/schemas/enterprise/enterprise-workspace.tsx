@@ -85,9 +85,11 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes }: Enterpris
     setActiveTab(normalizeEnterpriseTab(tabParam, defaultTab));
   }, [tabParam, defaultTab]);
 
+  // Client-only tab switch: the History API keeps `useSearchParams` in sync
+  // without a server round trip (see DomainTabs).
   function selectTab(tab: EnterpriseTab) {
     setActiveTab(tab);
-    router.replace(tabHref(tab), { scroll: false });
+    window.history.replaceState(null, "", tabHref(tab));
   }
 
   function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {

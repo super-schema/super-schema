@@ -110,6 +110,21 @@ describe("official TypeSpec emitter service", () => {
     expect(result.output).toContain("string name = 2;");
   });
 
+  it("emits Protobuf for a tenant-level entity with no domain (namespace falls back to the keyword `unknown`)", async () => {
+    // Entity.domainId is optional (tenant-level entities, Story 13.5);
+    // compileEntity() then reports the domain as "unknown" — a reserved
+    // TypeSpec keyword that must be escaped when used as the namespace.
+    const result = await emitOfficialTypeSpecTargetFromData(
+      makeEntity({ domainId: null, domain: null }),
+      fields,
+      "protobuf"
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.validationStatus).toBe("VALID");
+    expect(result.output).toContain("message Customer");
+  }, 30_000);
+
   it("rejects multi-file code generators in the Schemas tab flow", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(
       entity,

@@ -143,4 +143,59 @@ describe("CommandPalette recent entries", () => {
     expect(push).toHaveBeenCalledWith("/schemas/payments/checkout/order");
     expect(push).not.toHaveBeenCalledWith(expect.stringContaining("/entities/e1"));
   });
+
+  describe("field navigation", () => {
+    function stubFieldFetch(fields: unknown[]) {
+      global.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = String(url);
+        if (u.includes("domains-tree")) return { ok: true, json: async () => emptyTree } as Response;
+        if (u.includes("command-palette-fields")) return { ok: true, json: async () => fields } as Response;
+        return { ok: false, json: async () => ({}) } as Response;
+      }) as typeof fetch;
+    }
+
+    // The row renders "<entity> → <field>" as split text nodes, so match on textContent.
+    const findFieldRow = (entity: string, field: string) =>
+      screen.findByText((_, el) => el?.textContent === `${entity}\u2192${field}`);
+
+    it("navigates a product field through assetHref", async () => {
+      stubFieldFetch([
+        {
+          id: "f1",
+          slug: "email",
+          name: "email",
+          type: "string",
+          entityId: "e1",
+          entitySlug: "order",
+          entityName: "Order",
+          domainSlug: "payments",
+          productSlug: "checkout",
+        },
+      ]);
+      render(<CommandPalette isOpen onClose={vi.fn()} />);
+
+      fireEvent.click(await findFieldRow("Order", "email"));
+      expect(push).toHaveBeenCalledWith("/schemas/payments/checkout/order/fields/email");
+    });
+
+    it("navigates a tenant-level field (null slugs) to the enterprise URL", async () => {
+      stubFieldFetch([
+        {
+          id: "f2",
+          slug: "email",
+          name: "email",
+          type: "string",
+          entityId: "e0",
+          entitySlug: "customer",
+          entityName: "Customer",
+          domainSlug: null,
+          productSlug: null,
+        },
+      ]);
+      render(<CommandPalette isOpen onClose={vi.fn()} />);
+
+      fireEvent.click(await findFieldRow("Customer", "email"));
+      expect(push).toHaveBeenCalledWith("/schemas/enterprise/entities/customer/fields/email");
+    });
+  });
 });

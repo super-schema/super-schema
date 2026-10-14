@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assetHref } from "@/lib/navigation/asset-href";
+import { assetHref, ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT } from "@/lib/navigation/asset-href";
 
 describe("assetHref", () => {
   it("levels", () => {
@@ -10,6 +10,12 @@ describe("assetHref", () => {
   it("entities at product and tenant level", () => {
     expect(assetHref({ kind: "entity", slug: "order", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/order");
     expect(assetHref({ kind: "entity", slug: "customer", domainSlug: null, productSlug: null })).toBe("/schemas/enterprise/entities/customer");
+  });
+  it("tenant-level route segments are the ones assetHref emits", () => {
+    expect(assetHref({ kind: "entity", slug: "customer", domainSlug: null, productSlug: null })).toBe(
+      `/schemas/${ENTERPRISE_ROUTE_SEGMENT}/${ENTERPRISE_ENTITIES_SEGMENT}/customer`
+    );
+    expect(assetHref({ kind: "enterprise" })).toBe(`/schemas/${ENTERPRISE_ROUTE_SEGMENT}`);
   });
   it("version deep link", () => {
     expect(assetHref({ kind: "entity", slug: "order", domainSlug: "payments", productSlug: "checkout" }, { version: "2.1" }))

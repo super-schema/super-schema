@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard";
 import { isAiConfigured } from "@/services/ai.service";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { assetHref } from "@/lib/navigation/asset-href";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string }>;
@@ -48,14 +49,14 @@ export default async function NewEntityPage({ params }: Props) {
         </Link>
         <ChevronRight className="w-3 h-3" />
         <Link
-          href={`/schemas/${domainSlug}`}
+          href={assetHref({ kind: "domain", domainSlug })}
           className="hover:text-foreground transition-colors"
         >
           {domain.name}
         </Link>
         <ChevronRight className="w-3 h-3" />
         <Link
-          href={`/schemas/${domainSlug}/${productSlug}`}
+          href={assetHref({ kind: "product", domainSlug, productSlug })}
           className="hover:text-foreground transition-colors"
         >
           {product.name}

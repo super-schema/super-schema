@@ -21,6 +21,7 @@ import {
   RightPanelContentProvider,
   useRightPanelContent,
 } from "@/hooks/useRightPanelContent";
+import { newEntityHrefForPath } from "@/lib/navigation/new-entity-target";
 import { useModKey } from "@/lib/platform";
 
 type PaletteAction = {
@@ -67,19 +68,16 @@ export function DashboardClientShell({ children }: { children: React.ReactNode }
   }, []);
 
   const handleNewEntity = useCallback(() => {
-    // Need both a domain and a product in the path to create an entity.
-    const match = pathname.match(/^\/schemas\/([^/]+)\/([^/]+)/);
+    const target = newEntityHrefForPath(pathname);
 
-    if (!match) {
-      // On the domains or product grid — let the user pick a target.
+    if (!target) {
+      // On the domains list or a domain page — let the user pick a target.
       palette.open();
       return;
     }
 
-    const [, domainSlug, productSlug] = match;
     document.dispatchEvent(new CustomEvent("super-schema:new-entity"));
 
-    const target = `/schemas/${domainSlug}/${productSlug}/new`;
     if (pathname !== target) {
       router.push(target);
     }

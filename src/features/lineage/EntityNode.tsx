@@ -4,13 +4,15 @@ import { memo, useState, useCallback } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Badge } from "@/components/ui/badge";
 import { useRouter } from "next/navigation";
+import { assetHref } from "@/lib/navigation/asset-href";
 
 export interface EntityNodeData {
   label: string;
   slug: string;
   domainName: string;
-  domainSlug: string;
-  productSlug: string;
+  /** null for a tenant-level (Enterprise) entity. */
+  domainSlug: string | null;
+  productSlug: string | null;
   status: string;
   fieldCount: number;
   piiCount: number;
@@ -42,10 +44,14 @@ function EntityNodeInner({ data, id }: NodeProps) {
   );
 
   const handleOpenEditor = useCallback(() => {
-    const base = nodeData.productSlug
-      ? `/schemas/${nodeData.domainSlug}/${nodeData.productSlug}/${nodeData.slug || id}`
-      : `/schemas?entityId=${encodeURIComponent(id)}`;
-    router.push(base);
+    router.push(
+      assetHref({
+        kind: "entity",
+        slug: nodeData.slug || id,
+        domainSlug: nodeData.domainSlug,
+        productSlug: nodeData.productSlug,
+      })
+    );
   }, [router, nodeData.domainSlug, nodeData.productSlug, nodeData.slug, id]);
 
   const displayFields = nodeData.fields?.slice(0, 10) ?? [];

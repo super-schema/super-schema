@@ -28,7 +28,7 @@
 
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
-import type { ParsedEntity, ParsedField, ParsedFieldConstraint } from "./types";
+import type { ImportFormat, ParsedEntity, ParsedField, ParsedFieldConstraint } from "./types";
 import { parseTypeSpec } from "@/lib/compiler/typespec-parser";
 import type {
   ParsedTypeSpecDecoratorDefinition,
@@ -40,7 +40,11 @@ import type {
 } from "@/lib/compiler/typespec-parser";
 
 // ---------------------------------------------------------------------------
-// Multi-model import result
+// Multi-asset import result
+//
+// Shared by every multi-asset import (TypeSpec, OpenAPI, and — via
+// `toAssetImportResult` in multi-asset.ts — Protobuf / Avro / JSON Schema),
+// feeding TypeSpecImportReviewScreen + createDomainAssetsFromImportAction.
 // ---------------------------------------------------------------------------
 
 export interface TypeSpecImportModel extends ParsedEntity {
@@ -68,6 +72,8 @@ export interface TypeSpecImportService {
 }
 
 export interface TypeSpecImportResult {
+  /** Format the assets were imported from (absent = "typespec") */
+  sourceFormat?: ImportFormat;
   models: TypeSpecImportModel[];
   sharedEnums: Array<{ name: string; values: string[]; description?: string }>;
   customScalars: Array<{
@@ -428,6 +434,7 @@ export function mapDocumentToImportResult(
   }
 
   return {
+    sourceFormat: "typespec",
     models,
     sharedEnums: doc.enums.map((e) => ({
       name: e.name,

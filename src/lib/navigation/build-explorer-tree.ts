@@ -72,7 +72,10 @@ export function buildExplorerTree(input: ExplorerRows): ExplorerTree {
   const entitiesByKey = new Map<string, ExplorerEntity[]>();
   for (const e of [...input.entities].sort((a, b) => a.name.localeCompare(b.name))) {
     const k = keyOf(e);
-    entitiesByKey.set(k, [...(entitiesByKey.get(k) ?? []), { id: e.id, name: e.name, slug: e.slug, status: e.status }]);
+    const bucket = entitiesByKey.get(k);
+    const entity = { id: e.id, name: e.name, slug: e.slug, status: e.status };
+    if (bucket) bucket.push(entity);
+    else entitiesByKey.set(k, [entity]);
   }
   const tenantEntities = entitiesByKey.get(TENANT) ?? [];
 

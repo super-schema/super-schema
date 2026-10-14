@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Database, FlaskConical, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatDateOnly } from "@/lib/date-format";
+import { assetHref } from "@/lib/navigation/asset-href";
 
 interface DomainCardProps {
   id: string;
@@ -41,7 +42,7 @@ export function DomainCard({
             : "border-border"
       }`}
     >
-      <Link href={`/schemas/${slug}`} className="block p-space-6">
+      <Link href={assetHref({ kind: "domain", domainSlug: slug })} className="block p-space-6">
         {/* Title */}
         <div className="flex items-center gap-space-2 mb-space-2 pr-9">
           {isPlayground ? (

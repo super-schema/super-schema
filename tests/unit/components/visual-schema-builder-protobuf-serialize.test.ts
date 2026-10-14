@@ -134,24 +134,44 @@ describe("VisualSchemaBuilder protobuf-serialize", () => {
       const byName = Object.fromEntries(result.data.fields.map((f) => [f.name, f]));
 
       expect(byName.id).toMatchObject({ type: "string", confidence: "high", fieldNumber: 1 });
-      expect(byName.tags).toMatchObject({ type: "array", confidence: "medium", fieldNumber: 2 });
-      // protobuf.importer.ts has no cross-entity reference concept (unlike the
-      // JSON Schema importer) — an unrecognized message type name falls back
-      // to a low-confidence string. Accepted/designed, not a bug.
-      expect(byName.customer).toMatchObject({ confidence: "low", fieldNumber: 3 });
+      // Epic 15.1 (protobufjs importer): element / key / value types and oneof
+      // groups are preserved now, so these come back exact.
+      expect(byName.tags).toMatchObject({
+        type: "array",
+        arrayElementType: "string",
+        confidence: "high",
+        fieldNumber: 2,
+      });
+      // "Customer" is not defined in this document, so it stays a
+      // low-confidence reference by name (resolved against existing entities).
+      expect(byName.customer).toMatchObject({
+        type: "reference",
+        referencedEntityName: "Customer",
+        confidence: "low",
+        fieldNumber: 3,
+      });
       expect(byName.created_at).toMatchObject({
         type: "utcDateTime",
         confidence: "high",
         fieldNumber: 4,
       });
-      expect(byName.metadata).toMatchObject({ type: "map", confidence: "low", fieldNumber: 5 });
-      // oneof members: the importer has no brace-nesting awareness, so it
-      // matches each field line inside the oneof block individually and
-      // simply skips the `oneof NAME {`/`}` wrapper lines — grouping itself
-      // isn't preserved (ParsedField has no oneofGroup), which matches the
-      // same accepted-loss category as nested records.
-      expect(byName.email).toMatchObject({ fieldNumber: 6, description: "email variant" });
-      expect(byName.phone).toMatchObject({ fieldNumber: 7, description: "phone variant" });
+      expect(byName.metadata).toMatchObject({
+        type: "map",
+        mapKeyType: "string",
+        mapValueType: "string",
+        confidence: "high",
+        fieldNumber: 5,
+      });
+      expect(byName.email).toMatchObject({
+        fieldNumber: 6,
+        description: "email variant",
+        governance: { protobufOneofGroup: "contact" },
+      });
+      expect(byName.phone).toMatchObject({
+        fieldNumber: 7,
+        description: "phone variant",
+        governance: { protobufOneofGroup: "contact" },
+      });
     });
 
     it("proto3 fields are nullable by default per the importer's own semantics", () => {

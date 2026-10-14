@@ -12,10 +12,11 @@ import { FieldPreview, type PreviewField } from "./FieldPreview";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { createTenantEntityAction } from "@/app/(dashboard)/schemas/enterprise/actions";
 import type { StandardTemplate } from "@/lib/schema-standards";
-import { importSchema } from "@/services/import.service";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
-import { detectFormat } from "@/lib/importers/format-detector";
+import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
+import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
+import type { ImportFormat } from "@/lib/importers/types";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import {
   TypeSpecImportReviewScreen,
@@ -199,29 +200,39 @@ export function EntityCreationWizard({
 
   // ── Import handler ────────────────────────────────────────────────
 
-  function handleImportSubmit(content: string, filename?: string) {
+  /** `format` is known when the content comes from the visual builder; otherwise it is detected. */
+  function handleImportSubmit(content: string, filename?: string, format?: ImportFormat) {
     setIsLoading(true);
     setError(null);
 
     void (async () => {
       try {
-        const format = detectFormat(content, filename);
-        setDetectedFormat(format);
+        // Loaded on demand: the importers (protobufjs, yaml) stay out of the
+        // wizard's initial client chunk until someone actually imports.
+        const [{ detectFormat }, { importSchemaAssets }] = await Promise.all([
+          import("@/lib/importers/format-detector"),
+          import("@/services/import.service"),
+        ]);
+        const resolvedFormat = format ?? detectFormat(content, filename);
+        setDetectedFormat(resolvedFormat);
 
-        if (!format) {
+        if (!resolvedFormat) {
           setError("Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, Protobuf, JSON Schema, or TypeSpec.");
           return;
         }
 
-        // TypeSpec: compile with the real @typespec/compiler (server action).
-        if (format === "typespec") {
+        // TypeSpec / OpenAPI: compiled with the real @typespec/compiler (server actions).
+        if (resolvedFormat === "typespec" || resolvedFormat === "openapi") {
           if (!product) {
             setError(
-              "TypeSpec documents can define several assets and need a domain. Import this one from a domain or product page."
+              "TypeSpec and OpenAPI documents can define several assets and need a domain. Import this one from a domain or product page."
             );
             return;
           }
-          const tsResult = await importTypeSpecDocumentAction(content);
+          const tsResult =
+            resolvedFormat === "openapi"
+              ? await importOpenApiDocumentAction(content)
+              : await importTypeSpecDocumentAction(content);
           if (!tsResult.success) {
             setError(tsResult.error.message);
             return;
@@ -231,14 +242,30 @@ export function EntityCreationWizard({
           return;
         }
 
-        // Other formats: single entity import
-        const result = importSchema(content, format);
+        // Other formats: every asset of the document (Protobuf / Avro / JSON Schema
+        // can define several); more than one goes to the multi-asset review.
+        const result = importSchemaAssets(content, resolvedFormat);
         if (!result.success) {
           setError(result.error.message);
           return;
         }
 
-        const { parsedEntity } = result.data;
+        if (result.data.kind === "multi") {
+          const assets = result.data.result;
+          if (!product) {
+            const count =
+              assets.models.length + assets.sharedEnums.length + assets.customScalars.length;
+            setError(
+              `Multi-entity imports go into a product — at Enterprise level an import creates one entity. This schema defines ${count} assets (${assets.models.map((m) => m.name).join(", ")}).`
+            );
+            return;
+          }
+          setTypeSpecResult(assets);
+          setState((prev) => ({ ...prev, step: "typespec-review" }));
+          return;
+        }
+
+        const { parsedEntity } = result.data.result;
         const fields: PreviewField[] = parsedEntity.fields.map((f) => ({
           tempId: makeTempId(),
           name: f.name,
@@ -248,9 +275,11 @@ export function EntityCreationWizard({
           confidence: f.confidence === "high" ? 0.95 : f.confidence === "medium" ? 0.7 : 0.4,
           referencedEntityName: f.referencedEntityName,
           arrayElementType: f.arrayElementType,
+          importedDecorators: buildDecoratorsFromParsedField(f),
+          fieldNumber: f.fieldNumber,
         }));
 
-        goToPreview(parsedEntity.name, "", fields);
+        goToPreview(parsedEntity.name, parsedEntity.description ?? "", fields);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to parse schema");
       } finally {
@@ -259,59 +288,13 @@ export function EntityCreationWizard({
     })();
   }
 
-  // TypeSpec multi-model confirm handler
+  // Multi-asset confirm handler (TypeSpec, Protobuf, Avro, JSON Schema)
   async function handleTypeSpecConfirm(selection: TypeSpecImportSelection) {
     if (!typeSpecResult || !product) return;
     setIsCreating(true);
     setError(null);
 
-    const models = selection.selectedModels.map((idx) => {
-      const model = typeSpecResult.models[idx];
-      return {
-        name: model.name,
-        description: model.description,
-        extends: model.extends,
-        fields: model.fields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          nullable: f.nullable,
-          isKey: f.isKey ?? false,
-          description: f.description ?? "",
-          classification: f.classification ?? null,
-          precision: null,
-          scale: null,
-          decorators: buildDecoratorsFromParsedField(f),
-        })),
-      };
-    });
-
-    const entities = selection.selectedEntities.map((idx) => {
-      const model = typeSpecResult.models[idx];
-      return {
-        name: model.name,
-        description: model.description,
-        extends: model.extends,
-        fields: model.fields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          nullable: f.nullable,
-          isKey: f.isKey ?? false,
-          description: f.description ?? "",
-          classification: f.classification ?? null,
-          precision: null,
-          scale: null,
-          decorators: buildDecoratorsFromParsedField(f),
-        })),
-      };
-    });
-
-    const sharedEnums = selection.selectedEnums.map((idx) => typeSpecResult.sharedEnums[idx]);
-    const customScalars = selection.selectedScalars.map((idx) => typeSpecResult.customScalars[idx]);
-    const unionTypes = selection.selectedUnions.map((idx) => typeSpecResult.unions[idx]);
-    const services = selection.selectedServices.map((idx) => typeSpecResult.services[idx]);
-    const decoratorDefinitions = selection.selectedDecorators.map(
-      (idx) => typeSpecResult.decoratorDefinitions[idx]
-    );
+    const assets = buildImportAssetsPayload(typeSpecResult, selection);
 
     try {
       const { createDomainAssetsFromImportAction } = await import(
@@ -321,14 +304,7 @@ export function EntityCreationWizard({
       const result = await createDomainAssetsFromImportAction({
         domainId: product.domainId,
         productId: product.productId,
-        namespace: typeSpecResult.namespace,
-        models,
-        entities,
-        sharedEnums,
-        customScalars,
-        unionTypes,
-        services,
-        decoratorDefinitions,
+        ...assets,
       });
 
       const parts: string[] = [];
@@ -370,7 +346,7 @@ export function EntityCreationWizard({
       );
       router.refresh();
     } catch {
-      toast.error("Failed to import TypeSpec document");
+      toast.error("Failed to import schema assets");
     } finally {
       setIsCreating(false);
     }
@@ -388,9 +364,12 @@ export function EntityCreationWizard({
     setError(null);
 
     const fields: CreateFieldInput[] = state.fields.map((f) => {
-      // Preserve complex-type metadata (reference target, array element type)
-      // so references/arrays resolve in the IR.
-      const decorators: Record<string, unknown> = {};
+      // Preserve complex-type metadata (reference target, array element type,
+      // imported map/enum/governance decorators) so references/arrays resolve in
+      // the IR. The description column stays the source of truth (it is editable
+      // here), so imported `semantics` are not carried over.
+      const decorators: Record<string, unknown> = { ...f.importedDecorators };
+      delete decorators.semantics;
       if (f.referencedEntityName) decorators.referencedEntityName = f.referencedEntityName;
       if (f.arrayElementType) decorators.arrayElementType = f.arrayElementType;
 
@@ -404,6 +383,7 @@ export function EntityCreationWizard({
         precision: null,
         scale: null,
         ...(Object.keys(decorators).length > 0 ? { decorators } : {}),
+        ...(f.fieldNumber != null ? { fieldNumber: f.fieldNumber } : {}),
       };
     });
 
@@ -558,7 +538,7 @@ export function EntityCreationWizard({
               </div>
             )}
             <VisualSchemaBuilder
-              onImport={(content) => handleImportSubmit(content)}
+              onImport={(content, format) => handleImportSubmit(content, undefined, format)}
               referenceTargets={referenceTargets}
             />
           </div>

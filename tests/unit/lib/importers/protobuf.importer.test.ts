@@ -131,10 +131,30 @@ message Event {
       expect(result.data.fields[0].type).toBe("utcDateTime");
       expect(result.data.fields[0].confidence).toBe("high");
     });
+
+    it("maps the google.type civil-time messages the protobuf target emits back to plainDate / plainTime", () => {
+      const proto = `syntax = "proto3";
+import "google/type/date.proto";
+import "google/type/timeofday.proto";
+message Shift {
+  google.type.Date work_day = 1;
+  google.type.TimeOfDay starts_at = 2;
+}`;
+      const result = parseProtobufSchema(proto);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.fields.map((f) => [f.name, f.type, f.confidence])).toEqual([
+        ["work_day", "plainDate", "high"],
+        ["starts_at", "plainTime", "high"],
+      ]);
+    });
   });
 
-  describe("low confidence types", () => {
-    it("returns low confidence for map types", () => {
+  // Epic 15.1: map key/value and array element types are now preserved, so the
+  // mapping is exact (was low / medium when only "map" / "array" survived).
+  describe("map and repeated types", () => {
+    it("maps map<K,V> with key and value types at high confidence", () => {
       const proto = `syntax = "proto3";
 message Msg {
   map<string, string> metadata = 1;
@@ -143,11 +163,15 @@ message Msg {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      expect(result.data.fields[0].type).toBe("map");
-      expect(result.data.fields[0].confidence).toBe("low");
+      expect(result.data.fields[0]).toMatchObject({
+        type: "map",
+        mapKeyType: "string",
+        mapValueType: "string",
+        confidence: "high",
+      });
     });
 
-    it("returns medium confidence for repeated (array) types", () => {
+    it("maps repeated scalars to arrays with their element type at high confidence", () => {
       const proto = `syntax = "proto3";
 message Msg {
   repeated string tags = 1;
@@ -156,8 +180,11 @@ message Msg {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      expect(result.data.fields[0].type).toBe("array");
-      expect(result.data.fields[0].confidence).toBe("medium");
+      expect(result.data.fields[0]).toMatchObject({
+        type: "array",
+        arrayElementType: "string",
+        confidence: "high",
+      });
     });
   });
 

@@ -173,6 +173,7 @@ model Product {
 
   @@unique([slug, domainId])
   @@unique([name, domainId])
+  @@index([domainId])
   @@map("products")
 }
 
@@ -210,6 +211,8 @@ model Entity {
   @@unique([slug, productId])
   @@unique([name, productId])
   @@index([tenantId])
+  @@index([domainId])
+  @@index([productId])
   @@map("entities")
 }
 
@@ -848,6 +851,7 @@ model ServiceDefinition {
   updatedAt   DateTime    @updatedAt
 
   @@index([tenantId])
+  @@index([domainId])
   @@index([productId])
   @@map("service_definitions")
 }

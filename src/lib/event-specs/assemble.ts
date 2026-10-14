@@ -1,0 +1,494 @@
+import type {
+  Diagnostic,
+  FormatProfile,
+  JsonObject,
+  JsonValue,
+  ResolvedChannel,
+  ResolvedEventSpec,
+  ResolvedMessage,
+  ResolvedOperation,
+  ResolvedTrait,
+  TraitKind,
+} from "./types";
+import { compareStrings, diagnostic, normalizeDiagnostics } from "./diagnostics";
+import { jsonPointer, localRef } from "./json-pointer";
+import { contentTypeFor, formatSuffix, normalizeProfile, schemaFormatFor } from "./schema-format";
+import { qualifyNames, type NameCandidate } from "./qualify";
+import { headersSchema, kafkaKeyProfile, placeKafkaKey, selectArtifact } from "./message-schemas";
+
+/**
+ * Spec §7.2 steps 3–5: assemble an AsyncAPI 3.0.0 document from a
+ * `ResolvedEventSpec`. Pure and deterministic: maps (servers, channels,
+ * operations, components.*) are sorted by key; authored lists (operation
+ * messages, trait lists) keep their order; the input is never mutated.
+ * Problems never throw — they come back as diagnostics.
+ */
+
+export const ASYNCAPI_VERSION = "3.0.0";
+
+export type AssemblyResult = { document: JsonObject; diagnostics: Diagnostic[] };
+
+type MessageVariant = {
+  key: string;
+  message: ResolvedMessage;
+  profile: FormatProfile;
+  suffix: string;
+  /** Used on at least one Kafka channel → carries `bindings.kafka.key`. */
+  kafka: boolean;
+};
+
+/** Build an object with keys in the given order, dropping `undefined` values. */
+function ordered(entries: Array<[string, JsonValue | undefined]>): JsonObject {
+  const out: JsonObject = {};
+  for (const [key, value] of entries) if (value !== undefined) out[key] = value;
+  return out;
+}
+
+function sortedRecord(record: Record<string, JsonValue> | undefined): JsonObject | undefined {
+  if (!record) return undefined;
+  const keys = Object.keys(record).sort(compareStrings);
+  if (keys.length === 0) return undefined;
+  const out: JsonObject = {};
+  for (const key of keys) out[key] = structuredClone(record[key]);
+  return out;
+}
+
+function nonEmpty(obj: JsonObject): JsonObject | undefined {
+  return Object.keys(obj).length > 0 ? obj : undefined;
+}
+
+function clone<T extends JsonValue>(value: T | undefined): T | undefined {
+  return value === undefined ? undefined : structuredClone(value);
+}
+
+function ref(...segments: string[]): JsonObject {
+  return { $ref: localRef(...segments) };
+}
+
+function indexById<T extends { id: string }>(items: T[], kind: string, diagnostics: Diagnostic[]): Map<string, T> {
+  const map = new Map<string, T>();
+  for (const item of items) {
+    if (map.has(item.id)) {
+      diagnostics.push(
+        diagnostic("error", "DUPLICATE_ID", `Duplicate ${kind} id "${item.id}"; the first one is used`, ""),
+      );
+      continue;
+    }
+    map.set(item.id, item);
+  }
+  return map;
+}
+
+export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
+  const diagnostics: Diagnostic[] = [];
+  const channelsById = indexById(spec.channels, "channel", diagnostics);
+  const messagesById = indexById(spec.messages, "message", diagnostics);
+  const traitsById = indexById(spec.traits, "trait", diagnostics);
+
+  // ── 1. Walk operations: which channels, message variants and traits are used ──
+  const operations = [...spec.operations].sort((a, b) => compareStrings(a.key, b.key));
+  const usedChannels = new Map<string, ResolvedChannel>();
+  const channelVariants = new Map<string, Set<string>>();
+  const variants = new Map<string, MessageVariant>();
+  const usedOperationTraits = new Map<string, ResolvedTrait>();
+  const emitted: ResolvedOperation[] = [];
+  const operationKeys = new Set<string>();
+
+  const traitOfKind = (id: string, kind: TraitKind): ResolvedTrait | undefined => {
+    const trait = traitsById.get(id);
+    return trait && trait.kind === kind ? trait : undefined;
+  };
+
+  const takeMessage = (channel: ResolvedChannel, messageId: string, pointer: string): void => {
+    const message = messagesById.get(messageId);
+    if (!message) {
+      diagnostics.push(
+        diagnostic("error", "UNKNOWN_MESSAGE_REF", `Message "${messageId}" is not in the resolved spec`, pointer),
+      );
+      return;
+    }
+    const profile = normalizeProfile(channel.profile);
+    const suffix = formatSuffix(profile);
+    const key = `${message.id}|${suffix}`;
+    const variant = variants.get(key) ?? { key, message, profile, suffix, kafka: false };
+    if (channel.protocol === "kafka") variant.kafka = true;
+    variants.set(key, variant);
+    usedChannels.set(channel.id, channel);
+    const set = channelVariants.get(channel.id) ?? new Set<string>();
+    set.add(key);
+    channelVariants.set(channel.id, set);
+  };
+
+  for (const op of operations) {
+    const opPointer = jsonPointer("operations", op.key);
+    if (operationKeys.has(op.key)) {
+      diagnostics.push(
+        diagnostic("error", "DUPLICATE_OPERATION_KEY", `Operation key "${op.key}" is used more than once`, opPointer),
+      );
+      continue;
+    }
+    operationKeys.add(op.key);
+    const channel = channelsById.get(op.channelRef);
+    if (!channel) {
+      diagnostics.push(
+        diagnostic(
+          "error",
+          "UNKNOWN_CHANNEL_REF",
+          `Channel "${op.channelRef}" is not in the resolved spec`,
+          `${opPointer}/channel`,
+        ),
+      );
+      continue;
+    }
+    usedChannels.set(channel.id, channel);
+    op.messageRefs.forEach((id, i) => takeMessage(channel, id, `${opPointer}/messages/${i}`));
+    op.traitRefs.forEach((id, i) => {
+      const trait = traitOfKind(id, "OPERATION");
+      if (trait) usedOperationTraits.set(trait.id, trait);
+      else
+        diagnostics.push(
+          diagnostic(
+            "error",
+            "UNKNOWN_TRAIT_REF",
+            `Operation trait "${id}" is not in the resolved spec`,
+            `${opPointer}/traits/${i}`,
+          ),
+        );
+    });
+    if (op.reply) {
+      const replyMessages = op.reply.messageRefs ?? [];
+      const replyChannel = op.reply.channelRef ? channelsById.get(op.reply.channelRef) : undefined;
+      if (op.reply.channelRef && !replyChannel) {
+        diagnostics.push(
+          diagnostic(
+            "error",
+            "UNKNOWN_CHANNEL_REF",
+            `Reply channel "${op.reply.channelRef}" is not in the resolved spec`,
+            `${opPointer}/reply/channel`,
+          ),
+        );
+      } else if (!op.reply.channelRef && replyMessages.length > 0) {
+        diagnostics.push(
+          diagnostic(
+            "error",
+            "REPLY_CHANNEL_REQUIRED",
+            "Reply messages need a reply channel",
+            `${opPointer}/reply/messages`,
+          ),
+        );
+      }
+      if (replyChannel) {
+        usedChannels.set(replyChannel.id, replyChannel);
+        replyMessages.forEach((id, i) => takeMessage(replyChannel, id, `${opPointer}/reply/messages/${i}`));
+      }
+    }
+    emitted.push(op);
+  }
+
+  const usedMessageTraits = new Map<string, ResolvedTrait>();
+  for (const variant of variants.values()) {
+    for (const id of variant.message.traitRefs) {
+      const trait = traitOfKind(id, "MESSAGE");
+      if (trait) usedMessageTraits.set(trait.id, trait);
+    }
+  }
+
+  // ── 2. Qualify names (spec §7.2 step 5) ──
+  const disambiguationWarnings = (keys: string[], names: Map<string, string>, prefix: string[]): void => {
+    for (const key of keys) {
+      const name = names.get(key) as string;
+      diagnostics.push(
+        diagnostic(
+          "warning",
+          "NAME_DISAMBIGUATED",
+          `Name clash resolved with a numeric suffix: "${name}"`,
+          jsonPointer(...prefix, name),
+        ),
+      );
+    }
+  };
+
+  const channelNames = qualifyNames(
+    [...usedChannels.values()].map((c) => ({ key: c.id, name: c.name, owner: c.productSlug })),
+    spec.productSlug,
+  );
+  disambiguationWarnings(channelNames.disambiguated, channelNames.names, ["channels"]);
+
+  const variantCount = new Map<string, number>();
+  for (const v of variants.values()) variantCount.set(v.message.id, (variantCount.get(v.message.id) ?? 0) + 1);
+  const messageNames = qualifyNames(
+    [...variants.values()].map(
+      (v): NameCandidate => ({
+        key: v.key,
+        name: (variantCount.get(v.message.id) ?? 0) > 1 ? `${v.message.name}_${v.suffix}` : v.message.name,
+        owner: v.message.productSlug,
+      }),
+    ),
+    spec.productSlug,
+  );
+  disambiguationWarnings(messageNames.disambiguated, messageNames.names, ["components", "messages"]);
+
+  const traitCandidates = (traits: Map<string, ResolvedTrait>): NameCandidate[] =>
+    [...traits.values()].map((t) => ({ key: t.id, name: t.name, owner: t.ownerSlug }));
+  const messageTraitNames = qualifyNames(traitCandidates(usedMessageTraits), spec.productSlug);
+  disambiguationWarnings(messageTraitNames.disambiguated, messageTraitNames.names, ["components", "messageTraits"]);
+  const operationTraitNames = qualifyNames(traitCandidates(usedOperationTraits), spec.productSlug);
+  disambiguationWarnings(operationTraitNames.disambiguated, operationTraitNames.names, [
+    "components",
+    "operationTraits",
+  ]);
+
+  const channelKey = (id: string) => channelNames.names.get(id) as string;
+  const messageKey = (variantKey: string) => messageNames.names.get(variantKey) as string;
+  const variantOn = (channel: ResolvedChannel, messageId: string) => `${messageId}|${formatSuffix(channel.profile)}`;
+  const byName = <T>(entries: Array<[string, T]>) => entries.sort((a, b) => compareStrings(a[0], b[0]));
+
+  // ── 3. components.messages ──
+  const componentMessages: JsonObject = {};
+  for (const [name, variant] of byName(
+    [...variants.values()].map((v): [string, MessageVariant] => [messageKey(v.key), v]),
+  )) {
+    const msg = variant.message;
+    const base = ["components", "messages", name];
+
+    const traitRefs: JsonObject[] = [];
+    msg.traitRefs.forEach((id, i) => {
+      const trait = traitOfKind(id, "MESSAGE");
+      if (trait) traitRefs.push(ref("components", "messageTraits", messageTraitNames.names.get(trait.id) as string));
+      else
+        diagnostics.push(
+          diagnostic(
+            "error",
+            "UNKNOWN_TRAIT_REF",
+            `Message trait "${id}" is not in the resolved spec`,
+            jsonPointer(...base, "traits", i),
+          ),
+        );
+    });
+
+    let headers: JsonObject | undefined;
+    if (msg.headers) {
+      const h = headersSchema(msg.headers, jsonPointer(...base, "headers"));
+      diagnostics.push(...h.diagnostics);
+      headers = h.schema;
+    }
+
+    const payloadSelection = selectArtifact(
+      msg.payloads,
+      variant.profile,
+      "payload",
+      jsonPointer(...base, "payload", "schema"),
+    );
+    diagnostics.push(...payloadSelection.diagnostics);
+    const payload =
+      payloadSelection.schema === undefined
+        ? undefined
+        : { schemaFormat: schemaFormatFor(variant.profile), schema: payloadSelection.schema };
+
+    let bindings = clone(msg.bindings);
+    if (variant.kafka && msg.keys && msg.keys.length > 0) {
+      const keyPointer = jsonPointer(...base, "bindings", "kafka", "key");
+      const keySelection = selectArtifact(msg.keys, kafkaKeyProfile(variant.profile), "key", keyPointer);
+      diagnostics.push(...keySelection.diagnostics);
+      if (keySelection.schema !== undefined) {
+        const placed = placeKafkaKey(bindings, keySelection.schema);
+        bindings = placed.bindings;
+        if (placed.overridden) {
+          diagnostics.push(
+            diagnostic(
+              "warning",
+              "KEY_BINDING_OVERRIDDEN",
+              "bindings.kafka.key was replaced by the pinned key schema",
+              keyPointer,
+            ),
+          );
+        }
+      }
+    }
+
+    if (msg.unpublished) {
+      diagnostics.push(
+        diagnostic(
+          "info",
+          "UNPUBLISHED_MESSAGE",
+          `Message "${msg.name}" is an unpublished draft`,
+          jsonPointer(...base),
+        ),
+      );
+    }
+
+    // R28: a message emitted in several formats gets a per-format contentType; a single-format
+    // message keeps its explicit contentType, falling back to the same format-derived default.
+    const contentType =
+      msg.contentType !== undefined && (variantCount.get(msg.id) ?? 0) <= 1
+        ? msg.contentType
+        : contentTypeFor(variant.profile);
+
+    componentMessages[name] = ordered([
+      ["name", name !== msg.name ? msg.name : undefined],
+      ["title", msg.title],
+      ["summary", msg.summary],
+      ["description", msg.description],
+      ["contentType", contentType],
+      ["correlationId", clone(msg.correlationId)],
+      ["traits", traitRefs.length > 0 ? traitRefs : undefined],
+      ["headers", headers],
+      ["payload", payload],
+      ["tags", clone(msg.tags)],
+      ["externalDocs", clone(msg.externalDocs)],
+      ["bindings", bindings],
+      ["examples", clone(msg.examples)],
+    ]);
+  }
+
+  // ── 4. components.messageTraits / operationTraits ──
+  const componentMessageTraits: JsonObject = {};
+  for (const [name, trait] of byName(
+    [...usedMessageTraits.values()].map((t): [string, ResolvedTrait] => [
+      messageTraitNames.names.get(t.id) as string,
+      t,
+    ]),
+  )) {
+    if (!trait.headers) {
+      componentMessageTraits[name] = structuredClone(trait.spec);
+      continue;
+    }
+    const h = headersSchema(trait.headers, jsonPointer("components", "messageTraits", name, "headers"));
+    diagnostics.push(...h.diagnostics);
+    const rest = Object.entries(trait.spec).filter(([k]) => k !== "headers");
+    componentMessageTraits[name] = ordered([
+      ["headers", h.schema],
+      ...rest.map(([k, v]): [string, JsonValue] => [k, structuredClone(v)]),
+    ]);
+  }
+  const componentOperationTraits: JsonObject = {};
+  for (const [name, trait] of byName(
+    [...usedOperationTraits.values()].map((t): [string, ResolvedTrait] => [
+      operationTraitNames.names.get(t.id) as string,
+      t,
+    ]),
+  )) {
+    componentOperationTraits[name] = structuredClone(trait.spec);
+  }
+
+  // ── 5. channels ──
+  const channels: JsonObject = {};
+  for (const [name, channel] of byName(
+    [...usedChannels.values()].map((c): [string, ResolvedChannel] => [channelKey(c.id), c]),
+  )) {
+    const messages: JsonObject = {};
+    const keys = [...(channelVariants.get(channel.id) ?? [])].map(messageKey).sort(compareStrings);
+    for (const key of keys) messages[key] = ref("components", "messages", key);
+    channels[name] = ordered([
+      ["address", channel.address],
+      ["messages", nonEmpty(messages)],
+      ["title", channel.title],
+      ["summary", channel.summary],
+      ["description", channel.description],
+      ["parameters", sortedRecord(channel.parameters)],
+      ["tags", clone(channel.tags)],
+      ["externalDocs", clone(channel.externalDocs)],
+      ["bindings", clone(channel.bindings)],
+    ]);
+  }
+
+  // ── 6. operations ──
+  const operationsOut: JsonObject = {};
+  for (const op of emitted) {
+    const channel = channelsById.get(op.channelRef) as ResolvedChannel;
+    const cKey = channelKey(channel.id);
+    const messageRefs = op.messageRefs
+      .filter((id) => messagesById.has(id))
+      .map((id) => ref("channels", cKey, "messages", messageKey(variantOn(channel, id))));
+    const traitRefs = op.traitRefs
+      .filter((id) => usedOperationTraits.has(id))
+      .map((id) => ref("components", "operationTraits", operationTraitNames.names.get(id) as string));
+
+    let reply: JsonObject | undefined;
+    if (op.reply) {
+      const replyChannel = op.reply.channelRef ? channelsById.get(op.reply.channelRef) : undefined;
+      const rKey = replyChannel ? channelKey(replyChannel.id) : undefined;
+      const replyMessages =
+        replyChannel && rKey
+          ? (op.reply.messageRefs ?? [])
+              .filter((id) => messagesById.has(id))
+              .map((id) => ref("channels", rKey, "messages", messageKey(variantOn(replyChannel, id))))
+          : [];
+      reply = nonEmpty(
+        ordered([
+          ["channel", rKey ? ref("channels", rKey) : undefined],
+          ["messages", replyMessages.length > 0 ? replyMessages : undefined],
+        ]),
+      );
+    }
+
+    operationsOut[op.key] = ordered([
+      ["action", op.action],
+      ["channel", ref("channels", cKey)],
+      ["summary", op.summary],
+      ["description", op.description],
+      ["bindings", clone(op.bindings)],
+      ["traits", traitRefs.length > 0 ? traitRefs : undefined],
+      ["messages", messageRefs.length > 0 ? messageRefs : undefined],
+      ["reply", reply],
+    ]);
+  }
+
+  // ── 7. servers ──
+  const servers: JsonObject = {};
+  for (const server of [...spec.servers].sort((a, b) => compareStrings(a.key, b.key))) {
+    if (Object.prototype.hasOwnProperty.call(servers, server.key)) {
+      diagnostics.push(
+        diagnostic(
+          "error",
+          "DUPLICATE_SERVER_KEY",
+          `Server key "${server.key}" is used more than once`,
+          jsonPointer("servers", server.key),
+        ),
+      );
+      continue;
+    }
+    servers[server.key] = ordered([
+      ["host", server.host],
+      ["protocol", server.protocol],
+      ["protocolVersion", server.protocolVersion],
+      ["pathname", server.pathname],
+      ["description", server.description],
+      ["externalDocs", server.externalRef ? { url: server.externalRef } : undefined],
+    ]);
+  }
+
+  // ── 8. document ──
+  const components = ordered([
+    ["messages", nonEmpty(componentMessages)],
+    ["messageTraits", nonEmpty(componentMessageTraits)],
+    ["operationTraits", nonEmpty(componentOperationTraits)],
+    ["parameters", sortedRecord(spec.components.parameters)],
+    ["correlationIds", sortedRecord(spec.components.correlationIds)],
+    ["securitySchemes", sortedRecord(spec.components.securitySchemes)],
+    ["operationBindings", sortedRecord(spec.components.operationBindings)],
+  ]);
+
+  const document = ordered([
+    ["asyncapi", ASYNCAPI_VERSION],
+    [
+      "info",
+      ordered([
+        ["title", spec.info.title],
+        ["version", spec.info.version],
+        ["description", spec.info.description],
+        ["contact", clone(spec.info.contact)],
+        ["license", clone(spec.info.license)],
+        ["tags", clone(spec.info.tags)],
+        ["externalDocs", clone(spec.info.externalDocs)],
+      ]),
+    ],
+    ["servers", nonEmpty(servers)],
+    ["defaultContentType", spec.defaultContentType],
+    ["channels", nonEmpty(channels)],
+    ["operations", nonEmpty(operationsOut)],
+    ["components", nonEmpty(components)],
+  ]);
+
+  return { document, diagnostics: normalizeDiagnostics(diagnostics) };
+}

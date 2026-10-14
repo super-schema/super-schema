@@ -190,11 +190,15 @@ function extractComplexTypeInfo(
         arrayElementScale: (decorators.arrayElementScale as number) ?? undefined,
         // Target entity when the array holds references (items: { $ref }).
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
+        enumValues: stringArray(decorators.enumValues),
       };
     case "map":
       return {
         mapKeyType: (decorators.mapKeyType as string) ?? undefined,
         mapValueType: (decorators.mapValueType as string) ?? undefined,
+        // Target entity when the map values are references.
+        referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
+        enumValues: stringArray(decorators.enumValues),
       };
     case "object":
       return {
@@ -279,6 +283,10 @@ function extractRelationships(
   }
 
   return relationships;
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((v) => typeof v === "string") ? (value as string[]) : undefined;
 }
 
 function extractCustomArray<T>(

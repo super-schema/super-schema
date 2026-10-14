@@ -15,17 +15,23 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
+import type { ImportAssetSelection } from "@/lib/importers/import-payload";
+import type { ImportFormat } from "@/lib/importers/types";
 
-export interface TypeSpecImportSelection {
-  domainId: string;
-  selectedModels: number[];
-  selectedEntities: number[];
-  selectedEnums: number[];
-  selectedScalars: number[];
-  selectedUnions: number[];
-  selectedServices: number[];
-  selectedDecorators: number[];
-}
+/**
+ * Multi-asset import review, shared by every format that can define several
+ * assets in one document (TypeSpec, OpenAPI, Protobuf, Avro, JSON Schema).
+ */
+export type TypeSpecImportSelection = ImportAssetSelection;
+
+const FORMAT_LABEL: Record<ImportFormat, string> = {
+  typespec: "TypeSpec",
+  openapi: "OpenAPI",
+  protobuf: "Protobuf",
+  avro: "Avro",
+  "json-schema": "JSON Schema",
+  "bigquery-ddl": "BigQuery DDL",
+};
 
 interface TypeSpecImportReviewScreenProps {
   importResult: TypeSpecImportResult;
@@ -167,7 +173,9 @@ export function TypeSpecImportReviewScreen({
   return (
     <div className="space-y-space-4" data-testid="typespec-import-review">
       <div>
-        <h3 className="text-heading-3 text-foreground">Review TypeSpec Import</h3>
+        <h3 className="text-heading-3 text-foreground">
+          Review {FORMAT_LABEL[importResult.sourceFormat ?? "typespec"]} Import
+        </h3>
         <p className="text-caption text-muted-foreground mt-1">
           {importResult.models.length} model(s), {importResult.sharedEnums.length} enum(s),{" "}
           {importResult.customScalars.length} scalar(s), {importResult.unions.length} union(s),{" "}

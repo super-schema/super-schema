@@ -21,7 +21,6 @@ import {
 } from "@/types/schemas/notification";
 import type { ServiceContext } from "@/types/service-context";
 import type { Notification as PrismaNotification } from "@/generated/prisma/client";
-import { domainSegment, productSegment } from "@/lib/entity-placement";
 
 // ---------------------------------------------------------------------------
 // Test helpers (kept for backward compat — delegate to Prisma)
@@ -72,9 +71,10 @@ function toNotification(row: PrismaNotification): Notification {
 }
 
 async function enrichEntityRef(entityRef: EntityRef): Promise<EntityRef> {
+  // null slugs mean "tenant-level" and are already resolved; only undefined is not.
   if (
-    entityRef.domainSlug &&
-    entityRef.productSlug &&
+    entityRef.domainSlug !== undefined &&
+    entityRef.productSlug !== undefined &&
     entityRef.entitySlug &&
     (!entityRef.fieldId || entityRef.fieldSlug)
   ) {
@@ -101,8 +101,9 @@ async function enrichEntityRef(entityRef: EntityRef): Promise<EntityRef> {
 
   return {
     ...entityRef,
-    domainSlug: entityRef.domainSlug ?? domainSegment(entity.domain),
-    productSlug: entityRef.productSlug ?? productSegment(entity.product),
+    // null for a tenant-level entity; the client links it through assetHref.
+    domainSlug: entityRef.domainSlug ?? entity.domain?.slug ?? null,
+    productSlug: entityRef.productSlug ?? entity.product?.slug ?? null,
     entitySlug: entityRef.entitySlug ?? entity.slug,
     fieldSlug: entityRef.fieldId
       ? entityRef.fieldSlug ?? (entity.fields ? entity.fields[0]?.slug : undefined)

@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import {
   EnterpriseWorkspace,
@@ -57,13 +57,19 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof Enterpri
   );
 }
 
+let replaceState: MockInstance<History["replaceState"]>;
+
 beforeEach(() => {
   nav.search = "";
   vi.clearAllMocks();
+  replaceState = vi.spyOn(window.history, "replaceState").mockImplementation(() => {});
   actions.createSharedEnumAction.mockResolvedValue({ success: true });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  replaceState.mockRestore();
+});
 
 describe("normalizeEnterpriseTab", () => {
   it("maps the legacy ?tab=types to data-types", () => {
@@ -125,11 +131,12 @@ describe("EnterpriseWorkspace tabs", () => {
   it("writes the URL on every tab change, for both tabs", () => {
     renderWorkspace({ entities: [] });
     fireEvent.click(screen.getByRole("tab", { name: "Entities" }));
-    expect(nav.replace).toHaveBeenCalledWith("/schemas/enterprise?tab=entities", { scroll: false });
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/schemas/enterprise?tab=entities");
     expect(screen.getByRole("tab", { name: "Entities", selected: true })).toBeDefined();
 
     fireEvent.click(screen.getByRole("tab", { name: "Data Types" }));
-    expect(nav.replace).toHaveBeenLastCalledWith("/schemas/enterprise?tab=data-types", { scroll: false });
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/enterprise?tab=data-types");
+    expect(nav.replace).not.toHaveBeenCalled();
   });
 });
 
@@ -172,7 +179,7 @@ describe("EnterpriseWorkspace New menu", () => {
   it("New Custom Data Type switches to Data Types and opens the kind chooser", () => {
     renderWorkspace();
     fireEvent.click(within(openMenu()).getByRole("menuitem", { name: /New Custom Data Type/ }));
-    expect(nav.replace).toHaveBeenCalledWith("/schemas/enterprise?tab=data-types", { scroll: false });
+    expect(replaceState).toHaveBeenCalledWith(null, "", "/schemas/enterprise?tab=data-types");
     expect(screen.getByRole("tab", { name: "Data Types", selected: true })).toBeDefined();
     expect(screen.getByTestId("type-kind-chooser")).toBeDefined();
   });

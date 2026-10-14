@@ -62,7 +62,9 @@ export interface DeploymentOverviewRow {
   entityName: string;
   entitySlug?: string;
   domain: string;
-  domainSlug?: string;
+  /** Route slugs for links. `null` = tenant-level entity; `undefined` = not enriched. */
+  domainSlug?: string | null;
+  productSlug?: string | null;
   currentVersion: string | null;
   targets: {
     format: string;

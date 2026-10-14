@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
 import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
+import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import type { EntityWorkspaceProps } from "./entity-workspace";
 
 const ENTITY_INCLUDE = {
@@ -50,6 +51,39 @@ export async function findEntityInScope<I extends Prisma.EntityInclude>(
 }
 
 /**
+ * Resolve the entity a deprecated entity names as its replacement, within the same
+ * tenant, so the banner can link it. Null when none is named, the entity is not
+ * deprecated (no banner), or the named id matches nothing in the tenant.
+ */
+async function loadReplacementEntity(
+  entity: { status: string; metadata: unknown },
+  tenantId: string
+): Promise<ReplacementEntityLink | null> {
+  if (entity.status !== "DEPRECATED") return null;
+  const replacementId = (
+    entity.metadata as { deprecation?: { replacementEntityId?: string | null } } | null
+  )?.deprecation?.replacementEntityId;
+  if (!replacementId) return null;
+
+  const replacement = await prisma.entity.findFirst({
+    where: { id: replacementId, tenantId },
+    select: {
+      name: true,
+      slug: true,
+      domain: { select: { slug: true } },
+      product: { select: { slug: true } },
+    },
+  });
+  if (!replacement) return null;
+  return {
+    name: replacement.name,
+    slug: replacement.slug,
+    domainSlug: replacement.domain?.slug ?? null,
+    productSlug: replacement.product?.slug ?? null,
+  };
+}
+
+/**
  * Load everything EntityWorkspace renders for one entity, resolved through
  * `findEntityInScope`. Returns `null` when nothing matches, so callers decide how to 404.
  */
@@ -64,6 +98,8 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
   const domainPolicy =
     (entity.domain as { policyTemplate?: Record<string, unknown> } | null)
       ?.policyTemplate ?? null;
+
+  const replacementEntity = await loadReplacementEntity(entity, where.tenantId);
 
   return {
     props: {
@@ -100,6 +136,7 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
         decorators: f.decorators as Record<string, unknown>,
         sortOrder: f.sortOrder,
       })),
+      replacementEntity,
       apiServiceId: entity.services[0]?.id ?? null,
       apiOperations: entity.services.flatMap((service) =>
         service.operations.map((op) => ({

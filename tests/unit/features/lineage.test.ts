@@ -5,6 +5,7 @@ import {
   filterByDomain,
   getUniqueDomains,
   cardinalityLabel,
+  TENANT_LEVEL_FILTER_KEY,
   type EntityData,
 } from "@/features/lineage/useLineageLayout";
 
@@ -266,6 +267,16 @@ describe("Lineage Layout Utilities", () => {
     it("returns empty array for non-existent domain", () => {
       expect(filterByDomain(entities, "nonexistent")).toHaveLength(0);
     });
+
+    it("filters tenant-level entities (null domainSlug) by the tenant filter key", () => {
+      const withTenant = [
+        ...entities,
+        makeEntity({ id: "e4", domainSlug: null, productSlug: null, domainName: "Enterprise" }),
+      ];
+      const result = filterByDomain(withTenant, TENANT_LEVEL_FILTER_KEY);
+      expect(result.map((e) => e.id)).toEqual(["e4"]);
+      expect(filterByDomain(withTenant, "identity")).toHaveLength(2);
+    });
   });
 
   describe("getUniqueDomains", () => {
@@ -281,6 +292,19 @@ describe("Lineage Layout Utilities", () => {
       expect(domains).toHaveLength(2);
       expect(domains[0]).toEqual({ slug: "identity", name: "Identity" });
       expect(domains[1]).toEqual({ slug: "payments", name: "Payments" });
+    });
+
+    it("lists tenant-level entities (null domainSlug) once under the tenant filter key", () => {
+      const domains = getUniqueDomains([
+        makeEntity({ domainSlug: null, productSlug: null, domainName: "Enterprise" }),
+        makeEntity({ domainSlug: null, productSlug: null, domainName: "Enterprise" }),
+        makeEntity({ domainSlug: "payments", domainName: "Payments" }),
+      ]);
+
+      expect(domains).toEqual([
+        { slug: TENANT_LEVEL_FILTER_KEY, name: "Enterprise" },
+        { slug: "payments", name: "Payments" },
+      ]);
     });
 
     it("returns empty array for no entities", () => {

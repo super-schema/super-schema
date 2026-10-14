@@ -28,6 +28,7 @@ describe("DeploymentOverviewTable navigation", () => {
             entitySlug: "customer",
             domain: "CRM",
             domainSlug: "crm",
+            productSlug: "accounts",
             currentVersion: "v1",
             targets: [],
           },
@@ -36,11 +37,35 @@ describe("DeploymentOverviewTable navigation", () => {
     );
 
     expect(screen.getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
-      "/schemas/crm/customer"
+      "/schemas/crm/accounts/customer"
     );
   });
 
-  it("falls back to schemas index instead of generating an underscore route", () => {
+  it("links a tenant-level entity (null slugs) to its Enterprise route", () => {
+    render(
+      <DeploymentOverviewTable
+        targetFormats={["typescript"]}
+        rows={[
+          {
+            entityId: "entity-1",
+            entityName: "Customer",
+            entitySlug: "customer",
+            domain: "Enterprise",
+            domainSlug: null,
+            productSlug: null,
+            currentVersion: "v1",
+            targets: [],
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
+      "/schemas/enterprise/entities/customer"
+    );
+  });
+
+  it("renders an entity without route slugs as plain text, not a link", () => {
     render(
       <DeploymentOverviewTable
         targetFormats={["typescript"]}
@@ -56,8 +81,29 @@ describe("DeploymentOverviewTable navigation", () => {
       />
     );
 
-    expect(screen.getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
-      "/schemas?entityId=entity-1"
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText("Customer")).toBeTruthy();
+  });
+
+  it("renders a slug-enriched row missing its product slug as plain text", () => {
+    render(
+      <DeploymentOverviewTable
+        targetFormats={["typescript"]}
+        rows={[
+          {
+            entityId: "entity-1",
+            entityName: "Customer",
+            entitySlug: "customer",
+            domain: "CRM",
+            domainSlug: "crm",
+            currentVersion: "v1",
+            targets: [],
+          },
+        ]}
+      />
     );
+
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText("Customer")).toBeTruthy();
   });
 });

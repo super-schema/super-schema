@@ -1,15 +1,15 @@
 /**
- * JSON Schema Importer — parses a JSON Schema document into a ParsedEntity.
+ * JSON Schema Importer — parses a JSON Schema document into entities.
  *
  * Reverse of the JSON Schema emission path: maps JSON Schema types + formats
  * back to SuperSchemaModel LogicalType values. This is the landing point for
  * the schema-onboarding flow:
  *
  *   paste sample JSON / paste JSON Schema / visual build (jsonjoy-builder)
- *     → JsonSchema document
- *     → parseJsonSchema()        (this file)
- *     → ParsedEntity
- *     → ImportReviewScreen
+ *     → JsonSchema document (JSON or YAML)
+ *     → parseJsonSchemaDocument()   (this file)
+ *     → entities + enums
+ *     → review screen
  *     → createDomainAssetsFromImportAction → SuperSchemaModel → emitters
  *
  * Handles:
@@ -18,16 +18,32 @@
  * - String formats (date, date-time, time, duration, uri, uuid, email, ...)
  * - Validation constraints (minLength/maxLength/pattern/minimum/maximum/items)
  * - Inline enum / const
- * - Arrays, nested objects, $ref, combinators (flagged lower confidence)
+ * - `$defs` / `definitions`: object entries become entities (named by their
+ *   key, which is what `$ref` points at), enum entries become shared enums,
+ *   any other entry is inlined into the fields that reference it
+ * - `$ref` → `reference` to the defined entity (`#` → the root entity); an
+ *   unresolved `$ref` stays a low-confidence reference by name (an entity
+ *   that already exists in the catalog, as the visual builder emits)
+ * - Arrays (element type / element reference), combinators (lower confidence)
  *
- * Nested objects and arrays-of-objects are NOT expanded into child entities in
- * this version — they map to the `object` / `array` logical types and are
- * flagged low/medium confidence for the user to refine in the review screen.
+ * Inline nested objects (not `$ref`) are NOT expanded into child entities —
+ * they map to the `object` logical type, flagged low confidence.
+ *
+ * `parseJsonSchema()` keeps the single-entity contract: the root entity.
  */
 
+import { parse as parseYaml } from "yaml";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
-import type { ParsedEntity, ParsedField, ParsedFieldConstraint, ImportConfidence } from "./types";
+import { pickRootEntity } from "./multi-asset";
+import type {
+  ParsedEntity,
+  ParsedEnum,
+  ParsedField,
+  ParsedFieldConstraint,
+  ImportConfidence,
+  MultiEntityImportResult,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Minimal JSON Schema shape (we only read the keywords we map)
@@ -119,7 +135,29 @@ interface ResolvedType {
   nullable: boolean;
   originalType: string;
   format?: string;
+  referencedEntityName?: string;
+  enumName?: string;
+  enumValues?: string[];
 }
+
+/** One `$defs` / `definitions` entry, keyed by its local JSON pointer. */
+interface DefinitionEntry {
+  key: string;
+  node: JsonSchemaNode;
+  kind: "entity" | "enum" | "inline";
+  /** Asset name (entities / enums) — the key, made unique against the root entity. */
+  assetName: string;
+}
+
+interface ResolveContext {
+  definitions: Map<string, DefinitionEntry>;
+  /** Root entity name when the document root is itself an object schema (target of `$ref: "#"`). */
+  rootEntityName?: string;
+  /** Guards `$ref` chains through inline definitions. */
+  depth: number;
+}
+
+const MAX_REF_DEPTH = 16;
 
 /** Split a `type` keyword into its non-null base + whether "null" was present. */
 function normalizeType(type: string | string[] | undefined): {
@@ -136,15 +174,56 @@ function normalizeType(type: string | string[] | undefined): {
   return { base: type, nullableFromType: false };
 }
 
-function resolveSchemaType(node: JsonSchemaNode): ResolvedType {
-  // $ref → reference to another entity (not resolved in v1)
-  if (typeof node.$ref === "string") {
+function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
+  if ((ref === "#" || ref === "") && ctx.rootEntityName) {
     return {
       type: "reference",
-      confidence: "low",
+      confidence: "high",
       nullable: false,
-      originalType: node.$ref,
+      originalType: ref,
+      referencedEntityName: ctx.rootEntityName,
     };
+  }
+
+  const def = ctx.definitions.get(ref);
+  if (def?.kind === "entity") {
+    return {
+      type: "reference",
+      confidence: "high",
+      nullable: false,
+      originalType: ref,
+      referencedEntityName: def.assetName,
+    };
+  }
+  if (def?.kind === "enum") {
+    const values = (def.node.enum ?? []).filter((v) => v !== null).map(String);
+    return {
+      type: "enum",
+      confidence: "high",
+      nullable: (def.node.enum ?? []).includes(null),
+      originalType: ref,
+      enumName: def.assetName,
+      enumValues: values,
+    };
+  }
+  if (def?.kind === "inline" && ctx.depth < MAX_REF_DEPTH) {
+    return resolveSchemaType(def.node, { ...ctx, depth: ctx.depth + 1 });
+  }
+
+  // Not defined in this document: a reference by name to an entity that must
+  // already exist (the visual builder emits `#/$defs/<Existing>`).
+  return {
+    type: "reference",
+    confidence: "low",
+    nullable: false,
+    originalType: ref,
+    referencedEntityName: refToEntityName(ref),
+  };
+}
+
+function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedType {
+  if (typeof node.$ref === "string") {
+    return resolveRef(node.$ref, ctx);
   }
 
   // const → treat as a fixed single-value enum of the const's primitive type
@@ -160,11 +239,13 @@ function resolveSchemaType(node: JsonSchemaNode): ResolvedType {
   // enum → logical enum
   if (Array.isArray(node.enum)) {
     const hasNull = node.enum.includes(null);
+    const symbols = node.enum.filter((v) => v !== null);
     return {
       type: "enum",
       confidence: "high",
       nullable: hasNull,
       originalType: `enum(${node.enum.map((v) => JSON.stringify(v)).join(",")})`,
+      ...(symbols.every((v) => typeof v === "string") ? { enumValues: symbols as string[] } : {}),
     };
   }
 
@@ -176,14 +257,13 @@ function resolveSchemaType(node: JsonSchemaNode): ResolvedType {
     );
     const members = nonNull.length > 0 ? nonNull : combinator;
     const hasNull = combinator.some((m) => normalizeType(m.type).base === "null" || normalizeType(m.type).nullableFromType);
-    const first = resolveSchemaType(members[0]);
+    const first = resolveSchemaType(members[0], ctx);
     const keyword = node.oneOf ? "oneOf" : node.anyOf ? "anyOf" : "allOf";
     return {
-      type: first.type,
+      ...first,
       confidence: members.length === 1 ? first.confidence : "low",
       nullable: hasNull || first.nullable,
       originalType: `${keyword}(${members.length})`,
-      format: first.format,
     };
   }
 
@@ -289,54 +369,57 @@ function deriveEntityName(schema: JsonSchemaNode): string {
   return "ImportedEntity";
 }
 
+
 // ---------------------------------------------------------------------------
-// Public API
+// Document structure: definitions + per-object field mapping
 // ---------------------------------------------------------------------------
 
-export function parseJsonSchema(content: string): Result<ParsedEntity> {
-  let schema: JsonSchemaNode;
-  try {
-    schema = JSON.parse(content);
-  } catch {
-    return err({
-      code: "PARSE_ERROR",
-      message: "Invalid JSON: could not parse JSON Schema",
-      suggestedFix: "Ensure the content is a valid JSON Schema document.",
-    });
+function isObjectSchema(node: JsonSchemaNode): boolean {
+  const { base } = normalizeType(node.type);
+  if (base === "object") return true;
+  return base === undefined && !!node.properties && typeof node.properties === "object";
+}
+
+function hasProperties(node: JsonSchemaNode): boolean {
+  return !!node.properties && typeof node.properties === "object" && Object.keys(node.properties).length > 0;
+}
+
+/** Index root-level `$defs` and `definitions` by the local pointer `$ref` uses. */
+function indexDefinitions(schema: JsonSchemaNode, rootEntityName: string | undefined): Map<string, DefinitionEntry> {
+  const definitions = new Map<string, DefinitionEntry>();
+  const taken = new Set(rootEntityName ? [rootEntityName] : []);
+
+  for (const keyword of ["$defs", "definitions"] as const) {
+    const defs = schema[keyword];
+    if (!defs || typeof defs !== "object" || Array.isArray(defs)) continue;
+
+    for (const [key, raw] of Object.entries(defs as Record<string, unknown>)) {
+      if (!raw || typeof raw !== "object") continue;
+      const node = raw as JsonSchemaNode;
+      const kind: DefinitionEntry["kind"] = isObjectSchema(node)
+        ? "entity"
+        : Array.isArray(node.enum) && typeof node.$ref !== "string"
+          ? "enum"
+          : "inline";
+
+      let assetName = key;
+      if (kind !== "inline") {
+        for (let n = 2; taken.has(assetName); n++) assetName = `${key}_${n}`;
+        taken.add(assetName);
+      }
+      definitions.set(`#/${keyword}/${key}`, { key, node, kind, assetName });
+    }
   }
+  return definitions;
+}
 
-  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
-    return err({
-      code: "PARSE_ERROR",
-      message: "Expected a JSON Schema object at the top level",
-      suggestedFix: 'The root must be an object with a "properties" map (an object schema).',
-    });
-  }
+function buildFields(objectNode: JsonSchemaNode, ctx: ResolveContext): ParsedField[] {
+  const properties = (objectNode.properties ?? {}) as Record<string, unknown>;
+  const requiredSet = new Set(Array.isArray(objectNode.required) ? objectNode.required : []);
 
-  const { base: rootBase } = normalizeType(schema.type);
-
-  if (rootBase === "array") {
-    return err({
-      code: "PARSE_ERROR",
-      message: "Array-root JSON Schemas are not supported for entity import",
-      suggestedFix: "Wrap the item schema in an object, or import the element schema directly.",
-    });
-  }
-
-  const properties = schema.properties;
-  if (!properties || typeof properties !== "object" || Object.keys(properties).length === 0) {
-    return err({
-      code: "PARSE_ERROR",
-      message: "JSON Schema has no properties to import",
-      suggestedFix: 'Provide an object schema with a non-empty "properties" map.',
-    });
-  }
-
-  const requiredSet = new Set(Array.isArray(schema.required) ? schema.required : []);
-
-  const parsedFields: ParsedField[] = Object.entries(properties).map(([name, propNode]) => {
+  return Object.entries(properties).map(([name, propNode]) => {
     const node = (propNode && typeof propNode === "object" ? propNode : {}) as JsonSchemaNode;
-    const resolved = resolveSchemaType(node);
+    const resolved = resolveSchemaType(node, ctx);
     const isRequired = requiredSet.has(name);
     // nullable = optional (not in required) OR explicitly `type: [..., "null"]`.
     const nullable = resolved.nullable || !isRequired;
@@ -359,30 +442,134 @@ export function parseJsonSchema(content: string): Result<ParsedEntity> {
       maxValueExclusive,
     };
 
-    // Link a reference field to its target entity (from the $ref).
-    if (resolved.type === "reference" && typeof node.$ref === "string") {
-      field.referencedEntityName = refToEntityName(node.$ref);
-    }
+    if (resolved.referencedEntityName) field.referencedEntityName = resolved.referencedEntityName;
+    if (resolved.enumName) field.enumName = resolved.enumName;
+    if (resolved.enumValues) field.enumValues = resolved.enumValues;
 
-    // Array element type (+ reference target when items is a $ref).
+    // Array element type (+ reference / enum target of the element).
     if (resolved.type === "array" && node.items && !Array.isArray(node.items)) {
-      const itemNode = node.items as JsonSchemaNode;
-      if (typeof itemNode.$ref === "string") {
-        field.arrayElementType = "reference";
-        field.referencedEntityName = refToEntityName(itemNode.$ref);
-      } else {
-        field.arrayElementType = resolveSchemaType(itemNode).type;
-      }
+      const item = resolveSchemaType(node.items as JsonSchemaNode, ctx);
+      field.arrayElementType = item.type;
+      if (item.referencedEntityName) field.referencedEntityName = item.referencedEntityName;
+      if (item.enumName) field.enumName = item.enumName;
+      if (item.enumValues) field.enumValues = item.enumValues;
+      if (item.type === "reference" || item.type === "enum") field.confidence = item.confidence;
     }
 
     return field;
   });
+}
+
+/** JSON first; anything that is not JSON-shaped is tried as YAML (JSON Schema is often authored in YAML). */
+function parseStructured(content: string): JsonSchemaNode | null {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const trimmed = content.trim();
+    if (!trimmed || trimmed.startsWith("{") || trimmed.startsWith("[")) return null;
+    try {
+      return parseYaml(trimmed) as JsonSchemaNode;
+    } catch {
+      return null;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export function parseJsonSchemaDocument(content: string): Result<MultiEntityImportResult> {
+  const schema = parseStructured(content);
+  if (schema === null) {
+    return err({
+      code: "PARSE_ERROR",
+      message: "Invalid JSON: could not parse JSON Schema",
+      suggestedFix: "Ensure the content is a valid JSON Schema document (JSON or YAML).",
+    });
+  }
+
+  if (typeof schema !== "object" || Array.isArray(schema)) {
+    return err({
+      code: "PARSE_ERROR",
+      message: "Expected a JSON Schema object at the top level",
+      suggestedFix: 'The root must be an object with a "properties" map (an object schema).',
+    });
+  }
+
+  const { base: rootBase } = normalizeType(schema.type);
+
+  if (rootBase === "array") {
+    return err({
+      code: "PARSE_ERROR",
+      message: "Array-root JSON Schemas are not supported for entity import",
+      suggestedFix: "Wrap the item schema in an object, or import the element schema directly.",
+    });
+  }
+
+  const rootIsEntity = hasProperties(schema);
+  const rootEntityName = rootIsEntity ? deriveEntityName(schema) : undefined;
+  const definitions = indexDefinitions(schema, rootEntityName);
+  const ctx: ResolveContext = { definitions, rootEntityName, depth: 0 };
+
+  const entities: ParsedEntity[] = [];
+  if (rootIsEntity && rootEntityName) {
+    entities.push({
+      name: rootEntityName,
+      description: typeof schema.description === "string" ? schema.description : undefined,
+      fields: buildFields(schema, ctx),
+      sourceFormat: "json-schema",
+      originalContent: content,
+    });
+  }
+
+  const enums: ParsedEnum[] = [];
+  for (const def of definitions.values()) {
+    if (def.kind === "entity") {
+      entities.push({
+        name: def.assetName,
+        description: typeof def.node.description === "string" ? def.node.description : undefined,
+        fields: buildFields(def.node, ctx),
+        sourceFormat: "json-schema",
+        originalContent: content,
+      });
+    } else if (def.kind === "enum") {
+      const parsedEnum: ParsedEnum = {
+        name: def.assetName,
+        values: (def.node.enum ?? []).filter((v) => v !== null).map(String),
+      };
+      if (typeof def.node.description === "string") parsedEnum.description = def.node.description;
+      enums.push(parsedEnum);
+    }
+  }
+
+  if (entities.length === 0) {
+    return err({
+      code: "PARSE_ERROR",
+      message: "JSON Schema has no properties to import",
+      suggestedFix: 'Provide an object schema with a non-empty "properties" map (at the root or in "$defs").',
+    });
+  }
+
+  const warnings: string[] = [];
+  for (const def of definitions.values()) {
+    if (def.kind !== "inline" && def.assetName !== def.key) {
+      warnings.push(`Definition "${def.key}" clashes with the root entity name — imported as "${def.assetName}".`);
+    }
+  }
 
   return ok({
-    name: deriveEntityName(schema),
-    description: typeof schema.description === "string" ? schema.description : undefined,
-    fields: parsedFields,
     sourceFormat: "json-schema",
-    originalContent: content,
+    entities,
+    ...(rootIsEntity && rootEntityName ? { rootEntityName } : {}),
+    enums,
+    scalars: [],
+    warnings,
   });
+}
+
+export function parseJsonSchema(content: string): Result<ParsedEntity> {
+  const doc = parseJsonSchemaDocument(content);
+  if (!doc.success) return doc;
+  return ok(pickRootEntity(doc.data));
 }

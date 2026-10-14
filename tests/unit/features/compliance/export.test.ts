@@ -20,6 +20,8 @@ const MOCK_FIELDS: ComplianceFieldResult[] = [
     targetSystems: ["BigQuery", "Avro"],
     domain: "Commerce",
     domainId: "dom-1",
+    domainSlug: "commerce",
+    productSlug: "orders",
   },
   {
     entityId: "ent-1",
@@ -34,6 +36,8 @@ const MOCK_FIELDS: ComplianceFieldResult[] = [
     targetSystems: [],
     domain: "Commerce",
     domainId: "dom-1",
+    domainSlug: "commerce",
+    productSlug: "orders",
   },
   {
     entityId: "ent-2",
@@ -48,6 +52,8 @@ const MOCK_FIELDS: ComplianceFieldResult[] = [
     targetSystems: ["OpenAPI"],
     domain: "Commerce",
     domainId: "dom-1",
+    domainSlug: "commerce",
+    productSlug: "orders",
   },
 ];
 
