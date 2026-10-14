@@ -109,8 +109,10 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
       domainSlug: entity.domainSlug,
       entityName: entity.name,
       domainName: entity.domainName,
+      slug: entity.slug,
+      productSlug: entity.productSlug,
     });
-  }, [entity.id, entity.domainSlug, entity.name, entity.domainName]);
+  }, [entity.id, entity.domainSlug, entity.name, entity.domainName, entity.slug, entity.productSlug]);
 
   const [isPending, startTransition] = useTransition();
   const [statusError, setStatusError] = useState<string | null>(null);

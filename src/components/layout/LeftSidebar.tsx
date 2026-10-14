@@ -94,6 +94,9 @@ function ExplorerSidebar({
   const [search, setSearch] = useState("");
   // Explicit user choices; anything absent falls back to the route-derived defaults.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  // Toggles made while a search is active live apart so they never leak into
+  // the browsing state; they reset when the query clears.
+  const [searchOverrides, setSearchOverrides] = useState<Record<string, boolean>>({});
   const { data: tree, isError, isLoading, refetch } = useDomainsTree();
 
   const domains = useMemo(() => tree?.domains ?? [], [tree]);
@@ -115,12 +118,18 @@ function ExplorerSidebar({
     return next;
   }, [activeDomain]);
 
-  const isExpanded = (key: string) => overrides[key] ?? defaultExpanded.has(key);
-  const setExpanded = (key: string, open: boolean) =>
-    setOverrides((prev) => ({ ...prev, [key]: open }));
-  const toggle = (key: string) => setExpanded(key, !isExpanded(key));
-
   const query = search.trim().toLowerCase();
+
+  // While searching, every node that survives the filter is expanded so the
+  // matching entities are visible.
+  const isExpanded = (key: string) =>
+    query ? (searchOverrides[key] ?? true) : (overrides[key] ?? defaultExpanded.has(key));
+  const setExpanded = (key: string, open: boolean) => {
+    const apply = (prev: Record<string, boolean>) => ({ ...prev, [key]: open });
+    if (query) setSearchOverrides(apply);
+    else setOverrides(apply);
+  };
+  const toggle = (key: string) => setExpanded(key, !isExpanded(key));
   const enterpriseEntities = useMemo(
     () =>
       query
@@ -413,7 +422,11 @@ function ExplorerSidebar({
             type="text"
             placeholder="Filter domains, entities..."
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (!value.trim()) setSearchOverrides({});
+              setSearch(value);
+            }}
             className="bg-transparent text-body-small text-foreground placeholder:text-muted-foreground/40 outline-none w-full"
           />
         </div>

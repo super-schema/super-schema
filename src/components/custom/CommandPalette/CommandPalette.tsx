@@ -20,6 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   getRecentEntityEntries,
+  hasStoredEntityLocation,
   trackRecentEntity,
   type RecentEntityEntry,
 } from "@/lib/recent-entities";
@@ -134,6 +135,8 @@ export function CommandPalette({
         domainSlug: entity.domainSlug,
         entityName: entity.name,
         domainName: entity.domainName,
+        slug: entity.slug,
+        productSlug: entity.productSlug ?? null,
       });
       router.push(
         assetHref({
@@ -160,21 +163,26 @@ export function CommandPalette({
     [router, onClose]
   );
 
-  // Build recent entities from entries + fetched entities
+  // Build recent entities from entries + fetched entities. The fetched list
+  // wins (it has the current slugs); otherwise an entry navigates from the
+  // slugs stored with it. A legacy entry without stored slugs is hidden until
+  // the list resolves it — its URL is never guessed from the id.
   const recentEntities = useMemo(() => {
-    return recentEntries
-      .map((entry) => {
-        const found = entities.find((e) => e.id === entry.entityId);
-        if (found) return found;
-        // Use stored data as fallback
-        return {
+    return recentEntries.flatMap((entry): CommandPaletteEntity[] => {
+      const found = entities.find((e) => e.id === entry.entityId);
+      if (found) return [found];
+      if (!entry.entityName || !hasStoredEntityLocation(entry)) return [];
+      return [
+        {
           id: entry.entityId,
           name: entry.entityName,
+          slug: entry.slug,
           domainName: entry.domainName,
           domainSlug: entry.domainSlug,
-        };
-      })
-      .filter((e) => e.name); // filter out entries with no name
+          productSlug: entry.productSlug,
+        },
+      ];
+    });
   }, [recentEntries, entities]);
 
   // Default actions
