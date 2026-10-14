@@ -45,29 +45,46 @@ export function findLineConflict(candidate: Candidate, existing: NamedAsset[]): 
   return null;
 }
 
-/** Load every named asset whose placement could share a line with the candidate. */
-async function loadLineCandidates(db: Db, c: Candidate): Promise<NamedAsset[]> {
-  const nameFilter = { equals: c.name.trim(), mode: "insensitive" as const };
-  const where = { tenantId: c.tenantId, name: nameFilter };
-  const select = { id: true, name: true, tenantId: true, domainId: true, productId: true };
-  const [entities, enums, scalars, unions, services] = await Promise.all([
-    db.entity.findMany({ where, select }),
-    db.sharedEnum.findMany({ where, select }),
-    db.customScalar.findMany({ where, select }),
-    db.unionType.findMany({ where, select }),
-    db.serviceDefinition.findMany({ where, select }),
-  ]);
-  return [
-    ...entities.map((r) => ({ ...r, kind: "entity" as const })),
-    ...enums.map((r) => ({ ...r, kind: "sharedEnum" as const })),
-    ...scalars.map((r) => ({ ...r, kind: "customScalar" as const })),
-    ...unions.map((r) => ({ ...r, kind: "unionType" as const })),
-    ...services.map((r) => ({ ...r, kind: "service" as const })),
-  ];
+type NamedRow = Omit<NamedAsset, "kind">;
+type RegistryWhere = { tenantId: string; name?: { equals: string; mode: "insensitive" } };
+
+const NAMED_SELECT = { id: true, name: true, tenantId: true, domainId: true, productId: true } as const;
+
+/**
+ * One finder per RegistryKind. The Record type makes adding a kind (e.g. Phase 4's
+ * trait | message | channel | eventSpec) a compile error until its finder exists.
+ */
+const FINDERS: Record<RegistryKind, (db: Db, where: RegistryWhere) => Promise<NamedRow[]>> = {
+  entity: (db, where) => db.entity.findMany({ where, select: NAMED_SELECT }),
+  sharedEnum: (db, where) => db.sharedEnum.findMany({ where, select: NAMED_SELECT }),
+  customScalar: (db, where) => db.customScalar.findMany({ where, select: NAMED_SELECT }),
+  unionType: (db, where) => db.unionType.findMany({ where, select: NAMED_SELECT }),
+  service: (db, where) => db.serviceDefinition.findMany({ where, select: NAMED_SELECT }),
+};
+
+/** Run every kind's finder and tag each row with its kind. */
+async function loadNamedAssets(db: Db, where: RegistryWhere): Promise<NamedAsset[]> {
+  const kinds = Object.keys(FINDERS) as RegistryKind[];
+  const perKind = await Promise.all(
+    kinds.map(async (kind) => (await FINDERS[kind](db, where)).map((row): NamedAsset => ({ ...row, kind })))
+  );
+  return perKind.flat();
 }
 
 export async function assertNameAvailable(db: Db, candidate: Candidate): Promise<Result<void>> {
-  const hit = findLineConflict(candidate, await loadLineCandidates(db, candidate));
+  let sameName: NamedAsset[];
+  try {
+    sameName = await loadNamedAssets(db, {
+      tenantId: candidate.tenantId,
+      name: { equals: candidate.name.trim(), mode: "insensitive" },
+    });
+  } catch (e) {
+    return err({
+      code: "DB_ERROR",
+      message: e instanceof Error ? e.message : "Failed to check name availability",
+    });
+  }
+  const hit = findLineConflict(candidate, sameName);
   if (!hit) return ok(undefined);
   return err({
     code: "NAME_CONFLICT",
@@ -77,7 +94,10 @@ export async function assertNameAvailable(db: Db, candidate: Candidate): Promise
   });
 }
 
-/** Serialize name checks + writes within one tenant (spec §4.3). */
+/**
+ * Serialize name checks + writes within one tenant (spec §4.3).
+ * Deliberately lets errors propagate (does not return a Result): a throw is what rolls the transaction back.
+ */
 export async function withTenantNameLock<T>(
   db: PrismaClient,
   tenantId: string,
@@ -89,23 +109,8 @@ export async function withTenantNameLock<T>(
   });
 }
 
-export async function findNameConflicts(db: Db, tenantId: string): Promise<Array<{ name: string; assets: NamedAsset[] }>> {
-  const select = { id: true, name: true, tenantId: true, domainId: true, productId: true };
-  const where = { tenantId };
-  const [entities, enums, scalars, unions, services] = await Promise.all([
-    db.entity.findMany({ where, select }),
-    db.sharedEnum.findMany({ where, select }),
-    db.customScalar.findMany({ where, select }),
-    db.unionType.findMany({ where, select }),
-    db.serviceDefinition.findMany({ where, select }),
-  ]);
-  const all: NamedAsset[] = [
-    ...entities.map((r) => ({ ...r, kind: "entity" as const })),
-    ...enums.map((r) => ({ ...r, kind: "sharedEnum" as const })),
-    ...scalars.map((r) => ({ ...r, kind: "customScalar" as const })),
-    ...unions.map((r) => ({ ...r, kind: "unionType" as const })),
-    ...services.map((r) => ({ ...r, kind: "service" as const })),
-  ];
+/** Pure step: group same-name assets and keep only the members that share a line with another member. */
+export function groupLineConflicts(all: NamedAsset[]): Array<{ name: string; assets: NamedAsset[] }> {
   const byName = new Map<string, NamedAsset[]>();
   for (const a of all) {
     const key = a.name.trim().toLowerCase();
@@ -118,4 +123,8 @@ export async function findNameConflicts(db: Db, tenantId: string): Promise<Array
     if (clashing.length > 0) conflicts.push({ name: clashing[0].name, assets: clashing });
   }
   return conflicts;
+}
+
+export async function findNameConflicts(db: Db, tenantId: string): Promise<Array<{ name: string; assets: NamedAsset[] }>> {
+  return groupLineConflicts(await loadNamedAssets(db, { tenantId }));
 }
