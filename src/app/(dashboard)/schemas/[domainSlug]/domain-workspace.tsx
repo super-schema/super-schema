@@ -47,10 +47,20 @@ import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
 import type { DomainDeletionImpact } from "@/types/domain-deletion";
 
-type DomainTab = "entities" | "types" | "apis";
+export type DomainTab = "entities" | "data-types" | "apis";
+
+/**
+ * Normalize the `?tab=` query value to a workspace tab. The legacy `types`
+ * value is aliased to `data-types`; anything unknown falls back to `entities`.
+ */
+export function normalizeWorkspaceTab(raw: string | null): DomainTab {
+  if (raw === "types") return "data-types";
+  if (raw === "data-types" || raw === "apis" || raw === "entities") return raw;
+  return "entities";
+}
 
 // ---------------------------------------------------------------------------
-// Create dropdown — New Entity + New Model / Enum / Scalar / Union / API
+// Create dropdown — New Entity, New Data Type (Enum / Scalar / Union), New API
 // ---------------------------------------------------------------------------
 
 function CreateDropdown({
@@ -79,13 +89,46 @@ function CreateDropdown({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  const items = [
-    { label: "New Entity", icon: Database, action: onNewEntity, description: "Schema entity with fields" },
-    { label: "New Enum", icon: Hash, action: onNewEnum, description: "Shared enum type" },
-    { label: "New Scalar", icon: Hash, action: onNewScalar, description: "Custom scalar type" },
-    { label: "New Union", icon: Hash, action: onNewUnion, description: "Union type (A | B)" },
-    { label: "New API", icon: Globe, action: onNewApi, description: "API service definition" },
+  type DropdownItem = {
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    action: () => void;
+    description: string;
+  };
+
+  const entityItem: DropdownItem = {
+    label: "New Entity",
+    icon: Database,
+    action: onNewEntity,
+    description: "Schema entity with fields",
+  };
+  const dataTypeItems: DropdownItem[] = [
+    { label: "Enum", icon: Hash, action: onNewEnum, description: "Shared enum type" },
+    { label: "Scalar", icon: Hash, action: onNewScalar, description: "Custom scalar type" },
+    { label: "Union", icon: Hash, action: onNewUnion, description: "Union type (A | B)" },
   ];
+  const apiItem: DropdownItem = {
+    label: "New API",
+    icon: Globe,
+    action: onNewApi,
+    description: "API service definition",
+  };
+
+  function renderItem(item: DropdownItem, indented = false) {
+    return (
+      <button
+        key={item.label}
+        onClick={() => { item.action(); setOpen(false); }}
+        className={`flex items-start gap-2 w-full text-left py-2 pr-3 hover:bg-accent transition-colors ${indented ? "pl-6" : "pl-3"}`}
+      >
+        <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+        <div>
+          <div className="text-body-small text-foreground">{item.label}</div>
+          <div className="text-[10px] text-muted-foreground">{item.description}</div>
+        </div>
+      </button>
+    );
+  }
 
   return (
     <div className="relative" ref={ref}>
@@ -104,19 +147,10 @@ function CreateDropdown({
       </div>
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[220px]">
-          {items.map((item) => (
-            <button
-              key={item.label}
-              onClick={() => { item.action(); setOpen(false); }}
-              className="flex items-start gap-2 w-full text-left px-3 py-2 hover:bg-accent transition-colors"
-            >
-              <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div>
-                <div className="text-body-small text-foreground">{item.label}</div>
-                <div className="text-[10px] text-muted-foreground">{item.description}</div>
-              </div>
-            </button>
-          ))}
+          {renderItem(entityItem)}
+          <div className="text-[10px] uppercase text-muted-foreground px-3 pt-2">New Data Type</div>
+          {dataTypeItems.map((item) => renderItem(item, true))}
+          {renderItem(apiItem)}
         </div>
       )}
     </div>
@@ -125,7 +159,7 @@ function CreateDropdown({
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: Database, label: "Entities", id: "entities" },
-  { icon: Hash, label: "Types", id: "types" },
+  { icon: Hash, label: "Data Types", id: "data-types" },
   { icon: Globe, label: "APIs", id: "apis" },
 ];
 
@@ -232,11 +266,8 @@ export function DomainWorkspace({
   const router = useRouter();
   const invalidateDomainsTree = useInvalidateDomainsTree();
   const searchParams = useSearchParams();
-  const initialTab = (searchParams.get("tab") as DomainTab) || "entities";
   const [activeTab, setActiveTab] = useState<DomainTab>(
-    ["entities", "types", "apis"].includes(initialTab)
-      ? initialTab
-      : "entities"
+    normalizeWorkspaceTab(searchParams.get("tab"))
   );
   const viewMode = useSyncExternalStore(
     subscribeToViewMode,
@@ -551,9 +582,9 @@ export function DomainWorkspace({
           </div>
           <CreateDropdown
             onNewEntity={() => router.push(`/schemas/${domainSlug}/${productSlug}/new`)}
-            onNewEnum={() => { setActiveTab("types"); setTypeCreateIntent("enum"); }}
-            onNewScalar={() => { setActiveTab("types"); setTypeCreateIntent("scalar"); }}
-            onNewUnion={() => { setActiveTab("types"); setTypeCreateIntent("union"); }}
+            onNewEnum={() => { setActiveTab("data-types"); setTypeCreateIntent("enum"); }}
+            onNewScalar={() => { setActiveTab("data-types"); setTypeCreateIntent("scalar"); }}
+            onNewUnion={() => { setActiveTab("data-types"); setTypeCreateIntent("union"); }}
             onNewApi={() => setActiveTab("apis")}
           />
           {canDeleteDomain && !isSystemDomain ? (
@@ -592,8 +623,8 @@ export function DomainWorkspace({
         ))}
       </div>
 
-      {/* Types tab */}
-      {activeTab === "types" && (
+      {/* Data Types tab */}
+      {activeTab === "data-types" && (
         <DomainTypesTab
           domainId={domainId}
           sharedEnums={sharedEnums}
