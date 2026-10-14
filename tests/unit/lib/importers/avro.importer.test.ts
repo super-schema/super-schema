@@ -203,8 +203,10 @@ describe("Avro Importer", () => {
     });
   });
 
-  describe("nested records (low confidence)", () => {
-    it("returns low confidence for nested record types", () => {
+  // Epic 15.3: a nested record is its own entity now (see avro-document.test.ts);
+  // the field referencing it is an exact reference, no longer a low-confidence object.
+  describe("nested records", () => {
+    it("maps a nested record field to a reference to the nested entity", () => {
       const result = parseAvroSchema(
         validAvro([
           {
@@ -219,8 +221,11 @@ describe("Avro Importer", () => {
       );
       expect(result.success).toBe(true);
       if (!result.success) return;
-      expect(result.data.fields[0].type).toBe("object");
-      expect(result.data.fields[0].confidence).toBe("low");
+      expect(result.data.fields[0]).toMatchObject({
+        type: "reference",
+        referencedEntityName: "Address",
+        confidence: "high",
+      });
     });
   });
 
