@@ -171,6 +171,48 @@ describe("level-aware data type and API creates", () => {
     });
   });
 
+  describe("createServiceAction with scope ENTITY", () => {
+    it("derives the product-level target from the entity, ignoring any passed target", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1" });
+
+      const result = await createServiceAction(
+        "domain-1",
+        { name: "OrderApi", scope: "ENTITY", entityId: "ent-1" },
+        { level: "DOMAIN", domainId: "domain-1" }
+      );
+
+      expect(result).toEqual({ success: true, serviceId: "svc-1" });
+      expect(mockPrisma.entity.findUnique).toHaveBeenCalledWith({
+        where: { id: "ent-1" },
+        select: { id: true, productId: true },
+      });
+      expect(mockAssertNameAvailable).toHaveBeenCalledWith(mockTx, { name: "OrderApi", ...PRODUCT_SCOPE });
+      expect(mockTx.serviceDefinition.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ scope: "ENTITY", entityId: "ent-1", ...PRODUCT_SCOPE }),
+      });
+    });
+
+    it("refuses tenant-level (Enterprise) entities", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: null });
+      const result = await createServiceAction("domain-1", { name: "OrderApi", scope: "ENTITY", entityId: "ent-1" });
+      expect(result).toEqual({ error: "Enterprise entities cannot own APIs" });
+      expect(mockTx.serviceDefinition.create).not.toHaveBeenCalled();
+    });
+
+    it("returns an error for an unknown entity", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue(null);
+      const result = await createServiceAction("domain-1", { name: "OrderApi", scope: "ENTITY", entityId: "ent-1" });
+      expect(result).toEqual({ error: "Entity not found" });
+      expect(mockTx.serviceDefinition.create).not.toHaveBeenCalled();
+    });
+
+    it("requires an entity id", async () => {
+      const result = await createServiceAction("domain-1", { name: "OrderApi", scope: "ENTITY" });
+      expect(result).toEqual({ error: "Select an entity for an entity-scoped API" });
+      expect(mockPrisma.entity.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
   describe("getOrCreateEntityServiceAction", () => {
     beforeEach(() => {
       mockPrisma.serviceDefinition.findFirst.mockResolvedValue(null);

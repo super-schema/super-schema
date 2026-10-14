@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
-import type { Result, ServiceError } from "@/types/result";
+import type { Result } from "@/types/result";
 import type { Entity } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { EntityMetadataSchema } from "@/types/schemas/entity-metadata.schema";
@@ -16,17 +16,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { generateSlug, isReservedEntityRouteSlug } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
-import { resolveScope } from "@/lib/asset-scope";
-import { validateScope } from "@/lib/levels";
-import { assertNameAvailable, withTenantNameLock } from "@/services/name-registry.service";
-
-/** A Result failure (level validation or name registry) carried out of an audited write so it is never audited. */
-class ServiceErrorRejection extends Error {
-  constructor(readonly serviceError: ServiceError) {
-    super(serviceError.message);
-    this.name = "ServiceErrorRejection";
-  }
-}
+import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -71,20 +61,16 @@ export async function createEntity(
       userId: ctx.userId,
       fn: async () => {
         const productId = await ensureDefaultProductId(parsed.data.domainId);
-        const scope = await resolveScope(prisma, { level: "PRODUCT", productId });
-        if (!scope.success) throw new ServiceErrorRejection(scope.error);
-        const valid = validateScope("entity", scope.data);
-        if (!valid.success) throw new ServiceErrorRejection(valid.error);
-
-        const outcome = await withTenantNameLock(prisma, scope.data.tenantId, async (tx) => {
-          const free = await assertNameAvailable(tx, { name: parsed.data.name, ...scope.data });
-          if (!free.success) return free;
-          return ok(
-            await tx.entity.create({
+        const created = await createInScope(prisma, {
+          kind: "entity",
+          target: { level: "PRODUCT", productId },
+          name: parsed.data.name,
+          write: (tx, scope) =>
+            tx.entity.create({
               data: {
                 name: parsed.data.name,
                 slug: entitySlug,
-                ...scope.data,
+                ...scope,
                 description: parsed.data.description,
                 ownerId: ctx.userId,
                 metadata:
@@ -92,11 +78,10 @@ export async function createEntity(
                   undefined,
               },
               include: { domain: true },
-            })
-          );
+            }),
         });
-        if (!outcome.success) throw new ServiceErrorRejection(outcome.error);
-        return outcome.data;
+        if (!created.success) throw new ServiceErrorRejection(created.error);
+        return created.data;
       },
     });
     return ok(entity);
@@ -250,16 +235,11 @@ export async function updateEntity(
         if (newName === undefined || newName === existing.name) return prisma.entity.update(update);
 
         // A real rename must stay line-unique: check and write under the tenant lock.
-        const outcome = await withTenantNameLock(prisma, existing.tenantId, async (tx) => {
-          const free = await assertNameAvailable(tx, {
-            name: newName,
-            tenantId: existing.tenantId,
-            domainId: existing.domainId,
-            productId: existing.productId,
-            exclude: { kind: "entity", id },
-          });
-          if (!free.success) return free;
-          return ok(await tx.entity.update(update));
+        const outcome = await writeWithUniqueName(prisma, {
+          scope: existing,
+          name: newName,
+          exclude: { kind: "entity", id },
+          write: (tx) => tx.entity.update(update),
         });
         if (!outcome.success) throw new ServiceErrorRejection(outcome.error);
         return outcome.data;
