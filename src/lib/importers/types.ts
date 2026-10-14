@@ -150,8 +150,14 @@ export interface ParsedScalar {
 
 export interface MultiEntityImportResult {
   sourceFormat: ImportFormat;
-  /** Entities in document order; the first one is the document's root entity. */
+  /** Entities in document order. */
   entities: ParsedEntity[];
+  /**
+   * The document's own root entity, when the format has one (the Avro root
+   * record, a JSON Schema root object). Otherwise the root is inferred — see
+   * `pickRootEntity` in multi-asset.ts.
+   */
+  rootEntityName?: string;
   enums: ParsedEnum[];
   scalars: ParsedScalar[];
   /** Package / namespace declared by the document, if any */

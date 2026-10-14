@@ -14,33 +14,61 @@ import type {
   BulkImportResult,
   MultiEntityImportResult,
 } from "@/lib/importers/types";
-import { parseAvroSchema, parseAvroDocument } from "@/lib/importers/avro.importer";
+import { parseAvroDocument } from "@/lib/importers/avro.importer";
 import { parseBigQueryDDL } from "@/lib/importers/bigquery.importer";
-import { parseProtobufSchema, parseProtobufDocument } from "@/lib/importers/protobuf.importer";
-import { parseJsonSchema, parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
+import { parseProtobufDocument } from "@/lib/importers/protobuf.importer";
+import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
 import { parseTypeSpecSchema, type TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { detectFormat } from "@/lib/importers/format-detector";
-import { countImportAssets, lowConfidenceWarnings, toAssetImportResult } from "@/lib/importers/multi-asset";
+import {
+  countImportAssets,
+  lowConfidenceWarnings,
+  toAssetImportResult,
+  toSingleEntityImport,
+} from "@/lib/importers/multi-asset";
 
 // ---------------------------------------------------------------------------
 // Route to the correct parser
 // ---------------------------------------------------------------------------
 
+/** Formats whose importer returns every asset of the document. */
+function parseDocumentWithFormat(
+  content: string,
+  format: ImportFormat
+): Result<MultiEntityImportResult> | null {
+  switch (format) {
+    case "avro":
+      return parseAvroDocument(content);
+    case "protobuf":
+      return parseProtobufDocument(content);
+    case "json-schema":
+      return parseJsonSchemaDocument(content);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Single-entity parse: the document's root entity plus the document warnings
+ * (and a note naming sibling entities a multi-entity document also defines).
+ */
 function parseWithFormat(
   content: string,
   format: ImportFormat
-): Result<ParsedEntity> {
+): Result<ImportResult> {
+  const doc = parseDocumentWithFormat(content, format);
+  if (doc) {
+    return doc.success ? ok(toSingleEntityImport(doc.data)) : doc;
+  }
+
+  let single: Result<ParsedEntity>;
   switch (format) {
-    case "avro":
-      return parseAvroSchema(content);
     case "bigquery-ddl":
-      return parseBigQueryDDL(content);
-    case "protobuf":
-      return parseProtobufSchema(content);
-    case "json-schema":
-      return parseJsonSchema(content);
+      single = parseBigQueryDDL(content);
+      break;
     case "typespec":
-      return parseTypeSpecSchema(content);
+      single = parseTypeSpecSchema(content);
+      break;
     default:
       return err({
         code: "UNSUPPORTED_FORMAT",
@@ -49,6 +77,7 @@ function parseWithFormat(
           "Supported formats are: avro, bigquery-ddl, protobuf, json-schema, typespec.",
       });
   }
+  return single.success ? ok({ parsedEntity: single.data, warnings: [] }) : single;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,19 +106,11 @@ export function importSchema(
     return parseResult;
   }
 
-  // Collect warnings for low-confidence fields
-  const warnings: string[] = [];
-  for (const field of parseResult.data.fields) {
-    if (field.confidence === "low") {
-      warnings.push(
-        `Field "${field.name}": low confidence mapping from ${field.originalType} to ${field.type}`
-      );
-    }
-  }
-
+  const { parsedEntity, warnings } = parseResult.data;
   return ok({
-    parsedEntity: parseResult.data,
-    warnings,
+    parsedEntity,
+    // Document warnings first, then low-confidence field notes.
+    warnings: [...warnings, ...lowConfidenceWarnings(parsedEntity, false)],
   });
 }
 
@@ -101,23 +122,6 @@ export function importSchema(
 export type SchemaImportRoute =
   | { kind: "single"; result: ImportResult }
   | { kind: "multi"; result: TypeSpecImportResult };
-
-/** Formats whose importer returns every asset of the document. */
-function parseDocumentWithFormat(
-  content: string,
-  format: ImportFormat
-): Result<MultiEntityImportResult> | null {
-  switch (format) {
-    case "avro":
-      return parseAvroDocument(content);
-    case "protobuf":
-      return parseProtobufDocument(content);
-    case "json-schema":
-      return parseJsonSchemaDocument(content);
-    default:
-      return null;
-  }
-}
 
 /**
  * Parse a Protobuf / Avro / JSON Schema document into all of its assets and
@@ -144,10 +148,13 @@ export function importSchemaAssets(
     return ok({ kind: "multi", result: toAssetImportResult(doc) });
   }
 
-  const parsedEntity = doc.entities[0];
+  const single = toSingleEntityImport(doc);
   return ok({
     kind: "single",
-    result: { parsedEntity, warnings: [...doc.warnings, ...lowConfidenceWarnings(parsedEntity, false)] },
+    result: {
+      parsedEntity: single.parsedEntity,
+      warnings: [...single.warnings, ...lowConfidenceWarnings(single.parsedEntity, false)],
+    },
   });
 }
 
@@ -182,10 +189,14 @@ export function bulkImport(
       continue;
     }
 
-    parsed.push(result.data);
+    const { parsedEntity } = result.data;
+    parsed.push(parsedEntity);
 
-    // Collect low-confidence warnings
-    for (const field of result.data.fields) {
+    // Document warnings (incl. sibling entities left out), then low-confidence notes
+    for (const warning of result.data.warnings) {
+      warnings.push(`${file.filename} — ${warning}`);
+    }
+    for (const field of parsedEntity.fields) {
       if (field.confidence === "low") {
         warnings.push(
           `${file.filename} — field "${field.name}": low confidence mapping from ${field.originalType} to ${field.type}`

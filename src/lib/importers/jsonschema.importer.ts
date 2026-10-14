@@ -35,6 +35,7 @@
 import { parse as parseYaml } from "yaml";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
+import { pickRootEntity } from "./multi-asset";
 import type {
   ParsedEntity,
   ParsedEnum,
@@ -557,11 +558,18 @@ export function parseJsonSchemaDocument(content: string): Result<MultiEntityImpo
     }
   }
 
-  return ok({ sourceFormat: "json-schema", entities, enums, scalars: [], warnings });
+  return ok({
+    sourceFormat: "json-schema",
+    entities,
+    ...(rootIsEntity && rootEntityName ? { rootEntityName } : {}),
+    enums,
+    scalars: [],
+    warnings,
+  });
 }
 
 export function parseJsonSchema(content: string): Result<ParsedEntity> {
   const doc = parseJsonSchemaDocument(content);
   if (!doc.success) return doc;
-  return ok(doc.data.entities[0]);
+  return ok(pickRootEntity(doc.data));
 }

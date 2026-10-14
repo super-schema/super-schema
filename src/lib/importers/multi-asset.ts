@@ -9,12 +9,52 @@
  * Pure functions — no side effects, no I/O.
  */
 
-import type { MultiEntityImportResult, ParsedEntity } from "./types";
+import type { ImportResult, MultiEntityImportResult, ParsedEntity } from "./types";
 import type { TypeSpecImportModel, TypeSpecImportResult } from "./typespec.importer";
 
 /** Assets a document defines (entities + enums + scalars); >1 means multi-asset review. */
 export function countImportAssets(doc: MultiEntityImportResult): number {
   return doc.entities.length + doc.enums.length + doc.scalars.length;
+}
+
+/**
+ * The entity a single-entity import keeps, chosen deterministically:
+ * the document's own root when it has one (Avro root record, JSON Schema root
+ * object); otherwise the first entity, in document order, that no other entity
+ * references (the top of the reference graph); otherwise the first entity.
+ */
+export function pickRootEntity(doc: MultiEntityImportResult): ParsedEntity {
+  const explicit = doc.rootEntityName
+    ? doc.entities.find((entity) => entity.name === doc.rootEntityName)
+    : undefined;
+  if (explicit) return explicit;
+
+  const referenced = new Set<string>();
+  for (const entity of doc.entities) {
+    for (const field of entity.fields) {
+      if (field.referencedEntityName && field.referencedEntityName !== entity.name) {
+        referenced.add(field.referencedEntityName);
+      }
+    }
+  }
+  return doc.entities.find((entity) => !referenced.has(entity.name)) ?? doc.entities[0];
+}
+
+/**
+ * Single-entity view of a document (importSchema / bulkImport): the root entity
+ * plus the document's warnings and a note naming the sibling entities left out.
+ */
+export function toSingleEntityImport(doc: MultiEntityImportResult): ImportResult {
+  const parsedEntity = pickRootEntity(doc);
+  const siblings = doc.entities.filter((entity) => entity !== parsedEntity).map((entity) => entity.name);
+  const warnings = [...doc.warnings];
+  if (siblings.length > 0) {
+    const n = siblings.length;
+    warnings.push(
+      `${n} additional ${n === 1 ? "entity" : "entities"} (${siblings.join(", ")}) ${n === 1 ? "was" : "were"} not imported — use the multi-asset import`
+    );
+  }
+  return { parsedEntity, warnings };
 }
 
 /** Same wording `importSchema` uses for its low-confidence warnings, qualified by entity. */

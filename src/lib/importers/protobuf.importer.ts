@@ -28,6 +28,7 @@
 import { parse, Type, Enum, Service, MapField, type Namespace, type ReflectionObject, type Field } from "protobufjs";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
+import { pickRootEntity } from "./multi-asset";
 import type {
   ParsedEntity,
   ParsedField,
@@ -328,5 +329,5 @@ export function parseProtobufDocument(content: string): Result<MultiEntityImport
 export function parseProtobufSchema(content: string): Result<ParsedEntity> {
   const doc = parseProtobufDocument(content);
   if (!doc.success) return doc;
-  return ok(doc.data.entities[0]);
+  return ok(pickRootEntity(doc.data));
 }
