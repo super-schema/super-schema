@@ -412,10 +412,30 @@ function sanitizeIdentifier(name: string): string {
   return safe;
 }
 
+/**
+ * TypeSpec keywords (incl. reserved-for-future ones) from the
+ * @typespec/compiler 1.10 scanner. A bare keyword used as an identifier fails
+ * the real compile with `reserved-identifier`; it must be backtick-escaped.
+ * Reachable in practice: a tenant-level entity has no domain, so
+ * `compileEntity()` reports its domain as "unknown" — a keyword.
+ */
+const TYPESPEC_KEYWORDS = new Set([
+  "import", "model", "scalar", "namespace", "interface", "union", "if", "else",
+  "projection", "using", "op", "extends", "is", "enum", "alias", "dec", "fn",
+  "valueof", "typeof", "const", "init", "true", "false", "return", "void",
+  "never", "unknown", "extern", "internal", "statemachine", "macro", "package",
+  "metadata", "env", "arg", "declare", "array", "struct", "record", "module",
+  "mod", "sym", "context", "prop", "property", "scenario", "pub", "sub",
+  "typeref", "trait", "this", "self", "super", "keyof", "with", "implements",
+  "impl", "satisfies", "flag", "auto", "partial", "private", "public",
+  "protected", "sealed", "local", "async",
+]);
+
 function sanitizeNamespace(value: string): string {
   return value
     .split(".")
     .map((segment) => sanitizeIdentifier(segment))
+    .map((segment) => (TYPESPEC_KEYWORDS.has(segment) ? `\`${segment}\`` : segment))
     .join(".");
 }
 
