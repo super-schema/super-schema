@@ -13,7 +13,7 @@ import {
   type UpdateFieldInput,
 } from "@/types/schemas/field.schema";
 import type { Prisma } from "@/generated/prisma/client";
-import { markEntityFieldsEdited } from "@/lib/entity-versioning/draft-state";
+import { markEntityDraftChanged } from "@/lib/entity-versioning/draft-state";
 
 export async function createField(
   entityId: string,
@@ -87,7 +87,7 @@ export async function createField(
               {},
           },
         });
-        await markEntityFieldsEdited(prisma, entityId);
+        await markEntityDraftChanged(prisma, entityId);
         return created;
       },
     });
@@ -166,7 +166,7 @@ export async function updateField(
         where: { id },
         data: updateData,
       });
-      await markEntityFieldsEdited(prisma, existing.entityId);
+      await markEntityDraftChanged(prisma, existing.entityId);
       return updated;
     },
   });
@@ -194,7 +194,7 @@ export async function deleteField(
     beforeState: existing as unknown as object,
     fn: async () => {
       await prisma.field.delete({ where: { id } });
-      await markEntityFieldsEdited(prisma, existing.entityId);
+      await markEntityDraftChanged(prisma, existing.entityId);
       return null;
     },
   });
@@ -252,7 +252,7 @@ export async function reorderFields(
           })
         )
       );
-      await markEntityFieldsEdited(prisma, entityId);
+      await markEntityDraftChanged(prisma, entityId);
       return null;
     },
   });

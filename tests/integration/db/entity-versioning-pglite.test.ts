@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { applyPgliteMigrations } from "@/lib/pglite-migrate";
 import {
-  MARK_FIELDS_EDITED_SQL,
+  MARK_DRAFT_CHANGED_SQL,
   CLEAR_SOURCE_STALE_SQL,
   WRITE_BACK_SOURCE_SQL,
 } from "@/lib/entity-versioning/draft-state";
@@ -79,7 +79,7 @@ describe("entity versioning migrations on PGlite", () => {
     );
 
     // NULL metadata -> { sourceStale: true }, draft flag set.
-    await db.query(MARK_FIELDS_EDITED_SQL, ["e2"]);
+    await db.query(MARK_DRAFT_CHANGED_SQL, ["e2"]);
     expect(await metadataOf("e2")).toEqual({ sourceStale: true });
     const flag = await db.query<{ hasUnpublishedChanges: boolean }>(
       `SELECT "hasUnpublishedChanges" FROM "entities" WHERE "id" = 'e2'`
@@ -88,7 +88,7 @@ describe("entity versioning migrations on PGlite", () => {
 
     // Other metadata keys survive the mark and the clear.
     await db.exec(`UPDATE "entities" SET "metadata" = '{"tags":["a"],"schemaVersions":{"avro":[]}}'::jsonb WHERE "id" = 'e2'`);
-    await db.query(MARK_FIELDS_EDITED_SQL, ["e2"]);
+    await db.query(MARK_DRAFT_CHANGED_SQL, ["e2"]);
     expect(await metadataOf("e2")).toEqual({ tags: ["a"], schemaVersions: { avro: [] }, sourceStale: true });
     await db.query(CLEAR_SOURCE_STALE_SQL, ["e2"]);
     expect(await metadataOf("e2")).toEqual({ tags: ["a"], schemaVersions: { avro: [] } });

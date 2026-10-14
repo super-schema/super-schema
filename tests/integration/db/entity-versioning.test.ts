@@ -5,7 +5,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  markEntityFieldsEdited,
+  markEntityDraftChanged,
   CLEAR_SOURCE_STALE_SQL,
   WRITE_BACK_SOURCE_SQL,
 } from "@/lib/entity-versioning/draft-state";
@@ -182,7 +182,7 @@ describe("entity versioning schema", () => {
 
       // NULL metadata becomes { sourceStale: true } and the draft flag is set.
       await prisma.entity.update({ where: { id: e.id }, data: { hasUnpublishedChanges: false } });
-      await markEntityFieldsEdited(prisma, e.id);
+      await markEntityDraftChanged(prisma, e.id);
       expect(await prisma.entity.findUniqueOrThrow({ where: { id: e.id } })).toMatchObject({
         hasUnpublishedChanges: true,
         metadata: { sourceStale: true },
@@ -190,7 +190,7 @@ describe("entity versioning schema", () => {
 
       // Other metadata keys survive both the mark and the clear.
       await prisma.entity.update({ where: { id: e.id }, data: { metadata: { tags: ["a"], schemaVersions: { avro: [] } } } });
-      await markEntityFieldsEdited(prisma, e.id);
+      await markEntityDraftChanged(prisma, e.id);
       expect(await meta()).toEqual({ tags: ["a"], schemaVersions: { avro: [] }, sourceStale: true });
       await prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, e.id);
       expect(await meta()).toEqual({ tags: ["a"], schemaVersions: { avro: [] } });

@@ -9,7 +9,8 @@ import {
   getEntityVersion,
   getLatestPublishedVersion,
 } from "@/services/entity-version.service";
-import { markEntityDraftChanged, markEntityFieldsEdited } from "@/lib/entity-versioning/draft-state";
+import { markEntityDraftChanged } from "@/lib/entity-versioning/draft-state";
+import { updateEntity } from "@/services/entity.service";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -160,7 +161,7 @@ describe("entity version service", () => {
       const v10 = unwrap(await publishEntity(reader.id, {}, ctx));
       await sc.field(reader.id, "note", { sortOrder: 1 });
       // A field-editor edit: flags the draft changed AND the stored source stale (R42).
-      await markEntityFieldsEdited(prisma, reader.id);
+      await markEntityDraftChanged(prisma, reader.id);
       const v11 = unwrap(await publishEntity(reader.id, {}, ctx));
 
       expect(unwrap(await listEntityVersions(reader.id, ctx)).map((v) => v.label)).toEqual(["1.1", "1.0"]);
@@ -229,6 +230,43 @@ describe("entity version service", () => {
     }
   });
 
+  it("a rename or description edit made outside the TypeSpec tab reaches the published source (R45)", async () => {
+    let domainId: string | undefined;
+    try {
+      const sc = await scope();
+      domainId = sc.domainId;
+      const renamer = await sc.entity("Renamer");
+      await sc.field(renamer.id, "id", { nullable: false });
+      const meta = async () =>
+        (await prisma.entity.findUniqueOrThrow({ where: { id: renamer.id } })).metadata as Record<string, unknown> | null;
+
+      // Rename through the real service: the stored source still says `model Renamer`, so it must be marked stale.
+      unwrap(await updateEntity(renamer.id, { name: "Renamed" }, ctx));
+      expect((await meta())?.sourceStale).toBe(true);
+
+      const v10 = unwrap(await publishEntity(renamer.id, {}, ctx));
+      const frozen10 = unwrap(await getEntityVersion(renamer.id, v10.label, ctx));
+      expect(frozen10.resolvedSource).toContain("model Renamed");
+      expect(frozen10.resolvedSource).not.toContain("Renamer");
+      const afterRename = await prisma.entity.findUniqueOrThrow({ where: { id: renamer.id } });
+      expect(afterRename.typespecSource).toBe(frozen10.resolvedSource);
+      expect((afterRename.metadata as Record<string, unknown> | null)?.sourceStale).toBeUndefined();
+
+      // A description edit marks it stale again, and the next publish renders it as @doc.
+      unwrap(await updateEntity(renamer.id, { description: "Orders placed online" }, ctx));
+      expect(await prisma.entity.findUniqueOrThrow({ where: { id: renamer.id } })).toMatchObject({
+        hasUnpublishedChanges: true,
+        metadata: { sourceStale: true },
+      });
+      const v11 = unwrap(await publishEntity(renamer.id, {}, ctx));
+      expect(unwrap(await getEntityVersion(renamer.id, v11.label, ctx)).resolvedSource).toContain("Orders placed online");
+      // The already-published version keeps the source it was published with.
+      expect(unwrap(await getEntityVersion(renamer.id, v10.label, ctx)).resolvedSource).not.toContain("Orders placed online");
+    } finally {
+      await cleanup(domainId);
+    }
+  });
+
   it("blocks the publish with the compiler diagnostics when the regenerated source does not compile, and writes nothing", async () => {
     let domainId: string | undefined;
     try {
@@ -243,7 +281,7 @@ describe("entity version service", () => {
           decorators: { arrayElementType: "not a type!" },
         },
       });
-      await markEntityFieldsEdited(prisma, broken.id);
+      await markEntityDraftChanged(prisma, broken.id);
 
       const res = await publishEntity(broken.id, {}, ctx);
       expect(res.success).toBe(false);

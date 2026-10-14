@@ -46,19 +46,18 @@ export function entityUpdateTouchesDraft(
   return false;
 }
 
-/** Flag the entity's draft as diverged from its latest published version. */
-export async function markEntityDraftChanged(db: Db, entityId: string): Promise<void> {
-  await db.entity.update({ where: { id: entityId }, data: { hasUnpublishedChanges: true }, select: { id: true } });
-}
-
 // ---------------------------------------------------------------------------
-// Source staleness (controller ruling R42)
+// Source staleness (controller rulings R42, R45)
 //
-// `entity.typespecSource` is canonical (12.5), but every path that writes field
-// rows without going through the TypeSpec source tab (quick field editor, REST /
-// tRPC field routes, TypeSpec preview "apply") leaves it behind. Those paths set
-// `metadata.sourceStale = true`; only the TypeSpec source save and publish clear
-// it. Publish regenerates the source from the field rows while the flag is set.
+// `entity.typespecSource` is canonical (12.5), but name, description, tags and
+// other metadata, and the field rows are all rendered into it. Every draft edit
+// that does not go through the TypeSpec source tab (quick field editor, REST /
+// tRPC routes, TypeSpec preview "apply", rename, description, tags, owner,
+// retention, relationships, ...) therefore leaves the stored source behind. Those
+// paths set `metadata.sourceStale = true`; only the TypeSpec source save (which
+// writes source + fields consistently) and publish (which regenerates) clear it.
+// There is deliberately no opt-out on the helpers below: the TypeSpec source save
+// does not use them, it writes source + flag inline and clears the marker.
 //
 // The statements are plain SQL strings so they are atomic (jsonb_set / `-` touch
 // one key and never clobber concurrent metadata writes) and so the PGlite test
@@ -69,7 +68,7 @@ export async function markEntityDraftChanged(db: Db, entityId: string): Promise<
 const METADATA_AS_OBJECT = `(CASE WHEN jsonb_typeof("metadata") = 'object' THEN "metadata" ELSE '{}'::jsonb END)`;
 
 /** $1 = entity id. Marks the draft changed AND the stored source stale in one statement. */
-export const MARK_FIELDS_EDITED_SQL =
+export const MARK_DRAFT_CHANGED_SQL =
   `UPDATE "entities" SET "hasUnpublishedChanges" = true, "updatedAt" = CURRENT_TIMESTAMP, ` +
   `"metadata" = jsonb_set(${METADATA_AS_OBJECT}, '{sourceStale}', 'true'::jsonb, true) WHERE "id" = $1`;
 
@@ -92,9 +91,22 @@ export function isSourceStale(metadata: unknown): boolean {
 }
 
 /**
- * Call after any write to field rows that did not go through the TypeSpec source save: flags the
- * draft changed and the stored typespecSource stale, in one atomic statement.
+ * For writers that already rewrite the whole metadata object: apply the stale marker when this edit
+ * changes the draft, or when the stored metadata was already stale (so a caller-supplied copy that lacks
+ * the server-owned marker can never clear it).
  */
-export async function markEntityFieldsEdited(db: Db, entityId: string): Promise<void> {
-  await db.$executeRawUnsafe(MARK_FIELDS_EDITED_SQL, entityId);
+export function withSourceStale(
+  stored: unknown,
+  next: Record<string, unknown>,
+  changesDraft: boolean
+): Record<string, unknown> {
+  return changesDraft || isSourceStale(stored) ? { ...next, sourceStale: true } : next;
+}
+
+/**
+ * Call after any draft edit that did not go through the TypeSpec source save: flags the draft changed
+ * AND the stored typespecSource stale, in one atomic statement.
+ */
+export async function markEntityDraftChanged(db: Db, entityId: string): Promise<void> {
+  await db.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId);
 }

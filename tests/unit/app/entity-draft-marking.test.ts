@@ -23,7 +23,7 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "us
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: mockCompile }));
 
-import { MARK_FIELDS_EDITED_SQL, CLEAR_SOURCE_STALE_SQL } from "@/lib/entity-versioning/draft-state";
+import { MARK_DRAFT_CHANGED_SQL, CLEAR_SOURCE_STALE_SQL } from "@/lib/entity-versioning/draft-state";
 import {
   addFieldAction,
   updateFieldAction,
@@ -36,9 +36,9 @@ import {
   getTypeSpecSourceAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
-/** Field-row paths flag the draft changed AND the stored typespecSource stale in one statement. */
+/** Draft edits flag the draft changed AND the stored typespecSource stale in one statement. */
 const expectFieldsEdited = () =>
-  expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_FIELDS_EDITED_SQL, "ent-1");
+  expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "ent-1");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -80,36 +80,46 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
     expectFieldsEdited();
   });
 
-  it("updateEntityDescriptionAction writes the flag with the description", async () => {
+  it("updateEntityDescriptionAction writes the description, then marks the draft changed and the source stale (R45)", async () => {
     await updateEntityDescriptionAction("ent-1", "Orders placed online");
     expect(mockPrisma.entity.update).toHaveBeenCalledWith({
       where: { id: "ent-1" },
-      data: { description: "Orders placed online", hasUnpublishedChanges: true },
+      data: { description: "Orders placed online" },
     });
+    expectFieldsEdited();
   });
 
-  it("updateEntityRelationshipsAction writes the flag with the relationships", async () => {
+  it("updateEntityRelationshipsAction writes the relationships with the draft flag and sourceStale in one update", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({ metadata: {} });
     const relationships = [{ targetEntityId: "cust", fieldId: "fld-1", cardinality: "many-to-one" as const }];
     await updateEntityRelationshipsAction("ent-1", relationships);
     expect(mockPrisma.entity.update).toHaveBeenCalledWith({
       where: { id: "ent-1" },
-      data: { metadata: { relationships }, hasUnpublishedChanges: true },
+      data: { metadata: { relationships, sourceStale: true }, hasUnpublishedChanges: true },
     });
   });
 
-  it("updateEntityMetadataAction flags tag edits but not bookkeeping keys", async () => {
+  it("updateEntityMetadataAction marks tag edits stale but leaves bookkeeping-only edits fresh", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { tags: ["a"] } });
     await updateEntityMetadataAction("ent-1", { tags: ["a", "b"] });
     expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
       where: { id: "ent-1" },
-      data: { metadata: { tags: ["a", "b"] }, hasUnpublishedChanges: true },
+      data: { metadata: { tags: ["a", "b"], sourceStale: true }, hasUnpublishedChanges: true },
     });
 
     await updateEntityMetadataAction("ent-1", { schemaVersions: { avro: [] } });
     expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
       where: { id: "ent-1" },
       data: { metadata: { tags: ["a"], schemaVersions: { avro: [] } } },
+    });
+  });
+
+  it("updateEntityMetadataAction never lets an already-stale source go fresh, even on a bookkeeping-only edit", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { tags: ["a"], sourceStale: true } });
+    await updateEntityMetadataAction("ent-1", { schemaVersions: { avro: [] } });
+    expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
+      where: { id: "ent-1" },
+      data: { metadata: { tags: ["a"], schemaVersions: { avro: [] }, sourceStale: true } },
     });
   });
 

@@ -37,9 +37,10 @@ import {
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import {
-  markEntityFieldsEdited,
+  markEntityDraftChanged,
   metadataChangesDraft,
   isSourceStale,
+  withSourceStale,
   CLEAR_SOURCE_STALE_SQL,
 } from "@/lib/entity-versioning/draft-state";
 
@@ -147,7 +148,7 @@ export async function addFieldAction(
             ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
           },
         });
-        await markEntityFieldsEdited(prisma, entityId);
+        await markEntityDraftChanged(prisma, entityId);
         return created;
       },
     });
@@ -229,7 +230,7 @@ export async function updateFieldAction(
             ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
           },
         });
-        await markEntityFieldsEdited(prisma, existing.entityId);
+        await markEntityDraftChanged(prisma, existing.entityId);
         return updated;
       },
     });
@@ -291,7 +292,8 @@ export async function updateEntityRelationshipsAction(
   if (!entity) return { error: "Entity not found" };
 
   const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-  const updatedMeta = { ...existingMeta, relationships };
+  // A relationships edit changes the draft, so the stored TypeSpec source is stale (R45).
+  const updatedMeta = withSourceStale(existingMeta, { ...existingMeta, relationships }, true);
 
   try {
     await withAudit({
@@ -614,7 +616,7 @@ export async function deleteFieldAction(fieldId: string) {
       beforeState: existing as unknown as object,
       fn: async () => {
         await prisma.field.delete({ where: { id: fieldId } });
-        await markEntityFieldsEdited(prisma, existing.entityId);
+        await markEntityDraftChanged(prisma, existing.entityId);
         return null;
       },
     });
@@ -779,7 +781,7 @@ export async function applyTypeSpecAction(
     }
 
     if (addedCount + updatedCount + removedNames.length > 0) {
-      await markEntityFieldsEdited(prisma, entityId);
+      await markEntityDraftChanged(prisma, entityId);
     }
 
     revalidatePath("/schemas");
@@ -1403,7 +1405,11 @@ export async function updateEntityMetadataAction(
     if (!entity) return { error: "Entity not found" };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-    const updatedMeta = { ...existingMeta, ...metadata };
+    const mergedMeta = { ...existingMeta, ...metadata };
+    // A draft edit (tags, owner, retention, custom, ...) marks the stored TypeSpec source stale (R45);
+    // bookkeeping-only edits leave it alone, but never let an already-stale source go fresh.
+    const changesDraft = metadataChangesDraft(existingMeta, mergedMeta);
+    const updatedMeta = withSourceStale(existingMeta, mergedMeta, changesDraft);
 
     await withAudit({
       action: "UPDATE",
@@ -1416,7 +1422,7 @@ export async function updateEntityMetadataAction(
           where: { id: entityId },
           data: {
             metadata: updatedMeta as unknown as Prisma.InputJsonValue,
-            ...(metadataChangesDraft(existingMeta, updatedMeta) && { hasUnpublishedChanges: true }),
+            ...(changesDraft && { hasUnpublishedChanges: true }),
           },
         }),
     });
@@ -1437,10 +1443,13 @@ export async function updateEntityDescriptionAction(
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
+    // The description is rendered into the TypeSpec source (@doc): mark the draft changed and the
+    // stored source stale (R45).
     await prisma.entity.update({
       where: { id: entityId },
-      data: { description, hasUnpublishedChanges: true },
+      data: { description },
     });
+    await markEntityDraftChanged(prisma, entityId);
 
     revalidatePath("/schemas");
     return { success: true };

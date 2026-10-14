@@ -3,9 +3,9 @@ import {
   metadataChangesDraft,
   entityUpdateTouchesDraft,
   markEntityDraftChanged,
-  markEntityFieldsEdited,
   isSourceStale,
-  MARK_FIELDS_EDITED_SQL,
+  withSourceStale,
+  MARK_DRAFT_CHANGED_SQL,
   CLEAR_SOURCE_STALE_SQL,
   WRITE_BACK_SOURCE_SQL,
 } from "@/lib/entity-versioning/draft-state";
@@ -66,15 +66,7 @@ describe("entityUpdateTouchesDraft", () => {
   });
 });
 
-describe("markEntityDraftChanged", () => {
-  it("sets hasUnpublishedChanges on the entity row", async () => {
-    const update = vi.fn().mockResolvedValue({ id: "e1" });
-    await markEntityDraftChanged({ entity: { update } } as never, "e1");
-    expect(update).toHaveBeenCalledWith({ where: { id: "e1" }, data: { hasUnpublishedChanges: true }, select: { id: true } });
-  });
-});
-
-describe("source staleness (R42)", () => {
+describe("source staleness (R42, R45)", () => {
   it("isSourceStale is true only for metadata.sourceStale === true", () => {
     expect(isSourceStale({ sourceStale: true })).toBe(true);
     expect(isSourceStale({ sourceStale: false })).toBe(false);
@@ -84,13 +76,23 @@ describe("source staleness (R42)", () => {
     expect(isSourceStale(undefined)).toBe(false);
   });
 
-  it("markEntityFieldsEdited flags the draft and the source stale in one statement", async () => {
+  it("markEntityDraftChanged flags the draft AND the source stale in one statement", async () => {
     const run = vi.fn().mockResolvedValue(1);
-    await markEntityFieldsEdited({ $executeRawUnsafe: run } as never, "e1");
+    await markEntityDraftChanged({ $executeRawUnsafe: run } as never, "e1");
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(MARK_FIELDS_EDITED_SQL, "e1");
-    expect(MARK_FIELDS_EDITED_SQL).toContain(`"hasUnpublishedChanges" = true`);
-    expect(MARK_FIELDS_EDITED_SQL).toContain("sourceStale");
+    expect(run).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "e1");
+    expect(MARK_DRAFT_CHANGED_SQL).toContain(`"hasUnpublishedChanges" = true`);
+    expect(MARK_DRAFT_CHANGED_SQL).toContain("sourceStale");
+  });
+
+  it("withSourceStale marks a draft-changing edit, and never lets an already-stale source go fresh", () => {
+    expect(withSourceStale({ tags: [] }, { tags: ["a"] }, true)).toEqual({ tags: ["a"], sourceStale: true });
+    // Not a draft edit and not stale before: untouched (same object).
+    const next = { tags: [] };
+    expect(withSourceStale({ tags: [] }, next, false)).toBe(next);
+    // Already stale: a caller-supplied copy that lacks the marker still ends up stale.
+    expect(withSourceStale({ sourceStale: true }, { tags: [] }, false)).toEqual({ tags: [], sourceStale: true });
+    expect(withSourceStale(null, { x: 1 }, false)).toEqual({ x: 1 });
   });
 
   it("the clear and write-back statements remove sourceStale (write-back also the 12.7 flag)", () => {
