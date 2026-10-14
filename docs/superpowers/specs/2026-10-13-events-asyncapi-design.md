@@ -127,7 +127,7 @@ Events must serve all three jobs at once, and enable more later:
 - **One URL builder:** `assetHref(asset, { version? })` in `src/lib/navigation/asset-href.ts` produces the canonical URL for every kind × level. Sidebar, command palette, cards, breadcrumbs, cross-product references and version deep links (`?version=2.1`) use it exclusively. The legacy 2-segment redirect stays.
 
 ### 4.6 Navigation
-- Rename "Types" → **"Data Types"**; New menu groups enum/scalar/union under **New Data Type ▸**.
+- Rename "Types" → **"Data Types"**; the New menu has a single **"New Custom Data Type"** entry — the kind (Enum / Scalar / Union) is chosen inside the create form (user directive 2026-10-14).
 - New **Enterprise** section at the top of the left nav (tenant Data Types, Entities, Traits).
 - Empty categories are hidden at every level, and so is a domain's product list when it has none.
 - Each level's **New…** menu offers exactly the kinds allowed at that level (§4.1).
