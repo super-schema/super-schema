@@ -1,9 +1,11 @@
-const RESERVED_SCHEMA_ROUTE_SLUGS = new Set(["type-mappings"]);
+const RESERVED_SCHEMA_ROUTE_SLUGS = new Set(["type-mappings", "enterprise"]);
 
 // Static route segments that sit beside the dynamic [entityId] segment
-// (/schemas/[domainSlug]/[productSlug]/new). An entity whose slug matches one
-// would be shadowed by the static page and become unreachable.
-const RESERVED_ENTITY_ROUTE_SLUGS = new Set(["new"]);
+// (/schemas/[domainSlug]/[productSlug]/<segment>). An entity whose slug
+// matches one would be shadowed by the static page and become unreachable.
+const RESERVED_ENTITY_ROUTE_SLUGS = new Set([
+  "new", "events", "channels", "messages", "specs", "traits", "data-types", "apis",
+]);
 
 export function generateSlug(name: string): string {
   return name

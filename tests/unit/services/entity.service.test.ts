@@ -165,6 +165,20 @@ describe("Entity Service", () => {
         expect(result.error.suggestedFix).toBeDefined();
       }
     });
+
+    it("rejects 'Events' entity name (reserved for event spec routes)", async () => {
+      const result = await createEntity(
+        { name: "Events", domainId: "dom-1", description: "Reserved for event spec routes" },
+        mockCtx
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+        expect(result.error.message).toContain("reserved");
+      }
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+    });
   });
 
   describe("getEntities", () => {
