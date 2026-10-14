@@ -12,13 +12,15 @@ import type {
   ParsedEntity,
   ImportResult,
   BulkImportResult,
+  MultiEntityImportResult,
 } from "@/lib/importers/types";
-import { parseAvroSchema } from "@/lib/importers/avro.importer";
+import { parseAvroSchema, parseAvroDocument } from "@/lib/importers/avro.importer";
 import { parseBigQueryDDL } from "@/lib/importers/bigquery.importer";
-import { parseProtobufSchema } from "@/lib/importers/protobuf.importer";
-import { parseJsonSchema } from "@/lib/importers/jsonschema.importer";
-import { parseTypeSpecSchema } from "@/lib/importers/typespec.importer";
+import { parseProtobufSchema, parseProtobufDocument } from "@/lib/importers/protobuf.importer";
+import { parseJsonSchema, parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
+import { parseTypeSpecSchema, type TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { detectFormat } from "@/lib/importers/format-detector";
+import { countImportAssets, lowConfidenceWarnings, toAssetImportResult } from "@/lib/importers/multi-asset";
 
 // ---------------------------------------------------------------------------
 // Route to the correct parser
@@ -88,6 +90,64 @@ export function importSchema(
   return ok({
     parsedEntity: parseResult.data,
     warnings,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// importSchemaAssets — parse a document that may define several assets
+// ---------------------------------------------------------------------------
+
+/** Where the UI should send an import: the single-entity review or the multi-asset review. */
+export type SchemaImportRoute =
+  | { kind: "single"; result: ImportResult }
+  | { kind: "multi"; result: TypeSpecImportResult };
+
+/** Formats whose importer returns every asset of the document. */
+function parseDocumentWithFormat(
+  content: string,
+  format: ImportFormat
+): Result<MultiEntityImportResult> | null {
+  switch (format) {
+    case "avro":
+      return parseAvroDocument(content);
+    case "protobuf":
+      return parseProtobufDocument(content);
+    case "json-schema":
+      return parseJsonSchemaDocument(content);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Parse a Protobuf / Avro / JSON Schema document into all of its assets and
+ * pick the review path: more than one asset (entities + enums + scalars) goes
+ * to the multi-asset review; one asset stays on the single-entity review.
+ * Other formats use `importSchema` (TypeSpec / OpenAPI are compiled by their
+ * server actions before this is reached).
+ */
+export function importSchemaAssets(
+  content: string,
+  format?: ImportFormat | null
+): Result<SchemaImportRoute> {
+  const resolvedFormat = format || detectFormat(content);
+  const docResult = resolvedFormat ? parseDocumentWithFormat(content, resolvedFormat) : null;
+
+  if (!docResult) {
+    const single = importSchema(content, resolvedFormat);
+    return single.success ? ok({ kind: "single", result: single.data }) : single;
+  }
+  if (!docResult.success) return docResult;
+
+  const doc = docResult.data;
+  if (countImportAssets(doc) > 1) {
+    return ok({ kind: "multi", result: toAssetImportResult(doc) });
+  }
+
+  const parsedEntity = doc.entities[0];
+  return ok({
+    kind: "single",
+    result: { parsedEntity, warnings: [...doc.warnings, ...lowConfidenceWarnings(parsedEntity, false)] },
   });
 }
 

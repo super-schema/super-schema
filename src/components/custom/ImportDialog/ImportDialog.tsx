@@ -16,7 +16,12 @@ import {
   Minimize2,
   Sparkles,
 } from "lucide-react";
-import { importSchema, bulkImport } from "@/services/import.service";
+import {
+  importSchema,
+  importSchemaAssets,
+  bulkImport,
+  type SchemaImportRoute,
+} from "@/services/import.service";
 import type { ParsedEntity, ImportFormat } from "@/lib/importers/types";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
@@ -24,7 +29,10 @@ import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainS
 import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
 import { detectFormat } from "@/lib/importers/format-detector";
 import { inferJsonSchema } from "@/lib/importers/jsonschema-infer";
-import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
+import {
+  buildImportAssetsPayload,
+  parsedFieldToCreateFieldInput,
+} from "@/lib/importers/import-payload";
 import { ImportReviewScreen } from "./ImportReviewScreen";
 import { BulkImportReviewScreen } from "./BulkImportReviewScreen";
 import { VisualSchemaBuilder } from "@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder";
@@ -157,7 +165,7 @@ export function ImportDialog({
         !content.includes("model ")
       ) {
         // Try other formats
-        const result = importSchema(content);
+        const result = importSchemaAssets(content);
         if (!result.success) {
           const inferred = tryInferSampleToJsonSchema(content);
           const inferredResult = inferred ? importSchema(inferred, "json-schema") : null;
@@ -178,10 +186,16 @@ export function ImportDialog({
               });
             }
           }
+        } else if (result.data.kind === "multi") {
+          const assets = result.data.result;
+          items.push({
+            type: "info",
+            message: `Detected ${assets.sourceFormat} format — ${assets.models.length} entit${assets.models.length === 1 ? "y" : "ies"}, ${assets.sharedEnums.length} enum(s), ${assets.customScalars.length} scalar(s) found.`,
+          });
         } else {
           items.push({
             type: "info",
-            message: `Detected ${result.data.parsedEntity.sourceFormat} format — ${result.data.parsedEntity.fields.length} fields found.`,
+            message: `Detected ${result.data.result.parsedEntity.sourceFormat} format — ${result.data.result.parsedEntity.fields.length} fields found.`,
           });
         }
       } else {
@@ -289,22 +303,20 @@ export function ImportDialog({
       return;
     }
 
-    const result = importSchema(content, format ?? undefined);
+    // Protobuf / Avro / JSON Schema: every asset of the document; >1 asset →
+    // multi-asset review, otherwise the single-entity review.
+    const result = importSchemaAssets(content, format);
     if (!result.success) {
       // Fallback: when the content isn't a recognized schema, treat it as a
       // sample JSON *event* and infer a JSON Schema from it, then re-import.
       if (!format) {
         const inferred = tryInferSampleToJsonSchema(content);
         if (inferred) {
-          const inferredResult = importSchema(inferred, "json-schema");
+          const inferredResult = importSchemaAssets(inferred, "json-schema");
           if (inferredResult.success) {
-            setTypeSpecResult(null);
-            setParsedEntity(inferredResult.data.parsedEntity);
-            setWarnings([
+            showImportRoute(inferredResult.data, [
               "Schema was inferred from a sample JSON document — review types and nullability before importing.",
-              ...inferredResult.data.warnings,
             ]);
-            setPhase("review");
             return;
           }
         }
@@ -313,9 +325,20 @@ export function ImportDialog({
       return;
     }
 
+    showImportRoute(result.data);
+  }
+
+  function showImportRoute(route: SchemaImportRoute, extraWarnings: string[] = []) {
+    if (route.kind === "multi") {
+      setParsedEntity(null);
+      setWarnings([]);
+      setTypeSpecResult(route.result);
+      setPhase("typespec-review");
+      return;
+    }
     setTypeSpecResult(null);
-    setParsedEntity(result.data.parsedEntity);
-    setWarnings(result.data.warnings);
+    setParsedEntity(route.result.parsedEntity);
+    setWarnings([...extraWarnings, ...route.result.warnings]);
     setPhase("review");
   }
 
@@ -344,15 +367,12 @@ export function ImportDialog({
   // Handle visual builder → review
   function handleVisualImport(content: string, format: ImportFormat) {
     setError(null);
-    const result = importSchema(content, format);
+    const result = importSchemaAssets(content, format);
     if (!result.success) {
       setError(result.error.message);
       return;
     }
-    setTypeSpecResult(null);
-    setParsedEntity(result.data.parsedEntity);
-    setWarnings(result.data.warnings);
-    setPhase("review");
+    showImportRoute(result.data);
   }
 
   // Handle paste into textarea from file drop
@@ -438,17 +458,7 @@ export function ImportDialog({
           {
             name: entity.name,
             description: entity.description,
-            fields: entity.fields.map((f) => ({
-              name: f.name,
-              type: f.type,
-              nullable: f.nullable,
-              isKey: f.isKey ?? false,
-              description: f.description ?? "",
-              classification: f.classification ?? null,
-              precision: null,
-              scale: null,
-              decorators: buildDecoratorsFromParsedField(f),
-            })),
+            fields: entity.fields.map(parsedFieldToCreateFieldInput),
           },
         ],
         sharedEnums: [],
@@ -492,53 +502,8 @@ export function ImportDialog({
   async function handleConfirmTypeSpec(selection: TypeSpecImportSelection) {
     if (!typeSpecResult) return;
 
-    const models = selection.selectedModels.map((idx) => {
-      const model = typeSpecResult.models[idx];
-      return {
-        name: model.name,
-        description: model.description,
-        extends: model.extends,
-        fields: model.fields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          nullable: f.nullable,
-          isKey: f.isKey ?? false,
-          description: f.description ?? "",
-          classification: f.classification ?? null,
-          precision: null,
-          scale: null,
-          decorators: buildDecoratorsFromParsedField(f),
-        })),
-      };
-    });
-
-    const entities = selection.selectedEntities.map((idx) => {
-      const model = typeSpecResult.models[idx];
-      return {
-        name: model.name,
-        description: model.description,
-        extends: model.extends,
-        fields: model.fields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          nullable: f.nullable,
-          isKey: f.isKey ?? false,
-          description: f.description ?? "",
-          classification: f.classification ?? null,
-          precision: null,
-          scale: null,
-          decorators: buildDecoratorsFromParsedField(f),
-        })),
-      };
-    });
-
-    const sharedEnums = selection.selectedEnums.map((idx) => typeSpecResult.sharedEnums[idx]);
-    const customScalars = selection.selectedScalars.map((idx) => typeSpecResult.customScalars[idx]);
-    const unionTypes = selection.selectedUnions.map((idx) => typeSpecResult.unions[idx]);
-    const services = selection.selectedServices.map((idx) => typeSpecResult.services[idx]);
-    const decoratorDefinitions = selection.selectedDecorators.map(
-      (idx) => typeSpecResult.decoratorDefinitions[idx]
-    );
+    const assets = buildImportAssetsPayload(typeSpecResult, selection);
+    const { entities } = assets;
 
     try {
       const { createDomainAssetsFromImportAction } = await import(
@@ -547,14 +512,7 @@ export function ImportDialog({
 
       const result = await createDomainAssetsFromImportAction({
         domainId: selection.domainId,
-        namespace: typeSpecResult.namespace,
-        models,
-        entities,
-        sharedEnums,
-        customScalars,
-        unionTypes,
-        services,
-        decoratorDefinitions,
+        ...assets,
       });
 
       const parts: string[] = [];
@@ -601,7 +559,7 @@ export function ImportDialog({
 
       handleClose();
     } catch {
-      toast.error("Failed to import TypeSpec document");
+      toast.error("Failed to import schema assets");
       // Don't close — let user retry
     }
   }

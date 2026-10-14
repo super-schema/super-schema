@@ -12,10 +12,10 @@ import { FieldPreview, type PreviewField } from "./FieldPreview";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { createTenantEntityAction } from "@/app/(dashboard)/schemas/enterprise/actions";
 import type { StandardTemplate } from "@/lib/schema-standards";
-import { importSchema } from "@/services/import.service";
+import { importSchemaAssets } from "@/services/import.service";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { detectFormat } from "@/lib/importers/format-detector";
-import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
+import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import {
   TypeSpecImportReviewScreen,
@@ -231,14 +231,30 @@ export function EntityCreationWizard({
           return;
         }
 
-        // Other formats: single entity import
-        const result = importSchema(content, format);
+        // Other formats: every asset of the document (Protobuf / Avro / JSON Schema
+        // can define several); more than one goes to the multi-asset review.
+        const result = importSchemaAssets(content, format);
         if (!result.success) {
           setError(result.error.message);
           return;
         }
 
-        const { parsedEntity } = result.data;
+        if (result.data.kind === "multi") {
+          const assets = result.data.result;
+          if (!product) {
+            const count =
+              assets.models.length + assets.sharedEnums.length + assets.customScalars.length;
+            setError(
+              `This schema defines ${count} assets (${assets.models.map((m) => m.name).join(", ")}) and needs a domain. Import it from a domain or product page.`
+            );
+            return;
+          }
+          setTypeSpecResult(assets);
+          setState((prev) => ({ ...prev, step: "typespec-review" }));
+          return;
+        }
+
+        const { parsedEntity } = result.data.result;
         const fields: PreviewField[] = parsedEntity.fields.map((f) => ({
           tempId: makeTempId(),
           name: f.name,
@@ -250,7 +266,7 @@ export function EntityCreationWizard({
           arrayElementType: f.arrayElementType,
         }));
 
-        goToPreview(parsedEntity.name, "", fields);
+        goToPreview(parsedEntity.name, parsedEntity.description ?? "", fields);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to parse schema");
       } finally {
@@ -259,59 +275,13 @@ export function EntityCreationWizard({
     })();
   }
 
-  // TypeSpec multi-model confirm handler
+  // Multi-asset confirm handler (TypeSpec, Protobuf, Avro, JSON Schema)
   async function handleTypeSpecConfirm(selection: TypeSpecImportSelection) {
     if (!typeSpecResult || !product) return;
     setIsCreating(true);
     setError(null);
 
-    const models = selection.selectedModels.map((idx) => {
-      const model = typeSpecResult.models[idx];
-      return {
-        name: model.name,
-        description: model.description,
-        extends: model.extends,
-        fields: model.fields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          nullable: f.nullable,
-          isKey: f.isKey ?? false,
-          description: f.description ?? "",
-          classification: f.classification ?? null,
-          precision: null,
-          scale: null,
-          decorators: buildDecoratorsFromParsedField(f),
-        })),
-      };
-    });
-
-    const entities = selection.selectedEntities.map((idx) => {
-      const model = typeSpecResult.models[idx];
-      return {
-        name: model.name,
-        description: model.description,
-        extends: model.extends,
-        fields: model.fields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          nullable: f.nullable,
-          isKey: f.isKey ?? false,
-          description: f.description ?? "",
-          classification: f.classification ?? null,
-          precision: null,
-          scale: null,
-          decorators: buildDecoratorsFromParsedField(f),
-        })),
-      };
-    });
-
-    const sharedEnums = selection.selectedEnums.map((idx) => typeSpecResult.sharedEnums[idx]);
-    const customScalars = selection.selectedScalars.map((idx) => typeSpecResult.customScalars[idx]);
-    const unionTypes = selection.selectedUnions.map((idx) => typeSpecResult.unions[idx]);
-    const services = selection.selectedServices.map((idx) => typeSpecResult.services[idx]);
-    const decoratorDefinitions = selection.selectedDecorators.map(
-      (idx) => typeSpecResult.decoratorDefinitions[idx]
-    );
+    const assets = buildImportAssetsPayload(typeSpecResult, selection);
 
     try {
       const { createDomainAssetsFromImportAction } = await import(
@@ -321,14 +291,7 @@ export function EntityCreationWizard({
       const result = await createDomainAssetsFromImportAction({
         domainId: product.domainId,
         productId: product.productId,
-        namespace: typeSpecResult.namespace,
-        models,
-        entities,
-        sharedEnums,
-        customScalars,
-        unionTypes,
-        services,
-        decoratorDefinitions,
+        ...assets,
       });
 
       const parts: string[] = [];
@@ -370,7 +333,7 @@ export function EntityCreationWizard({
       );
       router.refresh();
     } catch {
-      toast.error("Failed to import TypeSpec document");
+      toast.error("Failed to import schema assets");
     } finally {
       setIsCreating(false);
     }
