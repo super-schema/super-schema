@@ -13,6 +13,7 @@ import {
   type UpdateFieldInput,
 } from "@/types/schemas/field.schema";
 import type { Prisma } from "@/generated/prisma/client";
+import { markEntityDraftChanged } from "@/lib/entity-versioning/draft-state";
 
 export async function createField(
   entityId: string,
@@ -66,7 +67,7 @@ export async function createField(
       entityId: "pending",
       userId: ctx.userId,
       fn: async () => {
-        return prisma.field.create({
+        const created = await prisma.field.create({
           data: {
             entityId,
             name: parsed.data.name,
@@ -86,6 +87,8 @@ export async function createField(
               {},
           },
         });
+        await markEntityDraftChanged(prisma, entityId);
+        return created;
       },
     });
     return ok(field);
@@ -159,10 +162,12 @@ export async function updateField(
       if (parsed.data.name && parsed.data.name !== existing.name) {
         updateData.slug = generateSlug(parsed.data.name);
       }
-      return prisma.field.update({
+      const updated = await prisma.field.update({
         where: { id },
         data: updateData,
       });
+      await markEntityDraftChanged(prisma, existing.entityId);
+      return updated;
     },
   });
   return ok(field);
@@ -189,6 +194,7 @@ export async function deleteField(
     beforeState: existing as unknown as object,
     fn: async () => {
       await prisma.field.delete({ where: { id } });
+      await markEntityDraftChanged(prisma, existing.entityId);
       return null;
     },
   });
@@ -246,6 +252,7 @@ export async function reorderFields(
           })
         )
       );
+      await markEntityDraftChanged(prisma, entityId);
       return null;
     },
   });

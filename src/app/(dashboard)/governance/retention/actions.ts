@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
+import { metadataChangesDraft } from "@/lib/entity-versioning/draft-state";
 
 export async function getEntitiesForRetentionAction() {
   const session = await auth();
@@ -59,7 +60,10 @@ export async function updateRetentionPolicyAction(
 
     await prisma.entity.update({
       where: { id: entityId },
-      data: { metadata: updatedMeta as Prisma.InputJsonValue },
+      data: {
+        metadata: updatedMeta as Prisma.InputJsonValue,
+        ...(metadataChangesDraft(existingMeta, updatedMeta) && { hasUnpublishedChanges: true }),
+      },
     });
 
     revalidatePath("/schemas");

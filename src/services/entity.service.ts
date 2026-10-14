@@ -14,6 +14,7 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
+import { entityUpdateTouchesDraft } from "@/lib/entity-versioning/draft-state";
 import { generateSlug, isReservedEntityRouteSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -232,6 +233,7 @@ export async function updateEntity(
       userId: ctx.userId,
       beforeState: existing as unknown as object,
       fn: async () => {
+        const touchesDraft = entityUpdateTouchesDraft(existing, parsed.data);
         const update = {
           where: { id },
           data: {
@@ -240,6 +242,7 @@ export async function updateEntity(
               parsed.data.metadata !== undefined
                 ? (parsed.data.metadata as unknown as Prisma.InputJsonValue)
                 : undefined,
+            ...(touchesDraft && { hasUnpublishedChanges: true }),
           },
           include: { domain: true },
         } satisfies Prisma.EntityUpdateArgs;

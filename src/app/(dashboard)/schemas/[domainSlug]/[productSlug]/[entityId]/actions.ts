@@ -36,6 +36,7 @@ import {
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
+import { markEntityDraftChanged, metadataChangesDraft } from "@/lib/entity-versioning/draft-state";
 
 /**
  * Look up the effective role for the current user.
@@ -122,8 +123,8 @@ export async function addFieldAction(
       entityType: "Field",
       entityId: "pending",
       userId: session.user.id,
-      fn: () =>
-        prisma.field.create({
+      fn: async () => {
+        const created = await prisma.field.create({
           data: {
             entityId,
             name,
@@ -140,7 +141,10 @@ export async function addFieldAction(
             ...(opts?.aliases && { aliases: opts.aliases }),
             ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
           },
-        }),
+        });
+        await markEntityDraftChanged(prisma, entityId);
+        return created;
+      },
     });
     revalidatePath("/schemas");
     return { success: true, field };
@@ -212,14 +216,17 @@ export async function updateFieldAction(
       entityId: fieldId,
       userId: session.user.id,
       beforeState: existing as unknown as object,
-      fn: () =>
-        prisma.field.update({
+      fn: async () => {
+        const updated = await prisma.field.update({
           where: { id: fieldId },
           data: {
             ...rest,
             ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
           },
-        }),
+        });
+        await markEntityDraftChanged(prisma, existing.entityId);
+        return updated;
+      },
     });
 
     revalidatePath("/schemas");
@@ -291,7 +298,7 @@ export async function updateEntityRelationshipsAction(
       fn: () =>
         prisma.entity.update({
           where: { id: entityId },
-          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue, hasUnpublishedChanges: true },
         }),
     });
 
@@ -632,6 +639,7 @@ export async function deleteFieldAction(fieldId: string) {
       beforeState: existing as unknown as object,
       fn: async () => {
         await prisma.field.delete({ where: { id: fieldId } });
+        await markEntityDraftChanged(prisma, existing.entityId);
         return null;
       },
     });
@@ -793,6 +801,10 @@ export async function applyTypeSpecAction(
           removedNames.push(fieldName);
         }
       }
+    }
+
+    if (addedCount + updatedCount + removedNames.length > 0) {
+      await markEntityDraftChanged(prisma, entityId);
     }
 
     revalidatePath("/schemas");
@@ -1427,7 +1439,10 @@ export async function updateEntityMetadataAction(
       fn: () =>
         prisma.entity.update({
           where: { id: entityId },
-          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+          data: {
+            metadata: updatedMeta as unknown as Prisma.InputJsonValue,
+            ...(metadataChangesDraft(existingMeta, updatedMeta) && { hasUnpublishedChanges: true }),
+          },
         }),
     });
 
@@ -1449,7 +1464,7 @@ export async function updateEntityDescriptionAction(
   try {
     await prisma.entity.update({
       where: { id: entityId },
-      data: { description },
+      data: { description, hasUnpublishedChanges: true },
     });
 
     revalidatePath("/schemas");
@@ -1723,7 +1738,7 @@ export async function compileAndApplyTypeSpecSourceAction(
     fn: () =>
       prisma.entity.update({
         where: { id: entityId },
-        data: { typespecSource: source },
+        data: { typespecSource: source, hasUnpublishedChanges: true },
       }),
   });
 

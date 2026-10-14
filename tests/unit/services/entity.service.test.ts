@@ -296,6 +296,28 @@ describe("Entity Service", () => {
       expect(result.success).toBe(true);
       expect(mockAssertNameAvailable).not.toHaveBeenCalled();
     });
+
+    it("flags the draft when the description changes", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: null } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, description: "d" } as never);
+
+      await updateEntity("ent-1", { description: "d" }, mockCtx);
+
+      expect(prisma.entity.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ description: "d", hasUnpublishedChanges: true }) })
+      );
+    });
+
+    it("does not flag the draft on a status-only change", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: null } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "ACTIVE" } as never);
+
+      const result = await updateEntity("ent-1", { status: "ACTIVE" }, mockCtx);
+
+      expect(result.success).toBe(true);
+      const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(call.data).not.toHaveProperty("hasUnpublishedChanges");
+    });
   });
 
   describe("deleteEntity", () => {

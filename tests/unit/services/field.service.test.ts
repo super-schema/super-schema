@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    entity: { findUnique: vi.fn() },
+    entity: { findUnique: vi.fn(), update: vi.fn() },
     field: {
       create: vi.fn(),
       findFirst: vi.fn(),
@@ -184,6 +184,39 @@ describe("Field Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("VALIDATION_ERROR");
       }
+    });
+  });
+
+  describe("draft tracking", () => {
+    const MARK = { where: { id: "ent-1" }, data: { hasUnpublishedChanges: true }, select: { id: true } };
+
+    it("createField marks the entity draft as changed", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ id: "ent-1" } as never);
+      vi.mocked(prisma.field.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.field.create).mockResolvedValue({ id: "fld-1", entityId: "ent-1" } as never);
+      await createField("ent-1", { name: "email", type: "string" }, mockCtx);
+      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
+    });
+
+    it("updateField marks the owning entity", async () => {
+      vi.mocked(prisma.field.findUnique).mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email" } as never);
+      vi.mocked(prisma.field.update).mockResolvedValue({ id: "fld-1" } as never);
+      await updateField("fld-1", { description: "Primary email" }, mockCtx);
+      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
+    });
+
+    it("deleteField marks the owning entity", async () => {
+      vi.mocked(prisma.field.findUnique).mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email" } as never);
+      vi.mocked(prisma.field.delete).mockResolvedValue({ id: "fld-1" } as never);
+      await deleteField("fld-1", mockCtx);
+      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
+    });
+
+    it("reorderFields marks the entity", async () => {
+      vi.mocked(prisma.field.findMany).mockResolvedValue([{ id: "fld-1", sortOrder: 0 }] as never);
+      vi.mocked(prisma.$transaction).mockResolvedValue([]);
+      await reorderFields("ent-1", ["fld-1"], mockCtx);
+      expect(prisma.entity.update).toHaveBeenCalledWith(MARK);
     });
   });
 });
