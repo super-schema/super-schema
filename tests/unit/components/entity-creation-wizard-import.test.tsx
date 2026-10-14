@@ -8,6 +8,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard/EntityCreationWizard";
+import { importSchemaAssets } from "@/services/import.service";
+import { detectFormat } from "@/lib/importers/format-detector";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
@@ -16,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   createEntityWithFieldsAction: vi.fn(),
   createDomainAssetsFromImportAction: vi.fn(),
   createTenantEntityAction: vi.fn(),
+  importOpenApiDocumentAction: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -31,8 +34,31 @@ vi.mock("@/app/(dashboard)/schemas/enterprise/actions", () => ({
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions", () => ({
   importTypeSpecDocumentAction: vi.fn(),
 }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions", () => ({
+  importOpenApiDocumentAction: mocks.importOpenApiDocumentAction,
+}));
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => mocks.invalidate }));
-vi.mock("@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder", () => ({ VisualSchemaBuilder: () => null }));
+// The visual builder hands its output over with the format it was built in.
+vi.mock("@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder", () => ({
+  VisualSchemaBuilder: ({ onImport }: { onImport: (content: string, format: string) => void }) => (
+    <button
+      type="button"
+      onClick={() => onImport('syntax = "proto3";\nmessage Visual { string id = 1; }', "protobuf")}
+    >
+      Use builder output
+    </button>
+  ),
+}));
+// Real import service, observed: the wizard must hand over the builder's format.
+vi.mock("@/services/import.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/import.service")>();
+  return { ...actual, importSchemaAssets: vi.fn(actual.importSchemaAssets) };
+});
+// Real detector by default; one test makes detection disagree with the builder.
+vi.mock("@/lib/importers/format-detector", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/importers/format-detector")>();
+  return { ...actual, detectFormat: vi.fn(actual.detectFormat) };
+});
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));
 vi.mock("@/components/custom/ClassificationPicker", () => ({ ClassificationPicker: () => null }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
@@ -131,5 +157,58 @@ describe("EntityCreationWizard — multi-entity import", () => {
 
     expect(await screen.findByText(/defines 6 assets/)).toBeDefined();
     expect(screen.queryByTestId("typespec-import-review")).toBeNull();
+  });
+});
+
+describe("EntityCreationWizard — visual builder hand-off (Story 15.6)", () => {
+  afterEach(async () => {
+    const actual = await vi.importActual<typeof import("@/lib/importers/format-detector")>(
+      "@/lib/importers/format-detector"
+    );
+    vi.mocked(detectFormat).mockImplementation(actual.detectFormat);
+  });
+
+  it("uses the builder's format instead of re-detecting it", async () => {
+    // Detection disagrees with the builder: the builder's format must win.
+    vi.mocked(detectFormat).mockImplementation(() => "avro");
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    fireEvent.click(screen.getByRole("button", { name: /Build Visually/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Use builder output" }));
+
+    await waitFor(() => expect(screen.getByDisplayValue("Visual")).toBeDefined());
+    expect(importSchemaAssets).toHaveBeenCalledWith(
+      'syntax = "proto3";\nmessage Visual { string id = 1; }',
+      "protobuf"
+    );
+  });
+
+  it("passes the uploader's detected format for pasted content", async () => {
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    pasteAndParse(`syntax = "proto3";\nmessage User { string id = 1; }`);
+
+    await waitFor(() => expect(screen.getByDisplayValue("User")).toBeDefined());
+    expect(importSchemaAssets).toHaveBeenLastCalledWith(expect.any(String), "protobuf");
+  });
+
+  it("routes an OpenAPI document (now accepted as .json/.yaml) through the OpenAPI action", async () => {
+    mocks.importOpenApiDocumentAction.mockResolvedValue({
+      success: true,
+      data: {
+        sourceFormat: "openapi",
+        models: [],
+        sharedEnums: [{ name: "PetKind", values: ["DOG", "CAT"] }],
+        customScalars: [],
+        unions: [],
+        aliases: [],
+        decoratorDefinitions: [],
+        services: [],
+        warnings: [],
+      },
+    });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    pasteAndParse(`openapi: "3.0.0"\ninfo:\n  title: Pets\n  version: "1"\npaths:\n  /pets: {}\n`);
+
+    await waitFor(() => expect(screen.getByText("Review OpenAPI Import")).toBeDefined());
+    expect(mocks.importOpenApiDocumentAction).toHaveBeenCalledTimes(1);
   });
 });

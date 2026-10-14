@@ -25,6 +25,9 @@ vi.mock("@/app/(dashboard)/schemas/enterprise/actions", () => ({
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions", () => ({
   importTypeSpecDocumentAction: vi.fn(),
 }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions", () => ({
+  importOpenApiDocumentAction: vi.fn(),
+}));
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => mocks.invalidate }));
 vi.mock("@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder", () => ({ VisualSchemaBuilder: () => null }));
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));

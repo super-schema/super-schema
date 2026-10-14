@@ -14,9 +14,11 @@ import { createTenantEntityAction } from "@/app/(dashboard)/schemas/enterprise/a
 import type { StandardTemplate } from "@/lib/schema-standards";
 import { importSchemaAssets } from "@/services/import.service";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
+import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
 import { detectFormat } from "@/lib/importers/format-detector";
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
+import type { ImportFormat } from "@/lib/importers/types";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import {
   TypeSpecImportReviewScreen,
@@ -200,29 +202,33 @@ export function EntityCreationWizard({
 
   // ── Import handler ────────────────────────────────────────────────
 
-  function handleImportSubmit(content: string, filename?: string) {
+  /** `format` is known when the content comes from the visual builder; otherwise it is detected. */
+  function handleImportSubmit(content: string, filename?: string, format?: ImportFormat) {
     setIsLoading(true);
     setError(null);
 
     void (async () => {
       try {
-        const format = detectFormat(content, filename);
-        setDetectedFormat(format);
+        const resolvedFormat = format ?? detectFormat(content, filename);
+        setDetectedFormat(resolvedFormat);
 
-        if (!format) {
+        if (!resolvedFormat) {
           setError("Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, Protobuf, JSON Schema, or TypeSpec.");
           return;
         }
 
-        // TypeSpec: compile with the real @typespec/compiler (server action).
-        if (format === "typespec") {
+        // TypeSpec / OpenAPI: compiled with the real @typespec/compiler (server actions).
+        if (resolvedFormat === "typespec" || resolvedFormat === "openapi") {
           if (!product) {
             setError(
-              "TypeSpec documents can define several assets and need a domain. Import this one from a domain or product page."
+              "TypeSpec and OpenAPI documents can define several assets and need a domain. Import this one from a domain or product page."
             );
             return;
           }
-          const tsResult = await importTypeSpecDocumentAction(content);
+          const tsResult =
+            resolvedFormat === "openapi"
+              ? await importOpenApiDocumentAction(content)
+              : await importTypeSpecDocumentAction(content);
           if (!tsResult.success) {
             setError(tsResult.error.message);
             return;
@@ -234,7 +240,7 @@ export function EntityCreationWizard({
 
         // Other formats: every asset of the document (Protobuf / Avro / JSON Schema
         // can define several); more than one goes to the multi-asset review.
-        const result = importSchemaAssets(content, format);
+        const result = importSchemaAssets(content, resolvedFormat);
         if (!result.success) {
           setError(result.error.message);
           return;
@@ -528,7 +534,7 @@ export function EntityCreationWizard({
               </div>
             )}
             <VisualSchemaBuilder
-              onImport={(content) => handleImportSubmit(content)}
+              onImport={(content, format) => handleImportSubmit(content, undefined, format)}
               referenceTargets={referenceTargets}
             />
           </div>
