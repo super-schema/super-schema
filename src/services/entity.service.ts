@@ -14,6 +14,7 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
+import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 import { generateSlug, isReservedEntityRouteSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -232,14 +233,27 @@ export async function updateEntity(
       userId: ctx.userId,
       beforeState: existing as unknown as object,
       fn: async () => {
+        const touchesDraft = entityUpdateTouchesDraft(existing, parsed.data);
+        // R42/R45: name, description and draft metadata are all rendered into the TypeSpec source, so a
+        // draft edit marks the stored source stale. Callers also send a whole metadata copy (and the
+        // schema strips unknown keys), so the server-owned marker is carried over from the stored
+        // metadata or a replace would silently clear it.
+        const storedMetadata =
+          existing.metadata !== null && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+            ? (existing.metadata as Record<string, unknown>)
+            : {};
+        const nextMetadata =
+          parsed.data.metadata !== undefined
+            ? withSourceStale(existing.metadata, parsed.data.metadata, touchesDraft)
+            : touchesDraft
+              ? withSourceStale(existing.metadata, storedMetadata, true)
+              : undefined;
         const update = {
           where: { id },
           data: {
             ...parsed.data,
-            metadata:
-              parsed.data.metadata !== undefined
-                ? (parsed.data.metadata as unknown as Prisma.InputJsonValue)
-                : undefined,
+            metadata: nextMetadata as unknown as Prisma.InputJsonValue | undefined,
+            ...(touchesDraft && { hasUnpublishedChanges: true }),
           },
           include: { domain: true },
         } satisfies Prisma.EntityUpdateArgs;

@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
+import { metadataChangesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 
 export async function getEntitiesForRetentionAction() {
   const session = await auth();
@@ -55,11 +56,18 @@ export async function updateRetentionPolicyAction(
     if (!entity) return { error: "Entity not found" };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-    const updatedMeta = { ...existingMeta, retentionPolicy };
+    const mergedMeta = { ...existingMeta, retentionPolicy };
+    // A changed policy is a draft edit and marks the stored TypeSpec source stale (R45); an unchanged
+    // policy leaves the flags alone, but never lets an already-stale source go fresh.
+    const changesDraft = metadataChangesDraft(existingMeta, mergedMeta);
+    const updatedMeta = withSourceStale(existingMeta, mergedMeta, changesDraft);
 
     await prisma.entity.update({
       where: { id: entityId },
-      data: { metadata: updatedMeta as Prisma.InputJsonValue },
+      data: {
+        metadata: updatedMeta as Prisma.InputJsonValue,
+        ...(changesDraft && { hasUnpublishedChanges: true }),
+      },
     });
 
     revalidatePath("/schemas");

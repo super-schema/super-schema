@@ -719,7 +719,7 @@ const TYPESPEC_RESERVED_WORDS = new Set([
   "scalar", "dec", "fn", "extern", "is", "extends", "using", "import",
 ]);
 
-function sanitizeIdentifier(name: string): string {
+export function sanitizeIdentifier(name: string): string {
   // Replace non-alphanumeric characters with underscores
   let safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
   // Ensure it doesn't start with a digit

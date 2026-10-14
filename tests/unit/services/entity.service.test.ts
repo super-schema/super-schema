@@ -296,6 +296,97 @@ describe("Entity Service", () => {
       expect(result.success).toBe(true);
       expect(mockAssertNameAvailable).not.toHaveBeenCalled();
     });
+
+    it("flags the draft and marks the stored source stale when the description changes (R45)", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: null } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, description: "d" } as never);
+
+      await updateEntity("ent-1", { description: "d" }, mockCtx);
+
+      expect(prisma.entity.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            description: "d",
+            hasUnpublishedChanges: true,
+            metadata: { sourceStale: true },
+          }),
+        })
+      );
+    });
+
+    it("a rename marks the stored source stale, keeping the other metadata (R45)", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({
+        ...existing, description: "", metadata: { tags: ["a"], schemaVersions: { avro: [] } },
+      } as never);
+      mockTx.entity.update.mockResolvedValue({ ...existing, name: "CustomerV2" } as never);
+
+      await updateEntity("ent-1", { name: "CustomerV2" }, mockCtx);
+
+      expect(mockTx.entity.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "CustomerV2",
+            hasUnpublishedChanges: true,
+            metadata: { tags: ["a"], schemaVersions: { avro: [] }, sourceStale: true },
+          }),
+        })
+      );
+    });
+
+    it("a tags edit marks the stored source stale", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: { tags: [] } } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing } as never);
+
+      await updateEntity("ent-1", { metadata: { tags: ["sales"] } }, mockCtx);
+
+      const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: { metadata: Record<string, unknown> } };
+      expect(call.data.metadata).toEqual({ tags: ["sales"], sourceStale: true });
+    });
+
+    it("does not flag the draft or touch metadata on a status-only change", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, description: "", metadata: null } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "ACTIVE" } as never);
+
+      const result = await updateEntity("ent-1", { status: "ACTIVE" }, mockCtx);
+
+      expect(result.success).toBe(true);
+      const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(call.data).not.toHaveProperty("hasUnpublishedChanges");
+      expect(call.data.metadata).toBeUndefined();
+    });
+
+    it("a lifecycle-only metadata change (deprecation) neither flags the draft nor invents sourceStale", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({
+        ...existing, status: "ACTIVE", description: "", metadata: { tags: [] },
+      } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "DEPRECATED" } as never);
+
+      await updateEntity(
+        "ent-1",
+        { status: "DEPRECATED", metadata: { tags: [], deprecation: { deprecated: true } } },
+        mockCtx
+      );
+
+      const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: Record<string, unknown> };
+      expect(call.data).not.toHaveProperty("hasUnpublishedChanges");
+      expect(call.data.metadata).toEqual({ tags: [], deprecation: { deprecated: true } });
+    });
+
+    it("keeps metadata.sourceStale when the caller replaces metadata with a copy that lacks it, even for a lifecycle-only change", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({
+        ...existing, status: "ACTIVE", description: "", metadata: { tags: [], sourceStale: true },
+      } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "DEPRECATED" } as never);
+
+      await updateEntity(
+        "ent-1",
+        { status: "DEPRECATED", metadata: { tags: [], deprecation: { deprecated: true } } },
+        mockCtx
+      );
+
+      const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: { metadata: Record<string, unknown> } };
+      expect(call.data.metadata).toEqual({ tags: [], deprecation: { deprecated: true }, sourceStale: true });
+    });
   });
 
   describe("deleteEntity", () => {

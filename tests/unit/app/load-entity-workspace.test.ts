@@ -147,6 +147,22 @@ describe("loadEntityWorkspace", () => {
     );
   });
 
+  it("maps the draft + publish state for the header", async () => {
+    mockEntityFindFirst.mockResolvedValueOnce(entityRow({ hasUnpublishedChanges: true, latestVersion: { major: 2, minor: 1 } }));
+
+    const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+    expect(data?.props.entity).toMatchObject({ latestVersionLabel: "2.1", hasUnpublishedChanges: true });
+  });
+
+  it("reports a never-published entity", async () => {
+    mockEntityFindFirst.mockResolvedValueOnce(entityRow({ hasUnpublishedChanges: true, latestVersion: null }));
+
+    const data = await loadEntityWorkspace({ slugOrId: "order", productId: null, tenantId: "tenant-1" });
+
+    expect(data?.props.entity).toMatchObject({ latestVersionLabel: null, hasUnpublishedChanges: true });
+  });
+
   describe("deprecation replacement", () => {
     const deprecated = (replacementEntityId: string | null | undefined) =>
       entityRow({

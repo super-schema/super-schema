@@ -9,6 +9,7 @@ import type {
   PrismaEntityInput,
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
+import { toCompilableTypeSpec } from "@/lib/compiler/compilable-source";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
@@ -145,7 +146,11 @@ function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): strin
     return buildDbTypeSpecSource(model, targetKey);
   }
 
-  const baseSource = stripRealCompileInvalidDecorators(generateTypeSpec(model).trim());
+  // Real TypeSpec rejects the `@tag(...)` decorators generateTypeSpec() emits (field classification and
+  // model tags), so they are stripped at the real-compile boundary. toCompilableTypeSpec is shared with the
+  // publish compile gate; model-level tags are stripped too since R46 (before that an entity with tags failed
+  // `decorator-wrong-target` on every typespec-cli target).
+  const baseSource = toCompilableTypeSpec(generateTypeSpec(model).trim());
 
   switch (targetKey) {
     case "json-schema":
@@ -157,20 +162,6 @@ function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): strin
     default:
       return baseSource;
   }
-}
-
-/**
- * `generateTypeSpec()` emits `@tag("classification:...")` on fields so the
- * regex-based Paste-Import round trip (`typespec.importer.ts#extractClassification`)
- * can read it back. Real TypeSpec's `@tag` only accepts Namespace | Interface |
- * Operation targets, so a real `tsp compile` (every typespec-cli target routed
- * through this file) rejects it outright with `decorator-wrong-target`. Strip
- * it here, at the real-compile boundary, rather than stop emitting it —
- * that would silently break the paste-import round trip, which never goes
- * through a real compile and has no other way to carry classification today.
- */
-function stripRealCompileInvalidDecorators(source: string): string {
-  return source.replace(/^[ \t]*@tag\("classification:[^"]*"\)\n/gm, "");
 }
 
 function buildOpenApi3Source(baseSource: string, model: SuperSchemaModel): string {

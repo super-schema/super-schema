@@ -1,12 +1,14 @@
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
+import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
 import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import type { EntityWorkspaceProps } from "./entity-workspace";
 
 const ENTITY_INCLUDE = {
   domain: true,
   product: { select: { slug: true, name: true } },
+  latestVersion: { select: { major: true, minor: true } },
   fields: { orderBy: { sortOrder: "asc" as const } },
   services: {
     include: {
@@ -115,6 +117,7 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
         productSlug: entity.product?.slug ?? null,
         productName: entity.product?.name ?? null,
         metadata: entity.metadata as Record<string, unknown> | null,
+        ...toDraftVersionState({ hasUnpublishedChanges: entity.hasUnpublishedChanges, latestVersion: entity.latestVersion }),
       },
       domainPolicy: domainPolicy as Record<string, unknown> | null,
       fields: entity.fields.map((f) => ({

@@ -36,6 +36,14 @@ import {
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
+import {
+  markEntityDraftChanged,
+  metadataChangesDraft,
+  isSourceStale,
+  withSourceStale,
+  CLEAR_SOURCE_STALE_SQL,
+  MARK_DRAFT_CHANGED_SQL,
+} from "@/lib/entity-versioning/draft-state";
 
 /**
  * Look up the effective role for the current user.
@@ -122,8 +130,8 @@ export async function addFieldAction(
       entityType: "Field",
       entityId: "pending",
       userId: session.user.id,
-      fn: () =>
-        prisma.field.create({
+      fn: async () => {
+        const created = await prisma.field.create({
           data: {
             entityId,
             name,
@@ -140,7 +148,10 @@ export async function addFieldAction(
             ...(opts?.aliases && { aliases: opts.aliases }),
             ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
           },
-        }),
+        });
+        await markEntityDraftChanged(prisma, entityId);
+        return created;
+      },
     });
     revalidatePath("/schemas");
     return { success: true, field };
@@ -212,14 +223,17 @@ export async function updateFieldAction(
       entityId: fieldId,
       userId: session.user.id,
       beforeState: existing as unknown as object,
-      fn: () =>
-        prisma.field.update({
+      fn: async () => {
+        const updated = await prisma.field.update({
           where: { id: fieldId },
           data: {
             ...rest,
             ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
           },
-        }),
+        });
+        await markEntityDraftChanged(prisma, existing.entityId);
+        return updated;
+      },
     });
 
     revalidatePath("/schemas");
@@ -279,7 +293,8 @@ export async function updateEntityRelationshipsAction(
   if (!entity) return { error: "Entity not found" };
 
   const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-  const updatedMeta = { ...existingMeta, relationships };
+  // A relationships edit changes the draft, so the stored TypeSpec source is stale (R45).
+  const updatedMeta = withSourceStale(existingMeta, { ...existingMeta, relationships }, true);
 
   try {
     await withAudit({
@@ -291,7 +306,7 @@ export async function updateEntityRelationshipsAction(
       fn: () =>
         prisma.entity.update({
           where: { id: entityId },
-          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue, hasUnpublishedChanges: true },
         }),
     });
 
@@ -404,36 +419,6 @@ export async function acknowledgeLossyMappingAction(input: {
   if (!result.success) return { error: result.error.message };
   revalidatePath("/schemas", "layout");
   return { success: true };
-}
-
-/**
- * Create a new version snapshot for an entity.
- */
-export async function createVersionAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
-
-  try {
-    const { createSnapshot } = await import(
-      "@/services/version-history/version.service"
-    );
-    const userRole = await resolveUserRole(session.user.id);
-    const result = await createSnapshot(entityId, {
-      userId: session.user.id,
-      userRole,
-      prisma,
-    });
-
-    if (!result.success) {
-      return { error: result.error.message };
-    }
-
-    revalidatePath("/schemas");
-    return { success: true, version: result.data };
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to create version";
-    return { error: message };
-  }
 }
 
 /**
@@ -635,6 +620,7 @@ export async function deleteFieldAction(fieldId: string) {
       beforeState: existing as unknown as object,
       fn: async () => {
         await prisma.field.delete({ where: { id: fieldId } });
+        await markEntityDraftChanged(prisma, existing.entityId);
         return null;
       },
     });
@@ -796,6 +782,10 @@ export async function applyTypeSpecAction(
           removedNames.push(fieldName);
         }
       }
+    }
+
+    if (addedCount + updatedCount + removedNames.length > 0) {
+      await markEntityDraftChanged(prisma, entityId);
     }
 
     revalidatePath("/schemas");
@@ -1419,7 +1409,11 @@ export async function updateEntityMetadataAction(
     if (!entity) return { error: "Entity not found" };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-    const updatedMeta = { ...existingMeta, ...metadata };
+    const mergedMeta = { ...existingMeta, ...metadata };
+    // A draft edit (tags, owner, retention, custom, ...) marks the stored TypeSpec source stale (R45);
+    // bookkeeping-only edits leave it alone, but never let an already-stale source go fresh.
+    const changesDraft = metadataChangesDraft(existingMeta, mergedMeta);
+    const updatedMeta = withSourceStale(existingMeta, mergedMeta, changesDraft);
 
     await withAudit({
       action: "UPDATE",
@@ -1430,7 +1424,10 @@ export async function updateEntityMetadataAction(
       fn: () =>
         prisma.entity.update({
           where: { id: entityId },
-          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+          data: {
+            metadata: updatedMeta as unknown as Prisma.InputJsonValue,
+            ...(changesDraft && { hasUnpublishedChanges: true }),
+          },
         }),
     });
 
@@ -1450,10 +1447,15 @@ export async function updateEntityDescriptionAction(
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
-    await prisma.entity.update({
-      where: { id: entityId },
-      data: { description },
-    });
+    // The description is rendered into the TypeSpec source (@doc): the write and the draft + stale-source
+    // mark are one atomic batch, so the description can never land without the mark (R45).
+    await prisma.$transaction([
+      prisma.entity.update({
+        where: { id: entityId },
+        data: { description },
+      }),
+      prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+    ]);
 
     revalidatePath("/schemas");
     return { success: true };
@@ -1614,6 +1616,10 @@ export async function checkTargetDriftAction(
  * field rows on first access (Story 12.7, incremental rather than a big
  * upfront migration job) — existing entities get a typespecSource the first
  * time anyone opens the TypeSpec Source tab, not before.
+ *
+ * A stored source flagged `metadata.sourceStale` (field rows were edited
+ * outside this tab since it was written, R42) is regenerated the same way, so
+ * the tab never shows — or re-saves — a source that lacks those edits.
  */
 export async function getTypeSpecSourceAction(entityId: string) {
   const session = await auth();
@@ -1625,7 +1631,7 @@ export async function getTypeSpecSourceAction(entityId: string) {
   });
   if (!entity) return { error: "Entity not found" };
 
-  if (entity.typespecSource) {
+  if (entity.typespecSource && !isSourceStale(entity.metadata)) {
     return { success: true as const, source: entity.typespecSource, generated: false };
   }
 
@@ -1723,11 +1729,18 @@ export async function compileAndApplyTypeSpecSourceAction(
     entityId,
     userId: session.user.id,
     beforeState: { typespecSource: entity.typespecSource } as unknown as object,
-    fn: () =>
-      prisma.entity.update({
-        where: { id: entityId },
-        data: { typespecSource: source },
-      }),
+    fn: async () => {
+      // Source + fields were just written consistently: save the source and clear
+      // `sourceStale` (set by applyTypeSpecAction above) in one atomic batch.
+      const [updated] = await prisma.$transaction([
+        prisma.entity.update({
+          where: { id: entityId },
+          data: { typespecSource: source, hasUnpublishedChanges: true },
+        }),
+        prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, entityId),
+      ]);
+      return updated;
+    },
   });
 
   revalidatePath("/schemas");
