@@ -1,25 +1,51 @@
 /**
- * Protobuf (.proto) Importer — parses .proto file into ParsedEntity.
+ * Protobuf (.proto) Importer — built on `protobufjs` (real parser, no regex).
  *
- * Handles:
- * - syntax = "proto3" detection
- * - message MessageName { ... } extraction
- * - Scalar types: string, int32, int64, float, double, bool, bytes, etc.
- * - Well-known types: google.protobuf.Timestamp
- * - Field numbers preservation
- * - optional keyword in proto3
- * - map<K,V> and oneof (flagged as low confidence)
+ * `parseProtobufDocument()` returns every asset the file defines:
+ * - every top-level and nested `message` → entity. Nested messages are named
+ *   by their nesting path joined with `_` (`Order.LineItem` → `Order_LineItem`),
+ *   the protoc-gen-go convention: stable, a valid TypeSpec identifier, and it
+ *   cannot clash with a PascalCase top-level name.
+ * - every `enum` (top-level or nested, same naming) → shared enum; fields of
+ *   that type become `enum` fields carrying `enumName` + `enumValues`.
+ * - `oneof` membership → `governance.protobufOneofGroup` (the key the TypeSpec
+ *   governance path already stores); proto3 `optional` synthetic oneofs are not groups.
+ * - `map<K,V>` → `map` with `mapKeyType` / `mapValueType`.
+ * - `repeated T` → `array` with `arrayElementType`.
+ * - field numbers → `fieldNumber`.
+ * - well-known types (`google.protobuf.Timestamp`, `Duration`, wrappers, …) →
+ *   temporal / scalar logical types.
+ * - message-typed fields → `reference` with `referencedEntityName`; a type the
+ *   file does not define (from an unresolved import) stays a low-confidence
+ *   reference by its simple name, with a warning.
+ * - `service` / `rpc` are not imported (gRPC APIs need a protocol model) —
+ *   reported as warnings, as are non-well-known imports.
+ *
+ * `parseProtobufSchema()` keeps the single-entity contract (drift detection,
+ * bulk import, visual-builder round trip): the first top-level message.
  */
 
+import { parse, Type, Enum, Service, MapField, type Namespace, type ReflectionObject, type Field } from "protobufjs";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
-import type { ParsedEntity, ParsedField, ImportConfidence } from "./types";
+import type {
+  ParsedEntity,
+  ParsedField,
+  ParsedEnum,
+  ImportConfidence,
+  MultiEntityImportResult,
+} from "./types";
 
 // ---------------------------------------------------------------------------
-// Protobuf → Logical type mapping
+// Protobuf → logical type mapping
 // ---------------------------------------------------------------------------
 
-const PROTO_TYPE_MAP: Record<string, { type: string; confidence: ImportConfidence }> = {
+interface Mapped {
+  type: string;
+  confidence: ImportConfidence;
+}
+
+const PROTO_SCALAR_MAP: Record<string, Mapped> = {
   string: { type: "string", confidence: "high" },
   int32: { type: "int32", confidence: "high" },
   int64: { type: "int64", confidence: "high" },
@@ -35,167 +61,219 @@ const PROTO_TYPE_MAP: Record<string, { type: string; confidence: ImportConfidenc
   double: { type: "float64", confidence: "high" },
   bool: { type: "boolean", confidence: "high" },
   bytes: { type: "bytes", confidence: "high" },
-  "google.protobuf.Timestamp": { type: "utcDateTime", confidence: "high" },
-  "google.protobuf.Duration": { type: "duration", confidence: "high" },
-  "google.protobuf.Any": { type: "string", confidence: "low" },
 };
 
+/** Well-known types, keyed by fully-qualified name without the leading dot. */
+const WELL_KNOWN_TYPE_MAP: Record<string, Mapped & { nullable?: boolean }> = {
+  "google.protobuf.Timestamp": { type: "utcDateTime", confidence: "high" },
+  "google.protobuf.Duration": { type: "duration", confidence: "high" },
+  // Wrappers exist to make a scalar nullable.
+  "google.protobuf.StringValue": { type: "string", confidence: "high", nullable: true },
+  "google.protobuf.BytesValue": { type: "bytes", confidence: "high", nullable: true },
+  "google.protobuf.BoolValue": { type: "boolean", confidence: "high", nullable: true },
+  "google.protobuf.Int32Value": { type: "int32", confidence: "high", nullable: true },
+  "google.protobuf.Int64Value": { type: "int64", confidence: "high", nullable: true },
+  "google.protobuf.UInt32Value": { type: "uint32", confidence: "high", nullable: true },
+  "google.protobuf.UInt64Value": { type: "uint64", confidence: "high", nullable: true },
+  "google.protobuf.FloatValue": { type: "float32", confidence: "high", nullable: true },
+  "google.protobuf.DoubleValue": { type: "float64", confidence: "high", nullable: true },
+  // Dynamic values have no faithful logical type.
+  "google.protobuf.Any": { type: "string", confidence: "low" },
+  "google.protobuf.Struct": { type: "object", confidence: "low" },
+  "google.protobuf.Value": { type: "string", confidence: "low" },
+  "google.protobuf.ListValue": { type: "array", confidence: "low" },
+  "google.protobuf.FieldMask": { type: "string", confidence: "medium" },
+  "google.type.Date": { type: "plainDate", confidence: "high" },
+  "google.type.TimeOfDay": { type: "plainTime", confidence: "high" },
+};
+
+const WELL_KNOWN_IMPORT_PREFIXES = ["google/protobuf/", "google/type/"];
+
 // ---------------------------------------------------------------------------
-// Resolve protobuf type
+// Document walk
 // ---------------------------------------------------------------------------
 
-function resolveProtoType(typeStr: string): {
+/** A single resolved type reference (a field's type, a map value, an array element). */
+interface ResolvedRef {
   type: string;
   confidence: ImportConfidence;
-  originalType: string;
-} {
-  // Check well-known types first
-  const mapped = PROTO_TYPE_MAP[typeStr];
-  if (mapped) {
-    return {
-      type: mapped.type,
-      confidence: mapped.confidence,
-      originalType: typeStr,
-    };
-  }
-
-  // map<K,V>
-  if (typeStr.startsWith("map<")) {
-    return {
-      type: "map",
-      confidence: "low",
-      originalType: typeStr,
-    };
-  }
-
-  // repeated type → array
-  if (typeStr.startsWith("repeated ")) {
-    return {
-      type: "array",
-      confidence: "medium",
-      originalType: typeStr,
-    };
-  }
-
-  // Any other type (nested message, enum reference) → low confidence
-  return {
-    type: "string",
-    confidence: "low",
-    originalType: typeStr,
-  };
+  nullable?: boolean;
+  referencedEntityName?: string;
+  enumName?: string;
+  enumValues?: string[];
 }
 
-// ---------------------------------------------------------------------------
-// Parse field lines inside a message block
-// ---------------------------------------------------------------------------
+interface WalkState {
+  names: Map<ReflectionObject, string>;
+  warnings: string[];
+}
 
-function parseProtoField(line: string, isProto3: boolean): ParsedField | null {
-  const trimmed = line.trim();
+function nestingName(obj: ReflectionObject): string {
+  const parts: string[] = [];
+  let cur: ReflectionObject | null = obj;
+  while (cur && (cur instanceof Type || cur instanceof Enum)) {
+    parts.unshift(cur.name);
+    cur = cur.parent;
+  }
+  return parts.join("_");
+}
 
-  // Skip empty, comments, closing braces, reserved, option statements
-  if (
-    !trimmed ||
-    trimmed.startsWith("//") ||
-    trimmed.startsWith("/*") ||
-    trimmed.startsWith("*") ||
-    trimmed === "}" ||
-    trimmed.startsWith("reserved ") ||
-    trimmed.startsWith("option ") ||
-    trimmed.startsWith("enum ") ||
-    trimmed.startsWith("message ") ||
-    trimmed.startsWith("oneof ")
-  ) {
-    return null;
+/** Depth-first, declaration order: each message, then its nested types. */
+function collectDefinitions(ns: Namespace, types: Type[], enums: Enum[], services: Service[]): void {
+  for (const obj of ns.nestedArray) {
+    if (obj instanceof Type) {
+      types.push(obj);
+      collectDefinitions(obj, types, enums, services);
+    } else if (obj instanceof Enum) {
+      enums.push(obj);
+    } else if (obj instanceof Service) {
+      services.push(obj);
+    } else if ("nestedArray" in obj) {
+      // Package namespaces
+      collectDefinitions(obj as Namespace, types, enums, services);
+    }
+  }
+}
+
+/** Unique asset name per definition (messages and enums share the registry namespace). */
+function assignNames(defs: ReflectionObject[], warnings: string[]): Map<ReflectionObject, string> {
+  const names = new Map<ReflectionObject, string>();
+  const used = new Set<string>();
+  for (const def of defs) {
+    const base = nestingName(def);
+    let name = base;
+    for (let n = 2; used.has(name); n++) name = `${base}_${n}`;
+    if (name !== base) {
+      warnings.push(`"${def.fullName.replace(/^\./, "")}" clashes with another definition named "${base}" — imported as "${name}".`);
+    }
+    used.add(name);
+    names.set(def, name);
+  }
+  return names;
+}
+
+function enumValues(e: Enum): string[] {
+  return Object.keys(e.values);
+}
+
+function resolveTypeName(typeName: string, scope: Type, state: WalkState, fieldLabel: string): ResolvedRef {
+  const scalar = PROTO_SCALAR_MAP[typeName];
+  if (scalar) return { ...scalar };
+
+  const qualified = typeName.replace(/^\./, "");
+  const wkt = WELL_KNOWN_TYPE_MAP[qualified];
+  if (wkt) return { ...wkt };
+
+  const found = scope.lookup(typeName, [Type, Enum]);
+  if (found instanceof Type) {
+    return { type: "reference", confidence: "high", referencedEntityName: state.names.get(found) };
+  }
+  if (found instanceof Enum) {
+    return {
+      type: "enum",
+      confidence: "high",
+      enumName: state.names.get(found),
+      enumValues: enumValues(found),
+    };
   }
 
-  // Match: [optional|repeated] type name = number [;] [// comment]
-  const match = trimmed.match(
-    /^(optional\s+|repeated\s+|required\s+)?(map<[^>]+>|[\w.]+)\s+(\w+)\s*=\s*(\d+)\s*;?\s*(?:\/\/\s*(.*))?$/
+  const simpleName = qualified.split(".").pop() ?? qualified;
+  state.warnings.push(
+    `Field "${fieldLabel}": type "${qualified}" is not defined in this file — imported as a reference to "${simpleName}".`
   );
+  return { type: "reference", confidence: "low", referencedEntityName: simpleName };
+}
 
-  if (!match) {
-    return null;
-  }
+/** Key type of a `map<K,V>` field (protobufjs builds those as MapField). */
+function mapKeyTypeOf(field: Field): string | undefined {
+  const base: unknown = field;
+  return base instanceof MapField ? base.keyType : undefined;
+}
 
-  const modifier = (match[1] || "").trim();
-  let typeStr = match[2];
-  const name = match[3];
-  const fieldNumber = parseInt(match[4], 10);
-  const comment = match[5]?.trim();
+function originalTypeOf(field: Field): string {
+  if (field.map) return `map<${mapKeyTypeOf(field) ?? "string"}, ${field.type}>`;
+  return field.repeated ? `repeated ${field.type}` : field.type;
+}
 
-  // Handle repeated as array
-  if (modifier === "repeated") {
-    typeStr = `repeated ${typeStr}`;
-  }
+function isProto2(content: string): boolean {
+  if (/^\s*syntax\s*=\s*["']proto3["']/m.test(content)) return false;
+  if (/^\s*edition\s*=/m.test(content)) return false;
+  return true; // explicit proto2, or no syntax statement (proto2 by spec)
+}
 
-  const resolved = resolveProtoType(typeStr);
+function mapField(field: Field, owner: Type, ownerName: string, proto2: boolean, state: WalkState): ParsedField {
+  const label = `${ownerName}.${field.name}`;
+  const ref = resolveTypeName(field.type, owner, state, label);
 
-  // In proto3, all fields are implicitly optional unless explicitly marked
-  const nullable = isProto3 ? true : modifier === "optional";
-
-  return {
-    name,
-    type: resolved.type,
-    nullable,
-    description: comment || undefined,
-    fieldNumber,
-    confidence: resolved.confidence,
-    originalType: resolved.originalType,
+  const parsed: ParsedField = {
+    name: field.name,
+    type: ref.type,
+    nullable: true,
+    fieldNumber: field.id,
+    confidence: ref.confidence,
+    originalType: originalTypeOf(field),
   };
+  if (field.comment) parsed.description = field.comment;
+
+  if (field.map) {
+    const key = PROTO_SCALAR_MAP[mapKeyTypeOf(field) ?? "string"];
+    parsed.type = "map";
+    parsed.mapKeyType = key?.type ?? "string";
+    parsed.mapValueType = ref.type;
+    parsed.confidence = ref.confidence;
+  } else if (field.repeated) {
+    parsed.type = "array";
+    parsed.arrayElementType = ref.type;
+  }
+
+  if (ref.referencedEntityName) parsed.referencedEntityName = ref.referencedEntityName;
+  if (ref.enumName) parsed.enumName = ref.enumName;
+  if (ref.enumValues) parsed.enumValues = ref.enumValues;
+
+  // proto3 / editions: every field has presence semantics we model as nullable.
+  // proto2: `required` is not nullable, and repeated/map are never null.
+  if (field.rule === "required") parsed.nullable = false;
+  else if (proto2 && (field.repeated || field.map)) parsed.nullable = false;
+
+  // Real oneof groups only — proto3 `optional` creates a synthetic `_name` oneof.
+  const oneof = field.partOf;
+  if (oneof && !field.options?.proto3_optional) {
+    parsed.governance = { protobufOneofGroup: oneof.name };
+  }
+
+  return parsed;
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-export function parseProtobufSchema(content: string): Result<ParsedEntity> {
-  const lines = content.split("\n");
-
-  // Detect proto3 syntax
-  const isProto3 = lines.some((line) =>
-    /^\s*syntax\s*=\s*"proto3"\s*;/.test(line)
-  );
-
-  // Find the first message definition
-  let messageName: string | null = null;
-  let messageStart = -1;
-  let braceDepth = 0;
-  let messageEnd = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-
-    if (!messageName) {
-      const match = trimmed.match(/^message\s+(\w+)\s*\{/);
-      if (match) {
-        messageName = match[1];
-        messageStart = i;
-        // Count braces on this line
-        for (const ch of trimmed) {
-          if (ch === "{") braceDepth++;
-          if (ch === "}") braceDepth--;
-        }
-        if (braceDepth === 0) {
-          messageEnd = i;
-          break;
-        }
-        continue;
-      }
-    }
-
-    if (messageName && messageStart >= 0) {
-      for (const ch of trimmed) {
-        if (ch === "{") braceDepth++;
-        if (ch === "}") braceDepth--;
-      }
-      if (braceDepth === 0) {
-        messageEnd = i;
-        break;
-      }
-    }
+export function parseProtobufDocument(content: string): Result<MultiEntityImportResult> {
+  if (!content || !content.trim()) {
+    return err({
+      code: "PARSE_ERROR",
+      message: "Empty .proto content",
+      suggestedFix: 'Provide a .proto file with at least one "message Name { ... }" definition.',
+    });
   }
 
-  if (!messageName) {
+  let parsed: ReturnType<typeof parse>;
+  try {
+    parsed = parse(content, { keepCase: true, alternateCommentMode: true });
+  } catch (e) {
+    return err({
+      code: "PARSE_ERROR",
+      message: `Invalid .proto file: ${e instanceof Error ? e.message : String(e)}`,
+      suggestedFix: "Fix the syntax error at the reported line and import again.",
+    });
+  }
+
+  const types: Type[] = [];
+  const enums: Enum[] = [];
+  const services: Service[] = [];
+  collectDefinitions(parsed.root, types, enums, services);
+
+  if (types.length === 0) {
     return err({
       code: "PARSE_ERROR",
       message: "No message definition found in .proto file",
@@ -203,40 +281,52 @@ export function parseProtobufSchema(content: string): Result<ParsedEntity> {
     });
   }
 
-  if (messageEnd === -1) {
-    messageEnd = lines.length - 1;
+  const warnings: string[] = [];
+  const state: WalkState = { names: assignNames([...types, ...enums], warnings), warnings };
+  const proto2 = isProto2(content);
+
+  for (const imp of [...(parsed.imports ?? []), ...(parsed.weakImports ?? [])]) {
+    if (WELL_KNOWN_IMPORT_PREFIXES.some((prefix) => imp.startsWith(prefix))) continue;
+    warnings.push(`Import "${imp}" is not resolved — types it defines import as references by name.`);
   }
 
-  // Parse fields within the message block
-  // Handle inline single-line message: message M { string x = 1; }
-  let fieldLines: string[];
-  if (messageStart === messageEnd) {
-    // Single-line message — extract content between { and }
-    const line = lines[messageStart];
-    const openIdx = line.indexOf("{");
-    const closeIdx = line.lastIndexOf("}");
-    if (openIdx !== -1 && closeIdx > openIdx) {
-      const inlineContent = line.substring(openIdx + 1, closeIdx);
-      fieldLines = inlineContent.split(";").map((s) => s.trim() + ";").filter((s) => s !== ";");
-    } else {
-      fieldLines = [];
-    }
-  } else {
-    fieldLines = lines.slice(messageStart + 1, messageEnd);
-  }
-  const parsedFields: ParsedField[] = [];
+  const entities: ParsedEntity[] = types.map((type) => {
+    const name = state.names.get(type) as string;
+    const entity: ParsedEntity = {
+      name,
+      fields: type.fieldsArray.map((field) => mapField(field, type, name, proto2, state)),
+      sourceFormat: "protobuf",
+      originalContent: content,
+    };
+    if (type.comment) entity.description = type.comment;
+    return entity;
+  });
 
-  for (const line of fieldLines) {
-    const field = parseProtoField(line, isProto3);
-    if (field) {
-      parsedFields.push(field);
-    }
+  const parsedEnums: ParsedEnum[] = enums.map((e) => {
+    const parsedEnum: ParsedEnum = { name: state.names.get(e) as string, values: enumValues(e) };
+    if (e.comment) parsedEnum.description = e.comment;
+    return parsedEnum;
+  });
+
+  for (const service of services) {
+    const rpcCount = service.methodsArray.length;
+    warnings.push(
+      `Service "${service.name}" (${rpcCount} rpc${rpcCount === 1 ? "" : "s"}) not imported — gRPC API import is not supported yet.`
+    );
   }
 
   return ok({
-    name: messageName,
-    fields: parsedFields,
     sourceFormat: "protobuf",
-    originalContent: content,
+    entities,
+    enums: parsedEnums,
+    scalars: [],
+    ...(parsed.package ? { namespace: parsed.package } : {}),
+    warnings,
   });
+}
+
+export function parseProtobufSchema(content: string): Result<ParsedEntity> {
+  const doc = parseProtobufDocument(content);
+  if (!doc.success) return doc;
+  return ok(doc.data.entities[0]);
 }
