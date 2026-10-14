@@ -9,10 +9,18 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 export type EntityMigrationOutcome = {
   entityId: string;
-  status: "SKIPPED" | "MIGRATED" | "FLAGGED";
+  status: "SKIPPED" | "MIGRATED" | "FLAGGED" | "ERROR";
   diagnostics?: GovernanceDiagnostic[];
+  /** Set when status is "ERROR". */
+  error?: string;
 };
-export type MigrationSummary = { migrated: number; skipped: number; flagged: number; outcomes: EntityMigrationOutcome[] };
+export type MigrationSummary = {
+  migrated: number;
+  skipped: number;
+  flagged: number;
+  errored: number;
+  outcomes: EntityMigrationOutcome[];
+};
 export type MigrationDeps = {
   generate: (model: SuperSchemaModel) => string;
   compile: typeof compileTypeSpecWithGovernance;
@@ -20,63 +28,92 @@ export type MigrationDeps = {
 
 const defaultDeps: MigrationDeps = { generate: generateTypeSpec, compile: compileTypeSpecWithGovernance };
 
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /**
  * Story 12.7: give one entity its canonical typespecSource. Idempotent — an
  * entity that already has source is skipped. Generated source must compile
  * clean under the real compiler before it is written; otherwise the entity is
  * flagged in metadata.typespecMigration and left on the old path.
+ *
+ * Writes are guarded on `typespecSource: null`, so source saved by a user
+ * between our read and our write is never overwritten (outcome: SKIPPED).
+ * An unexpected throw (compiler, DB) is returned as an ERROR outcome — it
+ * never crosses the service boundary.
  */
 export async function migrateEntityTypeSpecSource(
   db: Db,
   entityId: string,
   deps: MigrationDeps = defaultDeps
 ): Promise<Result<EntityMigrationOutcome>> {
-  const entity = await db.entity.findUnique({ where: { id: entityId } });
-  if (!entity) return err({ code: "NOT_FOUND", message: `Entity "${entityId}" not found` });
-  if (entity.typespecSource) return ok({ entityId, status: "SKIPPED" });
+  try {
+    const entity = await db.entity.findUnique({ where: { id: entityId } });
+    if (!entity) return err({ code: "NOT_FOUND", message: `Entity "${entityId}" not found` });
+    if (entity.typespecSource) return ok({ entityId, status: "SKIPPED" });
 
-  const model = await loadEntityModel(db, entityId);
-  if (!model.success) return model;
+    const model = await loadEntityModel(db, entityId);
+    if (!model.success) return model;
 
-  const source = deps.generate(model.data);
-  const compiled = await deps.compile(source);
-  const metadata = (entity.metadata as Record<string, unknown> | null) ?? {};
+    const source = deps.generate(model.data);
+    const compiled = await deps.compile(source);
+    const metadata = (entity.metadata as Record<string, unknown> | null) ?? {};
 
-  if (!compiled.success) {
-    await db.entity.update({
-      where: { id: entityId },
-      data: {
-        metadata: {
-          ...metadata,
-          typespecMigration: { status: "FLAGGED", at: new Date().toISOString(), diagnostics: compiled.diagnostics },
-        } as unknown as Prisma.InputJsonValue,
-      },
+    if (!compiled.success) {
+      const { count } = await db.entity.updateMany({
+        where: { id: entityId, typespecSource: null },
+        data: {
+          metadata: {
+            ...metadata,
+            typespecMigration: { status: "FLAGGED", at: new Date().toISOString(), diagnostics: compiled.diagnostics },
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      if (count === 0) return ok({ entityId, status: "SKIPPED" });
+      return ok({ entityId, status: "FLAGGED", diagnostics: compiled.diagnostics });
+    }
+
+    const rest = { ...metadata };
+    delete rest.typespecMigration;
+    const { count } = await db.entity.updateMany({
+      where: { id: entityId, typespecSource: null },
+      data: { typespecSource: source, metadata: rest as Prisma.InputJsonValue },
     });
-    return ok({ entityId, status: "FLAGGED", diagnostics: compiled.diagnostics });
+    if (count === 0) return ok({ entityId, status: "SKIPPED" });
+    return ok({ entityId, status: "MIGRATED" });
+  } catch (e) {
+    return ok({ entityId, status: "ERROR", error: messageOf(e) });
   }
-
-  const rest = { ...metadata };
-  delete rest.typespecMigration;
-  await db.entity.update({
-    where: { id: entityId },
-    data: { typespecSource: source, metadata: rest as Prisma.InputJsonValue },
-  });
-  return ok({ entityId, status: "MIGRATED" });
 }
 
+/**
+ * Migrate every entity. Never aborts the batch on a per-entity problem: a
+ * failed result or unexpected throw becomes an ERROR outcome and the loop
+ * continues. Only failing to list the entities at all is a failed Result.
+ */
 export async function runTypeSpecSourceMigration(
   db: Db,
   deps: MigrationDeps = defaultDeps
 ): Promise<Result<MigrationSummary>> {
-  const ids = await db.entity.findMany({ select: { id: true }, orderBy: { createdAt: "asc" } });
-  const summary: MigrationSummary = { migrated: 0, skipped: 0, flagged: 0, outcomes: [] };
+  let ids: Array<{ id: string }>;
+  try {
+    ids = await db.entity.findMany({ select: { id: true }, orderBy: { createdAt: "asc" } });
+  } catch (e) {
+    return err({ code: "DB_ERROR", message: `Failed to list entities: ${messageOf(e)}` });
+  }
+
+  const summary: MigrationSummary = { migrated: 0, skipped: 0, flagged: 0, errored: 0, outcomes: [] };
   for (const { id } of ids) {
     const res = await migrateEntityTypeSpecSource(db, id, deps);
-    if (!res.success) return res;
-    summary.outcomes.push(res.data);
-    if (res.data.status === "MIGRATED") summary.migrated++;
-    else if (res.data.status === "SKIPPED") summary.skipped++;
-    else summary.flagged++;
+    const outcome: EntityMigrationOutcome = res.success
+      ? res.data
+      : { entityId: id, status: "ERROR", error: `${res.error.code}: ${res.error.message}` };
+    summary.outcomes.push(outcome);
+    if (outcome.status === "MIGRATED") summary.migrated++;
+    else if (outcome.status === "SKIPPED") summary.skipped++;
+    else if (outcome.status === "FLAGGED") summary.flagged++;
+    else summary.errored++;
   }
   return ok(summary);
 }
