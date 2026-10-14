@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Save, Zap, Globe, Rocket, FileCode } from "lucide-react";
+import { Zap, Globe, Rocket, FileCode } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
@@ -14,7 +14,6 @@ import {
   emitEntityAction,
   createTypeMappingOverrideAction,
   acknowledgeLossyMappingAction,
-  createVersionAction,
   getVersionHistoryAction,
   compareVersionsAction,
   getChangeHistoryAction,
@@ -53,7 +52,6 @@ import {
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
-import { classifyChangeLevel } from "@/lib/validation/change-level";
 import { assetHref } from "@/lib/navigation/asset-href";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
@@ -144,7 +142,6 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   // Version history state
   const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
-  const [isCreatingVersion, setIsCreatingVersion] = useState(false);
 
   // Diff viewer state
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
@@ -195,72 +192,17 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   const alertCount = entityAlerts.length;
 
-  // Helper: bump semantic version in entity metadata
-  const bumpSemanticVersion = useCallback(async (level: "major" | "minor") => {
-    const meta = (entity.metadata ?? {}) as Record<string, unknown>;
-    const sv = (meta.semanticVersion as { major?: number; minor?: number }) ?? {};
-    const currentMajor = sv.major ?? entity.version;
-    const currentMinor = sv.minor ?? 0;
-
-    let newMajor = currentMajor;
-    let newMinor = currentMinor;
-    if (level === "major") {
-      newMajor = currentMajor + 1;
-      newMinor = 0;
-    } else {
-      newMinor = currentMinor + 1;
-    }
-
-    await updateEntityMetadataAction(entity.id, {
-      semanticVersion: { major: newMajor, minor: newMinor },
-    });
-  }, [entity.id, entity.metadata, entity.version]);
-
-  // Field update handler — saves field, creates version, bumps semantic version
+  // Field save — Story 2-22's explicit Save stays; saving updates the draft
+  // only (spec D1). Versions are cut by Publish, never by Save.
   const handleUpdateField = useCallback(async (id: string, data: Record<string, unknown>) => {
-    // Determine which properties changed by comparing to original field
-    const originalField = fields.find((f) => f.id === id);
-    const changedProps: string[] = [];
-    if (originalField) {
-      for (const key of Object.keys(data)) {
-        if (key === "decorators") {
-          const origTs = (originalField.decorators?.typespec ?? {}) as Record<string, unknown>;
-          const newTs = ((data.decorators as Record<string, unknown>)?.typespec ?? {}) as Record<string, unknown>;
-          if (JSON.stringify(origTs) !== JSON.stringify(newTs)) {
-            const origIdentity = (origTs.identity ?? {}) as Record<string, unknown>;
-            const newIdentity = (newTs.identity ?? {}) as Record<string, unknown>;
-            if (JSON.stringify(origIdentity) !== JSON.stringify(newIdentity)) {
-              if (origIdentity.format !== newIdentity.format) changedProps.push("format");
-              if (origIdentity.defaultValue !== newIdentity.defaultValue) changedProps.push("defaultValue");
-              if (origIdentity.secret !== newIdentity.secret) changedProps.push("secret");
-            }
-            if (JSON.stringify(origTs.documentation) !== JSON.stringify(newTs.documentation)) {
-              changedProps.push("summary");
-            }
-          }
-        } else {
-          const origVal = (originalField as unknown as Record<string, unknown>)[key];
-          if (JSON.stringify(origVal) !== JSON.stringify(data[key])) {
-            changedProps.push(key);
-          }
-        }
-      }
-    }
-
-    await updateFieldAction(id, data);
+    const result = await updateFieldAction(id, data);
     setTypeSpecTrigger((n) => n + 1);
-
-    // Create version snapshot and bump semantic version
-    const level = classifyChangeLevel(changedProps);
-    try {
-      await createVersionAction(entity.id);
-      await bumpSemanticVersion(level);
-    } catch {
-      // Version creation failure should not block the save
+    if (result?.error) {
+      toast.error(result.error);
+      return;
     }
-
     flashSaved();
-  }, [entity.id, fields, bumpSemanticVersion, flashSaved]);
+  }, [flashSaved]);
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -307,26 +249,6 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
       toast.error("Emission failed unexpectedly");
     } finally {
       setIsEmitting(false);
-    }
-  }, [entity.id]);
-
-  const handleCreateVersion = useCallback(async () => {
-    setIsCreatingVersion(true);
-    try {
-      const response = await createVersionAction(entity.id);
-      if (response.error) {
-        toast.error(response.error);
-        return;
-      }
-      toast.success(`Version v${response.version?.version} created`);
-      const historyResponse = await getVersionHistoryAction(entity.id);
-      if (historyResponse.versions) {
-        setVersionHistory(historyResponse.versions as VersionSnapshot[]);
-      }
-    } catch {
-      toast.error("Failed to create version");
-    } finally {
-      setIsCreatingVersion(false);
     }
   }, [entity.id]);
 
@@ -430,16 +352,10 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     }
   }, [entity.id, entity.name, entity.domainSlug, entity.productSlug, router]);
 
-  // Metadata save handler — creates version + bumps minor
-  const handleMetaSaved = useCallback(async () => {
-    try {
-      await createVersionAction(entity.id);
-      await bumpSemanticVersion("minor");
-    } catch {
-      // Version creation failure should not block the save
-    }
+  // Metadata save (tags / owner) — updates the draft only (spec D1).
+  const handleMetaSaved = useCallback(() => {
     flashSaved();
-  }, [entity.id, bumpSemanticVersion, flashSaved]);
+  }, [flashSaved]);
 
   // Navigation guard: tab switching
   const handleTabChange = useCallback((tab: ViewTab) => {
@@ -722,29 +638,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
         {activeTab === "versions" && (
           <div className="space-y-space-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-heading-2 text-foreground">Version History</h2>
-              {!readOnly_ && (
-                <Button
-                  variant="outline"
-                  onClick={handleCreateVersion}
-                  disabled={isCreatingVersion}
-                  className="gap-1.5"
-                >
-                  {isCreatingVersion ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      Create Version
-                    </>
-                  )}
-                </Button>
-              )}
-            </div>
+            <h2 className="text-heading-2 text-foreground">Legacy history (read-only)</h2>
 
             {/* Diff viewer */}
             {showDiff && diffResult && (
@@ -784,7 +678,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
               </div>
             ) : (
               <p className="text-body-small text-muted-foreground">
-                No versions created yet.
+                No legacy snapshots.
               </p>
             )}
 

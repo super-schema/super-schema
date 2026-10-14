@@ -411,36 +411,6 @@ export async function acknowledgeLossyMappingAction(input: {
 }
 
 /**
- * Create a new version snapshot for an entity.
- */
-export async function createVersionAction(entityId: string) {
-  const session = await auth();
-  if (!session?.user?.id) return { error: "Not authenticated" };
-
-  try {
-    const { createSnapshot } = await import(
-      "@/services/version-history/version.service"
-    );
-    const userRole = await resolveUserRole(session.user.id);
-    const result = await createSnapshot(entityId, {
-      userId: session.user.id,
-      userRole,
-      prisma,
-    });
-
-    if (!result.success) {
-      return { error: result.error.message };
-    }
-
-    revalidatePath("/schemas");
-    return { success: true, version: result.data };
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to create version";
-    return { error: message };
-  }
-}
-
-/**
  * Get version history for an entity.
  */
 export async function getVersionHistoryAction(entityId: string) {

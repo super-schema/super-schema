@@ -2,7 +2,7 @@
  * Version History Types
  *
  * Types for version snapshots and diffs.
- * MVP: snapshots stored in entity metadata JSONB under `versionHistory` key.
+ * Legacy (read-only): pre-Epic-14 snapshots in entity metadata JSONB under `versionHistory`; FieldSnapshot is also the shape of EntityVersion.fieldSnapshot.
  */
 
 /** Snapshot of a single field at a point in time */
