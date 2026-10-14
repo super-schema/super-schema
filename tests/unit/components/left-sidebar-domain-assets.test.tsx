@@ -1,106 +1,83 @@
 /**
- * LeftSidebar domain asset category tests.
+ * LeftSidebar explorer tests (Enterprise → Domain → Product).
  *
  * @vitest-environment jsdom
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 
-const { pushMock } = vi.hoisted(() => ({
-  pushMock: vi.fn(),
-}));
-
+const push = vi.fn();
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/schemas/customer-data",
-  useRouter: () => ({
-    push: pushMock,
-  }),
+  usePathname: () => "/schemas/payments",
+  useRouter: () => ({ push }),
+  useSearchParams: () => new URLSearchParams(""),
 }));
 
-function renderWithQueryClient(ui: React.ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
-  );
-}
-
-describe("LeftSidebar", () => {
-  beforeEach(() => {
-    window.history.replaceState(null, "", "/schemas/customer-data");
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => [
+const tree = {
+  enterprise: {
+    counts: { dataTypes: 2, entities: 1, traits: 0 },
+    entities: [{ id: "e0", name: "Customer", slug: "customer", status: "ACTIVE" }],
+  },
+  domains: [
+    {
+      id: "d1",
+      name: "Payments",
+      slug: "payments",
+      isSystem: false,
+      counts: { dataTypes: 0, apis: 1, traits: 0 },
+      products: [
         {
-          id: "domain-1",
-          name: "Customer Data",
-          slug: "customer-data",
-          isSystem: true,
-          entities: [
-            { id: "entity-1", name: "Customer", slug: "customer", status: "ACTIVE" },
-          ],
-          modelCount: 11,
-          decoratorCount: 2,
-          sharedEnumCount: 5,
-          customScalarCount: 4,
-          unionTypeCount: 1,
-          serviceCount: 3,
+          id: "p1",
+          name: "Checkout",
+          slug: "checkout",
+          isSystem: false,
+          counts: { dataTypes: 3, apis: 0, entities: 1, traits: 0, messages: 0, channels: 0, eventSpecs: 0 },
+          entities: [{ id: "e1", name: "Order", slug: "order", status: "DRAFT" }],
         },
       ],
-    }) as typeof fetch;
+    },
+  ],
+};
+vi.mock("@/hooks/useDomainsTree", () => ({
+  useDomainsTree: () => ({ data: tree, isLoading: false, isError: false, refetch: vi.fn() }),
+}));
+
+const props = { width: 260, isCollapsed: false, onMouseDown: vi.fn(), onDoubleClick: vi.fn() };
+
+describe("LeftSidebar", () => {
+  beforeEach(() => push.mockReset());
+  afterEach(() => cleanup());
+
+  it("renders Enterprise with its non-empty categories", () => {
+    render(<LeftSidebar {...props} />);
+    expect(screen.getByText("Enterprise")).toBeDefined();
+    fireEvent.click(screen.getByTestId("enterprise-data-types"));
+    expect(push).toHaveBeenCalledWith("/schemas/enterprise?tab=data-types");
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-    cleanup();
+  it("hides empty domain categories and shows non-empty ones", () => {
+    render(<LeftSidebar {...props} />);
+    expect(screen.queryByTestId("domain-d1-data-types")).toBeNull();
+    fireEvent.click(screen.getByTestId("domain-d1-apis"));
+    expect(push).toHaveBeenCalledWith("/schemas/payments?tab=apis");
   });
 
-  it("renders all domain asset categories and deep-links into tabs", async () => {
-    renderWithQueryClient(
-      <LeftSidebar
-        width={320}
-        isCollapsed={false}
-        onMouseDown={vi.fn()}
-        onDoubleClick={vi.fn()}
-      />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Customer Data")).toBeDefined();
-    });
-
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Entities")).toBeDefined();
-    expect(screen.getByText("Types")).toBeDefined();
-    expect(screen.getByText("APIs")).toBeDefined();
-
-    fireEvent.click(screen.getByText("Types"));
-    expect(pushMock).toHaveBeenCalledWith("/schemas/customer-data?tab=types");
+  it("renders products with their categories and links entities canonically", () => {
+    render(<LeftSidebar {...props} />);
+    fireEvent.click(screen.getByText("Checkout"));
+    expect(push).toHaveBeenCalledWith("/schemas/payments/checkout");
+    expect(screen.queryByTestId("product-p1-apis")).toBeNull();
+    fireEvent.click(screen.getByTestId("product-p1-data-types"));
+    expect(push).toHaveBeenCalledWith("/schemas/payments/checkout?tab=data-types");
+    fireEvent.click(screen.getByText("Order"));
+    expect(push).toHaveBeenCalledWith("/schemas/payments/checkout/order");
   });
 
-  it("marks the domain root and entity category active without relying on substring checks", async () => {
-    renderWithQueryClient(
-      <LeftSidebar
-        width={320}
-        isCollapsed={false}
-        onMouseDown={vi.fn()}
-        onDoubleClick={vi.fn()}
-      />
-    );
-
-    const domain = await screen.findByText("Customer Data");
-    const entities = screen.getByText("Entities");
-
-    expect(domain.closest("[data-active]")?.getAttribute("data-active")).toBe("true");
-    expect(entities.closest("[data-active]")?.getAttribute("data-active")).toBe("true");
+  it("uses the label Data Types, never Types", () => {
+    render(<LeftSidebar {...props} />);
+    expect(screen.queryByText(/^Types$/)).toBeNull();
+    expect(screen.getAllByText("Data Types").length).toBeGreaterThan(0);
   });
 });

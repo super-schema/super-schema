@@ -7,6 +7,7 @@ import { ComplianceResultsTable } from "@/features/compliance/ComplianceResultsT
 import { ComplianceGapsView } from "@/features/compliance/ComplianceGapsView";
 import { ComplianceExportPopover } from "@/features/compliance/ComplianceExportPopover";
 import { AuditTrailView } from "@/features/compliance/AuditTrailView";
+import type { ExplorerTree } from "@/lib/navigation/build-explorer-tree";
 import type {
   ComplianceFilter,
   ComplianceFieldResult,
@@ -58,12 +59,9 @@ export default function CompliancePage() {
   // Fetch domains on mount
   useEffect(() => {
     fetch("/api/domains-tree")
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) =>
-        setDomains(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          data.map((d: any) => ({ id: d.id, name: d.name }))
-        )
+      .then((res) => (res.ok ? res.json() : { domains: [] }))
+      .then((data: ExplorerTree) =>
+        setDomains(data.domains.map((d) => ({ id: d.id, name: d.name })))
       )
       .catch(() => setDomains([]));
   }, []);

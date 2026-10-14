@@ -23,24 +23,47 @@ import {
   trackRecentEntity,
   type RecentEntityEntry,
 } from "@/lib/recent-entities";
+import { assetHref } from "@/lib/navigation/asset-href";
+import type { ExplorerTree } from "@/lib/navigation/build-explorer-tree";
 import type {
   CommandPaletteProps,
   CommandPaletteEntity,
   CommandPaletteField,
 } from "./CommandPalette.types";
 
-interface DomainTreeNode {
-  id: string;
-  name: string;
-  slug: string;
-  isSystem: boolean;
-  entities: {
-    id: string;
-    name: string;
-    slug: string;
-    status: string;
-    productSlug: string;
-  }[];
+const ENTERPRISE_LABEL = "Enterprise";
+
+/**
+ * Flatten the explorer tree into palette entries: tenant-level (enterprise)
+ * entities first, then every product's entities. Tenant-level entities carry
+ * `domainSlug`/`productSlug` of null so `assetHref` resolves their canonical URL.
+ */
+function flattenExplorerEntities(tree: ExplorerTree): CommandPaletteEntity[] {
+  const list: CommandPaletteEntity[] = tree.enterprise.entities.map((entity) => ({
+    id: entity.id,
+    name: entity.name,
+    slug: entity.slug,
+    domainName: ENTERPRISE_LABEL,
+    domainSlug: null,
+    productSlug: null,
+    status: entity.status,
+  }));
+  for (const domain of tree.domains) {
+    for (const product of domain.products) {
+      for (const entity of product.entities) {
+        list.push({
+          id: entity.id,
+          name: entity.name,
+          slug: entity.slug,
+          domainName: domain.name,
+          domainSlug: domain.slug,
+          productSlug: product.slug,
+          status: entity.status,
+        });
+      }
+    }
+  }
+  return list;
 }
 
 export function CommandPalette({
@@ -68,23 +91,8 @@ export function CommandPalette({
       try {
         const res = await fetch("/api/domains-tree");
         if (!res.ok) return;
-        const domains: DomainTreeNode[] = await res.json();
-
-        const entityList: CommandPaletteEntity[] = [];
-        domains.forEach((domain) => {
-          domain.entities.forEach((entity) => {
-            entityList.push({
-              id: entity.id,
-              name: entity.name,
-              slug: entity.slug,
-              domainName: domain.name,
-              domainSlug: domain.slug,
-              productSlug: entity.productSlug,
-              status: entity.status,
-            });
-          });
-        });
-        setEntities(entityList);
+        const tree: ExplorerTree = await res.json();
+        setEntities(flattenExplorerEntities(tree));
 
         // Fetch fields for command palette
         try {
@@ -128,9 +136,12 @@ export function CommandPalette({
         domainName: entity.domainName,
       });
       router.push(
-        entity.productSlug
-          ? `/schemas/${entity.domainSlug}/${entity.productSlug}/${entity.slug || entity.id}`
-          : `/schemas/${entity.domainSlug}/${entity.slug || entity.id}`
+        assetHref({
+          kind: "entity",
+          slug: entity.slug || entity.id,
+          domainSlug: entity.domainSlug,
+          productSlug: entity.productSlug ?? null,
+        })
       );
       onClose();
     },

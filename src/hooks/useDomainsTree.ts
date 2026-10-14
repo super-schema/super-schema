@@ -1,30 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ExplorerTree } from "@/lib/navigation/build-explorer-tree";
 
-export interface DomainTreeEntity {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-  productSlug: string;
-}
-
-export interface DomainTreeNode {
-  id: string;
-  name: string;
-  slug: string;
-  isSystem: boolean;
-  entities: DomainTreeEntity[];
-  modelCount: number;
-  decoratorCount: number;
-  sharedEnumCount: number;
-  customScalarCount: number;
-  unionTypeCount: number;
-  serviceCount: number;
-}
+export type {
+  ExplorerCounts,
+  ExplorerDomain,
+  ExplorerEntity,
+  ExplorerProduct,
+  ExplorerTree,
+} from "@/lib/navigation/build-explorer-tree";
 
 export const domainsTreeQueryKey = ["domains-tree"] as const;
 
-async function fetchDomainsTree(): Promise<DomainTreeNode[]> {
+async function fetchDomainsTree(): Promise<ExplorerTree> {
   const response = await fetch("/api/domains-tree");
 
   if (!response.ok) {

@@ -8,7 +8,8 @@ const MAX_RECENT = 5;
 
 export interface RecentEntityEntry {
   entityId: string;
-  domainSlug: string;
+  /** null for tenant-level (enterprise) entities. */
+  domainSlug: string | null;
   entityName: string;
   domainName: string;
 }
