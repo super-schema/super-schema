@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { formatSuffix, normalizeProfile, sameProfile, schemaFormatFor } from "@/lib/event-specs/schema-format";
+import {
+  contentTypeFor,
+  formatSuffix,
+  normalizeProfile,
+  sameProfile,
+  schemaFormatFor,
+} from "@/lib/event-specs/schema-format";
 
 describe("schemaFormatFor (spec §7.2 step 4)", () => {
   it.each([
@@ -27,5 +33,12 @@ describe("schemaFormatFor (spec §7.2 step 4)", () => {
     expect(formatSuffix({ format: "json-schema" })).toBe("json");
     expect(formatSuffix({ format: "json-schema", dialect: "2020-12" })).toBe("json2020");
     expect(formatSuffix({ format: "protobuf" })).toBe("proto");
+  });
+
+  it("derives the default message contentType from the format (R28)", () => {
+    expect(contentTypeFor({ format: "avro" })).toBe("avro/binary");
+    expect(contentTypeFor({ format: "json-schema" })).toBe("application/json");
+    expect(contentTypeFor({ format: "json-schema", dialect: "2020-12" })).toBe("application/json");
+    expect(contentTypeFor({ format: "protobuf" })).toBe("application/x-protobuf");
   });
 });

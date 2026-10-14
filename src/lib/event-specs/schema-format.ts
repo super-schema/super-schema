@@ -43,3 +43,22 @@ export function formatSuffix(profile: FormatProfile): string {
   if (p.format === "protobuf") return "proto";
   return p.dialect === "2020-12" ? "json2020" : "json";
 }
+
+/** Wire content types implied by a format profile (controller ruling R28). */
+export const FORMAT_CONTENT_TYPES = {
+  avro: "avro/binary",
+  jsonSchema: "application/json",
+  protobuf: "application/x-protobuf",
+} as const;
+
+/** Default message `contentType` for a payload emitted in `profile` (any JSON Schema dialect → `application/json`). */
+export function contentTypeFor(profile: FormatProfile): string {
+  switch (normalizeProfile(profile).format) {
+    case "avro":
+      return FORMAT_CONTENT_TYPES.avro;
+    case "protobuf":
+      return FORMAT_CONTENT_TYPES.protobuf;
+    case "json-schema":
+      return FORMAT_CONTENT_TYPES.jsonSchema;
+  }
+}
