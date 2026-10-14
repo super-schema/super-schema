@@ -20,6 +20,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, unique } from "./helpers/auth";
+import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 
 const ALL_TYPES_TSP = readFileSync(
   path.join(__dirname, "fixtures/all-types.tsp"),
@@ -58,6 +59,8 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
   // heading transiently exists twice (the hidden streamed copy plus the visible
   // one) and getByText trips strict mode. getByRole only sees the visible one.
   await expect(page.getByRole("heading", { name: /create new entity/i })).toBeVisible();
+  // ...and the transient duplicate must settle to exactly one rendered copy.
+  await expect(page.getByText(/create new entity/i)).toHaveCount(1);
   await page.getByRole("button", { name: /import schema/i }).first().click();
   await page.locator("textarea").first().fill(tsp);
   await page.getByRole("button", { name: /parse schema/i }).click();
@@ -73,10 +76,25 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
 }
 
 test.describe("schema lifecycle", () => {
+  // Domains this spec creates through the UI; deleted afterwards (cascades to their
+  // products, entities and imported assets) so runs stop accumulating e2e rows.
+  const createdDomains: string[] = [];
+
+  test.afterAll(async () => {
+    try {
+      await deleteDomainsByName(createdDomains);
+    } catch (error) {
+      console.warn(`schema-lifecycle cleanup failed for ${createdDomains.join(", ")}: ${String(error)}`);
+    } finally {
+      await disconnectDb();
+    }
+  });
+
   test("create domain → product → all-types entity (real compiler) under product", async ({
     authedPage: page,
   }) => {
     const domain = unique("e2e-domain");
+    createdDomains.push(domain);
     const product = unique("e2e-product");
 
     // 1. Domain + product
