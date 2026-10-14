@@ -37,6 +37,7 @@ export function parsedFieldToCreateFieldInput(field: ParsedField): CreateFieldIn
     precision: null,
     scale: null,
     decorators: buildDecoratorsFromParsedField(field),
+    ...(field.fieldNumber != null ? { fieldNumber: field.fieldNumber } : {}),
   };
 }
 
@@ -55,6 +56,7 @@ export function buildImportAssetsPayload(
 ): Omit<BulkImportPayload, "domainId" | "productId"> {
   return {
     namespace: result.namespace,
+    sourceFormat: result.sourceFormat ?? "typespec",
     models: selection.selectedModels.map((idx) => toModelInput(result.models[idx])),
     entities: selection.selectedEntities.map((idx) => toModelInput(result.models[idx])),
     sharedEnums: selection.selectedEnums.map((idx) => result.sharedEnums[idx]),

@@ -67,6 +67,8 @@ export interface CreateFieldInput {
   scale: number | null;
   aliases?: string[];
   decorators?: Record<string, unknown>;
+  /** Protobuf field number, preserved by schema imports (Field.fieldNumber). */
+  fieldNumber?: number | null;
 }
 
 /**
@@ -778,6 +780,8 @@ export interface BulkImportPayload {
   domainId: string;
   productId?: string;
   namespace?: string;
+  /** Format the assets were imported from (ModelDefinition.sourceFormat); defaults to "typespec". */
+  sourceFormat?: string;
   models: Array<{
     name: string;
     description?: string;
@@ -1007,7 +1011,7 @@ export async function createDomainAssetsFromImportAction(
             name,
             description: model.description ?? "",
             domainId: payload.domainId,
-            sourceFormat: "typespec",
+            sourceFormat: payload.sourceFormat ?? "typespec",
             sourceNamespace: payload.namespace ?? null,
             extendsModelName: model.extends ?? null,
             fields: {

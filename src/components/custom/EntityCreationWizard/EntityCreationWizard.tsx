@@ -16,6 +16,7 @@ import { importSchemaAssets } from "@/services/import.service";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { detectFormat } from "@/lib/importers/format-detector";
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
+import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import {
   TypeSpecImportReviewScreen,
@@ -264,6 +265,8 @@ export function EntityCreationWizard({
           confidence: f.confidence === "high" ? 0.95 : f.confidence === "medium" ? 0.7 : 0.4,
           referencedEntityName: f.referencedEntityName,
           arrayElementType: f.arrayElementType,
+          importedDecorators: buildDecoratorsFromParsedField(f),
+          fieldNumber: f.fieldNumber,
         }));
 
         goToPreview(parsedEntity.name, parsedEntity.description ?? "", fields);
@@ -351,9 +354,12 @@ export function EntityCreationWizard({
     setError(null);
 
     const fields: CreateFieldInput[] = state.fields.map((f) => {
-      // Preserve complex-type metadata (reference target, array element type)
-      // so references/arrays resolve in the IR.
-      const decorators: Record<string, unknown> = {};
+      // Preserve complex-type metadata (reference target, array element type,
+      // imported map/enum/governance decorators) so references/arrays resolve in
+      // the IR. The description column stays the source of truth (it is editable
+      // here), so imported `semantics` are not carried over.
+      const decorators: Record<string, unknown> = { ...f.importedDecorators };
+      delete decorators.semantics;
       if (f.referencedEntityName) decorators.referencedEntityName = f.referencedEntityName;
       if (f.arrayElementType) decorators.arrayElementType = f.arrayElementType;
 
@@ -367,6 +373,7 @@ export function EntityCreationWizard({
         precision: null,
         scale: null,
         ...(Object.keys(decorators).length > 0 ? { decorators } : {}),
+        ...(f.fieldNumber != null ? { fieldNumber: f.fieldNumber } : {}),
       };
     });
 

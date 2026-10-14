@@ -101,6 +101,30 @@ describe("EntityCreationWizard — multi-entity import", () => {
     expect(screen.queryByTestId("typespec-import-review")).toBeNull();
   });
 
+  it("persists imported field numbers and map/oneof metadata from the single-entity preview", async () => {
+    mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e1" });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    pasteAndParse(
+      `syntax = "proto3";\nmessage User {\n  map<string, int64> scores = 4;\n  oneof contact { string email = 7; }\n}`
+    );
+    await waitFor(() => expect(screen.getByDisplayValue("User")).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Entity" }));
+
+    await waitFor(() => expect(mocks.createEntityWithFieldsAction).toHaveBeenCalledTimes(1));
+    const [, input] = mocks.createEntityWithFieldsAction.mock.calls[0];
+    const [scores, email] = input.fields;
+    expect(scores).toMatchObject({
+      name: "scores",
+      fieldNumber: 4,
+      decorators: { mapKeyType: "string", mapValueType: "int64" },
+    });
+    expect(email).toMatchObject({
+      fieldNumber: 7,
+      decorators: { governance: { protobufFieldNumber: 7, protobufOneofGroup: "contact" } },
+    });
+  });
+
   it("explains that a multi-asset document needs a domain at the Enterprise level", async () => {
     render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
     pasteAndParse(ORDER_PROTO);

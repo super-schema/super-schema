@@ -557,4 +557,75 @@ describe("schema import actions", () => {
       expect(mockAssertNameAvailable).not.toHaveBeenCalled();
     });
   });
+
+  describe("source format and field numbers (Story 15.8)", () => {
+    const basePayload = {
+      domainId: "domain-1",
+      models: [],
+      entities: [],
+      sharedEnums: [],
+      customScalars: [],
+      unionTypes: [],
+      services: [],
+      decoratorDefinitions: [],
+    };
+    const protoField = {
+      name: "status",
+      type: "enum",
+      nullable: true,
+      isKey: false,
+      description: "",
+      classification: null,
+      precision: null,
+      scale: null,
+      fieldNumber: 3,
+      decorators: { governance: { protobufFieldNumber: 3 } },
+    };
+
+    beforeEach(() => {
+      mockAuth.mockResolvedValue({ user: { id: "user-1", email: "user@example.com" } });
+      mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
+    });
+
+    it("records the payload's real source format on imported models", async () => {
+      await createDomainAssetsFromImportAction({
+        ...basePayload,
+        sourceFormat: "protobuf",
+        namespace: "shop.orders.v1",
+        models: [{ name: "Order", fields: [protoField] }],
+      });
+
+      expect(mockTx.modelDefinition.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "Order",
+            sourceFormat: "protobuf",
+            sourceNamespace: "shop.orders.v1",
+          }),
+        })
+      );
+    });
+
+    it("keeps typespec as the model source format when the payload names none", async () => {
+      await createDomainAssetsFromImportAction({
+        ...basePayload,
+        models: [{ name: "Order", fields: [] }],
+      });
+
+      expect(mockTx.modelDefinition.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ sourceFormat: "typespec" }) })
+      );
+    });
+
+    it("persists protobuf field numbers on imported entity fields", async () => {
+      await createDomainAssetsFromImportAction({
+        ...basePayload,
+        sourceFormat: "protobuf",
+        entities: [{ name: "Order", fields: [protoField] }],
+      });
+
+      const data = mockTx.entity.create.mock.calls[0][0].data;
+      expect(data.fields.create[0]).toMatchObject({ name: "status", fieldNumber: 3 });
+    });
+  });
 });

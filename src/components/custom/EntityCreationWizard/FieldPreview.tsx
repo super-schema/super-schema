@@ -19,6 +19,10 @@ export interface PreviewField {
   referencedEntityName?: string;
   /** Array element logical type (preserved through to persistence). */
   arrayElementType?: string;
+  /** Decorators built by a schema import (map key/value, enum, governance), kept on create. */
+  importedDecorators?: Record<string, unknown>;
+  /** Protobuf field number from a schema import. */
+  fieldNumber?: number;
 }
 
 interface FieldPreviewProps {

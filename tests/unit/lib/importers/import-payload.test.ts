@@ -55,6 +55,21 @@ describe("buildImportAssetsPayload", () => {
     expect(fields.status.decorators).toMatchObject({ enumName: "OrderStatus" });
     expect(fields.card.decorators).toMatchObject({ governance: { protobufOneofGroup: "payment" } });
   });
+
+  it("carries the source format and protobuf field numbers (Story 15.8)", () => {
+    const payload = buildImportAssetsPayload(protoResult(), {
+      ...NO_SELECTION,
+      selectedEntities: [0],
+    });
+    expect(payload.sourceFormat).toBe("protobuf");
+    const card = payload.entities[0].fields.find((f) => f.name === "card");
+    expect(card?.fieldNumber).toBe(8);
+  });
+
+  it("defaults the source format to typespec for results that do not name one", () => {
+    const payload = buildImportAssetsPayload({ ...protoResult(), sourceFormat: undefined }, NO_SELECTION);
+    expect(payload.sourceFormat).toBe("typespec");
+  });
 });
 
 describe("parsedFieldToCreateFieldInput", () => {
