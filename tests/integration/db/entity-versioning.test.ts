@@ -124,6 +124,49 @@ describe("entity versioning schema", () => {
     }
   });
 
+  it("refuses a direct DELETE of a published version, but still cascades with its entity and its domain", async () => {
+    let domainId: string | undefined;
+    try {
+      const user = await prisma.user.findFirstOrThrow();
+      const s = stamp();
+      const d = await prisma.domain.create({ data: { name: `nodel-${s}`, slug: `nodel-${s}`, tenantId: TENANT } });
+      domainId = d.id;
+      const p = await prisma.product.create({ data: { domainId: d.id, name: "P", slug: `p-${s}` } });
+      const mk = (name: string) =>
+        prisma.entity.create({
+          data: { name, slug: `${name.toLowerCase()}-${s}`, tenantId: TENANT, domainId: d.id, productId: p.id, ownerId: user.id },
+        });
+      const publish = async (entityId: string) => {
+        const v = await prisma.entityVersion.create({
+          data: { entityId, resolvedSource: "model X {}", fieldSnapshot: [], publishedById: user.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL" },
+        });
+        await prisma.entity.update({ where: { id: entityId }, data: { latestVersionId: v.id, hasUnpublishedChanges: false } });
+        return v;
+      };
+      const e1 = await mk("One");
+      const v1 = await publish(e1.id);
+      const e2 = await mk("Two");
+      const v2 = await publish(e2.id);
+
+      // A direct delete is refused (raw SQL and through Prisma), whether or not it is the latest version.
+      await expect(prisma.$executeRaw`DELETE FROM "entity_versions" WHERE "id" = ${v1.id}`).rejects.toThrow(/cannot be deleted/);
+      await expect(prisma.entityVersion.delete({ where: { id: v1.id } })).rejects.toThrow(/cannot be deleted/);
+      await expect(prisma.entityVersion.deleteMany({ where: { entityId: e1.id } })).rejects.toThrow(/cannot be deleted/);
+      expect(await prisma.entityVersion.count({ where: { id: v1.id } })).toBe(1);
+
+      // Deleting the entity still cascades its version (the circular latestVersionId FK does not block it).
+      await prisma.entity.delete({ where: { id: e1.id } });
+      expect(await prisma.entityVersion.count({ where: { id: v1.id } })).toBe(0);
+
+      // Deleting the whole domain cascades domain -> entity -> version.
+      await prisma.domain.delete({ where: { id: d.id } });
+      domainId = undefined;
+      expect(await prisma.entityVersion.count({ where: { id: v2.id } })).toBe(0);
+    } finally {
+      if (domainId) await prisma.domain.deleteMany({ where: { id: domainId } });
+    }
+  });
+
   it("marks the stored source stale, keeps other metadata, copes with NULL metadata, and clears the marker (R42)", async () => {
     let domainId: string | undefined;
     try {

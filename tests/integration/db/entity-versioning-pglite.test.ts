@@ -52,6 +52,26 @@ describe("entity versioning migrations on PGlite", () => {
     expect(left.rows).toHaveLength(0);
   });
 
+  it("refuses a direct DELETE of a version but still cascades with its entity", async () => {
+    expect(applied).toContain("20261015_entity_versions_no_delete");
+
+    await db.exec(
+      `INSERT INTO "entities" ("id", "name", "slug", "tenantId", "ownerId", "updatedAt")
+       VALUES ('e3', 'E3', 'e3', 'tenant_default', 'u1', CURRENT_TIMESTAMP)`
+    );
+    await db.exec(
+      `INSERT INTO "entity_versions" ("id", "entityId", "major", "minor", "sequence", "resolvedSource", "fieldSnapshot", "changeKind", "publishedById")
+       VALUES ('v3', 'e3', 1, 0, 1, 'model E3 {}', '[]', 'INITIAL', 'u1')`
+    );
+    await db.exec(`UPDATE "entities" SET "latestVersionId" = 'v3', "hasUnpublishedChanges" = false WHERE "id" = 'e3'`);
+
+    await expect(db.exec(`DELETE FROM "entity_versions" WHERE "id" = 'v3'`)).rejects.toThrow(/cannot be deleted/);
+    expect((await db.query(`SELECT 1 FROM "entity_versions" WHERE "id" = 'v3'`)).rows).toHaveLength(1);
+
+    await db.exec(`DELETE FROM "entities" WHERE "id" = 'e3'`);
+    expect((await db.query(`SELECT 1 FROM "entity_versions" WHERE "id" = 'v3'`)).rows).toHaveLength(0);
+  });
+
   it("runs the stale-source statements (R42) with the same SQL text as PostgreSQL", async () => {
     await db.exec(
       `INSERT INTO "entities" ("id", "name", "slug", "tenantId", "ownerId", "updatedAt", "hasUnpublishedChanges")
