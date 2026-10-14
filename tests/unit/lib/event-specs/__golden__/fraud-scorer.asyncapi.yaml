@@ -1,0 +1,52 @@
+asyncapi: 3.0.0
+info:
+  title: fraud-scorer
+  version: '1.0'
+servers:
+  kafka-prod:
+    host: kafka-prod.internal:9092
+    protocol: kafka
+channels:
+  orders:
+    address: payments.orders.v1
+    messages:
+      OrderCreated:
+        $ref: '#/components/messages/OrderCreated'
+    bindings:
+      kafka:
+        partitions: 12
+operations:
+  consumeOrderCreated:
+    action: receive
+    channel:
+      $ref: '#/channels/orders'
+    messages:
+      - $ref: '#/channels/orders/messages/OrderCreated'
+components:
+  messages:
+    OrderCreated:
+      contentType: avro/binary
+      traits:
+        - $ref: '#/components/messageTraits/CloudEvents'
+      payload:
+        schemaFormat: application/vnd.apache.avro+json;version=1.9.0
+        schema:
+          type: record
+          name: Order
+          namespace: acme.payments.checkout
+          fields: []
+      bindings:
+        kafka:
+          key:
+            type: string
+  messageTraits:
+    CloudEvents:
+      headers:
+        type: object
+        properties:
+          ce_id:
+            type: string
+          ce_type:
+            type: string
+          ce_source:
+            type: string
