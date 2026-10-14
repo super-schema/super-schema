@@ -1,0 +1,121 @@
+import "dotenv/config";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { PrismaClient, type Prisma } from "@/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+let prisma: PrismaClient;
+const TENANT = "tenant_default";
+
+// The statement shipped in the backfill migration, re-run here to prove behaviour + idempotency.
+const BACKFILL_SQL = readFileSync(
+  join(process.cwd(), "prisma/migrations/20261015_entity_versioning_backfill/migration.sql"),
+  "utf8"
+)
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("--"))
+  .join("\n");
+
+class Rollback extends Error {}
+
+/** Run fn in a transaction that is always rolled back — the backfill touches every eligible row. */
+async function inRolledBackTx(fn: (tx: Prisma.TransactionClient) => Promise<void>) {
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        await fn(tx);
+        throw new Rollback();
+      },
+      { timeout: 30_000 }
+    );
+  } catch (e) {
+    if (!(e instanceof Rollback)) throw e;
+  }
+}
+
+function stamp() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+beforeAll(async () => {
+  prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
+});
+afterAll(async () => prisma.$disconnect());
+
+describe("entity versioning schema", () => {
+  it("backfills INITIAL 1.0 for ACTIVE entities with source, leaves DRAFT and source-less ones, and is idempotent", async () => {
+    await inRolledBackTx(async (tx) => {
+      const user = await tx.user.findFirstOrThrow();
+      const s = stamp();
+      const d = await tx.domain.create({ data: { name: `bf-${s}`, slug: `bf-${s}`, tenantId: TENANT } });
+      const p = await tx.product.create({ data: { domainId: d.id, name: "P", slug: `p-${s}` } });
+      const base = { tenantId: TENANT, domainId: d.id, productId: p.id, ownerId: user.id };
+
+      const active = await tx.entity.create({
+        data: {
+          ...base, name: "Active", slug: `active-${s}`, status: "ACTIVE", version: 3,
+          typespecSource: "model Active { id: string; }",
+          fields: { create: [{ name: "id", slug: "id", type: "string", nullable: false, isKey: true, sortOrder: 0 }] },
+        },
+      });
+      const draft = await tx.entity.create({
+        data: { ...base, name: "Drafty", slug: `drafty-${s}`, status: "DRAFT", typespecSource: "model Drafty {}" },
+      });
+      const noSource = await tx.entity.create({
+        data: { ...base, name: "NoSource", slug: `nosource-${s}`, status: "ACTIVE" },
+      });
+
+      await tx.$executeRawUnsafe(BACKFILL_SQL);
+      await tx.$executeRawUnsafe(BACKFILL_SQL);
+
+      const versions = await tx.entityVersion.findMany({ where: { entityId: active.id } });
+      expect(versions).toHaveLength(1);
+      expect(versions[0]).toMatchObject({
+        major: 1, minor: 0, sequence: 3, changeKind: "INITIAL",
+        resolvedSource: "model Active { id: string; }", publishedById: user.id,
+      });
+      expect((versions[0].fieldSnapshot as Array<{ name: string; isKey: boolean; aliases: string[] }>)[0]).toMatchObject({
+        name: "id", isKey: true, aliases: [],
+      });
+
+      const a = await tx.entity.findUniqueOrThrow({ where: { id: active.id } });
+      expect(a).toMatchObject({ latestVersionId: versions[0].id, hasUnpublishedChanges: false, version: 3 });
+
+      expect(await tx.entityVersion.count({ where: { entityId: { in: [draft.id, noSource.id] } } })).toBe(0);
+      const dr = await tx.entity.findUniqueOrThrow({ where: { id: draft.id } });
+      expect(dr).toMatchObject({ latestVersionId: null, hasUnpublishedChanges: true });
+    });
+  });
+
+  it("keeps versions immutable, unique per MAJOR.MINOR and sequence, and cascades them with the entity", async () => {
+    let domainId: string | undefined;
+    try {
+      const user = await prisma.user.findFirstOrThrow();
+      const s = stamp();
+      const d = await prisma.domain.create({ data: { name: `imm-${s}`, slug: `imm-${s}`, tenantId: TENANT } });
+      domainId = d.id;
+      const p = await prisma.product.create({ data: { domainId: d.id, name: "P", slug: `p-${s}` } });
+      const e = await prisma.entity.create({
+        data: { name: "Imm", slug: `imm-${s}`, tenantId: TENANT, domainId: d.id, productId: p.id, ownerId: user.id },
+      });
+      const row = { entityId: e.id, resolvedSource: "model Imm {}", fieldSnapshot: [], publishedById: user.id };
+      const v = await prisma.entityVersion.create({ data: { ...row, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL" } });
+      await prisma.entity.update({ where: { id: e.id }, data: { latestVersionId: v.id, hasUnpublishedChanges: false } });
+
+      await expect(prisma.$executeRaw`UPDATE "entity_versions" SET "minor" = 1 WHERE "id" = ${v.id}`).rejects.toThrow(/immutable/);
+      await expect(
+        prisma.entityVersion.create({ data: { ...row, major: 1, minor: 0, sequence: 2, changeKind: "MINOR" } })
+      ).rejects.toThrow(/Unique constraint/);
+      await expect(
+        prisma.entityVersion.create({ data: { ...row, major: 1, minor: 1, sequence: 1, changeKind: "MINOR" } })
+      ).rejects.toThrow(/Unique constraint/);
+
+      // Circular FK (entities.latestVersionId ↔ entity_versions.entityId) must not block the delete.
+      await prisma.entity.delete({ where: { id: e.id } });
+      expect(await prisma.entityVersion.count({ where: { id: v.id } })).toBe(0);
+    } finally {
+      if (domainId) await prisma.domain.deleteMany({ where: { id: domainId } });
+    }
+  });
+});

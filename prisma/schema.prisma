@@ -25,6 +25,7 @@ model User {
   roles         UserRole[]
   notifications Notification[]
   webhooks      WebhookEndpoint[] @relation("WebhookCreator")
+  publishedEntityVersions EntityVersion[] @relation("EntityVersionPublisher")
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -189,6 +190,8 @@ model Entity {
   metadata       Json?
   typespecSource String?
   parentEntityId String?
+  latestVersionId       String?          @unique
+  hasUnpublishedChanges Boolean          @default(true)
   fields         Field[]
   services       ServiceDefinition[] @relation("EntityServices")
   pullRequests   GitPullRequest[]
@@ -201,6 +204,8 @@ model Entity {
   owner         User     @relation(fields: [ownerId], references: [id])
   parentEntity  Entity?  @relation("EntityInheritance", fields: [parentEntityId], references: [id])
   childEntities Entity[] @relation("EntityInheritance")
+  versions      EntityVersion[] @relation("EntityVersions")
+  latestVersion EntityVersion?  @relation("EntityLatestVersion", fields: [latestVersionId], references: [id], onDelete: SetNull)
 
   @@unique([slug, productId])
   @@unique([name, productId])
@@ -288,6 +293,85 @@ model Field {
   @@unique([entityId, name])
   @@unique([entityId, slug])
   @@map("fields")
+}
+
+// ============================================================
+// Entity Versioning (Epic 14 — Draft + Publish, spec §5)
+// ============================================================
+
+enum EntityVersionChangeKind {
+  INITIAL
+  MINOR
+  MAJOR
+}
+
+/// Immutable published snapshot of an entity draft (DB trigger forbids UPDATE).
+model EntityVersion {
+  id                  String                  @id @default(cuid())
+  entityId            String
+  major               Int
+  minor               Int
+  /// Monotonic publish counter; Entity.version mirrors the latest one.
+  sequence            Int
+  /// Phase 2a: the entity's TypeSpec source. Phase 2b adds frozen Data Type copies (14.2).
+  resolvedSource      String
+  /// FieldSnapshot[] (src/services/version-history/version.types.ts)
+  fieldSnapshot       Json
+  changeKind          EntityVersionChangeKind
+  /// Per-format compatibility findings — {} until Story 14.3.
+  compatReport        Json                    @default("{}")
+  changeSummary       String?
+  publishedById       String
+  publishedAt         DateTime                @default(now())
+  /// Unused until MAJOR governance (14.4).
+  governanceRequestId String?
+
+  entity      Entity  @relation("EntityVersions", fields: [entityId], references: [id], onDelete: Cascade)
+  publishedBy User    @relation("EntityVersionPublisher", fields: [publishedById], references: [id])
+  latestOf    Entity? @relation("EntityLatestVersion")
+
+  @@unique([entityId, major, minor])
+  @@unique([entityId, sequence])
+  @@map("entity_versions")
+}
+
+enum SchemaReferenceFromKind {
+  ENTITY_VERSION
+  MESSAGE
+  MESSAGE_VERSION
+  EVENT_SPEC
+  EVENT_SPEC_VERSION
+  TRAIT
+}
+
+enum SchemaReferenceRole {
+  FIELD
+  PAYLOAD
+  HEADERS
+  KEY
+  MESSAGE
+}
+
+enum SchemaReferenceToKind {
+  ENTITY_VERSION
+  MESSAGE_VERSION
+}
+
+/// One edge table for every pinned link (spec §6.1). Polymorphic — no FKs.
+model SchemaReference {
+  id        String                  @id @default(cuid())
+  fromKind  SchemaReferenceFromKind
+  fromId    String
+  role      SchemaReferenceRole
+  toKind    SchemaReferenceToKind
+  toId      String
+  isDraft   Boolean                 @default(false)
+  createdAt DateTime                @default(now())
+
+  @@unique([fromKind, fromId, role, toKind, toId])
+  @@index([toKind, toId])
+  @@index([fromKind, fromId])
+  @@map("schema_references")
 }
 
 // ============================================================
