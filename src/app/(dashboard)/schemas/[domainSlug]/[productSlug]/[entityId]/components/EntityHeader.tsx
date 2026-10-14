@@ -7,7 +7,7 @@ import { ChevronRight, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
+import { DeprecationBanner, type ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import { RetirementBanner } from "@/components/custom/RetirementBanner";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { levelLabel } from "@/lib/levels";
@@ -48,6 +48,8 @@ interface EntityHeaderProps {
   statusError: string | null;
   toolbar?: React.ReactNode;
   showSaved?: boolean;
+  /** The deprecation replacement, resolved server-side (null = named but not found). */
+  replacementEntity?: ReplacementEntityLink | null;
 }
 
 export function EntityHeader({
@@ -59,6 +61,7 @@ export function EntityHeader({
   statusError,
   toolbar,
   showSaved = false,
+  replacementEntity,
 }: EntityHeaderProps) {
   const currentStatus = getStatusOption(entity.status);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -281,7 +284,7 @@ export function EntityHeader({
 
       {/* Banners */}
       {entity.status === "DEPRECATED" && (
-        <DeprecationBanner metadata={entity.metadata} domainSlug={entity.domainSlug} />
+        <DeprecationBanner metadata={entity.metadata} replacementEntity={replacementEntity} />
       )}
       {entity.status === "RETIRED" && (
         <RetirementBanner metadata={entity.metadata} />

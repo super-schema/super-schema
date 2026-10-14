@@ -46,12 +46,6 @@ function GapPanelForType(gapType: string): string {
 
 /** Entity deep link that opens the panel matching the gap. null slugs = tenant-level entity. */
 export function gapHref(gap: ComplianceGap): string {
-  const panel = GapPanelForType(gap.gapType);
-  // undefined (not null) means the row was never resolved to route slugs.
-  if (gap.domainSlug === undefined || gap.productSlug === undefined) {
-    const params = new URLSearchParams({ entityId: gap.entityId, fieldId: gap.fieldId, panel });
-    return `/schemas?${params.toString()}`;
-  }
   return assetHref(
     {
       kind: "entity",
@@ -59,7 +53,7 @@ export function gapHref(gap: ComplianceGap): string {
       domainSlug: gap.domainSlug,
       productSlug: gap.productSlug,
     },
-    { query: { fieldId: gap.fieldId, panel } }
+    { query: { fieldId: gap.fieldId, panel: GapPanelForType(gap.gapType) } }
   );
 }
 

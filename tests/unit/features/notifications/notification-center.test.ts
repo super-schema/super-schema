@@ -113,14 +113,13 @@ describe("Notification Center Logic", () => {
   });
 
   describe("Click-to-navigate", () => {
-    it("falls back to the schemas index when the notification lacks route slugs", () => {
+    it("has no URL when the notification lacks route slugs", () => {
       const notification = makeNotification({
         type: "CHANGE_COMPLETE",
         entityRef: { entityId: "entity-1" },
       });
 
-      const url = getNotificationNavigationUrl(notification);
-      expect(url).toBe("/schemas?entityId=entity-1");
+      expect(getNotificationNavigationUrl(notification)).toBeNull();
     });
 
     it("navigates to the entity route when domain, product and entity slugs are available", () => {
@@ -133,14 +132,13 @@ describe("Notification Center Logic", () => {
       expect(url).toBe("/schemas/crm/orders/customer");
     });
 
-    it("falls back to the schemas index when productSlug is missing", () => {
+    it("has no URL when productSlug is missing", () => {
       const notification = makeNotification({
         type: "CHANGE_COMPLETE",
         entityRef: { entityId: "entity-1", entitySlug: "customer", domainSlug: "crm" },
       });
 
-      const url = getNotificationNavigationUrl(notification);
-      expect(url).toBe("/schemas?entityId=entity-1");
+      expect(getNotificationNavigationUrl(notification)).toBeNull();
     });
 
     it("navigates a tenant-level entity (null slugs) to its Enterprise route", () => {
@@ -181,20 +179,28 @@ describe("Notification Center Logic", () => {
       expect(url).toBe("/schemas/crm/orders/customer/fields/email");
     });
 
-    it("preserves version query params on the safe fallback route", () => {
+    it("preserves the version query param on a resolved entity route", () => {
+      const notification = makeNotification({
+        type: "CHANGE_COMPLETE",
+        entityRef: { entityId: "entity-1", entitySlug: "customer", domainSlug: "crm", productSlug: "orders", versionId: "v3" },
+      });
+
+      expect(getNotificationNavigationUrl(notification)).toBe("/schemas/crm/orders/customer?version=v3");
+    });
+
+    it("has no URL for an unresolved notification even when it carries a version", () => {
       const notification = makeNotification({
         type: "CHANGE_COMPLETE",
         entityRef: { entityId: "entity-1", versionId: "v3" },
       });
 
-      const url = getNotificationNavigationUrl(notification);
-      expect(url).toBe("/schemas?entityId=entity-1&version=v3");
+      expect(getNotificationNavigationUrl(notification)).toBeNull();
     });
 
     it("adds governance panel param for APPROVAL_REQUEST", () => {
       const notification = makeNotification({
         type: "APPROVAL_REQUEST",
-        entityRef: { entityId: "entity-1", versionId: "v2" },
+        entityRef: { entityId: "entity-1", entitySlug: "customer", domainSlug: "crm", productSlug: "orders", versionId: "v2" },
       });
 
       const url = getNotificationNavigationUrl(notification);

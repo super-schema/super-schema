@@ -65,7 +65,7 @@ describe("DeploymentOverviewTable navigation", () => {
     );
   });
 
-  it("falls back to schemas index instead of generating an underscore route", () => {
+  it("renders an entity without route slugs as plain text, not a link", () => {
     render(
       <DeploymentOverviewTable
         targetFormats={["typescript"]}
@@ -81,8 +81,29 @@ describe("DeploymentOverviewTable navigation", () => {
       />
     );
 
-    expect(screen.getByRole("link", { name: "Customer" }).getAttribute("href")).toBe(
-      "/schemas?entityId=entity-1"
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText("Customer")).toBeTruthy();
+  });
+
+  it("renders a slug-enriched row missing its product slug as plain text", () => {
+    render(
+      <DeploymentOverviewTable
+        targetFormats={["typescript"]}
+        rows={[
+          {
+            entityId: "entity-1",
+            entityName: "Customer",
+            entitySlug: "customer",
+            domain: "CRM",
+            domainSlug: "crm",
+            currentVersion: "v1",
+            targets: [],
+          },
+        ]}
+      />
     );
+
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByText("Customer")).toBeTruthy();
   });
 });

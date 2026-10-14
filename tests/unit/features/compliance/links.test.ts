@@ -5,6 +5,8 @@ import type { ComplianceFieldResult, ComplianceGap } from "@/types/schemas/compl
 
 const field = (overrides: Partial<ComplianceFieldResult> = {}) =>
   ({
+    domainSlug: "commerce",
+    productSlug: "orders",
     entityId: "ent-1",
     entityName: "Customer",
     entitySlug: "customer",
@@ -15,6 +17,8 @@ const field = (overrides: Partial<ComplianceFieldResult> = {}) =>
 
 const gap = (overrides: Partial<ComplianceGap> = {}) =>
   ({
+    domainSlug: "commerce",
+    productSlug: "orders",
     entityId: "ent-1",
     entityName: "Customer",
     entitySlug: "customer",
@@ -28,7 +32,7 @@ const gap = (overrides: Partial<ComplianceGap> = {}) =>
 
 describe("compliance results entityHref", () => {
   it("links a placed entity through assetHref", () => {
-    expect(entityHref(field({ domainSlug: "commerce", productSlug: "orders" }))).toBe(
+    expect(entityHref(field())).toBe(
       "/schemas/commerce/orders/customer"
     );
   });
@@ -39,14 +43,14 @@ describe("compliance results entityHref", () => {
     );
   });
 
-  it("falls back to the schemas index for a row without route slugs", () => {
-    expect(entityHref(field())).toBe("/schemas?entityId=ent-1");
+  it("uses the entity id when the row has no entity slug", () => {
+    expect(entityHref(field({ entitySlug: undefined }))).toBe("/schemas/commerce/orders/ent-1");
   });
 });
 
 describe("compliance gapHref", () => {
   it("opens the matching panel on a placed entity", () => {
-    expect(gapHref(gap({ domainSlug: "commerce", productSlug: "orders" }))).toBe(
+    expect(gapHref(gap())).toBe(
       "/schemas/commerce/orders/customer?fieldId=fld-1&panel=classification"
     );
   });
@@ -57,7 +61,9 @@ describe("compliance gapHref", () => {
     );
   });
 
-  it("falls back to the schemas index for a gap without route slugs", () => {
-    expect(gapHref(gap())).toBe("/schemas?entityId=ent-1&fieldId=fld-1&panel=classification");
+  it("uses the entity id when the gap has no entity slug", () => {
+    expect(gapHref(gap({ entitySlug: undefined }))).toBe(
+      "/schemas/commerce/orders/ent-1?fieldId=fld-1&panel=classification"
+    );
   });
 });

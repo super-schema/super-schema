@@ -37,6 +37,7 @@ import { formatDateTime } from "@/lib/date-format";
 import { isReadOnly } from "@/lib/entity-lifecycle";
 import { trackRecentEntity } from "@/lib/recent-entities";
 import { EntityHeader } from "./components/EntityHeader";
+import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import { EntityToolbar } from "./components/EntityToolbar";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 import { InlineEntityMeta } from "./components/InlineEntityMeta";
@@ -105,9 +106,14 @@ export interface EntityWorkspaceProps {
   domainPolicy: Record<string, unknown> | null;
   apiServiceId: string | null;
   apiOperations: ApiOperationData[];
+  /**
+   * The entity named by `metadata.deprecation.replacementEntityId`, resolved by the
+   * loader. null when none is named or it cannot be found in the tenant.
+   */
+  replacementEntity?: ReplacementEntityLink | null;
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -534,6 +540,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         isPending={isPending}
         statusError={statusError}
         showSaved={showSaved}
+        replacementEntity={replacementEntity}
         toolbar={
           <EntityToolbar
             onDelete={readOnly_ ? undefined : () => setDeleteConfirmOpen(true)}

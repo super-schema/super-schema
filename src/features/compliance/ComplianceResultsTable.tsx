@@ -9,11 +9,8 @@ import {
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { ComplianceFieldResult } from "@/types/schemas/compliance";
 
-/** undefined slugs = unresolved row; null slugs = tenant-level entity (assetHref handles it). */
+/** Entity route of a result row; null slugs are a tenant-level entity (assetHref handles it). */
 export function entityHref(field: ComplianceFieldResult): string {
-  if (field.domainSlug === undefined || field.productSlug === undefined) {
-    return `/schemas?entityId=${encodeURIComponent(field.entityId)}`;
-  }
   return assetHref({
     kind: "entity",
     slug: field.entitySlug || field.entityId,

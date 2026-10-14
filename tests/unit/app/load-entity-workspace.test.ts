@@ -146,4 +146,73 @@ describe("loadEntityWorkspace", () => {
       expect.objectContaining({ where: { id: "cuid-123", productId: null, domainId: null, tenantId: "tenant-1" } })
     );
   });
+
+  describe("deprecation replacement", () => {
+    const deprecated = (replacementEntityId: string | null | undefined) =>
+      entityRow({
+        status: "DEPRECATED",
+        metadata: { deprecation: { deprecated: true, since: "2026-01-01", replacementEntityId } },
+      });
+
+    it("resolves a product replacement's slugs within the same tenant", async () => {
+      mockEntityFindFirst
+        .mockResolvedValueOnce(deprecated("ent-2"))
+        .mockResolvedValueOnce({
+          name: "Order v2",
+          slug: "order-v2",
+          domain: { slug: "payments" },
+          product: { slug: "checkout" },
+        });
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(mockEntityFindFirst).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ where: { id: "ent-2", tenantId: "tenant-1" } })
+      );
+      expect(data?.props.replacementEntity).toEqual({
+        name: "Order v2",
+        slug: "order-v2",
+        domainSlug: "payments",
+        productSlug: "checkout",
+      });
+    });
+
+    it("carries null slugs for a tenant-level replacement", async () => {
+      mockEntityFindFirst
+        .mockResolvedValueOnce(deprecated("ent-2"))
+        .mockResolvedValueOnce({ name: "Customer v2", slug: "customer-v2", domain: null, product: null });
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(data?.props.replacementEntity).toEqual({
+        name: "Customer v2",
+        slug: "customer-v2",
+        domainSlug: null,
+        productSlug: null,
+      });
+    });
+
+    it("yields null when the replacement entity cannot be found", async () => {
+      mockEntityFindFirst.mockResolvedValueOnce(deprecated("ent-gone")).mockResolvedValueOnce(null);
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(data?.props.replacementEntity).toBeNull();
+    });
+
+    it("does not look anything up when no replacement is named or the entity is not deprecated", async () => {
+      mockEntityFindFirst.mockResolvedValueOnce(deprecated(null));
+      const none = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+      expect(none?.props.replacementEntity).toBeNull();
+
+      mockEntityFindFirst.mockClear();
+      mockEntityFindFirst.mockResolvedValueOnce(
+        entityRow({ metadata: { deprecation: { deprecated: true, replacementEntityId: "ent-2" } } })
+      );
+      const active = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+      expect(active?.props.replacementEntity).toBeNull();
+      expect(mockEntityFindFirst).toHaveBeenCalledTimes(1);
+    });
+  });
 });
