@@ -553,10 +553,12 @@ export type DomainCreateNestedOneWithoutEntitiesInput = {
   connect?: Prisma.DomainWhereUniqueInput
 }
 
-export type DomainUpdateOneRequiredWithoutEntitiesNestedInput = {
+export type DomainUpdateOneWithoutEntitiesNestedInput = {
   create?: Prisma.XOR<Prisma.DomainCreateWithoutEntitiesInput, Prisma.DomainUncheckedCreateWithoutEntitiesInput>
   connectOrCreate?: Prisma.DomainCreateOrConnectWithoutEntitiesInput
   upsert?: Prisma.DomainUpsertWithoutEntitiesInput
+  disconnect?: Prisma.DomainWhereInput | boolean
+  delete?: Prisma.DomainWhereInput | boolean
   connect?: Prisma.DomainWhereUniqueInput
   update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutEntitiesInput, Prisma.DomainUpdateWithoutEntitiesInput>, Prisma.DomainUncheckedUpdateWithoutEntitiesInput>
 }
@@ -611,10 +613,12 @@ export type DomainCreateNestedOneWithoutSharedEnumsInput = {
   connect?: Prisma.DomainWhereUniqueInput
 }
 
-export type DomainUpdateOneRequiredWithoutSharedEnumsNestedInput = {
+export type DomainUpdateOneWithoutSharedEnumsNestedInput = {
   create?: Prisma.XOR<Prisma.DomainCreateWithoutSharedEnumsInput, Prisma.DomainUncheckedCreateWithoutSharedEnumsInput>
   connectOrCreate?: Prisma.DomainCreateOrConnectWithoutSharedEnumsInput
   upsert?: Prisma.DomainUpsertWithoutSharedEnumsInput
+  disconnect?: Prisma.DomainWhereInput | boolean
+  delete?: Prisma.DomainWhereInput | boolean
   connect?: Prisma.DomainWhereUniqueInput
   update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutSharedEnumsInput, Prisma.DomainUpdateWithoutSharedEnumsInput>, Prisma.DomainUncheckedUpdateWithoutSharedEnumsInput>
 }
@@ -625,10 +629,12 @@ export type DomainCreateNestedOneWithoutCustomScalarsInput = {
   connect?: Prisma.DomainWhereUniqueInput
 }
 
-export type DomainUpdateOneRequiredWithoutCustomScalarsNestedInput = {
+export type DomainUpdateOneWithoutCustomScalarsNestedInput = {
   create?: Prisma.XOR<Prisma.DomainCreateWithoutCustomScalarsInput, Prisma.DomainUncheckedCreateWithoutCustomScalarsInput>
   connectOrCreate?: Prisma.DomainCreateOrConnectWithoutCustomScalarsInput
   upsert?: Prisma.DomainUpsertWithoutCustomScalarsInput
+  disconnect?: Prisma.DomainWhereInput | boolean
+  delete?: Prisma.DomainWhereInput | boolean
   connect?: Prisma.DomainWhereUniqueInput
   update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutCustomScalarsInput, Prisma.DomainUpdateWithoutCustomScalarsInput>, Prisma.DomainUncheckedUpdateWithoutCustomScalarsInput>
 }
@@ -639,10 +645,12 @@ export type DomainCreateNestedOneWithoutUnionTypesInput = {
   connect?: Prisma.DomainWhereUniqueInput
 }
 
-export type DomainUpdateOneRequiredWithoutUnionTypesNestedInput = {
+export type DomainUpdateOneWithoutUnionTypesNestedInput = {
   create?: Prisma.XOR<Prisma.DomainCreateWithoutUnionTypesInput, Prisma.DomainUncheckedCreateWithoutUnionTypesInput>
   connectOrCreate?: Prisma.DomainCreateOrConnectWithoutUnionTypesInput
   upsert?: Prisma.DomainUpsertWithoutUnionTypesInput
+  disconnect?: Prisma.DomainWhereInput | boolean
+  delete?: Prisma.DomainWhereInput | boolean
   connect?: Prisma.DomainWhereUniqueInput
   update?: Prisma.XOR<Prisma.XOR<Prisma.DomainUpdateToOneWithWhereWithoutUnionTypesInput, Prisma.DomainUpdateWithoutUnionTypesInput>, Prisma.DomainUncheckedUpdateWithoutUnionTypesInput>
 }

@@ -15,7 +15,7 @@ import {
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { generateSlug, isReservedEntityRouteSlug } from "@/lib/slug";
-import { ensureDefaultProductId } from "@/lib/org-defaults";
+import { ensureDefaultProductId, getDomainTenantId } from "@/lib/org-defaults";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -59,11 +59,13 @@ export async function createEntity(
       entityId: "pending",
       userId: ctx.userId,
       fn: async () => {
+        const tenantId = await getDomainTenantId(parsed.data.domainId);
         const productId = await ensureDefaultProductId(parsed.data.domainId);
         return prisma.entity.create({
           data: {
             name: parsed.data.name,
             slug: entitySlug,
+            tenantId,
             domainId: parsed.data.domainId,
             productId,
             description: parsed.data.description,

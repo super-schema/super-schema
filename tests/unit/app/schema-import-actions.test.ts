@@ -20,6 +20,9 @@ const { mockAuth, mockPrisma, mockTx } = vi.hoisted(() => ({
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    domain: {
+      findUniqueOrThrow: vi.fn(),
+    },
     serviceDefinition: {
       create: vi.fn(),
     },
@@ -53,6 +56,7 @@ describe("schema import actions", () => {
     mockTx.entity.create.mockImplementation(async ({ data }) => ({
       id: `entity-${data.name}`,
     }));
+    mockTx.domain.findUniqueOrThrow.mockResolvedValue({ tenantId: "tenant-1" });
     mockTx.product.findUnique.mockResolvedValue({ id: "prd-default" });
     mockTx.product.create.mockResolvedValue({ id: "prd-default" });
     mockTx.entity.findMany.mockResolvedValue([]);
@@ -141,6 +145,7 @@ describe("schema import actions", () => {
         data: expect.objectContaining({
           name: "Customer",
           ownerId: "user-1",
+          tenantId: "tenant-1",
         }),
       })
     );

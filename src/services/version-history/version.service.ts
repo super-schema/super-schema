@@ -77,7 +77,7 @@ function toEntitySnapshot(entity: {
   description: string;
   status: string;
   version: number;
-  domainId: string;
+  domainId: string | null;
   metadata: unknown;
 }): EntitySnapshot {
   return {

@@ -19,6 +19,7 @@ import type { ChangeRecord } from "@/services/version-history/version.types";
 import type { MigrationArtifacts } from "@/lib/migration/migration.types";
 import type { TargetOutput } from "@/lib/emission/emission.types";
 import { slugify, generateExportFiles } from "./git.service";
+import { domainLabel } from "@/lib/entity-placement";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -341,7 +342,7 @@ export async function exportWithReview(
     const entityDefinition = {
       name: entity.name,
       description: entity.description,
-      domain: entity.domain.name,
+      domain: domainLabel(entity.domain),
       version,
       status: entity.status,
       fields: entity.fields.map((f) => ({
@@ -358,7 +359,7 @@ export async function exportWithReview(
 
     const files = generateExportFiles(
       config.basePath,
-      entity.domain.name,
+      domainLabel(entity.domain),
       entity.name,
       entityDefinition,
       emittedOutputs
@@ -397,7 +398,7 @@ export async function exportWithReview(
       (metadata.emittedOutputs as Record<string, TargetOutput>) ?? {};
 
     const prBody = buildPrBody({
-      entity: { ...entity, domain: entity.domain },
+      entity: { ...entity, domain: entity.domain ?? { name: domainLabel(null) } },
       version: { id: versionId, version },
       changeInfo,
       emittedOutputs,
@@ -441,7 +442,7 @@ export async function exportWithReview(
     const entityDefinition = {
       name: entity.name,
       description: entity.description,
-      domain: entity.domain.name,
+      domain: domainLabel(entity.domain),
       version,
       status: entity.status,
       fields: entity.fields.map((f) => ({
@@ -458,7 +459,7 @@ export async function exportWithReview(
 
     const files = generateExportFiles(
       config.basePath,
-      entity.domain.name,
+      domainLabel(entity.domain),
       entity.name,
       entityDefinition,
       emittedOutputs

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { EntityWorkspace } from "./entity-workspace";
+import { domainLabel, productSegment } from "@/lib/entity-placement";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string; entityId: string }>;
@@ -51,9 +52,10 @@ export default async function EntityDetailPage({ params }: Props) {
     notFound();
   }
 
+  // Tenant-level entities have no domain and therefore no domain policy.
   const domainPolicy =
-    (entity.domain as { policyTemplate?: Record<string, unknown> })
-      .policyTemplate ?? null;
+    (entity.domain as { policyTemplate?: Record<string, unknown> } | null)
+      ?.policyTemplate ?? null;
 
   return (
     <EntityWorkspace
@@ -65,10 +67,10 @@ export default async function EntityDetailPage({ params }: Props) {
         status: entity.status,
         version: entity.version,
         domainId: entity.domainId,
-        domainName: entity.domain.name,
+        domainName: domainLabel(entity.domain),
         domainSlug,
-        productSlug: entity.product.slug,
-        productName: entity.product.name,
+        productSlug: productSegment(entity.product),
+        productName: entity.product?.name ?? null,
         metadata: entity.metadata as Record<string, unknown> | null,
       }}
       domainPolicy={domainPolicy as Record<string, unknown> | null}

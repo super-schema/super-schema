@@ -13,6 +13,9 @@ const { mockAuth, mockPrisma } = vi.hoisted(() => ({
       findUnique: vi.fn().mockResolvedValue({ id: "prd-default" }),
       create: vi.fn().mockResolvedValue({ id: "prd-default" }),
     },
+    domain: {
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ tenantId: "tenant-1" }),
+    },
     auditLog: {
       create: vi.fn(),
     },
@@ -66,7 +69,7 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
     });
     expect(mockPrisma.entity.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ ownerId: "current-user-id" }),
+        data: expect.objectContaining({ ownerId: "current-user-id", tenantId: "tenant-1" }),
       })
     );
     expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(

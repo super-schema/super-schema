@@ -69,7 +69,8 @@ export type ComplianceFieldResult = {
   encryption: string | null;
   targetSystems: string[];
   domain: string;
-  domainId: string;
+  /** null for tenant-level entities (no domain placement). */
+  domainId: string | null;
 };
 
 // ============================================================

@@ -54,3 +54,19 @@ export async function ensureDefaultProductId(
   });
   return created.id;
 }
+
+/**
+ * Resolve the tenant that owns a domain. Asset rows (entities, data types,
+ * APIs) carry their own `tenantId` so tenant-level rows need no domain; domain-
+ * and product-level creates inherit it from the parent domain.
+ */
+export async function getDomainTenantId(
+  domainId: string,
+  db: Db = defaultPrisma
+): Promise<string> {
+  const domain = await db.domain.findUniqueOrThrow({
+    where: { id: domainId },
+    select: { tenantId: true },
+  });
+  return domain.tenantId;
+}

@@ -61,7 +61,8 @@ export interface ApiOperationData {
 interface ApiTabProps {
   entityId: string;
   entityName: string;
-  domainId: string;
+  /** null for tenant-level entities, which cannot host an API service yet. */
+  domainId: string | null;
   serviceId: string | null;
   initialOperations: ApiOperationData[];
   fields: { name: string; type: string }[];
@@ -172,6 +173,10 @@ export function ApiTab({
     startTransition(async () => {
       let targetServiceId = serviceId;
       if (!targetServiceId) {
+        if (!domainId) {
+          toast.error("Place this entity in a product before adding API operations.");
+          return;
+        }
         const serviceResult = await getOrCreateEntityServiceAction(domainId, entityId, entityName);
         if ("error" in serviceResult) {
           toast.error(serviceResult.error);

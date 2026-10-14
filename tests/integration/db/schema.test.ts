@@ -53,6 +53,7 @@ describe("Database Schema", () => {
       data: {
         name: "Customer",
         slug: "customer",
+        tenantId: TEST_TENANT_ID,
         domainId: domain.id,
         productId,
         ownerId: user.id,
@@ -68,6 +69,7 @@ describe("Database Schema", () => {
         data: {
           name: "Customer",
           slug: "customer",
+          tenantId: TEST_TENANT_ID,
           domainId: domain.id,
           productId,
           ownerId: user.id,
@@ -90,6 +92,7 @@ describe("Database Schema", () => {
       data: {
         name: "Order",
         slug: "order",
+        tenantId: TEST_TENANT_ID,
         domainId: domain.id,
         productId: await makeProduct(domain.id),
         ownerId: user.id,
@@ -138,6 +141,7 @@ describe("Database Schema", () => {
       data: {
         name: "Product",
         slug: "product",
+        tenantId: TEST_TENANT_ID,
         domainId: domain.id,
         productId: await makeProduct(domain.id),
         ownerId: user.id,

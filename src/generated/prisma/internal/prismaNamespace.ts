@@ -3408,6 +3408,7 @@ export const EntityScalarFieldEnum = {
   id: 'id',
   name: 'name',
   slug: 'slug',
+  tenantId: 'tenantId',
   domainId: 'domainId',
   productId: 'productId',
   version: 'version',
@@ -3761,7 +3762,9 @@ export const SharedEnumScalarFieldEnum = {
   name: 'name',
   values: 'values',
   description: 'description',
+  tenantId: 'tenantId',
   domainId: 'domainId',
+  productId: 'productId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -3776,7 +3779,9 @@ export const CustomScalarScalarFieldEnum = {
   format: 'format',
   pattern: 'pattern',
   description: 'description',
+  tenantId: 'tenantId',
   domainId: 'domainId',
+  productId: 'productId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -3789,7 +3794,9 @@ export const UnionTypeScalarFieldEnum = {
   name: 'name',
   memberTypes: 'memberTypes',
   description: 'description',
+  tenantId: 'tenantId',
   domainId: 'domainId',
+  productId: 'productId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -3802,7 +3809,9 @@ export const ServiceDefinitionScalarFieldEnum = {
   name: 'name',
   description: 'description',
   basePath: 'basePath',
+  tenantId: 'tenantId',
   domainId: 'domainId',
+  productId: 'productId',
   scope: 'scope',
   entityId: 'entityId',
   createdAt: 'createdAt',

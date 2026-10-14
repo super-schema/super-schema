@@ -29,7 +29,8 @@ export interface EntitySnapshot {
   description: string;
   status: string;
   version: number;
-  domainId: string;
+  /** null for tenant-level entities (no domain placement). */
+  domainId: string | null;
   metadata: Record<string, unknown> | null;
 }
 

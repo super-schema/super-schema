@@ -96,6 +96,11 @@ model Tenant {
   isSystem  Boolean  @default(false)
   domains   Domain[]
   userRoles UserRole[]
+  entities       Entity[]
+  sharedEnums    SharedEnum[]
+  customScalars  CustomScalar[]
+  unionTypes     UnionType[]
+  services       ServiceDefinition[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -158,6 +163,10 @@ model Product {
   tier        ProductTier? @relation(fields: [tierId], references: [id])
   entities    Entity[]
   userRoles   UserRole[]
+  sharedEnums    SharedEnum[]
+  customScalars  CustomScalar[]
+  unionTypes     UnionType[]
+  services       ServiceDefinition[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -170,8 +179,9 @@ model Entity {
   id             String           @id @default(cuid())
   name           String
   slug           String
-  domainId       String
-  productId      String
+  tenantId       String
+  domainId       String?
+  productId      String?
   version        Int              @default(1)
   status         EntityStatus     @default(DRAFT)
   ownerId        String
@@ -185,14 +195,16 @@ model Entity {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  domain        Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain        Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product       Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
   owner         User     @relation(fields: [ownerId], references: [id])
   parentEntity  Entity?  @relation("EntityInheritance", fields: [parentEntityId], references: [id])
   childEntities Entity[] @relation("EntityInheritance")
 
   @@unique([slug, productId])
   @@unique([name, productId])
+  @@index([tenantId])
   @@map("entities")
 }
 
@@ -664,12 +676,18 @@ model SharedEnum {
   name        String
   values      String[]
   description String   @default("")
-  domainId    String
-  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  tenantId    String
+  domainId    String?
+  productId   String?
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain      Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([name, domainId])
+  @@index([tenantId])
+  @@index([domainId])
+  @@index([productId])
   @@map("shared_enums")
 }
 
@@ -684,12 +702,18 @@ model CustomScalar {
   format      String?
   pattern     String?
   description String   @default("")
-  domainId    String
-  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  tenantId    String
+  domainId    String?
+  productId   String?
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain      Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([name, domainId])
+  @@index([tenantId])
+  @@index([domainId])
+  @@index([productId])
   @@map("custom_scalars")
 }
 
@@ -702,12 +726,18 @@ model UnionType {
   name        String
   memberTypes String[]
   description String   @default("")
-  domainId    String
-  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  tenantId    String
+  domainId    String?
+  productId   String?
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain      Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product     Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([name, domainId])
+  @@index([tenantId])
+  @@index([domainId])
+  @@index([productId])
   @@map("union_types")
 }
 
@@ -720,16 +750,21 @@ model ServiceDefinition {
   name        String
   description String      @default("")
   basePath    String      @default("/")
+  tenantId    String
   domainId    String
+  productId   String?
   scope       ApiScope    @default(DOMAIN)
   entityId    String?
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   domain      Domain      @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product     Product?    @relation(fields: [productId], references: [id], onDelete: Cascade)
   entity      Entity?     @relation("EntityServices", fields: [entityId], references: [id], onDelete: SetNull)
   operations  Operation[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
-  @@unique([name, domainId])
+  @@index([tenantId])
+  @@index([productId])
   @@map("service_definitions")
 }
 

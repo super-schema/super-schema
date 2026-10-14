@@ -33,7 +33,8 @@ interface EntityHeaderProps {
     domainName: string;
     domainSlug: string;
     productSlug: string;
-    productName: string;
+    /** null for tenant-level entities — the breadcrumb omits the product crumb. */
+    productName: string | null;
     metadata: Record<string, unknown> | null;
   };
   onStatusChange: (newStatus: EntityStatus, metadata?: Record<string, unknown>) => void;
@@ -123,13 +124,17 @@ export function EntityHeader({
         >
           {entity.domainName}
         </Link>
-        <ChevronRight className="w-3 h-3" />
-        <Link
-          href={`/schemas/${entity.domainSlug}/${entity.productSlug}`}
-          className="hover:text-foreground transition-colors"
-        >
-          {entity.productName}
-        </Link>
+        {entity.productName !== null && (
+          <>
+            <ChevronRight className="w-3 h-3" />
+            <Link
+              href={`/schemas/${entity.domainSlug}/${entity.productSlug}`}
+              className="hover:text-foreground transition-colors"
+            >
+              {entity.productName}
+            </Link>
+          </>
+        )}
         <ChevronRight className="w-3 h-3" />
         <span className="text-foreground font-medium font-mono">{entity.name}</span>
       </nav>

@@ -372,7 +372,8 @@ export interface SuperSchemaModel {
     id: string;
     name: string;
     domain: string;
-    domainId: string;
+    /** null for tenant-level entities (no domain placement). */
+    domainId: string | null;
     description: string;
     status: string;
     version: number;

@@ -30,6 +30,9 @@ const { mockPrisma } = vi.hoisted(() => {
         findUnique: vi.fn().mockResolvedValue({ id: "prod-default" }),
         create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
+      domain: {
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ tenantId: "tenant-1" }),
+      },
       field: {
         create: vi.fn(),
         findFirst: vi.fn(),

@@ -11,6 +11,7 @@ import {
   type DeploymentOverviewRow,
 } from "@/services/deployment.service";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
+import { domainLabel } from "@/lib/entity-placement";
 
 async function resolveCtx(): Promise<
   { ok: true; ctx: ServiceContext } | { ok: false; error: string }
@@ -43,7 +44,7 @@ export async function getDeploymentOverviewAction() {
   const input = entitiesRes.data.map((e) => ({
     entityId: e.id,
     entityName: e.name,
-    domain: domainById.get(e.domainId)?.name ?? "—",
+    domain: e.domainId ? (domainById.get(e.domainId)?.name ?? "—") : domainLabel(null),
     currentVersion: e.version != null ? `v${e.version}` : null,
     targets: targets.map((t) => ({ id: `${e.id}:${t.key}`, format: t.targetFormat })),
   }));
@@ -55,7 +56,11 @@ export async function getDeploymentOverviewAction() {
   const slugById = new Map(
     entitiesRes.data.map((e) => [
       e.id,
-      { entitySlug: e.slug, domainSlug: domainById.get(e.domainId)?.slug },
+      {
+        entitySlug: e.slug,
+        // Tenant-level entities have no domain slug; the table links them by id.
+        domainSlug: e.domainId ? domainById.get(e.domainId)?.slug : undefined,
+      },
     ])
   );
   const rows: DeploymentOverviewRow[] = overview.data.rows.map((r) => ({

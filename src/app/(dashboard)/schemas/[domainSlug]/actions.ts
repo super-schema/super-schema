@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
-import { ensureDefaultProductId } from "@/lib/org-defaults";
+import { ensureDefaultProductId, getDomainTenantId } from "@/lib/org-defaults";
 
 const STALE_SESSION_IMPORT_ERROR =
   "Your session is stale. Sign out and sign in again, then retry the import.";
@@ -83,12 +83,14 @@ export async function createEntityWithFieldsAction(
       entityId: "pending",
       userId: currentUserId,
       fn: async () => {
+        const tenantId = await getDomainTenantId(domainId);
         const effectiveProductId =
           productId ?? (await ensureDefaultProductId(domainId));
         return prisma.entity.create({
           data: {
             name: name.trim(),
             slug: generateSlug(name),
+            tenantId,
             domainId,
             productId: effectiveProductId,
             description,
@@ -154,11 +156,13 @@ export async function createEntityAction(domainId: string, formData: FormData) {
       entityId: "pending",
       userId: currentUserId,
       fn: async () => {
+        const tenantId = await getDomainTenantId(domainId);
         const productId = await ensureDefaultProductId(domainId);
         return prisma.entity.create({
           data: {
             name: name.trim(),
             slug: generateSlug(name),
+            tenantId,
             domainId,
             productId,
             description,
@@ -297,8 +301,9 @@ export async function createSharedEnumAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
+    const tenantId = await getDomainTenantId(domainId);
     await prisma.sharedEnum.create({
-      data: { name: data.name, values: data.values, description: data.description ?? "", domainId },
+      data: { name: data.name, values: data.values, description: data.description ?? "", tenantId, domainId },
     });
     revalidatePath("/schemas");
     return { success: true };
@@ -347,8 +352,9 @@ export async function createCustomScalarAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
+    const tenantId = await getDomainTenantId(domainId);
     await prisma.customScalar.create({
-      data: { name: data.name, baseType: data.baseType, format: data.format ?? null, pattern: data.pattern ?? null, description: data.description ?? "", domainId },
+      data: { name: data.name, baseType: data.baseType, format: data.format ?? null, pattern: data.pattern ?? null, description: data.description ?? "", tenantId, domainId },
     });
     revalidatePath("/schemas");
     return { success: true };
@@ -397,8 +403,9 @@ export async function createUnionTypeAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
+    const tenantId = await getDomainTenantId(domainId);
     await prisma.unionType.create({
-      data: { name: data.name, memberTypes: data.memberTypes, description: data.description ?? "", domainId },
+      data: { name: data.name, memberTypes: data.memberTypes, description: data.description ?? "", tenantId, domainId },
     });
     revalidatePath("/schemas");
     return { success: true };
@@ -447,11 +454,13 @@ export async function createServiceAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
+    const tenantId = await getDomainTenantId(domainId);
     const created = await prisma.serviceDefinition.create({
       data: {
         name: data.name.trim(),
         description: data.description ?? "",
         basePath: data.basePath ?? "/",
+        tenantId,
         domainId,
         scope: data.scope,
         entityId: data.scope === "ENTITY" ? data.entityId : undefined,
@@ -479,10 +488,12 @@ export async function getOrCreateEntityServiceAction(domainId: string, entityId:
     });
     if (existing) return { success: true, serviceId: existing.id };
 
+    const tenantId = await getDomainTenantId(domainId);
     const created = await prisma.serviceDefinition.create({
       data: {
         name: `${entityName}Api`,
         basePath: "/",
+        tenantId,
         domainId,
         scope: "ENTITY",
         entityId,
@@ -850,6 +861,7 @@ export async function createDomainAssetsFromImportAction(
     const currentUserId = await resolveCurrentUserId(session.user);
 
     await prisma.$transaction(async (tx) => {
+      const tenantId = await getDomainTenantId(payload.domainId, tx);
       const sortedModels = sortByInheritance(payload.models);
 
       for (const model of sortedModels) {
@@ -908,6 +920,7 @@ export async function createDomainAssetsFromImportAction(
               name: sharedEnum.name,
               values: sharedEnum.values,
               description: sharedEnum.description ?? "",
+              tenantId,
               domainId: payload.domainId,
             },
           });
@@ -930,6 +943,7 @@ export async function createDomainAssetsFromImportAction(
               format: scalar.format ?? null,
               pattern: scalar.pattern ?? null,
               description: scalar.description ?? "",
+              tenantId,
               domainId: payload.domainId,
             },
           });
@@ -950,6 +964,7 @@ export async function createDomainAssetsFromImportAction(
               name: unionType.name,
               memberTypes: unionType.memberTypes,
               description: unionType.description ?? "",
+              tenantId,
               domainId: payload.domainId,
             },
           });
@@ -979,6 +994,7 @@ export async function createDomainAssetsFromImportAction(
             data: {
               name: entity.name.trim(),
               slug: generateSlug(entity.name),
+              tenantId,
               domainId: payload.domainId,
               productId: importProductId,
               description: entity.description ?? "",
@@ -1037,6 +1053,7 @@ export async function createDomainAssetsFromImportAction(
               name: service.name,
               description: service.description ?? "",
               basePath: service.basePath ?? "/",
+              tenantId,
               domainId: payload.domainId,
               scope: service.scope === "entity" && entityId ? "ENTITY" : "DOMAIN",
               entityId,

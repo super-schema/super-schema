@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
+import { domainLabel } from "@/lib/entity-placement";
 
 export async function getEntitiesForRetentionAction() {
   const session = await auth();
@@ -27,7 +28,7 @@ export async function getEntitiesForRetentionAction() {
       entities: entities.map((e) => ({
         id: e.id,
         name: e.name,
-        domainName: e.domain.name,
+        domainName: domainLabel(e.domain),
         metadata: e.metadata as Record<string, unknown> | null,
         fields: e.fields.map((f) => ({ name: f.name, type: f.type, classification: f.classification })),
       })),

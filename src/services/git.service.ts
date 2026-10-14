@@ -22,6 +22,7 @@ import {
   type GitConfigResponse,
 } from "@/types/schemas/git";
 import type { TargetOutput } from "@/lib/emission/emission.types";
+import { domainLabel } from "@/lib/entity-placement";
 
 // ---------------------------------------------------------------------------
 // Pure helper functions (no I/O — unit-testable)
@@ -314,7 +315,7 @@ export async function exportEntity(
     const entityDefinition = {
       name: entity.name,
       description: entity.description,
-      domain: entity.domain.name,
+      domain: domainLabel(entity.domain),
       version,
       status: entity.status,
       fields: entity.fields.map((f) => ({
@@ -335,7 +336,7 @@ export async function exportEntity(
 
     const files = generateExportFiles(
       config.basePath,
-      entity.domain.name,
+      domainLabel(entity.domain),
       entity.name,
       entityDefinition,
       emittedOutputs
@@ -436,7 +437,7 @@ export async function exportAll(
       const entityDefinition = {
         name: entity.name,
         description: entity.description,
-        domain: entity.domain.name,
+        domain: domainLabel(entity.domain),
         version: (metadata.currentVersion as number) ?? 1,
         status: entity.status,
         fields: entity.fields.map((f) => ({
@@ -453,7 +454,7 @@ export async function exportAll(
 
       const files = generateExportFiles(
         config.basePath,
-        entity.domain.name,
+        domainLabel(entity.domain),
         entity.name,
         entityDefinition,
         emittedOutputs

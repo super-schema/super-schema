@@ -84,11 +84,13 @@ interface EntityWorkspaceProps {
     description: string;
     status: string;
     version: number;
-    domainId: string;
+    /** null for tenant-level entities (no domain placement). */
+    domainId: string | null;
     domainName: string;
     domainSlug: string;
     productSlug: string;
-    productName: string;
+    /** null for tenant-level entities (no product placement). */
+    productName: string | null;
     metadata: Record<string, unknown> | null;
   };
   fields: FieldData[];

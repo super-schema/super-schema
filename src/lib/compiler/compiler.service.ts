@@ -32,7 +32,8 @@ export interface PrismaEntityInput {
   description: string;
   status: string;
   version: number;
-  domainId: string;
+  /** null for tenant-level entities (no domain placement). */
+  domainId: string | null;
   metadata: unknown; // Prisma JSONB
   domain?: { id: string; name: string; slug: string } | null;
 }

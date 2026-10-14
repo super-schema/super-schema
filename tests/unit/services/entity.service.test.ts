@@ -13,6 +13,9 @@ vi.mock("@/lib/db", () => ({
       findUnique: vi.fn().mockResolvedValue({ id: "prd-default" }),
       create: vi.fn().mockResolvedValue({ id: "prd-default" }),
     },
+    domain: {
+      findUniqueOrThrow: vi.fn().mockResolvedValue({ tenantId: "tenant-1" }),
+    },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
     },
@@ -60,6 +63,11 @@ describe("Entity Service", () => {
       if (result.success) {
         expect(result.data.name).toBe("Customer");
       }
+      expect(prisma.entity.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ domainId: "dom-1", tenantId: "tenant-1" }),
+        })
+      );
     });
 
     it("returns error for duplicate entity name in same domain", async () => {

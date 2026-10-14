@@ -4,6 +4,7 @@ import { resolveGlobalAdminAccess } from "@/lib/access-control";
 import { notFound, redirect } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
+import { productSegment } from "@/lib/entity-placement";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string }>;
@@ -64,7 +65,7 @@ export default async function ProductWorkspacePage({
       }
       const suffix = qs.toString();
       redirect(
-        `/schemas/${domainSlug}/${legacyEntity.product.slug}/${legacyEntity.slug}${
+        `/schemas/${domainSlug}/${productSegment(legacyEntity.product)}/${legacyEntity.slug}${
           suffix ? `?${suffix}` : ""
         }`
       );

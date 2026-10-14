@@ -21,6 +21,7 @@ import {
 } from "@/types/schemas/notification";
 import type { ServiceContext } from "@/types/service-context";
 import type { Notification as PrismaNotification } from "@/generated/prisma/client";
+import { domainSegment, productSegment } from "@/lib/entity-placement";
 
 // ---------------------------------------------------------------------------
 // Test helpers (kept for backward compat — delegate to Prisma)
@@ -100,8 +101,8 @@ async function enrichEntityRef(entityRef: EntityRef): Promise<EntityRef> {
 
   return {
     ...entityRef,
-    domainSlug: entityRef.domainSlug ?? entity.domain.slug,
-    productSlug: entityRef.productSlug ?? entity.product?.slug,
+    domainSlug: entityRef.domainSlug ?? domainSegment(entity.domain),
+    productSlug: entityRef.productSlug ?? productSegment(entity.product),
     entitySlug: entityRef.entitySlug ?? entity.slug,
     fieldSlug: entityRef.fieldId
       ? entityRef.fieldSlug ?? (entity.fields ? entity.fields[0]?.slug : undefined)

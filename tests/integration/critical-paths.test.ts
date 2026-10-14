@@ -28,6 +28,9 @@ const { mockPrisma } = vi.hoisted(() => {
         findUnique: vi.fn().mockResolvedValue({ id: "prod-default" }),
         create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
+      domain: {
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ tenantId: "tenant-1" }),
+      },
       field: {
         create: vi.fn(),
         findFirst: vi.fn(),
@@ -162,6 +165,7 @@ describe("Critical Paths - Integration", () => {
       const createCall = mockPrisma.entity.create.mock.calls[0][0];
       expect(createCall.data.name).toBe("Customer");
       expect(createCall.data.domainId).toBe("dom-1");
+      expect(createCall.data.tenantId).toBe("tenant-1");
       expect(createCall.data.fields.create).toHaveLength(3);
 
       // Verify each field in the nested create
