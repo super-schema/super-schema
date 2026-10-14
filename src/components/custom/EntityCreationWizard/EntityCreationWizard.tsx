@@ -12,10 +12,8 @@ import { FieldPreview, type PreviewField } from "./FieldPreview";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { createTenantEntityAction } from "@/app/(dashboard)/schemas/enterprise/actions";
 import type { StandardTemplate } from "@/lib/schema-standards";
-import { importSchemaAssets } from "@/services/import.service";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
-import { detectFormat } from "@/lib/importers/format-detector";
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import type { ImportFormat } from "@/lib/importers/types";
@@ -209,6 +207,12 @@ export function EntityCreationWizard({
 
     void (async () => {
       try {
+        // Loaded on demand: the importers (protobufjs, yaml) stay out of the
+        // wizard's initial client chunk until someone actually imports.
+        const [{ detectFormat }, { importSchemaAssets }] = await Promise.all([
+          import("@/lib/importers/format-detector"),
+          import("@/services/import.service"),
+        ]);
         const resolvedFormat = format ?? detectFormat(content, filename);
         setDetectedFormat(resolvedFormat);
 
@@ -252,7 +256,7 @@ export function EntityCreationWizard({
             const count =
               assets.models.length + assets.sharedEnums.length + assets.customScalars.length;
             setError(
-              `This schema defines ${count} assets (${assets.models.map((m) => m.name).join(", ")}) and needs a domain. Import it from a domain or product page.`
+              `Multi-entity imports go into a product — at Enterprise level an import creates one entity. This schema defines ${count} assets (${assets.models.map((m) => m.name).join(", ")}).`
             );
             return;
           }

@@ -151,11 +151,16 @@ describe("EntityCreationWizard — multi-entity import", () => {
     });
   });
 
-  it("explains that a multi-asset document needs a domain at the Enterprise level", async () => {
+  it("explains that multi-entity imports go into a product at the Enterprise level", async () => {
     render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
     pasteAndParse(ORDER_PROTO);
 
-    expect(await screen.findByText(/defines 6 assets/)).toBeDefined();
+    expect(
+      await screen.findByText(
+        /^Multi-entity imports go into a product — at Enterprise level an import creates one entity\./
+      )
+    ).toBeDefined();
+    expect(screen.getByText(/defines 6 assets/)).toBeDefined();
     expect(screen.queryByTestId("typespec-import-review")).toBeNull();
   });
 });
