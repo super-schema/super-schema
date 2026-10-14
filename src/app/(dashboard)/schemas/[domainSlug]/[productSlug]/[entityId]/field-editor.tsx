@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, ExternalLink, X, Search } from "lucide-react";
 import {
@@ -171,8 +171,10 @@ export function FieldEditor({
   // Parents hand over fresh inline handlers on every render, but FieldCard is
   // memoized. Rows get wrappers whose identity never changes and which always
   // call the latest handler, so a workspace re-render doesn't re-render every row.
+  // Updated in a layout effect so an event between commit and the passive-effect
+  // flush never calls a stale handler.
   const latestHandlers = useRef({ onUpdateField, onDeleteField, onFieldSelect });
-  useEffect(() => {
+  useLayoutEffect(() => {
     latestHandlers.current = { onUpdateField, onDeleteField, onFieldSelect };
   });
   const updateFieldStable = useCallback(

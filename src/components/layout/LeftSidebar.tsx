@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Suspense, useCallback, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Building2,
@@ -133,8 +133,10 @@ function ExplorerSidebar({
   // rows are not re-rendered by navigation alone.
   const [isPending, startTransition] = useTransition();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
+  // Layout effect, not a passive one: a click landing between a navigation's
+  // commit and the passive-effect flush must still compare against the new URL.
   const currentUrlRef = useRef(currentUrl);
-  useEffect(() => {
+  useLayoutEffect(() => {
     currentUrlRef.current = currentUrl;
   }, [currentUrl]);
   const { push } = router;
