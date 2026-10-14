@@ -1,4 +1,8 @@
-/** Events core — pure AsyncAPI 3 layer (Phase 4a). See spec §6–§7. */
+/**
+ * Events core — pure AsyncAPI 3 layer (Phase 4a). See spec §6–§7.
+ * Not exported here on purpose: `./validation/asyncapi-parser-validator` (Story 18.5) pulls in
+ * `@asyncapi/parser` and is Node-only — import it directly from server code.
+ */
 export * from "./types";
 export { compareStrings, diagnostic, hasErrors, normalizeDiagnostics } from "./diagnostics";
 export { jsonPointer, localRef, parseLocalRef, resolveLocalRef } from "./json-pointer";

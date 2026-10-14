@@ -19,7 +19,13 @@ export interface EventSpecAdapter {
 export const ASYNCAPI_3_SPEC_TYPE = "asyncapi@3.0";
 
 export type AsyncApi3AdapterOptions = {
-  /** Run in order; default: the built-in structural validator only. */
+  /**
+   * Run in order; default: the built-in structural validator only (pure, dependency-free).
+   * The `@asyncapi/parser` validator is opt-in and Node-only (server code, never client
+   * components); it is not part of the barrel, import it from its own module:
+   *   `new AsyncApi3Adapter({ validators: [new AsyncApiParserValidator()] })`
+   *   (`@/lib/event-specs/validation/asyncapi-parser-validator`) — or combine both validators.
+   */
   validators?: EventSpecValidator[];
 };
 
