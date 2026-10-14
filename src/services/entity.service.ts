@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
-import type { Result } from "@/types/result";
+import type { Result, ServiceError } from "@/types/result";
 import type { Entity } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { EntityMetadataSchema } from "@/types/schemas/entity-metadata.schema";
@@ -15,7 +15,18 @@ import {
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { generateSlug, isReservedEntityRouteSlug } from "@/lib/slug";
-import { ensureDefaultProductId, getDomainTenantId } from "@/lib/org-defaults";
+import { ensureDefaultProductId } from "@/lib/org-defaults";
+import { resolveScope } from "@/lib/asset-scope";
+import { validateScope } from "@/lib/levels";
+import { assertNameAvailable, withTenantNameLock } from "@/services/name-registry.service";
+
+/** A Result failure (level validation or name registry) carried out of an audited write so it is never audited. */
+class ServiceErrorRejection extends Error {
+  constructor(readonly serviceError: ServiceError) {
+    super(serviceError.message);
+    this.name = "ServiceErrorRejection";
+  }
+}
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -59,27 +70,38 @@ export async function createEntity(
       entityId: "pending",
       userId: ctx.userId,
       fn: async () => {
-        const tenantId = await getDomainTenantId(parsed.data.domainId);
         const productId = await ensureDefaultProductId(parsed.data.domainId);
-        return prisma.entity.create({
-          data: {
-            name: parsed.data.name,
-            slug: entitySlug,
-            tenantId,
-            domainId: parsed.data.domainId,
-            productId,
-            description: parsed.data.description,
-            ownerId: ctx.userId,
-            metadata:
-              (parsed.data.metadata as unknown as Prisma.InputJsonValue) ??
-              undefined,
-          },
-          include: { domain: true },
+        const scope = await resolveScope(prisma, { level: "PRODUCT", productId });
+        if (!scope.success) throw new ServiceErrorRejection(scope.error);
+        const valid = validateScope("entity", scope.data);
+        if (!valid.success) throw new ServiceErrorRejection(valid.error);
+
+        const outcome = await withTenantNameLock(prisma, scope.data.tenantId, async (tx) => {
+          const free = await assertNameAvailable(tx, { name: parsed.data.name, ...scope.data });
+          if (!free.success) return free;
+          return ok(
+            await tx.entity.create({
+              data: {
+                name: parsed.data.name,
+                slug: entitySlug,
+                ...scope.data,
+                description: parsed.data.description,
+                ownerId: ctx.userId,
+                metadata:
+                  (parsed.data.metadata as unknown as Prisma.InputJsonValue) ??
+                  undefined,
+              },
+              include: { domain: true },
+            })
+          );
         });
+        if (!outcome.success) throw new ServiceErrorRejection(outcome.error);
+        return outcome.data;
       },
     });
     return ok(entity);
   } catch (e: unknown) {
+    if (e instanceof ServiceErrorRejection) return err(e.serviceError);
     if (
       e instanceof Error &&
       e.message.includes("Unique constraint failed")
@@ -204,27 +226,50 @@ export async function updateEntity(
     });
   }
 
-  const entity = await withAudit({
-    action: "UPDATE",
-    entityType: "Entity",
-    entityId: id,
-    userId: ctx.userId,
-    beforeState: existing as unknown as object,
-    fn: async () => {
-      return prisma.entity.update({
-        where: { id },
-        data: {
-          ...parsed.data,
-          metadata:
-            parsed.data.metadata !== undefined
-              ? (parsed.data.metadata as unknown as Prisma.InputJsonValue)
-              : undefined,
-        },
-        include: { domain: true },
-      });
-    },
-  });
-  return ok(entity);
+  try {
+    const entity = await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId: id,
+      userId: ctx.userId,
+      beforeState: existing as unknown as object,
+      fn: async () => {
+        const update = {
+          where: { id },
+          data: {
+            ...parsed.data,
+            metadata:
+              parsed.data.metadata !== undefined
+                ? (parsed.data.metadata as unknown as Prisma.InputJsonValue)
+                : undefined,
+          },
+          include: { domain: true },
+        } satisfies Prisma.EntityUpdateArgs;
+
+        const newName = parsed.data.name;
+        if (newName === undefined || newName === existing.name) return prisma.entity.update(update);
+
+        // A real rename must stay line-unique: check and write under the tenant lock.
+        const outcome = await withTenantNameLock(prisma, existing.tenantId, async (tx) => {
+          const free = await assertNameAvailable(tx, {
+            name: newName,
+            tenantId: existing.tenantId,
+            domainId: existing.domainId,
+            productId: existing.productId,
+            exclude: { kind: "entity", id },
+          });
+          if (!free.success) return free;
+          return ok(await tx.entity.update(update));
+        });
+        if (!outcome.success) throw new ServiceErrorRejection(outcome.error);
+        return outcome.data;
+      },
+    });
+    return ok(entity);
+  } catch (e: unknown) {
+    if (e instanceof ServiceErrorRejection) return err(e.serviceError);
+    throw e;
+  }
 }
 
 export async function deleteEntity(

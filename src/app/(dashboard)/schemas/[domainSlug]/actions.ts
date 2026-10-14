@@ -6,12 +6,37 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
-import { ensureDefaultProductId, getDomainTenantId } from "@/lib/org-defaults";
+import { ensureDefaultProductId } from "@/lib/org-defaults";
+import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
+import { validateScope, type LevelScope } from "@/lib/levels";
+import { assertNameAvailable, withTenantNameLock } from "@/services/name-registry.service";
+import { ok } from "@/types/result";
 
 const STALE_SESSION_IMPORT_ERROR =
   "Your session is stale. Sign out and sign in again, then retry the import.";
 const STALE_SESSION_ENTITY_ERROR =
   "Your session is stale. Sign out and sign in again, then create the entity.";
+
+/**
+ * The name registry rejected an asset (conflict or failed check). Thrown from inside an
+ * audited or transactional create so the surrounding work rolls back / is never audited.
+ */
+class NameConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NameConflictError";
+  }
+}
+
+/**
+ * `validateScope("api", …)` guarantees an API carries a domain; this narrows the
+ * type for ServiceDefinition's required `domainId` column.
+ */
+function apiPlacement(scope: LevelScope) {
+  return scope.domainId
+    ? { tenantId: scope.tenantId, domainId: scope.domainId, productId: scope.productId }
+    : null;
+}
 
 async function resolveCurrentUserId(user: { id?: string | null; email?: string | null }) {
   if (!user.id) {
@@ -54,6 +79,64 @@ export interface CreateFieldInput {
   decorators?: Record<string, unknown>;
 }
 
+/**
+ * Create an entity at product level: validates the placement matrix, then checks the
+ * line-unique name registry and writes under the tenant's advisory lock. Returns an
+ * `{ error }` for placement/registry rejections; other failures (stale session, DB
+ * unique-index hits) propagate to the caller's catch.
+ */
+async function createProductEntity(params: {
+  userId: string;
+  domainId: string;
+  productId?: string;
+  name: string;
+  description: string;
+  fields?: CreateFieldInput[];
+}): Promise<{ entityId: string } | { error: string }> {
+  const { userId, domainId, description, fields } = params;
+  const name = params.name.trim();
+
+  const productId = params.productId ?? (await ensureDefaultProductId(domainId));
+  const scope = await resolveScope(prisma, { level: "PRODUCT", productId });
+  if (!scope.success) return { error: scope.error.message };
+  if (scope.data.domainId !== domainId) return { error: "Product does not belong to this domain" };
+  const valid = validateScope("entity", scope.data);
+  if (!valid.success) return { error: valid.error.message };
+
+  try {
+    const entity = await withAudit({
+      action: "CREATE",
+      entityType: "Entity",
+      entityId: "pending",
+      userId,
+      fn: async () => {
+        const outcome = await withTenantNameLock(prisma, scope.data.tenantId, async (tx) => {
+          const free = await assertNameAvailable(tx, { name, ...scope.data });
+          if (!free.success) return free;
+          return ok(
+            await tx.entity.create({
+              data: {
+                name,
+                slug: generateSlug(name),
+                ...scope.data,
+                description,
+                ownerId: userId,
+                ...(fields && { fields: { create: fields.map(mapFieldCreateInput) } }),
+              },
+            })
+          );
+        });
+        if (!outcome.success) throw new NameConflictError(outcome.error.message);
+        return outcome.data;
+      },
+    });
+    return { entityId: entity.id };
+  } catch (e: unknown) {
+    if (e instanceof NameConflictError) return { error: e.message };
+    throw e;
+  }
+}
+
 export async function createEntityWithFieldsAction(
   domainId: string,
   data: { name: string; description: string; fields: CreateFieldInput[] },
@@ -77,47 +160,18 @@ export async function createEntityWithFieldsAction(
   try {
     const currentUserId = await resolveCurrentUserId(session.user);
 
-    const entity = await withAudit({
-      action: "CREATE",
-      entityType: "Entity",
-      entityId: "pending",
+    const created = await createProductEntity({
       userId: currentUserId,
-      fn: async () => {
-        const tenantId = await getDomainTenantId(domainId);
-        const effectiveProductId =
-          productId ?? (await ensureDefaultProductId(domainId));
-        return prisma.entity.create({
-          data: {
-            name: name.trim(),
-            slug: generateSlug(name),
-            tenantId,
-            domainId,
-            productId: effectiveProductId,
-            description,
-            ownerId: currentUserId,
-            fields: {
-              create: fields.map((f, i) => ({
-                name: f.name,
-                slug: generateSlug(f.name),
-                type: f.type,
-                nullable: f.nullable,
-                isKey: f.isKey,
-                description: f.description,
-                classification: f.classification,
-                precision: f.precision,
-                scale: f.scale,
-                sortOrder: i,
-                ...(f.aliases && f.aliases.length > 0 && { aliases: f.aliases }),
-                ...(f.decorators && Object.keys(f.decorators).length > 0 && { decorators: f.decorators as Prisma.InputJsonValue }),
-              })),
-            },
-          },
-        });
-      },
+      domainId,
+      productId,
+      name,
+      description,
+      fields,
     });
+    if ("error" in created) return { error: created.error };
 
     revalidatePath("/schemas");
-    return { success: true, entityId: entity.id };
+    return { success: true, entityId: created.entityId };
   } catch (e: unknown) {
     if (e instanceof AuditUserMissingError) {
       return { error: STALE_SESSION_ENTITY_ERROR };
@@ -150,27 +204,13 @@ export async function createEntityAction(domainId: string, formData: FormData) {
   try {
     const currentUserId = await resolveCurrentUserId(session.user);
 
-    await withAudit({
-      action: "CREATE",
-      entityType: "Entity",
-      entityId: "pending",
+    const created = await createProductEntity({
       userId: currentUserId,
-      fn: async () => {
-        const tenantId = await getDomainTenantId(domainId);
-        const productId = await ensureDefaultProductId(domainId);
-        return prisma.entity.create({
-          data: {
-            name: name.trim(),
-            slug: generateSlug(name),
-            tenantId,
-            domainId,
-            productId,
-            description,
-            ownerId: currentUserId,
-          },
-        });
-      },
+      domainId,
+      name,
+      description,
     });
+    if ("error" in created) return { error: created.error };
 
     revalidatePath("/schemas");
     return { success: true };
@@ -296,19 +336,29 @@ export async function deleteEntityAction(entityId: string) {
 
 export async function createSharedEnumAction(
   domainId: string,
-  data: { name: string; values: string[]; description?: string }
+  data: { name: string; values: string[]; description?: string },
+  target: ScopeTarget = { level: "DOMAIN", domainId }
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    const tenantId = await getDomainTenantId(domainId);
-    await prisma.sharedEnum.create({
-      data: { name: data.name, values: data.values, description: data.description ?? "", tenantId, domainId },
+    const scope = await resolveScope(prisma, target);
+    if (!scope.success) return { error: scope.error.message };
+    const valid = validateScope("dataType", scope.data);
+    if (!valid.success) return { error: valid.error.message };
+
+    const result = await withTenantNameLock(prisma, scope.data.tenantId, async (tx) => {
+      const free = await assertNameAvailable(tx, { name: data.name, ...scope.data });
+      if (!free.success) return free;
+      await tx.sharedEnum.create({
+        data: { name: data.name, values: data.values, description: data.description ?? "", ...scope.data },
+      });
+      return ok(undefined);
     });
+    if (!result.success) return { error: result.error.message };
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    if (e instanceof Error && e.message.includes("Unique constraint")) return { error: `Enum "${data.name}" already exists` };
     return { error: e instanceof Error ? e.message : "Failed to create enum" };
   }
 }
@@ -347,19 +397,36 @@ export async function updateSharedEnumAction(
 
 export async function createCustomScalarAction(
   domainId: string,
-  data: { name: string; baseType: string; format?: string; pattern?: string; description?: string }
+  data: { name: string; baseType: string; format?: string; pattern?: string; description?: string },
+  target: ScopeTarget = { level: "DOMAIN", domainId }
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    const tenantId = await getDomainTenantId(domainId);
-    await prisma.customScalar.create({
-      data: { name: data.name, baseType: data.baseType, format: data.format ?? null, pattern: data.pattern ?? null, description: data.description ?? "", tenantId, domainId },
+    const scope = await resolveScope(prisma, target);
+    if (!scope.success) return { error: scope.error.message };
+    const valid = validateScope("dataType", scope.data);
+    if (!valid.success) return { error: valid.error.message };
+
+    const result = await withTenantNameLock(prisma, scope.data.tenantId, async (tx) => {
+      const free = await assertNameAvailable(tx, { name: data.name, ...scope.data });
+      if (!free.success) return free;
+      await tx.customScalar.create({
+        data: {
+          name: data.name,
+          baseType: data.baseType,
+          format: data.format ?? null,
+          pattern: data.pattern ?? null,
+          description: data.description ?? "",
+          ...scope.data,
+        },
+      });
+      return ok(undefined);
     });
+    if (!result.success) return { error: result.error.message };
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    if (e instanceof Error && e.message.includes("Unique constraint")) return { error: `Scalar "${data.name}" already exists` };
     return { error: e instanceof Error ? e.message : "Failed to create scalar" };
   }
 }
@@ -398,19 +465,29 @@ export async function updateCustomScalarAction(
 
 export async function createUnionTypeAction(
   domainId: string,
-  data: { name: string; memberTypes: string[]; description?: string }
+  data: { name: string; memberTypes: string[]; description?: string },
+  target: ScopeTarget = { level: "DOMAIN", domainId }
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    const tenantId = await getDomainTenantId(domainId);
-    await prisma.unionType.create({
-      data: { name: data.name, memberTypes: data.memberTypes, description: data.description ?? "", tenantId, domainId },
+    const scope = await resolveScope(prisma, target);
+    if (!scope.success) return { error: scope.error.message };
+    const valid = validateScope("dataType", scope.data);
+    if (!valid.success) return { error: valid.error.message };
+
+    const result = await withTenantNameLock(prisma, scope.data.tenantId, async (tx) => {
+      const free = await assertNameAvailable(tx, { name: data.name, ...scope.data });
+      if (!free.success) return free;
+      await tx.unionType.create({
+        data: { name: data.name, memberTypes: data.memberTypes, description: data.description ?? "", ...scope.data },
+      });
+      return ok(undefined);
     });
+    if (!result.success) return { error: result.error.message };
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    if (e instanceof Error && e.message.includes("Unique constraint")) return { error: `Union "${data.name}" already exists` };
     return { error: e instanceof Error ? e.message : "Failed to create union" };
   }
 }
@@ -449,36 +526,48 @@ export async function updateUnionTypeAction(
 
 export async function createServiceAction(
   domainId: string,
-  data: { name: string; description?: string; basePath?: string; scope: "DOMAIN" | "ENTITY"; entityId?: string }
+  data: { name: string; description?: string; basePath?: string; scope: "DOMAIN" | "ENTITY"; entityId?: string },
+  target: ScopeTarget = { level: "DOMAIN", domainId }
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
-    const tenantId = await getDomainTenantId(domainId);
-    const created = await prisma.serviceDefinition.create({
-      data: {
-        name: data.name.trim(),
-        description: data.description ?? "",
-        basePath: data.basePath ?? "/",
-        tenantId,
-        domainId,
-        scope: data.scope,
-        entityId: data.scope === "ENTITY" ? data.entityId : undefined,
-      },
+    const scope = await resolveScope(prisma, target);
+    if (!scope.success) return { error: scope.error.message };
+    const valid = validateScope("api", scope.data);
+    if (!valid.success) return { error: valid.error.message };
+    const placement = apiPlacement(scope.data);
+    if (!placement) return { error: "An API must belong to a domain." };
+
+    const name = data.name.trim();
+    const result = await withTenantNameLock(prisma, placement.tenantId, async (tx) => {
+      const free = await assertNameAvailable(tx, { name, ...placement });
+      if (!free.success) return free;
+      const created = await tx.serviceDefinition.create({
+        data: {
+          name,
+          description: data.description ?? "",
+          basePath: data.basePath ?? "/",
+          ...placement,
+          scope: data.scope,
+          entityId: data.scope === "ENTITY" ? data.entityId : undefined,
+        },
+      });
+      return ok(created);
     });
+    if (!result.success) return { error: result.error.message };
     revalidatePath("/schemas");
-    return { success: true, serviceId: created.id };
+    return { success: true, serviceId: result.data.id };
   } catch (e: unknown) {
-    if (e instanceof Error && e.message.includes("Unique constraint")) {
-      return { error: `API "${data.name}" already exists in this domain` };
-    }
     return { error: e instanceof Error ? e.message : "Failed to create API service" };
   }
 }
 
 // Entity API tab calls this once, on the first operation it adds, so each
 // entity gets a single implicit ENTITY-scoped service to hang operations off.
-export async function getOrCreateEntityServiceAction(domainId: string, entityId: string, entityName: string) {
+// The service lives at its entity's own level: product-level entities get a
+// product-level API, and tenant-level (Enterprise) entities cannot own one.
+export async function getOrCreateEntityServiceAction(_domainId: string, entityId: string, entityName: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   try {
@@ -488,19 +577,32 @@ export async function getOrCreateEntityServiceAction(domainId: string, entityId:
     });
     if (existing) return { success: true, serviceId: existing.id };
 
-    const tenantId = await getDomainTenantId(domainId);
-    const created = await prisma.serviceDefinition.create({
-      data: {
-        name: `${entityName}Api`,
-        basePath: "/",
-        tenantId,
-        domainId,
-        scope: "ENTITY",
-        entityId,
-      },
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { id: true, productId: true },
     });
+    if (!entity) return { error: "Entity not found" };
+    if (!entity.productId) return { error: "Enterprise entities cannot own APIs" };
+
+    const scope = await resolveScope(prisma, { level: "PRODUCT", productId: entity.productId });
+    if (!scope.success) return { error: scope.error.message };
+    const valid = validateScope("api", scope.data);
+    if (!valid.success) return { error: valid.error.message };
+    const placement = apiPlacement(scope.data);
+    if (!placement) return { error: "An API must belong to a domain." };
+
+    const name = `${entityName}Api`;
+    const result = await withTenantNameLock(prisma, placement.tenantId, async (tx) => {
+      const free = await assertNameAvailable(tx, { name, ...placement });
+      if (!free.success) return free;
+      const created = await tx.serviceDefinition.create({
+        data: { name, basePath: "/", ...placement, scope: "ENTITY", entityId },
+      });
+      return ok(created);
+    });
+    if (!result.success) return { error: result.error.message };
     revalidatePath("/schemas");
-    return { success: true, serviceId: created.id };
+    return { success: true, serviceId: result.data.id };
   } catch (e: unknown) {
     return { error: e instanceof Error ? e.message : "Failed to create API service" };
   }
@@ -825,26 +927,8 @@ function inferResponseFromReturnType(
   };
 }
 
-export async function createDomainAssetsFromImportAction(
-  payload: BulkImportPayload
-): Promise<BulkImportResult> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return {
-      modelsCreated: 0,
-      entitiesCreated: 0,
-      enumsCreated: 0,
-      scalarsCreated: 0,
-      unionsCreated: 0,
-      servicesCreated: 0,
-      decoratorsCreated: 0,
-      entityIds: [],
-      modelIds: [],
-      errors: ["Not authenticated"],
-    };
-  }
-
-  const result: BulkImportResult = {
+function emptyImportResult(errors: string[] = []): BulkImportResult {
+  return {
     modelsCreated: 0,
     entitiesCreated: 0,
     enumsCreated: 0,
@@ -854,14 +938,37 @@ export async function createDomainAssetsFromImportAction(
     decoratorsCreated: 0,
     entityIds: [],
     modelIds: [],
-    errors: [],
+    errors,
   };
+}
+
+export async function createDomainAssetsFromImportAction(
+  payload: BulkImportPayload
+): Promise<BulkImportResult> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return emptyImportResult(["Not authenticated"]);
+  }
+
+  const result = emptyImportResult();
 
   try {
     const currentUserId = await resolveCurrentUserId(session.user);
 
     await prisma.$transaction(async (tx) => {
-      const tenantId = await getDomainTenantId(payload.domainId, tx);
+      const domainScope = await resolveScope(tx, { level: "DOMAIN", domainId: payload.domainId });
+      if (!domainScope.success) throw new Error(domainScope.error.message);
+      const { tenantId } = domainScope.data;
+
+      // Serialize name checks + writes for this tenant (spec §4.3). Each asset is
+      // checked right before its create, so later checks also see this batch's
+      // earlier rows — two same-named assets in one import conflict with each other.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+      const assertNameFree = async (name: string, scope: LevelScope) => {
+        const free = await assertNameAvailable(tx, { name, ...scope });
+        if (!free.success) throw new NameConflictError(free.error.message);
+      };
+
       const sortedModels = sortByInheritance(payload.models);
 
       for (const model of sortedModels) {
@@ -914,27 +1021,24 @@ export async function createDomainAssetsFromImportAction(
       }
 
       for (const sharedEnum of payload.sharedEnums) {
+        await assertNameFree(sharedEnum.name, domainScope.data);
         try {
           await tx.sharedEnum.create({
             data: {
               name: sharedEnum.name,
               values: sharedEnum.values,
               description: sharedEnum.description ?? "",
-              tenantId,
-              domainId: payload.domainId,
+              ...domainScope.data,
             },
           });
           result.enumsCreated++;
-        } catch (err: unknown) {
-          result.errors.push(
-            err instanceof Error && err.message.includes("Unique constraint")
-              ? `Enum "${sharedEnum.name}" already exists — skipped`
-              : `Failed to create enum "${sharedEnum.name}"`
-          );
+        } catch {
+          result.errors.push(`Failed to create enum "${sharedEnum.name}"`);
         }
       }
 
       for (const scalar of payload.customScalars) {
+        await assertNameFree(scalar.name, domainScope.data);
         try {
           await tx.customScalar.create({
             data: {
@@ -943,38 +1047,29 @@ export async function createDomainAssetsFromImportAction(
               format: scalar.format ?? null,
               pattern: scalar.pattern ?? null,
               description: scalar.description ?? "",
-              tenantId,
-              domainId: payload.domainId,
+              ...domainScope.data,
             },
           });
           result.scalarsCreated++;
-        } catch (err: unknown) {
-          result.errors.push(
-            err instanceof Error && err.message.includes("Unique constraint")
-              ? `Scalar "${scalar.name}" already exists — skipped`
-              : `Failed to create scalar "${scalar.name}"`
-          );
+        } catch {
+          result.errors.push(`Failed to create scalar "${scalar.name}"`);
         }
       }
 
       for (const unionType of payload.unionTypes) {
+        await assertNameFree(unionType.name, domainScope.data);
         try {
           await tx.unionType.create({
             data: {
               name: unionType.name,
               memberTypes: unionType.memberTypes,
               description: unionType.description ?? "",
-              tenantId,
-              domainId: payload.domainId,
+              ...domainScope.data,
             },
           });
           result.unionsCreated++;
-        } catch (err: unknown) {
-          result.errors.push(
-            err instanceof Error && err.message.includes("Unique constraint")
-              ? `Union "${unionType.name}" already exists — skipped`
-              : `Failed to create union "${unionType.name}"`
-          );
+        } catch {
+          result.errors.push(`Failed to create union "${unionType.name}"`);
         }
       }
 
@@ -982,8 +1077,14 @@ export async function createDomainAssetsFromImportAction(
       const createdEntityMap = new Map<string, string>();
       const importProductId =
         payload.productId ?? (await ensureDefaultProductId(payload.domainId, tx));
+      const productScope = await resolveScope(tx, { level: "PRODUCT", productId: importProductId });
+      if (!productScope.success) throw new Error(productScope.error.message);
+      if (productScope.data.domainId !== payload.domainId) {
+        throw new Error("Product does not belong to this domain");
+      }
 
       for (const entity of sortedEntities) {
+        await assertNameFree(entity.name.trim(), productScope.data);
         try {
           const parentEntityId =
             entity.extends && createdEntityMap.has(entity.extends)
@@ -994,9 +1095,7 @@ export async function createDomainAssetsFromImportAction(
             data: {
               name: entity.name.trim(),
               slug: generateSlug(entity.name),
-              tenantId,
-              domainId: payload.domainId,
-              productId: importProductId,
+              ...productScope.data,
               description: entity.description ?? "",
               ownerId: currentUserId,
               ...(parentEntityId ? { parentEntityId } : {}),
@@ -1042,6 +1141,7 @@ export async function createDomainAssetsFromImportAction(
       }
 
       for (const service of payload.services) {
+        await assertNameFree(service.name, domainScope.data);
         try {
           const entityId =
             service.scope === "entity" && service.entityName
@@ -1080,18 +1180,16 @@ export async function createDomainAssetsFromImportAction(
             },
           });
           result.servicesCreated++;
-        } catch (err: unknown) {
-          result.errors.push(
-            err instanceof Error && err.message.includes("Unique constraint")
-              ? `API "${service.name}" already exists — skipped`
-              : `Failed to create API "${service.name}"`
-          );
+        } catch {
+          result.errors.push(`Failed to create API "${service.name}"`);
         }
       }
     });
 
     revalidatePath("/schemas");
   } catch (e: unknown) {
+    // The transaction rolled back, so nothing from this import was created.
+    if (e instanceof NameConflictError) return emptyImportResult([e.message]);
     result.errors.push(
       e instanceof AuditUserMissingError
         ? STALE_SESSION_IMPORT_ERROR

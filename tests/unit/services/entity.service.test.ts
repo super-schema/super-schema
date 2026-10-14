@@ -1,5 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const { mockTx, mockAssertNameAvailable } = vi.hoisted(() => ({
+  mockTx: {
+    entity: {
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+  },
+  mockAssertNameAvailable: vi.fn(),
+}));
+
+vi.mock("@/services/name-registry.service", () => ({
+  assertNameAvailable: mockAssertNameAvailable,
+  withTenantNameLock: (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) => fn(mockTx),
+}));
+
 vi.mock("@/lib/db", () => ({
   prisma: {
     entity: {
@@ -10,11 +25,12 @@ vi.mock("@/lib/db", () => ({
       delete: vi.fn(),
     },
     product: {
-      findUnique: vi.fn().mockResolvedValue({ id: "prd-default" }),
+      findUnique: vi.fn().mockResolvedValue({
+        id: "prd-default",
+        domainId: "dom-1",
+        domain: { tenantId: "tenant-1" },
+      }),
       create: vi.fn().mockResolvedValue({ id: "prd-default" }),
-    },
-    domain: {
-      findUniqueOrThrow: vi.fn().mockResolvedValue({ tenantId: "tenant-1" }),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
@@ -38,9 +54,16 @@ const mockCtx: ServiceContext = {
   prisma: prisma as unknown as ServiceContext["prisma"],
 };
 
+const CONFLICT_ERROR = {
+  code: "NAME_CONFLICT",
+  message: '"Customer" is already used by Enum "Customer" at Domain level.',
+  suggestedFix: "Choose a different name.",
+};
+
 describe("Entity Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAssertNameAvailable.mockResolvedValue({ success: true, data: undefined });
   });
 
   describe("createEntity", () => {
@@ -52,7 +75,7 @@ describe("Entity Service", () => {
         version: 1,
         status: "DRAFT",
       };
-      vi.mocked(prisma.entity.create).mockResolvedValue(mockEntity as never);
+      mockTx.entity.create.mockResolvedValue(mockEntity as never);
 
       const result = await createEntity(
         { name: "Customer", domainId: "dom-1", description: "Customer entity" },
@@ -63,15 +86,53 @@ describe("Entity Service", () => {
       if (result.success) {
         expect(result.data.name).toBe("Customer");
       }
-      expect(prisma.entity.create).toHaveBeenCalledWith(
+      expect(mockAssertNameAvailable).toHaveBeenCalledWith(mockTx, {
+        name: "Customer",
+        tenantId: "tenant-1",
+        domainId: "dom-1",
+        productId: "prd-default",
+      });
+      expect(mockTx.entity.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ domainId: "dom-1", tenantId: "tenant-1" }),
+          data: expect.objectContaining({
+            domainId: "dom-1",
+            tenantId: "tenant-1",
+            productId: "prd-default",
+          }),
         })
       );
     });
 
+    it("returns the registry conflict, creates nothing and writes no audit log", async () => {
+      mockAssertNameAvailable.mockResolvedValue({ success: false, error: CONFLICT_ERROR });
+
+      const result = await createEntity(
+        { name: "Customer", domainId: "dom-1", description: "Clash" },
+        mockCtx
+      );
+
+      expect(result).toEqual({ success: false, error: CONFLICT_ERROR });
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("returns NOT_FOUND when the domain's default product cannot be resolved", async () => {
+      vi.mocked(prisma.product.findUnique)
+        .mockResolvedValueOnce({ id: "prd-default" } as never) // ensureDefaultProductId
+        .mockResolvedValueOnce(null); // resolveScope
+
+      const result = await createEntity(
+        { name: "Customer", domainId: "dom-1", description: "" },
+        mockCtx
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.code).toBe("NOT_FOUND");
+      expect(mockAssertNameAvailable).not.toHaveBeenCalled();
+    });
+
     it("returns error for duplicate entity name in same domain", async () => {
-      vi.mocked(prisma.entity.create).mockRejectedValue(
+      mockTx.entity.create.mockRejectedValue(
         new Error("Unique constraint failed on the constraint: `entities_name_domainId_key`")
       );
 
@@ -143,24 +204,69 @@ describe("Entity Service", () => {
   });
 
   describe("updateEntity", () => {
-    it("returns updated entity", async () => {
-      const existing = { id: "ent-1", name: "Customer", version: 1 };
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
-      vi.mocked(prisma.entity.update).mockResolvedValue({
-        ...existing,
-        name: "CustomerV2",
-      } as never);
+    const existing = {
+      id: "ent-1",
+      name: "Customer",
+      version: 1,
+      tenantId: "tenant-1",
+      domainId: "dom-1",
+      productId: "prd-1",
+    };
 
-      const result = await updateEntity(
-        "ent-1",
-        { name: "CustomerV2" },
-        mockCtx
-      );
+    it("renames through the registry (excluding the entity itself) inside the tenant lock", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+      mockTx.entity.update.mockResolvedValue({ ...existing, name: "CustomerV2" } as never);
+
+      const result = await updateEntity("ent-1", { name: "CustomerV2" }, mockCtx);
 
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.name).toBe("CustomerV2");
       }
+      expect(mockAssertNameAvailable).toHaveBeenCalledWith(mockTx, {
+        name: "CustomerV2",
+        tenantId: "tenant-1",
+        domainId: "dom-1",
+        productId: "prd-1",
+        exclude: { kind: "entity", id: "ent-1" },
+      });
+      expect(mockTx.entity.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "ent-1" }, data: expect.objectContaining({ name: "CustomerV2" }) })
+      );
+      expect(prisma.entity.update).not.toHaveBeenCalled();
+    });
+
+    it("returns the registry conflict and does not rename", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+      mockAssertNameAvailable.mockResolvedValue({ success: false, error: CONFLICT_ERROR });
+
+      const result = await updateEntity("ent-1", { name: "Order" }, mockCtx);
+
+      expect(result).toEqual({ success: false, error: CONFLICT_ERROR });
+      expect(mockTx.entity.update).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("skips the registry when the name is unchanged", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, description: "d" } as never);
+
+      const result = await updateEntity("ent-1", { name: "Customer", description: "d" }, mockCtx);
+
+      expect(result.success).toBe(true);
+      expect(mockAssertNameAvailable).not.toHaveBeenCalled();
+      expect(prisma.entity.update).toHaveBeenCalled();
+      expect(mockTx.entity.update).not.toHaveBeenCalled();
+    });
+
+    it("skips the registry when no name is supplied", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, description: "d" } as never);
+
+      const result = await updateEntity("ent-1", { description: "d" }, mockCtx);
+
+      expect(result.success).toBe(true);
+      expect(mockAssertNameAvailable).not.toHaveBeenCalled();
     });
   });
 

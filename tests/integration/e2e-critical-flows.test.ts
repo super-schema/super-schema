@@ -22,17 +22,25 @@ const { mockPrisma } = vi.hoisted(() => {
       entity: {
         create: vi.fn(),
         findUnique: vi.fn(),
-        findMany: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
         update: vi.fn(),
         delete: vi.fn(),
       },
       product: {
-        findUnique: vi.fn().mockResolvedValue({ id: "prod-default" }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: "prod-default",
+          domainId: "dom-1",
+          domain: { tenantId: "tenant-1" },
+        }),
         create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
-      domain: {
-        findUniqueOrThrow: vi.fn().mockResolvedValue({ tenantId: "tenant-1" }),
-      },
+      // Name-registry finders (real registry runs against this mock; no rows = no conflicts)
+      sharedEnum: { findMany: vi.fn().mockResolvedValue([]) },
+      customScalar: { findMany: vi.fn().mockResolvedValue([]) },
+      unionType: { findMany: vi.fn().mockResolvedValue([]) },
+      serviceDefinition: { findMany: vi.fn().mockResolvedValue([]) },
+      $executeRaw: vi.fn(),
+      $transaction: vi.fn(),
       field: {
         create: vi.fn(),
         findFirst: vi.fn(),
@@ -102,6 +110,8 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Interactive transactions (tenant name lock) run their callback against the same mock client.
+  mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma));
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
 });
 
