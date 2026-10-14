@@ -6,11 +6,21 @@ import { getActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
 import { productSegment } from "@/lib/entity-placement";
 import {
+  buildProductInheritedDataTypes,
+  buildProductInheritedServices,
   mapCustomScalarRows,
   mapServiceRows,
   mapSharedEnumRows,
   mapUnionTypeRows,
 } from "../map-asset-rows";
+
+const SERVICE_INCLUDE = {
+  entity: { select: { id: true, name: true, slug: true } },
+  operations: {
+    orderBy: { name: "asc" },
+    include: { parameters: true, responses: true },
+  },
+} as const;
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string }>;
@@ -87,6 +97,13 @@ export default async function ProductWorkspacePage({
     customScalarsRaw,
     unionTypesRaw,
     servicesRaw,
+    domainEnumsRaw,
+    domainScalarsRaw,
+    domainUnionsRaw,
+    domainServicesRaw,
+    tenantEnumsRaw,
+    tenantScalarsRaw,
+    tenantUnionsRaw,
   ] = await Promise.all([
     prisma.domain.findUnique({
       where: { id: domain.id },
@@ -115,28 +132,55 @@ export default async function ProductWorkspacePage({
       where: { domainId: domain.id },
       orderBy: { name: "asc" },
     }),
+    // Product-level assets (managed on this page).
     prisma.sharedEnum.findMany({
-      where: { domainId: domain.id },
+      where: { productId: product.id },
       orderBy: { name: "asc" },
     }),
     prisma.customScalar.findMany({
-      where: { domainId: domain.id },
+      where: { productId: product.id },
       orderBy: { name: "asc" },
     }),
     prisma.unionType.findMany({
-      where: { domainId: domain.id },
+      where: { productId: product.id },
+      orderBy: { name: "asc" },
+    }),
+    // Includes entity-scoped APIs: those live at their entity's product scope.
+    prisma.serviceDefinition.findMany({
+      where: { productId: product.id },
+      orderBy: { name: "asc" },
+      include: SERVICE_INCLUDE,
+    }),
+    // Inherited from the domain (read-only).
+    prisma.sharedEnum.findMany({
+      where: { domainId: domain.id, productId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.customScalar.findMany({
+      where: { domainId: domain.id, productId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.unionType.findMany({
+      where: { domainId: domain.id, productId: null },
       orderBy: { name: "asc" },
     }),
     prisma.serviceDefinition.findMany({
-      where: { domainId: domain.id },
+      where: { domainId: domain.id, productId: null },
       orderBy: { name: "asc" },
-      include: {
-        entity: { select: { id: true, name: true, slug: true } },
-        operations: {
-          orderBy: { name: "asc" },
-          include: { parameters: true, responses: true },
-        },
-      },
+      include: SERVICE_INCLUDE,
+    }),
+    // Inherited from the Enterprise (read-only).
+    prisma.sharedEnum.findMany({
+      where: { tenantId: domain.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.customScalar.findMany({
+      where: { tenantId: domain.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.unionType.findMany({
+      where: { tenantId: domain.tenantId, domainId: null },
+      orderBy: { name: "asc" },
     }),
   ]);
 
@@ -198,6 +242,24 @@ export default async function ProductWorkspacePage({
 
   const services = mapServiceRows(servicesRaw);
 
+  const inheritedDataTypes = buildProductInheritedDataTypes({
+    domainSlug,
+    domain: {
+      sharedEnums: mapSharedEnumRows(domainEnumsRaw),
+      customScalars: mapCustomScalarRows(domainScalarsRaw),
+      unionTypes: mapUnionTypeRows(domainUnionsRaw),
+    },
+    enterprise: {
+      sharedEnums: mapSharedEnumRows(tenantEnumsRaw),
+      customScalars: mapCustomScalarRows(tenantScalarsRaw),
+      unionTypes: mapUnionTypeRows(tenantUnionsRaw),
+    },
+  });
+  const inheritedServices = buildProductInheritedServices({
+    domainSlug,
+    domain: mapServiceRows(domainServicesRaw),
+  });
+
   const domainPolicy =
     (domain as { policyTemplate?: Record<string, unknown> }).policyTemplate ??
     null;
@@ -233,6 +295,8 @@ export default async function ProductWorkspacePage({
       unionTypes={unionTypes}
       decoratorDefinitions={decorators}
       services={services}
+      inheritedDataTypes={inheritedDataTypes}
+      inheritedServices={inheritedServices}
     />
   );
 }

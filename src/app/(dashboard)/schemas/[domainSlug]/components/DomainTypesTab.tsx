@@ -46,7 +46,19 @@ export interface UnionTypeData {
   description: string;
 }
 
-export type DomainTypeCreateIntent = "enum" | "scalar" | "union";
+export type DomainTypeKind = "enum" | "scalar" | "union";
+
+/**
+ * What the parent asks the tab to open: a specific kind's create form, or
+ * "choose" to let the user pick the kind first ("New Custom Data Type").
+ */
+export type DomainTypeCreateIntent = DomainTypeKind | "choose";
+
+const TYPE_KINDS: { kind: DomainTypeKind; label: string }[] = [
+  { kind: "enum", label: "Enum" },
+  { kind: "scalar", label: "Scalar" },
+  { kind: "union", label: "Union" },
+];
 
 /** Data types owned by a broader level, shown read-only with a link to their source. */
 export interface InheritedDataTypes {
@@ -117,18 +129,29 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
   const [newUnionName, setNewUnionName] = useState("");
   const [newUnionMembers, setNewUnionMembers] = useState("");
 
-  useEffect(() => {
-    if (!createIntent) return;
+  // "New Custom Data Type": the kind is picked here, not in the parent's menu.
+  const [showKindChooser, setShowKindChooser] = useState(false);
 
-    if (createIntent === "enum") {
+  function openCreateForm(kind: DomainTypeKind) {
+    if (kind === "enum") {
       setActiveSubTab("enums");
       setShowCreateEnum(true);
-    } else if (createIntent === "scalar") {
+    } else if (kind === "scalar") {
       setActiveSubTab("scalars");
       setShowCreateScalar(true);
     } else {
       setActiveSubTab("unions");
       setShowCreateUnion(true);
+    }
+  }
+
+  useEffect(() => {
+    if (!createIntent) return;
+
+    if (createIntent === "choose") {
+      setShowKindChooser(true);
+    } else {
+      openCreateForm(createIntent);
     }
 
     onCreateIntentConsumed?.();
@@ -203,6 +226,39 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
 
         {/* Content area */}
         <div className="flex-1 min-w-0">
+          {showKindChooser && (
+            <div
+              data-testid="type-kind-chooser"
+              role="group"
+              aria-label="Choose a custom data type kind"
+              className="rounded-lg border border-primary/30 bg-primary/5 p-3 mb-space-3 space-y-2"
+            >
+              <div>
+                <div className="text-body-small font-semibold text-foreground">New Custom Data Type</div>
+                <div className="text-caption text-muted-foreground">What kind of type do you want to create?</div>
+              </div>
+              <div className="flex items-center gap-1">
+                {TYPE_KINDS.map(({ kind, label }) => (
+                  <Button
+                    key={kind}
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px]"
+                    onClick={() => {
+                      setShowKindChooser(false);
+                      openCreateForm(kind);
+                    }}
+                  >
+                    {label}
+                  </Button>
+                ))}
+                <Button variant="ghost" size="sm" className="h-7 text-[11px] ml-auto" onClick={() => setShowKindChooser(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Enums */}
           {activeSubTab === "enums" && (
             <div className="space-y-space-2">
@@ -274,10 +330,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
                 <div key={s.id} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/scalar">
                   <div className="flex items-center gap-space-2">
                     <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
-                    <span className="text-caption text-muted-foreground">extends</span>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono">{s.baseType}</Badge>
-                    {s.format && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">format: {s.format}</Badge>}
-                    {s.pattern && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">pattern: {s.pattern}</Badge>}
+                    <ScalarTypeBadges s={s} />
                     <button
                       onClick={() => deleteDialog.ask(s.name, async () => {
                         const r = await deleteCustomScalarAction(s.id);
@@ -338,6 +391,21 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
 }
 
 // ---------------------------------------------------------------------------
+// Shared scalar summary (editable and inherited cards render the same facts)
+// ---------------------------------------------------------------------------
+
+function ScalarTypeBadges({ s }: { s: CustomScalarData }) {
+  return (
+    <>
+      <span className="text-caption text-muted-foreground">extends</span>
+      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono">{s.baseType}</Badge>
+      {s.format && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">format: {s.format}</Badge>}
+      {s.pattern && <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">pattern: {s.pattern}</Badge>}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Read-only data types inherited from a broader level
 // ---------------------------------------------------------------------------
 
@@ -374,8 +442,7 @@ function InheritedSection({ group }: { group: InheritedDataTypes }) {
             <div className="flex items-center gap-space-2 flex-wrap">
               <Sigma className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
               <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
-              <span className="text-caption text-muted-foreground">extends</span>
-              <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono">{s.baseType}</Badge>
+              <ScalarTypeBadges s={s} />
             </div>
             {s.description && <p className="text-caption text-muted-foreground mt-1">{s.description}</p>}
           </div>

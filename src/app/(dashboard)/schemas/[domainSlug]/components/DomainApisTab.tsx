@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import Link from "next/link";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import {
   createServiceAction,
@@ -56,12 +57,27 @@ export interface ServiceData {
   operations: OperationData[];
 }
 
+/** Services owned by a broader level, shown read-only with a link to their source. */
+export interface InheritedServices {
+  label: string;
+  href: string;
+  services: ServiceData[];
+}
+
 interface DomainApisTabProps {
   domainId: string;
   /** Level new services are created at (domain page, product page, ...). */
   target: ScopeTarget;
   services: ServiceData[];
   entities: { id: string; name: string }[];
+  inherited?: InheritedServices[];
+}
+
+/** Name of the level a target creates at; labels the non-entity service group. */
+function levelNoun(target: ScopeTarget): string {
+  if (target.level === "PRODUCT") return "Product";
+  if (target.level === "TENANT") return "Enterprise";
+  return "Domain";
 }
 
 // ---------------------------------------------------------------------------
@@ -82,7 +98,7 @@ const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
 // Component
 // ---------------------------------------------------------------------------
 
-export function DomainApisTab({ domainId, target, services, entities }: DomainApisTabProps) {
+export function DomainApisTab({ domainId, target, services, entities, inherited }: DomainApisTabProps) {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedOp, setExpandedOp] = useState<string | null>(null);
   const [isAddingService, setIsAddingService] = useState(false);
@@ -162,8 +178,11 @@ export function DomainApisTab({ domainId, target, services, entities }: DomainAp
   // Entity-scoped APIs belong to an entity's product. Where no entities are
   // offered (the domain page) they can neither be created nor listed here.
   const canScopeToEntity = entities.length > 0;
+  const noun = levelNoun(target);
+  // A group with nothing in it carries no information — hide it.
+  const inheritedGroups = (inherited ?? []).filter((g) => g.services.length > 0);
   const serviceGroups = [
-    { title: "Domain APIs", services: domainServices },
+    { title: `${noun} APIs`, services: domainServices },
     ...(canScopeToEntity || entityServices.length > 0
       ? [{ title: "Entity APIs", services: entityServices }]
       : []),
@@ -199,7 +218,7 @@ export function DomainApisTab({ domainId, target, services, entities }: DomainAp
                 onChange={(e) => setNewServiceScope(e.target.value as "DOMAIN" | "ENTITY")}
                 className="h-8 rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
               >
-                <option value="DOMAIN">Domain-scoped</option>
+                <option value="DOMAIN">{`${noun}-scoped`}</option>
                 <option value="ENTITY">Entity-scoped</option>
               </select>
             )}
@@ -271,7 +290,7 @@ export function DomainApisTab({ domainId, target, services, entities }: DomainAp
                   {service.name}
                 </span>
                 <Badge variant="outline" className="text-[10px] h-4 px-1.5 uppercase">
-                  {service.scope === "ENTITY" ? "entity" : "domain"}
+                  {service.scope === "ENTITY" ? "entity" : noun.toLowerCase()}
                 </Badge>
                 {service.entity && (
                   <span className="text-caption text-muted-foreground">
@@ -455,7 +474,60 @@ export function DomainApisTab({ domainId, target, services, entities }: DomainAp
         </div>
         ))
       )}
+
+      {inheritedGroups.map((group) => (
+        <InheritedServicesSection key={group.label} group={group} />
+      ))}
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Read-only services inherited from a broader level
+// ---------------------------------------------------------------------------
+
+function InheritedServicesSection({ group }: { group: InheritedServices }) {
+  return (
+    <section
+      className="mt-space-6 border-t border-border/50 pt-space-4 space-y-space-2"
+      data-testid="inherited-services"
+    >
+      <div className="flex items-center gap-space-2">
+        <h3 className="text-body-small font-semibold text-foreground">
+          <Link href={group.href} className="hover:text-primary hover:underline">
+            {group.label}
+          </Link>
+        </h3>
+        <Badge variant="outline" className="text-[10px] h-4 px-1.5">Read-only</Badge>
+      </div>
+      {group.services.map((service) => (
+        <div key={service.id} className="rounded-lg border border-border/30 p-space-3">
+          <div className="flex items-center gap-space-2 flex-wrap">
+            <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <span className="font-mono text-body-small text-foreground font-medium">{service.name}</span>
+            {service.basePath !== "/" && (
+              <span className="font-mono text-caption text-muted-foreground">{service.basePath}</span>
+            )}
+            <Badge variant="secondary" className="text-[10px] h-4 px-1.5 ml-auto">
+              {service.operations.length} op{service.operations.length !== 1 ? "s" : ""}
+            </Badge>
+          </div>
+          {service.description && <p className="text-caption text-muted-foreground mt-1">{service.description}</p>}
+          {service.operations.length > 0 && (
+            <div className="mt-space-2 space-y-0.5">
+              {service.operations.map((op) => (
+                <div key={op.id} className="flex items-center gap-2">
+                  <Badge className={`text-[10px] h-4 font-mono font-bold border ${METHOD_COLORS[op.httpMethod] ?? METHOD_COLORS.GET}`}>
+                    {op.httpMethod}
+                  </Badge>
+                  <span className="font-mono text-caption text-foreground">{op.httpPath}</span>
+                  <span className="text-caption text-muted-foreground truncate">{op.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}

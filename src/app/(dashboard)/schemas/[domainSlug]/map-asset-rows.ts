@@ -1,9 +1,11 @@
+import { assetHref } from "@/lib/navigation/asset-href";
 import type {
   CustomScalarData,
+  InheritedDataTypes,
   SharedEnumData,
   UnionTypeData,
 } from "./components/DomainTypesTab";
-import type { ServiceData } from "./components/DomainApisTab";
+import type { InheritedServices, ServiceData } from "./components/DomainApisTab";
 
 /**
  * Row -> UI-shape mapping shared by the domain page and the product page.
@@ -121,4 +123,43 @@ export function mapServiceRows(rows: ServiceRow[]): ServiceData[] {
       })),
     })),
   }));
+}
+
+/**
+ * Inherited sections of a product workspace. A product inherits data types
+ * from its domain and from the Enterprise, and API services from its domain.
+ * Empty groups are dropped; links go to the owning level's tab via assetHref.
+ */
+export function buildProductInheritedDataTypes(args: {
+  domainSlug: string;
+  domain: Pick<InheritedDataTypes, "sharedEnums" | "customScalars" | "unionTypes">;
+  enterprise: Pick<InheritedDataTypes, "sharedEnums" | "customScalars" | "unionTypes">;
+}): InheritedDataTypes[] {
+  const groups: InheritedDataTypes[] = [
+    {
+      label: "From Domain",
+      href: assetHref({ kind: "dataTypes", domainSlug: args.domainSlug, productSlug: null }),
+      ...args.domain,
+    },
+    {
+      label: "From Enterprise",
+      href: assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null }),
+      ...args.enterprise,
+    },
+  ];
+  return groups.filter((g) => g.sharedEnums.length + g.customScalars.length + g.unionTypes.length > 0);
+}
+
+export function buildProductInheritedServices(args: {
+  domainSlug: string;
+  domain: ServiceData[];
+}): InheritedServices[] {
+  if (args.domain.length === 0) return [];
+  return [
+    {
+      label: "From Domain",
+      href: assetHref({ kind: "apis", domainSlug: args.domainSlug, productSlug: null }),
+      services: args.domain,
+    },
+  ];
 }

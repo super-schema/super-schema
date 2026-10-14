@@ -39,9 +39,10 @@ import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
 import { deleteDomainAction } from "../actions";
 import { useModKey } from "@/lib/platform";
-import { DomainTypesTab, type DomainTypeCreateIntent, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
+import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
 import type { DomainModelData } from "./components/DomainModelsTab";
-import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
+import { DomainApisTab, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
+import { assetHref } from "@/lib/navigation/asset-href";
 import { formatDateOnly } from "@/lib/date-format";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
@@ -60,20 +61,18 @@ export function normalizeWorkspaceTab(raw: string | null): DomainTab {
 }
 
 // ---------------------------------------------------------------------------
-// Create dropdown — New Entity, New Data Type (Enum / Scalar / Union), New API
+// Create dropdown — New Entity, New Custom Data Type, New API. The kind of
+// custom data type (Enum / Scalar / Union) is chosen on the Data Types tab,
+// not listed here.
 // ---------------------------------------------------------------------------
 
 function CreateDropdown({
   onNewEntity,
-  onNewEnum,
-  onNewScalar,
-  onNewUnion,
+  onNewCustomDataType,
   onNewApi,
 }: {
   onNewEntity: () => void;
-  onNewEnum: () => void;
-  onNewScalar: () => void;
-  onNewUnion: () => void;
+  onNewCustomDataType: () => void;
   onNewApi: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -102,11 +101,12 @@ function CreateDropdown({
     action: onNewEntity,
     description: "Schema entity with fields",
   };
-  const dataTypeItems: DropdownItem[] = [
-    { label: "Enum", icon: Hash, action: onNewEnum, description: "Shared enum type" },
-    { label: "Scalar", icon: Hash, action: onNewScalar, description: "Custom scalar type" },
-    { label: "Union", icon: Hash, action: onNewUnion, description: "Union type (A | B)" },
-  ];
+  const customDataTypeItem: DropdownItem = {
+    label: "New Custom Data Type",
+    icon: Hash,
+    action: onNewCustomDataType,
+    description: "Enum, scalar or union",
+  };
   const apiItem: DropdownItem = {
     label: "New API",
     icon: Globe,
@@ -114,12 +114,13 @@ function CreateDropdown({
     description: "API service definition",
   };
 
-  function renderItem(item: DropdownItem, indented = false) {
+  function renderItem(item: DropdownItem) {
     return (
       <button
         key={item.label}
+        role="menuitem"
         onClick={() => { item.action(); setOpen(false); }}
-        className={`flex items-start gap-2 w-full text-left py-2 pr-3 hover:bg-accent transition-colors ${indented ? "pl-6" : "pl-3"}`}
+        className="flex items-start gap-2 w-full text-left py-2 px-3 hover:bg-accent transition-colors"
       >
         <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
         <div>
@@ -146,10 +147,9 @@ function CreateDropdown({
         </Button>
       </div>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[220px]">
+        <div role="menu" className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[220px]">
           {renderItem(entityItem)}
-          <div className="text-[10px] uppercase text-muted-foreground px-3 pt-2">New Data Type</div>
-          {dataTypeItems.map((item) => renderItem(item, true))}
+          {renderItem(customDataTypeItem)}
           {renderItem(apiItem)}
         </div>
       )}
@@ -189,11 +189,17 @@ interface DomainWorkspaceProps {
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
   models: DomainModelData[];
+  /** Product-level data types (managed here). */
   sharedEnums: SharedEnumData[];
   customScalars: CustomScalarData[];
   unionTypes: UnionTypeData[];
   decoratorDefinitions: DecoratorDefinitionData[];
+  /** Product-level API services (managed here). */
   services: ServiceData[];
+  /** Data types owned by the domain / Enterprise, shown read-only. */
+  inheritedDataTypes?: InheritedDataTypes[];
+  /** Services owned by the domain, shown read-only. */
+  inheritedServices?: InheritedServices[];
 }
 
 interface InlineField {
@@ -262,6 +268,8 @@ export function DomainWorkspace({
   customScalars,
   unionTypes,
   services,
+  inheritedDataTypes,
+  inheritedServices,
 }: DomainWorkspaceProps) {
   const router = useRouter();
   const invalidateDomainsTree = useInvalidateDomainsTree();
@@ -276,15 +284,18 @@ export function DomainWorkspace({
   );
   const [showCreate, setShowCreate] = useState(false);
 
+  const newEntityHref = assetHref({ kind: "newEntity", domainSlug, productSlug });
+  const productTarget = { level: "PRODUCT", productId } as const;
+
   // Listen for Cmd+N global shortcut to navigate to wizard
   useEffect(() => {
     function handleNewEntity() {
-      router.push(`/schemas/${domainSlug}/${productSlug}/new`);
+      router.push(newEntityHref);
     }
     document.addEventListener("super-schema:new-entity", handleNewEntity);
     return () =>
       document.removeEventListener("super-schema:new-entity", handleNewEntity);
-  }, [router, domainSlug]);
+  }, [router, newEntityHref]);
 
   const [typeCreateIntent, setTypeCreateIntent] = useState<DomainTypeCreateIntent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
@@ -545,7 +556,7 @@ export function DomainWorkspace({
         </Link>
         <ChevronRight className="w-3 h-3" />
         <Link
-          href={`/schemas/${domainSlug}`}
+          href={assetHref({ kind: "domain", domainSlug })}
           className="hover:text-foreground transition-colors"
         >
           {domainName}
@@ -581,10 +592,8 @@ export function DomainWorkspace({
             </button>
           </div>
           <CreateDropdown
-            onNewEntity={() => router.push(`/schemas/${domainSlug}/${productSlug}/new`)}
-            onNewEnum={() => { setActiveTab("data-types"); setTypeCreateIntent("enum"); }}
-            onNewScalar={() => { setActiveTab("data-types"); setTypeCreateIntent("scalar"); }}
-            onNewUnion={() => { setActiveTab("data-types"); setTypeCreateIntent("union"); }}
+            onNewEntity={() => router.push(newEntityHref)}
+            onNewCustomDataType={() => { setActiveTab("data-types"); setTypeCreateIntent("choose"); }}
             onNewApi={() => setActiveTab("apis")}
           />
           {canDeleteDomain && !isSystemDomain ? (
@@ -627,10 +636,11 @@ export function DomainWorkspace({
       {activeTab === "data-types" && (
         <DomainTypesTab
           domainId={domainId}
-          target={{ level: "DOMAIN", domainId }}
+          target={productTarget}
           sharedEnums={sharedEnums}
           customScalars={customScalars}
           unionTypes={unionTypes}
+          inherited={inheritedDataTypes}
           createIntent={typeCreateIntent}
           onCreateIntentConsumed={() => setTypeCreateIntent(null)}
         />
@@ -640,9 +650,10 @@ export function DomainWorkspace({
       {activeTab === "apis" && (
         <DomainApisTab
           domainId={domainId}
-          target={{ level: "DOMAIN", domainId }}
+          target={productTarget}
           services={services}
           entities={entities.map((e) => ({ id: e.id, name: e.name }))}
+          inherited={inheritedServices}
         />
       )}
 
@@ -923,7 +934,7 @@ export function DomainWorkspace({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-space-4 w-full max-w-2xl">
             {/* Standards Template */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new?template=standards`)}
+              onClick={() => router.push(assetHref({ kind: "newEntity", domainSlug, productSlug }, { query: { template: "standards" } }))}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <FileText className="w-8 h-8 text-primary mb-space-3 group-hover:scale-110 transition-transform" />
@@ -935,7 +946,7 @@ export function DomainWorkspace({
 
             {/* Describe with AI */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new?mode=ai`)}
+              onClick={() => router.push(assetHref({ kind: "newEntity", domainSlug, productSlug }, { query: { mode: "ai" } }))}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <Sparkles className="w-8 h-8 text-warning mb-space-3 group-hover:scale-110 transition-transform" />
@@ -947,7 +958,7 @@ export function DomainWorkspace({
 
             {/* Start Blank */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new`)}
+              onClick={() => router.push(newEntityHref)}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <FilePlus2 className="w-8 h-8 text-muted-foreground mb-space-3 group-hover:text-foreground group-hover:scale-110 transition-all" />
@@ -1003,7 +1014,7 @@ export function DomainWorkspace({
                 <tr
                   key={entity.id}
                   className="border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/${entity.slug}`)}
+                  onClick={() => router.push(assetHref({ kind: "entity", slug: entity.slug, domainSlug, productSlug }))}
                 >
                   <td className="px-space-4 py-space-3 font-mono text-body-small text-foreground">
                     {entity.name}
