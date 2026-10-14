@@ -63,6 +63,11 @@ type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api" | "deployments" | "typespec";
 type RightPanelTab = "field-edit" | "typespec-preview";
 
+/** Message for a thrown value (server actions reject on network or server failures). */
+function errorMessage(e: unknown): string {
+  return e instanceof Error && e.message ? e.message : "Unexpected error";
+}
+
 interface FieldData {
   id: string;
   slug?: string;
@@ -180,6 +185,9 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   // Publish dialog + published versions
   const [publishedVersions, setPublishedVersions] = useState<EntityVersionSummary[]>([]);
+  // The versions tab must not say "Not published yet" before the first load finishes, or when it failed.
+  const [versionsLoaded, setVersionsLoaded] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishPreview, setPublishPreview] = useState<PublishAnalysis | null>(null);
   const [publishLoadError, setPublishLoadError] = useState<string | null>(null);
@@ -290,16 +298,23 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   }, [entity.id]);
 
   const handleOpenHistory = useCallback(async () => {
-    const [published, legacy] = await Promise.all([
+    // allSettled: a failure in one list must not hide the other, and nothing may go unreported.
+    const [published, legacy] = await Promise.allSettled([
       listEntityVersionsAction(entity.id),
       getVersionHistoryAction(entity.id),
     ]);
-    if (!("error" in published)) {
-      setPublishedVersions(published.versions);
+    if (published.status === "rejected") {
+      setVersionsError(errorMessage(published.reason));
+    } else if ("error" in published.value) {
+      setVersionsError(published.value.error);
+    } else {
+      setVersionsError(null);
+      setPublishedVersions(published.value.versions);
     }
-    if (legacy.versions) {
-      setVersionHistory(legacy.versions as VersionSnapshot[]);
+    if (legacy.status === "fulfilled" && legacy.value.versions) {
+      setVersionHistory(legacy.value.versions as VersionSnapshot[]);
     }
+    setVersionsLoaded(true);
   }, [entity.id]);
 
   const handleOpenPublish = useCallback(async () => {
@@ -311,9 +326,14 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     setPublishPreview(null);
     setPublishLoadError(null);
     setPublishError(null);
-    const res = await getPublishPreviewAction(entity.id);
-    if ("error" in res) setPublishLoadError(res.error);
-    else setPublishPreview(res.preview);
+    try {
+      const res = await getPublishPreviewAction(entity.id);
+      if ("error" in res) setPublishLoadError(res.error);
+      else setPublishPreview(res.preview);
+    } catch (e) {
+      // Without this the dialog would spin on "Checking changes…" forever.
+      setPublishLoadError(`Could not load the publish preview: ${errorMessage(e)}`);
+    }
   }, [entity.id]);
 
   const handleConfirmPublish = useCallback(async (input: PublishInput) => {
@@ -330,6 +350,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
       setPublishOpen(false);
       toast.success(`Published ${entity.name} v${res.version.label}`);
       router.refresh();
+    } catch (e) {
+      setPublishError(`Publishing failed: ${errorMessage(e)}`);
     } finally {
       setIsPublishing(false);
     }
@@ -734,7 +756,17 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 </Button>
               )}
             </div>
-            <EntityVersionList versions={publishedVersions} />
+            {versionsError ? (
+              <p role="alert" data-testid="versions-error" className="text-body-small text-destructive">
+                Could not load published versions: {versionsError}
+              </p>
+            ) : !versionsLoaded ? (
+              <p data-testid="versions-loading" className="text-body-small text-muted-foreground">
+                Loading published versions…
+              </p>
+            ) : (
+              <EntityVersionList versions={publishedVersions} />
+            )}
 
             <div className="border-t border-border/50 pt-space-4 space-y-space-3">
               <h3 className="text-heading-3 text-foreground">Legacy history (read-only)</h3>
@@ -803,9 +835,14 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 return null;
               })()}
               onSave={async (_entityId, policy) => {
-                await updateEntityMetadataAction(entity.id, {
+                const res = await updateEntityMetadataAction(entity.id, {
                   retentionPolicy: policy as unknown as Record<string, unknown>,
                 });
+                if (res?.error) {
+                  toast.error(res.error);
+                  return;
+                }
+                markDraftDirty();
                 toast.success("Retention policy saved");
               }}
             />
