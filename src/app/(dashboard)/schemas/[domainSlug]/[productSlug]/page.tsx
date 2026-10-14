@@ -5,6 +5,12 @@ import { notFound, redirect } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
 import { productSegment } from "@/lib/entity-placement";
+import {
+  mapCustomScalarRows,
+  mapServiceRows,
+  mapSharedEnumRows,
+  mapUnionTypeRows,
+} from "../map-asset-rows";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string }>;
@@ -161,28 +167,9 @@ export default async function ProductWorkspacePage({
     };
   });
 
-  const sharedEnums = sharedEnumsRaw.map((e) => ({
-    id: e.id,
-    name: e.name,
-    values: e.values,
-    description: e.description,
-  }));
-
-  const customScalars = customScalarsRaw.map((s) => ({
-    id: s.id,
-    name: s.name,
-    baseType: s.baseType,
-    format: s.format,
-    pattern: s.pattern,
-    description: s.description,
-  }));
-
-  const unionTypes = unionTypesRaw.map((u) => ({
-    id: u.id,
-    name: u.name,
-    memberTypes: u.memberTypes,
-    description: u.description,
-  }));
+  const sharedEnums = mapSharedEnumRows(sharedEnumsRaw);
+  const customScalars = mapCustomScalarRows(customScalarsRaw);
+  const unionTypes = mapUnionTypeRows(unionTypesRaw);
 
   const models = modelDefinitions.map((model) => ({
     id: model.id,
@@ -209,35 +196,7 @@ export default async function ProductWorkspacePage({
     targetTypes: decorator.targetTypes,
   }));
 
-  const services = servicesRaw.map((s) => ({
-    id: s.id,
-    name: s.name,
-    description: s.description,
-    basePath: s.basePath,
-    scope: s.scope,
-    entity: s.entity
-      ? { id: s.entity.id, name: s.entity.name, slug: s.entity.slug }
-      : null,
-    operations: s.operations.map((op) => ({
-      id: op.id,
-      name: op.name,
-      httpMethod: op.httpMethod,
-      httpPath: op.httpPath,
-      description: op.description,
-      parameters: op.parameters.map((pr) => ({
-        name: pr.name,
-        type: pr.type,
-        location: pr.location,
-        required: pr.required,
-        description: pr.description,
-      })),
-      responses: op.responses.map((r) => ({
-        statusCode: r.statusCode,
-        type: r.type,
-        description: r.description,
-      })),
-    })),
-  }));
+  const services = mapServiceRows(servicesRaw);
 
   const domainPolicy =
     (domain as { policyTemplate?: Record<string, unknown> }).policyTemplate ??

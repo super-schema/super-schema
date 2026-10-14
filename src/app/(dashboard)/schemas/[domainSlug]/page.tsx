@@ -1,7 +1,14 @@
 import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { ProductGrid } from "./product-grid";
+import { assetHref } from "@/lib/navigation/asset-href";
+import { DomainTabs } from "./domain-tabs";
+import {
+  mapCustomScalarRows,
+  mapServiceRows,
+  mapSharedEnumRows,
+  mapUnionTypeRows,
+} from "./map-asset-rows";
 
 interface Props {
   params: Promise<{ domainSlug: string }>;
@@ -44,41 +51,109 @@ export default async function DomainProductsPage({ params }: Props) {
     notFound();
   }
 
-  const tiers = await prisma.productTier.findMany({
-    orderBy: { sortOrder: "asc" },
-  });
+  const [
+    tiers,
+    enums,
+    scalars,
+    unions,
+    services,
+    tenantEnums,
+    tenantScalars,
+    tenantUnions,
+  ] = await Promise.all([
+    prisma.productTier.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.sharedEnum.findMany({
+      where: { domainId: resolved.id, productId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.customScalar.findMany({
+      where: { domainId: resolved.id, productId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.unionType.findMany({
+      where: { domainId: resolved.id, productId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.serviceDefinition.findMany({
+      where: { domainId: resolved.id, productId: null },
+      orderBy: { name: "asc" },
+      include: {
+        entity: { select: { id: true, name: true, slug: true } },
+        operations: {
+          orderBy: { name: "asc" },
+          include: { parameters: true, responses: true },
+        },
+      },
+    }),
+    prisma.sharedEnum.findMany({
+      where: { tenantId: resolved.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.customScalar.findMany({
+      where: { tenantId: resolved.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.unionType.findMany({
+      where: { tenantId: resolved.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+  ]);
+
+  const enterpriseDataTypes = {
+    label: "From Enterprise",
+    href: assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null }),
+    sharedEnums: mapSharedEnumRows(tenantEnums),
+    customScalars: mapCustomScalarRows(tenantScalars),
+    unionTypes: mapUnionTypeRows(tenantUnions),
+  };
+  const hasEnterpriseDataTypes =
+    enterpriseDataTypes.sharedEnums.length +
+      enterpriseDataTypes.customScalars.length +
+      enterpriseDataTypes.unionTypes.length >
+    0;
 
   return (
-    <ProductGrid
-      domainId={resolved.id}
-      domainName={resolved.name}
-      domainSlug={domainSlug}
-      domainDescription={resolved.description}
-      products={resolved.products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        slug: p.slug,
-        description: p.description,
-        ownerTeam: p.ownerTeam,
-        isSystem: p.isSystem,
-        entityCount: p._count.entities,
-        updatedAt: p.updatedAt,
-        tier: p.tier
-          ? {
-              id: p.tier.id,
-              name: p.tier.name,
-              displayColor: p.tier.displayColor,
-              bgColor: p.tier.bgColor,
-              textColor: p.tier.textColor,
-            }
-          : null,
-      }))}
-      tiers={tiers.map((t) => ({
-        id: t.id,
-        name: t.name,
-        bgColor: t.bgColor,
-        textColor: t.textColor,
-      }))}
+    <DomainTabs
+      domain={{
+        id: resolved.id,
+        name: resolved.name,
+        slug: domainSlug,
+        description: resolved.description,
+      }}
+      productGridProps={{
+        products: resolved.products.map((p) => ({
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          description: p.description,
+          ownerTeam: p.ownerTeam,
+          isSystem: p.isSystem,
+          entityCount: p._count.entities,
+          updatedAt: p.updatedAt,
+          tier: p.tier
+            ? {
+                id: p.tier.id,
+                name: p.tier.name,
+                displayColor: p.tier.displayColor,
+                bgColor: p.tier.bgColor,
+                textColor: p.tier.textColor,
+              }
+            : null,
+        })),
+        tiers: tiers.map((t) => ({
+          id: t.id,
+          name: t.name,
+          bgColor: t.bgColor,
+          textColor: t.textColor,
+        })),
+      }}
+      dataTypes={{
+        sharedEnums: mapSharedEnumRows(enums),
+        customScalars: mapCustomScalarRows(scalars),
+        unionTypes: mapUnionTypeRows(unions),
+      }}
+      inheritedDataTypes={hasEnterpriseDataTypes ? [enterpriseDataTypes] : []}
+      services={mapServiceRows(services)}
     />
   );
 }

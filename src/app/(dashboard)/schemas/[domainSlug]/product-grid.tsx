@@ -3,12 +3,13 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Package, Plus, Search, Trash2, Users } from "lucide-react";
+import { Package, Plus, Search, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { formatDateOnly } from "@/lib/date-format";
+import { assetHref } from "@/lib/navigation/asset-href";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import {
   createProductAction,
@@ -44,7 +45,6 @@ interface ProductGridProps {
   domainId: string;
   domainName: string;
   domainSlug: string;
-  domainDescription: string;
   products: ProductGridItem[];
   tiers: TierOption[];
 }
@@ -57,7 +57,6 @@ export function ProductGrid({
   domainId,
   domainName,
   domainSlug,
-  domainDescription,
   products,
   tiers,
 }: ProductGridProps) {
@@ -114,7 +113,7 @@ export function ProductGrid({
     invalidateDomainsTree();
     resetCreate();
     if (result.slug) {
-      router.push(`/schemas/${domainSlug}/${result.slug}`);
+      router.push(assetHref({ kind: "product", domainSlug, productSlug: result.slug }));
     } else {
       router.refresh();
     }
@@ -136,33 +135,10 @@ export function ProductGrid({
   }
 
   return (
-    <div className="animate-auth-fade-up">
-      {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
-        <Link href="/schemas" className="hover:text-foreground transition-colors">
-          Domains
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <span className="text-foreground font-medium">{domainName}</span>
-      </nav>
-
-      {/* Header */}
-      <div className="flex items-center justify-between mb-space-4">
-        <div>
-          <h1 className="text-display text-foreground">{domainName}</h1>
-          <p className="text-body text-muted-foreground mt-space-1">
-            {domainDescription || "Select a product to manage its schemas"}
-          </p>
-        </div>
-        <Button onClick={() => setShowCreate(true)} className="gap-2">
-          <Plus className="w-4 h-4" />
-          New Product
-        </Button>
-      </div>
-
-      {/* Search */}
-      <div className="flex items-center gap-space-2 mb-space-6 max-w-md">
-        <div className="relative flex-1">
+    <div>
+      {/* Toolbar (the domain header lives above the tabs in DomainTabs) */}
+      <div className="flex items-center justify-between gap-space-4 mb-space-6">
+        <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search products..."
@@ -171,6 +147,10 @@ export function ProductGrid({
             className="pl-9 h-9"
           />
         </div>
+        <Button onClick={() => setShowCreate(true)} className="gap-2">
+          <Plus className="w-4 h-4" />
+          New Product
+        </Button>
       </div>
 
       {/* Create form */}
@@ -278,7 +258,7 @@ export function ProductGrid({
                 className="group relative surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/40 hover:shadow-lg"
               >
                 <Link
-                  href={`/schemas/${domainSlug}/${product.slug}`}
+                  href={assetHref({ kind: "product", domainSlug, productSlug: product.slug })}
                   className="block"
                 >
                   <div className="flex items-center gap-space-2 mb-space-2 pr-9">

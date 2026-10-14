@@ -627,6 +627,7 @@ export function DomainWorkspace({
       {activeTab === "data-types" && (
         <DomainTypesTab
           domainId={domainId}
+          target={{ level: "DOMAIN", domainId }}
           sharedEnums={sharedEnums}
           customScalars={customScalars}
           unionTypes={unionTypes}
@@ -639,6 +640,7 @@ export function DomainWorkspace({
       {activeTab === "apis" && (
         <DomainApisTab
           domainId={domainId}
+          target={{ level: "DOMAIN", domainId }}
           services={services}
           entities={entities.map((e) => ({ id: e.id, name: e.name }))}
         />

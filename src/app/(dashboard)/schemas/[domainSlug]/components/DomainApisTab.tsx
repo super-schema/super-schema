@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import type { ScopeTarget } from "@/lib/asset-scope";
 import {
   createServiceAction,
   deleteServiceAction,
@@ -57,6 +58,8 @@ export interface ServiceData {
 
 interface DomainApisTabProps {
   domainId: string;
+  /** Level new services are created at (domain page, product page, ...). */
+  target: ScopeTarget;
   services: ServiceData[];
   entities: { id: string; name: string }[];
 }
@@ -79,7 +82,7 @@ const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
 // Component
 // ---------------------------------------------------------------------------
 
-export function DomainApisTab({ domainId, services, entities }: DomainApisTabProps) {
+export function DomainApisTab({ domainId, target, services, entities }: DomainApisTabProps) {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedOp, setExpandedOp] = useState<string | null>(null);
   const [isAddingService, setIsAddingService] = useState(false);
@@ -100,12 +103,16 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
   function submitNewService() {
     if (!newServiceName.trim()) return;
     startTransition(async () => {
-      const result = await createServiceAction(domainId, {
-        name: newServiceName.trim(),
-        basePath: newServiceBasePath || "/",
-        scope: newServiceScope,
-        entityId: newServiceScope === "ENTITY" ? newServiceEntityId : undefined,
-      });
+      const result = await createServiceAction(
+        domainId,
+        {
+          name: newServiceName.trim(),
+          basePath: newServiceBasePath || "/",
+          scope: newServiceScope,
+          entityId: newServiceScope === "ENTITY" ? newServiceEntityId : undefined,
+        },
+        target
+      );
       if ("error" in result) {
         toast.error(result.error);
         return;
@@ -152,6 +159,15 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
   const totalOps = services.reduce((sum, s) => sum + s.operations.length, 0);
   const entityServices = services.filter((service) => service.scope === "ENTITY");
   const domainServices = services.filter((service) => service.scope !== "ENTITY");
+  // Entity-scoped APIs belong to an entity's product. Where no entities are
+  // offered (the domain page) they can neither be created nor listed here.
+  const canScopeToEntity = entities.length > 0;
+  const serviceGroups = [
+    { title: "Domain APIs", services: domainServices },
+    ...(canScopeToEntity || entityServices.length > 0
+      ? [{ title: "Entity APIs", services: entityServices }]
+      : []),
+  ];
 
   return (
     <div className="space-y-space-3" data-testid="domain-apis-tab">
@@ -169,7 +185,7 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
       {isAddingService && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-space-4 space-y-space-3">
           <h3 className="text-body-small font-semibold text-foreground">New API Service</h3>
-          <div className="grid grid-cols-2 gap-space-2">
+          <div className={canScopeToEntity ? "grid grid-cols-2 gap-space-2" : "grid grid-cols-1 gap-space-2"}>
             <Input
               value={newServiceName}
               onChange={(e) => setNewServiceName(e.target.value)}
@@ -177,14 +193,16 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
               className="h-8"
               autoFocus
             />
-            <select
-              value={newServiceScope}
-              onChange={(e) => setNewServiceScope(e.target.value as "DOMAIN" | "ENTITY")}
-              className="h-8 rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
-            >
-              <option value="DOMAIN">Domain-scoped</option>
-              <option value="ENTITY">Entity-scoped</option>
-            </select>
+            {canScopeToEntity && (
+              <select
+                value={newServiceScope}
+                onChange={(e) => setNewServiceScope(e.target.value as "DOMAIN" | "ENTITY")}
+                className="h-8 rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
+              >
+                <option value="DOMAIN">Domain-scoped</option>
+                <option value="ENTITY">Entity-scoped</option>
+              </select>
+            )}
           </div>
           {newServiceScope === "ENTITY" && (
             <select
@@ -221,10 +239,7 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
           </p>
         </div>
       ) : (
-        [
-          { title: "Domain APIs", services: domainServices },
-          { title: "Entity APIs", services: entityServices },
-        ].map(({ title, services: groupedServices }) => (
+        serviceGroups.map(({ title, services: groupedServices }) => (
         <div key={title} className="space-y-space-2">
           <div className="flex items-center justify-between">
             <h3 className="text-body-small font-medium text-foreground">{title}</h3>

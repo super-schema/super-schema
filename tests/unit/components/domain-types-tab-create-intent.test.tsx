@@ -31,6 +31,7 @@ describe("DomainTypesTab create intent", () => {
     render(
       <DomainTypesTab
         domainId="domain-1"
+        target={{ level: "DOMAIN", domainId: "domain-1" }}
         sharedEnums={[]}
         customScalars={[]}
         unionTypes={[]}
