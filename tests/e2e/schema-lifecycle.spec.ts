@@ -54,7 +54,10 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
   // "New Entity" buttons, incl. the sidebar's 2-segment variant).
   await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
   await expect(page).toHaveURL(/\/new$/);
-  await expect(page.getByText(/create new entity/i)).toBeVisible();
+  // Role query, not getByText: the route streams behind a loading.tsx, so the
+  // heading transiently exists twice (the hidden streamed copy plus the visible
+  // one) and getByText trips strict mode. getByRole only sees the visible one.
+  await expect(page.getByRole("heading", { name: /create new entity/i })).toBeVisible();
   await page.getByRole("button", { name: /import schema/i }).first().click();
   await page.locator("textarea").first().fill(tsp);
   await page.getByRole("button", { name: /parse schema/i }).click();
