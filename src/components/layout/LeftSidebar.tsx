@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Building2,
@@ -21,12 +21,12 @@ import type {
   ExplorerEntity,
   ExplorerProduct,
 } from "@/lib/navigation/build-explorer-tree";
-import { cn } from "@/lib/utils";
 import {
   SidebarCategory,
   SidebarEntityRow,
   SidebarLeafCategory,
   SidebarNodeRow,
+  type SidebarNavigate,
 } from "@/components/layout/sidebar/SidebarNodes";
 
 interface LeftSidebarProps {
@@ -91,6 +91,8 @@ function ExplorerSidebar({
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = searchParams?.get("tab") ?? null;
+  const currentQuery = searchParams?.toString() ?? "";
+  const currentUrl = currentQuery ? `${pathname}?${currentQuery}` : pathname;
   const [search, setSearch] = useState("");
   // Explicit user choices; anything absent falls back to the route-derived defaults.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
@@ -119,17 +121,57 @@ function ExplorerSidebar({
   }, [activeDomain]);
 
   const query = search.trim().toLowerCase();
+  const searching = query !== "";
 
   // While searching, every node that survives the filter is expanded so the
   // matching entities are visible.
   const isExpanded = (key: string) =>
-    query ? (searchOverrides[key] ?? true) : (overrides[key] ?? defaultExpanded.has(key));
-  const setExpanded = (key: string, open: boolean) => {
-    const apply = (prev: Record<string, boolean>) => ({ ...prev, [key]: open });
-    if (query) setSearchOverrides(apply);
-    else setOverrides(apply);
-  };
-  const toggle = (key: string) => setExpanded(key, !isExpanded(key));
+    searching ? (searchOverrides[key] ?? true) : (overrides[key] ?? defaultExpanded.has(key));
+
+  // Row callbacks are stable across pathname changes (they read the live URL
+  // through a ref and flip expansion via functional updates), so the memoized
+  // rows are not re-rendered by navigation alone.
+  const [isPending, startTransition] = useTransition();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const currentUrlRef = useRef(currentUrl);
+  useEffect(() => {
+    currentUrlRef.current = currentUrl;
+  }, [currentUrl]);
+  const { push } = router;
+
+  const expand = useCallback(
+    (key: string) => {
+      const apply = (prev: Record<string, boolean>) => ({ ...prev, [key]: true });
+      if (searching) setSearchOverrides(apply);
+      else setOverrides(apply);
+    },
+    [searching]
+  );
+  const toggle = useCallback(
+    (key: string) => {
+      const flip = (prev: Record<string, boolean>) => ({
+        ...prev,
+        [key]: !(prev[key] ?? (searching || defaultExpanded.has(key))),
+      });
+      if (searching) setSearchOverrides(flip);
+      else setOverrides(flip);
+    },
+    [searching, defaultExpanded]
+  );
+  // Every navigation runs in a transition so the clicked row can show a pending
+  // state, and never pushes the URL we are already on (it only expands).
+  const navigate = useCallback<SidebarNavigate>(
+    (href, expandKey) => {
+      if (expandKey) expand(expandKey);
+      if (href === currentUrlRef.current) return;
+      setPendingHref(href);
+      startTransition(() => {
+        push(href);
+      });
+    },
+    [expand, push]
+  );
+  const pendingTarget = isPending ? pendingHref : null;
   const enterpriseEntities = useMemo(
     () =>
       query
@@ -164,6 +206,8 @@ function ExplorerSidebar({
   }
 
   const enterpriseHref = assetHref({ kind: "enterprise" });
+  const enterpriseAddHref = assetHref({ kind: "newEntity", domainSlug: null, productSlug: null });
+  const enterpriseDataTypesHref = assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null });
   const enterpriseDataTypes = tree?.enterprise.counts.dataTypes ?? 0;
 
   function renderEntities(
@@ -178,7 +222,9 @@ function ExplorerSidebar({
           key={entity.id}
           active={pathname === href}
           entity={entity}
-          onClick={() => router.push(href)}
+          href={href}
+          onNavigate={navigate}
+          pending={pendingTarget === href}
         />
       );
     });
@@ -186,6 +232,13 @@ function ExplorerSidebar({
 
   function renderProduct(domain: ExplorerDomain, product: ExplorerProduct) {
     const base = assetHref({ kind: "product", domainSlug: domain.slug, productSlug: product.slug });
+    const addHref = assetHref({ kind: "newEntity", domainSlug: domain.slug, productSlug: product.slug });
+    const dataTypesHref = assetHref({
+      kind: "dataTypes",
+      domainSlug: domain.slug,
+      productSlug: product.slug,
+    });
+    const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: product.slug });
     const key = productKey(product.id);
     const entitiesKey = productEntitiesKey(product.id);
     const expanded = isExpanded(key);
@@ -199,19 +252,15 @@ function ExplorerSidebar({
           active={pathname === base}
           inRoute={inRoute}
           expanded={expanded}
-          icon={<Package className={cn("w-4 h-4 shrink-0", expanded && "text-primary")} />}
+          icon={Package}
           label={product.name}
           addTitle="New Entity"
-          onToggle={() => toggle(key)}
-          onNavigate={() => {
-            setExpanded(key, true);
-            router.push(base);
-          }}
-          onAdd={() =>
-            router.push(
-              assetHref({ kind: "newEntity", domainSlug: domain.slug, productSlug: product.slug })
-            )
-          }
+          nodeKey={key}
+          href={base}
+          addHref={addHref}
+          pending={pendingTarget === base || pendingTarget === addHref}
+          onToggle={toggle}
+          onNavigate={navigate}
         />
 
         {expanded && (
@@ -223,13 +272,13 @@ function ExplorerSidebar({
                   active={inRoute && !activeTab}
                   count={product.entities.length}
                   expanded={entitiesExpanded}
-                  icon={<Database className="w-3 h-3 shrink-0" />}
+                  icon={Database}
                   label="Entities"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    toggle(entitiesKey);
-                    router.push(base);
-                  }}
+                  nodeKey={entitiesKey}
+                  href={base}
+                  pending={pendingTarget === base}
+                  onToggle={toggle}
+                  onNavigate={navigate}
                 />
                 {entitiesExpanded && renderEntities(product.entities, domain.slug, product.slug)}
               </>
@@ -240,13 +289,11 @@ function ExplorerSidebar({
                 testId={`product-${product.id}-data-types`}
                 active={pathname === base && isDataTypesTab(activeTab)}
                 count={product.counts.dataTypes}
-                icon={<Hash className="w-3 h-3 shrink-0" />}
+                icon={Hash}
                 label="Data Types"
-                onClick={() =>
-                  router.push(
-                    assetHref({ kind: "dataTypes", domainSlug: domain.slug, productSlug: product.slug })
-                  )
-                }
+                href={dataTypesHref}
+                pending={pendingTarget === dataTypesHref}
+                onNavigate={navigate}
               />
             )}
 
@@ -255,13 +302,11 @@ function ExplorerSidebar({
                 testId={`product-${product.id}-apis`}
                 active={pathname === base && activeTab === "apis"}
                 count={product.counts.apis}
-                icon={<Globe className="w-3 h-3 shrink-0" />}
+                icon={Globe}
                 label="APIs"
-                onClick={() =>
-                  router.push(
-                    assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: product.slug })
-                  )
-                }
+                href={apisHref}
+                pending={pendingTarget === apisHref}
+                onNavigate={navigate}
               />
             )}
           </div>
@@ -272,6 +317,13 @@ function ExplorerSidebar({
 
   function renderDomain(domain: ExplorerDomain) {
     const base = assetHref({ kind: "domain", domainSlug: domain.slug });
+    const addHref = assetHref({
+      kind: "newEntity",
+      domainSlug: domain.slug,
+      productSlug: domain.products[0]?.slug ?? "default",
+    });
+    const dataTypesHref = assetHref({ kind: "dataTypes", domainSlug: domain.slug, productSlug: null });
+    const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: null });
     const key = domainKey(domain.id);
     const expanded = isExpanded(key);
 
@@ -282,29 +334,16 @@ function ExplorerSidebar({
           active={pathname === base}
           inRoute={isWithin(pathname, base)}
           expanded={expanded}
-          icon={
-            expanded ? (
-              <FolderOpen className="w-4 h-4 shrink-0 text-primary" />
-            ) : (
-              <Folder className="w-4 h-4 shrink-0" />
-            )
-          }
+          icon={Folder}
+          expandedIcon={FolderOpen}
           label={domain.name}
           addTitle="New Entity"
-          onToggle={() => toggle(key)}
-          onNavigate={() => {
-            setExpanded(key, true);
-            router.push(base);
-          }}
-          onAdd={() =>
-            router.push(
-              assetHref({
-                kind: "newEntity",
-                domainSlug: domain.slug,
-                productSlug: domain.products[0]?.slug ?? "default",
-              })
-            )
-          }
+          nodeKey={key}
+          href={base}
+          addHref={addHref}
+          pending={pendingTarget === base || pendingTarget === addHref}
+          onToggle={toggle}
+          onNavigate={navigate}
         />
 
         {expanded && (
@@ -314,13 +353,11 @@ function ExplorerSidebar({
                 testId={`domain-${domain.id}-data-types`}
                 active={pathname === base && isDataTypesTab(activeTab)}
                 count={domain.counts.dataTypes}
-                icon={<Hash className="w-3 h-3 shrink-0" />}
+                icon={Hash}
                 label="Data Types"
-                onClick={() =>
-                  router.push(
-                    assetHref({ kind: "dataTypes", domainSlug: domain.slug, productSlug: null })
-                  )
-                }
+                href={dataTypesHref}
+                pending={pendingTarget === dataTypesHref}
+                onNavigate={navigate}
               />
             )}
 
@@ -329,11 +366,11 @@ function ExplorerSidebar({
                 testId={`domain-${domain.id}-apis`}
                 active={pathname === base && activeTab === "apis"}
                 count={domain.counts.apis}
-                icon={<Globe className="w-3 h-3 shrink-0" />}
+                icon={Globe}
                 label="APIs"
-                onClick={() =>
-                  router.push(assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: null }))
-                }
+                href={apisHref}
+                pending={pendingTarget === apisHref}
+                onNavigate={navigate}
               />
             )}
 
@@ -356,17 +393,15 @@ function ExplorerSidebar({
           active={pathname === enterpriseHref}
           inRoute={inRoute}
           expanded={expanded}
-          icon={<Building2 className={cn("w-4 h-4 shrink-0", expanded && "text-primary")} />}
+          icon={Building2}
           label="Enterprise"
           addTitle="New Entity"
-          onToggle={() => toggle(ENTERPRISE_KEY)}
-          onNavigate={() => {
-            setExpanded(ENTERPRISE_KEY, true);
-            router.push(enterpriseHref);
-          }}
-          onAdd={() =>
-            router.push(assetHref({ kind: "newEntity", domainSlug: null, productSlug: null }))
-          }
+          nodeKey={ENTERPRISE_KEY}
+          href={enterpriseHref}
+          addHref={enterpriseAddHref}
+          pending={pendingTarget === enterpriseHref || pendingTarget === enterpriseAddHref}
+          onToggle={toggle}
+          onNavigate={navigate}
         />
 
         {expanded && (
@@ -376,11 +411,11 @@ function ExplorerSidebar({
                 testId="enterprise-data-types"
                 active={pathname === enterpriseHref && isDataTypesTab(activeTab)}
                 count={enterpriseDataTypes}
-                icon={<Hash className="w-3 h-3 shrink-0" />}
+                icon={Hash}
                 label="Data Types"
-                onClick={() =>
-                  router.push(assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null }))
-                }
+                href={enterpriseDataTypesHref}
+                pending={pendingTarget === enterpriseDataTypesHref}
+                onNavigate={navigate}
               />
             )}
 
@@ -391,13 +426,13 @@ function ExplorerSidebar({
                   active={inRoute && !activeTab}
                   count={enterpriseEntities.length}
                   expanded={entitiesExpanded}
-                  icon={<Database className="w-3 h-3 shrink-0" />}
+                  icon={Database}
                   label="Entities"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    toggle(ENTERPRISE_ENTITIES_KEY);
-                    router.push(enterpriseHref);
-                  }}
+                  nodeKey={ENTERPRISE_ENTITIES_KEY}
+                  href={enterpriseHref}
+                  pending={pendingTarget === enterpriseHref}
+                  onToggle={toggle}
+                  onNavigate={navigate}
                 />
                 {entitiesExpanded && renderEntities(enterpriseEntities, null, null)}
               </>

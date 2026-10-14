@@ -4,17 +4,54 @@
  * @vitest-environment jsdom
  */
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 
 const push = vi.fn();
-const location = vi.hoisted(() => ({ pathname: "/schemas/payments" }));
+const location = vi.hoisted(() => ({ pathname: "/schemas/payments", search: "" }));
 vi.mock("next/navigation", () => ({
   usePathname: () => location.pathname,
   useRouter: () => ({ push }),
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(location.search),
 }));
+
+// Wraps the real `useTransition` so tests can observe which navigations start
+// a transition and hold the transition "pending" without real async routing.
+const transition = vi.hoisted(() => ({ started: 0, forcePending: false }));
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return {
+    ...actual,
+    useTransition: () => {
+      const [pending, start] = actual.useTransition();
+      const wrapped: typeof start = (callback) => {
+        transition.started += 1;
+        start(callback);
+      };
+      return [pending || transition.forcePending, wrapped] as const;
+    },
+  };
+});
+
+// Counts how many times the Order row renders (SidebarEntityRow reads `name` once per render).
+const renders = vi.hoisted(() => ({ order: 0 }));
+const orderEntity = vi.hoisted(() => {
+  const entity = { id: "e1", slug: "order", status: "DRAFT" } as {
+    id: string;
+    slug: string;
+    status: string;
+    name: string;
+  };
+  Object.defineProperty(entity, "name", {
+    enumerable: true,
+    get() {
+      renders.order += 1;
+      return "Order";
+    },
+  });
+  return entity;
+});
 
 const tree = {
   enterprise: {
@@ -35,7 +72,7 @@ const tree = {
           slug: "checkout",
           isSystem: false,
           counts: { dataTypes: 3, apis: 0, entities: 1, traits: 0, messages: 0, channels: 0, eventSpecs: 0 },
-          entities: [{ id: "e1", name: "Order", slug: "order", status: "DRAFT" }],
+          entities: [orderEntity],
         },
       ],
     },
@@ -68,6 +105,10 @@ describe("LeftSidebar", () => {
   beforeEach(() => {
     push.mockReset();
     location.pathname = "/schemas/payments";
+    location.search = "";
+    transition.started = 0;
+    transition.forcePending = false;
+    renders.order = 0;
   });
   afterEach(() => cleanup());
 
@@ -100,6 +141,135 @@ describe("LeftSidebar", () => {
     render(<LeftSidebar {...props} />);
     expect(screen.queryByText(/^Types$/)).toBeNull();
     expect(screen.getAllByText("Data Types").length).toBeGreaterThan(0);
+  });
+
+  describe("navigation", () => {
+    const entitiesRow = () => screen.getByTestId("product-p1-entities");
+
+    it("keeps the Entities category expanded and navigates to the product when clicked", () => {
+      location.pathname = "/schemas/payments";
+      render(<LeftSidebar {...props} />);
+      expect(screen.getByText("Order")).toBeDefined();
+
+      fireEvent.click(entitiesRow());
+      expect(screen.getByText("Order")).toBeDefined();
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push).toHaveBeenCalledWith("/schemas/payments/checkout");
+    });
+
+    it("collapses the Entities list only through its chevron, without navigating", () => {
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(within(entitiesRow()).getByLabelText("Collapse Entities"));
+      expect(screen.queryByText("Order")).toBeNull();
+      expect(push).not.toHaveBeenCalled();
+
+      fireEvent.click(within(entitiesRow()).getByLabelText("Expand Entities"));
+      expect(screen.getByText("Order")).toBeDefined();
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    it("clicking a collapsed Entities category expands it and navigates", () => {
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(within(entitiesRow()).getByLabelText("Collapse Entities"));
+      expect(screen.queryByText("Order")).toBeNull();
+
+      fireEvent.click(entitiesRow());
+      expect(screen.getByText("Order")).toBeDefined();
+      expect(push).toHaveBeenCalledWith("/schemas/payments/checkout");
+    });
+
+    it("never pushes the URL it is already on; it only ensures the node is expanded", () => {
+      location.pathname = "/schemas/payments/checkout";
+      render(<LeftSidebar {...props} />);
+
+      // Entities category (href = product base) while on the product page.
+      fireEvent.click(within(entitiesRow()).getByLabelText("Collapse Entities"));
+      expect(screen.queryByText("Order")).toBeNull();
+      fireEvent.click(entitiesRow());
+      expect(screen.getByText("Order")).toBeDefined();
+      expect(push).not.toHaveBeenCalled();
+
+      // Product row label while on the product page.
+      fireEvent.click(screen.getByLabelText("Collapse Checkout"));
+      expect(screen.queryByTestId("product-p1-entities")).toBeNull();
+      fireEvent.click(screen.getByText("Checkout"));
+      expect(screen.getByTestId("product-p1-entities")).toBeDefined();
+      expect(push).not.toHaveBeenCalled();
+
+      // Entity row while on its own page.
+      location.pathname = "/schemas/payments/checkout/order";
+      cleanup();
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(screen.getByText("Order"));
+      expect(push).not.toHaveBeenCalled();
+      expect(transition.started).toBe(0);
+    });
+
+    it("treats pathname plus query as the URL, so a leaf category is not re-pushed on its own tab", () => {
+      location.pathname = "/schemas/payments/checkout";
+      location.search = "tab=data-types";
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(screen.getByTestId("product-p1-data-types"));
+      expect(push).not.toHaveBeenCalled();
+
+      location.search = "";
+      cleanup();
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(screen.getByTestId("product-p1-data-types"));
+      expect(push).toHaveBeenCalledWith("/schemas/payments/checkout?tab=data-types");
+    });
+
+    it("starts a transition for every navigation that pushes", () => {
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(screen.getByText("Order"));
+      fireEvent.click(screen.getByTestId("enterprise-data-types"));
+      fireEvent.click(within(screen.getByTestId("product-p1")).getByTitle("New Entity"));
+      expect(push).toHaveBeenCalledTimes(3);
+      expect(transition.started).toBe(3);
+    });
+
+    it("marks only the clicked row as pending while the transition is pending", () => {
+      render(<LeftSidebar {...props} />);
+      expect(screen.getByTestId("product-p1").getAttribute("data-pending")).toBe("false");
+
+      transition.forcePending = true;
+      fireEvent.click(screen.getByTestId("product-p1"));
+      expect(screen.getByTestId("product-p1").getAttribute("data-pending")).toBe("true");
+      expect(screen.getByTestId("product-p1").getAttribute("aria-busy")).toBe("true");
+      expect(screen.getByTestId("domain-d1").getAttribute("data-pending")).toBe("false");
+      expect(screen.getByTestId("entity-e1").getAttribute("data-pending")).toBe("false");
+
+      fireEvent.click(screen.getByTestId("entity-e1"));
+      expect(screen.getByTestId("entity-e1").getAttribute("data-pending")).toBe("true");
+      expect(screen.getByTestId("product-p1").getAttribute("data-pending")).toBe("false");
+
+      transition.forcePending = false;
+      cleanup();
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(screen.getByTestId("product-p1-data-types"));
+      // The transition settled within the click's act(): nothing stays pending.
+      expect(screen.getByTestId("product-p1-data-types").getAttribute("data-pending")).toBe("false");
+    });
+
+    it("does not mark a row pending when the click is a same-URL no-op", () => {
+      location.pathname = "/schemas/payments/checkout";
+      transition.forcePending = true;
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(screen.getByTestId("product-p1"));
+      expect(screen.getByTestId("product-p1").getAttribute("data-pending")).toBe("false");
+    });
+
+    it("does not re-render unaffected entity rows when only the pathname changes", () => {
+      location.pathname = "/schemas/payments";
+      const { rerender } = render(<LeftSidebar {...props} />);
+      const before = renders.order;
+      expect(before).toBeGreaterThan(0);
+
+      location.pathname = "/schemas/payments/checkout";
+      rerender(<LeftSidebar {...props} />);
+      expect(renders.order).toBe(before);
+      expect(screen.getByTestId("product-p1").getAttribute("data-active")).toBe("true");
+    });
   });
 
   describe("search", () => {
