@@ -66,6 +66,23 @@ describe("official TypeSpec emitter service", () => {
     expect(result.output).toContain('"properties"');
   });
 
+  it("emits an entity with model tags and a classified field: both @tag forms are stripped before the real compile (R46)", async () => {
+    // Before R46 only the field-level `@tag("classification:...")` was stripped, so a model-level
+    // `@tag("sales")` failed the real compile with decorator-wrong-target on every typespec-cli target.
+    const result = await emitOfficialTypeSpecTargetFromData(
+      makeEntity({ metadata: { tags: ["sales", "pii"] } }),
+      [
+        makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
+        makeField({ name: "email", type: "string", nullable: true, sortOrder: 1, classification: "PII" }),
+      ],
+      "json-schema"
+    );
+
+    expect(result.validationStatus).toBe("VALID");
+    expect(result.output).toContain('"properties"');
+    expect(result.output).toContain("email");
+  }, 15_000);
+
   it("emits OpenAPI output with the official openapi3 emitter", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(
       entity,

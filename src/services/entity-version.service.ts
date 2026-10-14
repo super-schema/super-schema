@@ -22,7 +22,11 @@ import { analyzePublish, planPublish, type PublishAnalysis, type PublishState } 
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import { isSourceStale, WRITE_BACK_SOURCE_SQL } from "@/lib/entity-versioning/draft-state";
-import { resolveDraftSource } from "@/lib/entity-versioning/resolve-source";
+import {
+  needsRegeneration,
+  compileRegeneratedSource,
+  confirmRegeneratedSource,
+} from "@/lib/entity-versioning/resolve-source";
 import { ServiceErrorRejection } from "@/services/scoped-create.service";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -132,6 +136,20 @@ export async function publishEntity(
   const db = ctx.prisma;
   const changeSummary = opts.changeSummary?.trim() ? opts.changeSummary.trim() : null;
   try {
+    // Phase 1 — no lock, no transaction. Fail fast on blockers, and when the stored source is stale or
+    // missing regenerate it and gate it with the real compiler. The compile can take seconds, so it
+    // must never run while holding the row lock (or PGlite's single connection).
+    const pre = await loadPublishState(db, entityId);
+    if (!pre.success) return err(pre.error);
+    const prePlan = planPublish(pre.data, opts.bump);
+    if (!prePlan.success) return err(prePlan.error);
+    let precompiled: string | null = null;
+    if (needsRegeneration(pre.data.entity.typespecSource, pre.data.sourceStale)) {
+      const compiled = await compileRegeneratedSource(db, entityId);
+      if (!compiled.success) return err(compiled.error);
+      precompiled = compiled.data;
+    }
+
     const created = await withAudit({
       action: "PUBLISH_VERSION",
       entityType: "Entity",
@@ -148,15 +166,29 @@ export async function publishEntity(
             if (!state.success) throw new ServiceErrorRejection(state.error);
             const plan = planPublish(state.data, opts.bump);
             if (!plan.success) throw new ServiceErrorRejection(plan.error);
-            // R42: a stale or missing stored source is regenerated from the field rows and gated with
-            // the real compiler; the publish is blocked (with the diagnostics) if it does not compile.
-            const source = await resolveDraftSource(
-              tx,
-              entityId,
-              state.data.entity.typespecSource,
-              state.data.sourceStale
-            );
-            if (!source.success) throw new ServiceErrorRejection(source.error);
+
+            // Phase 2 — the source to freeze (R42/R45/R46). A fresh stored source is used as-is. A
+            // regenerated one is only valid if the text phase 1 compiled is still exactly what the
+            // locked rows generate; otherwise an edit landed in between: abort, retryable.
+            const stored = state.data.entity.typespecSource;
+            let source: string;
+            let regenerated = false;
+            if (stored && !needsRegeneration(stored, state.data.sourceStale)) {
+              source = stored;
+            } else {
+              if (precompiled === null) {
+                // Became stale/missing after phase 1 looked.
+                throw new ServiceErrorRejection({
+                  code: "CONFLICT",
+                  message: "Entity changed during publish, try again",
+                  suggestedFix: "Publish again.",
+                });
+              }
+              const confirmed = await confirmRegeneratedSource(tx, entityId, precompiled);
+              if (!confirmed.success) throw new ServiceErrorRejection(confirmed.error);
+              source = precompiled;
+              regenerated = true;
+            }
 
             const version = await tx.entityVersion.create({
               data: {
@@ -164,7 +196,7 @@ export async function publishEntity(
                 major: plan.data.version.major,
                 minor: plan.data.version.minor,
                 sequence: plan.data.sequence,
-                resolvedSource: source.data.source,
+                resolvedSource: source,
                 fieldSnapshot: state.data.currentFields as unknown as Prisma.InputJsonValue,
                 changeKind: plan.data.changeKind,
                 compatReport: {},
@@ -190,8 +222,8 @@ export async function publishEntity(
 
             // A regenerated source is written back (and sourceStale cleared) in this same transaction,
             // so the entity's canonical source matches what was just frozen.
-            if (source.data.regenerated) {
-              await tx.$executeRawUnsafe(WRITE_BACK_SOURCE_SQL, entityId, source.data.source);
+            if (regenerated) {
+              await tx.$executeRawUnsafe(WRITE_BACK_SOURCE_SQL, entityId, source);
             }
 
             await tx.entity.update({
@@ -201,8 +233,7 @@ export async function publishEntity(
             });
             return version;
           },
-          // Regenerating source runs the real TypeSpec compiler inside the transaction.
-          { timeout: 30_000 }
+          { timeout: 15_000 }
         ),
     });
     return ok(toSummary(created));

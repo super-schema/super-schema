@@ -267,6 +267,37 @@ describe("entity version service", () => {
     }
   });
 
+  it("publishes an entity with model tags or a classified field: the gate strips the generator's @tag lines for the compiler only (R46)", async () => {
+    let domainId: string | undefined;
+    try {
+      const sc = await scope();
+      domainId = sc.domainId;
+
+      // (a) entity tags -> `@tag("sales")` on the model; stale source.
+      const tagged = await sc.entity("Tagged");
+      await sc.field(tagged.id, "id", { nullable: false });
+      await prisma.entity.update({ where: { id: tagged.id }, data: { metadata: { tags: ["sales"], sourceStale: true } } });
+      const taggedV = unwrap(await publishEntity(tagged.id, {}, ctx));
+      const taggedFrozen = unwrap(await getEntityVersion(tagged.id, taggedV.label, ctx));
+      expect(taggedFrozen.resolvedSource).toContain('@tag("sales")'); // frozen text is the generator's, not the stripped one
+      expect((await prisma.entity.findUniqueOrThrow({ where: { id: tagged.id } })).typespecSource).toBe(taggedFrozen.resolvedSource);
+
+      // (b) PII-classified field -> `@tag("classification:PII")` on the field; missing source.
+      const classified = await sc.entity("Classified");
+      await sc.field(classified.id, "id", { nullable: false });
+      await prisma.field.create({
+        data: { entityId: classified.id, name: "email", slug: "email", type: "string", nullable: true, sortOrder: 1, classification: "PII", decorators: {} },
+      });
+      await prisma.entity.update({ where: { id: classified.id }, data: { typespecSource: null } });
+      const classifiedV = unwrap(await publishEntity(classified.id, {}, ctx));
+      const classifiedFrozen = unwrap(await getEntityVersion(classified.id, classifiedV.label, ctx));
+      expect(classifiedFrozen.resolvedSource).toContain('@tag("classification:PII")');
+      expect(classifiedFrozen.resolvedSource).toContain("email");
+    } finally {
+      await cleanup(domainId);
+    }
+  });
+
   it("blocks the publish with the compiler diagnostics when the regenerated source does not compile, and writes nothing", async () => {
     let domainId: string | undefined;
     try {

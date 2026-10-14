@@ -4,6 +4,7 @@ import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec, sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
 import { compileTypeSpecWithGovernance } from "@/lib/compiler/typespec-compiler";
+import { toCompilableTypeSpec } from "@/lib/compiler/compilable-source";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -21,12 +22,6 @@ const defaultDeps: ResolveSourceDeps = {
   generate: generateTypeSpec,
   compile: compileTypeSpecWithGovernance,
 };
-
-export interface ResolvedDraftSource {
-  source: string;
-  /** True when the source was regenerated from the field rows (the caller must write it back). */
-  regenerated: boolean;
-}
 
 /** Names of the models this entity's source refers to but does not define (reference targets, parent, spreads). */
 export function referencedModelNames(model: SuperSchemaModel): string[] {
@@ -54,35 +49,46 @@ export function stubUnresolvedReferences(source: string, names: string[]): strin
   return `${source}\n${stubs.map((name) => `model ${name} {}`).join("\n")}\n`;
 }
 
+/** True when publish must regenerate the source: there is none stored, or field/entity edits left it stale. */
+export function needsRegeneration(stored: string | null, stale: boolean): boolean {
+  return !stored || stale;
+}
+
 /**
- * The source Publish freezes as `resolvedSource` (controller ruling R42).
+ * Phase 1 of the source the publish freezes (controller rulings R42, R45, R46): regenerate it from
+ * the entity and field rows and gate it with the real compiler. Runs OUTSIDE the publish lock and
+ * transaction, so a slow compile never holds a row lock or the single PGlite connection.
  *
- * `entity.typespecSource` is canonical, but paths that write field rows without the TypeSpec source
- * save (quick field editor, REST/tRPC, TypeSpec preview apply) leave it behind and set
- * `metadata.sourceStale`. When the source is stale or missing, regenerate it from the field rows and
- * gate it with the real compiler; a source that does not compile blocks the publish with the
- * diagnostics. The caller writes a regenerated source back to the entity inside the publish transaction.
+ * `entity.typespecSource` is canonical, but name, description, tags and other metadata and the field
+ * rows are all rendered into it; every edit outside the TypeSpec source tab sets
+ * `metadata.sourceStale`. A source that does not compile blocks the publish with the diagnostics.
  *
- * Trade-off: if hand-written TypeSpec constructs that fields cannot represent (custom decorators,
- * unions, anything the generator does not emit) were saved on the TypeSpec tab and the entity was then
- * edited in the quick field editor, publishing regenerates the source from the fields and those
- * constructs are dropped. A fresh, fully field-representable source is preferred over a frozen source
- * that silently lacks the latest field edits.
+ * The text handed to the compiler differs from the generated text in two ways, both for the check
+ * only: unresolved reference names get empty stub models (`stubUnresolvedReferences`), and the
+ * `@tag(...)` decorators real TypeSpec rejects are removed (`toCompilableTypeSpec`, shared with the
+ * typespec-cli emitters; the proper fix is Story 16.6). What this returns, and what the caller stores
+ * and freezes, is the generator's own text.
+ *
+ * Trade-off: regeneration works from the field rows, so TypeSpec that fields cannot represent is not
+ * carried over. If such constructs (custom decorators, unions, hand-declared enums, scalars or nested
+ * models used as field types, anything the generator does not emit) were saved on the TypeSpec tab and
+ * the entity was then edited anywhere else, publishing regenerates the source from the fields: those
+ * constructs are dropped, and field types that referred to hand-declared enums, scalars or nested
+ * models collapse to `string` in the frozen source. A fresh, field-representable source is preferred
+ * over a frozen source that silently lacks the latest edits.
  */
-export async function resolveDraftSource(
+export async function compileRegeneratedSource(
   db: Db,
   entityId: string,
-  stored: string | null,
-  stale: boolean,
   deps: ResolveSourceDeps = defaultDeps
-): Promise<Result<ResolvedDraftSource>> {
-  if (stored && !stale) return ok({ source: stored, regenerated: false });
-
+): Promise<Result<string>> {
   const model = await deps.loadModel(db, entityId);
   if (!model.success) return model;
 
   const generated = deps.generate(model.data);
-  const compiled = await deps.compile(stubUnresolvedReferences(generated, referencedModelNames(model.data)));
+  const compiled = await deps.compile(
+    toCompilableTypeSpec(stubUnresolvedReferences(generated, referencedModelNames(model.data)))
+  );
   if (!compiled.success) {
     const errors = compiled.diagnostics.filter((d) => d.severity === "error");
     const summary = (errors.length > 0 ? errors : compiled.diagnostics)
@@ -96,5 +102,30 @@ export async function resolveDraftSource(
       suggestedFix: "Fix the reported fields (or the TypeSpec source), then publish again.",
     });
   }
-  return ok({ source: generated, regenerated: true });
+  return ok(generated);
+}
+
+/**
+ * Phase 2, inside the publish transaction after the row lock: the compile in phase 1 only vouches
+ * for the exact text it compiled. Regenerate the text from the now-locked rows (pure, no compile)
+ * and require it to be identical; otherwise an edit landed in between and the publish aborts with a
+ * retryable error. Comparing the generated text is exact (it is the compiler's input) and, unlike
+ * comparing `updatedAt`, does not abort for bookkeeping writes the source does not render.
+ */
+export async function confirmRegeneratedSource(
+  db: Db,
+  entityId: string,
+  precompiled: string,
+  deps: ResolveSourceDeps = defaultDeps
+): Promise<Result<void>> {
+  const model = await deps.loadModel(db, entityId);
+  if (!model.success) return model;
+  if (deps.generate(model.data) !== precompiled) {
+    return err({
+      code: "CONFLICT",
+      message: "Entity changed during publish, try again",
+      suggestedFix: "Publish again.",
+    });
+  }
+  return ok(undefined);
 }

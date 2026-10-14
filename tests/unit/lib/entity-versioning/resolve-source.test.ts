@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  resolveDraftSource,
+  needsRegeneration,
+  compileRegeneratedSource,
+  confirmRegeneratedSource,
   referencedModelNames,
   stubUnresolvedReferences,
   type ResolveSourceDeps,
@@ -29,29 +31,24 @@ function deps(over: Partial<ResolveSourceDeps> = {}): ResolveSourceDeps & {
 
 const DB = {} as never;
 
-describe("resolveDraftSource", () => {
-  it("uses the stored source untouched when it is present and not stale", async () => {
-    const d = deps();
-    const res = await resolveDraftSource(DB, "e1", "model Order { hand: string; }", false, d);
-    expect(res).toEqual({ success: true, data: { source: "model Order { hand: string; }", regenerated: false } });
-    expect(d.loadModel).not.toHaveBeenCalled();
-    expect(d.compile).not.toHaveBeenCalled();
+describe("needsRegeneration", () => {
+  it("is true when the stored source is missing or stale, false only for a fresh stored source", () => {
+    expect(needsRegeneration(null, false)).toBe(true);
+    expect(needsRegeneration("", false)).toBe(true);
+    expect(needsRegeneration("model A {}", true)).toBe(true);
+    expect(needsRegeneration("model A {}", false)).toBe(false);
   });
+});
 
-  it("regenerates from the field rows when the stored source is stale", async () => {
+describe("compileRegeneratedSource (phase 1, outside the lock)", () => {
+  it("regenerates from the field rows, compiles the text, and returns the generated source", async () => {
     const d = deps();
-    const res = await resolveDraftSource(DB, "e1", "model Order { old: string; }", true, d);
-    expect(res).toEqual({ success: true, data: { source: "model Order {\n  id?: string;\n}\n", regenerated: true } });
+    const res = await compileRegeneratedSource(DB, "e1", d);
+    expect(res).toEqual({ success: true, data: "model Order {\n  id?: string;\n}\n" });
     expect(d.compile).toHaveBeenCalledWith("model Order {\n  id?: string;\n}\n");
   });
 
-  it("regenerates when there is no stored source", async () => {
-    const d = deps();
-    const res = await resolveDraftSource(DB, "e1", null, false, d);
-    expect(res.success && res.data.regenerated).toBe(true);
-  });
-
-  it("blocks the publish with the compiler diagnostics when the regenerated source does not compile", async () => {
+  it("blocks with the compiler diagnostics when the regenerated source does not compile", async () => {
     const d = deps({
       compile: vi.fn().mockResolvedValue({
         success: false,
@@ -61,7 +58,7 @@ describe("resolveDraftSource", () => {
         ],
       }),
     });
-    const res = await resolveDraftSource(DB, "e1", null, true, d);
+    const res = await compileRegeneratedSource(DB, "e1", d);
     expect(res.success).toBe(false);
     if (!res.success) {
       expect(res.error.code).toBe("PUBLISH_BLOCKED");
@@ -72,14 +69,14 @@ describe("resolveDraftSource", () => {
     }
   });
 
-  it("passes loader failures through", async () => {
+  it("passes loader failures through without compiling", async () => {
     const d = deps({ loadModel: vi.fn().mockResolvedValue({ success: false, error: { code: "NOT_FOUND", message: "gone" } }) });
-    const res = await resolveDraftSource(DB, "e1", null, true, d);
+    const res = await compileRegeneratedSource(DB, "e1", d);
     expect(res).toEqual({ success: false, error: { code: "NOT_FOUND", message: "gone" } });
     expect(d.compile).not.toHaveBeenCalled();
   });
 
-  it("gates reference fields with stub models but freezes the unstubbed source", async () => {
+  it("gates reference fields with stub models but returns the unstubbed source", async () => {
     const m = model({
       fields: [
         { name: "buyer", complexType: { referencedEntityId: "b1", referencedEntityName: "Buyer" } },
@@ -90,9 +87,50 @@ describe("resolveDraftSource", () => {
       loadModel: vi.fn().mockResolvedValue({ success: true, data: m }),
       generate: vi.fn().mockReturnValue("model Order {\n  buyer?: Buyer;\n}\n"),
     });
-    const res = await resolveDraftSource(DB, "e1", null, true, d);
+    const res = await compileRegeneratedSource(DB, "e1", d);
     expect(d.compile).toHaveBeenCalledWith("model Order {\n  buyer?: Buyer;\n}\n\nmodel Buyer {}\n");
-    expect(res).toEqual({ success: true, data: { source: "model Order {\n  buyer?: Buyer;\n}\n", regenerated: true } });
+    expect(res).toEqual({ success: true, data: "model Order {\n  buyer?: Buyer;\n}\n" });
+  });
+
+  it("strips the generator's @tag decorators for the compiler only: model tags and field classification (R46)", async () => {
+    const text = ['@doc("Orders")', '@tag("sales")', "model Order {", '  @tag("classification:PII")', "  email?: string;", "}", ""].join("\n");
+    const d = deps({ generate: vi.fn().mockReturnValue(text) });
+    const res = await compileRegeneratedSource(DB, "e1", d);
+
+    const compiled = d.compile.mock.calls[0][0] as string;
+    expect(compiled).not.toContain("@tag(");
+    expect(compiled).toContain('@doc("Orders")');
+    expect(compiled).toContain("email?: string;");
+    // What is frozen and stored is still the generator's text.
+    expect(res).toEqual({ success: true, data: text });
+  });
+});
+
+describe("confirmRegeneratedSource (phase 2, inside the lock)", () => {
+  it("accepts the precompiled text when the regenerated text is identical, without compiling again", async () => {
+    const d = deps();
+    const res = await confirmRegeneratedSource(DB, "e1", "model Order {\n  id?: string;\n}\n", d);
+    expect(res).toEqual({ success: true, data: undefined });
+    expect(d.compile).not.toHaveBeenCalled();
+  });
+
+  it("aborts with a retryable CONFLICT when the entity changed since the compile", async () => {
+    const d = deps({ generate: vi.fn().mockReturnValue("model Order {\n  id?: string;\n  note?: string;\n}\n") });
+    const res = await confirmRegeneratedSource(DB, "e1", "model Order {\n  id?: string;\n}\n", d);
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error.code).toBe("CONFLICT");
+      expect(res.error.message).toBe("Entity changed during publish, try again");
+    }
+    expect(d.compile).not.toHaveBeenCalled();
+  });
+
+  it("passes loader failures through", async () => {
+    const d = deps({ loadModel: vi.fn().mockResolvedValue({ success: false, error: { code: "NOT_FOUND", message: "gone" } }) });
+    expect(await confirmRegeneratedSource(DB, "e1", "x", d)).toEqual({
+      success: false,
+      error: { code: "NOT_FOUND", message: "gone" },
+    });
   });
 });
 
