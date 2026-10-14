@@ -225,7 +225,21 @@ describe("Entity Service", () => {
       tenantId: "tenant-1",
       domainId: "dom-1",
       productId: "prd-1",
+      status: "DRAFT",
     };
+
+    it("rejects renaming to 'Specs' (reserved URL segment)", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+
+      const result = await updateEntity("ent-1", { name: "Specs" }, mockCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+        expect(result.error.message).toContain("reserved");
+      }
+      expect(mockTx.entity.update).not.toHaveBeenCalled();
+    });
 
     it("renames through the registry (excluding the entity itself) inside the tenant lock", async () => {
       vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);

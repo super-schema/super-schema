@@ -14,7 +14,7 @@ import {
 } from "@/types/schemas/entity.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
-import { generateSlug, isReservedEntityRouteSlug } from "@/lib/slug";
+import { generateSlug, isReservedEntityRouteSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
 
@@ -45,10 +45,11 @@ export async function createEntity(
   }
 
   const entitySlug = generateSlug(parsed.data.name);
-  if (isReservedEntityRouteSlug(entitySlug)) {
+  const reservedMsg = reservedEntitySlugMessage(parsed.data.name);
+  if (reservedMsg) {
     return err({
       code: "VALIDATION_ERROR",
-      message: `"${entitySlug}" is reserved for a schemas utility page.`,
+      message: reservedMsg,
       suggestedFix: "Choose a different entity name.",
     });
   }
@@ -198,6 +199,18 @@ export async function updateEntity(
         code: "INVALID_TRANSITION",
         message: transition.reason!,
         suggestedFix: transition.reason!,
+      });
+    }
+  }
+
+  // Check if renaming to a reserved slug
+  if (parsed.data.name && parsed.data.name !== existing.name) {
+    const reservedMsg = reservedEntitySlugMessage(parsed.data.name);
+    if (reservedMsg) {
+      return err({
+        code: "VALIDATION_ERROR",
+        message: reservedMsg,
+        suggestedFix: "Choose a different entity name.",
       });
     }
   }

@@ -161,5 +161,19 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
       expect(mockAssertNameAvailable).not.toHaveBeenCalled();
       expect(mockTx.entity.create).not.toHaveBeenCalled();
     });
+
+    it("rejects an entity named 'Events' (reserved URL segment)", async () => {
+      const result = await createEntityWithFieldsAction("domain-1", {
+        name: "Events",
+        description: "",
+        fields: [],
+      });
+
+      expect(result).toEqual({
+        error: expect.stringContaining("events"),
+      });
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
   });
 });

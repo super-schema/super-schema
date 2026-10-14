@@ -5,7 +5,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
-import { generateSlug } from "@/lib/slug";
+import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
@@ -103,6 +103,11 @@ async function createProductEntity(params: {
   const { userId, domainId, description, fields } = params;
   const name = params.name.trim();
   const productId = params.productId ?? (await ensureDefaultProductId(domainId));
+
+  const reservedMsg = reservedEntitySlugMessage(name);
+  if (reservedMsg) {
+    return { error: reservedMsg };
+  }
 
   try {
     const entity = await withAudit({
@@ -1115,6 +1120,12 @@ export async function createDomainAssetsFromImportAction(
       for (const entity of sortByInheritance(payload.entities)) {
         const name = entity.name.trim();
         if (!(await isNameFree("entity", name, productScope.data))) continue;
+
+        const reservedMsg = reservedEntitySlugMessage(name);
+        if (reservedMsg) {
+          skipped.push(reservedMsg);
+          continue;
+        }
 
         const slug = generateSlug(entity.name);
         const slugTaken = await tx.entity.findFirst({

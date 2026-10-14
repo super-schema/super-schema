@@ -4,7 +4,7 @@ import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { Product, ProductTier } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
-import { generateSlug } from "@/lib/slug";
+import { generateSlug, isReservedProductRouteSlug } from "@/lib/slug";
 
 export interface ProductListItem {
   id: string;
@@ -115,6 +115,15 @@ export async function createProduct(
     });
   }
 
+  const slug = generateSlug(name);
+  if (isReservedProductRouteSlug(slug)) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: `"${slug}" is reserved for a domain-level utility page.`,
+      suggestedFix: "Choose a different product name.",
+    });
+  }
+
   try {
     const product = await withAudit({
       action: "CREATE",
@@ -126,7 +135,7 @@ export async function createProduct(
           data: {
             domainId: input.domainId,
             name,
-            slug: generateSlug(name),
+            slug,
             description: input.description ?? "",
             tierId: input.tierId ?? null,
             ownerTeam: input.ownerTeam ?? null,
@@ -162,8 +171,16 @@ export async function updateProduct(
     if (!name) {
       return err({ code: "VALIDATION_ERROR", message: "Product name is required" });
     }
+    const slug = generateSlug(name);
+    if (isReservedProductRouteSlug(slug)) {
+      return err({
+        code: "VALIDATION_ERROR",
+        message: `"${slug}" is reserved for a domain-level utility page.`,
+        suggestedFix: "Choose a different product name.",
+      });
+    }
     data.name = name;
-    data.slug = generateSlug(name);
+    data.slug = slug;
   }
   if (input.description !== undefined) data.description = input.description;
   if (input.tierId !== undefined) data.tierId = input.tierId;
