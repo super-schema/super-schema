@@ -52,9 +52,10 @@ describe("downConvertToDraft07 (spec §7.3, Story 16.2)", () => {
   });
 
   it("drops keywords draft-07 cannot express, with a pointer per warning", () => {
+    // (`unevaluatedItems`, not `unevaluatedProperties`: that one is converted on a plain object — see below)
     const { schema, warnings } = downConvertToDraft07({
       type: "object",
-      unevaluatedProperties: false,
+      unevaluatedItems: false,
       properties: { tags: { type: "array", contains: { type: "string" }, minContains: 1 } },
       $defs: { Node: { $anchor: "node", type: "object" } },
     });
@@ -64,10 +65,106 @@ describe("downConvertToDraft07 (spec §7.3, Story 16.2)", () => {
       definitions: { Node: { type: "object" } },
     });
     expect(warnings.map((w) => [w.pointer, w.keyword])).toEqual([
-      ["/unevaluatedProperties", "unevaluatedProperties"],
+      ["/unevaluatedItems", "unevaluatedItems"],
       ["/properties/tags/minContains", "minContains"],
       ["/$defs/Node/$anchor", "$anchor"],
     ]);
+  });
+
+  describe("unevaluatedProperties (C-I4)", () => {
+    it("converts it to additionalProperties on a plain object schema, keeping the value type (TypeSpec Record<T>)", () => {
+      const { schema, warnings } = downConvertToDraft07({
+        type: "object",
+        properties: { tags: { $ref: "#/$defs/RecordInt32" } },
+        $defs: {
+          RecordInt32: { type: "object", properties: {}, unevaluatedProperties: { type: "integer", minimum: -2147483648, maximum: 2147483647 } },
+          RecordBase: { type: "object", properties: {}, unevaluatedProperties: { $ref: "#/$defs/Base" } },
+          RecordUnknown: { type: "object", properties: {}, unevaluatedProperties: {} },
+          Base: { type: "object", properties: { a: { type: "string" } } },
+        },
+      });
+      expect(schema).toEqual({
+        type: "object",
+        properties: { tags: { $ref: "#/definitions/RecordInt32" } },
+        definitions: {
+          RecordInt32: { type: "object", properties: {}, additionalProperties: { type: "integer", minimum: -2147483648, maximum: 2147483647 } },
+          RecordBase: { type: "object", properties: {}, additionalProperties: { $ref: "#/definitions/Base" } },
+          RecordUnknown: { type: "object", properties: {}, additionalProperties: {} },
+          Base: { type: "object", properties: { a: { type: "string" } } },
+        },
+      });
+      // an exact equivalence: nothing was lost, so nothing is reported
+      expect(warnings).toEqual([]);
+    });
+
+    it("carries a boolean through, and works with properties / patternProperties (or neither)", () => {
+      expect(
+        downConvertToDraft07({ type: "object", properties: { a: { type: "string" } }, unevaluatedProperties: false }).schema,
+      ).toEqual({ type: "object", properties: { a: { type: "string" } }, additionalProperties: false });
+      expect(
+        downConvertToDraft07({ type: "object", patternProperties: { "^x-": { type: "string" } }, unevaluatedProperties: true }).schema,
+      ).toEqual({ type: "object", patternProperties: { "^x-": { type: "string" } }, additionalProperties: true });
+      expect(downConvertToDraft07({ type: "object", unevaluatedProperties: false }).schema).toEqual({
+        type: "object",
+        additionalProperties: false,
+      });
+    });
+
+    it("converts the nested subschema's own unevaluatedProperties too", () => {
+      const { schema } = downConvertToDraft07({
+        type: "object",
+        properties: { inner: { type: "object", properties: {}, unevaluatedProperties: { type: "string" } } },
+      });
+      expect(schema).toEqual({
+        type: "object",
+        properties: { inner: { type: "object", properties: {}, additionalProperties: { type: "string" } } },
+      });
+    });
+
+    it.each([
+      ["allOf", { allOf: [{ properties: { a: { type: "string" } } }] }],
+      ["anyOf", { anyOf: [{ properties: { a: { type: "string" } } }] }],
+      ["oneOf", { oneOf: [{ properties: { a: { type: "string" } } }] }],
+      ["$ref", { $ref: "#/$defs/A" }],
+      ["if/then/else", { if: { required: ["a"] }, then: { properties: { b: { type: "string" } } } }],
+      ["dependentSchemas", { dependentSchemas: { a: { properties: { b: { type: "string" } } } } }],
+      ["not", { not: { required: ["a"] } }],
+      ["additionalProperties", { additionalProperties: { type: "string" } }],
+    ])("keeps dropping it, with the warning, when a %s sibling may evaluate properties", (_name, siblings) => {
+      const { schema, warnings } = downConvertToDraft07({
+        type: "object",
+        properties: { id: { type: "string" } },
+        unevaluatedProperties: false,
+        ...siblings,
+        $defs: { A: { type: "object" } },
+      });
+      expect(schema.unevaluatedProperties).toBeUndefined();
+      expect(Object.keys(schema)).not.toContain("unevaluatedProperties");
+      // nothing was turned into additionalProperties on the user's behalf
+      if (!("additionalProperties" in siblings)) expect(schema.additionalProperties).toBeUndefined();
+      expect(warnings.some((w) => w.keyword === "unevaluatedProperties" && w.kind === "dropped")).toBe(true);
+    });
+
+    it("does not touch a property or example that is merely CALLED unevaluatedProperties", () => {
+      const input: JsonObject = {
+        type: "object",
+        properties: { unevaluatedProperties: { type: "string" } },
+        examples: [{ unevaluatedProperties: 1 }],
+      };
+      expect(downConvertToDraft07(input).schema).toEqual(input);
+    });
+  });
+
+  it("keeps a `__proto__` property / definition as an own entry instead of setting the prototype", () => {
+    const input = JSON.parse(
+      '{"type":"object","properties":{"__proto__":{"type":"string"},"ok":{"type":"integer"}},"$defs":{"__proto__":{"type":"boolean"}}}',
+    ) as JsonObject;
+    const { schema } = downConvertToDraft07(input);
+    const properties = schema.properties as JsonObject;
+    expect(Object.keys(properties)).toEqual(["__proto__", "ok"]);
+    expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+    expect(Object.keys(schema.definitions as JsonObject)).toEqual(["__proto__"]);
+    expect(JSON.stringify(schema)).toContain('"__proto__":{"type":"string"}');
   });
 
   it("leaves data keywords and property names alone", () => {

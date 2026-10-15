@@ -6,6 +6,60 @@ import type { JsonObject } from "@/lib/event-specs/types";
 import { checkoutServiceSpec } from "./fixtures/worked-example";
 
 describe("serialize", () => {
+  // C-I3: YAML 1.1 readers (PyYAML, Psych, SnakeYAML 1.1 mode) read `yes` / `no` / `on` / `off` / `y` / `n` as booleans,
+  // `12:30` as a sexagesimal int and `2001-01-01` as a date; the keys `no` and `n` even collapse into one.
+  describe("YAML 1.1 safety", () => {
+    const hostile: JsonObject = {
+      asyncapi: "3.0.0",
+      info: { title: "yes", version: "1.0", description: "no" },
+      channels: {
+        no: { address: "on", description: "off" },
+        yes: { address: "y" },
+        n: { address: "010" },
+        N: {},
+        Y: {},
+        "12:30": { address: "12:30:45" },
+        "2001-01-01": { address: "2001-01-01" },
+        "1_000": {},
+        "0b11": {},
+        "0x1f": {},
+        "1e3": {},
+        null: { address: "~" },
+      },
+    };
+
+    it("quotes every key and value a YAML 1.1 parser would misread", () => {
+      const yaml = toYaml(hostile);
+      expect(yaml).toContain("title: 'yes'");
+      expect(yaml).toContain("description: 'no'");
+      expect(yaml).toContain("'no':");
+      expect(yaml).toContain("'yes':");
+      expect(yaml).toContain("'n':");
+      expect(yaml).toContain("address: 'on'");
+      expect(yaml).toContain("description: 'off'");
+      expect(yaml).toContain("address: 'y'");
+      expect(yaml).toContain("'12:30':");
+      expect(yaml).toContain("address: '12:30:45'");
+      expect(yaml).toContain("'2001-01-01':");
+      // no %YAML directive: the text stays a plain YAML document
+      expect(yaml).not.toContain("%YAML");
+    });
+
+    it("round-trips unchanged under a YAML 1.1 core-schema reader, and under 1.2", () => {
+      const yaml = toYaml(hostile);
+      expect(parse(yaml, { version: "1.1" })).toEqual(hostile);
+      expect(parse(yaml, { version: "1.2" })).toEqual(hostile);
+    });
+
+    it("is deterministic and leaves ordinary documents (including the worked example) byte-stable", () => {
+      expect(toYaml(hostile)).toBe(toYaml(structuredClone(hostile)));
+      const assembled = assembleAsyncApi3(checkoutServiceSpec).document;
+      const yaml = toYaml(assembled);
+      expect(parse(yaml, { version: "1.1" })).toEqual(assembled);
+      expect(yaml).toBe(toYaml(assembled));
+    });
+  });
+
   it("writes 2-space JSON with a trailing newline, preserving key order", () => {
     expect(toJson({ b: 1, a: { d: true, c: null } })).toBe(
       '{\n  "b": 1,\n  "a": {\n    "d": true,\n    "c": null\n  }\n}\n',

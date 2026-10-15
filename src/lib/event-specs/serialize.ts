@@ -36,6 +36,11 @@ export function toJson(document: JsonObject): string {
 
 export function toYaml(document: JsonObject): string {
   return stringify(document, {
+    // Quote what a YAML 1.1 reader (PyYAML, Ruby/Psych, many Java parsers) misreads. The default (1.2 core) writes
+    // `title: yes`, `no:`, `address: on`, `12:30:` and `2001-01-01` bare — 1.1 parses those as true/false/true/750/a date,
+    // and the keys `no` / `n` collapse into one. `version: "1.1"` quotes them all; the output is a plain subset of YAML
+    // 1.2 as well (no `%YAML` directive is emitted), so 1.2 readers see the same document.
+    version: "1.1",
     aliasDuplicateObjects: false, // never emit &anchors / *aliases for repeated schemas
     lineWidth: 0, // never fold long descriptions
     singleQuote: true, // '2.0', '#/components/...' — matches spec §6.2
