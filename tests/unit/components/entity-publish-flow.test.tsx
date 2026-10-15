@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getPreview: vi.fn(),
   publish: vi.fn(),
   listVersions: vi.fn(),
+  listUsages: vi.fn(),
   getHistory: vi.fn(),
   updateMetadata: vi.fn(),
   refresh: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/version
   publishEntityAction: mocks.publish,
   listEntityVersionsAction: mocks.listVersions,
 }));
+vi.mock("@/app/(dashboard)/schemas/usage-actions", () => ({ listUsagesAction: mocks.listUsages }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({ deleteEntityAction: vi.fn() }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/field-editor", () => ({ FieldEditor: () => null }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab", () => ({ SchemasTab: () => null }));
@@ -57,6 +59,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getHistory.mockResolvedValue({ versions: [] });
   mocks.listVersions.mockResolvedValue({ success: true, versions: [] });
+  mocks.listUsages.mockResolvedValue({ success: true, data: [] });
 });
 afterEach(cleanup);
 
@@ -79,6 +82,43 @@ const PREVIEW = {
   isFirstPublish: true, latestLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0",
   reasons: [], diffSummary: { added: 1, removed: 0, modified: 0 }, blockers: [], warnings: [], pins: [],
 };
+
+describe("Used-by panel on the versions tab", () => {
+  it("looks up who uses the entity and lists the referrers under the published versions", async () => {
+    mocks.listUsages.mockResolvedValue({
+      success: true,
+      data: [{ id: "r1", fromKind: "MESSAGE", role: "PAYLOAD", isDraft: true, target: "Customer v1.0", label: "Message CustomerSeen (draft)", href: "/schemas/payments/checkout?tab=events&section=messages" }],
+    });
+    render(<EntityWorkspace {...props()} />);
+    expect(screen.queryByTestId("used-by-panel")).toBeNull();
+    fireEvent.click(screen.getByTestId("tab-versions"));
+
+    expect(await screen.findByRole("link", { name: "Message CustomerSeen (draft)" })).toBeDefined();
+    expect(screen.getByTestId("used-by-panel")).toBeDefined();
+    expect(mocks.listUsages).toHaveBeenCalledWith({ kind: "entity", entityId: "ent-1" });
+  });
+
+  it("works for a tenant-level entity (no domain or product)", async () => {
+    const tenant = {
+      ...props({ domainId: null, domainName: "Enterprise", domainSlug: null, productSlug: null, productName: null }),
+      level: "TENANT" as const,
+    };
+    render(<EntityWorkspace {...tenant} />);
+    fireEvent.click(screen.getByTestId("tab-versions"));
+
+    expect(await screen.findByText("Nothing references this yet.")).toBeDefined();
+    expect(mocks.listUsages).toHaveBeenCalledWith({ kind: "entity", entityId: "ent-1" });
+  });
+
+  it("keeps the published versions list usable when the lookup fails", async () => {
+    mocks.listUsages.mockRejectedValue(new Error("network down"));
+    render(<EntityWorkspace {...props()} />);
+    fireEvent.click(screen.getByTestId("tab-versions"));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not load usages. Try again.");
+    expect(await screen.findByTestId("entity-version-list-empty")).toBeDefined();
+  });
+});
 
 describe("published versions tab", () => {
   it("shows the load error instead of 'Not published yet' when listing versions fails", async () => {
