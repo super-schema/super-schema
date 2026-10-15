@@ -160,15 +160,39 @@ export async function loadDraftSnapshot(db: Db, specId: string): Promise<Result<
 }
 
 /**
- * A render failure as a diagnostic. The renderer returns `ARTIFACT_RENDER_FAILED` for combine / emit errors (the underlying
- * code is in `details.cause`) and the loader's own code (`UNRESOLVED_REFERENCE`, `UNPUBLISHED_REFERENCE`, `NOT_FOUND`, …)
- * for everything else; both shapes keep their code and carry the cause + remedy in the message.
+ * Codes whose message is written by our own loader / combiner / limiter and is safe to show to the user. Anything else —
+ * an unexpected throw wrapped as `ARTIFACT_RENDER_FAILED` without a cause, `EMITTER_FAILED` (raw `tsp` stdout / stderr with
+ * temp paths), `ARTIFACT_PARSE_FAILED`, or a code this list does not know — is replaced by a generic text; the original is
+ * logged server-side only.
+ */
+const USER_FACING_RENDER_CODES = new Set([
+  "NOT_FOUND", "UNRESOLVED_REFERENCE", "UNPUBLISHED_REFERENCE", "ROOT_MODEL_NOT_FOUND", "ROOT_SCHEMA_NOT_FOUND",
+  "SCHEMA_BUNDLE_UNRESOLVED", "REFERENCE_CLOSURE_TOO_LARGE", "CONFLICTING_PINS", "TYPESPEC_DECLARATION_CONFLICT",
+  "TYPESPEC_IMPORT_NOT_ALLOWED", "TYPESPEC_PARSE_ERROR", "PROTO_NOT_SELF_CONTAINED", "AVRO_NAME_CONFLICT", "EMITTER_TIMEOUT",
+  "UNSUPPORTED_FORMAT",
+]);
+const GENERIC_RENDER_FAILURE = "Artifact render failed";
+const MAX_RENDER_DETAIL = 400;
+/** Absolute multi-segment filesystem paths (temp workspaces) — never shown, even inside an otherwise user-facing message. */
+const FILE_PATH = /(?<![\w#:.@-])\/(?:[\w.@+~-]+\/){2,}[\w.@+~-]*|superschema-tsp-[\w-]+/g;
+const userFacing = (text: string): string => text.replace(FILE_PATH, "<path>").slice(0, MAX_RENDER_DETAIL);
+
+/**
+ * A render failure as a diagnostic. The renderer returns `ARTIFACT_RENDER_FAILED` for combine / emit errors (the
+ * underlying code is in `details.cause`) and the loader's own code for everything else; both shapes keep their code, and
+ * the cause code is appended (`[EMITTER_FAILED]`). Only messages from `USER_FACING_RENDER_CODES` are shown (scrubbed of file
+ * paths, capped); unexpected failures get a generic text and are logged.
  */
 function renderDiagnostic(what: string, format: PayloadFormat, error: ServiceError): Diagnostic {
   const cause = (error.details as { cause?: unknown } | undefined)?.cause;
-  const parts = [`${what} (${format}): ${error.message}`];
-  if (typeof cause === "string" && cause !== error.code && !error.message.includes(cause)) parts.push(`[${cause}]`);
-  if (error.suggestedFix) parts.push(`Fix: ${error.suggestedFix}`);
+  const causeCode = typeof cause === "string" ? cause : undefined;
+  const effective = error.code === "ARTIFACT_RENDER_FAILED" ? causeCode : error.code;
+  const shown = effective !== undefined && USER_FACING_RENDER_CODES.has(effective);
+  if (!shown) console.error(`[event-spec-resolver] ${what} (${format}) render failed (${error.code}${causeCode ? `/${causeCode}` : ""}):`, error.message);
+  const text = shown ? userFacing(error.message) : GENERIC_RENDER_FAILURE;
+  const parts = [`${what} (${format}): ${text}`];
+  if (causeCode && causeCode !== error.code && !text.includes(causeCode)) parts.push(`[${causeCode}]`);
+  if (shown && error.suggestedFix) parts.push(`Fix: ${userFacing(error.suggestedFix)}`);
   return diagnostic("error", error.code, parts.join(" "), "");
 }
 

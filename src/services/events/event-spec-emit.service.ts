@@ -1,5 +1,5 @@
 import {
-  getEventSpecAdapter, normalizeDiagnostics, StructuralAsyncApi3Validator, toJson, toYaml,
+  canonicalizeDocumentOrder, getEventSpecAdapter, normalizeDiagnostics, StructuralAsyncApi3Validator, toJson, toYaml,
   type Diagnostic, type EmitOutput, type EventSpecValidator, type JsonObject, type ResolvedEventSpec,
 } from "@/lib/event-specs";
 import { AsyncApiParserValidator } from "@/lib/event-specs/validation/asyncapi-parser-validator";
@@ -72,7 +72,11 @@ async function emitStoredVersion(ctx: ServiceContext, specId: string, label: str
   if (!row) {
     return err({ code: "NOT_FOUND", message: `Version ${formatVersionLabel(parsed.data)} of event spec "${specId}" not found`, suggestedFix: "List the published versions and pick one." });
   }
-  const document = row.document as JsonObject;
+  if (!isJsonObject(row.document)) {
+    return err({ code: "DATA_CORRUPT", message: `Stored document of version ${formatVersionLabel(row)} is invalid` });
+  }
+  // jsonb returns keys shortest-first; serialize in the assembler's canonical order, like the draft emission.
+  const document = canonicalizeDocumentOrder(row.document);
   const report = isJsonObject(row.compatReport) ? row.compatReport : {};
   return ok({
     specId,

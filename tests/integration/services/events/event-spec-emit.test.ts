@@ -151,6 +151,22 @@ describe.sequential("emitEventSpec — DB → ResolvedEventSpec → AsyncAPI 3 (
     expect(json).toContain("/definitions/Address");
   }, 180_000);
 
+  it("a JSON Schema 2020-12 channel emits a document the parser accepts, with an explicit PAYLOAD_NOT_VALIDATED warning (never a silent pass)", async () => {
+    const channel2020 = unwrap(await createChannel(checkout.product.id, {
+      name: `orders-2020-${checkout.s}`, address: "payments.orders.2020.v1", protocol: "kafka", format: "json-schema", formatDialect: "2020-12",
+    }, ctx));
+    unwrap(await updateEventSpecDocument(consumer.id, {
+      info: { title: "fraud-scorer" }, servers: [],
+      operations: [{ key: "consumeOrderCreated2020", action: "receive", channelId: channel2020.id, messageVersionIds: [messageVersionId], traitIds: [] }],
+    }, productOwner(fraud.product.id), ctx));
+    const emitted = unwrap(await emitEventSpec(consumer.id, { draft: true }, ctx, { renderer }));
+    expect(errorsOf(emitted.diagnostics)).toEqual([]);
+    expect(JSON.stringify(emitted.document)).toContain("application/schema+json;version=2020-12");
+    const notValidated = emitted.diagnostics.filter((d) => d.code === "PAYLOAD_NOT_VALIDATED");
+    expect(notValidated).toHaveLength(1);
+    expect(notValidated[0]).toMatchObject({ severity: "warning", pointer: expect.stringMatching(/\/payload$/) });
+  }, 180_000);
+
   it("previews unpublished own-product messages (D4), pinned or against the entity's current draft", async () => {
     const draftEntity = await checkout.entity("Draftling", [{ name: "draftOnlyField", type: "string" }]);
     const draftMessage = unwrap(await createMessage(checkout.product.id, {
@@ -199,7 +215,7 @@ describe.sequential("emitEventSpec — DB → ResolvedEventSpec → AsyncAPI 3 (
 
   it("returns a published version's stored document verbatim (never regenerated) and maps lookups to clear errors", async () => {
     const stored: JsonObject = {
-      asyncapi: "3.0.0", info: { title: "stored", version: "1.0" }, operations: {}, channels: {}, // deliberately not what a regeneration would produce
+      asyncapi: "3.0.0", info: { title: "stored", version: "1.0" }, components: {}, operations: {}, channels: {}, servers: {}, // deliberately not what a regeneration would produce
     };
     const version = await prisma.eventSpecVersion.create({
       data: {
@@ -218,6 +234,10 @@ describe.sequential("emitEventSpec — DB → ResolvedEventSpec → AsyncAPI 3 (
     expect(emitted).toMatchObject({ specId: producer.id, version: "1.0", published: true, document: stored, unpublishedMessages: [] });
     expect(JSON.parse(emitted.json as string)).toEqual(stored);
     expect(emitted.yaml).toContain("title: stored");
+    // jsonb hands the keys back shortest-first (info, servers, asyncapi, ...); the emission restores the canonical AsyncAPI order
+    expect(Object.keys(emitted.document as JsonObject)).toEqual(["asyncapi", "info", "servers", "channels", "operations", "components"]);
+    expect(emitted.yaml?.startsWith("asyncapi: 3.0.0\ninfo:\n  title: stored\n  version: '1.0'\nservers: {}\nchannels: {}\n")).toBe(true);
+    expect(emitted.json?.startsWith('{\n  "asyncapi": "3.0.0",\n  "info": {')).toBe(true);
     expect(emitted.diagnostics).toEqual([{ severity: "warning", code: "PAYLOAD_NOT_VALIDATED", message: "kept", pointer: "" }]);
 
     const missing = await emitEventSpec(producer.id, { versionLabel: "9.9" }, ctx, { renderer });

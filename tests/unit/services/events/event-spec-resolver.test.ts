@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { toResolvedChannel, messageSourceFromVersion, toFrozenTrait } from "@/lib/events/catalog-mapping";
 import { resolveSnapshot, type DraftSnapshot } from "@/services/events/event-spec-resolver";
 import type { ArtifactRenderer, ArtifactSubject } from "@/services/events/artifact-renderer";
@@ -70,7 +70,7 @@ describe("resolveSnapshot", () => {
       const id = subject.kind === "version" ? subject.entityVersionId : subject.entityId;
       if (id === "ev-order") {
         return err({
-          code: "ARTIFACT_RENDER_FAILED", message: "Order@1.0 → avro: Unknown identifier Ghost", details: { cause: "TYPESPEC_COMBINE_FAILED" },
+          code: "ARTIFACT_RENDER_FAILED", message: "Order@1.0 → avro: Unknown identifier Ghost", details: { cause: "TYPESPEC_DECLARATION_CONFLICT" },
           suggestedFix: "Pin the referenced entity.",
         });
       }
@@ -85,7 +85,7 @@ describe("resolveSnapshot", () => {
     expect(out.diagnostics).toEqual(expect.arrayContaining([
       {
         severity: "error", code: "ARTIFACT_RENDER_FAILED", pointer: "",
-        message: "Message OrderCreated payload (avro): Order@1.0 → avro: Unknown identifier Ghost [TYPESPEC_COMBINE_FAILED] Fix: Pin the referenced entity.",
+        message: "Message OrderCreated payload (avro): Order@1.0 → avro: Unknown identifier Ghost [TYPESPEC_DECLARATION_CONFLICT] Fix: Pin the referenced entity.",
       },
       { severity: "error", code: "UNPUBLISHED_REFERENCE", pointer: "", message: 'Message OrderCreated key (avro): Entity "Address" has no published version' },
       { severity: "error", code: "NOT_FOUND", pointer: "", message: 'Message OrderCreated headers (json-schema): Entity version "ev-headers" not found' },
@@ -107,15 +107,75 @@ describe("resolveSnapshot", () => {
     });
   });
 
-  it("does not render an unpinned key / headers (null subjects) and plans nothing for unreferenced messages", async () => {
+  it("does not render an unpinned key / headers (null subjects), and renders nothing for a message no operation references", async () => {
     const render = vi.fn(async (subject: ArtifactSubject, format: PayloadFormat) => ok({ artifact: schemaFor(subject, format), warnings: [] }));
-    const bare = messageSourceFromVersion({
-      id: "mv1", messageId: "m1", major: 1, minor: 0,
-      resolvedSpec: { name: "OrderCreated", spec: { traitIds: [] }, payload: { entityId: "e1", entityName: "Order", entityVersionId: "ev-order", label: "1.0", major: 1 }, headers: null, key: null },
-      message: { name: "OrderCreated", product: { slug: "checkout" } },
-    });
-    const out = await resolveSnapshot(snapshot({ messages: bare ? [bare] : [], traits: [] }), { render } as ArtifactRenderer, "draft");
+    const bare = (id: string, entityVersionId: string) =>
+      messageSourceFromVersion({
+        id, messageId: `m-${id}`, major: 1, minor: 0,
+        resolvedSpec: { name: `Msg-${id}`, spec: { traitIds: [] }, payload: { entityId: "e1", entityName: "Order", entityVersionId, label: "1.0", major: 1 }, headers: null, key: null },
+        message: { name: `Msg-${id}`, product: { slug: "checkout" } },
+      });
+    const sources = [bare("mv1", "ev-order"), bare("mv-unused", "ev-unused")].flatMap((m) => (m ? [m] : []));
+    expect(sources).toHaveLength(2);
+    const out = await resolveSnapshot(snapshot({ messages: sources, traits: [] }), { render } as ArtifactRenderer, "draft");
+    // only the referenced message's payload, in the channel's (Avro) format: no key / headers subjects, nothing for the unused message
     expect(render).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledWith({ kind: "version", entityVersionId: "ev-order" }, "avro");
+    expect(out.resolved?.messages.map((m) => m.id)).toEqual(["mv1"]);
     expect(out.resolved?.messages[0].keys).toBeUndefined();
+    expect(out.resolved?.messages[0].headers).toBeUndefined();
+  });
+});
+
+describe("resolveSnapshot render-failure diagnostics never leak internals (R67)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const failingRender = (failure: ReturnType<typeof err>): ArtifactRenderer["render"] => async (subject, format) =>
+    subject.kind === "version" && subject.entityVersionId === "ev-order" ? failure : ok({ artifact: schemaFor(subject, format), warnings: [] });
+  const payloadDiagnostic = async (failure: ReturnType<typeof err>) => {
+    const out = await resolveSnapshot(snapshot(), { render: failingRender(failure) }, "draft");
+    return out.diagnostics.find((d) => d.message.startsWith("Message OrderCreated payload"));
+  };
+
+  it("replaces an unexpected throw (ARTIFACT_RENDER_FAILED without a cause) by a generic text and logs the original", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const raw = 'Entity version "ev-order" → avro: Invalid `prisma.entityVersion.findUnique()` invocation: Can\'t reach database server at `10.0.0.5:5432` (user "app", password "hunter2")';
+    const d = await payloadDiagnostic(err({ code: "ARTIFACT_RENDER_FAILED", message: raw }));
+    expect(d).toEqual({ severity: "error", code: "ARTIFACT_RENDER_FAILED", pointer: "", message: "Message OrderCreated payload (avro): Artifact render failed" });
+    expect(JSON.stringify(d)).not.toMatch(/prisma|invocation|10\.0\.0\.5|hunter2|database/i);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("ARTIFACT_RENDER_FAILED"), raw); // the original stays server-side
+  });
+
+  it("omits raw tsp stdout / stderr and temp paths of an emitter failure but keeps the code and the cause code", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const tsp = [
+      "Order@1.0 → avro: /var/folders/zz/abc123/T/superschema-tsp-Xy12/main.tsp:14:5 - error unknown-identifier: Unknown identifier Ghost",
+      "    at /Users/ci/app/node_modules/@typespec/compiler/dist/src/core/checker.js:100:3",
+    ].join("\n");
+    const d = await payloadDiagnostic(err({ code: "ARTIFACT_RENDER_FAILED", message: tsp, details: { cause: "EMITTER_FAILED" } }));
+    expect(d).toEqual({ severity: "error", code: "ARTIFACT_RENDER_FAILED", pointer: "", message: "Message OrderCreated payload (avro): Artifact render failed [EMITTER_FAILED]" });
+    expect(d?.message).not.toMatch(/var\/folders|superschema-tsp|main\.tsp|checker\.js|Users|Ghost/);
+    expect(log).toHaveBeenCalled();
+  });
+
+  it("keeps the user-facing message of a timeout and of our own combiner errors, scrubbing any file path inside it", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const timeout = await payloadDiagnostic(
+      err({ code: "ARTIFACT_RENDER_FAILED", message: 'Order@1.0 → avro: Emitter "@typespec/avro" did not finish within 120000 ms and was killed.', details: { cause: "EMITTER_TIMEOUT" } })
+    );
+    expect(timeout?.message).toBe(
+      'Message OrderCreated payload (avro): Order@1.0 → avro: Emitter "@typespec/avro" did not finish within 120000 ms and was killed. [EMITTER_TIMEOUT]'
+    );
+    const conflict = await payloadDiagnostic(
+      err({ code: "TYPESPEC_DECLARATION_CONFLICT", message: "Address is declared twice (see /tmp/superschema-tsp-q1/a/main.tsp)", suggestedFix: "Rename one." })
+    );
+    expect(conflict?.message).toBe("Message OrderCreated payload (avro): Address is declared twice (see <path>) Fix: Rename one.");
+    expect(log).not.toHaveBeenCalled(); // user-facing failures are not logged as unexpected
+  });
+
+  it("treats an unknown loader code like an unexpected failure (generic text, code kept)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const d = await payloadDiagnostic(err({ code: "DB_ERROR", message: "connect ECONNREFUSED 10.0.0.5:5432" }));
+    expect(d).toEqual({ severity: "error", code: "DB_ERROR", pointer: "", message: "Message OrderCreated payload (avro): Artifact render failed" });
   });
 });

@@ -93,8 +93,9 @@ describe("AsyncApiParserValidator (real @asyncapi/parser)", { timeout: 60_000 },
     });
   });
 
-  describe("Kafka key (the Kafka binding types `key` as a JSON Schema Object)", () => {
-    const avroKeyedDocument = (key: SchemaArtifact, channelRef: ReturnType<typeof channel>) =>
+  describe("Kafka key (the Kafka binding types `key` as a JSON Schema Object; the key schema is validated by this validator)", () => {
+    const avroChannel = channel({ id: "ch-avro", name: "orders", profile: { format: "avro" } });
+    const keyedDocument = (key: SchemaArtifact, channelRef: ReturnType<typeof channel>) =>
       assembleAsyncApi3(
         spec({
           channels: [channelRef],
@@ -102,23 +103,48 @@ describe("AsyncApiParserValidator (real @asyncapi/parser)", { timeout: 60_000 },
           operations: [operation({ key: "o", channelRef: channelRef.id, messageRefs: ["m"] })],
         }),
       ).document;
+    const keyOf = (document: JsonObject): JsonObject =>
+      (document.components as { messages: { M: { bindings: { kafka: { key: JsonObject } } } } }).messages.M.bindings.kafka.key;
+    /** The assembled Avro-key document with the key replaced (in the components copy, the only place a key is stored). */
+    const withKey = (key: unknown): JsonObject => {
+      const document = keyedDocument({ format: "avro", schema: { type: "record", name: "K", fields: [] } }, avroChannel);
+      (document.components as { messages: { M: { bindings: { kafka: { key: unknown } } } } }).messages.M.bindings.kafka.key = key;
+      return document;
+    };
+    const KEY_POINTER = "/components/messages/M/bindings/kafka/key";
 
-    it("accepts an Avro RECORD key on an Avro channel (tagged as a Multi Format Schema Object, never a bare record)", async () => {
-      const avroChannel = channel({ id: "ch-avro", name: "orders", profile: { format: "avro" } });
-      const document = avroKeyedDocument(
-        { format: "avro", schema: { type: "record", name: "OrderKey", namespace: "acme.test", fields: [{ name: "id", type: "string" }] } },
-        avroChannel,
-      );
-      const key = ((document.components as { messages: { M: { bindings: { kafka: { key: JsonObject } } } } }).messages.M.bindings.kafka).key;
-      expect(key).toEqual({
-        schemaFormat: "application/vnd.apache.avro+json;version=1.9.0",
-        schema: { type: "record", name: "OrderKey", namespace: "acme.test", fields: [{ name: "id", type: "string" }] },
-      });
+    it("accepts a wrapped Avro RECORD key (the parser binding check passes AND the key schema is parsed as Avro)", async () => {
+      const schema = { type: "record", name: "OrderKey", namespace: "acme.test", fields: [{ name: "id", type: "string" }] };
+      const document = keyedDocument({ format: "avro", schema }, avroChannel);
+      expect(keyOf(document)).toEqual({ schemaFormat: "application/vnd.apache.avro+json;version=1.9.0", schema });
       expect(errorsOf(await validate(document))).toEqual([]);
     });
 
+    it("rejects an Avro key that is not valid Avro (record without name / fields) at the key pointer", async () => {
+      const errors = errorsOf(
+        await validate(withKey({ schemaFormat: "application/vnd.apache.avro+json;version=1.9.0", schema: { type: "record" } })),
+      );
+      expect(errors.map((d) => [d.code, d.pointer])).toContainEqual(["KAFKA_KEY_SCHEMA_INVALID", KEY_POINTER]);
+      expect(errors.find((d) => d.code === "KAFKA_KEY_SCHEMA_INVALID")?.message).toMatch(/^Kafka key Avro schema is invalid: /);
+    });
+
+    it("rejects an Avro key whose schema is not a schema at all, and an unknown schemaFormat", async () => {
+      const badAvro = errorsOf(await validate(withKey({ schemaFormat: "application/vnd.apache.avro+json;version=1.9.0", schema: 12345 })));
+      expect(badAvro.map((d) => [d.code, d.pointer])).toContainEqual(["KAFKA_KEY_SCHEMA_INVALID", KEY_POINTER]);
+
+      const nonsense = errorsOf(await validate(withKey({ schemaFormat: "application/x-nonsense", schema: 12345 })));
+      expect(nonsense.map((d) => [d.code, d.pointer])).toContainEqual(["KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED", KEY_POINTER]);
+      expect(nonsense.filter((d) => d.code === "KAFKA_KEY_SCHEMA_INVALID")).toEqual([]);
+    });
+
+    it("rejects a bare Avro record key (the shape the assembler used to emit) via the parser's own binding check", async () => {
+      const errors = errorsOf(await validate(withKey({ type: "record", name: "K", fields: [] })));
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some((d) => d.pointer.endsWith("/bindings/kafka/key/type"))).toBe(true);
+    });
+
     it("accepts a JSON Schema key on a JSON Schema Kafka channel", async () => {
-      const document = avroKeyedDocument(
+      const document = keyedDocument(
         { format: "json-schema", dialect: "draft-07", schema: { type: "object", properties: { id: { type: "string" } } } },
         jsonDraft07Channel,
       );
