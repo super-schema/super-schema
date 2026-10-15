@@ -478,6 +478,8 @@ model Trait {
   @@index([tenantId])
   @@index([domainId])
   @@index([productId])
+  @@index([headersEntityId])
+  @@index([headersEntityVersionId])
   @@map("traits")
 }
 
@@ -517,6 +519,11 @@ model Message {
   @@index([domainId])
   @@index([productId])
   @@index([payloadEntityId])
+  @@index([payloadEntityVersionId])
+  @@index([headersEntityId])
+  @@index([headersEntityVersionId])
+  @@index([keyEntityId])
+  @@index([keyEntityVersionId])
   @@map("messages")
 }
 
@@ -550,6 +557,8 @@ model MessageVersion {
   @@unique([messageId, major, minor])
   @@unique([messageId, sequence])
   @@index([payloadEntityVersionId])
+  @@index([headersEntityVersionId])
+  @@index([keyEntityVersionId])
   @@map("message_versions")
 }
 

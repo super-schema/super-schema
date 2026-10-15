@@ -18,6 +18,50 @@ async function inRolledBackTx(fn: (tx: Prisma.TransactionClient) => Promise<void
   }
 }
 
+/** domain / product / published entity + trait, message (+version), event spec (+version) and their schema_references edges. */
+async function seedEvents(tx: Prisma.TransactionClient) {
+  const user = await tx.user.findFirstOrThrow();
+  const s = `${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+  const domain = await tx.domain.create({ data: { name: `evd-${s}`, slug: `evd-${s}`, tenantId: TENANT } });
+  const product = await tx.product.create({ data: { domainId: domain.id, name: "Checkout", slug: `checkout-${s}` } });
+  const level = { tenantId: TENANT, domainId: domain.id, productId: product.id };
+  const entity = await tx.entity.create({ data: { name: "Order", slug: `order-${s}`, ...level, ownerId: user.id } });
+  const version = await tx.entityVersion.create({
+    data: { entityId: entity.id, major: 1, minor: 0, sequence: 1, resolvedSource: "model Order {}", fieldSnapshot: [], changeKind: "INITIAL", publishedById: user.id },
+  });
+  const trait = await tx.trait.create({
+    data: { kind: "MESSAGE", name: `CloudEvents${s}`, tenantId: TENANT, headersEntityId: entity.id, headersEntityVersionId: version.id },
+  });
+  const message = await tx.message.create({
+    data: { ...level, name: "OrderCreated", payloadEntityId: entity.id, payloadEntityVersionId: version.id },
+  });
+  const messageVersion = await tx.messageVersion.create({
+    data: {
+      messageId: message.id, major: 1, minor: 0, sequence: 1, resolvedSpec: { name: "OrderCreated" },
+      payloadEntityVersionId: version.id, changeKind: "INITIAL", publishedById: user.id,
+    },
+  });
+  const spec = await tx.eventSpec.create({ data: { ...level, name: "checkout-service", document: { info: { title: "x" }, servers: [], operations: [] } } });
+  const specVersion = await tx.eventSpecVersion.create({
+    data: {
+      eventSpecId: spec.id, major: 1, minor: 0, sequence: 1, document: {}, sourceDocument: {},
+      frozenChannels: [], frozenTraits: [], messageVersionIds: [messageVersion.id], changeKind: "INITIAL", publishedById: user.id,
+    },
+  });
+  const edge = (fromKind: "MESSAGE" | "MESSAGE_VERSION" | "EVENT_SPEC" | "EVENT_SPEC_VERSION" | "TRAIT", fromId: string, role: "PAYLOAD" | "HEADERS" | "MESSAGE", toKind: "ENTITY_VERSION" | "MESSAGE_VERSION", toId: string) =>
+    ({ fromKind, fromId, role, toKind, toId });
+  await tx.schemaReference.createMany({
+    data: [
+      edge("MESSAGE", message.id, "PAYLOAD", "ENTITY_VERSION", version.id),
+      edge("MESSAGE_VERSION", messageVersion.id, "PAYLOAD", "ENTITY_VERSION", version.id),
+      edge("EVENT_SPEC", spec.id, "MESSAGE", "MESSAGE_VERSION", messageVersion.id),
+      edge("EVENT_SPEC_VERSION", specVersion.id, "MESSAGE", "MESSAGE_VERSION", messageVersion.id),
+      edge("TRAIT", trait.id, "HEADERS", "ENTITY_VERSION", version.id),
+    ],
+  });
+  return { domain, entity, version, trait, message, messageVersion, spec, specVersion };
+}
+
 beforeAll(() => {
   prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 });
@@ -75,6 +119,44 @@ describe("events core schema (PostgreSQL)", () => {
       expect(reread.payloadEntityVersion?.id).toBe(v.id);
       expect((await tx.eventSpecVersion.findUniqueOrThrow({ where: { id: sv.id } })).messageVersionIds).toEqual([mv.id]);
       expect((await tx.trait.findUniqueOrThrow({ where: { id: trait.id }, include: { headersEntityVersion: true } })).headersEntityVersion?.id).toBe(v.id);
+    });
+  });
+});
+
+describe("events core no-delete triggers (PostgreSQL)", () => {
+  it("rejects direct deletes of published message and event spec versions", async () => {
+    await inRolledBackTx(async (tx) => {
+      const { messageVersion } = await seedEvents(tx);
+      await expect(tx.messageVersion.delete({ where: { id: messageVersion.id } })).rejects.toThrow(/cannot be deleted directly/);
+    });
+    await inRolledBackTx(async (tx) => {
+      const { specVersion } = await seedEvents(tx);
+      await expect(tx.eventSpecVersion.delete({ where: { id: specVersion.id } })).rejects.toThrow(/cannot be deleted directly/);
+    });
+  });
+
+  it("allows deleting a message / event spec with its versions and removes their schema_references", async () => {
+    await inRolledBackTx(async (tx) => {
+      const { message, messageVersion, spec, specVersion, trait } = await seedEvents(tx);
+      await tx.eventSpec.delete({ where: { id: spec.id } });
+      await tx.message.delete({ where: { id: message.id } });
+      expect(await tx.messageVersion.count({ where: { id: messageVersion.id } })).toBe(0);
+      expect(await tx.eventSpecVersion.count({ where: { id: specVersion.id } })).toBe(0);
+      const left = await tx.schemaReference.findMany({ where: { fromId: { in: [message.id, messageVersion.id, spec.id, specVersion.id, trait.id] } } });
+      expect(left.map((r) => r.fromKind)).toEqual(["TRAIT"]);
+    });
+  });
+
+  it("cascades with the domain and leaves no ghost schema_references", async () => {
+    await inRolledBackTx(async (tx) => {
+      const { domain, message, messageVersion, spec, specVersion, trait } = await seedEvents(tx);
+      await tx.trait.delete({ where: { id: trait.id } });
+      await tx.domain.delete({ where: { id: domain.id } });
+      expect(await tx.messageVersion.count({ where: { id: messageVersion.id } })).toBe(0);
+      expect(await tx.eventSpecVersion.count({ where: { id: specVersion.id } })).toBe(0);
+      expect(
+        await tx.schemaReference.count({ where: { fromId: { in: [message.id, messageVersion.id, spec.id, specVersion.id, trait.id] } } })
+      ).toBe(0);
     });
   });
 });
