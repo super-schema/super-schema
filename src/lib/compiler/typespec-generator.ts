@@ -44,11 +44,37 @@ export interface GenerateTypeSpecOptions {
 }
 
 /**
+ * Something the generator could not express faithfully. An `error` also surfaces as a compile error in the
+ * generated source (a publish / emission fails loudly instead of shipping an unsatisfiable schema); a `warning`
+ * was repaired (a duplicate enum symbol is dropped) and is only reported.
+ */
+export interface GeneratorDiagnostic {
+  severity: "error" | "warning";
+  code: "ENUM_NO_VALUES" | "ENUM_DUPLICATE_VALUE";
+  fieldName?: string;
+  message: string;
+}
+
+export interface GeneratedTypeSpec {
+  source: string;
+  diagnostics: GeneratorDiagnostic[];
+}
+
+/**
  * Generate TypeSpec source from a SuperSchemaModel.
  * Returns a valid TypeSpec .tsp string that compiles standalone.
  */
 export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeSpecOptions = {}): string {
+  return generateTypeSpecWithDiagnostics(model, options).source;
+}
+
+/** {@link generateTypeSpec} plus a report of everything that could not be expressed faithfully. */
+export function generateTypeSpecWithDiagnostics(
+  model: SuperSchemaModel,
+  options: GenerateTypeSpecOptions = {}
+): GeneratedTypeSpec {
   const governance = resolveGovernance(model, options);
+  const ctx = createContext(model);
   const lines: string[] = [...governanceImportLines(model, governance)];
 
   // Emit namespace if present
@@ -71,7 +97,7 @@ export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeS
   // Emit shared enums
   if (model.sharedEnums && model.sharedEnums.length > 0) {
     for (const sharedEnum of model.sharedEnums) {
-      lines.push(...generateSharedEnumDefinition(sharedEnum));
+      lines.push(...generateSharedEnumDefinition(sharedEnum, ctx));
       lines.push("");
     }
   }
@@ -93,13 +119,10 @@ export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeS
   }
 
   // Emit inline enum definitions (for enum-type fields not in shared enums)
-  const sharedEnumNames = new Set(model.sharedEnums?.map((e) => e.name) ?? []);
-  const enumFields = model.fields.filter(needsInlineEnum);
-  for (const field of enumFields) {
+  for (const field of model.fields.filter(needsInlineEnum)) {
     // Only emit inline enum if it's not a shared enum reference
-    const enumName = `${sanitizeIdentifier(model.entity.name)}_${sanitizeIdentifier(field.name)}`;
-    if (!sharedEnumNames.has(enumName)) {
-      lines.push(...generateInlineEnumDefinition(field, model.entity.name));
+    if (ctx.declaresInlineEnum(field)) {
+      lines.push(...generateInlineEnumDefinition(field, ctx));
       lines.push("");
     }
   }
@@ -123,7 +146,7 @@ export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeS
 
   // Emit fields
   for (const field of model.fields) {
-    const fieldLines = generateFieldDefinition(field, model.entity.name, governance);
+    const fieldLines = generateFieldDefinition(field, ctx, governance);
     for (const fl of fieldLines) {
       lines.push(`  ${fl}`);
     }
@@ -139,7 +162,7 @@ export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeS
     }
   }
 
-  return lines.join("\n") + "\n";
+  return { source: lines.join("\n") + "\n", diagnostics: ctx.diagnostics };
 }
 
 /**
@@ -167,6 +190,7 @@ export function generateTypeSpecWithSourceMap(
   options: GenerateTypeSpecOptions = {}
 ): { source: string; sourceMap: SourceMapEntry[] } {
   const governance = resolveGovernance(model, options);
+  const ctx = createContext(model);
   const lines: string[] = [...governanceImportLines(model, governance)];
   const sourceMap: SourceMapEntry[] = [];
 
@@ -189,7 +213,7 @@ export function generateTypeSpecWithSourceMap(
   // Shared enums
   if (model.sharedEnums && model.sharedEnums.length > 0) {
     for (const sharedEnum of model.sharedEnums) {
-      lines.push(...generateSharedEnumDefinition(sharedEnum));
+      lines.push(...generateSharedEnumDefinition(sharedEnum, ctx));
       lines.push("");
     }
   }
@@ -211,13 +235,10 @@ export function generateTypeSpecWithSourceMap(
   }
 
   // Emit inline enum definitions first
-  const sharedEnumNames = new Set(model.sharedEnums?.map((e) => e.name) ?? []);
-  const enumFields = model.fields.filter(needsInlineEnum);
-  for (const field of enumFields) {
-    const enumName = `${sanitizeIdentifier(model.entity.name)}_${sanitizeIdentifier(field.name)}`;
-    if (!sharedEnumNames.has(enumName)) {
+  for (const field of model.fields.filter(needsInlineEnum)) {
+    if (ctx.declaresInlineEnum(field)) {
       const startLine = lines.length + 1;
-      lines.push(...generateInlineEnumDefinition(field, model.entity.name));
+      lines.push(...generateInlineEnumDefinition(field, ctx));
       lines.push("");
       sourceMap.push({
         fieldName: field.name,
@@ -247,7 +268,7 @@ export function generateTypeSpecWithSourceMap(
   // Emit fields with source map tracking
   for (const field of model.fields) {
     const startLine = lines.length + 1;
-    const fieldLines = generateFieldDefinition(field, model.entity.name, governance);
+    const fieldLines = generateFieldDefinition(field, ctx, governance);
     for (const fl of fieldLines) {
       lines.push(`  ${fl}`);
     }
@@ -346,23 +367,95 @@ function generateModelDecorators(model: SuperSchemaModel, governance: Governance
 }
 
 // ---------------------------------------------------------------------------
+// Generation context: enum naming + diagnostics
+// ---------------------------------------------------------------------------
+
+interface GenContext {
+  /** The entity (model) name the inline enums are scoped to. */
+  entityName: string;
+  diagnostics: GeneratorDiagnostic[];
+  /** TypeSpec type name of the field-scoped enum of `field` (unique within the document). */
+  enumNameOf(field: SuperSchemaField): string;
+  /** False when the field reuses a shared enum of the same name, so no field-scoped enum is declared. */
+  declaresInlineEnum(field: SuperSchemaField): boolean;
+  /** True for a field-scoped enum with no symbols (never declared; the field fails loudly instead). */
+  hasNoEnumValues(field: SuperSchemaField): boolean;
+}
+
+/**
+ * Per-document state. A field-scoped enum is named `<Entity>_<field>`; two enum fields whose names sanitize
+ * identically (`a-b` / `a_b`, or two non-ASCII names) would declare the same enum twice, so a later one gets a
+ * numeric suffix. A shared enum of exactly that name is reused instead of redeclared.
+ */
+function createContext(model: SuperSchemaModel): GenContext {
+  const diagnostics: GeneratorDiagnostic[] = [];
+  const entityName = model.entity.name;
+
+  const sharedNames = new Set(
+    (model.sharedEnums ?? []).filter((e) => normalizeEnumSymbols(e.values).length > 0).map((e) => sanitizeIdentifier(e.name))
+  );
+  const taken = new Set<string>([sanitizeIdentifier(entityName), ...sharedNames]);
+  for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases, model.interfaces]) {
+    for (const declared of group ?? []) taken.add(sanitizeIdentifier(declared.name));
+  }
+
+  const names = new Map<SuperSchemaField, string>();
+  const reused = new Set<SuperSchemaField>();
+  const inlineValues = new Map<SuperSchemaField, string[]>();
+  for (const field of model.fields) {
+    if (!needsInlineEnum(field)) continue;
+    inlineValues.set(field, normalizeEnumSymbols(extractEnumValues(field)));
+    const base = `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`;
+    if (sharedNames.has(base)) {
+      names.set(field, base);
+      reused.add(field);
+      continue;
+    }
+    let name = base;
+    for (let n = 2; taken.has(name); n++) name = `${base}_${n}`;
+    taken.add(name);
+    names.set(field, name);
+  }
+
+  return {
+    entityName,
+    diagnostics,
+    enumNameOf: (field) => names.get(field) ?? `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`,
+    // An enum without symbols is never declared (see generateFieldDefinition for how the field fails loudly).
+    declaresInlineEnum: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) > 0,
+    hasNoEnumValues: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) === 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Shared enum definition
 // ---------------------------------------------------------------------------
 
-function generateSharedEnumDefinition(sharedEnum: SuperSchemaSharedEnum): string[] {
+function generateSharedEnumDefinition(sharedEnum: SuperSchemaSharedEnum, ctx: GenContext): string[] {
   const lines: string[] = [];
+  const values = normalizeEnumSymbols(sharedEnum.values, (dup) =>
+    ctx.diagnostics.push({
+      severity: "warning",
+      code: "ENUM_DUPLICATE_VALUE",
+      message: `Shared enum "${sharedEnum.name}" lists the value "${dup}" more than once; the duplicate was dropped`,
+    })
+  );
+
+  // An empty enum is unsatisfiable (`{ "enum": [] }` accepts nothing): never declare one.
+  if (values.length === 0) {
+    const message = `Shared enum "${sharedEnum.name}" has no values and was not emitted`;
+    ctx.diagnostics.push({ severity: "warning", code: "ENUM_NO_VALUES", message });
+    lines.push(`// ${message}`);
+    return lines;
+  }
 
   if (sharedEnum.description) {
     lines.push(`@doc("${escapeString(sharedEnum.description)}")`);
   }
   lines.push(`enum ${sanitizeIdentifier(sharedEnum.name)} {`);
 
-  for (const val of sharedEnum.values) {
-    lines.push(`  ${sanitizeIdentifier(val)},`);
-  }
-
-  if (sharedEnum.values.length === 0) {
-    lines.push(`  // TODO: Define enum values`);
+  for (const val of values) {
+    lines.push(`  ${enumMemberName(val)},`);
   }
 
   lines.push("}");
@@ -372,10 +465,6 @@ function generateSharedEnumDefinition(sharedEnum: SuperSchemaSharedEnum): string
 // ---------------------------------------------------------------------------
 // Inline enum definition (field-scoped)
 // ---------------------------------------------------------------------------
-
-function inlineEnumName(entityName: string, field: SuperSchemaField): string {
-  return `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`;
-}
 
 /**
  * Fields that get a field-scoped enum: every `enum` field, plus arrays / maps
@@ -392,15 +481,19 @@ function needsInlineEnum(field: SuperSchemaField): boolean {
   return member === "enum" && extractEnumValues(field).length > 0;
 }
 
-function generateInlineEnumDefinition(
-  field: SuperSchemaField,
-  entityName: string
-): string[] {
-  const enumName = inlineEnumName(entityName, field);
+function generateInlineEnumDefinition(field: SuperSchemaField, ctx: GenContext): string[] {
+  const enumName = ctx.enumNameOf(field);
   const lines: string[] = [];
 
   // Extract enum values from decorators or aliases
-  const values = extractEnumValues(field);
+  const values = normalizeEnumSymbols(extractEnumValues(field), (dup) =>
+    ctx.diagnostics.push({
+      severity: "warning",
+      code: "ENUM_DUPLICATE_VALUE",
+      fieldName: field.name,
+      message: `Enum field "${field.name}" lists the value "${dup}" more than once; the duplicate was dropped`,
+    })
+  );
 
   if (field.description) {
     lines.push(`@doc("${escapeString(field.description)}")`);
@@ -408,17 +501,30 @@ function generateInlineEnumDefinition(
   lines.push(`enum ${enumName} {`);
 
   for (const val of values) {
-    lines.push(`  ${sanitizeIdentifier(val)},`);
-  }
-
-  // If no values found, add a placeholder
-  if (values.length === 0) {
-    lines.push(`  // TODO: Define enum values`);
+    lines.push(`  ${enumMemberName(val)},`);
   }
 
   lines.push("}");
   return lines;
 }
+
+/** Drop repeated symbols (a second `a` is a TypeSpec compile error), keeping first-seen order. */
+function normalizeEnumSymbols(values: readonly string[], onDuplicate?: (value: string) => void): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      onDuplicate?.(value);
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+/** A pattern with regex constructs is a real regex, not an `A|B|C` symbol list. */
+const REGEX_CONSTRUCT = /^\^|\$$|\\[dDwWsSbB]|[[\]()]|\.[*+]|\{\d/;
 
 function extractEnumValues(field: SuperSchemaField): string[] {
   // Array element / map value enums carry their symbols in complexType.
@@ -426,19 +532,20 @@ function extractEnumValues(field: SuperSchemaField): string[] {
     return field.complexType?.enumValues ?? [];
   }
 
-  // Check typespec validation for enum hints
-  const validation = field.decorators.typespec?.validation;
-  if (validation && "pattern" in validation && validation.pattern) {
-    // If pattern looks like "val1|val2|val3", extract as enum values
-    const pattern = validation.pattern;
-    if (/^[\w|]+$/.test(pattern)) {
-      return pattern.split("|").filter(Boolean);
-    }
-  }
-
-  // Use aliases as enum values if present
+  // Aliases hold the symbols verbatim (no separator ambiguity), so they win.
   if (field.aliases.length > 0) {
     return field.aliases;
+  }
+
+  // The importers carry an enum field's symbols in the pattern slot as "val1|val2|val3" (the generator never
+  // emits @pattern for an enum, so the slot is free). Symbols may hold any character — hyphens, spaces — but a
+  // value that is a regex (anchors, classes, groups) is not a symbol list.
+  const validation = field.decorators.typespec?.validation;
+  if (validation && "pattern" in validation && validation.pattern) {
+    const pattern = validation.pattern;
+    if (!REGEX_CONSTRUCT.test(pattern)) {
+      return pattern.split("|").filter(Boolean);
+    }
   }
 
   return [];
@@ -548,7 +655,7 @@ function generateOperationDefinition(op: SuperSchemaOperation): string[] {
 
 function generateFieldDefinition(
   field: SuperSchemaField,
-  entityName: string,
+  ctx: GenContext,
   governance: Governance
 ): string[] {
   const lines: string[] = [];
@@ -557,17 +664,33 @@ function generateFieldDefinition(
   lines.push(...generateFieldDecorators(field, governance));
 
   // Build the type expression
-  const typeExpr = resolveTypeSpecType(field, entityName);
+  let typeExpr: string;
+  if (field.type === "enum" && ctx.hasNoEnumValues(field)) {
+    // An empty enum would publish `{ "enum": [] }`, which no payload satisfies. Fail loudly instead: the type is an
+    // identifier that cannot resolve, so the TypeSpec compile (Source tab, publish gate, emission) reports this
+    // field with the message below rather than shipping a schema nobody can satisfy.
+    const label = oneLine(`enum field ${JSON.stringify(field.name)} has no values; add at least one value`);
+    ctx.diagnostics.push({
+      severity: "error",
+      code: "ENUM_NO_VALUES",
+      fieldName: field.name,
+      message: `Enum field "${field.name}" has no values; add at least one value`,
+    });
+    lines.push(`// ERROR: ${label}`);
+    typeExpr = quoteIdentifier(`ERROR: ${label}`);
+  } else {
+    typeExpr = resolveTypeSpecType(field, ctx);
+  }
 
   // Determine optionality
   const optional = field.nullable ? "?" : "";
 
   // Default value
   const defaultClause = field.decorators.typespec?.identity?.defaultValue !== undefined
-    ? ` = ${JSON.stringify(field.decorators.typespec.identity.defaultValue)}`
+    ? ` = ${JSON.stringify(field.decorators.typespec.identity.defaultValue).replace(/\$\{/g, "\\${")}`
     : "";
 
-  lines.push(`${sanitizeIdentifier(field.name)}${optional}: ${typeExpr}${defaultClause};`);
+  lines.push(`${propertyName(field.name)}${optional}: ${typeExpr}${defaultClause};`);
 
   return lines;
 }
@@ -596,7 +719,7 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
 
   // @discriminator
   if (field.decorators.typespec?.identity?.discriminator) {
-    decorators.push(`@discriminator("${field.name}")`);
+    decorators.push(`@discriminator("${escapeString(field.name)}")`);
   }
 
   // @format (from typespec identity)
@@ -718,14 +841,14 @@ const STRUCTURED_MEMBER_TYPES: Record<string, string> = {
 function resolveCollectionMemberType(
   memberType: string,
   field: SuperSchemaField,
-  entityName: string
+  ctx: GenContext
 ): string {
   if (memberType === "reference") {
     const refName = field.complexType?.referencedEntityName;
     return refName ? sanitizeIdentifier(refName) : "string";
   }
   if (memberType === "enum") {
-    return extractEnumValues(field).length > 0 ? inlineEnumName(entityName, field) : "string";
+    return extractEnumValues(field).length > 0 ? ctx.enumNameOf(field) : "string";
   }
   if (STRUCTURED_MEMBER_TYPES[memberType]) {
     return STRUCTURED_MEMBER_TYPES[memberType];
@@ -735,24 +858,24 @@ function resolveCollectionMemberType(
 
 function resolveTypeSpecType(
   field: SuperSchemaField,
-  entityName: string
+  ctx: GenContext
 ): string {
   const typeInfo = getTypeInfo(field.type);
   const typespecScalar = typeInfo?.typespecScalar ?? field.type;
 
   switch (field.type as LogicalType) {
     case "enum": {
-      return inlineEnumName(entityName, field);
+      return ctx.enumNameOf(field);
     }
     case "array": {
       const elementType = field.complexType?.arrayElementType ?? "string";
-      return `${resolveCollectionMemberType(elementType, field, entityName)}[]`;
+      return `${resolveCollectionMemberType(elementType, field, ctx)}[]`;
     }
     case "map": {
       // TypeSpec `Record<T>` is string-keyed only (a key type argument does not
       // compile), so the key type stays in the IR (complexType.mapKeyType).
       const valueType = field.complexType?.mapValueType ?? "string";
-      return `Record<${resolveCollectionMemberType(valueType, field, entityName)}>`;
+      return `Record<${resolveCollectionMemberType(valueType, field, ctx)}>`;
     }
     case "object": {
       // Inline model or reference to a nested model
@@ -779,10 +902,28 @@ function resolveTypeSpecType(
 // Utilities
 // ---------------------------------------------------------------------------
 
-const TYPESPEC_RESERVED_WORDS = new Set([
-  "model", "enum", "interface", "namespace", "op", "union", "alias",
-  "scalar", "dec", "fn", "extern", "is", "extends", "using", "import",
+/**
+ * Every word the TypeSpec scanner (`Keywords` in @typespec/compiler core/scanner) will not accept as a bare
+ * identifier — statement keywords, literal / type keywords (`true`, `void`, `never`, `unknown`) and the reserved
+ * future keywords. A test enumerates the compiler's own `Token` enum and fails when this list falls behind.
+ */
+export const TYPESPEC_KEYWORDS: ReadonlySet<string> = new Set([
+  "import", "model", "scalar", "namespace", "interface", "union", "if", "else", "projection", "using", "op",
+  "extends", "is", "enum", "alias", "dec", "fn", "valueof", "typeof", "const", "init", "true", "false", "return",
+  "void", "never", "unknown", "extern", "internal",
+  // reserved for future use
+  "statemachine", "macro", "package", "metadata", "env", "arg", "declare", "array", "struct", "record", "module",
+  "mod", "sym", "context", "prop", "property", "scenario", "pub", "sub", "typeref", "trait", "this", "self",
+  "super", "keyof", "with", "implements", "impl", "satisfies", "flag", "auto", "partial", "private", "public",
+  "protected", "sealed", "local", "async",
 ]);
+
+const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** A bare TypeSpec identifier: ASCII word characters, not starting with a digit, not a keyword. */
+export function isPlainIdentifier(name: string): boolean {
+  return PLAIN_IDENTIFIER.test(name) && !TYPESPEC_KEYWORDS.has(name);
+}
 
 export function sanitizeIdentifier(name: string): string {
   // Replace non-alphanumeric characters with underscores
@@ -792,10 +933,39 @@ export function sanitizeIdentifier(name: string): string {
     safe = `_${safe}`;
   }
   // Escape TypeSpec reserved words
-  if (TYPESPEC_RESERVED_WORDS.has(safe)) {
+  if (TYPESPEC_KEYWORDS.has(safe)) {
     safe = `_${safe}`;
   }
   return safe;
+}
+
+/**
+ * A model property name that keeps the WIRE name: a bare identifier when the name is one, otherwise a backticked
+ * identifier (`` `in-progress` ``, `` `op` ``, `` `日本語` ``). Never mangled — the generated contract must describe
+ * the property the producer actually sends, and two distinct names can never collapse into one.
+ */
+export function propertyName(name: string): string {
+  return isPlainIdentifier(name) ? name : quoteIdentifier(name);
+}
+
+/** An enum member name that keeps the wire symbol: bare when it is an identifier, else the quoted `"…"` form. */
+export function enumMemberName(name: string): string {
+  return isPlainIdentifier(name) ? name : `"${escapeString(name)}"`;
+}
+
+/** A backticked TypeSpec identifier. Backslash, backtick and line breaks are escaped; any other character is literal. */
+export function quoteIdentifier(name: string): string {
+  const escaped = name
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+  return `\`${escaped}\``;
+}
+
+function oneLine(text: string): string {
+  return text.replace(new RegExp("[\\r\\n\\u2028\\u2029]+", "g"), " ");
 }
 
 function sanitizeNamespace(ns: string): string {
@@ -806,10 +976,16 @@ function sanitizeNamespace(ns: string): string {
     .join(".");
 }
 
-function escapeString(str: string): string {
+/**
+ * Escape text for a TypeSpec `"…"` string. `${` opens a string template (`"Price in ${currency}"` is an
+ * unresolved reference), so its `$` is escaped; a lone `$` is left alone.
+ */
+export function escapeString(str: string): string {
   return str
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
     .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r");
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")
+    .replace(/\$\{/g, "\\${");
 }

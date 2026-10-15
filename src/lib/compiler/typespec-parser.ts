@@ -381,8 +381,8 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
         .map((l) => l.trim())
         .filter((l) => l && !l.startsWith("//") && !l.startsWith("@"))
         .map((l) => l.replace(/[,;]$/, "").trim())
-        // Handle `Value: "string_value"` syntax
-        .map((l) => l.split(":")[0].trim())
+        // Handle `Value: "string_value"` syntax; a member may itself be quoted (`"in-progress"`)
+        .map((l) => leadingMemberName(l))
         .filter(Boolean);
       result.enums.push({
         name: enumMatch[1],
@@ -710,9 +710,10 @@ function parseModelBody(bodyLines: string[]): { fields: ParsedTypeSpecField[]; s
     }
 
     // Field declaration: `name: type;` or `name?: type;` or `name: type = defaultValue;`
-    const fieldMatch = line.match(/^(\w+)(\?)?\s*:\s*(.+?)(?:\s*=\s*(.+?))?\s*;\s*$/);
+    // (`name` may be a backticked identifier: `` `in-progress`: string; ``)
+    const fieldMatch = line.match(/^(\w+|`(?:[^`\\]|\\.)*`)(\?)?\s*:\s*(.+?)(?:\s*=\s*(.+?))?\s*;\s*$/);
     if (fieldMatch) {
-      const fieldName = fieldMatch[1];
+      const fieldName = fieldMatch[1].startsWith("`") ? leadingMemberName(fieldMatch[1]) : fieldMatch[1];
       const isOptional = fieldMatch[2] === "?";
       const typeExpr = fieldMatch[3].trim();
       const defaultValue = fieldMatch[4]?.trim();
@@ -1106,11 +1107,39 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
 // ---------------------------------------------------------------------------
 
 function unescapeString(str: string): string {
-  return str
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\"/g, '"')
-    .replace(/\\\\/g, "\\");
+  // One pass: `\\n` is a backslash then `n`, not a newline. Handles the escapes TypeSpec defines and the generator
+  // writes (`\n \r \t \" \\ \$ \@ \``); any other backslash sequence is kept as written (`\.` in a regex).
+  return str.replace(/\\(.)/g, (whole, ch: string) => {
+    switch (ch) {
+      case "n":
+        return "\n";
+      case "r":
+        return "\r";
+      case "t":
+        return "\t";
+      case '"':
+      case "\\":
+      case "$":
+      case "@":
+      case "`":
+        return ch;
+      default:
+        return whole;
+    }
+  });
+}
+
+/**
+ * The name at the start of a model property / enum member line: a bare identifier, a backticked identifier or
+ * (enum members) a quoted string. Quoted forms are unescaped, so `` `in-progress` `` and `"in-progress"` both
+ * yield `in-progress` — what the TypeSpec compiler reports as the member / property name.
+ */
+const QUOTED_NAME = /^(?:`((?:[^`\\]|\\.)*)`|"((?:[^"\\]|\\.)*)")/;
+
+function leadingMemberName(line: string): string {
+  const quoted = QUOTED_NAME.exec(line);
+  if (quoted) return unescapeString(quoted[1] ?? quoted[2] ?? "");
+  return line.split(":")[0].trim();
 }
 
 // ---------------------------------------------------------------------------

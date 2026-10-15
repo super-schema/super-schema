@@ -40,6 +40,8 @@
  * Pure functions — no side effects, no I/O.
  */
 
+import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
+
 const WELL_KNOWN_TIMESTAMP = "TypeSpec.Protobuf.WellKnown.Timestamp";
 
 function externMessage(protoPath: string, protoName: string): string {
@@ -114,19 +116,36 @@ export function projectTypeSpecSourceForProtobuf(source: string): string {
     }
 
     const [, indent, head, typeExpression] = property;
+    // The canonical source keeps wire names (`` `in-progress`: string; ``); a .proto field name must be an
+    // identifier (the wire carries the field number, so the name is only a label there).
+    const protobufHead = protobufPropertyHead(head);
     const protobufType = rewriteTypeExpressionForProtobuf(typeExpression);
     if (protobufType === typeExpression) {
-      projected.push(line);
+      projected.push(protobufHead === head ? line : `${indent}${protobufHead}${line.slice(indent.length + head.length)}`);
       continue;
     }
 
     dropTypeBoundDecorators(projected);
     // proto3 has no field defaults; a default typed for the original scalar
     // would not be assignable to the substituted type, so it is dropped too.
-    projected.push(`${indent}${head}${protobufType};`);
+    projected.push(`${indent}${protobufHead}${protobufType};`);
   }
 
   return projected.join("\n");
+}
+
+const QUOTED_NAME = /^(?:`((?:[^`\\]|\\.)*)`|"((?:[^"\\]|\\.)*)")/;
+
+const unescapeQuoted = (text: string): string =>
+  text.replace(/\\(.)/g, (whole, ch: string) =>
+    ch === "n" ? "\n" : ch === "r" ? "\r" : ch === "t" ? "\t" : '"\\$@`'.includes(ch) ? ch : whole
+  );
+
+/** `` `in-progress`?: `` → `in_progress?:` (an identifier head is returned unchanged). */
+function protobufPropertyHead(head: string): string {
+  const quoted = QUOTED_NAME.exec(head);
+  if (!quoted) return head;
+  return `${sanitizeIdentifier(unescapeQuoted(quoted[1] ?? quoted[2] ?? ""))}${head.slice(quoted[0].length)}`;
 }
 
 /** Rewrite one TypeSpec type expression into its protobuf-representable form. */
@@ -164,7 +183,12 @@ function normalizeEnumsForProtobuf(source: string): string {
     const members = body
       .split("\n")
       .map((line) => line.replace(/\/\/.*$/, "").trim())
-      .map((line) => line.replace(/,$/, "").split(":")[0].trim())
+      .map((line) => line.replace(/,$/, ""))
+      .map((line) => {
+        // Wire symbols are quoted (`"in-progress"`); a proto enum value name must be an identifier.
+        const quoted = QUOTED_NAME.exec(line);
+        return quoted ? sanitizeIdentifier(unescapeQuoted(quoted[1] ?? quoted[2] ?? "")) : line.split(":")[0].trim();
+      })
       .filter(Boolean);
 
     const sentinel = `${toUpperSnakeCase(enumName)}_UNSPECIFIED`;
