@@ -73,6 +73,15 @@ describe("ProductGrid delete", () => {
     expect(deleteProductActionMock).not.toHaveBeenCalled();
   });
 
+  it("disables delete when the product owns Events assets (channels, messages, traits, event specs)", () => {
+    renderGrid([product({ eventsAssets: { channels: 2, messages: 1, traits: 0, eventSpecs: 1 } })]);
+    const button = screen.getByRole("button", { name: /Delete product Checkout/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe("Delete the product's 2 channels, 1 message and 1 event spec before removing it");
+    fireEvent.click(button);
+    expect(deleteProductActionMock).not.toHaveBeenCalled();
+  });
+
   it("still deletes an empty product", async () => {
     renderGrid([product()]);
     fireEvent.click(screen.getByRole("button", { name: /Delete product Checkout/i }));

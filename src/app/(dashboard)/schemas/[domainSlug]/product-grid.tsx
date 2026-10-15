@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { formatDateOnly } from "@/lib/date-format";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
-import { productDeleteBlocker } from "@/lib/product-deletion";
+import { NO_EVENTS_ASSETS, productDeleteBlocker, type EventsAssetCounts } from "@/lib/product-deletion";
 import {
   createProductAction,
   deleteProductAction,
@@ -29,6 +29,8 @@ export interface ProductGridItem {
   dataTypeCount: number;
   /** Product-level APIs (service definitions) — cascade with the product. */
   apiCount: number;
+  /** Events assets (channels, messages, traits, event specs) — cascade with the product; absent = none known. */
+  eventsAssets?: EventsAssetCounts;
   updatedAt: Date | string;
   tier: {
     id: string;
@@ -62,6 +64,7 @@ function deleteBlocker(product: ProductGridItem): string | null {
     customScalars: 0,
     unionTypes: 0,
     services: product.apiCount,
+    ...(product.eventsAssets ?? NO_EVENTS_ASSETS),
   });
 }
 

@@ -1,4 +1,6 @@
-export interface DomainDeletionImpact {
+import type { EventsAssetCounts } from "@/lib/product-deletion";
+
+export interface DomainDeletionImpact extends EventsAssetCounts {
   entities: number;
   /** Products in the domain — deleted (cascade) with it. */
   products: number;
@@ -16,4 +18,6 @@ export interface DomainDeletionImpact {
   services: number;
   interfaces: number;
   userRoles: number;
+  // `channels`, `messages`, `traits` and `eventSpecs` (EventsAssetCounts) count the Events assets of the domain
+  // and its products at every level; like entities they block the delete instead of cascading.
 }

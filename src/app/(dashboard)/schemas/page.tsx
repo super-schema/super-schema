@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { resolveGlobalAdminAccess } from "@/lib/access-control";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
 import { DomainGrid } from "./domain-grid";
 
 export default async function SchemasPage() {
@@ -21,6 +22,7 @@ export default async function SchemasPage() {
           services: true,
           interfaces: true,
           userRoles: true,
+          ...EVENTS_ASSET_COUNT_SELECT,
         },
       },
       // Product-level Data Types / APIs cascade with their products when the domain goes.
@@ -74,6 +76,10 @@ export default async function SchemasPage() {
           services: d._count.services,
           interfaces: d._count.interfaces,
           userRoles: d._count.userRoles,
+          channels: d._count.channels,
+          messages: d._count.messages,
+          traits: d._count.traits,
+          eventSpecs: d._count.eventSpecs,
         },
         createdAt: d.createdAt,
       }))}

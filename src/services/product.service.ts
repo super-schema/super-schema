@@ -5,7 +5,9 @@ import type { Result } from "@/types/result";
 import type { Product, ProductTier } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { generateSlug, isReservedProductRouteSlug } from "@/lib/slug";
-import { productDeleteBlocker } from "@/lib/product-deletion";
+import { combineBlockers, EVENTS_ASSET_COUNT_SELECT, productDeleteBlocker } from "@/lib/product-deletion";
+import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
+import { findCrossProductPins } from "@/services/events/delete-guards";
 
 export interface ProductListItem {
   id: string;
@@ -214,6 +216,7 @@ export async function deleteProduct(
   const existing = await ctx.prisma.product.findUnique({
     where: { id },
     include: {
+      domain: { select: { tenantId: true } },
       _count: {
         select: {
           entities: true,
@@ -221,6 +224,7 @@ export async function deleteProduct(
           customScalars: true,
           unionTypes: true,
           services: true,
+          ...EVENTS_ASSET_COUNT_SELECT,
         },
       },
     },
@@ -234,15 +238,23 @@ export async function deleteProduct(
       message: "System products cannot be deleted",
     });
   }
-  // Entities and product-level Data Types / APIs all cascade with the product
-  // (FK ON DELETE CASCADE), so any of them blocks the delete.
-  const blocker = productDeleteBlocker(existing._count);
+  // Entities, product-level Data Types / APIs and Events assets (channels, messages, traits, event specs) all
+  // cascade with the product (FK ON DELETE CASCADE), so any of them blocks the delete. Events assets also block
+  // while a published event spec of ANOTHER product still pins or froze one of them (immutable versions) — that
+  // reason is reported together with the content counts, naming the specs and their products.
+  const pins = await findCrossProductPins(ctx.prisma, {
+    kind: "product",
+    productId: id,
+    tenantId: existing.domain.tenantId,
+  });
+  const blocker = combineBlockers([productDeleteBlocker(existing._count), crossProductPinBlocker(pins)]);
   if (blocker) {
     return err({
       code: "VALIDATION_ERROR",
       message: blocker,
+      ...(pins.length > 0 && { details: { eventSpecs: pins } }),
       suggestedFix:
-        "Remove or move the product's entities, Data Types and APIs, then delete the product.",
+        "Remove or move the product's entities, Data Types, APIs and Events assets (channels, messages, traits, event specs), then delete the product.",
     });
   }
 

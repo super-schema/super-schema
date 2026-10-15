@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { DomainDeletionImpact } from "@/types/domain-deletion";
+import { eventsAssetParts, eventsAssetTotal, joinList } from "@/lib/product-deletion";
 
 interface DomainDeletionDialogProps {
   open: boolean;
@@ -42,6 +43,10 @@ const impactLabels: Array<{
   { key: "services", singular: "API service", plural: "API services" },
   { key: "interfaces", singular: "interface", plural: "interfaces" },
   { key: "userRoles", singular: "role assignment", plural: "role assignments" },
+  { key: "channels", singular: "channel", plural: "channels" },
+  { key: "messages", singular: "message", plural: "messages" },
+  { key: "traits", singular: "trait", plural: "traits" },
+  { key: "eventSpecs", singular: "event spec", plural: "event specs" },
 ];
 
 export function DomainDeletionDialog({
@@ -57,6 +62,17 @@ export function DomainDeletionDialog({
     .map((item) => ({ ...item, count: impact[item.key] }))
     .filter((item) => item.count > 0);
   const hasEntities = impact.entities > 0;
+  const hasEventsAssets = eventsAssetTotal(impact) > 0;
+  // Entities and Events assets block the delete (they never cascade silently); the rest is deleted with the domain.
+  const blockingParts = [
+    ...(hasEntities ? [`${impact.entities} ${impact.entities === 1 ? "entity" : "entities"}`] : []),
+    ...eventsAssetParts(impact),
+  ];
+  const blockedHeading = hasEntities
+    ? hasEventsAssets
+      ? "Delete or move all entities and Events assets first."
+      : "Delete or move all entities first."
+    : "Delete or move all Events assets first.";
 
   return (
     <Dialog
@@ -92,14 +108,13 @@ export function DomainDeletionDialog({
         </DialogHeader>
 
         <div className="space-y-space-3 p-space-5">
-          {hasEntities ? (
+          {blockingParts.length > 0 ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-space-3">
               <p className="text-body-small font-medium text-destructive">
-                Delete or move all entities first.
+                {blockedHeading}
               </p>
               <p className="mt-space-1 text-caption text-muted-foreground">
-                This domain currently contains {impact.entities}{" "}
-                {impact.entities === 1 ? "entity" : "entities"}.
+                This domain currently contains {joinList(blockingParts)}.
               </p>
             </div>
           ) : (
@@ -163,7 +178,7 @@ export function DomainDeletionDialog({
             type="button"
             variant="destructive"
             onClick={onConfirm}
-            disabled={isDeleting || hasEntities}
+            disabled={isDeleting || blockingParts.length > 0}
           >
             {isDeleting ? "Deleting..." : "Delete Domain"}
           </Button>
