@@ -16,6 +16,7 @@ import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
+import { ok, err, type Result } from "@/types/result";
 
 const execFileAsync = promisify(execFile);
 
@@ -231,16 +232,23 @@ function injectProtobufFieldDecorators(
   source: string,
   model: SuperSchemaModel
 ): string {
-  const modelName = sanitizeIdentifier(model.entity.name);
-  const modelStart = source.indexOf(`model ${modelName}`);
-  if (modelStart === -1) {
-    return source;
-  }
+  return injectProtobufFieldNumbers(source, sanitizeIdentifier(model.entity.name), model.fields);
+}
 
-  const openBrace = source.indexOf("{", modelStart);
-  if (openBrace === -1) {
-    return source;
-  }
+/**
+ * Inject `@field(n)` before every listed property of `model <modelName>` — n is the
+ * field's stored number, else its 1-based position. The model is matched by exact name
+ * (`Order` never matches `OrderKey`); property lines keep their indentation.
+ */
+export function injectProtobufFieldNumbers(
+  source: string,
+  modelName: string,
+  fields: ReadonlyArray<{ name: string; fieldNumber?: number | null }>
+): string {
+  const header = new RegExp(`\\bmodel\\s+${escapeRegExp(modelName)}(?![A-Za-z0-9_])`).exec(source);
+  if (!header) return source;
+  const openBrace = source.indexOf("{", header.index);
+  if (openBrace === -1) return source;
 
   let depth = 0;
   let closeBrace = -1;
@@ -254,37 +262,48 @@ function injectProtobufFieldDecorators(
       }
     }
   }
-
-  if (closeBrace === -1) {
-    return source;
-  }
+  if (closeBrace === -1) return source;
 
   const before = source.slice(0, openBrace + 1);
   let body = source.slice(openBrace + 1, closeBrace);
   const after = source.slice(closeBrace);
 
-  model.fields.forEach((field, index) => {
+  fields.forEach((field, index) => {
     const safeName = sanitizeIdentifier(field.name);
     const fieldNumber = field.fieldNumber ?? index + 1;
-    const matcher = new RegExp(`^(\\s*)${escapeRegExp(safeName)}(\\??:)`, "m");
-    if (matcher.test(body)) {
-      body = body.replace(
-        matcher,
-        `$1@field(${fieldNumber})\n$1${safeName}$2`
-      );
-    }
+    const matcher = new RegExp(`^([ \\t]*)${escapeRegExp(safeName)}(\\??:)`, "m");
+    if (matcher.test(body)) body = body.replace(matcher, `$1@field(${fieldNumber})\n$1${safeName}$2`);
   });
 
   return `${before}${body}${after}`;
 }
 
-async function runTypeSpecEmitter(
+export interface EmittedFile {
+  relativePath: string;
+  content: string;
+}
+
+/** A hung `tsp` is killed after this long (`EMITTER_TIMEOUT`). */
+export const DEFAULT_EMITTER_TIMEOUT_MS = 120_000;
+
+/**
+ * Run one TypeSpec emitter in a throw-away workspace; every file it wrote, sorted by path. Never throws: a
+ * workspace that cannot be created, a failed compile and a `tsp` that outlives `timeoutMs` (SIGKILL) are errors.
+ */
+export async function runTypeSpecEmitterFiles(
   packageName: string,
   source: string,
-  emitterOptions: Record<string, unknown>
-): Promise<OfficialTypeSpecTargetResult> {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
+  emitterOptions: Record<string, unknown>,
+  runOptions: { timeoutMs?: number } = {}
+): Promise<Result<EmittedFile[]>> {
+  let workspace: string;
+  try {
+    workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
+  } catch (error) {
+    return err({ code: "EMITTER_FAILED", message: `Could not create a TypeSpec workspace: ${error instanceof Error ? error.message : String(error)}` });
+  }
   const outputDir = path.join(workspace, "out");
+  const timeoutMs = runOptions.timeoutMs ?? DEFAULT_EMITTER_TIMEOUT_MS;
 
   try {
     await fs.symlink(
@@ -313,20 +332,19 @@ async function runTypeSpecEmitter(
     await execFileAsync(getTspBinaryPath(), ["compile", mainFile, "--config", configFile, "--pretty", "false"], {
       cwd: workspace,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
     });
 
     const files = await collectTextFiles(outputDir);
     if (files.length === 0) {
-      return invalidResult(`Emitter "${packageName}" completed but did not write any files.`);
+      return err({ code: "EMITTER_NO_OUTPUT", message: `Emitter "${packageName}" completed but did not write any files.` });
     }
-
-    return {
-      output: bundleGeneratedFiles(files),
-      validationStatus: "VALID",
-      warnings: [],
-      errors: [],
-    };
+    return ok(files);
   } catch (error) {
+    if (typeof error === "object" && error !== null && (error as { killed?: boolean }).killed === true) {
+      return err({ code: "EMITTER_TIMEOUT", message: `Emitter "${packageName}" did not finish within ${timeoutMs} ms and was killed.` });
+    }
     const message = error instanceof Error ? error.message : "TypeSpec emitter failed";
     const details = typeof error === "object" && error !== null && "stdout" in error
       ? [String((error as { stdout?: string }).stdout ?? ""), String((error as { stderr?: string }).stderr ?? "")]
@@ -335,14 +353,29 @@ async function runTypeSpecEmitter(
           .trim()
       : "";
 
-    return invalidResult(details || message);
+    return err({ code: "EMITTER_FAILED", message: details || message });
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-async function collectTextFiles(rootDir: string): Promise<Array<{ relativePath: string; content: string }>> {
-  const files: Array<{ relativePath: string; content: string }> = [];
+async function runTypeSpecEmitter(
+  packageName: string,
+  source: string,
+  emitterOptions: Record<string, unknown>
+): Promise<OfficialTypeSpecTargetResult> {
+  const files = await runTypeSpecEmitterFiles(packageName, source, emitterOptions);
+  if (!files.success) return invalidResult(files.error.message);
+  return {
+    output: bundleGeneratedFiles(files.data),
+    validationStatus: "VALID",
+    warnings: [],
+    errors: [],
+  };
+}
+
+async function collectTextFiles(rootDir: string): Promise<EmittedFile[]> {
+  const files: EmittedFile[] = [];
 
   async function walk(currentDir: string) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
@@ -365,7 +398,7 @@ async function collectTextFiles(rootDir: string): Promise<Array<{ relativePath: 
   return files;
 }
 
-function bundleGeneratedFiles(files: Array<{ relativePath: string; content: string }>): string {
+function bundleGeneratedFiles(files: EmittedFile[]): string {
   if (files.length === 1) {
     return files[0].content;
   }
@@ -397,7 +430,7 @@ function deriveNamespace(model: SuperSchemaModel): string {
   return sanitizeNamespace(model.namespace || model.entity.domain || model.entity.name);
 }
 
-function sanitizeIdentifier(name: string): string {
+export function sanitizeIdentifier(name: string): string {
   let safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
   if (/^[0-9]/.test(safe)) {
     safe = `_${safe}`;

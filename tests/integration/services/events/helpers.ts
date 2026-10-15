@@ -28,8 +28,12 @@ export function stamp(): string {
 export interface TestField {
   name: string;
   type: string;
-  /** For reference fields: the referenced entity (also written into the TypeSpec source by name). */
-  ref?: { id: string; name: string };
+  /**
+   * For reference fields: the referenced entity (also written into the TypeSpec source by name).
+   * `nameOnly` stores just `referencedEntityName` — what every real creation path does — so the target must be
+   * resolved against the entity's line (publish and the draft renderer both do).
+   */
+  ref?: { id: string; name: string; nameOnly?: boolean };
 }
 
 /** A fresh domain + product with entity helpers; names carry a unique stamp so line-unique names never collide. */
@@ -47,7 +51,11 @@ export async function createProductScope(prisma: PrismaClient, ctx: ServiceConte
         fields: {
           create: fields.map((f, i) => ({
             name: f.name, slug: f.name, type: f.ref ? "reference" : f.type, nullable: false, sortOrder: i, fieldNumber: i + 1,
-            decorators: f.ref ? { referencedEntityId: f.ref.id, referencedEntityName: f.ref.name } : {},
+            decorators: f.ref
+              ? f.ref.nameOnly
+                ? { referencedEntityName: f.ref.name }
+                : { referencedEntityId: f.ref.id, referencedEntityName: f.ref.name }
+              : {},
           })),
         },
       },
