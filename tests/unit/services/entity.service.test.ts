@@ -37,6 +37,8 @@ vi.mock("@/lib/db", () => ({
     },
     message: { findMany: vi.fn().mockResolvedValue([]) },
     trait: { findMany: vi.fn().mockResolvedValue([]) },
+    entityVersion: { findMany: vi.fn().mockResolvedValue([]) },
+    schemaReference: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -48,6 +50,7 @@ import {
   deleteEntity,
 } from "@/services/entity.service";
 import { prisma } from "@/lib/db";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import type { ServiceContext } from "@/types/service-context";
 
 const mockCtx: ServiceContext = {
@@ -391,16 +394,33 @@ describe("Entity Service", () => {
     });
   });
 
-  describe("deleteEntity", () => {
-    it("returns success on delete", async () => {
-      vi.mocked(prisma.entity.findUnique).mockResolvedValue({
-        id: "ent-1",
-        name: "Customer",
-      } as never);
-      vi.mocked(prisma.entity.delete).mockResolvedValue({} as never);
 
+  describe("deleteEntity", () => {
+    const existing = { id: "ent-1", name: "Order", tenantId: "tenant-1" };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fkError = () => Object.assign(new Error("Foreign key constraint violated on the constraint: `messages_payloadEntityId_fkey`"), { code: "P2003" });
+    const rawQuery = (state: string) =>
+      Object.assign(new Error('Raw query failed. relation "entities" deadlock'), { code: "P2010", meta: { driverAdapterError: { cause: { originalCode: state } } } });
+    const deleteAudits = () =>
+      vi.mocked(prisma.auditLog.create).mock.calls.filter(([args]) => (args as { data: { action: string } }).data.action === "DELETE");
+
+    beforeEach(() => {
+      consoleError.mockClear();
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+      vi.mocked(prisma.entity.delete).mockResolvedValue({} as never);
+      vi.mocked(prisma.message.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.trait.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.entityVersion.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.schemaReference.findMany).mockResolvedValue([]);
+    });
+
+    it("returns success on delete, after checking pins (tenant-scoped) and referencing entities", async () => {
       const result = await deleteEntity("ent-1", mockCtx);
       expect(result.success).toBe(true);
+      expect(prisma.message.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: "tenant-1" }) }));
+      expect(prisma.entityVersion.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { entityId: "ent-1" } }));
+      expect(prisma.entity.delete).toHaveBeenCalledWith({ where: { id: "ent-1" } });
+      expect(deleteAudits()).toHaveLength(1);
     });
 
     it("returns not-found error for missing entity", async () => {
@@ -411,17 +431,40 @@ describe("Entity Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("NOT_FOUND");
       }
+      expect(prisma.entity.delete).not.toHaveBeenCalled();
+    });
+
+    describe("an entity-version reference (no FK) blocks the delete BEFORE it is attempted", () => {
+      it("returns IN_USE naming the referencing entity + versions; nothing is deleted or audited", async () => {
+        vi.mocked(prisma.entityVersion.findMany)
+          .mockResolvedValueOnce([{ id: "ev-money-1" }] as never) // this entity's versions
+          .mockResolvedValueOnce([{ major: 1, minor: 0, entity: { id: "ent-cart", name: "Cart" } }] as never); // the edge source
+        vi.mocked(prisma.schemaReference.findMany).mockResolvedValueOnce([{ fromId: "ev-cart-1" }] as never);
+
+        const result = await deleteEntity("ent-1", mockCtx);
+
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            code: "IN_USE",
+            message: 'Entity "Order" cannot be deleted: it is referenced by published versions of Entity "Cart" (v1.0).',
+            details: { entities: [{ id: "ent-cart", name: "Cart", versions: ["1.0"] }] },
+          },
+        });
+        expect(prisma.schemaReference.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ fromKind: "ENTITY_VERSION", toKind: "ENTITY_VERSION", toId: { in: ["ev-money-1"] } }) })
+        );
+        expect(prisma.entity.delete).not.toHaveBeenCalled();
+        expect(deleteAudits()).toHaveLength(0);
+      });
     });
 
     describe("when a foreign key blocks the delete (P2003)", () => {
-      const fkError = () => Object.assign(new Error("Foreign key constraint violated"), { code: "P2003" });
-      const existing = { id: "ent-1", name: "Order" };
-
       it("returns IN_USE naming the messages and traits that pin the entity", async () => {
-        vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
         vi.mocked(prisma.entity.delete).mockRejectedValueOnce(fkError());
-        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
-        vi.mocked(prisma.trait.findMany).mockResolvedValueOnce([{ id: "t1", name: "CloudEvents" }] as never);
+        // the pre-delete check finds nothing (the pin landed meanwhile), the post-P2003 check does
+        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
+        vi.mocked(prisma.trait.findMany).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "t1", name: "CloudEvents" }] as never);
 
         const result = await deleteEntity("ent-1", mockCtx);
         expect(result).toMatchObject({
@@ -429,26 +472,64 @@ describe("Entity Service", () => {
           error: {
             code: "IN_USE",
             message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated" and Trait "CloudEvents".',
-            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [{ id: "t1", name: "CloudEvents" }] },
+            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [{ id: "t1", name: "CloudEvents" }], entities: [] },
           },
         });
-        expect(prisma.auditLog.create).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "DELETE" }) }));
+        expect(deleteAudits()).toHaveLength(0);
       });
 
-      it("rethrows the original error when no message or trait explains it", async () => {
-        vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
-        const error = fkError();
-        vi.mocked(prisma.entity.delete).mockRejectedValueOnce(error);
-        await expect(deleteEntity("ent-1", mockCtx)).rejects.toBe(error);
+      it("returns a generic IN_USE (never the driver text) when no pin explains it", async () => {
+        vi.mocked(prisma.entity.delete).mockRejectedValueOnce(fkError());
+        const result = await deleteEntity("ent-1", mockCtx);
+        expect(result).toEqual({
+          success: false,
+          error: { code: "IN_USE", message: "This entity is referenced by another record and cannot be deleted.", suggestedFix: "Remove the references first." },
+        });
+      });
+    });
+
+    describe("never throws and never carries driver text", () => {
+      it("a lock timeout / deadlock / expired transaction is a retryable CONFLICT without a pin lookup", async () => {
+        for (const error of [rawQuery("40P01"), rawQuery("55P03"), rawQuery("40001"), Object.assign(new Error("Transaction API error"), { code: "P2028" })]) {
+          vi.mocked(prisma.message.findMany).mockClear();
+          vi.mocked(prisma.entity.delete).mockRejectedValueOnce(error);
+          const result = await deleteEntity("ent-1", mockCtx);
+          expect(result).toEqual({
+            success: false,
+            error: { code: "CONFLICT", message: "Entity changed concurrently, try again", suggestedFix: "Reload and try deleting again." },
+          });
+          // the one pre-delete check ran; the failure path did not look for pins again
+          expect(prisma.message.findMany).toHaveBeenCalledTimes(1);
+        }
       });
 
-      it("rethrows any other database error without looking for pins", async () => {
-        vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
-        vi.mocked(prisma.message.findMany).mockClear();
-        const error = new Error("connection lost");
+      it("any other database error is a DB_ERROR with the generic message; the original is only logged", async () => {
+        const error = new Error("connection lost to 10.0.0.5:5432");
         vi.mocked(prisma.entity.delete).mockRejectedValueOnce(error);
-        await expect(deleteEntity("ent-1", mockCtx)).rejects.toBe(error);
-        expect(prisma.message.findMany).not.toHaveBeenCalled();
+        const result = await deleteEntity("ent-1", mockCtx);
+        expect(result).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("deleteEntity ent-1"), error);
+      });
+
+      it("a failing lookup of the entity itself or of its pins is a DB_ERROR, not a throw", async () => {
+        vi.mocked(prisma.entity.findUnique).mockRejectedValueOnce(new Error("pool exhausted"));
+        expect(await deleteEntity("ent-1", mockCtx)).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+
+        vi.mocked(prisma.schemaReference.findMany).mockRejectedValueOnce(new Error("relation schema_references does not exist"));
+        vi.mocked(prisma.entityVersion.findMany).mockResolvedValueOnce([{ id: "ev1" }] as never);
+        expect(await deleteEntity("ent-1", mockCtx)).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+        expect(prisma.entity.delete).not.toHaveBeenCalled();
+      });
+
+      it("a session whose user no longer exists is UNAUTHORIZED", async () => {
+        (prisma as unknown as { user: unknown }).user = { findUnique: vi.fn().mockResolvedValue(null) };
+        try {
+          const result = await deleteEntity("ent-1", mockCtx);
+          expect(result).toMatchObject({ success: false, error: { code: "UNAUTHORIZED" } });
+          expect(prisma.entity.delete).not.toHaveBeenCalled();
+        } finally {
+          delete (prisma as unknown as { user?: unknown }).user;
+        }
       });
     });
   });

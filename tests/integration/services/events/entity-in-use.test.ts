@@ -53,6 +53,7 @@ describe("deleting an entity that events pin (DB)", () => {
         // ordered by name: OrderArchived-… before OrderCreated-…
         messages: [historic, direct].map((m) => ({ id: m.id, name: m.name })),
         traits: [{ id: trait.id, name: trait.name }],
+        entities: [], // no other entity's published version references Order
       });
       expect(await prisma.entity.count({ where: { id: order.entity.id } })).toBe(1);
       expect(await prisma.entityVersion.count({ where: { entityId: order.entity.id } })).toBe(1);

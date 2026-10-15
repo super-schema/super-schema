@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { withAudit } from "@/lib/audit";
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { Entity } from "@/generated/prisma/client";
@@ -18,7 +18,7 @@ import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioni
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
-import { explainEntityDeleteFailure, isForeignKeyViolation } from "@/services/events/entity-pin-usage";
+import { entityDeleteFailure, explainEntityDeleteFailure } from "@/services/events/entity-pin-usage";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -280,20 +280,31 @@ export async function updateEntity(
   }
 }
 
+/**
+ * Deletes an entity, but only when nothing keeps it alive: no message / trait pin (NO ACTION FKs) and no published
+ * version of another entity that references one of its versions (`schema_references`, no FK: spec §6.1 says a version
+ * referenced by a published version cannot be deleted, and the check has to be ours). The guard runs before the delete
+ * and again after a P2003, so a pin that lands in between is still reported by name. Never throws: a lock timeout /
+ * deadlock is a retryable CONFLICT, any other database failure a DB_ERROR with the generic message.
+ */
 export async function deleteEntity(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<void>> {
-  const existing = await prisma.entity.findUnique({ where: { id } });
-  if (!existing) {
-    return err({
-      code: "NOT_FOUND",
-      message: `Entity with ID "${id}" not found`,
-      suggestedFix: "Verify the entity ID and try again.",
-    });
-  }
-
+  let existing: Entity | null = null;
   try {
+    existing = await prisma.entity.findUnique({ where: { id } });
+    if (!existing) {
+      return err({
+        code: "NOT_FOUND",
+        message: `Entity with ID "${id}" not found`,
+        suggestedFix: "Verify the entity ID and try again.",
+      });
+    }
+
+    const inUse = await explainEntityDeleteFailure(prisma, existing);
+    if (inUse) return err(inUse);
+
     await withAudit({
       action: "DELETE",
       entityType: "Entity",
@@ -306,12 +317,8 @@ export async function deleteEntity(
       },
     });
   } catch (e: unknown) {
-    // A message / trait pin (NO ACTION FK, D3) keeps the entity alive: say which ones instead of a raw FK error.
-    if (isForeignKeyViolation(e)) {
-      const inUse = await explainEntityDeleteFailure(prisma, existing);
-      if (inUse) return err(inUse);
-    }
-    throw e;
+    if (e instanceof AuditUserMissingError) return err({ code: "UNAUTHORIZED", message: e.message });
+    return err(await entityDeleteFailure(prisma, existing ?? { id }, e));
   }
 
   return ok(undefined as unknown as void);

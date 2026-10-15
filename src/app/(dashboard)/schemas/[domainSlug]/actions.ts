@@ -9,7 +9,7 @@ import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
-import { explainEntityDeleteFailure, isForeignKeyViolation } from "@/services/events/entity-pin-usage";
+import { entityDeleteFailure, explainEntityDeleteFailure } from "@/services/events/entity-pin-usage";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
@@ -300,18 +300,28 @@ export async function deleteModelFieldAction(fieldId: string) {
 // Entity delete
 // ---------------------------------------------------------------------------
 
+/** What the delete toast shows for a blocked entity: the service message plus its one-line remedy. */
+const inUseText = (e: ServiceError) => (e.suggestedFix ? `${e.message}${/[.!?]$/.test(e.message) ? "" : "."} ${e.suggestedFix}` : e.message);
+
 export async function deleteEntityAction(entityId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  // Declared outside the try: the catch explains a P2003 for this very entity.
+  let entity: { id: string; name: string; tenantId: string } | null = null;
   try {
     const currentUserId = await resolveCurrentUserId(session.user);
 
     // Verify the entity exists before attempting delete
-    const entity = await prisma.entity.findUnique({
+    entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, tenantId: true },
     });
     if (!entity) return { error: "Entity not found" };
+
+    // Messages / traits that pin it, and other entities whose published versions reference one of its versions (no FK:
+    // only this guard stops that delete and leaves a dangling edge that breaks rendering of the referencing version).
+    const inUse = await explainEntityDeleteFailure(prisma, entity);
+    if (inUse) return { error: inUseText(inUse) };
 
     await withAudit({
       action: "DELETE",
@@ -330,13 +340,9 @@ export async function deleteEntityAction(entityId: string) {
     if (e instanceof AuditUserMissingError) {
       return { error: "Your session is stale. Sign out and sign in again, then retry." };
     }
-    // A message / trait pin (NO ACTION FK) keeps the entity alive: name the referencing records.
-    if (isForeignKeyViolation(e)) {
-      const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { id: true, name: true } });
-      const inUse = entity ? await explainEntityDeleteFailure(prisma, entity) : null;
-      if (inUse) return { error: inUse.message };
-    }
-    return { error: e instanceof Error ? e.message : "Failed to delete entity" };
+    // P2003 (a pin that landed since the check) -> IN_USE by name; lock timeout / deadlock -> retryable CONFLICT; anything
+    // else -> the generic message (the driver text is logged, never shown).
+    return { error: inUseText(await entityDeleteFailure(prisma, entity ?? { id: entityId }, e)) };
   }
 }
 

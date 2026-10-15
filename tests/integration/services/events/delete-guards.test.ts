@@ -131,7 +131,8 @@ describe("product / domain delete guards: Events assets", () => {
       const owner = await seedOwner(sc);
       const error = await errorOf(sc.product.id);
       expect(error.message).toBe("Delete the product's 1 entity, 1 channel, 1 message and 1 trait before removing it");
-      expect(owner.message.id).toBeTruthy();
+      // Nothing was deleted or touched by the refused delete.
+      expect(await prisma.message.count({ where: { id: owner.message.id } })).toBe(1);
       expect(await productExists(sc.product.id)).toBe(true);
     } finally {
       await cleanupDomains(prisma, [domainId]);
@@ -312,7 +313,6 @@ describe("product / domain delete guards: cross-product pins", () => {
       foreign = await createForeignTenantFixture(prisma, ctx);
 
       // Corrupt cross-tenant data: a foreign tenant's published spec "pins" the owner's message version / channel / trait.
-      const foreignScope = { s: foreign.s, domain: foreign.domain, product: foreign.product } as unknown as Scope;
       const foreignSpecPlaced = { tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id };
       const foreignSpec = await prisma.eventSpec.create({ data: { name: `foreign-spec-${foreign.s}`, document: {}, ...foreignSpecPlaced } });
       const foreignVersion = await prisma.eventSpecVersion.create({
@@ -325,7 +325,6 @@ describe("product / domain delete guards: cross-product pins", () => {
       await prisma.schemaReference.create({
         data: { fromKind: "EVENT_SPEC_VERSION", fromId: foreignVersion.id, role: "MESSAGE", toKind: "MESSAGE_VERSION", toId: assets.messageVersion.id, isDraft: false },
       });
-      expect(foreignScope.s).toBe(foreign.s);
 
       // Only the foreign spec references the owner: nothing from that tenant is returned or named.
       expect(await findCrossProductPins(prisma, { kind: "product", productId: owner.product.id, tenantId: TENANT })).toEqual([]);

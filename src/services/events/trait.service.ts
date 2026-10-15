@@ -5,6 +5,7 @@ import { isJsonObject, normalizeCatalogName } from "@/lib/events/inputs";
 import type { EntityPin, JsonObject, TraitDetail, TraitKind } from "@/lib/events/types";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
+import { assetInUseError, findTraitReferrers } from "@/services/events/delete-guards";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
 import { guardRead, loadOwnedRow, parseScopeTarget, requireId, requireString } from "@/services/events/service-guards";
@@ -163,18 +164,27 @@ export async function updateTrait(id: string, input: Omit<TraitInput, "kind">, o
   });
 }
 
+/**
+ * Deletes a trait unless something still uses it (IN_USE, naming the same-tenant referrers): a published message version
+ * that carries it, a published event spec version that froze it, or a live message / event spec draft that references it.
+ * A published version is immutable, so deleting a trait it carries would leave every spec using it permanently
+ * `UNRESOLVED_REFERENCE`. The check and the delete share one transaction and take no lock of their own (the lock order is
+ * `event_specs` -> `messages`, see `deleteMessage`).
+ */
 export async function deleteTrait(id: string, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<{ id: string }>> {
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
+  const { name, tenantId } = owned.data.row;
   return auditedWrite({
     action: "DELETE", entityType: "Trait", entityId: id, userId: ctx.userId, beforeState: toDetail(owned.data.row),
-    run: async () => {
-      await ctx.prisma.$transaction(async (tx) => {
+    run: () =>
+      ctx.prisma.$transaction(async (tx): Promise<Result<{ id: string }>> => {
+        const blocked = assetInUseError("Trait", name, await findTraitReferrers(tx, { id, tenantId }));
+        if (blocked) return err(blocked);
         await deleteReferencesFrom(tx, "TRAIT", [id]);
         await tx.trait.delete({ where: { id } });
-      });
-      return ok({ id });
-    },
+        return ok({ id });
+      }),
   });
 }
 
