@@ -113,9 +113,41 @@ describe("scanTypeSpecImports (TypeSpec's own parser decides what is an import)"
     expect(() => scanTypeSpecImports("[".repeat(300_000))).not.toThrow();
     expect(() => scanTypeSpecImports("model A {".repeat(100_000))).not.toThrow();
   });
+
+  it("never throws for input that is not text: undefined, null, numbers, objects and arrays are a clean error result", () => {
+    for (const input of [undefined, null, 5, {}, [], true, Symbol("s"), () => "model A {}"]) {
+      const r = scanTypeSpecImports(input as never);
+      expect(r, String(typeof input)).toEqual({ success: false, error: { code: "TYPESPEC_PARSE_ERROR", message: "The TypeSpec source must be text" } });
+    }
+  });
+
+  it("reports where the text belonging to each import starts: the end of the previous top-level statement", () => {
+    const source = '/** header */\nimport "@typespec/http";\n/** between */\n@foo import "@typespec/rest";\nusing TypeSpec.Http;\n/** doc */\nmodel A {}\n';
+    const r = scanTypeSpecImports(source);
+    if (!r.success) throw new Error(r.error.message);
+    const [first, second] = r.data.imports;
+    expect(first.leadStart).toBe(0);
+    expect(r.data.text.slice(first.leadStart, first.end)).toBe('/** header */\nimport "@typespec/http";');
+    expect(second.leadStart).toBe(first.end);
+    expect(r.data.text.slice(second.leadStart, second.end)).toBe('\n/** between */\n@foo import "@typespec/rest";');
+    const nested = scanTypeSpecImports('namespace N { import "/x.mjs"; }');
+    expect(nested.success && nested.data.imports.map((i) => [i.topLevel, i.leadStart === i.pos])).toEqual([[false, true]]);
+  });
 });
 
 describe("checkTypeSpecImports", () => {
+  it("rejects input that is not text with a clean error instead of throwing (label kept)", () => {
+    for (const input of [undefined, null, 5, {}]) {
+      expect(() => checkTypeSpecImports(input as never)).not.toThrow();
+      expect(checkTypeSpecImports(input as never)).toMatchObject({ success: false, error: { code: "TYPESPEC_PARSE_ERROR" } });
+    }
+    expect(checkTypeSpecImports(undefined as never, { label: "A@1.0" })).toMatchObject({ error: { message: "A@1.0: The TypeSpec source must be text" } });
+  });
+
+  it("makes assertTypeSpecImportsAllowed throw the guard error (not a TypeError) for input that is not text", () => {
+    expect(() => assertTypeSpecImportsAllowed(undefined as never)).toThrow(TypeSpecImportGuardError);
+  });
+
   it("accepts allowed library imports and a source with none", () => {
     expect(checkTypeSpecImports('import "@typespec/http";\nimport "@typespec/rest";\nimport"@superschema/typespec-enterprise";\nmodel A { x: string; }').success).toBe(true);
     expect(checkTypeSpecImports("model A { x: string; }").success).toBe(true);

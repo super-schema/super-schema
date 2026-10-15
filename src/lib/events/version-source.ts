@@ -1,4 +1,5 @@
 import { ok, err, type Result } from "@/types/result";
+// Server-only by inheritance: the guard imports `server-only` and the TypeSpec compiler's parser (Node package).
 import { importNotAllowedError, isAllowedTypeSpecImport, scanTypeSpecImports } from "@/lib/typespec/import-guard";
 
 export type StatementKind = "import" | "using" | "namespace" | "declaration" | "other";
@@ -184,11 +185,25 @@ function stripComments(text: string): string {
 
 const normalizeDeclaration = (text: string): string => stripComments(text).replace(/\s+/g, " ").trim();
 
-/** `text` with each range replaced by spaces (newlines kept), so offsets and line structure are unchanged. */
-function blankRanges(text: string, ranges: ReadonlyArray<{ pos: number; end: number }>): string {
-  let out = text;
-  for (const { pos, end } of ranges) out = out.slice(0, pos) + out.slice(pos, end).replace(/[^\r\n]/g, " ") + out.slice(end);
-  return out;
+/**
+ * `text` with every hoisted import removed in ONE pass: from the end of the previous top-level statement
+ * (`leadStart`) through the end of the import. That range is the import plus whatever is attached to it in front
+ * (a `/** … *\/` doc comment, other comments, decorators), so none of it is left behind to attach to the NEXT
+ * declaration. Removed characters become spaces and every newline is kept, so offsets and line numbers of
+ * everything after are unchanged. Linear in the text (a source can hold tens of thousands of imports); `imports`
+ * must be in source order, as the scanner returns them.
+ */
+export function blankImportStatements(text: string, imports: ReadonlyArray<{ leadStart: number; end: number }>): string {
+  const segments: string[] = [];
+  let cursor = 0;
+  for (const { leadStart, end } of imports) {
+    const start = Math.max(leadStart, cursor);
+    if (end <= start) continue;
+    segments.push(text.slice(cursor, start), text.slice(start, end).replace(/[^\r\n]/g, " "));
+    cursor = end;
+  }
+  segments.push(text.slice(cursor));
+  return segments.join("");
 }
 
 /**
@@ -218,8 +233,9 @@ export function combineTypeSpecSources(parts: SourcePart[]): Result<CombinedSour
     if (offender) return err(importNotAllowedError(offender.specifier, part.label));
     const hoisted = scanned.data.imports.filter((i) => i.topLevel);
     for (const i of hoisted) imports.add(`import "${i.specifier}";`);
-    // The splitter never sees the hoisted statements, so it cannot misplace or misclassify them.
-    const statements = splitTypeSpecStatements(blankRanges(scanned.data.text, hoisted));
+    // The splitter never sees the hoisted statements (nor the comments / decorators written in front of them), so it
+    // cannot misplace or misclassify them and a file-header doc comment does not attach to the next declaration.
+    const statements = splitTypeSpecStatements(blankImportStatements(scanned.data.text, hoisted));
     if (!statements.success) return err({ ...statements.error, message: `${part.label}: ${statements.error.message}` });
     for (const s of statements.data) {
       if (s.kind === "import") {

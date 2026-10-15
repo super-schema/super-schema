@@ -20,7 +20,8 @@ import { ok, err, type Result } from "@/types/result";
  * (resolved by package name from `node_modules`, never from a path). Everything else is rejected, including
  * relative and absolute paths, `.tsp` / `.js` / `.mjs` files, directories, URLs and `@typespec/<pkg>/<subpath>`.
  *
- * Pure: no filesystem, no database, no network.
+ * Server-only (it uses the TypeSpec compiler's parser, which is a Node package, so it imports `server-only`),
+ * but it touches no filesystem, database or network: the checks are deterministic functions of the text.
  */
 
 export const TYPESPEC_IMPORT_NOT_ALLOWED = "TYPESPEC_IMPORT_NOT_ALLOWED";
@@ -40,6 +41,13 @@ export interface TypeSpecImport {
   /** Offsets into `ScannedTypeSpecSource.text` covering the whole statement. */
   pos: number;
   end: number;
+  /**
+   * Where the text that belongs to this statement begins: the end of the previous top-level statement (0 for the
+   * first). `leadStart..pos` is trivia (comments, doc comments) and any decorators written in front of the
+   * import, so removing `leadStart..end` removes the import together with what is attached to it. For a nested
+   * import, `leadStart === pos`.
+   */
+  leadStart: number;
   /** A direct child of the file (the only position the compiler loads from); anything else is a compile error. */
   topLevel: boolean;
 }
@@ -63,19 +71,28 @@ function asReadFromDisk(source: string): string {
 }
 
 /**
- * Every import statement of `source`, in source order, at any depth. Never throws: a parser failure (for
- * example stack exhaustion on pathological nesting) is `TYPESPEC_PARSE_ERROR` and the caller must treat the
- * source as rejected.
+ * Every import statement of `source`, in source order, at any depth. Never throws: input that is not a string
+ * and a parser failure (for example stack exhaustion on pathological nesting) are `TYPESPEC_PARSE_ERROR`
+ * results, and the caller must treat the source as rejected.
  */
 export function scanTypeSpecImports(source: string): Result<ScannedTypeSpecSource> {
-  const text = asReadFromDisk(source);
+  if (typeof source !== "string") return err({ code: TYPESPEC_PARSE_ERROR, message: "The TypeSpec source must be text" });
   try {
+    const text = asReadFromDisk(source);
     const script: TypeSpecScriptNode = parse(text);
-    const topLevel = new Set<Node>(script.statements);
+    const topLevel = new Map<Node, number>(script.statements.map((statement, index) => [statement, index]));
     const imports: TypeSpecImport[] = [];
     const visit = (node: Node): void => {
       if (node.kind === SyntaxKind.ImportStatement) {
-        imports.push({ specifier: (node as ImportStatementNode).path.value, pos: node.pos, end: node.end, topLevel: topLevel.has(node) });
+        const index = topLevel.get(node);
+        const previous = index === undefined || index === 0 ? undefined : script.statements[index - 1];
+        imports.push({
+          specifier: (node as ImportStatementNode).path.value,
+          pos: node.pos,
+          end: node.end,
+          leadStart: index === undefined ? node.pos : Math.min(previous?.end ?? 0, node.pos),
+          topLevel: index !== undefined,
+        });
       }
       // The callback must return nothing: a truthy return stops the walk.
       visitChildren(node, visit);

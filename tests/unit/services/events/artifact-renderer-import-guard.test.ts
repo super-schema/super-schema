@@ -57,6 +57,24 @@ describe("renderer sequence refuses a source that imports a host script (C-C1)",
     expect(existsSync(marker)).toBe(false);
   });
 
+  it("a file-header doc comment before an import does not become the first model's description in the emitted schema", async () => {
+    const render = async (source: string) => {
+      const combined = combineTypeSpecSources([{ label: "A@1.0", source }]);
+      if (!combined.success) throw new Error(combined.error.message);
+      const main = buildTargetSource("json-schema", combined.data, programFor(source));
+      const result = await runTypeSpecEmitterFiles("@typespec/json-schema", main, JSON_SCHEMA_OPTIONS, { timeoutMs: 90_000 });
+      if (!result.success) throw new Error(result.error.message);
+      return result.data.map((f) => f.content).join("\n");
+    };
+    const plain = await render('import "@typespec/json-schema";\nmodel A { x: string; }\n');
+    const withHeader = await render('/** File header: not about the model */\nimport "@typespec/json-schema";\nmodel A { x: string; }\n');
+    expect(withHeader).not.toContain("File header");
+    expect(withHeader).toBe(plain);
+    const documented = await render('/** File header */\nimport "@typespec/json-schema";\n/** The A model */\nmodel A { x: string; }\n');
+    expect(documented).toContain("The A model");
+    expect(documented).not.toContain("File header");
+  }, 180_000);
+
   it("still renders a legitimate multi-model source that imports TypeSpec libraries, through the real tsp", async () => {
     const source = 'import "@typespec/json-schema";\nenum Status { Active, Retired }\nmodel A { id: string; status: Status; line: Line; }\nmodel Line { sku: string; }\n';
     const combined = combineTypeSpecSources([{ label: "A@1.0", source }]);

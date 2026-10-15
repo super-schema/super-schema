@@ -136,6 +136,68 @@ describe("createLibraryOnlyHost (second layer: even a source that got past the g
     await expect(host.readUrl("https://example.com/x.tsp")).rejects.toThrow(/Remote imports are disabled/);
   });
 
+  describe("trusts only the compiler and the installed @typespec/* and @superschema/* packages", () => {
+    const plant = (cwd: string, ...segments: string[]) => {
+      const pkg = join(cwd, "node_modules", ...segments);
+      mkdirSync(pkg, { recursive: true });
+      return pkg;
+    };
+
+    it("does not load another package of node_modules (a planted package is not executed, even imported by name)", async () => {
+      const cwd2 = join(dir, "cwd2");
+      const evil = plant(cwd2, "evil");
+      writeFileSync(join(evil, "package.json"), JSON.stringify({ name: "evil", version: "1.0.0", main: "x.mjs" }));
+      writeFileSync(join(evil, "x.mjs"), `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "executed");\nexport const $decorators = {};\n`);
+      const main = join(cwd2, "main.tsp");
+      writeFileSync(main, 'import "evil";\nmodel A { x: string; }\n');
+      const program = await compile(createLibraryOnlyHost({ cwd: cwd2 }), main, { noEmit: true });
+      expect(existsSync(marker)).toBe(false);
+      expect(program.diagnostics.map((d) => d.code)).toContain("js-error");
+      await expect(createLibraryOnlyHost({ cwd: cwd2 }).getJsImport(join(evil, "x.mjs"))).rejects.toThrow(/installed TypeSpec libraries/);
+    });
+
+    it("does not trust a node_modules directory higher up the tree either", async () => {
+      const cwd2 = join(dir, "cwd2");
+      mkdirSync(cwd2, { recursive: true });
+      const hoisted = plant(dir, "hoisted"); // <dir>/node_modules/hoisted, above cwd2
+      writeFileSync(join(hoisted, "index.mjs"), "export const x = 1;\n");
+      await expect(createLibraryOnlyHost({ cwd: cwd2 }).getJsImport(join(hoisted, "index.mjs"))).rejects.toThrow(/installed TypeSpec libraries/);
+    });
+
+    it("loads JavaScript of a package installed under @typespec or @superschema, and of the compiler itself", async () => {
+      const cwd2 = join(dir, "cwd2");
+      writeFileSync(join(plant(cwd2, "@typespec", "legit"), "index.mjs"), "export const x = 1;\n");
+      writeFileSync(join(plant(cwd2, "@superschema", "legit"), "index.mjs"), "export const y = 2;\n");
+      const host = createLibraryOnlyHost({ cwd: cwd2 });
+      await expect(host.getJsImport(join(cwd2, "node_modules", "@typespec", "legit", "index.mjs"))).resolves.toMatchObject({ x: 1 });
+      await expect(host.getJsImport(join(cwd2, "node_modules", "@superschema", "legit", "index.mjs"))).resolves.toMatchObject({ y: 2 });
+      const compilerEntry = join(host.getExecutionRoot(), "dist", "src", "index.js");
+      await expect(host.getJsImport(compilerEntry)).resolves.toBeDefined();
+    });
+
+    it("still compiles with every library the app uses (installed, symlinked workspace packages included)", async () => {
+      const work = join(process.cwd(), ".typespec-work");
+      mkdirSync(work, { recursive: true });
+      const jobDir = mkdtempSync(join(work, "f1-libs-"));
+      try {
+        for (const libs of [
+          ["@typespec/http", "@typespec/rest", "@typespec/openapi", "@typespec/openapi3", "@typespec/versioning"],
+          ["@typespec/json-schema", "@typespec/protobuf", "@superschema/typespec-enterprise"],
+          ["@typespec/avro"],
+          ["@typespec/java-pojo"],
+        ]) {
+          const main = join(jobDir, `main-${libs.length}-${libs[0].replace(/\W/g, "_")}.tsp`);
+          writeFileSync(main, `${libs.map((l) => `import "${l}";`).join("\n")}\nmodel A { x: string; }\n`);
+          const program = await compile(createLibraryOnlyHost(), main, { noEmit: true });
+          const problems = program.diagnostics.filter((d) => d.code === "js-error" || d.code === "import-not-found" || d.code === "library-invalid");
+          expect(problems.map((d) => `${d.code}: ${d.message}`), libs.join(",")).toEqual([]);
+        }
+      } finally {
+        rmSync(jobDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("still loads installed libraries (including the symlinked governance package) and compiles with them", async () => {
     // Library resolution walks up to <project>/node_modules, so (like compileSource) compile inside the project tree.
     const work = join(process.cwd(), ".typespec-work");

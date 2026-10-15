@@ -1,12 +1,12 @@
 import "server-only";
 
 import { readdir, realpath } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import { NodeHost, type CompilerHost } from "@typespec/compiler";
 
 /**
  * A `CompilerHost` for compiling USER-AUTHORED TypeSpec in-process: `NodeHost`, except that JavaScript can only be
- * loaded from installed libraries.
+ * loaded from installed TypeSpec libraries.
  *
  * `compile(NodeHost, …)` executes any `.js` / `.mjs` a source imports (`getJsImport` is a dynamic `import()`). The
  * import guard (`@/lib/typespec/import-guard`) is what normally stops a source from naming such a file; this host
@@ -14,10 +14,13 @@ import { NodeHost, type CompilerHost } from "@typespec/compiler";
  * that forgets it) still cannot run code from the host: the library loader asks for a path and gets an error
  * (reported by the compiler as a `js-error` diagnostic) unless that path really lives in a trusted root.
  *
- * Trusted roots (real paths, symlinks resolved): `<cwd>/node_modules`, the compiler's own package root, every
- * package directly under `node_modules/@typespec` and `node_modules/@superschema` (these are symlinks to
- * workspace checkouts in development), and the nearest enclosing `node_modules` of such a linked package (where
- * its own dependencies are hoisted). Nothing an author can write to is in that list.
+ * Trusted roots are deliberately narrow (real paths, symlinks resolved): the compiler's own package root and the
+ * directory of every package installed directly under `<cwd>/node_modules/@typespec` and
+ * `<cwd>/node_modules/@superschema` (in development some of these are symlinks to workspace checkouts; their real
+ * directories are what is trusted). These are exactly the packages the import guard lets a source name. A package
+ * anywhere else, including any other directory of `node_modules` or a `node_modules` higher up the tree, is NOT
+ * trusted. A library's own dependencies are loaded by Node itself when the library's entry point is imported, not
+ * through `getJsImport`, so they need no entry here.
  *
  * `readUrl` is disabled outright (no remote imports). Reading files, `stat` and `realpath` stay as they are:
  * module resolution walks parent directories looking for `package.json` and relies on the usual not-found errors.
@@ -38,35 +41,17 @@ async function tryRealpath(path: string): Promise<string | null> {
   }
 }
 
-/** First ancestor of `dir` (itself excluded) that has a `node_modules` directory, as that directory's real path. */
-async function enclosingNodeModules(dir: string): Promise<string | null> {
-  for (let current = dirname(dir); current !== dirname(current); current = dirname(current)) {
-    const found = await tryRealpath(join(current, "node_modules"));
-    if (found) return found;
-  }
-  return null;
-}
-
 async function computeTrustedRoots(base: CompilerHost, cwd: string): Promise<string[]> {
   const nodeModules = join(cwd, "node_modules");
-  const realNodeModules = await tryRealpath(nodeModules);
   const roots = new Set<string>();
-  const add = async (path: string): Promise<string | null> => {
+  const add = async (path: string): Promise<void> => {
     const real = await tryRealpath(path);
     if (real) roots.add(real);
-    return real;
   };
-  if (realNodeModules) roots.add(realNodeModules);
-  await add(base.getExecutionRoot?.() ?? nodeModules);
+  await add(base.getExecutionRoot());
   for (const scope of ["@typespec", "@superschema"]) {
     const names = await readdir(join(nodeModules, scope)).catch(() => [] as string[]);
-    for (const name of names) {
-      const real = await add(join(nodeModules, scope, name));
-      if (real && (!realNodeModules || !isInside(real, realNodeModules))) {
-        const hoisted = await enclosingNodeModules(real);
-        if (hoisted) roots.add(hoisted);
-      }
-    }
+    for (const name of names) await add(join(nodeModules, scope, name));
   }
   return [...roots];
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { combineTypeSpecSources, findRootModelName, levelNamespace, splitTypeSpecStatements, stripGovernanceOverlay } from "@/lib/events/version-source";
+import { blankImportStatements, combineTypeSpecSources, findRootModelName, levelNamespace, splitTypeSpecStatements, stripGovernanceOverlay } from "@/lib/events/version-source";
+import { scanTypeSpecImports } from "@/lib/typespec/import-guard";
 
 describe("splitTypeSpecStatements", () => {
   it("keeps decorators + comments with their statement; braces / semicolons inside strings do not split", () => {
@@ -180,6 +181,115 @@ describe("combineTypeSpecSources", () => {
       }
       const r = combineTypeSpecSources([{ label: "Bad@1.0", source: 'import"/tmp/x.mjs"' }]); // no `;`: the parser still reads the import
       expect(!r.success && r.error.code).toBe("TYPESPEC_IMPORT_NOT_ALLOWED");
+    });
+
+    it("returns a clean error, never a throw, when a part's source is not text", () => {
+      for (const source of [undefined, null, 5, {}, [], true]) {
+        const r = combineTypeSpecSources([{ label: "Bad@1.0", source: source as never }]);
+        expect(!r.success && r.error.code, String(source)).toBe("TYPESPEC_PARSE_ERROR");
+        expect(!r.success && r.error.message).toContain("Bad@1.0");
+      }
+    });
+  });
+
+  // Fix round 1: the text in front of an import (doc comment, decorators) goes with it instead of attaching to the
+  // next declaration (a file-header doc comment used to become the first model's `description` in the payload).
+  describe("what is written in front of an import is removed with it", () => {
+    const bodyOf = (source: string) => {
+      const r = combineTypeSpecSources([{ label: "A@1.0", source }]);
+      if (!r.success) throw new Error(r.error.message);
+      return r.data;
+    };
+
+    it("drops a file-header doc comment before the first import (it must not become the model's doc)", () => {
+      const combined = bodyOf('/** File header */\nimport "@typespec/http";\nmodel A { x: string; }\n');
+      expect(combined.body).toBe("model A { x: string; }");
+      expect(combined.imports).toEqual(['import "@typespec/http";']);
+    });
+
+    it("drops a doc comment between two imports", () => {
+      const combined = bodyOf('import "@typespec/http";\n/** between */\nimport "@typespec/rest";\nmodel A { x: string; }\n');
+      expect(combined.body).toBe("model A { x: string; }");
+      expect(combined.imports).toEqual(['import "@typespec/http";', 'import "@typespec/rest";']);
+    });
+
+    it("drops ordinary comments and several stacked doc comments before an import", () => {
+      const combined = bodyOf('// license\n/** one */\n/** two */\nimport "@typespec/http";\n// note\nusing TypeSpec.Http;\nmodel A { x: string; }\n');
+      expect(combined.body).toBe("model A { x: string; }");
+      expect(combined.usings).toEqual(["using TypeSpec.Http;"]);
+    });
+
+    it("drops decorators written in front of an (invalid) import", () => {
+      const combined = bodyOf('@doc("leaks")\n@foo import "@typespec/http";\nmodel A { x: string; }\n');
+      expect(combined.body).toBe("model A { x: string; }");
+    });
+
+    it("keeps the doc comment and decorators of a real declaration, including right after the imports", () => {
+      const combined = bodyOf(
+        ['/** File header */', 'import "@typespec/http";', 'import "@typespec/rest";', "", "/** The order */", '@doc("the order")', "model Order { id: string; }", "", "/** The line */", "model Line { sku: string; }", ""].join("\n")
+      );
+      expect(combined.body).toBe(['/** The order */\n@doc("the order")\nmodel Order { id: string; }', "/** The line */\nmodel Line { sku: string; }"].join("\n\n"));
+    });
+
+    it("keeps the doc comment of a declaration that precedes an import, and of the one after it", () => {
+      const combined = bodyOf('/** first */\nmodel A { x: string; }\n/** header of the import */\nimport "@typespec/http";\n/** second */\nmodel B { y: string; }\n');
+      expect(combined.body).toBe("/** first */\nmodel A { x: string; }\n\n/** second */\nmodel B { y: string; }");
+    });
+
+    it("keeps doc comments across parts independently (each part's header goes, each model's doc stays)", () => {
+      const r = combineTypeSpecSources([
+        { label: "A@1.0", source: '/** A header */\nimport "@typespec/http";\n/** A doc */\nmodel A { x: string; }\n' },
+        { label: "B@1.0", source: '/** B header */\nimport"@typespec/rest";\nmodel B { y: string; }\n' },
+      ]);
+      expect(r.success && r.data.body).toBe("/** A doc */\nmodel A { x: string; }\n\nmodel B { y: string; }");
+    });
+  });
+
+  describe("blankImportStatements", () => {
+    const scan = (source: string) => {
+      const r = scanTypeSpecImports(source);
+      if (!r.success) throw new Error(r.error.message);
+      return r.data;
+    };
+
+    it("replaces the import and what is attached to it with spaces, keeping every newline and every later offset", () => {
+      const source = '/** File header */\n@foo\nimport "@typespec/http";\n\n/** The model */\nmodel A { x: string; }\n';
+      const scanned = scan(source);
+      const blanked = blankImportStatements(scanned.text, scanned.imports);
+      expect(blanked.length).toBe(source.length);
+      expect(blanked.split("\n").length).toBe(source.split("\n").length);
+      expect(blanked.indexOf("/** The model */")).toBe(source.indexOf("/** The model */"));
+      expect(blanked.indexOf("model A")).toBe(source.indexOf("model A"));
+      expect(blanked.slice(0, source.indexOf("\n\n/** The model"))).toMatch(/^[ \n]*$/);
+    });
+
+    it("keeps \\r\\n line endings", () => {
+      const source = '/** h */\r\nimport "@typespec/http";\r\nmodel A {}\r\n';
+      const scanned = scan(source);
+      const blanked = blankImportStatements(scanned.text, scanned.imports);
+      expect(blanked.split("\r\n").length).toBe(source.split("\r\n").length);
+      expect(blanked.endsWith("model A {}\r\n")).toBe(true);
+    });
+
+    it("is linear: a million-character source with tens of thousands of imports is combined well under a second", () => {
+      const line = 'import "@typespec/http";\n';
+      const source = `${line.repeat(Math.ceil((1024 * 1024) / line.length))}model A { x: string; }\n`;
+      expect(source.length).toBeGreaterThan(1024 * 1024);
+      const started = performance.now();
+      const r = combineTypeSpecSources([{ label: "Big@1.0", source }]);
+      const elapsed = performance.now() - started;
+      expect(r.success && r.data.imports).toEqual(['import "@typespec/http";']);
+      expect(r.success && r.data.body).toBe("model A { x: string; }");
+      expect(elapsed).toBeLessThan(1000);
+    });
+
+    it("blanks a quarter of a million ranges in one pass", () => {
+      const text = "x\n".repeat(500_000);
+      const ranges = Array.from({ length: 250_000 }, (_, i) => ({ leadStart: i * 4, end: i * 4 + 2 }));
+      const started = performance.now();
+      const blanked = blankImportStatements(text, ranges);
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(blanked.length).toBe(text.length);
     });
   });
 });
