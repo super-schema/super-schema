@@ -456,8 +456,9 @@ describe("Critical Paths - Integration", () => {
       expect(result.source).toContain("balance");
       // Key field gets @key decorator
       expect(result.source).toContain("@key");
-      // PII field gets classification tag
-      expect(result.source).toContain("classification:PII");
+      // PII field gets the governance classification decorator (Story 16.6)
+      expect(result.source).toContain("@Enterprise.dataClassification(Enterprise.DataClassification.PII)");
+      expect(result.source).not.toContain("@tag(");
       // Nullable field gets optional marker
       expect(result.source).toContain("balance?");
     });
