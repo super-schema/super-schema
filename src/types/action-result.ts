@@ -8,7 +8,7 @@ export type ActionResult<T> =
   | { success: true; data: T }
   | { success: false; error: string; code?: string; details?: object; suggestedFix?: string };
 
-/** Shown in place of raw database / driver text (server-side `sanitizeActionError` and client forms share it). */
+/** Shown in place of raw database / driver text (server-side `toActionResult` / `sanitizeActionError`, the services' `dbErrorResult` and client forms share it). */
 export const GENERIC_ACTION_ERROR = "Something went wrong. Try again; if it keeps happening, contact an administrator.";
 
 /** Failure codes whose service message may carry raw database / driver text: never shown to the user. */

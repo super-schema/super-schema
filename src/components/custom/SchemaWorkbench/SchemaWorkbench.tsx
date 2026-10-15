@@ -55,7 +55,12 @@ export function SchemaWorkbench({
   const [isDragging, setIsDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // A destructive action waiting for the user's confirmation.
+  const [pending, setPending] = useState<{
+    message: string;
+    confirmLabel: string;
+    run: () => void;
+  } | null>(null);
   const [hydrate, setHydrate] = useState<{ nonce: number; state: FormState } | undefined>();
 
   // After a panel-driven hydrate the editor echoes the serialized state once
@@ -150,7 +155,7 @@ export function SchemaWorkbench({
     setHydrate(undefined);
     setNotice(null);
     setImportNotice(null);
-    setConfirmDiscard(false);
+    setPending(null);
     setFormFormat(format);
     setMode("form");
     dispatch({ type: "startForm", format });
@@ -163,21 +168,59 @@ export function SchemaWorkbench({
     setNotice(null);
     setImportNotice(null);
     setPasteText("");
-    setConfirmDiscard(false);
+    setPending(null);
     dispatch({ type: "clear" });
+  }
+
+  /** Work that would be lost if the form or the imported text were replaced. */
+  const hasFormWork = state.origin === "form" && state.currentText.trim() !== "";
+  const hasImportEdits =
+    state.origin === "imported" && state.currentText !== state.baselineText;
+
+  /** Replace the current schema with a new file / pasted text — confirm if that discards work. */
+  function requestLoad(run: () => void) {
+    if (hasFormWork || hasImportEdits) {
+      setPending({
+        message: hasFormWork
+          ? "Loading a schema discards the form you built. Continue?"
+          : "Loading a schema discards your edits to the imported one. Continue?",
+        confirmLabel: "Discard & load",
+        run,
+      });
+      return;
+    }
+    run();
+  }
+
+  /** Switch the Build-form format — confirm if that discards the form. */
+  function requestFormat(format: WorkbenchFormat) {
+    if (format === formFormat) return;
+    if (hasFormWork) {
+      setPending({
+        message: "Switching format discards the form you built. Continue?",
+        confirmLabel: "Discard form",
+        run: () => startForm(format),
+      });
+      return;
+    }
+    startForm(format);
   }
 
   function selectMode(next: Mode) {
     if (next === "form") {
       if (state.origin === "imported" && state.currentText.trim()) {
-        setConfirmDiscard(true);
+        setPending({
+          message: "Building with the form discards the imported schema. Continue?",
+          confirmLabel: "Discard import",
+          run: () => startForm(formFormat),
+        });
         return;
       }
       if (state.origin !== "form") startForm(formFormat);
       else setMode("form");
       return;
     }
-    setConfirmDiscard(false);
+    setPending(null);
     setMode(next);
   }
 
@@ -235,26 +278,28 @@ export function SchemaWorkbench({
         ))}
       </div>
 
-      {confirmDiscard && (
+      {pending && (
         <div
           role="alertdialog"
           data-testid="workbench-discard-confirm"
           className="flex items-center justify-between gap-space-3 p-space-3 rounded-lg border border-destructive/30 bg-destructive/5"
         >
-          <span className="text-body-small text-foreground">
-            Building with the form discards the imported schema. Continue?
-          </span>
+          <span className="text-body-small text-foreground">{pending.message}</span>
           <span className="flex gap-space-2">
             <button
               type="button"
-              onClick={() => startForm(formFormat)}
+              onClick={() => {
+                const { run } = pending;
+                setPending(null);
+                run();
+              }}
               className="px-3 py-1 rounded-lg text-body-small bg-destructive text-destructive-foreground"
             >
-              Discard import
+              {pending.confirmLabel}
             </button>
             <button
               type="button"
-              onClick={() => setConfirmDiscard(false)}
+              onClick={() => setPending(null)}
               className="px-3 py-1 rounded-lg text-body-small bg-muted hover:bg-accent"
             >
               Cancel
@@ -326,7 +371,7 @@ export function SchemaWorkbench({
                 e.preventDefault();
                 setIsDragging(false);
                 const file = e.dataTransfer.files[0];
-                if (file) readFile(file);
+                if (file) requestLoad(() => readFile(file));
               }}
               className={cn(
                 "flex flex-col items-center justify-center gap-space-3 p-space-6 rounded-lg border-2 border-dashed cursor-pointer transition-all",
@@ -351,7 +396,7 @@ export function SchemaWorkbench({
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) readFile(file);
+                  if (file) requestLoad(() => readFile(file));
                   e.target.value = "";
                 }}
               />
@@ -382,7 +427,7 @@ Example (Avro):
                 type="button"
                 data-testid="workbench-load-button"
                 disabled={!pasteText.trim()}
-                onClick={() => void loadImport(pasteText)}
+                onClick={() => requestLoad(() => void loadImport(pasteText))}
                 className="self-start px-4 py-1.5 rounded-lg text-body-small bg-muted hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Load schema
@@ -401,7 +446,7 @@ Example (Avro):
                       key={format.id}
                       type="button"
                       disabled={!format.enabled || !isWorkbenchFormat(format.id)}
-                      onClick={() => isWorkbenchFormat(format.id) && startForm(format.id)}
+                      onClick={() => isWorkbenchFormat(format.id) && requestFormat(format.id)}
                       className={cn(
                         "px-space-3 py-1.5 text-body-small transition-colors",
                         format.id === formFormat
