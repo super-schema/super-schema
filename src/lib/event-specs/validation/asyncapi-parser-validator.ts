@@ -1,11 +1,11 @@
 import { DiagnosticSeverity, Parser, type Diagnostic as ParserDiagnostic } from "@asyncapi/parser";
 import { AvroSchemaParser } from "@asyncapi/avro-schema-parser";
 import { ProtoBuffSchemaParser } from "@asyncapi/protobuf-schema-parser";
-import { err, ok, type Result } from "@/types/result";
+import { ok, type Result } from "@/types/result";
 import type { Diagnostic, DiagnosticSeverity as EventSpecSeverity } from "../types";
 import { diagnostic, normalizeDiagnostics } from "../diagnostics";
 import { jsonPointer } from "../json-pointer";
-import type { EventSpecValidator } from "../validator";
+import { validatorFailure, type EventSpecValidator } from "../validator";
 
 /**
  * Story 18.5 — `@asyncapi/parser` (v3) backed `EventSpecValidator`.
@@ -209,10 +209,8 @@ export class AsyncApiParserValidator implements EventSpecValidator {
       await validateKafkaKeys(document, [], keyProblems);
       return ok(normalizeDiagnostics([...output.diagnostics.map(mapParserDiagnostic), ...notValidated, ...keyProblems]));
     } catch (e) {
-      return err({
-        code: "ASYNCAPI_PARSER_FAILED",
-        message: `@asyncapi/parser failed to run: ${e instanceof Error ? e.message : String(e)}`,
-      });
+      // The parser's exception text (Spectral / Ajv / avsc internals, document fragments) is logged, never returned.
+      return validatorFailure("ASYNCAPI_PARSER_FAILED", "@asyncapi/parser", e);
     }
   }
 }

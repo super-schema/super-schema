@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   inSameLine,
   findLineConflict,
@@ -6,6 +6,7 @@ import {
   assertNameAvailable,
   type NamedAsset,
 } from "@/services/name-registry.service";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import { emptyRegistryDelegates } from "../../helpers/registry-mocks";
 
 const T = "t1";
@@ -108,18 +109,26 @@ describe("assertNameAvailable", () => {
     expect(res.error.message).toContain("Product level");
     expect((res.error.details as { conflict: NamedAsset }).conflict).toMatchObject({ kind: "service", id: "s1" });
   });
-  it("returns DB_ERROR instead of rejecting when a query fails", async () => {
-    const db = fakeDb({ sharedEnum: { findMany: () => Promise.reject(new Error("connection reset")) } });
-    const res = await assertNameAvailable(db, candidate);
-    expect(res.success).toBe(false);
-    if (res.success) return;
-    expect(res.error).toMatchObject({ code: "DB_ERROR", message: "connection reset" });
-  });
-  it("falls back to a generic DB_ERROR message for non-Error rejections", async () => {
-    const db = fakeDb({ entity: { findMany: () => Promise.reject("boom") } });
-    const res = await assertNameAvailable(db, candidate);
-    expect(res.success).toBe(false);
-    if (res.success) return;
-    expect(res.error).toMatchObject({ code: "DB_ERROR", message: "Failed to check name availability" });
+  describe("a failing query", () => {
+    let consoleError: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+    afterEach(() => consoleError.mockRestore());
+
+    it("returns DB_ERROR instead of rejecting, with the generic message; the driver text is only logged server-side", async () => {
+      const raw = new Error('connection reset by 10.0.0.5:5432: relation "entities" is gone');
+      const db = fakeDb({ sharedEnum: { findMany: () => Promise.reject(raw) } });
+      const res = await assertNameAvailable(db, candidate);
+      expect(res).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+      expect(JSON.stringify(res)).not.toMatch(/10\.0\.0\.5|entities|connection reset/);
+      expect(consoleError).toHaveBeenCalledWith("[assertNameAvailable] database error", raw);
+    });
+    it("uses the same generic message for non-Error rejections", async () => {
+      const db = fakeDb({ entity: { findMany: () => Promise.reject("boom") } });
+      const res = await assertNameAvailable(db, candidate);
+      expect(res).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+      expect(consoleError).toHaveBeenCalledWith("[assertNameAvailable] database error", "boom");
+    });
   });
 });

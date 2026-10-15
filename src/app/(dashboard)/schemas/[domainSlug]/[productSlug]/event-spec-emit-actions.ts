@@ -28,15 +28,19 @@ async function inScope(ctx: ServiceContext, specId: unknown, productId?: unknown
   return row !== null;
 }
 
-/** Read-style action: authenticate, scope, call the service, never revalidate. An unexpected throw is logged and returned generically. */
-async function emitAction(specId: string, ownerProductId: string | undefined, target: EmitTarget): Promise<ActionResult<EventSpecEmission>> {
+/**
+ * Read-style action: authenticate, scope, call the service, never revalidate. An unexpected throw is logged (under `label`) and
+ * returned generically; a DB_ERROR / INTERNAL_ERROR Result from the service goes through `toActionResult`, which hides its raw
+ * text and logs it under the same `label` (H2).
+ */
+async function emitAction(specId: string, ownerProductId: string | undefined, target: EmitTarget, label: string): Promise<ActionResult<EventSpecEmission>> {
   try {
     const ctx = await getActionContext();
     if (!ctx) return NOT_AUTHENTICATED;
     if (!(await inScope(ctx, specId, ownerProductId))) return SPEC_NOT_FOUND;
-    return toActionResult(await emitEventSpec(specId, target, ctx));
+    return toActionResult(await emitEventSpec(specId, target, ctx), label);
   } catch (e: unknown) {
-    console.error("[event-spec-emit-actions] unexpected failure:", e);
+    console.error(`[${label}] unexpected failure:`, e);
     return UNEXPECTED_FAILURE;
   }
 }
@@ -46,7 +50,7 @@ async function emitAction(specId: string, ownerProductId: string | undefined, ta
  * private to its product: `productId` (the page's owning product, same position as in the publish actions) must own the spec.
  */
 export async function emitEventSpecDraftAction(specId: string, productId: string): Promise<ActionResult<EventSpecEmission>> {
-  return emitAction(specId, productId ?? "", { draft: true });
+  return emitAction(specId, productId ?? "", { draft: true }, "emitEventSpecDraftAction");
 }
 
 /**
@@ -57,5 +61,5 @@ export async function emitEventSpecDraftAction(specId: string, productId: string
 export async function getEventSpecVersionDocumentAction(specId: string, label: string): Promise<ActionResult<EventSpecEmission>> {
   const parsed = parseVersionParam(label);
   if (!parsed) return { success: false, error: "The version must be MAJOR.MINOR, e.g. 2.1", code: "VALIDATION_ERROR" };
-  return emitAction(specId, undefined, { versionLabel: `${parsed.major}.${parsed.minor}` });
+  return emitAction(specId, undefined, { versionLabel: `${parsed.major}.${parsed.minor}` }, "getEventSpecVersionDocumentAction");
 }

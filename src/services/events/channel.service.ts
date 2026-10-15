@@ -1,14 +1,13 @@
 import type { Prisma } from "@/generated/prisma/client";
-import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
+import type { ScopeTarget } from "@/lib/asset-scope";
 import type { LevelScope } from "@/lib/levels";
 import { normalizeCatalogName, normalizeFormatProfile, normalizeProtocol } from "@/lib/events/inputs";
 import { parseChannelSpec, readChannelSpec } from "@/lib/events/catalog-specs";
-import { assertOwnedBy } from "@/lib/events/ownership";
 import type { ChannelDetail, ChannelSpec, JsonSchemaDialect, PayloadFormat } from "@/lib/events/types";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
 import {
-  guardRead, optionalString, parseIdList, parseScopeTarget, requireId, requireString,
+  guardRead, loadOwnedRow, optionalString, parseIdList, parseScopeTarget, requireId, requireString,
 } from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -86,15 +85,10 @@ async function loadOwned(ctx: ServiceContext, id: unknown, owner: unknown): Prom
   if (!channelId.success) return channelId;
   const target = parseScopeTarget(owner);
   if (!target.success) return target;
-  return guardRead(async () => {
-    const scope = await resolveScope(ctx.prisma, target.data);
-    if (!scope.success) return scope;
-    const row = await ctx.prisma.channel.findUnique({ where: { id: channelId.data }, select: CHANNEL_SELECT });
-    if (!row) return err({ code: "NOT_FOUND", message: `Channel "${channelId.data}" not found` });
-    // Labelled by the caller's own id, never `row.name`: the row may belong to another product or tenant.
-    const owned = assertOwnedBy(row, scope.data, `Channel "${channelId.data}"`);
-    if (!owned.success) return owned;
-    return ok({ row, scope: scope.data });
+  // Labelled by the caller's own id, never `row.name`: the row may belong to another product or tenant.
+  return loadOwnedRow(ctx.prisma, {
+    kind: "Channel", id: channelId.data, owner: target.data,
+    load: (rowId) => ctx.prisma.channel.findUnique({ where: { id: rowId }, select: CHANNEL_SELECT }),
   });
 }
 

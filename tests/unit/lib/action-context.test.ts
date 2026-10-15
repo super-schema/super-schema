@@ -23,7 +23,22 @@ beforeEach(() => {
   h.getEffectiveRole.mockResolvedValue({ success: true, data: "AUTHOR" });
 });
 
+/** What the server-side log line calls each opaque failure. */
+const LOG_KIND: Record<string, string> = { DB_ERROR: "database error", INTERNAL_ERROR: "internal error" };
+
+/** A spy on console.error for the tests that exercise a sanitized failure; restored after each test. */
+function spyOnConsoleError() {
+  let spy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => spy.mockRestore());
+  return () => spy;
+}
+
 describe("toActionResult", () => {
+  const consoleError = spyOnConsoleError();
+
   it("maps success data through", () => {
     expect(toActionResult({ success: true, data: { id: "1" } })).toEqual({ success: true, data: { id: "1" } });
   });
@@ -36,6 +51,47 @@ describe("toActionResult", () => {
     expect(bare).toEqual({ success: false, error: "gone", code: "NOT_FOUND" });
     expect("details" in bare).toBe(false);
     expect("suggestedFix" in bare).toBe(false);
+    expect(consoleError()).not.toHaveBeenCalled();
+  });
+
+  it.each(["DB_ERROR", "INTERNAL_ERROR"])(
+    "turns a %s into the generic message with NO details / suggestedFix, and logs the original server-side",
+    (code) => {
+      const raw = 'Invalid `prisma.message.create()` invocation: relation "messages" does not exist (postgres://admin:s3cret@10.0.0.5:5432/db)';
+      const details = { sql: "select * from messages", host: "10.0.0.5" };
+      const r = toActionResult({ success: false, error: { code, message: raw, details, suggestedFix: "Check DATABASE_URL" } }, "createMessageAction");
+      expect(r).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code });
+      expect("details" in r).toBe(false);
+      expect("suggestedFix" in r).toBe(false);
+      expect(JSON.stringify(r)).not.toMatch(/prisma|messages|s3cret|10\.0\.0\.5|DATABASE_URL|select/);
+      expect(consoleError()).toHaveBeenCalledTimes(1);
+      expect(consoleError()).toHaveBeenCalledWith(`[createMessageAction] ${LOG_KIND[code]}`, raw);
+    }
+  );
+
+  it("logs a sanitized failure under a default label when the caller names none", () => {
+    toActionResult({ success: false, error: { code: "DB_ERROR", message: "pool exhausted" } });
+    expect(consoleError()).toHaveBeenCalledWith("[action] database error", "pool exhausted");
+  });
+
+  it("is idempotent: a failure that is already the generic one (sanitized at the source or by sanitizeActionError) is not logged again", () => {
+    for (const code of ["DB_ERROR", "INTERNAL_ERROR"]) {
+      expect(toActionResult({ success: false, error: { code, message: GENERIC_ACTION_ERROR } })).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code });
+    }
+    expect(consoleError()).not.toHaveBeenCalled();
+    // ... unless it still carries details / a suggested fix, which are stripped (and logged).
+    expect(toActionResult({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR, details: { sql: "x" } } })).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code: "DB_ERROR" });
+    expect(consoleError()).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes every other failure code through unchanged (message, details, suggestedFix) without logging", () => {
+    for (const code of ["PUBLISH_BLOCKED", "BUMP_TOO_LOW", "INVALID_PLAN_INPUT", "CONFLICT", "NOT_FOUND", "FORBIDDEN", "VALIDATION_ERROR", "NAME_CONFLICT", "IN_USE", "VALIDATOR_FAILED", "SOMETHING_NEW"]) {
+      const details = { blockers: [{ kind: "X" }] };
+      expect(toActionResult({ success: false, error: { code, message: `${code} text`, details, suggestedFix: "Do this" } })).toEqual({
+        success: false, error: `${code} text`, code, details, suggestedFix: "Do this",
+      });
+    }
+    expect(consoleError()).not.toHaveBeenCalled();
   });
 });
 
@@ -71,6 +127,8 @@ describe("getActionContext", () => {
 });
 
 describe("runMutation", () => {
+  const consoleError = spyOnConsoleError();
+
   it("returns NOT_AUTHENTICATED without running or revalidating", async () => {
     h.auth.mockResolvedValueOnce(null);
     const run = vi.fn();
@@ -96,28 +154,47 @@ describe("runMutation", () => {
     expect(r).toEqual({ success: false, error: "taken", code: "NAME_CONFLICT", details: { conflict: 1 }, suggestedFix: "Pick another" });
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
+
+  it.each(["DB_ERROR", "INTERNAL_ERROR"])("never returns raw %s text from a mutating action: generic payload, no revalidation, original logged with the action label", async (code) => {
+    const raw = "duplicate key value violates unique constraint \"messages_pkey\"";
+    const r = await runMutation(
+      async () => ({ success: false as const, error: { code, message: raw, details: { constraint: "messages_pkey" }, suggestedFix: "x" } }),
+      "updateMessageAction"
+    );
+    expect(r).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code });
+    expect(JSON.stringify(r)).not.toMatch(/messages_pkey|duplicate/);
+    expect(h.revalidatePath).not.toHaveBeenCalled();
+    expect(consoleError()).toHaveBeenCalledWith(`[updateMessageAction] ${LOG_KIND[code]}`, raw);
+  });
+
+  it("logs under a default label when the action does not name itself", async () => {
+    await runMutation(async () => ({ success: false as const, error: { code: "DB_ERROR", message: "x" } }));
+    expect(consoleError()).toHaveBeenCalledWith("[mutation] database error", "x");
+  });
 });
 
 describe("sanitizeActionError", () => {
-  let consoleError: ReturnType<typeof vi.spyOn>;
-  beforeEach(() => {
-    consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  });
-  afterEach(() => consoleError.mockRestore());
+  const consoleError = spyOnConsoleError();
 
   it("turns a DB_ERROR result into the generic message and logs the original server-side", async () => {
     const raw = 'relation "message_versions" does not exist';
     const r = await sanitizeActionError({ success: false, error: { code: "DB_ERROR", message: raw, details: { sql: "select 1" }, suggestedFix: "x" } }, "myAction");
     expect(r).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
     expect(JSON.stringify(r)).not.toContain("message_versions");
-    expect(consoleError).toHaveBeenCalledWith("[myAction] database error", raw);
+    expect(consoleError()).toHaveBeenCalledWith("[myAction] database error", raw);
+  });
+
+  it("sanitizes an INTERNAL_ERROR result exactly like a DB_ERROR one", async () => {
+    const r = await sanitizeActionError({ success: false, error: { code: "INTERNAL_ERROR", message: "TypeError: x is undefined at /srv/app.js:1", suggestedFix: "x" } }, "myAction");
+    expect(r).toEqual({ success: false, error: { code: "INTERNAL_ERROR", message: GENERIC_ACTION_ERROR } });
+    expect(consoleError()).toHaveBeenCalledWith("[myAction] internal error", "TypeError: x is undefined at /srv/app.js:1");
   });
 
   it("turns a rejected promise into a generic INTERNAL_ERROR and logs the thrown error", async () => {
     const thrown = new Error("connect ECONNREFUSED 10.0.0.5:5432");
     const r = await sanitizeActionError(Promise.reject(thrown), "myAction");
     expect(r).toEqual({ success: false, error: { code: "INTERNAL_ERROR", message: GENERIC_ACTION_ERROR } });
-    expect(consoleError).toHaveBeenCalledWith("[myAction] unexpected error", thrown);
+    expect(consoleError()).toHaveBeenCalledWith("[myAction] unexpected error", thrown);
   });
 
   it("passes successes and every other failure through untouched, keeping details and suggestedFix", async () => {
@@ -128,6 +205,30 @@ describe("sanitizeActionError", () => {
       const failure = { success: false as const, error: { code, message: `${code} text`, details: { blockers: [{ kind: "X" }] }, suggestedFix: "Do this" } };
       expect(await sanitizeActionError(failure)).toBe(failure);
     }
-    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleError()).not.toHaveBeenCalled();
+  });
+
+  it("composes with toActionResult (as the events actions use them): one log line, one generic payload", async () => {
+    const sanitized = await sanitizeActionError({ success: false, error: { code: "DB_ERROR", message: "raw pg text", details: { a: 1 }, suggestedFix: "f" } }, "myAction");
+    expect(toActionResult(sanitized, "runMutation label")).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code: "DB_ERROR" });
+    expect(consoleError()).toHaveBeenCalledTimes(1);
+    expect(consoleError()).toHaveBeenCalledWith("[myAction] database error", "raw pg text");
+  });
+
+  it("shares ONE implementation with toActionResult: the same Result is sanitized identically (no divergent copies)", async () => {
+    const results = [
+      { success: false as const, error: { code: "DB_ERROR", message: "raw", details: { a: 1 }, suggestedFix: "f" } },
+      { success: false as const, error: { code: "INTERNAL_ERROR", message: "raw", details: { a: 1 }, suggestedFix: "f" } },
+      { success: false as const, error: { code: "CONFLICT", message: "kept", details: { a: 1 }, suggestedFix: "f" } },
+    ];
+    for (const result of results) {
+      const viaSanitize = await sanitizeActionError(result, "x");
+      const viaAction = toActionResult(result, "x");
+      if (viaSanitize.success) throw new Error("expected a failure");
+      expect(viaAction).toMatchObject({ success: false, error: viaSanitize.error.message, code: viaSanitize.error.code });
+      // Whatever sanitizeActionError kept (details / suggestedFix), toActionResult kept, and vice versa.
+      expect("details" in viaAction).toBe("details" in viaSanitize.error);
+      expect("suggestedFix" in viaAction).toBe("suggestedFix" in viaSanitize.error);
+    }
   });
 });

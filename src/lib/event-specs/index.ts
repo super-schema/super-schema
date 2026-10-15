@@ -33,7 +33,7 @@ export type { EventSpecCatalog, ResolveOptions, ResolveProblem } from "./resolve
 export { assembleAsyncApi3, ASYNCAPI_VERSION } from "./assemble";
 export type { AssemblyResult } from "./assemble";
 export { canonicalizeDocumentOrder, toJson, toYaml } from "./serialize";
-export { StructuralAsyncApi3Validator, validateAsyncApi3Structure } from "./validator";
+export { GENERIC_VALIDATION_FAILURE, StructuralAsyncApi3Validator, validateAsyncApi3Structure } from "./validator";
 export type { EventSpecValidator } from "./validator";
 export { AsyncApi3Adapter, ASYNCAPI_3_SPEC_TYPE, getEventSpecAdapter } from "./adapter";
 export type { AsyncApi3AdapterOptions, EventSpecAdapter } from "./adapter";

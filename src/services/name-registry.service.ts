@@ -1,4 +1,5 @@
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
+import { dbErrorResult } from "@/lib/db-error";
 import { ok, err, type Result } from "@/types/result";
 import { levelOf, levelLabel } from "@/lib/levels";
 
@@ -108,10 +109,8 @@ export async function assertNameAvailable(db: Db, candidate: Candidate): Promise
       name: { equals: candidate.name.trim(), mode: "insensitive" },
     });
   } catch (e) {
-    return err({
-      code: "DB_ERROR",
-      message: e instanceof Error ? e.message : "Failed to check name availability",
-    });
+    // The driver text stays in the server log; the Result (also shown by REST routes and forms) gets the generic message.
+    return dbErrorResult("assertNameAvailable", e);
   }
   const hit = findLineConflict(candidate, sameName);
   if (!hit) return ok(undefined);

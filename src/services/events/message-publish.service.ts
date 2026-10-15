@@ -1,10 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
-import { resolveScope } from "@/lib/asset-scope";
 import { isBumpKind, type PublishInput } from "@/lib/entity-versioning/types";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import { readMessageSpec, validateMessageSpec } from "@/lib/events/catalog-specs";
-import { assertOwnedBy } from "@/lib/events/ownership";
 import {
   analyzeVersionedPublish, messagePublishInput, planVersionedPublish,
   type EventPublishAnalysis, type MessagePublishState, type PinState,
@@ -12,8 +10,9 @@ import {
 import type { EventVersionSummary, MessageResolvedSpec, PinRole } from "@/lib/events/types";
 import { assertNameAvailable } from "@/services/name-registry.service";
 import { auditedWrite } from "@/services/events/audited";
+import { isConcurrentWriteFailure } from "@/services/events/publish-concurrency";
 import { pinEdges, replaceReferences } from "@/services/events/schema-references";
-import { guardRead, requireId } from "@/services/events/service-guards";
+import { guardRead, loadOwnedRow, requireId } from "@/services/events/service-guards";
 import { toEventVersionSummary, VERSION_SUMMARY_SELECT } from "@/services/events/version-summary";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -23,19 +22,9 @@ type Db = PrismaClient | Prisma.TransactionClient;
 const notFound = (messageId: string) => err({ code: "NOT_FOUND", message: `Message "${messageId}" not found` });
 const isString = (v: string | null): v is string => typeof v === "string";
 
-/** The retryable "something changed under the publish" failure (lock re-verification, unique index, FK to a removed row). */
+/** The retryable "something changed under the publish" failure (lock re-verification, unique index, FK to a removed row, lock timeout / deadlock — see `isConcurrentWriteFailure`). */
 const changedDuringPublish = () =>
   err({ code: "CONFLICT", message: "Message changed during publish, try again", suggestedFix: "Reload the message and publish again." });
-
-/**
- * Prisma codes that mean a concurrent writer beat this publish: P2002 (unique version label / sequence), P2003 (FK to a row a
- * concurrent delete removed — auditedWrite would misreport it as IN_USE) and P2034 (write conflict / deadlock).
- */
-const CONCURRENT_WRITE_CODES = new Set(["P2002", "P2003", "P2034"]);
-function isConcurrentWriteFailure(e: unknown): boolean {
-  const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
-  return typeof code === "string" && CONCURRENT_WRITE_CODES.has(code);
-}
 
 export async function loadMessagePublishState(db: Db, messageId: string): Promise<Result<MessagePublishState>> {
   const row = await db.message.findUnique({
@@ -97,7 +86,7 @@ export async function loadMessagePublishState(db: Db, messageId: string): Promis
 
 /**
  * Spec §10 ownership, checked ONCE per call before anything is read or written (a message's level columns never change):
- * the page's product must own the message — the same scope + `assertOwnedBy` checks as `updateMessage` / `deleteMessage`
+ * the page's product must own the message — the same shared `loadOwnedRow` guard as `updateMessage` / `deleteMessage`
  * (unknown message or product → NOT_FOUND, another product's or tenant's message → FORBIDDEN). Neither error carries
  * `details`, and the label is the caller's own id, so a foreign message's name, pins, traits or publishers never leak.
  */
@@ -106,11 +95,12 @@ async function assertOwnedMessage(db: PrismaClient, messageId: string, productId
   if (!messageIdOk.success) return messageIdOk;
   const productIdOk = requireId(productId, "productId");
   if (!productIdOk.success) return productIdOk;
-  const scope = await resolveScope(db, { level: "PRODUCT", productId: productIdOk.data });
-  if (!scope.success) return scope;
-  const row = await db.message.findUnique({ where: { id: messageId }, select: { tenantId: true, domainId: true, productId: true } });
-  if (!row) return notFound(messageId);
-  return assertOwnedBy(row, scope.data, `Message "${messageId}"`);
+  const owned = await loadOwnedRow(db, {
+    kind: "Message", id: messageId, owner: { level: "PRODUCT", productId: productIdOk.data },
+    // Only the level columns: nothing of a foreign message is read.
+    load: (id) => db.message.findUnique({ where: { id }, select: { tenantId: true, domainId: true, productId: true } }),
+  });
+  return owned.success ? ok(undefined) : owned;
 }
 
 export async function previewMessagePublish(messageId: string, productId: string, ctx: ServiceContext): Promise<Result<EventPublishAnalysis>> {

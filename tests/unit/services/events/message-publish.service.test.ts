@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { emptyRegistryDelegates } from "../../../helpers/registry-mocks";
 
 const h = vi.hoisted(() => ({ withAudit: vi.fn() }));
@@ -14,6 +14,7 @@ vi.mock("@/lib/events/publish-plan", async (importOriginal) => {
 
 import { messagePublishInput } from "@/lib/events/publish-plan";
 import { listMessageVersions, previewMessagePublish, publishMessage } from "@/services/events/message-publish.service";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import type { ServiceContext } from "@/types/service-context";
 
 type MessageRow = Record<string, unknown>;
@@ -117,6 +118,11 @@ describe("publishMessage (unit)", () => {
         expect(!r.success && "details" in r.error).toBe(false);
         // Nothing of the foreign message (name, pins, traits, publishers) is echoed back.
         expect(JSON.stringify(r)).not.toMatch(/OrderCreated|Order\b|ev1|e1\b|Ada/);
+      }
+      // The ownership read loads the message by the caller's id with ONLY the level columns, and is the only read of the message.
+      expect(db.message.findUnique).toHaveBeenCalledTimes(3);
+      for (const call of db.message.findUnique.mock.calls) {
+        expect(call[0]).toEqual({ where: { id: "m1" }, select: { tenantId: true, domainId: true, productId: true } });
       }
       expect(db.$transaction).not.toHaveBeenCalled();
       expect(db.messageVersion.create).not.toHaveBeenCalled();
@@ -224,16 +230,60 @@ describe("publishMessage (unit)", () => {
     expect(await publish(same)).toMatchObject({ success: true, data: { label: "1.1", changeKind: "MINOR" } });
   });
 
+  const CONFLICT = {
+    success: false,
+    error: { code: "CONFLICT", message: "Message changed during publish, try again", suggestedFix: "Reload the message and publish again." },
+  };
+  const prismaError = (code: string, meta?: object) => Object.assign(new Error(`prisma ${code}`), { code, ...(meta && { meta }) });
+  const rawQueryError = (sqlState: string) => prismaError("P2010", { driverAdapterError: { cause: { originalCode: sqlState, originalMessage: "x", kind: "postgres" } } });
+
   it("maps FK / unique / write-conflict failures from a concurrent writer to a retryable CONFLICT, never IN_USE", async () => {
     for (const code of ["P2003", "P2002", "P2034"]) {
       const db = makeDb();
-      db.messageVersion.create.mockRejectedValueOnce(Object.assign(new Error(`prisma ${code}`), { code }));
-      const r = await publish(db);
-      expect(r).toEqual({
-        success: false,
-        error: { code: "CONFLICT", message: "Message changed during publish, try again", suggestedFix: "Reload the message and publish again." },
-      });
+      db.messageVersion.create.mockRejectedValueOnce(prismaError(code));
+      expect(await publish(db)).toEqual(CONFLICT);
       expect(db.message.update).not.toHaveBeenCalled();
+    }
+  });
+
+  it("maps a lock timeout / deadlock to the same retryable CONFLICT: P2028 (expired transaction) and raw-lock-statement failures (P2010 + 40P01 / 55P03 / 40001)", async () => {
+    // Raised by the lock statement itself (`SELECT … FOR UPDATE`), by a later statement, and by the transaction wrapper (commit on an expired transaction).
+    const failures: Array<[string, Error]> = [
+      ["P2028", prismaError("P2028", { operation: "commit", timeout: 15_000, timeTaken: 20_000 })],
+      ["P2010 / 40P01 deadlock_detected", rawQueryError("40P01")],
+      ["P2010 / 55P03 lock_not_available", rawQueryError("55P03")],
+      ["P2010 / 40001 serialization_failure", rawQueryError("40001")],
+    ];
+    for (const [label, failure] of failures) {
+      const atLock = makeDb();
+      atLock.$queryRaw.mockRejectedValueOnce(failure);
+      expect(await publish(atLock), `${label} at the lock`).toEqual(CONFLICT);
+      expect(atLock.messageVersion.create, label).not.toHaveBeenCalled();
+      expect(atLock.message.update, label).not.toHaveBeenCalled();
+
+      const atWrite = makeDb();
+      atWrite.messageVersion.create.mockRejectedValueOnce(failure);
+      expect(await publish(atWrite), `${label} at the version insert`).toEqual(CONFLICT);
+      expect(atWrite.message.update, label).not.toHaveBeenCalled();
+
+      const atTransaction = makeDb();
+      atTransaction.$transaction.mockRejectedValueOnce(failure);
+      expect(await publish(atTransaction), `${label} from $transaction itself`).toEqual(CONFLICT);
+      expect(atTransaction.messageVersion.create, label).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not turn other database failures into a CONFLICT: a P2010 with another SQLSTATE or P2024 stays a (generic) DB_ERROR", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      for (const failure of [rawQueryError("42P01"), prismaError("P2024"), prismaError("P2021")]) {
+        const db = makeDb();
+        db.$queryRaw.mockRejectedValueOnce(failure);
+        expect(await publish(db)).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+        expect(db.messageVersion.create).not.toHaveBeenCalled();
+      }
+    } finally {
+      consoleError.mockRestore();
     }
   });
 
@@ -249,15 +299,34 @@ describe("publishMessage (unit)", () => {
     expect(deleted.messageVersion.create).not.toHaveBeenCalled();
   });
 
-  it("still reports unexpected database failures as DB_ERROR (sanitised by the action layer)", async () => {
-    const db = makeDb();
-    db.messageVersion.create.mockRejectedValueOnce(new Error("connection reset"));
-    expect(await publish(db)).toEqual({ success: false, error: { code: "DB_ERROR", message: "connection reset" } });
-    const failing = makeDb();
-    failing.message.findUnique.mockRejectedValueOnce(new Error("pool exhausted"));
-    expect(await publish(failing)).toEqual({ success: false, error: { code: "DB_ERROR", message: "pool exhausted" } });
-    const preview = makeDb();
-    preview.message.findUnique.mockRejectedValueOnce(new Error("pool exhausted"));
-    expect(await previewMessagePublish("m1", OWNING_PRODUCT, ctxOf(preview))).toEqual({ success: false, error: { code: "DB_ERROR", message: "pool exhausted" } });
+  describe("unexpected database failures", () => {
+    let consoleError: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+    afterEach(() => consoleError.mockRestore());
+    const DB_ERROR = { success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } };
+
+    it("are reported as DB_ERROR with the generic message at the source; the driver text is only logged server-side", async () => {
+      const db = makeDb();
+      const reset = new Error("connection reset by 10.0.0.5:5432");
+      db.messageVersion.create.mockRejectedValueOnce(reset);
+      expect(await publish(db)).toEqual(DB_ERROR);
+      expect(consoleError).toHaveBeenCalledWith("[auditedWrite PUBLISH_VERSION Message m1] database error", reset);
+
+      const failing = makeDb();
+      const pool = new Error("pool exhausted");
+      failing.message.findUnique.mockRejectedValueOnce(pool);
+      expect(await publish(failing)).toEqual(DB_ERROR);
+      expect(consoleError).toHaveBeenCalledWith("[guardRead] database error", pool);
+
+      const preview = makeDb();
+      preview.message.findUnique.mockRejectedValueOnce(pool);
+      expect(await previewMessagePublish("m1", OWNING_PRODUCT, ctxOf(preview))).toEqual(DB_ERROR);
+      const list = makeDb();
+      list.messageVersion.findMany.mockRejectedValueOnce(pool);
+      expect(await listMessageVersions("m1", OWNING_PRODUCT, ctxOf(list))).toEqual(DB_ERROR);
+      for (const call of consoleError.mock.calls) expect(JSON.stringify(call[0])).not.toMatch(/10\.0\.0\.5/);
+    });
   });
 });

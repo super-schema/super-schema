@@ -1,5 +1,6 @@
 // src/services/events/audited.ts
 import { withAudit, AuditUserMissingError } from "@/lib/audit";
+import { dbErrorResult } from "@/lib/db-error";
 import { ServiceErrorRejection } from "@/services/scoped-create.service";
 import { ok, err, type Result } from "@/types/result";
 
@@ -43,6 +44,7 @@ export async function auditedWrite<T>(p: AuditedWriteParams<T>): Promise<Result<
       return err({ code: "IN_USE", message: "This record is referenced by another record and cannot be removed.", suggestedFix: "Remove the references first." });
     }
     if (code === "P2025") return err({ code: "NOT_FOUND", message: "The record no longer exists." });
-    return err({ code: "DB_ERROR", message: e instanceof Error ? e.message : "Database error" });
+    // Anything else is unexpected driver text (constraint, table, column, host names): logged here, generic in the Result.
+    return dbErrorResult(`auditedWrite ${p.action} ${p.entityType} ${p.entityId}`, e);
   }
 }

@@ -11,7 +11,7 @@ export interface ActionNotice {
   fix?: string;
 }
 
-/** Client-side backstop for server-side `sanitizeActionError`: DB_ERROR / INTERNAL_ERROR always render the generic text. */
+/** Client-side backstop for server-side `toActionResult` / `sanitizeActionError`: DB_ERROR / INTERNAL_ERROR always render the generic text. */
 export function noticeFor(failure: { error: string; code?: string; suggestedFix?: string }): ActionNotice {
   if (isOpaqueErrorCode(failure.code)) return { message: GENERIC_ACTION_ERROR };
   return { message: failure.error, ...(failure.suggestedFix && { fix: failure.suggestedFix }) };

@@ -2,13 +2,12 @@ import type { Prisma } from "@/generated/prisma/client";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import type { LevelScope } from "@/lib/levels";
 import { isJsonObject, normalizeCatalogName } from "@/lib/events/inputs";
-import { assertOwnedBy } from "@/lib/events/ownership";
 import type { EntityPin, JsonObject, TraitDetail, TraitKind } from "@/lib/events/types";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
-import { guardRead, parseScopeTarget, requireId, requireString } from "@/services/events/service-guards";
+import { guardRead, loadOwnedRow, parseScopeTarget, requireId, requireString } from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -98,15 +97,10 @@ async function loadOwned(ctx: ServiceContext, id: unknown, owner: unknown): Prom
   if (!traitId.success) return traitId;
   const target = parseScopeTarget(owner);
   if (!target.success) return target;
-  return guardRead(async () => {
-    const scope = await resolveScope(ctx.prisma, target.data);
-    if (!scope.success) return scope;
-    const row = await ctx.prisma.trait.findUnique({ where: { id: traitId.data }, select: TRAIT_SELECT });
-    if (!row) return err({ code: "NOT_FOUND", message: `Trait "${traitId.data}" not found` });
-    // Labelled by the caller's own id, never `row.name`: the row may belong to another level or tenant.
-    const owned = assertOwnedBy(row, scope.data, `Trait "${traitId.data}"`);
-    if (!owned.success) return owned;
-    return ok({ row, scope: scope.data });
+  // Labelled by the caller's own id, never `row.name`: the row may belong to another level or tenant.
+  return loadOwnedRow(ctx.prisma, {
+    kind: "Trait", id: traitId.data, owner: target.data,
+    load: (rowId) => ctx.prisma.trait.findUnique({ where: { id: rowId }, select: TRAIT_SELECT }),
   });
 }
 

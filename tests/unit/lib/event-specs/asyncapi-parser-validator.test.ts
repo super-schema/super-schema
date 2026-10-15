@@ -3,11 +3,11 @@ import type { AddressInfo } from "node:net";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { DiagnosticSeverity, Parser } from "@asyncapi/parser";
 import { AsyncApi3Adapter } from "@/lib/event-specs/adapter";
 import { assembleAsyncApi3 } from "@/lib/event-specs/assemble";
-import { StructuralAsyncApi3Validator, validateAsyncApi3Structure } from "@/lib/event-specs/validator";
+import { GENERIC_VALIDATION_FAILURE, StructuralAsyncApi3Validator, validateAsyncApi3Structure } from "@/lib/event-specs/validator";
 import {
   AsyncApiParserValidator,
   createAsyncApiParser,
@@ -490,6 +490,46 @@ describe("AsyncApiParserValidator (real @asyncapi/parser)", { timeout: 60_000 },
         expect(output.document).toBeUndefined();
         expect(output.diagnostics.some((d) => d.severity === DiagnosticSeverity.Error)).toBe(true);
         expect(errorsOf(await validate(document)).map((d) => d.code)).toEqual(["REMOTE_REF"]);
+      }
+    });
+  });
+
+  describe("a crash of the parser itself", () => {
+    /** A validator whose parser is replaced (the field is private; `validate()` only creates one when it is unset). */
+    function validatorWithParser(parse: () => Promise<never>): AsyncApiParserValidator {
+      const v = new AsyncApiParserValidator();
+      (v as unknown as { parser: { parse: () => Promise<never> } }).parser = { parse };
+      return v;
+    }
+
+    it("returns ASYNCAPI_PARSER_FAILED with a generic message and logs the original exception server-side", async () => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const raw = new Error("Spectral ruleset blew up near /srv/app/node_modules/@stoplight/spectral-core/index.js with postgres://admin:s3cret@db/app");
+        const res = await validatorWithParser(() => Promise.reject(raw)).validate(golden("checkout-service"));
+        expect(res).toEqual({ success: false, error: { code: "ASYNCAPI_PARSER_FAILED", message: GENERIC_VALIDATION_FAILURE } });
+        expect(JSON.stringify(res)).not.toMatch(/Spectral|s3cret|node_modules|postgres:/);
+        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("ASYNCAPI_PARSER_FAILED"), raw);
+
+        // A non-Error rejection is sanitized the same way.
+        const primitive = await validatorWithParser(() => Promise.reject("raw s3cret")).validate(golden("checkout-service"));
+        expect(primitive).toEqual({ success: false, error: { code: "ASYNCAPI_PARSER_FAILED", message: GENERIC_VALIDATION_FAILURE } });
+        expect(consoleError).toHaveBeenLastCalledWith(expect.stringContaining("ASYNCAPI_PARSER_FAILED"), "raw s3cret");
+      } finally {
+        consoleError.mockRestore();
+      }
+    });
+
+    it("keeps the generic message when the failure flows through the adapter (what emitDraft / toActionResult forward to the browser)", async () => {
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const adapter = new AsyncApi3Adapter({ validators: [validatorWithParser(() => Promise.reject(new Error("raw parser text s3cret")))] });
+        const emitted = await adapter.emit(checkoutServiceSpec);
+        expect(emitted).toEqual({ success: false, error: { code: "ASYNCAPI_PARSER_FAILED", message: GENERIC_VALIDATION_FAILURE } });
+        expect(JSON.stringify(emitted)).not.toContain("s3cret");
+      } finally {
+        consoleError.mockRestore();
       }
     });
   });

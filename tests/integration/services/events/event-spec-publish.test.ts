@@ -488,12 +488,15 @@ describe.sequential("event spec publish (spec §6.1, §7.4, D8, D11, R66, R67)",
       const { sc, spec, doc, owner, deps } = f;
       const mv = await f.freezeMessage();
       unwrap(await updateEventSpecDocument(spec.id, doc(mv.id), owner, ctx));
-      for (const code of ["P2003", "P2002", "P2034"]) {
+      // Concurrent-writer failures, plus lock timeout / deadlock (P2028 expired transaction; P2010 raw lock statement with 40P01 / 55P03).
+      const raw = (sqlState: string) => ({ driverAdapterError: { cause: { originalCode: sqlState, originalMessage: "x", kind: "postgres" } } });
+      const racers: Array<[string, object?]> = [["P2003"], ["P2002"], ["P2034"], ["P2028"], ["P2010", raw("40P01")], ["P2010", raw("55P03")]];
+      for (const [code, meta] of racers) {
         const racing: ServiceContext = {
           ...ctx,
           prisma: new Proxy(prisma, {
             get(target, prop) {
-              if (prop === "$transaction") return async () => { throw Object.assign(new Error(`constraint ${code}`), { code }); };
+              if (prop === "$transaction") return async () => { throw Object.assign(new Error(`constraint ${code}`), { code, ...(meta && { meta }) }); };
               const value: unknown = Reflect.get(target, prop, target);
               return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
             },

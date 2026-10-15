@@ -1,5 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
-import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
+import type { ScopeTarget } from "@/lib/asset-scope";
 import type { LevelScope } from "@/lib/levels";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { normalizeCatalogName } from "@/lib/events/inputs";
@@ -9,12 +9,12 @@ import {
   parseEventSpecDocument,
   type DocumentProblem,
 } from "@/lib/events/event-spec-document";
-import { assertOwnedBy } from "@/lib/events/ownership";
 import type { EventSpecDetail, EventSpecDocument } from "@/lib/events/types";
 import { inSameLine } from "@/services/name-registry.service";
 import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
 import { deleteReferencesFrom, replaceReferences } from "@/services/events/schema-references";
+import { loadOwnedRow } from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -51,14 +51,12 @@ function detailOrRollback(row: SpecRow): EventSpecDetail {
   return d.data;
 }
 
-async function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise<Result<{ row: SpecRow; scope: LevelScope }>> {
-  const scope = await resolveScope(ctx.prisma, owner);
-  if (!scope.success) return scope;
-  const row = await ctx.prisma.eventSpec.findUnique({ where: { id }, select: SPEC_SELECT });
-  if (!row) return err({ code: "NOT_FOUND", message: `Event spec "${id}" not found` });
-  const owned = assertOwnedBy(row, scope.data, `Event spec "${row.name}"`);
-  if (!owned.success) return owned;
-  return ok({ row, scope: scope.data });
+/** Ownership read (spec §10) through the shared guard: the FORBIDDEN / NOT_FOUND text is labelled by the caller's own id, never `row.name`. */
+function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise<Result<{ row: SpecRow; scope: LevelScope }>> {
+  return loadOwnedRow(ctx.prisma, {
+    kind: "Event spec", id, owner,
+    load: (specId) => ctx.prisma.eventSpec.findUnique({ where: { id: specId }, select: SPEC_SELECT }),
+  });
 }
 
 /** Every referenced id must exist; drafts (D4) only from this spec's product; traits must be OPERATION traits in line. */
