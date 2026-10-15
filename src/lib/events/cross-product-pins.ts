@@ -31,6 +31,7 @@ export interface CrossProductPin {
 
 export const MAX_NAMED_PIN_SPECS = 5;
 export const MAX_NAMED_PIN_ASSETS = 3;
+export const MAX_NAMED_PIN_VERSIONS = 3;
 
 function assetList(assets: PinnedAsset[]): string {
   const shown = assets.slice(0, MAX_NAMED_PIN_ASSETS).map((a) => `${a.kind} "${a.name}"`);
@@ -38,9 +39,15 @@ function assetList(assets: PinnedAsset[]): string {
   return joinList(more > 0 ? [...shown, `${more} more`] : shown);
 }
 
+/** "v1.0, v1.1, v2.0", or "v1.0, v1.1, v2.0 and 4 more" for a spec with many published versions (the message stays bounded). */
+function versionList(versions: string[]): string {
+  const shown = versions.slice(0, MAX_NAMED_PIN_VERSIONS).map((v) => `v${v}`);
+  const more = versions.length - shown.length;
+  return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.join(", ");
+}
+
 function describePin(p: CrossProductPin): string {
-  const versions = p.versions.map((v) => `v${v}`).join(", ");
-  return `"${p.specName}" (product "${p.productName}", ${versions}) references ${assetList(p.assets)}`;
+  return `"${p.specName}" (product "${p.productName}", ${versionList(p.versions)}) references ${assetList(p.assets)}`;
 }
 
 /** The block message naming the referencing specs + products, or null when no other product's spec references the target. */
