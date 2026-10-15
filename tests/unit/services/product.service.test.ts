@@ -6,6 +6,7 @@ vi.mock("@/lib/db", () => ({
       create: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
@@ -13,7 +14,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { createProduct, updateProduct } from "@/services/product.service";
+import { createProduct, deleteProduct, updateProduct } from "@/services/product.service";
 import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -92,6 +93,80 @@ describe("Product Service", () => {
         expect(result.error.message).toContain("reserved");
       }
       expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteProduct", () => {
+    const counts = {
+      entities: 0,
+      sharedEnums: 0,
+      customScalars: 0,
+      unionTypes: 0,
+      services: 0,
+    };
+
+    it("counts product-level Data Types and APIs, not just entities", async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue({
+        id: "prd-1",
+        isSystem: false,
+        _count: counts,
+      } as never);
+      vi.mocked(prisma.product.delete).mockResolvedValue({ id: "prd-1" } as never);
+
+      const result = await deleteProduct("prd-1", mockCtx);
+
+      expect(result.success).toBe(true);
+      expect(prisma.product.findUnique).toHaveBeenCalledWith({
+        where: { id: "prd-1" },
+        include: {
+          _count: {
+            select: {
+              entities: true,
+              sharedEnums: true,
+              customScalars: true,
+              unionTypes: true,
+              services: true,
+            },
+          },
+        },
+      });
+    });
+
+    it("blocks deleting a product that still owns Data Types (they would cascade)", async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue({
+        id: "prd-1",
+        isSystem: false,
+        _count: { ...counts, sharedEnums: 1, unionTypes: 1 },
+      } as never);
+
+      const result = await deleteProduct("prd-1", mockCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+        expect(result.error.message).toBe(
+          "Delete the product's 2 Data Types before removing it"
+        );
+      }
+      expect(prisma.product.delete).not.toHaveBeenCalled();
+    });
+
+    it("blocks deleting a product that still owns APIs", async () => {
+      vi.mocked(prisma.product.findUnique).mockResolvedValue({
+        id: "prd-1",
+        isSystem: false,
+        _count: { ...counts, services: 1 },
+      } as never);
+
+      const result = await deleteProduct("prd-1", mockCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.message).toBe(
+          "Delete the product's 1 API before removing it"
+        );
+      }
+      expect(prisma.product.delete).not.toHaveBeenCalled();
     });
   });
 });

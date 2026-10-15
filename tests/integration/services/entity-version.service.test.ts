@@ -132,6 +132,35 @@ describe("entity version service", () => {
     }
   });
 
+  it("resolves a by-name reference in the line: blocks until B is published, then pins it", async () => {
+    let domainId: string | undefined;
+    try {
+      const sc = await scope();
+      domainId = sc.domainId;
+      const seller = await sc.entity("Seller");
+      await sc.field(seller.id, "id", { nullable: false });
+      const listing = await sc.entity("Listing");
+      // Every reference-creating path (type picker, wizard, importers, TypeSpec save) stores only the name.
+      await sc.field(listing.id, "seller", { type: "reference", decorators: { referencedEntityName: "seller" } });
+      await sc.field(listing.id, "ghost", { type: "reference", decorators: { referencedEntityName: "Ghost" }, sortOrder: 1 });
+
+      const blocked = await publishEntity(listing.id, {}, ctx);
+      expect(blocked.success).toBe(false);
+      if (!blocked.success) expect(blocked.error).toMatchObject({ code: "PUBLISH_BLOCKED", message: "Publish Seller first" });
+      const preview = unwrap(await previewPublish(listing.id, ctx));
+      expect(preview.warnings.map((w) => w.entityName)).toEqual(["Ghost"]);
+
+      const sellerV = unwrap(await publishEntity(seller.id, {}, ctx));
+      const listingV = unwrap(await publishEntity(listing.id, {}, ctx));
+      const refs = await prisma.schemaReference.findMany({ where: { fromKind: "ENTITY_VERSION", fromId: listingV.id } });
+      expect(refs).toEqual([
+        expect.objectContaining({ role: "FIELD", toKind: "ENTITY_VERSION", toId: sellerV.id, isDraft: false }),
+      ]);
+    } finally {
+      await cleanup(domainId);
+    }
+  });
+
   it("creates exactly one version under concurrent publishes", async () => {
     let domainId: string | undefined;
     try {

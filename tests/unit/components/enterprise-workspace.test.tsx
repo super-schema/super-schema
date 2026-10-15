@@ -25,6 +25,12 @@ const actions = vi.hoisted(() => ({
   deleteUnionTypeAction: vi.fn(),
 }));
 
+// The app renders these tabs under a QueryClientProvider; here the tree refresh is a no-op.
+vi.mock("@/hooks/useDomainsTree", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useDomainsTree")>()),
+  useInvalidateDomainsTree: () => vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: nav.push, replace: nav.replace, refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(nav.search),

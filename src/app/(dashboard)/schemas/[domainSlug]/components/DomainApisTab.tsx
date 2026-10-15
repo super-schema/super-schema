@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { ScopeTarget } from "@/lib/asset-scope";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import {
   createServiceAction,
   deleteServiceAction,
@@ -104,6 +105,8 @@ export function DomainApisTab({ domainId, target, services, entities, inherited 
   const [isAddingService, setIsAddingService] = useState(false);
   const [addingOpFor, setAddingOpFor] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // The explorer tree's APIs counts come from /api/domains-tree, not revalidatePath.
+  const invalidateDomainsTree = useInvalidateDomainsTree();
 
   // New service form state
   const [newServiceName, setNewServiceName] = useState("");
@@ -133,6 +136,7 @@ export function DomainApisTab({ domainId, target, services, entities, inherited 
         toast.error(result.error);
         return;
       }
+      void invalidateDomainsTree();
       setIsAddingService(false);
       setNewServiceName("");
       setNewServiceBasePath("/");
@@ -143,6 +147,7 @@ export function DomainApisTab({ domainId, target, services, entities, inherited 
     startTransition(async () => {
       const result = await deleteServiceAction(serviceId);
       if ("error" in result) toast.error(result.error);
+      else void invalidateDomainsTree();
     });
   }
 
@@ -158,6 +163,7 @@ export function DomainApisTab({ domainId, target, services, entities, inherited 
         toast.error(result.error);
         return;
       }
+      void invalidateDomainsTree();
       setAddingOpFor(null);
       setNewOpName("");
       setNewOpMethod("GET");
@@ -169,6 +175,7 @@ export function DomainApisTab({ domainId, target, services, entities, inherited 
     startTransition(async () => {
       const result = await deleteOperationAction(operationId);
       if ("error" in result) toast.error(result.error);
+      else void invalidateDomainsTree();
     });
   }
 

@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { formatDateOnly } from "@/lib/date-format";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import { productDeleteBlocker } from "@/lib/product-deletion";
 import {
   createProductAction,
   deleteProductAction,
@@ -24,6 +25,10 @@ export interface ProductGridItem {
   ownerTeam: string | null;
   isSystem: boolean;
   entityCount: number;
+  /** Product-level Data Types (enums + scalars + unions) — cascade with the product. */
+  dataTypeCount: number;
+  /** Product-level APIs (service definitions) — cascade with the product. */
+  apiCount: number;
   updatedAt: Date | string;
   tier: {
     id: string;
@@ -47,6 +52,17 @@ interface ProductGridProps {
   domainSlug: string;
   products: ProductGridItem[];
   tiers: TierOption[];
+}
+
+/** Same rule as the server guard: anything that would cascade blocks the delete. */
+function deleteBlocker(product: ProductGridItem): string | null {
+  return productDeleteBlocker({
+    entities: product.entityCount,
+    sharedEnums: product.dataTypeCount,
+    customScalars: 0,
+    unionTypes: 0,
+    services: product.apiCount,
+  });
 }
 
 function tierLabel(name: string) {
@@ -120,8 +136,9 @@ export function ProductGrid({
   }
 
   async function handleDelete(product: ProductGridItem) {
-    if (product.entityCount > 0) {
-      toast.error("Delete the product's entities before removing it");
+    const blocker = deleteBlocker(product);
+    if (blocker) {
+      toast.error(blocker);
       return;
     }
     const result = await deleteProductAction(product.id);
@@ -251,7 +268,8 @@ export function ProductGrid({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-space-4">
           {filtered.map((product) => {
-            const canDelete = !product.isSystem && product.entityCount === 0;
+            const blocker = deleteBlocker(product);
+            const canDelete = !product.isSystem && blocker === null;
             return (
               <div
                 key={product.id}
@@ -314,11 +332,7 @@ export function ProductGrid({
                     onClick={() => handleDelete(product)}
                     disabled={!canDelete}
                     aria-label={`Delete product ${product.name}`}
-                    title={
-                      canDelete
-                        ? `Delete ${product.name}`
-                        : "Delete entities in this product before removing it"
-                    }
+                    title={canDelete ? `Delete ${product.name}` : (blocker ?? undefined)}
                     className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                   >
                     <Trash2 className="w-4 h-4" />

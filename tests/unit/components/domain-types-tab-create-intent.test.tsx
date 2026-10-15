@@ -6,6 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { DomainTypesTab } from "@/app/(dashboard)/schemas/[domainSlug]/components/DomainTypesTab";
 
+// The app renders these tabs under a QueryClientProvider; here the tree refresh is a no-op.
+vi.mock("@/hooks/useDomainsTree", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useDomainsTree")>()),
+  useInvalidateDomainsTree: () => vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),

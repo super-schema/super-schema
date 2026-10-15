@@ -17,6 +17,8 @@ export interface PublishState {
   currentFields: FieldSnapshot[];
   /** One entry per referenced entity; `entityName: null` means it no longer exists. */
   references: Array<{ entityId: string; entityName: string | null; latestVersionId: string | null }>;
+  /** By-name references that match no entity in the entity's line — not pinned, surfaced as warnings. */
+  unresolvedReferenceNames?: string[];
 }
 
 export type PublishBlocker =
@@ -24,6 +26,9 @@ export type PublishBlocker =
   | { kind: "NO_CHANGES"; message: string }
   | { kind: "UNPUBLISHED_REFERENCE"; entityId: string; entityName: string; message: string }
   | { kind: "MISSING_REFERENCE"; entityId: string; message: string };
+
+/** Shown in the publish dialog; never stops the publish. */
+export type PublishWarning = { kind: "UNRESOLVED_REFERENCE"; entityName: string; message: string };
 
 export interface ReferencePin {
   entityId: string;
@@ -42,6 +47,7 @@ export interface PublishAnalysis {
   reasons: string[];
   diffSummary: { added: number; removed: number; modified: number };
   blockers: PublishBlocker[];
+  warnings: PublishWarning[];
   pins: ReferencePin[];
 }
 
@@ -85,6 +91,12 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
     }
   }
 
+  const warnings: PublishWarning[] = (state.unresolvedReferenceNames ?? []).map((entityName) => ({
+    kind: "UNRESOLVED_REFERENCE",
+    entityName,
+    message: `Reference "${entityName}" does not match any entity in this line; it will not be pinned.`,
+  }));
+
   const initialLabel = formatVersionLabel(INITIAL_VERSION);
   if (!latest) {
     return {
@@ -96,6 +108,7 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
       reasons: [],
       diffSummary: { added: state.currentFields.length, removed: 0, modified: 0 },
       blockers,
+      warnings,
       pins,
     };
   }
@@ -113,6 +126,7 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
     reasons: suggestion.reasons,
     diffSummary: suggestion.summary,
     blockers,
+    warnings,
     pins,
   };
 }

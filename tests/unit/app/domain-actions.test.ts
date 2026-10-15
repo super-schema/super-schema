@@ -38,6 +38,7 @@ import { deleteDomainAction } from "@/app/(dashboard)/schemas/actions";
 
 const EMPTY_COUNTS = {
   entities: 0,
+  products: 0,
   modelDefinitions: 0,
   decoratorDefinitions: 0,
   sharedEnums: 0,
@@ -125,6 +126,7 @@ describe("deleteDomainAction", () => {
         _count: {
           select: {
             entities: true,
+            products: true,
             modelDefinitions: true,
             decoratorDefinitions: true,
             sharedEnums: true,
@@ -162,7 +164,7 @@ describe("deleteDomainAction", () => {
 
     expect(result).toEqual({
       error:
-        "Cannot delete - 1 entity exists in this domain. Move or delete it first.",
+        "Cannot delete - 1 entity exists in this domain or its products. Move or delete it first.",
     });
     expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
   });

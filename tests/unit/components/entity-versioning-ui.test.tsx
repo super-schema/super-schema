@@ -10,7 +10,7 @@ afterEach(cleanup);
 function analysis(overrides: Partial<PublishAnalysis> = {}): PublishAnalysis {
   return {
     isFirstPublish: false, latestLabel: "2.1", suggestedBump: "MINOR", candidateLabels: { MAJOR: "3.0", MINOR: "2.2" },
-    initialLabel: "1.0", reasons: [], diffSummary: { added: 1, removed: 0, modified: 0 }, blockers: [], pins: [],
+    initialLabel: "1.0", reasons: [], diffSummary: { added: 1, removed: 0, modified: 0 }, blockers: [], warnings: [], pins: [],
     ...overrides,
   };
 }
@@ -49,6 +49,22 @@ describe("PublishEntityForm", () => {
     fireEvent.change(screen.getByRole("textbox"), { target: { value: " initial import " } });
     fireEvent.click(screen.getByTestId("confirm-publish"));
     expect(onConfirm).toHaveBeenCalledWith({ bump: undefined, changeSummary: "initial import" });
+  });
+
+  it("shows warnings without blocking Publish", () => {
+    renderForm(
+      analysis({
+        warnings: [
+          {
+            kind: "UNRESOLVED_REFERENCE",
+            entityName: "Ghost",
+            message: 'Reference "Ghost" does not match any entity in this line; it will not be pinned.',
+          },
+        ],
+      })
+    );
+    expect(screen.getByTestId("publish-warnings").textContent).toContain('Reference "Ghost"');
+    expect(isDisabled(screen.getByTestId("confirm-publish"))).toBe(false);
   });
 
   it("lists blockers and disables Publish", () => {

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { ScopeTarget } from "@/lib/asset-scope";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import {
   createSharedEnumAction,
   updateSharedEnumAction,
@@ -116,6 +117,8 @@ function useConfirmDelete() {
 export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, unionTypes, inherited, createIntent, onCreateIntentConsumed }: DomainTypesTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<TypeSubTab>("enums");
   const deleteDialog = useConfirmDelete();
+  // The explorer tree's Data Types counts come from /api/domains-tree, not revalidatePath.
+  const invalidateDomainsTree = useInvalidateDomainsTree();
 
   // Create form states
   const [showCreateEnum, setShowCreateEnum] = useState(false);
@@ -162,20 +165,20 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
     if (!newEnumName.trim()) return;
     const values = newEnumValues.split(",").map((v) => v.trim()).filter(Boolean);
     const result = await createSharedEnumAction(domainId, { name: newEnumName.trim(), values }, target);
-    if (result.error) { toast.error(result.error); } else { toast.success(`Enum "${newEnumName}" created`); setNewEnumName(""); setNewEnumValues(""); setShowCreateEnum(false); }
+    if (result.error) { toast.error(result.error); } else { void invalidateDomainsTree(); toast.success(`Enum "${newEnumName}" created`); setNewEnumName(""); setNewEnumValues(""); setShowCreateEnum(false); }
   }
 
   async function handleCreateScalar() {
     if (!newScalarName.trim()) return;
     const result = await createCustomScalarAction(domainId, { name: newScalarName.trim(), baseType: newScalarBase }, target);
-    if (result.error) { toast.error(result.error); } else { toast.success(`Scalar "${newScalarName}" created`); setNewScalarName(""); setNewScalarBase("string"); setShowCreateScalar(false); }
+    if (result.error) { toast.error(result.error); } else { void invalidateDomainsTree(); toast.success(`Scalar "${newScalarName}" created`); setNewScalarName(""); setNewScalarBase("string"); setShowCreateScalar(false); }
   }
 
   async function handleCreateUnion() {
     if (!newUnionName.trim()) return;
     const members = newUnionMembers.split("|").map((v) => v.trim()).filter(Boolean);
     const result = await createUnionTypeAction(domainId, { name: newUnionName.trim(), memberTypes: members }, target);
-    if (result.error) { toast.error(result.error); } else { toast.success(`Union "${newUnionName}" created`); setNewUnionName(""); setNewUnionMembers(""); setShowCreateUnion(false); }
+    if (result.error) { toast.error(result.error); } else { void invalidateDomainsTree(); toast.success(`Union "${newUnionName}" created`); setNewUnionName(""); setNewUnionMembers(""); setShowCreateUnion(false); }
   }
 
   // A group with nothing in it carries no information — hide it.
@@ -288,7 +291,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               {sharedEnums.map((e) => (
                 <EnumCard key={e.id} e={e} onDelete={(name) => deleteDialog.ask(name, async () => {
                   const r = await deleteSharedEnumAction(e.id);
-                  if (r.error) toast.error(r.error); else toast.success(`Enum "${name}" deleted`);
+                  if (r.error) toast.error(r.error); else { void invalidateDomainsTree(); toast.success(`Enum "${name}" deleted`); }
                 })} />
               ))}
             </div>
@@ -335,7 +338,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
                     <button
                       onClick={() => deleteDialog.ask(s.name, async () => {
                         const r = await deleteCustomScalarAction(s.id);
-                        if (r.error) toast.error(r.error); else toast.success(`Scalar "${s.name}" deleted`);
+                        if (r.error) toast.error(r.error); else { void invalidateDomainsTree(); toast.success(`Scalar "${s.name}" deleted`); }
                       })}
                       className="ml-auto opacity-0 group-hover/scalar:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
                     >
@@ -376,7 +379,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               {unionTypes.map((u) => (
                 <UnionCard key={u.id} u={u} onDelete={(name) => deleteDialog.ask(name, async () => {
                   const r = await deleteUnionTypeAction(u.id);
-                  if (r.error) toast.error(r.error); else toast.success(`Union "${name}" deleted`);
+                  if (r.error) toast.error(r.error); else { void invalidateDomainsTree(); toast.success(`Union "${name}" deleted`); }
                 })} />
               ))}
             </div>
@@ -471,6 +474,7 @@ function InheritedSection({ group }: { group: InheritedDataTypes }) {
 // ---------------------------------------------------------------------------
 
 function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string) => void }) {
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [values, setValues] = useState(e.values);
   const [isAdding, setIsAdding] = useState(false);
   const [newValue, setNewValue] = useState("");
@@ -483,14 +487,14 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
     setNewValue("");
     setIsAdding(false);
     const result = await updateSharedEnumAction(e.id, { values: updated });
-    if (result.error) { toast.error(result.error); setValues(e.values); }
+    if (result.error) { toast.error(result.error); setValues(e.values); } else { void invalidateDomainsTree(); }
   }
 
   async function removeValue(val: string) {
     const updated = values.filter((v) => v !== val);
     setValues(updated);
     const result = await updateSharedEnumAction(e.id, { values: updated });
-    if (result.error) { toast.error(result.error); setValues(e.values); }
+    if (result.error) { toast.error(result.error); setValues(e.values); } else { void invalidateDomainsTree(); }
   }
 
   return (
@@ -533,6 +537,7 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
 // ---------------------------------------------------------------------------
 
 function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string) => void }) {
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [members, setMembers] = useState(u.memberTypes);
   const [isAdding, setIsAdding] = useState(false);
   const [newMember, setNewMember] = useState("");
@@ -545,14 +550,14 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
     setNewMember("");
     setIsAdding(false);
     const result = await updateUnionTypeAction(u.id, { memberTypes: updated });
-    if (result.error) { toast.error(result.error); setMembers(u.memberTypes); }
+    if (result.error) { toast.error(result.error); setMembers(u.memberTypes); } else { void invalidateDomainsTree(); }
   }
 
   async function removeMember(val: string) {
     const updated = members.filter((m) => m !== val);
     setMembers(updated);
     const result = await updateUnionTypeAction(u.id, { memberTypes: updated });
-    if (result.error) { toast.error(result.error); setMembers(u.memberTypes); }
+    if (result.error) { toast.error(result.error); setMembers(u.memberTypes); } else { void invalidateDomainsTree(); }
   }
 
   return (

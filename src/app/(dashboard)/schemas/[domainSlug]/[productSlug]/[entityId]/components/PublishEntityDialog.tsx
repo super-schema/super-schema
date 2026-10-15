@@ -54,6 +54,22 @@ export function PublishEntityForm({
         </div>
       )}
 
+      {preview.warnings.length > 0 && (
+        <div
+          data-testid="publish-warnings"
+          className="rounded-lg border border-warning/30 bg-warning/5 p-space-3"
+        >
+          <p className="flex items-center gap-1.5 text-body-small font-medium text-warning">
+            <AlertTriangle className="size-4" aria-hidden="true" /> Warnings
+          </p>
+          <ul className="mt-space-1 list-disc pl-5 text-caption text-foreground">
+            {preview.warnings.map((w, i) => (
+              <li key={`${w.kind}-${i}`}>{w.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {preview.isFirstPublish ? (
         <p className="text-body-small text-foreground">
           First publish of <span className="font-mono">{entityName}</span>. It becomes{" "}

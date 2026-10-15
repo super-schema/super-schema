@@ -39,6 +39,8 @@ function renderWithQueryClient(ui: React.ReactElement) {
 
 const EMPTY_DELETION_IMPACT = {
   entities: 0,
+  products: 0,
+  productLevelAssets: 0,
   modelDefinitions: 0,
   decoratorDefinitions: 0,
   sharedEnums: 0,
@@ -120,6 +122,44 @@ describe("DomainGrid", () => {
       expect(deleteDomainActionMock).toHaveBeenCalledWith("domain-1");
     });
     expect(refreshMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns that product-level Data Types and APIs are deleted with the domain", () => {
+    renderWithQueryClient(
+      <DomainGrid
+        canDeleteDomains
+        domains={[
+          {
+            id: "domain-1",
+            name: "Orders",
+            slug: "orders",
+            description: "",
+            isSystem: false,
+            entityCount: 0,
+            deletionImpact: {
+              ...EMPTY_DELETION_IMPACT,
+              products: 2,
+              productLevelAssets: 3,
+              sharedEnums: 2,
+              services: 1,
+            },
+            createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          },
+        ]}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Delete domain Orders/i }));
+
+    expect(screen.getByText("2 products")).toBeDefined();
+    expect(
+      screen.getByText(
+        "Includes 3 product-level Data Types and APIs, deleted together with their products."
+      )
+    ).toBeDefined();
+    expect(
+      screen.getByText(/its products, and every asset listed below/i)
+    ).toBeDefined();
   });
 
   it("does not show delete controls for system domains", () => {

@@ -319,11 +319,13 @@ function ExplorerSidebar({
 
   function renderDomain(domain: ExplorerDomain) {
     const base = assetHref({ kind: "domain", domainSlug: domain.slug });
-    const addHref = assetHref({
-      kind: "newEntity",
-      domainSlug: domain.slug,
-      productSlug: domain.products[0]?.slug ?? "default",
-    });
+    // Entities live in products: "+" creates one in the first product. A domain with no
+    // products has nowhere to put it, so "+" opens the domain's Products tab (its default tab).
+    const firstProduct = domain.products[0];
+    const addHref = firstProduct
+      ? assetHref({ kind: "newEntity", domainSlug: domain.slug, productSlug: firstProduct.slug })
+      : base;
+    const addTitle = firstProduct ? "New Entity" : "Create a product first";
     const dataTypesHref = assetHref({ kind: "dataTypes", domainSlug: domain.slug, productSlug: null });
     const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: null });
     const key = domainKey(domain.id);
@@ -339,7 +341,7 @@ function ExplorerSidebar({
           icon={Folder}
           expandedIcon={FolderOpen}
           label={domain.name}
-          addTitle="New Entity"
+          addTitle={addTitle}
           nodeKey={key}
           href={base}
           addHref={addHref}

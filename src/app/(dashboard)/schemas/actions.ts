@@ -104,6 +104,7 @@ export async function deleteDomainAction(domainId: string) {
         _count: {
           select: {
             entities: true,
+            products: true,
             modelDefinitions: true,
             decoratorDefinitions: true,
             sharedEnums: true,
@@ -125,10 +126,15 @@ export async function deleteDomainAction(domainId: string) {
       return { error: "System domains cannot be deleted" };
     }
 
+    // Entities (domain- or product-level) block the delete. Everything else — the
+    // domain's products and every domain- AND product-level Data Type / API
+    // (productId FKs cascade too) — is deleted with it; the confirmation dialog
+    // lists those counts (DomainDeletionImpact) before the admin confirms.
+
     if (domain._count.entities > 0) {
       const isSingleEntity = domain._count.entities === 1;
       return {
-        error: `Cannot delete - ${domain._count.entities} ${isSingleEntity ? "entity exists" : "entities exist"} in this domain. Move or delete ${isSingleEntity ? "it" : "them"} first.`,
+        error: `Cannot delete - ${domain._count.entities} ${isSingleEntity ? "entity exists" : "entities exist"} in this domain or its products. Move or delete ${isSingleEntity ? "it" : "them"} first.`,
       };
     }
 
