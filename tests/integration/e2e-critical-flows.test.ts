@@ -13,9 +13,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock: Prisma client
 // ---------------------------------------------------------------------------
 
-const { mockPrisma } = vi.hoisted(() => {
+const { mockPrisma } = await vi.hoisted(async () => {
+  const { emptyRegistryDelegates } = await import("../helpers/registry-mocks");
   return {
     mockPrisma: {
+      // Name-registry finders for every kind (real registry runs against this mock; no rows = no conflicts).
+      // Spread first: the explicit `entity` mock below overrides the registry's entity delegate.
+      ...emptyRegistryDelegates(),
       user: {
         findUnique: vi.fn().mockResolvedValue({ id: "user-1" }),
       },
@@ -34,11 +38,6 @@ const { mockPrisma } = vi.hoisted(() => {
         }),
         create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
-      // Name-registry finders (real registry runs against this mock; no rows = no conflicts)
-      sharedEnum: { findMany: vi.fn().mockResolvedValue([]) },
-      customScalar: { findMany: vi.fn().mockResolvedValue([]) },
-      unionType: { findMany: vi.fn().mockResolvedValue([]) },
-      serviceDefinition: { findMany: vi.fn().mockResolvedValue([]) },
       $executeRaw: vi.fn(),
       $executeRawUnsafe: vi.fn(),
       $transaction: vi.fn(),

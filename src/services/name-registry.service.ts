@@ -4,7 +4,9 @@ import { levelOf, levelLabel } from "@/lib/levels";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export type RegistryKind = "entity" | "sharedEnum" | "customScalar" | "unionType" | "service";
+export type RegistryKind =
+  | "entity" | "sharedEnum" | "customScalar" | "unionType" | "service"
+  | "trait" | "message" | "channel" | "eventSpec";
 
 export interface NamedAsset {
   kind: RegistryKind;
@@ -18,12 +20,35 @@ export interface NamedAsset {
 type Placement = Pick<NamedAsset, "tenantId" | "domainId" | "productId">;
 type Candidate = Omit<NamedAsset, "id" | "kind"> & { exclude?: { kind: RegistryKind; id: string } };
 
+/**
+ * Prisma delegate name behind each RegistryKind. Hand-built fake databases in tests must provide a
+ * `findMany` for every value here (see `emptyRegistryDelegates` in tests/helpers/registry-mocks.ts);
+ * both `Record<RegistryKind, …>` constraints make adding a kind a compile error until it is listed.
+ */
+export const REGISTRY_DELEGATES = {
+  entity: "entity",
+  sharedEnum: "sharedEnum",
+  customScalar: "customScalar",
+  unionType: "unionType",
+  service: "serviceDefinition",
+  trait: "trait",
+  message: "message",
+  channel: "channel",
+  eventSpec: "eventSpec",
+} as const satisfies Record<RegistryKind, keyof Db>;
+
+export type RegistryDelegateKey = (typeof REGISTRY_DELEGATES)[RegistryKind];
+
 const KIND_LABEL: Record<RegistryKind, string> = {
   entity: "Entity",
   sharedEnum: "Enum",
   customScalar: "Scalar",
   unionType: "Union",
   service: "API",
+  trait: "Trait",
+  message: "Message",
+  channel: "Channel",
+  eventSpec: "Event Spec",
 };
 
 /** True when one placement is an ancestor-or-self of the other (spec §4.3). */
@@ -60,6 +85,10 @@ const FINDERS: Record<RegistryKind, (db: Db, where: RegistryWhere) => Promise<Na
   customScalar: (db, where) => db.customScalar.findMany({ where, select: NAMED_SELECT }),
   unionType: (db, where) => db.unionType.findMany({ where, select: NAMED_SELECT }),
   service: (db, where) => db.serviceDefinition.findMany({ where, select: NAMED_SELECT }),
+  trait: (db, where) => db.trait.findMany({ where, select: NAMED_SELECT }),
+  message: (db, where) => db.message.findMany({ where, select: NAMED_SELECT }),
+  channel: (db, where) => db.channel.findMany({ where, select: NAMED_SELECT }),
+  eventSpec: (db, where) => db.eventSpec.findMany({ where, select: NAMED_SELECT }),
 };
 
 /** Run every kind's finder and tag each row with its kind. */

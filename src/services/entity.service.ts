@@ -18,6 +18,7 @@ import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioni
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
+import { explainEntityDeleteFailure, isForeignKeyViolation } from "@/services/events/entity-pin-usage";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -292,17 +293,26 @@ export async function deleteEntity(
     });
   }
 
-  await withAudit({
-    action: "DELETE",
-    entityType: "Entity",
-    entityId: id,
-    userId: ctx.userId,
-    beforeState: existing as unknown as object,
-    fn: async () => {
-      await prisma.entity.delete({ where: { id } });
-      return null;
-    },
-  });
+  try {
+    await withAudit({
+      action: "DELETE",
+      entityType: "Entity",
+      entityId: id,
+      userId: ctx.userId,
+      beforeState: existing as unknown as object,
+      fn: async () => {
+        await prisma.entity.delete({ where: { id } });
+        return null;
+      },
+    });
+  } catch (e: unknown) {
+    // A message / trait pin (NO ACTION FK, D3) keeps the entity alive: say which ones instead of a raw FK error.
+    if (isForeignKeyViolation(e)) {
+      const inUse = await explainEntityDeleteFailure(prisma, existing);
+      if (inUse) return err(inUse);
+    }
+    throw e;
+  }
 
   return ok(undefined as unknown as void);
 }

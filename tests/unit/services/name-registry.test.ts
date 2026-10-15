@@ -6,6 +6,7 @@ import {
   assertNameAvailable,
   type NamedAsset,
 } from "@/services/name-registry.service";
+import { emptyRegistryDelegates } from "../../helpers/registry-mocks";
 
 const T = "t1";
 const asset = (over: Partial<NamedAsset>): NamedAsset => ({
@@ -89,16 +90,8 @@ describe("groupLineConflicts", () => {
 
 describe("assertNameAvailable", () => {
   const candidate = { name: "Order", tenantId: T, domainId: "d1", productId: null };
-  const emptyFinder = () => Promise.resolve([]);
   const fakeDb = (over: Record<string, unknown> = {}) =>
-    ({
-      entity: { findMany: emptyFinder },
-      sharedEnum: { findMany: emptyFinder },
-      customScalar: { findMany: emptyFinder },
-      unionType: { findMany: emptyFinder },
-      serviceDefinition: { findMany: emptyFinder },
-      ...over,
-    }) as never;
+    ({ ...emptyRegistryDelegates(), ...over }) as never;
 
   it("returns ok when nothing in the line uses the name", async () => {
     const res = await assertNameAvailable(fakeDb(), candidate);
