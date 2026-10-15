@@ -1,14 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { assertNameAvailable } from "@/services/name-registry.service";
+import { emptyRegistryDelegates } from "../../helpers/registry-mocks";
 
-const empty = { findMany: vi.fn(async () => []) };
-function fakeDb(rows: Partial<Record<string, Array<Record<string, unknown>>>>) {
-  const delegate = (key: string) => ({ findMany: vi.fn(async () => rows[key] ?? []) });
-  return {
-    entity: empty, sharedEnum: empty, customScalar: empty, unionType: empty, serviceDefinition: empty,
-    trait: delegate("trait"), message: delegate("message"), channel: delegate("channel"), eventSpec: delegate("eventSpec"),
-  };
-}
+const fakeDb = (rows: Parameters<typeof emptyRegistryDelegates>[0]) => emptyRegistryDelegates(rows);
 
 describe("name registry — events kinds", () => {
   it("treats channels, messages, traits and event specs as line-unique names", async () => {

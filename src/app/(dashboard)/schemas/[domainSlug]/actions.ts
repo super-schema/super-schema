@@ -9,6 +9,7 @@ import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
+import { explainEntityDeleteFailure, isForeignKeyViolation } from "@/services/events/entity-pin-usage";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
@@ -328,6 +329,12 @@ export async function deleteEntityAction(entityId: string) {
   } catch (e: unknown) {
     if (e instanceof AuditUserMissingError) {
       return { error: "Your session is stale. Sign out and sign in again, then retry." };
+    }
+    // A message / trait pin (NO ACTION FK) keeps the entity alive: name the referencing records.
+    if (isForeignKeyViolation(e)) {
+      const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { id: true, name: true } });
+      const inUse = entity ? await explainEntityDeleteFailure(prisma, entity) : null;
+      if (inUse) return { error: inUse.message };
     }
     return { error: e instanceof Error ? e.message : "Failed to delete entity" };
   }

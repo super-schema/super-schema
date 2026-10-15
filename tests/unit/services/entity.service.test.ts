@@ -35,6 +35,8 @@ vi.mock("@/lib/db", () => ({
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
     },
+    message: { findMany: vi.fn().mockResolvedValue([]) },
+    trait: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -409,6 +411,45 @@ describe("Entity Service", () => {
       if (!result.success) {
         expect(result.error.code).toBe("NOT_FOUND");
       }
+    });
+
+    describe("when a foreign key blocks the delete (P2003)", () => {
+      const fkError = () => Object.assign(new Error("Foreign key constraint violated"), { code: "P2003" });
+      const existing = { id: "ent-1", name: "Order" };
+
+      it("returns IN_USE naming the messages and traits that pin the entity", async () => {
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+        vi.mocked(prisma.entity.delete).mockRejectedValueOnce(fkError());
+        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
+        vi.mocked(prisma.trait.findMany).mockResolvedValueOnce([{ id: "t1", name: "CloudEvents" }] as never);
+
+        const result = await deleteEntity("ent-1", mockCtx);
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            code: "IN_USE",
+            message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated" and Trait "CloudEvents".',
+            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [{ id: "t1", name: "CloudEvents" }] },
+          },
+        });
+        expect(prisma.auditLog.create).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: "DELETE" }) }));
+      });
+
+      it("rethrows the original error when no message or trait explains it", async () => {
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+        const error = fkError();
+        vi.mocked(prisma.entity.delete).mockRejectedValueOnce(error);
+        await expect(deleteEntity("ent-1", mockCtx)).rejects.toBe(error);
+      });
+
+      it("rethrows any other database error without looking for pins", async () => {
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+        vi.mocked(prisma.message.findMany).mockClear();
+        const error = new Error("connection lost");
+        vi.mocked(prisma.entity.delete).mockRejectedValueOnce(error);
+        await expect(deleteEntity("ent-1", mockCtx)).rejects.toBe(error);
+        expect(prisma.message.findMany).not.toHaveBeenCalled();
+      });
     });
   });
 });

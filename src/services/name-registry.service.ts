@@ -20,6 +20,25 @@ export interface NamedAsset {
 type Placement = Pick<NamedAsset, "tenantId" | "domainId" | "productId">;
 type Candidate = Omit<NamedAsset, "id" | "kind"> & { exclude?: { kind: RegistryKind; id: string } };
 
+/**
+ * Prisma delegate name behind each RegistryKind. Hand-built fake databases in tests must provide a
+ * `findMany` for every value here (see `emptyRegistryDelegates` in tests/helpers/registry-mocks.ts);
+ * both `Record<RegistryKind, …>` constraints make adding a kind a compile error until it is listed.
+ */
+export const REGISTRY_DELEGATES = {
+  entity: "entity",
+  sharedEnum: "sharedEnum",
+  customScalar: "customScalar",
+  unionType: "unionType",
+  service: "serviceDefinition",
+  trait: "trait",
+  message: "message",
+  channel: "channel",
+  eventSpec: "eventSpec",
+} as const satisfies Record<RegistryKind, keyof Db>;
+
+export type RegistryDelegateKey = (typeof REGISTRY_DELEGATES)[RegistryKind];
+
 const KIND_LABEL: Record<RegistryKind, string> = {
   entity: "Entity",
   sharedEnum: "Enum",
