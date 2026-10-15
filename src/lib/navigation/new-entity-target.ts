@@ -1,4 +1,4 @@
-import { assetHref, ENTERPRISE_ROUTE_SEGMENT } from "@/lib/navigation/asset-href";
+import { assetHref, ENTERPRISE_ROUTE_SEGMENT, TRAITS_SEGMENT } from "@/lib/navigation/asset-href";
 
 /**
  * The new-entity page implied by the current `/schemas/...` path, or `null`
@@ -16,6 +16,7 @@ export function newEntityHrefForPath(pathname: string): string | null {
   if (first === ENTERPRISE_ROUTE_SEGMENT) {
     return assetHref({ kind: "newEntity", domainSlug: null, productSlug: null });
   }
-  if (!second) return null;
+  // `/schemas/<domain>/traits/<id>` is a domain-level trait page, not a product named "traits" (that slug is reserved).
+  if (!second || second === TRAITS_SEGMENT) return null;
   return assetHref({ kind: "newEntity", domainSlug: first, productSlug: second });
 }

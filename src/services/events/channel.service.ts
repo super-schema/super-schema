@@ -91,7 +91,8 @@ async function loadOwned(ctx: ServiceContext, id: unknown, owner: unknown): Prom
     if (!scope.success) return scope;
     const row = await ctx.prisma.channel.findUnique({ where: { id: channelId.data }, select: CHANNEL_SELECT });
     if (!row) return err({ code: "NOT_FOUND", message: `Channel "${channelId.data}" not found` });
-    const owned = assertOwnedBy(row, scope.data, `Channel "${row.name}"`);
+    // Labelled by the caller's own id, never `row.name`: the row may belong to another product or tenant.
+    const owned = assertOwnedBy(row, scope.data, `Channel "${channelId.data}"`);
     if (!owned.success) return owned;
     return ok({ row, scope: scope.data });
   });

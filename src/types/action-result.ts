@@ -14,11 +14,16 @@ export const GENERIC_ACTION_ERROR = "Something went wrong. Try again; if it keep
 /** Failure codes whose service message may carry raw database / driver text: never shown to the user. */
 const OPAQUE_ERROR_CODES: readonly string[] = ["DB_ERROR", "INTERNAL_ERROR"];
 
+/** True for failure codes whose message must never reach the user (see `OPAQUE_ERROR_CODES`). */
+export function isOpaqueErrorCode(code: string | undefined): boolean {
+  return code !== undefined && OPAQUE_ERROR_CODES.includes(code);
+}
+
 /**
  * The one line a form shows for a failed action result: the service's message plus its suggested fix,
  * except for `DB_ERROR` / `INTERNAL_ERROR`, which become the generic message (no fix either).
  */
 export function actionErrorText(failure: { error: string; code?: string; suggestedFix?: string }): string {
-  if (failure.code && OPAQUE_ERROR_CODES.includes(failure.code)) return GENERIC_ACTION_ERROR;
+  if (isOpaqueErrorCode(failure.code)) return GENERIC_ACTION_ERROR;
   return failure.suggestedFix ? `${failure.error} ${failure.suggestedFix}` : failure.error;
 }

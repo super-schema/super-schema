@@ -204,3 +204,33 @@ describe("trait service never throws on untrusted input", () => {
     expect(code(await deleteTrait("t1", DOMAIN, tenantTrait))).toBe("FORBIDDEN");
   });
 });
+
+describe("ownership failures never leak the foreign record (the Task 15 detail pages make these actions reachable)", () => {
+  const SECRET = "secret-foreign-name";
+  const hygiene = <T,>(r: Result<T>) => {
+    expect(code(r)).toBe("FORBIDDEN");
+    expect(JSON.stringify(r)).not.toContain(SECRET);
+    expect(r.success ? undefined : r.error.details).toBeUndefined();
+  };
+
+  it("channel writes from another product: FORBIDDEN, no details, labelled by the caller's own channel id", async () => {
+    const foreign = fakeCtx({
+      product: { findUnique: vi.fn().mockResolvedValue({ id: "p2", domainId: "d1", domain: { tenantId: "tn" } }) },
+      channel: { findUnique: vi.fn().mockResolvedValue({ ...channelRow, name: SECRET }) },
+    });
+    const other = { level: "PRODUCT", productId: "p2" } as const;
+    hygiene(await updateChannel("c1", CHANNEL, other, foreign));
+    hygiene(await setChannelMessages("c1", [], other, foreign));
+    const deleted = await deleteChannel("c1", other, foreign);
+    hygiene(deleted);
+    expect(message(deleted)).toContain('Channel "c1"');
+  });
+
+  it("trait writes from another level: FORBIDDEN, no details, labelled by the caller's own trait id", async () => {
+    const tenantTrait = fakeCtx({ domain, trait: { findUnique: vi.fn().mockResolvedValue({ ...traitRow, name: SECRET, domainId: null }) } });
+    hygiene(await updateTrait("t1", { name: "CE" }, DOMAIN, tenantTrait));
+    const deleted = await deleteTrait("t1", DOMAIN, tenantTrait);
+    hygiene(deleted);
+    expect(message(deleted)).toContain('Trait "t1"');
+  });
+});

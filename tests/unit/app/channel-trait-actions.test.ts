@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -130,6 +130,50 @@ describe("trait actions", () => {
     expect(result).toEqual({ success: false, error: "Scope target must be an object", code: "VALIDATION_ERROR" });
     expect(h.createTrait).toHaveBeenCalledWith(null, { name: "x", kind: "MESSAGE" }, CTX);
     expect(h.getActiveTenantId).not.toHaveBeenCalled();
+    expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("database error hygiene (the detail-page forms render whatever these return)", () => {
+  const GENERIC = "Something went wrong. Try again; if it keeps happening, contact an administrator.";
+  const RAW = 'insert or update on table "channel_messages" violates foreign key constraint "channel_messages_message_id_fkey"';
+  let consoleError: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => consoleError.mockRestore());
+
+  it("turns a DB_ERROR or a thrown error from any channel / trait action into a generic message, logged server-side, without revalidating", async () => {
+    const dbFailure = { success: false, error: { code: "DB_ERROR", message: RAW } };
+    for (const fn of [h.createChannel, h.updateChannel, h.setChannelMessages, h.deleteChannel, h.createTrait, h.updateTrait, h.deleteTrait]) fn.mockResolvedValue(dbFailure);
+    const generic = { success: false, error: GENERIC, code: "DB_ERROR" };
+    const results = [
+      await createChannelAction("p1", INPUT), await updateChannelAction("c1", "p1", INPUT), await setChannelMessagesAction("c1", "p1", ["m1"]),
+      await deleteChannelAction("c1", "p1"),
+      await createTraitAction({ level: "DOMAIN", domainId: "d1" }, { name: "x", kind: "OPERATION" }),
+      await updateTraitAction("t1", { level: "DOMAIN", domainId: "d1" }, { name: "x" }), await deleteTraitAction("t1", { level: "DOMAIN", domainId: "d1" }),
+    ];
+    for (const r of results) expect(r).toEqual(generic);
+    expect(JSON.stringify(results)).not.toContain("channel_messages");
+    expect(consoleError).toHaveBeenCalledWith("[updateChannelAction] database error", RAW);
+    expect(consoleError).toHaveBeenCalledWith("[deleteTraitAction] database error", RAW);
+
+    const thrown = new Error("connect ECONNREFUSED 10.0.0.5:5432");
+    h.updateChannel.mockRejectedValueOnce(thrown);
+    expect(await updateChannelAction("c1", "p1", INPUT)).toEqual({ success: false, error: GENERIC, code: "INTERNAL_ERROR" });
+    expect(consoleError).toHaveBeenCalledWith("[updateChannelAction] unexpected error", thrown);
+    h.getActiveTenantId.mockRejectedValueOnce(thrown);
+    expect(await updateTraitAction("t1", { level: "TENANT", tenantId: "t" }, { name: "x" })).toEqual({ success: false, error: GENERIC, code: "INTERNAL_ERROR" });
+    expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("passes ownership, conflict and validation failures through untouched (suggested fix and all)", async () => {
+    for (const code of ["FORBIDDEN", "NOT_FOUND", "CONFLICT", "VALIDATION_ERROR"]) {
+      h.updateChannel.mockResolvedValueOnce({ success: false, error: { code, message: code, suggestedFix: "fix it" } });
+      expect(await updateChannelAction("c1", "p1", INPUT)).toEqual({ success: false, error: code, code, suggestedFix: "fix it" });
+      h.deleteTrait.mockResolvedValueOnce({ success: false, error: { code, message: code, suggestedFix: "fix it" } });
+      expect(await deleteTraitAction("t1", { level: "DOMAIN", domainId: "d1" })).toEqual({ success: false, error: code, code, suggestedFix: "fix it" });
+    }
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 });
