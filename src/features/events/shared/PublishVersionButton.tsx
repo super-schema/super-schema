@@ -12,6 +12,10 @@ import {
 import type { PublishInput } from "@/lib/entity-versioning/types";
 import type { ActionResult } from "@/types/action-result";
 
+function errorMessage(e: unknown): string {
+  return e instanceof Error && e.message ? e.message : "Unexpected error";
+}
+
 export interface PublishVersionButtonProps {
   subjectName: string;
   description: string;
@@ -38,24 +42,35 @@ export function PublishVersionButton({
     setPreview(null);
     setLoadError(null);
     setPublishError(null);
-    const r = await loadPreview();
-    if (r.success) setPreview(r.data);
-    else setLoadError(r.error);
+    try {
+      const r = await loadPreview();
+      if (r.success) setPreview(r.data);
+      else setLoadError(r.error);
+    } catch (e) {
+      // Without this the dialog would spin on "Checking changes…" forever.
+      setLoadError(`Could not load the publish preview: ${errorMessage(e)}`);
+    }
   }
 
   async function confirm(input: PublishInput) {
     setPublishing(true);
     setPublishError(null);
-    const r = await publish(input);
-    setPublishing(false);
-    if (!r.success) {
-      setPublishError(r.error);
-      return;
+    try {
+      const r = await publish(input);
+      if (!r.success) {
+        setPublishError(r.error);
+        return;
+      }
+      setOpen(false);
+      toast.success(`Published ${subjectName} v${r.data.label}`);
+      onPublished?.(r.data.label);
+      router.refresh();
+    } catch (e) {
+      setPublishError(`Publishing failed: ${errorMessage(e)}`);
+    } finally {
+      // The dialog refuses to close while `isPublishing`; a thrown action must not leave it stuck.
+      setPublishing(false);
     }
-    setOpen(false);
-    toast.success(`Published ${subjectName} v${r.data.label}`);
-    onPublished?.(r.data.label);
-    router.refresh();
   }
 
   return (

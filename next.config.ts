@@ -2,9 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  // D14: the AsyncAPI preview iframe fallback reads these files at runtime (standalone output must ship them).
+  // D14: the AsyncAPI preview iframe reads these files at runtime (standalone output must ship them).
+  // The key is a glob over the route path. Verified with a standalone build: under Turbopack the literal
+  // dynamic-segment key "/api/asyncapi-preview/[asset]" matches nothing, so neither file ships.
   outputFileTracingIncludes: {
-    "/api/asyncapi-preview/[asset]": [
+    "/api/asyncapi-preview/*": [
       "./node_modules/@asyncapi/react-component/browser/standalone/index.js",
       "./node_modules/@asyncapi/react-component/styles/default.min.css",
     ],

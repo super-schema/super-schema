@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { listEntityVersionsAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/version-actions";
+import { listPinnableVersionsAction } from "../pin-actions";
 import type { EntityPin } from "@/lib/events/types";
 
 export interface EntityOption {
@@ -17,10 +17,14 @@ export interface VersionOption {
   label: string;
 }
 
+/** Tenant-scoped server loader; an error result throws so the picker shows it instead of an empty list. */
 async function defaultLoadVersions(entityId: string): Promise<VersionOption[]> {
-  const r = await listEntityVersionsAction(entityId);
-  return "versions" in r ? r.versions.map((v) => ({ id: v.id, label: v.label })) : [];
+  const r = await listPinnableVersionsAction(entityId);
+  if (!r.success) throw new Error(r.error);
+  return r.data;
 }
+
+type LoadedVersions = { entityId: string; options: VersionOption[] } | { entityId: string; error: string };
 
 const selectClass = "rounded-md border border-border bg-background px-space-2 py-1 text-body-small";
 
@@ -43,14 +47,19 @@ export function EntityPinPicker({
   disabled?: boolean;
 }) {
   const entityId = value?.entityId ?? null;
-  const [loaded, setLoaded] = useState<{ entityId: string; options: VersionOption[] } | null>(null);
+  const [loaded, setLoaded] = useState<LoadedVersions | null>(null);
 
   useEffect(() => {
     if (!entityId) return;
     let cancelled = false;
-    void loadVersions(entityId).then((options) => {
-      if (!cancelled) setLoaded({ entityId, options });
-    });
+    Promise.resolve()
+      .then(() => loadVersions(entityId))
+      .then((options) => {
+        if (!cancelled) setLoaded({ entityId, options });
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setLoaded({ entityId, error: e instanceof Error && e.message ? e.message : "Unexpected error" });
+      });
     return () => {
       cancelled = true;
     };
@@ -63,7 +72,9 @@ export function EntityPinPicker({
   }, [entities]);
 
   const entity = entities.find((e) => e.id === entityId) ?? null;
-  const options = loaded && loaded.entityId === entityId ? loaded.options : [];
+  const current = loaded && loaded.entityId === entityId ? loaded : null;
+  const options = current && "options" in current ? current.options : [];
+  const loadError = current && "error" in current ? current.error : null;
   const pinned = value?.entityVersionId ?? null;
   const behind = pinned !== null && entity?.latestVersionId && pinned !== entity.latestVersionId;
 
@@ -106,6 +117,11 @@ export function EntityPinPicker({
           </select>
         )}
       </div>
+      {loadError && (
+        <p role="alert" className="text-caption text-destructive" data-testid={`${id}-versions-error`}>
+          Could not load published versions: {loadError}
+        </p>
+      )}
       {behind && entity?.latestVersionLabel && (
         <Badge variant="secondary" data-testid={`${id}-newer`}>Newer version available (v{entity.latestVersionLabel})</Badge>
       )}
