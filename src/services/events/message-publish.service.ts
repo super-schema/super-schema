@@ -1,8 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
+import { resolveScope } from "@/lib/asset-scope";
+import { isBumpKind, type PublishInput } from "@/lib/entity-versioning/types";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
-import type { PublishInput } from "@/lib/entity-versioning/types";
 import { readMessageSpec, validateMessageSpec } from "@/lib/events/catalog-specs";
+import { assertOwnedBy } from "@/lib/events/ownership";
 import {
   analyzeVersionedPublish, messagePublishInput, planVersionedPublish,
   type EventPublishAnalysis, type MessagePublishState, type PinState,
@@ -11,6 +13,7 @@ import type { EventVersionSummary, MessageResolvedSpec, PinRole } from "@/lib/ev
 import { assertNameAvailable } from "@/services/name-registry.service";
 import { auditedWrite } from "@/services/events/audited";
 import { pinEdges, replaceReferences } from "@/services/events/schema-references";
+import { guardRead, requireId } from "@/services/events/service-guards";
 import { toEventVersionSummary, VERSION_SUMMARY_SELECT } from "@/services/events/version-summary";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -92,10 +95,32 @@ export async function loadMessagePublishState(db: Db, messageId: string): Promis
   });
 }
 
-export async function previewMessagePublish(messageId: string, ctx: ServiceContext): Promise<Result<EventPublishAnalysis>> {
-  const state = await loadMessagePublishState(ctx.prisma, messageId);
-  if (!state.success) return state;
-  return ok(analyzeVersionedPublish(messagePublishInput(state.data).input));
+/**
+ * Spec §10 ownership, checked ONCE per call before anything is read or written (a message's level columns never change):
+ * the page's product must own the message — the same scope + `assertOwnedBy` checks as `updateMessage` / `deleteMessage`
+ * (unknown message or product → NOT_FOUND, another product's or tenant's message → FORBIDDEN). Neither error carries
+ * `details`, and the label is the caller's own id, so a foreign message's name, pins, traits or publishers never leak.
+ */
+async function assertOwnedMessage(db: PrismaClient, messageId: string, productId: string): Promise<Result<void>> {
+  const messageIdOk = requireId(messageId, "messageId");
+  if (!messageIdOk.success) return messageIdOk;
+  const productIdOk = requireId(productId, "productId");
+  if (!productIdOk.success) return productIdOk;
+  const scope = await resolveScope(db, { level: "PRODUCT", productId: productIdOk.data });
+  if (!scope.success) return scope;
+  const row = await db.message.findUnique({ where: { id: messageId }, select: { tenantId: true, domainId: true, productId: true } });
+  if (!row) return notFound(messageId);
+  return assertOwnedBy(row, scope.data, `Message "${messageId}"`);
+}
+
+export async function previewMessagePublish(messageId: string, productId: string, ctx: ServiceContext): Promise<Result<EventPublishAnalysis>> {
+  return guardRead(async () => {
+    const owned = await assertOwnedMessage(ctx.prisma, messageId, productId);
+    if (!owned.success) return owned;
+    const state = await loadMessagePublishState(ctx.prisma, messageId);
+    if (!state.success) return state;
+    return ok(analyzeVersionedPublish(messagePublishInput(state.data).input));
+  });
 }
 
 type PlanInputs = ReturnType<typeof messagePublishInput>;
@@ -115,17 +140,24 @@ async function readPlanInputs(db: Db, messageId: string): Promise<Result<PlanInp
  * message row through the FK and this transaction updates `messages`, so it serializes against a delete (`FOR UPDATE`) on its
  * own — whoever locks the row first wins, and a delete that wins makes the re-read below return NOT_FOUND.
  */
-export async function publishMessage(messageId: string, input: PublishInput, ctx: ServiceContext): Promise<Result<EventVersionSummary>> {
-  const changeSummary = input.changeSummary?.trim() ? input.changeSummary.trim() : null;
-
-  let planned: Result<PlanInputs>;
-  try {
-    planned = await readPlanInputs(ctx.prisma, messageId);
-  } catch (e: unknown) {
-    return err({ code: "DB_ERROR", message: e instanceof Error ? e.message : "Publish failed" });
+export async function publishMessage(messageId: string, productId: string, input: PublishInput, ctx: ServiceContext): Promise<Result<EventVersionSummary>> {
+  // Untrusted action input: null / non-object → no options; a bump or summary of the wrong type is rejected, never coerced.
+  const opts: Partial<PublishInput> = typeof input === "object" && input !== null ? input : {};
+  if (opts.bump !== undefined && !isBumpKind(opts.bump)) return err({ code: "VALIDATION_ERROR", message: "bump must be MAJOR or MINOR" });
+  if (opts.changeSummary !== undefined && opts.changeSummary !== null && typeof opts.changeSummary !== "string") {
+    return err({ code: "VALIDATION_ERROR", message: "Change summary must be a string" });
   }
+  const bump = opts.bump;
+  const changeSummary = opts.changeSummary?.trim() ? opts.changeSummary.trim() : null;
+
+  // Phase 1: ownership (once — scope never changes) + the unlocked plan. Nothing is written or audited on any failure here.
+  const planned = await guardRead(async () => {
+    const owned = await assertOwnedMessage(ctx.prisma, messageId, productId);
+    if (!owned.success) return owned;
+    return readPlanInputs(ctx.prisma, messageId);
+  });
   if (!planned.success) return planned;
-  const prePlan = planVersionedPublish(planned.data.input, input.bump);
+  const prePlan = planVersionedPublish(planned.data.input, bump);
   if (!prePlan.success) return prePlan;
   const plannedFrom = planned.data;
 
@@ -143,7 +175,7 @@ export async function publishMessage(messageId: string, input: PublishInput, ctx
             // Re-verify under the lock: spec, pins (incl. that the pinned entity versions still exist), latest version, blockers.
             if (!isDeepStrictEqual(current.data, plannedFrom)) return changedDuringPublish();
 
-            const plan = planVersionedPublish(current.data.input, input.bump);
+            const plan = planVersionedPublish(current.data.input, bump);
             if (!plan.success) return plan;
             const resolved = current.data.resolved;
             if (!resolved) return err({ code: "PUBLISH_BLOCKED", message: "The message pins could not be resolved" });
@@ -184,13 +216,19 @@ export async function publishMessage(messageId: string, input: PublishInput, ctx
   });
 }
 
-export async function listMessageVersions(messageId: string, ctx: ServiceContext): Promise<Result<EventVersionSummary[]>> {
-  const exists = await ctx.prisma.message.findUnique({ where: { id: messageId }, select: { id: true } });
-  if (!exists) return notFound(messageId);
-  const rows = await ctx.prisma.messageVersion.findMany({ where: { messageId }, orderBy: { sequence: "desc" }, select: VERSION_SUMMARY_SELECT });
-  return ok(rows.map(toEventVersionSummary));
+export async function listMessageVersions(messageId: string, productId: string, ctx: ServiceContext): Promise<Result<EventVersionSummary[]>> {
+  return guardRead(async () => {
+    const owned = await assertOwnedMessage(ctx.prisma, messageId, productId);
+    if (!owned.success) return owned;
+    const rows = await ctx.prisma.messageVersion.findMany({ where: { messageId }, orderBy: { sequence: "desc" }, select: VERSION_SUMMARY_SELECT });
+    return ok(rows.map(toEventVersionSummary));
+  });
 }
 
+/**
+ * One frozen version by label. Unscoped by id on purpose: consumers in other products read published message versions
+ * read-only (spec §10), so callers that need tenant / product scoping (the message page loader) must apply it.
+ */
 export async function getMessageVersion(
   messageId: string,
   label: string,

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole
 vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
 
 import { AuditUserMissingError } from "@/lib/audit";
-import { getActionContext, NOT_AUTHENTICATED, runMutation, toActionResult } from "@/lib/action-context";
+import { GENERIC_ACTION_ERROR, getActionContext, NOT_AUTHENTICATED, runMutation, sanitizeActionError, toActionResult } from "@/lib/action-context";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -95,5 +95,39 @@ describe("runMutation", () => {
     }));
     expect(r).toEqual({ success: false, error: "taken", code: "NAME_CONFLICT", details: { conflict: 1 }, suggestedFix: "Pick another" });
     expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("sanitizeActionError", () => {
+  let consoleError: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => consoleError.mockRestore());
+
+  it("turns a DB_ERROR result into the generic message and logs the original server-side", async () => {
+    const raw = 'relation "message_versions" does not exist';
+    const r = await sanitizeActionError({ success: false, error: { code: "DB_ERROR", message: raw, details: { sql: "select 1" }, suggestedFix: "x" } }, "myAction");
+    expect(r).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+    expect(JSON.stringify(r)).not.toContain("message_versions");
+    expect(consoleError).toHaveBeenCalledWith("[myAction] database error", raw);
+  });
+
+  it("turns a rejected promise into a generic INTERNAL_ERROR and logs the thrown error", async () => {
+    const thrown = new Error("connect ECONNREFUSED 10.0.0.5:5432");
+    const r = await sanitizeActionError(Promise.reject(thrown), "myAction");
+    expect(r).toEqual({ success: false, error: { code: "INTERNAL_ERROR", message: GENERIC_ACTION_ERROR } });
+    expect(consoleError).toHaveBeenCalledWith("[myAction] unexpected error", thrown);
+  });
+
+  it("passes successes and every other failure through untouched, keeping details and suggestedFix", async () => {
+    const ok = { success: true as const, data: { id: "1" } };
+    expect(await sanitizeActionError(ok)).toBe(ok);
+    expect(await sanitizeActionError(Promise.resolve(ok))).toBe(ok);
+    for (const code of ["PUBLISH_BLOCKED", "BUMP_TOO_LOW", "INVALID_PLAN_INPUT", "CONFLICT", "NOT_FOUND", "FORBIDDEN", "VALIDATION_ERROR"]) {
+      const failure = { success: false as const, error: { code, message: `${code} text`, details: { blockers: [{ kind: "X" }] }, suggestedFix: "Do this" } };
+      expect(await sanitizeActionError(failure)).toBe(failure);
+    }
+    expect(consoleError).not.toHaveBeenCalled();
   });
 });

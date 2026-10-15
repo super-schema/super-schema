@@ -5,6 +5,7 @@ import type { ServiceContext } from "@/types/service-context";
 import { createMessage, updateMessage } from "@/services/events/message.service";
 import { createTrait } from "@/services/events/trait.service";
 import { getMessageVersion, listMessageVersions, previewMessagePublish, publishMessage } from "@/services/events/message-publish.service";
+import { createForeignTenant } from "./foreign-tenant";
 import { cleanupDomains, connectTestDb, createProductScope, testContext, unwrap } from "./helpers";
 
 let prisma: PrismaClient;
@@ -47,9 +48,9 @@ describe("message publish (spec §6.1, §10)", () => {
       await prisma.trait.delete({ where: { id: trait.id } });
 
       // Unpublished pin + deleted trait + invalid correlationId: every blocker is listed, nothing is written.
-      const blockedPreview = unwrap(await previewMessagePublish(message.id, ctx));
+      const blockedPreview = unwrap(await previewMessagePublish(message.id, sc.product.id, ctx));
       expect(blockedPreview.blockers.map((b) => b.kind)).toEqual(["UNPUBLISHED_PIN", "MISSING_TRAIT", "INVALID_SPEC"]);
-      const blocked = await publishMessage(message.id, {}, ctx);
+      const blocked = await publishMessage(message.id, sc.product.id, {}, ctx);
       expect(!blocked.success && blocked.error.code).toBe("PUBLISH_BLOCKED");
       const blockedDetails = !blocked.success ? (blocked.error.details as { blockers: Array<{ kind: string }> }) : { blockers: [] };
       expect(blockedDetails.blockers.map((b) => b.kind)).toEqual(["UNPUBLISHED_PIN", "MISSING_TRAIT", "INVALID_SPEC"]);
@@ -58,7 +59,7 @@ describe("message publish (spec §6.1, §10)", () => {
 
       const orderV1 = await insertEntityVersion(order.id, 1, 0, 1);
       unwrap(await updateMessage(message.id, { name: message.name, spec: { contentType: "avro/binary", traitIds: [] }, payload: { entityId: order.id } }, owner, ctx));
-      const v1 = unwrap(await publishMessage(message.id, { changeSummary: "first" }, ctx));
+      const v1 = unwrap(await publishMessage(message.id, sc.product.id, { changeSummary: "first" }, ctx));
       expect(v1).toMatchObject({ label: "1.0", changeKind: "INITIAL", sequence: 1, changeSummary: "first" });
       expect(await prisma.message.findUniqueOrThrow({ where: { id: message.id } })).toMatchObject({ latestVersionId: v1.id, hasUnpublishedChanges: false });
       const refs = await prisma.schemaReference.findMany({ where: { fromKind: "MESSAGE_VERSION", fromId: v1.id } });
@@ -70,25 +71,25 @@ describe("message publish (spec §6.1, §10)", () => {
       expect(frozen.resolvedSpec.payload).toMatchObject({ entityName: "Order", entityVersionId: orderV1.id, label: "1.0" });
       expect(frozen.summary.id).toBe(v1.id);
 
-      const again = await publishMessage(message.id, {}, ctx);
+      const again = await publishMessage(message.id, sc.product.id, {}, ctx);
       expect(!again.success && JSON.stringify(again.error.details)).toContain("NO_CHANGES");
 
       unwrap(await updateMessage(message.id, { name: message.name, spec: { contentType: "avro/binary", description: "docs", traitIds: [] }, payload: { entityId: order.id, entityVersionId: orderV1.id } }, owner, ctx));
-      expect(unwrap(await previewMessagePublish(message.id, ctx)).suggestedBump).toBe("MINOR");
-      expect(unwrap(await publishMessage(message.id, {}, ctx)).label).toBe("1.1");
+      expect(unwrap(await previewMessagePublish(message.id, sc.product.id, ctx)).suggestedBump).toBe("MINOR");
+      expect(unwrap(await publishMessage(message.id, sc.product.id, {}, ctx)).label).toBe("1.1");
 
       const orderV2 = await insertEntityVersion(order.id, 2, 0, 2);
       unwrap(await updateMessage(message.id, { name: message.name, spec: { contentType: "avro/binary", description: "docs", traitIds: [] }, payload: { entityId: order.id, entityVersionId: orderV2.id } }, owner, ctx));
-      const majorPreview = unwrap(await previewMessagePublish(message.id, ctx));
+      const majorPreview = unwrap(await previewMessagePublish(message.id, sc.product.id, ctx));
       expect(majorPreview).toMatchObject({ suggestedBump: "MAJOR", candidateLabels: { MAJOR: "2.0", MINOR: "1.2" } });
       expect(majorPreview.reasons[0]).toMatch(/new major/);
-      const tooLow = await publishMessage(message.id, { bump: "MINOR" }, ctx);
+      const tooLow = await publishMessage(message.id, sc.product.id, { bump: "MINOR" }, ctx);
       expect(!tooLow.success && tooLow.error.code).toBe("BUMP_TOO_LOW");
       expect(await prisma.messageVersion.count({ where: { messageId: message.id } })).toBe(2);
-      const v3 = unwrap(await publishMessage(message.id, {}, ctx));
+      const v3 = unwrap(await publishMessage(message.id, sc.product.id, {}, ctx));
       expect(v3).toMatchObject({ label: "2.0", changeKind: "MAJOR", sequence: 3 });
       expect((await prisma.messageVersion.findUniqueOrThrow({ where: { id: v3.id } })).compatReport).toEqual({ reasons: majorPreview.reasons });
-      expect(unwrap(await listMessageVersions(message.id, ctx)).map((v) => v.label)).toEqual(["2.0", "1.1", "1.0"]);
+      expect(unwrap(await listMessageVersions(message.id, sc.product.id, ctx)).map((v) => v.label)).toEqual(["2.0", "1.1", "1.0"]);
 
       // Earlier versions keep their frozen pin edges and stay immutable.
       expect((await prisma.schemaReference.findMany({ where: { fromKind: "MESSAGE_VERSION", fromId: v1.id } })).map((r) => r.toId)).toEqual([orderV1.id]);
@@ -97,7 +98,7 @@ describe("message publish (spec §6.1, §10)", () => {
 
       const missing = await getMessageVersion(message.id, "9.9", ctx);
       expect(!missing.success && missing.error.code).toBe("NOT_FOUND");
-      const unknownMessage = await listMessageVersions("no-such-message", ctx);
+      const unknownMessage = await listMessageVersions("no-such-message", sc.product.id, ctx);
       expect(!unknownMessage.success && unknownMessage.error.code).toBe("NOT_FOUND");
     } finally {
       await cleanupDomains(prisma, [domainId]);
@@ -119,7 +120,7 @@ describe("message publish (spec §6.1, §10)", () => {
         name: `OrderCreated-${sc.s}`, payload: { entityId: order.id }, headers: { entityId: meta.id }, key: { entityId: orderKey.id },
       }, ctx));
 
-      const results = await Promise.all([publishMessage(message.id, {}, ctx), publishMessage(message.id, {}, ctx)]);
+      const results = await Promise.all([publishMessage(message.id, sc.product.id, {}, ctx), publishMessage(message.id, sc.product.id, {}, ctx)]);
       expect(results.filter((r) => r.success)).toHaveLength(1);
       const loser = results.find((r) => !r.success);
       const loserCode = loser && !loser.success ? loser.error.code : "none";
@@ -175,16 +176,75 @@ describe("message publish (spec §6.1, §10)", () => {
           },
         }),
       };
-      const raced = await publishMessage(message.id, {}, racing);
+      const raced = await publishMessage(message.id, sc.product.id, {}, racing);
       expect(edited).toBe(true);
       expect(!raced.success && raced.error).toMatchObject({ code: "CONFLICT", message: "Message changed during publish, try again" });
       expect(await prisma.messageVersion.count({ where: { messageId: message.id } })).toBe(0);
 
       // The draft keeps the mid-publish edit and is still publishable (a retry would plan against it).
       expect(await prisma.message.findUniqueOrThrow({ where: { id: message.id } })).toMatchObject({ latestVersionId: null, hasUnpublishedChanges: true });
-      expect(unwrap(await previewMessagePublish(message.id, ctx))).toMatchObject({ isFirstPublish: true, blockers: [] });
+      expect(unwrap(await previewMessagePublish(message.id, sc.product.id, ctx))).toMatchObject({ isFirstPublish: true, blockers: [] });
     } finally {
       await cleanupDomains(prisma, [domainId]);
+    }
+  });
+
+  it("enforces product ownership: another product's or tenant's message is FORBIDDEN, an unknown id NOT_FOUND, and nothing is written or leaked", async () => {
+    let foreign: Awaited<ReturnType<typeof createForeignTenant>> | undefined;
+    const domainIds: string[] = [];
+    try {
+      const owning = await createProductScope(prisma, ctx, "own");
+      const other = await createProductScope(prisma, ctx, "oth");
+      domainIds.push(owning.domain.id, other.domain.id);
+      foreign = await createForeignTenant(prisma, ctx);
+
+      // A publishable message (so a missing ownership check would write a version) that already has a published version row
+      // (inserted directly: no audit row) whose publisher / pin names a leaking list or preview would expose.
+      const order = await owning.entity("Order");
+      const orderV1 = await insertEntityVersion(order.id, 1, 0, 1);
+      const message = unwrap(await createMessage(owning.product.id, { name: `OrderCreated-${owning.s}`, payload: { entityId: order.id } }, ctx));
+      await prisma.messageVersion.create({
+        data: {
+          messageId: message.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, payloadEntityVersionId: orderV1.id,
+          resolvedSpec: {
+            name: message.name, spec: { traitIds: [] }, headers: null, key: null,
+            payload: { entityId: order.id, entityName: "Order", entityVersionId: orderV1.id, label: "1.0", major: 1 },
+          },
+        },
+      });
+
+      const attempt = async (messageId: string, productId: string, code: string, leaks: string[]) => {
+        const results = [
+          await publishMessage(messageId, productId, {}, ctx),
+          await previewMessagePublish(messageId, productId, ctx),
+          await listMessageVersions(messageId, productId, ctx),
+        ];
+        for (const r of results) {
+          expect(!r.success && r.error.code).toBe(code);
+          expect(!r.success && "details" in r.error).toBe(false);
+          for (const leak of leaks) expect(JSON.stringify(r)).not.toContain(leak);
+        }
+      };
+      const owningLeaks = [message.name, order.name, orderV1.id, ctx.userId];
+
+      await attempt(message.id, other.product.id, "FORBIDDEN", owningLeaks); // same tenant, another product
+      await attempt(message.id, foreign.product.id, "FORBIDDEN", owningLeaks); // a product of another tenant
+      await attempt(foreign.message.id, owning.product.id, "FORBIDDEN", [foreign.message.name, foreign.entity.name]); // another tenant's message
+      await attempt("no-such-message", owning.product.id, "NOT_FOUND", owningLeaks);
+      await attempt(message.id, "no-such-product", "NOT_FOUND", owningLeaks);
+
+      // Nothing was written: no new versions, drafts untouched.
+      expect(await prisma.messageVersion.count({ where: { messageId: message.id } })).toBe(1);
+      expect(await prisma.message.findUniqueOrThrow({ where: { id: message.id } })).toMatchObject({ latestVersionId: null, hasUnpublishedChanges: true });
+      expect(await prisma.messageVersion.count({ where: { messageId: foreign.message.id } })).toBe(0);
+      expect(await prisma.message.findUniqueOrThrow({ where: { id: foreign.message.id } })).toMatchObject({ latestVersionId: null, hasUnpublishedChanges: true });
+
+      // The owning product still reads its own message.
+      expect(unwrap(await previewMessagePublish(message.id, owning.product.id, ctx))).toMatchObject({ isFirstPublish: true, blockers: [] });
+      expect(unwrap(await listMessageVersions(message.id, owning.product.id, ctx)).map((v) => v.label)).toEqual(["1.0"]);
+    } finally {
+      await cleanupDomains(prisma, domainIds);
+      await foreign?.cleanup();
     }
   });
 });
