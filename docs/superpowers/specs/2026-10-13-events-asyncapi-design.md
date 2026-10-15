@@ -275,7 +275,9 @@ components:
         schema: { type: record, name: Order, namespace: acme.payments.checkout, fields: [] }
       bindings:
         kafka:
-          key: { type: string }
+          key:
+            schemaFormat: application/vnd.apache.avro+json;version=1.9.0
+            schema: { type: string }
   messageTraits:
     CloudEvents:
       headers:
@@ -305,7 +307,7 @@ interface EventSpecAdapter {
 2. **Draft** → resolve operations → Channels (incl. cross-product) → pinned `MessageVersion`s → Traits. Draft preview may use draft Messages, flagged "unpublished".
 3. **Schemas** from `EntityVersionArtifact` in the channel's format profile:
    - Headers always JSON Schema (AsyncAPI requires an object schema).
-   - Kafka key: Avro when the channel is Avro, otherwise JSON Schema.
+   - Kafka key: Avro when the channel is Avro, otherwise JSON Schema. The Kafka message binding types `key` as a JSON Schema Object (or `$ref`), so an Avro key is emitted tagged like a payload — a Multi Format Schema Object `{ schemaFormat, schema }` — a bare Avro record (`type: record`) is rejected by `@asyncapi/parser`.
 4. **`schemaFormat`:**
    - avro → `application/vnd.apache.avro+json;version=1.9.0`
    - protobuf → `application/vnd.google.protobuf;version=3`

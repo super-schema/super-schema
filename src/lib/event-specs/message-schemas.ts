@@ -11,7 +11,9 @@ import { normalizeProfile, sameProfile } from "./schema-format";
  * - headers: always a JSON Schema object schema, emitted as a plain AsyncAPI
  *   Schema Object (draft-07 compatible);
  * - Kafka key: Avro when the channel is Avro, otherwise JSON Schema draft-07,
- *   placed at `bindings.kafka.key`.
+ *   placed at `bindings.kafka.key`. The Kafka binding types `key` as a JSON Schema
+ *   Object, so an Avro key is emitted tagged like a payload — a Multi Format Schema
+ *   Object `{ schemaFormat, schema }` (assemble.ts) — never as a bare Avro record.
  * Embedded JSON Schemas get their local `$ref`s rebased onto their location in
  * the AsyncAPI document so they stay resolvable from the document root.
  */

@@ -116,7 +116,7 @@ export type ResolvedMessage = {
   payloads: SchemaArtifact[];
   /** Headers — must be a JSON Schema object schema (spec §7.2 step 3). */
   headers?: SchemaArtifact;
-  /** Kafka key renderings (Avro and/or JSON Schema). */
+  /** Kafka key renderings (Avro and/or JSON Schema); an Avro key is emitted as a `{ schemaFormat, schema }` Multi Format Schema Object. */
   keys?: SchemaArtifact[];
   /** Draft preview of an unpublished Message (spec §7.2 step 2). */
   unpublished?: boolean;

@@ -288,10 +288,17 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     let bindings = clone(msg.bindings);
     if (variant.kafka && msg.keys && msg.keys.length > 0) {
       const keyPointer = jsonPointer(...base, "bindings", "kafka", "key");
-      const keySelection = selectArtifact(msg.keys, kafkaKeyProfile(variant.profile), "key", keyPointer);
+      const keyProfile = kafkaKeyProfile(variant.profile);
+      const keySelection = selectArtifact(msg.keys, keyProfile, "key", keyPointer);
       diagnostics.push(...keySelection.diagnostics);
       if (keySelection.schema !== undefined) {
-        const placed = placeKafkaKey(bindings, keySelection.schema);
+        // The Kafka message binding types `key` as a JSON Schema Object (or $ref): a bare Avro record (`type: "record"`) is
+        // rejected by @asyncapi/parser, so an Avro key is tagged like a payload — a Multi Format Schema Object.
+        const key =
+          keyProfile.format === "avro"
+            ? { schemaFormat: schemaFormatFor(keyProfile), schema: keySelection.schema }
+            : keySelection.schema;
+        const placed = placeKafkaKey(bindings, key);
         bindings = placed.bindings;
         if (placed.overridden) {
           diagnostics.push(
