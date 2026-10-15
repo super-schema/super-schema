@@ -58,7 +58,9 @@ export function SchemaWorkbench({
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [hydrate, setHydrate] = useState<{ nonce: number; state: FormState } | undefined>();
 
-  const lastHydratedText = useRef<string | null>(null);
+  // After a panel-driven hydrate the editor echoes the serialized state once
+  // (null when it has no usable fields). `undefined` = no echo expected.
+  const expectedEcho = useRef<{ text: string | null } | undefined>(undefined);
   const parseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nonce = useRef(0);
 
@@ -98,9 +100,13 @@ export function SchemaWorkbench({
   // ── Form ↔ panel handshake ──────────────────────────────────────────
 
   const handleFormContent = useCallback((text: string | null) => {
-    // The editor echoes the text of a state we just hydrated from the panel;
-    // keep what the user typed instead of overwriting it with the normalised form.
-    if (text !== null && text === lastHydratedText.current) return;
+    const echo = expectedEcho.current;
+    expectedEcho.current = undefined; // consume-once: a later identical text is a real edit
+    // The editor echoes the state we just hydrated from the panel; keep what the
+    // user typed instead of overwriting it with the normalised form.
+    if (echo && echo.text === text) return;
+    // A real form edit supersedes any panel edit still waiting to be parsed.
+    if (parseTimer.current) clearTimeout(parseTimer.current);
     setNotice(null);
     dispatch({ type: "formChanged", text });
   }, []);
@@ -123,7 +129,7 @@ export function SchemaWorkbench({
       parseTimer.current = setTimeout(() => {
         const result = parseToFormState(format, text);
         if (result.ok) {
-          lastHydratedText.current = serializeFormState(result.state);
+          expectedEcho.current = { text: serializeFormState(result.state) };
           nonce.current += 1;
           setHydrate({ nonce: nonce.current, state: result.state });
           setNotice(null);
@@ -140,7 +146,7 @@ export function SchemaWorkbench({
 
   const startForm = useCallback((format: WorkbenchFormat) => {
     if (parseTimer.current) clearTimeout(parseTimer.current);
-    lastHydratedText.current = null;
+    expectedEcho.current = undefined;
     setHydrate(undefined);
     setNotice(null);
     setImportNotice(null);
@@ -149,6 +155,17 @@ export function SchemaWorkbench({
     setMode("form");
     dispatch({ type: "startForm", format });
   }, []);
+
+  function startOver() {
+    if (parseTimer.current) clearTimeout(parseTimer.current);
+    expectedEcho.current = undefined;
+    setHydrate(undefined);
+    setNotice(null);
+    setImportNotice(null);
+    setPasteText("");
+    setConfirmDiscard(false);
+    dispatch({ type: "clear" });
+  }
 
   function selectMode(next: Mode) {
     if (next === "form") {
@@ -277,6 +294,13 @@ export function SchemaWorkbench({
                 className="px-2 py-0.5 rounded bg-muted hover:bg-accent disabled:opacity-40"
               >
                 Reset to original
+              </button>
+              <button
+                type="button"
+                onClick={startOver}
+                className="px-2 py-0.5 rounded bg-muted hover:bg-accent"
+              >
+                Start over
               </button>
             </div>
           )}

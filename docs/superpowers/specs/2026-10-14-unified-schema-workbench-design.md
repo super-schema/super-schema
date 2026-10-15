@@ -69,12 +69,12 @@ Transitions: `loadImport(text, format, filename)`, `startForm(format)`, `formCha
 
 - **Form → panel:** the active editor's `onContentChange(text)` dispatches `formChanged`, which sets `currentText`.
 - **Panel → form:** `panelEdited(text)` is debounced (300 ms). `parseToFormState(format, text)` runs; if `ok`, the editor's state is replaced. If not, the text is kept, `formMappable = false`, and an inline notice reads "Can't map to the form. Fix the schema or keep editing as text." The form does not change and no user text is lost.
-- **Loop guard:** track `lastWrittenText`. A `formChanged` whose text equals the text the panel just pushed down is ignored, and a `panelEdited` whose text equals the last form-serialized text is skipped.
+- **Loop guard:** after a panel-driven hydrate the editor echoes the serialized state exactly once (`null` when it has no usable fields). The workbench records that expected echo and consumes it on the next `formChanged`, ignoring it only if it matches; any later identical text is a real edit. A real form edit also cancels a still-pending panel parse, so a stale parse can never overwrite newer form input.
 - **Editors take a `hydrate` prop.** `VisualEditorProps.hydrate?: { nonce: number; state: FormState }` replaces the editor's internal state whenever `nonce` changes and the state's format matches. Optional, so uncontrolled use is unchanged. The workbench keeps the form editor mounted (hidden) while another input is shown, so form state survives tab switches.
 
 ### 5.5 `parseToFormState`
 
-`src/lib/schema-workbench/parse-to-form-state.ts`. A strict, direct inverse of `serializeJsonSchema` / `serializeAvroSchema` / `serializeProtobufSchema` (not a mapping from importer IR, which is richer than the form models and lossy to go through). Returns `{ ok: true, state } | { ok: false, reason }`. Only text shaped like the serializers' output is accepted; invalid text and unrepresentable constructs (nested properties, multi-type unions, nested messages, extra keywords) return `ok: false` with a reason. Round-trip tests (`form → serialize → parse → serialize`) define "mappable". `serializeFormState` in `form-state.ts` is the single serialize entry point.
+`src/lib/schema-workbench/parse-to-form-state.ts`. A strict, direct inverse of `serializeJsonSchema` / `serializeAvroSchema` / `serializeProtobufSchema` (not a mapping from importer IR, which is richer than the form models and lossy to go through). Returns `{ ok: true, state } | { ok: false, reason }`. Only text shaped like the serializers' output is accepted; invalid text and unrepresentable constructs (nested properties, multi-type unions, nested messages, extra keywords) return `ok: false` with a reason. After parsing, the state is re-serialized and compared with the input (ignoring an absent `$schema`, empty `required`, empty `description`/`doc`, whitespace); any difference — a dropped `""` default, a rewritten relative `$ref`, an added Avro default, a property name the serializer cannot emit, an empty `oneof` — is also `ok: false`, so the panel text is never silently replaced by a lossy form. Round-trip tests (`form → serialize → parse → serialize`) define "mappable". `serializeFormState` in `form-state.ts` is the single serialize entry point.
 
 ### 5.6 Imported / pasted origin
 
@@ -101,7 +101,7 @@ Transitions: `loadImport(text, format, filename)`, `startForm(format)`, `formCha
 
 - Reducer: every transition, including `formMappable` toggling and `resetToBaseline`.
 - `parseToFormState`: round-trip `form → serialize → parse → form` equality for json-schema, avro, protobuf; invalid text; unrepresentable constructs.
-- Loop guard: a form edit produces exactly one panel write and no echo back.
+- Loop guard: a form edit produces exactly one panel write and no echo back; rename-and-back, an edit inside the debounce window, and zero-field panel text all behave (no stale overwrite, no wipe).
 - Diff highlighter: unchanged, changed, added, removed lines.
 - Component: mode switching, confirm-before-discard, red highlighting after edit, Review & Import disabled when empty, commit calls `handleImportSubmit` with the expected args.
 - Route flag: new-entity pages hide the empty panel; an entity workspace page still shows pushed content; the flag clears on unmount.

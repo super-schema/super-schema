@@ -9,8 +9,8 @@
  *   1. a visual editor component implementing VisualEditorProps
  *   2. an importer that already parses that format's text
  *
- * JSON Schema is implemented today; Avro and Protobuf are registered as
- * disabled slots so adding them later is additive, not a refactor.
+ * JSON Schema, Avro and Protobuf are implemented. An editor may also accept a
+ * `hydrate` prop so the Schema Workbench can push Detail Panel edits back into it.
  */
 
 import type { ImportFormat } from "@/lib/importers/types";

@@ -12,8 +12,6 @@ import { serializeJsonSchema } from "@/components/custom/VisualSchemaBuilder/ser
 
 export type WorkbenchFormat = "json-schema" | "avro" | "protobuf";
 
-export const WORKBENCH_FORMATS: readonly WorkbenchFormat[] = ["json-schema", "avro", "protobuf"];
-
 export type FormState =
   | { format: "json-schema"; title: string; description: string; fields: JsonSchemaField[] }
   | { format: "avro"; name: string; namespace: string; doc: string; fields: AvroField[] }

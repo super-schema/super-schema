@@ -138,3 +138,60 @@ describe("parseToFormState — Protobuf round-trip", () => {
     expect(parseToFormState("protobuf", 'syntax = "proto3";\nmessage A {\n  string id = 1;\n').ok).toBe(false);
   });
 });
+
+describe("parseToFormState — refuses text the form would silently rewrite", () => {
+  const json = (props: object, extra: object = {}) =>
+    JSON.stringify({ title: "T", type: "object", properties: props, ...extra });
+  const rec = (field: object) => JSON.stringify({ type: "record", name: "R", fields: [field] });
+
+  it("JSON Schema: empty-string default / const", () => {
+    expect(parseToFormState("json-schema", json({ a: { type: "string", default: "" } })).ok).toBe(false);
+    expect(parseToFormState("json-schema", json({ a: { type: "string", const: "" } })).ok).toBe(false);
+  });
+
+  it("JSON Schema: a relative $ref that would be rewritten to #/$defs/…", () => {
+    expect(parseToFormState("json-schema", json({ a: { $ref: "other.json" } })).ok).toBe(false);
+    expect(parseToFormState("json-schema", json({ a: { $ref: "#/$defs/Other" } })).ok).toBe(true);
+  });
+
+  it("JSON Schema: property names the serializer can't emit, and inherited names in required", () => {
+    expect(parseToFormState("json-schema", `{"title":"T","type":"object","properties":{"__proto__":{"type":"string"}}}`).ok).toBe(false);
+    expect(parseToFormState("json-schema", json({ a: { type: "string" }, "": { type: "string" } })).ok).toBe(false);
+    expect(parseToFormState("json-schema", json({ a: { type: "string" } }, { required: ["toString"] })).ok).toBe(false);
+  });
+
+  it("Avro: decimal without a scale, and a nullable union without a default", () => {
+    expect(
+      parseToFormState("avro", rec({ name: "p", type: { type: "bytes", logicalType: "decimal", precision: 10 } })).ok
+    ).toBe(false);
+    expect(parseToFormState("avro", rec({ name: "n", type: ["null", "string"] })).ok).toBe(false);
+  });
+
+  it("Avro: empty-string default", () => {
+    expect(parseToFormState("avro", rec({ name: "s", type: "string", default: "" })).ok).toBe(false);
+  });
+
+  it("Protobuf: an empty oneof block", () => {
+    const text = 'syntax = "proto3";\nmessage A {\n  string id = 1;\n  oneof pick {\n  }\n}\n';
+    expect(parseToFormState("protobuf", text).ok).toBe(false);
+  });
+
+  it("still accepts harmless variations: missing $schema, empty required, extra whitespace", () => {
+    expect(parseToFormState("json-schema", json({ a: { type: "string" } }, { required: [] })).ok).toBe(true);
+    expect(
+      parseToFormState("protobuf", 'syntax="proto3";\nmessage  A{\n   string   id=1;\n}\n').ok
+    ).toBe(true);
+  });
+
+  it("accepts a schema with no usable fields (nothing to compare)", () => {
+    expect(parseToFormState("json-schema", json({})).ok).toBe(true);
+    expect(parseToFormState("avro", JSON.stringify({ type: "record", name: "R", fields: [] })).ok).toBe(true);
+  });
+
+  it("truncates long offending lines in the reason", () => {
+    const long = "x".repeat(300);
+    const r = parseToFormState("protobuf", `syntax = "proto3";\nmessage A {\n  ${long}\n}\n`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason.length).toBeLessThan(120);
+  });
+});

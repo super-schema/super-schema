@@ -191,3 +191,137 @@ describe("SchemaWorkbench — form origin", () => {
     expect((screen.getByPlaceholderText("propertyName") as HTMLInputElement).value).toBe("email");
   });
 });
+
+describe("SchemaWorkbench — sync guard regressions", () => {
+  function startFormWithEmail() {
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    fireEvent.change(screen.getByPlaceholderText("propertyName"), { target: { value: "email" } });
+  }
+  const renamed = (to: string, indent = 4) => {
+    const doc = JSON.parse(panel().value);
+    const [from] = Object.keys(doc.properties);
+    doc.properties = { [to]: doc.properties[from] };
+    if (doc.required) doc.required = doc.required.map((r: string) => (r === from ? to : r));
+    return JSON.stringify(doc, null, indent);
+  };
+  const settle = () =>
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+  const fieldName = () => (screen.getByPlaceholderText("propertyName") as HTMLInputElement).value;
+
+  it("keeps panel text that parses to zero usable fields instead of wiping it", () => {
+    vi.useFakeTimers();
+    setup();
+    startFormWithEmail();
+    const empty = '{"title":"T","type":"object","properties":{}}';
+    fireEvent.change(panel(), { target: { value: empty } });
+    settle();
+    expect(panel().value).toBe(empty);
+  });
+
+  it("a form edit after a panel-driven hydrate is never swallowed (rename and back)", () => {
+    vi.useFakeTimers();
+    setup();
+    startFormWithEmail();
+    fireEvent.change(panel(), { target: { value: renamed("mail") } });
+    settle();
+    expect(fieldName()).toBe("mail");
+
+    fireEvent.change(screen.getByPlaceholderText("propertyName"), { target: { value: "x" } });
+    expect(JSON.parse(panel().value).properties.x).toBeDefined();
+    fireEvent.change(screen.getByPlaceholderText("propertyName"), { target: { value: "mail" } });
+
+    // Panel must follow the form again, not stay on the stale "x".
+    expect(JSON.parse(panel().value).properties).toHaveProperty("mail");
+    expect(JSON.parse(panel().value).properties).not.toHaveProperty("x");
+    expect(fieldName()).toBe("mail");
+  });
+
+  it("a form edit inside the debounce window beats the stale panel parse", () => {
+    vi.useFakeTimers();
+    setup();
+    startFormWithEmail();
+    fireEvent.change(panel(), { target: { value: renamed("mail") } });
+    // no time passes: the panel parse is still pending
+    fireEvent.change(screen.getByPlaceholderText("propertyName"), { target: { value: "other" } });
+    settle();
+
+    expect(fieldName()).toBe("other");
+    expect(JSON.parse(panel().value).properties).toHaveProperty("other");
+  });
+
+  it("does not parse after unmount", () => {
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { unmount } = render(<SchemaWorkbench onCommit={vi.fn()} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    fireEvent.change(screen.getByPlaceholderText("propertyName"), { target: { value: "email" } });
+    fireEvent.change(panel(), { target: { value: renamed("mail") } });
+    unmount();
+    expect(() => settle()).not.toThrow();
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("refuses to map text the form would rewrite, keeping form and text", () => {
+    vi.useFakeTimers();
+    setup();
+    startFormWithEmail();
+    const lossy = JSON.stringify({
+      title: "T",
+      type: "object",
+      properties: { a: { type: "string", default: "" } },
+    });
+    fireEvent.change(panel(), { target: { value: lossy } });
+    settle();
+    expect(screen.getByTestId("workbench-unmappable")).toBeDefined();
+    expect(panel().value).toBe(lossy);
+    expect(fieldName()).toBe("email");
+  });
+});
+
+describe("SchemaWorkbench — import affordances", () => {
+  it("accepts the supported schema file types", () => {
+    setup();
+    const input = screen.getByTestId("workbench-file-input") as HTMLInputElement;
+    expect(input.accept.split(",").sort()).toEqual(
+      [".avro", ".avsc", ".ddl", ".json", ".proto", ".sql", ".tsp", ".yaml", ".yml"].sort()
+    );
+  });
+
+  it("loads a file chosen with the browse input", async () => {
+    setup();
+    const file = new File([AVRO], "picked.avsc");
+    fireEvent.change(screen.getByTestId("workbench-file-input"), { target: { files: [file] } });
+    await waitFor(() => expect(panel().value).toBe(AVRO));
+    expect(screen.getByTestId("workbench-import-summary").textContent).toContain("picked.avsc");
+  });
+
+  it("passes the dropped file's name to onCommit", async () => {
+    const { onCommit } = setup();
+    const file = new File([AVRO], "customer.avsc");
+    fireEvent.drop(screen.getByTestId("workbench-dropzone"), { dataTransfer: { files: [file] } });
+    await waitFor(() => expect(panel().value).toBe(AVRO));
+    fireEvent.click(screen.getByTestId("workbench-review-button"));
+    expect(onCommit).toHaveBeenCalledWith(AVRO, undefined, "customer.avsc");
+  });
+
+  it("Start over clears the import and the panel", async () => {
+    setup();
+    await pasteLoad(AVRO);
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(panel().value).toBe("");
+    expect(screen.queryByTestId("workbench-import-summary")).toBeNull();
+    expect((screen.getByTestId("workbench-review-button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("marks where a baseline line was removed", async () => {
+    setup();
+    await pasteLoad(AVRO);
+    const lines = AVRO.split("\n");
+    fireEvent.change(panel(), { target: { value: [...lines.slice(0, 2), ...lines.slice(3)].join("\n") } });
+    expect(screen.getAllByTestId("detail-panel-removed-marker").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("detail-panel-changes").textContent).toMatch(/removed/);
+  });
+});

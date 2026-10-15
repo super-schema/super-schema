@@ -61,9 +61,14 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
   await expect(page.getByRole("heading", { name: /create new entity/i })).toBeVisible();
   // ...and the transient duplicate must settle to exactly one rendered copy.
   await expect(page.getByText(/create new entity/i)).toHaveCount(1);
-  await page.getByRole("button", { name: /import schema/i }).first().click();
-  await page.locator("textarea").first().fill(tsp);
-  await page.getByRole("button", { name: /parse schema/i }).click();
+  // Unified workbench: card → Paste → Load schema → Review & Import. The Detail
+  // Panel textarea is separate from the paste textarea, so target by test id.
+  await page.getByRole("button", { name: /import or build schema/i }).first().click();
+  await page.getByRole("button", { name: "Paste", exact: true }).click();
+  await page.getByTestId("workbench-paste-textarea").fill(tsp);
+  await page.getByTestId("workbench-load-button").click();
+  await expect(page.getByTestId("detail-panel-textarea")).toHaveValue(tsp);
+  await page.getByTestId("workbench-review-button").click();
   // TypeSpec imports go to the multi-model review screen.
   await expect(page.getByText(/AllTypes/i).first()).toBeVisible();
   // Register AllTypes as an entity only (uncheck the model to avoid a same-named

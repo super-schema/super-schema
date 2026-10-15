@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef } from "react";
+import { cn } from "@/lib/utils";
 import { diffLines } from "@/lib/schema-workbench/line-diff";
 
 interface DetailPanelProps {
@@ -24,6 +25,7 @@ export function DetailPanel({ value, onChange, baseline, readOnly, placeholder }
     () => (baseline !== undefined ? diffLines(baseline, value) : null),
     [baseline, value]
   );
+  const removedBefore = useMemo(() => new Set(diff?.removedAt ?? []), [diff]);
   const changed = diff ? diff.lines.filter((l) => l.changed).length : 0;
   const removed = diff ? diff.removedAt.length : 0;
 
@@ -57,9 +59,21 @@ export function DetailPanel({ value, onChange, baseline, readOnly, placeholder }
               <div
                 key={i}
                 data-changed={line.changed ? "true" : "false"}
-                className={line.changed ? "bg-destructive/25" : undefined}
+                className={cn("relative", line.changed && "bg-destructive/25")}
               >
                 {line.text || " "}
+                {removedBefore.has(i) && (
+                  <span
+                    data-testid="detail-panel-removed-marker"
+                    className="absolute inset-x-0 top-0 h-0.5 bg-destructive"
+                  />
+                )}
+                {i === diff.lines.length - 1 && removedBefore.has(diff.lines.length) && (
+                  <span
+                    data-testid="detail-panel-removed-marker"
+                    className="absolute inset-x-0 bottom-0 h-0.5 bg-destructive"
+                  />
+                )}
               </div>
             ))}
           </div>

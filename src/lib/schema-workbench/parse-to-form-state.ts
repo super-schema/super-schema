@@ -28,13 +28,17 @@ import {
   type JsonSchemaField,
   type JsonType,
 } from "@/components/custom/VisualSchemaBuilder/serialize";
-import type { FormState, WorkbenchFormat } from "./form-state";
+import { serializeFormState, type FormState, type WorkbenchFormat } from "./form-state";
 
 export type ParseResult = { ok: true; state: FormState } | { ok: false; reason: string };
 
 type Obj = Record<string, unknown>;
 
 class Unmappable extends Error {}
+
+function truncate(text: string, max = 60): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
 
 function fail(reason: string): never {
   throw new Unmappable(reason);
@@ -229,7 +233,9 @@ function parseJsonSchema(text: string): FormState {
     fail(`"required" must be a list of strings`);
   }
   for (const name of requiredList as string[]) {
-    if (!(name in doc.properties)) fail(`"required" lists unknown property "${name}"`);
+    if (!Object.prototype.hasOwnProperty.call(doc.properties, name)) {
+      fail(`"required" lists unknown property "${name}"`);
+    }
   }
 
   const properties = doc.properties;
@@ -495,7 +501,7 @@ function parseProtobuf(text: string): FormState {
         continue;
       }
       const m = PROTO_FIELD_RE.exec(line);
-      if (!m) fail(`Can't read line: ${line}`);
+      if (!m) fail(`Can't read line: ${truncate(line)}`);
       fields.push(parseProtoField(m, group));
       continue;
     }
@@ -510,7 +516,7 @@ function parseProtobuf(text: string): FormState {
       continue;
     }
     const m = PROTO_FIELD_RE.exec(line);
-    if (!m) fail(`Can't read line: ${line}`);
+    if (!m) fail(`Can't read line: ${truncate(line)}`);
     fields.push(parseProtoField(m, undefined));
   }
 
@@ -525,16 +531,94 @@ function parseProtobuf(text: string): FormState {
 // Public API
 // ---------------------------------------------------------------------------
 
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((v, i) => deepEqual(v, b[i]))
+    );
+  }
+  if (isObj(a) && isObj(b)) {
+    const keys = Object.keys(a);
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k]))
+    );
+  }
+  return false;
+}
+
+/**
+ * Drop values that carry no meaning so they don't count as a rewrite: an empty
+ * `required`, empty `description` / `doc`, and (JSON Schema) a missing `$schema`
+ * that the serializer always adds.
+ */
+function normaliseJsonText(value: unknown, topLevelSchema: boolean): unknown {
+  if (Array.isArray(value)) return value.map((v) => normaliseJsonText(v, false));
+  if (!isObj(value)) return value;
+  // Null prototype: a `__proto__` key must stay an ordinary key, not a prototype assignment.
+  const out = Object.create(null) as Obj;
+  for (const [k, v] of Object.entries(value)) {
+    if (k === "required" && Array.isArray(v) && v.length === 0) continue;
+    if ((k === "description" || k === "doc") && v === "") continue;
+    out[k] = normaliseJsonText(v, false);
+  }
+  if (topLevelSchema && out.$schema === undefined) out.$schema = JSON_SCHEMA_DIALECT;
+  return out;
+}
+
+function squash(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+/g, ""))
+    .filter((l) => l !== "");
+}
+
+/**
+ * The form can only stand in for the text if serializing the parsed state gives
+ * the same document back. Anything the parser accepted but the serializer would
+ * change (a dropped `""` default, a rewritten `$ref`, an added Avro default,
+ * a property the serializer can't emit, an empty `oneof`, …) is reported as
+ * unmappable, so the panel text is never silently replaced by a lossy form.
+ */
+function equivalenceIssue(format: WorkbenchFormat, text: string, state: FormState): string | null {
+  // No named fields → the serializer yields null; there is nothing to compare.
+  const again = serializeFormState(state);
+  if (again === null) return null;
+
+  if (format === "protobuf") {
+    const a = squash(text);
+    const b = squash(again);
+    // `package` is optional on input and only emitted when set; compare as emitted.
+    return a.length === b.length && a.every((l, i) => l === b[i])
+      ? null
+      : "some of it would change when shown in the form";
+  }
+
+  const input = normaliseJsonText(JSON.parse(text), format === "json-schema");
+  const output = normaliseJsonText(JSON.parse(again), format === "json-schema");
+  return deepEqual(input, output) ? null : "some of it would change when shown in the form";
+}
+
 export function parseToFormState(format: WorkbenchFormat, text: string): ParseResult {
   try {
+    let state: FormState;
     switch (format) {
       case "json-schema":
-        return { ok: true, state: parseJsonSchema(text) };
+        state = parseJsonSchema(text);
+        break;
       case "avro":
-        return { ok: true, state: parseAvro(text) };
+        state = parseAvro(text);
+        break;
       case "protobuf":
-        return { ok: true, state: parseProtobuf(text) };
+        state = parseProtobuf(text);
+        break;
     }
+    const issue = equivalenceIssue(format, text, state);
+    return issue ? { ok: false, reason: issue } : { ok: true, state };
   } catch (e) {
     if (e instanceof Unmappable) return { ok: false, reason: e.message };
     return { ok: false, reason: "Could not read this schema" };
