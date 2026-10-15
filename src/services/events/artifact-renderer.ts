@@ -7,7 +7,7 @@ import { inlineJsonSchemaBundle } from "@/lib/events/json-schema-bundle";
 import { combineTypeSpecSources, findRootModelName, levelNamespace, stripGovernanceOverlay, type CombinedSource } from "@/lib/events/version-source";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
-import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { findEmptyEnumFields, generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
 import { isSourceStale } from "@/lib/entity-versioning/draft-state";
@@ -19,7 +19,7 @@ import {
   runTypeSpecEmitterFiles,
   type EmittedFile,
 } from "@/lib/typespec-official/emitter.service";
-import { describeAvroProjection, projectTypeSpecSourceForAvro } from "@/lib/typespec-official/avro-source";
+import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "@/lib/typespec-official/avro-source";
 import { projectTypeSpecSourceForProtobuf } from "@/lib/typespec-official/protobuf-source";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { ok, err, type Result } from "@/types/result";
@@ -268,7 +268,12 @@ export function pickEmittedArtifact(format: PayloadFormat, files: EmittedFile[],
     if (!json.success) return json;
     // the emitter inlines a record at every use; Avro defines a named type once and refers to it by name afterwards
     const deduped = dedupeAvroNamedTypes(json.data);
-    return deduped.success ? ok({ format: "avro", schema: deduped.data }) : deduped;
+    if (!deduped.success) return deduped;
+    // Safety net behind the Avro projection: a symbol it could not fix (a numeric-valued enum member) is a clear,
+    // user-facing error naming the enum — not dozens of opaque AsyncAPI parser errors later.
+    const invalidSymbols = describeInvalidAvroSymbols(findInvalidAvroSymbols(deduped.data));
+    if (invalidSymbols.length > 0) return err({ code: "AVRO_INVALID_SYMBOL", message: invalidSymbols.join("; ") });
+    return ok({ format: "avro", schema: deduped.data });
   }
   if (format === "json-schema") {
     const file = files.find((f) => basename(f.relativePath) === rootModel) ?? (files.length === 1 ? files[0] : undefined);
@@ -379,6 +384,19 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
     if (!program.success) return program;
     const parts = [program.data.root, ...program.data.deps];
     const label = program.data.root.label;
+    // A regenerated draft source marks an enum field without values (the generator never declares an empty enum); the
+    // compiler would only say "Unknown identifier ERROR: …" — say what is wrong, and where, instead.
+    for (const part of parts) {
+      const empty = findEmptyEnumFields(part.source);
+      if (empty.length > 0) {
+        return err({
+          code: "ARTIFACT_RENDER_FAILED",
+          message: `${part.label} → ${format}: enum field ${empty.map((name) => `"${name}"`).join(", ")} has no values`,
+          suggestedFix: "Give the enum field at least one value.",
+          details: { cause: "ENUM_NO_VALUES" },
+        });
+      }
+    }
     const combined = combineTypeSpecSources(parts.map((p) => ({ label: p.label, source: toRealCompilable(p.source) })));
     if (!combined.success) {
       return err({

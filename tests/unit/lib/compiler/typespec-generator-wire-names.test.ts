@@ -13,6 +13,7 @@ import {
   TYPESPEC_RESERVED_FUTURE_WORDS,
   enumMemberName,
   escapeString,
+  findEmptyEnumFields,
   generateTypeSpec,
   generateTypeSpecWithDiagnostics,
   isPlainIdentifier,
@@ -294,6 +295,17 @@ describe("an enum without values is never emitted (C-I1)", () => {
     expect(r.success).toBe(false);
     expect(r.diagnostics.map((d) => d.message).join("\n")).toContain('enum field "status" has no values');
   }, 60_000);
+
+  it("findEmptyEnumFields reads the marker back from the generated text (what the events renderer reports)", () => {
+    const { source } = generate([
+      field({ name: "id" }),
+      field({ name: "status", type: "enum" }),
+      field({ name: 'odd "name"\\x', type: "enum" }),
+      field({ name: "ok", type: "enum", aliases: ["A"] }),
+    ]);
+    expect(findEmptyEnumFields(source)).toEqual(["status", 'odd "name"\\x']);
+    expect(findEmptyEnumFields(generate([field({ name: "ok", type: "enum", aliases: ["A"] })]).source)).toEqual([]);
+  });
 
   it("generateTypeSpec (the string API) behaves the same", () => {
     const source = generateTypeSpec(compileEntity(entity(), [field({ name: "status", type: "enum" })]), { governance: false });

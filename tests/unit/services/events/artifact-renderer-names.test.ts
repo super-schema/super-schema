@@ -29,6 +29,29 @@ const versions: Record<string, V> = {
     resolvedSource: 'enum Clash_kind {\n  "a-b",\n  "a b",\n}\n\nmodel Clash {\n  kind: Clash_kind;\n}\n',
     fieldSnapshot: [{ name: "kind", fieldNumber: null }],
   },
+  // a regenerated draft source: the generator never declares an empty enum, it marks the field instead
+  vEmpty: {
+    id: "vEmpty", entityId: "eEmpty", major: 1, minor: 0, entity: { name: "Empty" },
+    resolvedSource: [
+      "model Empty {",
+      "  id: string;",
+      '  // ERROR: enum field "status" has no values; add at least one value',
+      '  status: `ERROR: enum field "status" has no values; add at least one value`;',
+      "}",
+      "",
+    ].join("\n"),
+    fieldSnapshot: [{ name: "id", fieldNumber: null }, { name: "status", fieldNumber: null }],
+  },
+  vNumeric: {
+    id: "vNumeric", entityId: "eNumeric", major: 1, minor: 0, entity: { name: "Numeric" },
+    resolvedSource: "enum Priority {\n  Low: 1,\n  High: 2,\n}\n\nmodel Numeric {\n  priority: Priority;\n}\n",
+    fieldSnapshot: [{ name: "priority", fieldNumber: null }],
+  },
+  vBraces: {
+    id: "vBraces", entityId: "eBraces", major: 1, minor: 0, entity: { name: "Braces" },
+    resolvedSource: 'enum Braces_kind {\n  @doc("see {x}")\n  "a{b",\n  "\\${x}",\n  ok,\n}\n\nmodel Braces {\n  kind: Braces_kind;\n}\n',
+    fieldSnapshot: [{ name: "kind", fieldNumber: null }],
+  },
 };
 
 function fakeDb() {
@@ -95,5 +118,36 @@ describe("Avro payload", () => {
     const emitFiles = vi.fn<EmitFiles>(async () => ({ success: true, data: [{ relativePath: "Order.avsc.json", content: '{"type":"record","name":"Order","fields":[]}' }] }));
     const r = await createArtifactRenderer({ db: fakeDb() as never, emitFiles }).render(subject("vOrder"), "avro");
     expect(r.success && "notes" in r.data).toBe(false);
+  });
+
+  it("enums whose values hold braces are projected too (real Avro emitter)", async () => {
+    const r = await createArtifactRenderer({ db: fakeDb() as never }).render(subject("vBraces"), "avro");
+    if (!r.success) throw new Error(r.error.message);
+    const schema = r.data.artifact.schema as { fields: Array<{ name: string; type: { symbols?: string[] } }> };
+    expect(schema.fields.find((f) => f.name === "kind")?.type.symbols).toEqual(["a_b", "__x_", "ok"]);
+    expect(r.data.notes?.map((n) => n.code)).toEqual(["AVRO_ENUM_SYMBOL_RENAMED", "AVRO_ENUM_SYMBOL_RENAMED"]);
+  }, 120_000);
+
+  it("a numeric-valued enum member (publishes the number as the symbol) is a user-facing AVRO_INVALID_SYMBOL error naming the enum", async () => {
+    const r = await createArtifactRenderer({ db: fakeDb() as never }).render(subject("vNumeric"), "avro");
+    expect(r.success).toBe(false);
+    expect(!r.success && r.error.code).toBe("AVRO_INVALID_SYMBOL");
+    expect(!r.success && r.error.message).toContain('Avro enum Priority has the symbol "1"');
+    expect(!r.success && r.error.message).toContain("numeric value");
+  }, 120_000);
+});
+
+describe("an enum field without values", () => {
+  it("is a coded error naming the entity and the field; the emitter never runs", async () => {
+    const emitFiles = vi.fn<EmitFiles>();
+    for (const format of ["avro", "json-schema", "protobuf"] as const) {
+      const r = await createArtifactRenderer({ db: fakeDb() as never, emitFiles }).render(subject("vEmpty"), format);
+      expect(r.success, format).toBe(false);
+      expect(!r.success && r.error.code, format).toBe("ARTIFACT_RENDER_FAILED");
+      expect(!r.success && r.error.message, format).toBe(`Empty@1.0 → ${format}: enum field "status" has no values`);
+      expect(!r.success && r.error.details, format).toEqual({ cause: "ENUM_NO_VALUES" });
+      expect(!r.success && r.error.suggestedFix, format).toBe("Give the enum field at least one value.");
+    }
+    expect(emitFiles).not.toHaveBeenCalled();
   });
 });

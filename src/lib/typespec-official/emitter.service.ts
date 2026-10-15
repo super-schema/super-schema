@@ -16,7 +16,7 @@ import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
-import { describeAvroProjection, projectTypeSpecSourceForAvro } from "./avro-source";
+import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { ok, err, type Result } from "@/types/result";
 import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
@@ -439,7 +439,23 @@ export function targetResultFromFiles(packageName: string, files: EmittedFile[])
   const output = bundleGeneratedFiles(files);
   const unusable = unusableOutputReason(packageName, output);
   if (unusable) return invalidResult(unusable);
+  if (packageName === "@typespec/avro") {
+    // Safety net behind the Avro projection: a symbol it could not fix (a numeric-valued member) must fail here, naming
+    // the enum, not later as dozens of opaque AsyncAPI parser errors.
+    const problems = describeInvalidAvroSymbols(files.flatMap((file) => findInvalidAvroSymbols(parseJsonOrNull(file.content))));
+    if (problems.length > 0) {
+      return { output: "", validationStatus: "INVALID", warnings: [], errors: problems.map((message) => ({ message })) };
+    }
+  }
   return { output, validationStatus: "VALID", warnings: [], errors: [] };
+}
+
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 /**

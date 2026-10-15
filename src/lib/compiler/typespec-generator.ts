@@ -923,6 +923,26 @@ function resolveTypeSpecType(
 // Utilities
 // ---------------------------------------------------------------------------
 
+/** The comment line {@link generateFieldDefinition} writes above a property whose enum has no values. */
+const EMPTY_ENUM_COMMENT = /^[ \t]*\/\/ ERROR: enum field ("(?:[^"\\]|\\.)*") has no values/gm;
+
+/**
+ * The enum fields a generated source could not express (they have no values; see `ENUM_NO_VALUES`), read back from the
+ * marker comment the generator leaves above each of them. Lets a consumer that only has the TEXT (the events renderer)
+ * report the real cause instead of an opaque compiler failure.
+ */
+export function findEmptyEnumFields(source: string): string[] {
+  const names: string[] = [];
+  for (const match of source.matchAll(EMPTY_ENUM_COMMENT)) {
+    try {
+      names.push(JSON.parse(match[1]) as string);
+    } catch {
+      names.push(match[1].slice(1, -1));
+    }
+  }
+  return names;
+}
+
 function oneLine(text: string): string {
   return text.replace(new RegExp("[\\r\\n\\u2028\\u2029]+", "g"), " ");
 }
