@@ -8,6 +8,7 @@ import {
   traitHeadersSubject, type MessageSource,
 } from "@/lib/events/catalog-mapping";
 import { collectDocumentRefs, parseEventSpecDocument } from "@/lib/events/event-spec-document";
+import type { MessageVersionInfo } from "@/lib/events/bump-rules";
 import type { FrozenTrait } from "@/lib/events/types";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ArtifactRenderer, ArtifactSubject } from "./artifact-renderer";
@@ -16,18 +17,6 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 /** D13: `info.version` of a draft emission. */
 export const DRAFT_VERSION = "draft";
-
-/**
- * A MessageVersion's identity as the bump classifier needs it. Structurally identical to
- * `MessageVersionInfo` in `@/lib/events/bump-rules` (Task 6, a later wave in this branch's history) — declared here so the
- * resolver does not depend on a module that is not merged yet; the two are interchangeable.
- */
-export interface MessageVersionInfo {
-  messageId: string;
-  messageName: string;
-  major: number;
-  label: string;
-}
 
 export interface LatestEventSpecVersion {
   id: string;
