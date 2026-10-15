@@ -42,6 +42,7 @@ export function JsonSchemaVisualEditor({
   defaultName = "NewEntity",
   referenceTargets = [],
   onContentChange,
+  hydrate,
 }: VisualEditorProps) {
   const [title, setTitle] = useState(defaultName);
   const [description, setDescription] = useState("");
@@ -51,6 +52,15 @@ export function JsonSchemaVisualEditor({
   useEffect(() => {
     onContentChange(serializeJsonSchema(title, description, fields));
   }, [title, description, fields, onContentChange]);
+
+  useEffect(() => {
+    if (!hydrate || hydrate.state.format !== "json-schema") return;
+    setTitle(hydrate.state.title);
+    setDescription(hydrate.state.description);
+    setFields(hydrate.state.fields.length > 0 ? hydrate.state.fields : [newField()]);
+    setExpanded(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply only when the nonce changes
+  }, [hydrate?.nonce]);
 
   const update = useCallback((id: string, patch: Partial<JsonSchemaField>) => {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));

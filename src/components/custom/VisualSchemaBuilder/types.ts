@@ -14,6 +14,7 @@
  */
 
 import type { ImportFormat } from "@/lib/importers/types";
+import type { FormState } from "@/lib/schema-workbench/form-state";
 
 export interface VisualEditorProps {
   /** Suggested initial entity/schema name. */
@@ -29,6 +30,12 @@ export interface VisualEditorProps {
    * (so the dispatcher can disable "Review & Import").
    */
   onContentChange: (content: string | null) => void;
+  /**
+   * Replace the editor's state from outside (Schema Workbench: Detail Panel
+   * edits flowing back into the form). Applied whenever `nonce` changes and the
+   * state's format matches the editor's. Omit for a fully uncontrolled editor.
+   */
+  hydrate?: { nonce: number; state: FormState };
 }
 
 export interface VisualFormat {
