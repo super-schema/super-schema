@@ -239,6 +239,73 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
     expect(!r.success && r.error.code).toBe("UNRESOLVED_REFERENCE");
     expect(!r.success && r.error.message).toContain("eGone");
   });
+
+  // Final review B-I4: the draft path used `entity.typespecSource` as-is, ignoring `metadata.sourceStale` (publish regenerates).
+  describe("a draft whose stored source is flagged stale (B-I4)", () => {
+    const STORED = "model Order {\n  id: string;\n}\n";
+    const idOnlyField = (name: string) => ({
+      id: `f-${name}`, name, type: "string", precision: null, scale: null, nullable: false, isKey: false, fieldNumber: null,
+      description: null, classification: null, aliases: [], decorators: {}, sortOrder: 0,
+    });
+
+    /** An entity whose stored source says `id` while its field rows now say `code`; `metadata` decides whether that is flagged (read per call). */
+    function staleDb(metadata: Record<string, unknown> | (() => Record<string, unknown>), typespecSource: string | null = STORED) {
+      const fields = [idOnlyField("code")];
+      const currentMetadata = () => (typeof metadata === "function" ? metadata() : metadata);
+      const entityRow = () => ({ id: "eDraft", name: "Order", description: null, status: "DRAFT", version: 1, domainId: "d1", metadata: currentMetadata(), domain: null });
+      return {
+        ...fakeDb(),
+        entity: {
+          findUnique: vi.fn(async ({ select }: { select?: Record<string, unknown> }) => {
+            if (!select) return entityRow(); // loadEntityModel (include)
+            if ("typespecSource" in select) return { ...entityRow(), ...placement, typespecSource, fields: fields.map((f) => ({ id: f.id, name: f.name, fieldNumber: f.fieldNumber, decorators: f.decorators })) };
+            return { tenant: { slug: "acme" }, domain: { slug: "payments" }, product: { slug: "checkout" } };
+          }),
+          findMany: vi.fn(async () => []),
+        },
+        field: { findMany: vi.fn(async () => fields) },
+      };
+    }
+    const orderFiles: EmitFiles = async () => ({ success: true, data: [{ relativePath: "Order.avsc.json", content: '{"type":"record","name":"Order"}' }] });
+    const subject = { kind: "draft" as const, entityId: "eDraft" };
+
+    it("regenerates the source from the field rows (the NEW field, not the stored one)", async () => {
+      const emitFiles = vi.fn<EmitFiles>(orderFiles);
+      const db = staleDb({ sourceStale: true });
+      const r = await createArtifactRenderer({ db: db as never, emitFiles }).render(subject, "avro");
+      expect(r.success).toBe(true);
+      const source = emitFiles.mock.calls[0][1];
+      expect(source).toContain("model Order {");
+      expect(source).toMatch(/\bcode: string;/);
+      expect(source).not.toMatch(/\bid: string;/);
+      expect(db.field.findMany).toHaveBeenCalled(); // loadEntityModel ran
+    });
+
+    it("keeps a fresh (unflagged) stored source as-is, and still regenerates when there is no stored source", async () => {
+      const fresh = vi.fn<EmitFiles>(orderFiles);
+      const freshDb = staleDb({});
+      await createArtifactRenderer({ db: freshDb as never, emitFiles: fresh }).render(subject, "avro");
+      expect(fresh.mock.calls[0][1]).toMatch(/\bid: string;/);
+      expect(fresh.mock.calls[0][1]).not.toMatch(/\bcode: string;/);
+      expect(freshDb.field.findMany).not.toHaveBeenCalled();
+
+      const none = vi.fn<EmitFiles>(orderFiles);
+      await createArtifactRenderer({ db: staleDb({}, null) as never, emitFiles: none }).render(subject, "avro");
+      expect(none.mock.calls[0][1]).toMatch(/\bcode: string;/);
+    });
+
+    it("never caches the draft render: an edit between two renders shows up in the second", async () => {
+      const emitFiles = vi.fn<EmitFiles>(orderFiles);
+      let metadata: Record<string, unknown> = {};
+      const renderer = createArtifactRenderer({ db: staleDb(() => metadata) as never, emitFiles });
+      await renderer.render(subject, "avro");
+      metadata = { sourceStale: true };
+      await renderer.render(subject, "avro");
+      expect(emitFiles).toHaveBeenCalledTimes(2);
+      expect(emitFiles.mock.calls[0][1]).toMatch(/\bid: string;/);
+      expect(emitFiles.mock.calls[1][1]).toMatch(/\bcode: string;/);
+    });
+  });
 });
 
 /** An Avro emitter fake that writes `<Root>.avsc.json` for the first model of the program it is given. */

@@ -4,6 +4,7 @@ import type { LevelScope } from "@/lib/levels";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { channelListItem, eventSpecListItem, messageListItem, traitListItem } from "@/lib/events/list-items";
 import type { Linked, TraitListItem } from "@/lib/events/types";
+import { findEventSpecsWithCatalogDrift } from "@/services/events/event-spec.service";
 import { loadEntityOptions } from "@/features/events/load-options";
 import type { EventsTabData, TraitGroup, TraitsTabData } from "./types";
 
@@ -57,10 +58,14 @@ export async function loadProductEventsData(args: {
     prisma.trait.findMany({ where: domainTraits(tenantId, domainId), orderBy: { name: "asc" }, select: TRAIT_SELECT }),
     prisma.trait.findMany({ where: tenantTraits(tenantId), orderBy: { name: "asc" }, select: TRAIT_SELECT }),
   ]);
+  // D8: a published spec whose live Channel / Trait differs from its frozen copy has unpublished changes too (R78) — the stored
+  // flag never sees it. Frozen copies vs live rows only (three batched queries, no rendering / emitter).
+  const unflagged = specs.filter((s) => s.latestVersion && !s.hasUnpublishedChanges).map((s) => s.id);
+  const drifted = await findEventSpecsWithCatalogDrift(prisma, tenantId, unflagged);
   const at = { domainSlug, productSlug };
   return {
     events: {
-      eventSpecs: specs.map((s) => ({ ...eventSpecListItem(s), href: assetHref({ kind: "eventSpec", id: s.id, ...at }) })),
+      eventSpecs: specs.map((s) => ({ ...eventSpecListItem({ ...s, hasUnpublishedChanges: s.hasUnpublishedChanges || drifted.has(s.id) }), href: assetHref({ kind: "eventSpec", id: s.id, ...at }) })),
       messages: messages.map((m) => ({ ...messageListItem(m), href: assetHref({ kind: "message", id: m.id, ...at }) })),
       channels: channels.map((c) => ({ ...channelListItem(c), href: assetHref({ kind: "channel", id: c.id, ...at }) })),
       payloadEntities,

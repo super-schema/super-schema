@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
-  analyzeVersionedPublish, eventSpecPublishInput, messagePublishInput, planVersionedPublish, provisionalLabel,
+  analyzeVersionedPublish, eventSpecPublishInput, hasCatalogDrift, messagePublishInput, planVersionedPublish, provisionalLabel,
   type MessagePublishState,
 } from "@/lib/events/publish-plan";
 import type { EventSpecBumpSide } from "@/lib/events/bump-rules";
 import { validateMessageSpec } from "@/lib/events/catalog-specs";
+import type { FrozenChannel, FrozenTrait } from "@/lib/events/types";
 
 const latest = { major: 1, minor: 3, sequence: 4 };
 
@@ -300,6 +301,84 @@ describe("eventSpecPublishInput: classification and fail-closed inputs (fix roun
     current.document.operations = [];
     const input = eventSpecPublishInput(facts({ current, unpublishedMessages: [{ id: "m1", name: "OrderCreated" }] }));
     expect(input.bump).toEqual({ bump: "MAJOR", reasons: ['Operation "o" removed'] });
+  });
+});
+
+describe("eventSpecPublishInput: R78 channel / trait / default content type changes reach the preview (final review B-I1)", () => {
+  const side = (over: Partial<EventSpecBumpSide> = {}): EventSpecBumpSide => ({
+    document: { info: { title: "x" }, servers: [], operations: [{ key: "o", action: "send", channelId: "ch", messageVersionIds: ["mv"], traitIds: [] }] },
+    channelAddresses: { ch: "a.b" },
+    channelNames: { ch: "orders" },
+    channelProfiles: { ch: { protocol: "kafka", format: "avro" } },
+    messageVersions: { mv: { messageId: "m1", messageName: "OrderCreated", major: 1, label: "1.0" } },
+    ...over,
+  });
+  const facts = (current: EventSpecBumpSide): Parameters<typeof eventSpecPublishInput>[0] => ({
+    latest: { major: 2, minor: 0, sequence: 3 },
+    hasChanges: true,
+    previous: side(),
+    current,
+    unresolved: [],
+    unpublishedMessages: [],
+    diagnostics: [],
+    nameConflict: null,
+  });
+
+  it("a shared channel changing from Avro to JSON Schema suggests MAJOR 3.0 with a readable reason (was MINOR 2.1 with none)", () => {
+    const input = eventSpecPublishInput(facts(side({ channelProfiles: { ch: { protocol: "kafka", format: "json-schema", dialect: "draft-07" } } })));
+    expect(input.bump).toEqual({ bump: "MAJOR", reasons: ["Channel orders: format avro → json-schema"] });
+    expect(analyzeVersionedPublish(input)).toMatchObject({
+      suggestedBump: "MAJOR",
+      candidateLabels: { MAJOR: "3.0", MINOR: "2.1" },
+      reasons: ["Channel orders: format avro → json-schema"],
+      blockers: [],
+    });
+    // The raise-only rule: a MINOR request is refused, the suggested MAJOR is what gets planned.
+    expect(planVersionedPublish(input, "MINOR")).toMatchObject({ success: false, error: { code: "BUMP_TOO_LOW" } });
+    expect(planVersionedPublish(input)).toMatchObject({ success: true, data: { label: "3.0", changeKind: "MAJOR", reasons: ["Channel orders: format avro → json-schema"] } });
+  });
+
+  it("a changed defaultContentType and a moved trait headers pin are MAJOR too", () => {
+    const withDefault = side();
+    withDefault.document = { ...withDefault.document, defaultContentType: "application/json" };
+    expect(eventSpecPublishInput(facts(withDefault)).bump).toEqual({ bump: "MAJOR", reasons: ['defaultContentType changed from "(none)" to "application/json"'] });
+
+    const pin = (label: string, major: number) => ({ entityId: "e", entityName: "Headers", entityVersionId: `h@${label}`, major, label });
+    const prev = { ...facts(side()), previous: side({ traitHeaders: { t: pin("1.0", 1) }, traitNames: { t: "CloudEvents" } }) };
+    const next = side({ traitHeaders: { t: pin("2.0", 2) }, traitNames: { t: "CloudEvents" } });
+    expect(eventSpecPublishInput({ ...prev, current: next }).bump).toEqual({
+      bump: "MAJOR",
+      reasons: ["Trait CloudEvents: headers pin moved from Headers v1.0 to v2.0 (new major)"],
+    });
+  });
+
+  it("a documentation-only change (nothing on the bump side moved) stays MINOR", () => {
+    expect(eventSpecPublishInput(facts(side())).bump).toEqual({ bump: "MINOR", reasons: [] });
+  });
+});
+
+describe("hasCatalogDrift (D8): the one definition behind the planner's hasChanges and the unpublished-changes badges", () => {
+  const channel = (over: Record<string, unknown> = {}): FrozenChannel =>
+    ({ id: "ch", name: "orders", productSlug: "p", address: "a", protocol: "kafka", profile: { format: "avro" }, ...over }) as FrozenChannel;
+  const trait = (over: Record<string, unknown> = {}): FrozenTrait =>
+    ({ id: "t", name: "CloudEvents", kind: "MESSAGE", ownerSlug: "acme", spec: { a: 1, b: 2 }, headersEntityId: null, headersEntityVersionId: null, ...over }) as FrozenTrait;
+  const copies = (channels: FrozenChannel[] = [channel()], traits: FrozenTrait[] = [trait()]) => ({ channels, traits });
+
+  it("is false for identical copies, regardless of JSON key order", () => {
+    expect(hasCatalogDrift(copies(), copies())).toBe(false);
+    expect(hasCatalogDrift(copies([channel()], [trait({ spec: { a: 1, b: 2 } })]), copies([channel()], [trait({ spec: { b: 2, a: 1 } })]))).toBe(false);
+  });
+
+  it("is true for ANY live channel difference (format, address, description) and any trait difference", () => {
+    expect(hasCatalogDrift(copies(), copies([channel({ profile: { format: "json-schema", dialect: "draft-07" } })]))).toBe(true);
+    expect(hasCatalogDrift(copies(), copies([channel({ address: "b" })]))).toBe(true);
+    expect(hasCatalogDrift(copies(), copies([channel({ description: "now documented" })]))).toBe(true);
+    expect(hasCatalogDrift(copies(), copies([channel()], [trait({ headersEntityId: "e", headersEntityVersionId: "v" })]))).toBe(true);
+  });
+
+  it("is true when a frozen channel or trait no longer exists live", () => {
+    expect(hasCatalogDrift(copies(), copies([], [trait()]))).toBe(true);
+    expect(hasCatalogDrift(copies(), copies([channel()], []))).toBe(true);
   });
 });
 

@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { EventSpecDetail, EventVersionSummary } from "@/lib/events/types";
-import { SPEC_SELECT, toEventSpecDetail } from "@/services/events/event-spec.service";
+import { findEventSpecsWithCatalogDrift, SPEC_SELECT, toEventSpecDetail } from "@/services/events/event-spec.service";
 import { toEventVersionSummary, VERSION_SUMMARY_SELECT } from "@/services/events/version-summary";
 import { productCrumbs } from "@/features/events/crumbs";
 import {
@@ -113,7 +113,13 @@ export async function loadEventSpecPage(params: {
       return null;
     }
     const listHref = assetHref({ kind: "events", domainSlug: route.domain.slug, productSlug: route.product.slug, section: "specs" });
-    return { ...shared, spec: detail.data, crumbs: productCrumbs(route, { label: "Event Specs", href: listHref }, row.name), owner: null };
+    // D8: the badge also reads live Channel / Trait drift (R78), which the stored flag never sees. Compared against the frozen
+    // copies only (no rendering), and only when the flag is not already set.
+    const drifted = row.latestVersion && !detail.data.hasUnpublishedChanges
+      ? (await findEventSpecsWithCatalogDrift(prisma, route.tenantId, [row.id])).has(row.id)
+      : false;
+    const spec = drifted ? { ...detail.data, hasUnpublishedChanges: true } : detail.data;
+    return { ...shared, spec, crumbs: productCrumbs(route, { label: "Event Specs", href: listHref }, row.name), owner: null };
   }
 
   // Crumbs and the owner link name the owning product; version links keep the reader on this read-only page.

@@ -47,10 +47,10 @@ export interface DraftSnapshot {
   unresolved: ResolveProblem[];
 }
 
-const CHANNEL_SELECT = {
+export const CHANNEL_SELECT = {
   id: true, name: true, address: true, protocol: true, format: true, formatDialect: true, spec: true, product: { select: { slug: true } },
 } satisfies Prisma.ChannelSelect;
-const TRAIT_SELECT = {
+export const TRAIT_SELECT = {
   id: true, name: true, kind: true, spec: true, headersEntityId: true, headersEntityVersionId: true,
   tenant: { select: { slug: true } }, domain: { select: { slug: true } }, product: { select: { slug: true } },
 } satisfies Prisma.TraitSelect;

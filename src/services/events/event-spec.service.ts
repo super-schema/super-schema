@@ -1,7 +1,8 @@
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import type { LevelScope } from "@/lib/levels";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { toFrozenTrait, toResolvedChannel } from "@/lib/events/catalog-mapping";
 import { normalizeCatalogName } from "@/lib/events/inputs";
 import {
   collectDocumentRefs,
@@ -9,10 +10,12 @@ import {
   parseEventSpecDocument,
   type DocumentProblem,
 } from "@/lib/events/event-spec-document";
-import type { EventSpecDetail, EventSpecDocument } from "@/lib/events/types";
+import { hasCatalogDrift } from "@/lib/events/publish-plan";
+import type { EventSpecDetail, EventSpecDocument, FrozenChannel, FrozenTrait } from "@/lib/events/types";
 import { inSameLine } from "@/services/name-registry.service";
 import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
+import { CHANNEL_SELECT, TRAIT_SELECT } from "@/services/events/event-spec-resolver";
 import { deleteReferencesFrom, replaceReferences } from "@/services/events/schema-references";
 import { loadOwnedRow } from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
@@ -188,6 +191,50 @@ export async function deleteEventSpec(id: string, owner: ScopeTarget, ctx: Servi
 export async function getEventSpec(id: string, ctx: ServiceContext): Promise<Result<EventSpecDetail>> {
   const row = await ctx.prisma.eventSpec.findUnique({ where: { id }, select: SPEC_SELECT });
   return row ? toDetail(row) : err({ code: "NOT_FOUND", message: `Event spec "${id}" not found` });
+}
+
+const frozenList = <T extends { id: string }>(value: unknown): T[] =>
+  Array.isArray(value) ? (value as T[]).filter((v) => v !== null && typeof v === "object" && typeof v.id === "string") : [];
+
+/**
+ * D8 drift for the "unpublished changes" badges: which of these specs have a live Channel / Trait that differs from the copy
+ * frozen into their latest version (the same `hasCatalogDrift` the publish planner uses for `hasChanges`). It reads the frozen
+ * copies and the live rows only — no snapshot, no rendering, no emission — in three batched queries however many specs are
+ * listed, so list pages can afford it. A published spec whose draft is unchanged references exactly its frozen channel / trait
+ * ids, so the live rows are looked up by those ids; a deleted row drops out and counts as drift, as in the planner's snapshot.
+ * (A spec with draft edits is already flagged by `hasUnpublishedChanges`; unpublished specs have nothing to drift from.)
+ */
+export async function findEventSpecsWithCatalogDrift(
+  db: PrismaClient | Prisma.TransactionClient,
+  tenantId: string,
+  specIds: string[]
+): Promise<Set<string>> {
+  if (specIds.length === 0) return new Set();
+  const rows = await db.eventSpec.findMany({
+    where: { id: { in: specIds }, tenantId, latestVersionId: { not: null } },
+    select: { id: true, latestVersion: { select: { frozenChannels: true, frozenTraits: true } } },
+  });
+  const frozen = rows.flatMap((r) =>
+    r.latestVersion ? [{ id: r.id, channels: frozenList<FrozenChannel>(r.latestVersion.frozenChannels), traits: frozenList<FrozenTrait>(r.latestVersion.frozenTraits) }] : []
+  );
+  const channelIds = [...new Set(frozen.flatMap((f) => f.channels.map((c) => c.id)))];
+  const traitIds = [...new Set(frozen.flatMap((f) => f.traits.map((t) => t.id)))];
+  const [channelRows, traitRows] = await Promise.all([
+    channelIds.length > 0 ? db.channel.findMany({ where: { id: { in: channelIds }, tenantId }, select: CHANNEL_SELECT }) : [],
+    traitIds.length > 0 ? db.trait.findMany({ where: { id: { in: traitIds }, tenantId }, select: TRAIT_SELECT }) : [],
+  ]);
+  const liveChannels = new Map(channelRows.map((c) => [c.id, toResolvedChannel(c)]));
+  const liveTraits = new Map(traitRows.map((t) => [t.id, toFrozenTrait(t)]));
+  const present = <T,>(v: T | undefined): v is T => v !== undefined;
+  const drifted = new Set<string>();
+  for (const f of frozen) {
+    const live = {
+      channels: f.channels.map((c) => liveChannels.get(c.id)).filter(present),
+      traits: f.traits.map((t) => liveTraits.get(t.id)).filter(present),
+    };
+    if (hasCatalogDrift({ channels: f.channels, traits: f.traits }, live)) drifted.add(f.id);
+  }
+  return drifted;
 }
 
 /** Read-side reuse by the page loader (Task 17); returns a Result because stored drafts are re-validated. */
