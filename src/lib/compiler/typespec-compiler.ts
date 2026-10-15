@@ -239,7 +239,6 @@ function exprToArgValue(node: unknown): string | number | boolean | undefined {
   return ref.sv ?? ref.id?.sv;
 }
 
-/** Read decorator names + resolved args directly from a type's AST node. */
 /** String elements of a value tuple argument (`#["a", "b"]`), or [] for anything else. */
 function exprToStringArray(node: unknown): string[] {
   const values = (node as { values?: unknown[] } | undefined)?.values;
@@ -260,6 +259,10 @@ function modelTags(type: Type): string[] | undefined {
   return tags.length > 0 ? tags : undefined;
 }
 
+/**
+ * Read decorator names + resolved args directly from a type's AST node. `rawArgs` keeps the argument
+ * nodes for values `exprToArgValue` does not flatten (e.g. a value tuple).
+ */
 function readAstDecorators(
   type: Type
 ): Array<{ name: string; args: Array<string | number | boolean | undefined>; rawArgs: unknown[] }> {
