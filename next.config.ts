@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // `@typespec/compiler` loads its stdlib and library JS with a runtime `import(fileUrl)` (NodeHost.getJsImport).
+  // When Turbopack bundles the package, that becomes "Cannot find module as expression is too dynamic", so every
+  // in-process compile reported errors under `next dev` (the entity publish regeneration check rejected every
+  // entity whose stored source was missing or stale; verified live in Playwright). A server-external package is a
+  // plain Node import, which is what the compiler needs.
+  serverExternalPackages: ["@typespec/compiler"],
   // D14: the AsyncAPI preview iframe reads these files at runtime (standalone output must ship them).
   // The key is a glob over the route path. Verified with a standalone build: under Turbopack the literal
   // dynamic-segment key "/api/asyncapi-preview/[asset]" matches nothing, so neither file ships.
