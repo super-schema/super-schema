@@ -413,7 +413,9 @@ export function FieldEditor({
       )}
 
       {/* Field cards */}
+      {/* A fixed id keeps dnd-kit's generated aria-describedby identical on server and client (no hydration mismatch). */}
       <DndContext
+        id="field-editor-dnd"
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragEnd={handleDragEnd}

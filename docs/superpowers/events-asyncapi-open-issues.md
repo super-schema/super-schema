@@ -49,6 +49,8 @@ R78 (decided in review): Event Spec bump is MAJOR on channel format/dialect/prot
 
 - Baseline failures: 8 (`db-emitter-parity` ×4 and `e2e-critical-flows` bigquery ×1 from the broken `@typespec/db`; `schemas-tab` ×3) plus load-dependent 5 s typespec-cli timeouts that pass alone.
 - Playwright specs: `events-flow.spec.ts` (4 tests), `navigation`, `schema-lifecycle`, `layout`, `sample` pass on a dedicated dev server; **restart your `next dev` on :3000** to pick up `serverExternalPackages: ["@typespec/compiler"]` (entity publish fails under dev otherwise).
+- Final e2e run (own dev server): every spec passes when run on its own, including the two new ones (`dashboard-not-found`, `entity-field-edit`). The default 8-worker parallel run fails the same 8 first-wave tests with 30 s timeouts (dev-server capacity, load average 25–50 on 16 cores); with `--timeout=120000` they pass. With 4 workers `navigation` "every explorer node" can click a sidebar node whose fixture another spec's `afterAll` already deleted (CI uses `workers: 1`). The `events-flow`, `schema-lifecycle` and `entity-field-edit` fixtures are visible to the other specs' navigation crawl; isolate them (per-spec tenant or domain filter) if you want parallel e2e.
+- The dev server will not start from a git worktree: `next.config.ts` pins `turbopack.root: __dirname` and Turbopack rejects a `node_modules` symlink pointing outside it (agents worked around it with a temporary edit). Run e2e from the main checkout.
 - Shared `node_modules` can be poisoned by agent symlinks (a self-referencing `node_modules/@typespec/@typespec` broke the production build once): check `find node_modules -maxdepth 3 -type l` after automated runs.
 
 ## 6. Not started (spec §14 backlog)
