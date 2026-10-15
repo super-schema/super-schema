@@ -7,9 +7,13 @@ import { createTrait, deleteTrait, updateTrait, type TraitInput } from "@/servic
 import type { TraitDetail } from "@/lib/events/types";
 import type { ActionResult } from "@/types/action-result";
 
-/** A TENANT target is always the server-resolved active tenant (same rule as data types). */
+/**
+ * A TENANT target is always the server-resolved active tenant (same rule as data types). The target comes from the
+ * client, so a malformed one (null, wrong shape) is passed through untouched and the service rejects it.
+ */
 async function serverTarget(target: ScopeTarget): Promise<ScopeTarget> {
-  return target.level === "TENANT" ? { level: "TENANT", tenantId: await getActiveTenantId() } : target;
+  const isTenant = typeof target === "object" && target !== null && target.level === "TENANT";
+  return isTenant ? { level: "TENANT", tenantId: await getActiveTenantId() } : target;
 }
 
 export async function createTraitAction(target: ScopeTarget, input: TraitInput): Promise<ActionResult<TraitDetail>> {

@@ -52,6 +52,25 @@ describe("channel actions", () => {
     expect(h.createChannel).not.toHaveBeenCalled();
   });
 
+  it("rejects every unauthenticated channel action without a service call or revalidate", async () => {
+    h.auth.mockResolvedValue(null);
+    const notAuthenticated = { success: false, error: "Not authenticated", code: "UNAUTHORIZED" };
+    expect(await updateChannelAction("c1", "p1", INPUT)).toEqual(notAuthenticated);
+    expect(await setChannelMessagesAction("c1", "p1", ["m1"])).toEqual(notAuthenticated);
+    expect(await deleteChannelAction("c1", "p1")).toEqual(notAuthenticated);
+    for (const fn of [h.updateChannel, h.setChannelMessages, h.deleteChannel, h.revalidatePath]) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("returns failures from every channel action and never revalidates", async () => {
+    for (const fn of [h.createChannel, h.updateChannel, h.setChannelMessages, h.deleteChannel]) fn.mockResolvedValue(FAIL);
+    const expected = { success: false, error: "read-only", code: "FORBIDDEN", details: { x: 1 } };
+    expect(await createChannelAction("p1", INPUT)).toEqual(expected);
+    expect(await updateChannelAction("c1", "p1", INPUT)).toEqual(expected);
+    expect(await setChannelMessagesAction("c1", "p1", ["m1"])).toEqual(expected);
+    expect(await deleteChannelAction("c1", "p1")).toEqual(expected);
+    expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+
   it("passes the product owner target and revalidates the /schemas layout on success", async () => {
     for (const fn of [h.createChannel, h.updateChannel, h.setChannelMessages, h.deleteChannel]) fn.mockResolvedValue(OK);
     expect(await createChannelAction("p1", INPUT)).toEqual({ success: true, data: { id: "c1" } });
@@ -84,5 +103,33 @@ describe("trait actions", () => {
     await deleteTraitAction("t1", { level: "DOMAIN", domainId: "d1" });
     expect(h.deleteTrait).toHaveBeenCalledWith("t1", { level: "DOMAIN", domainId: "d1" }, CTX);
     expect(h.revalidatePath).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects unauthenticated calls with NOT_AUTHENTICATED: no service call, no tenant lookup, no revalidate", async () => {
+    h.auth.mockResolvedValue(null);
+    const notAuthenticated = { success: false, error: "Not authenticated", code: "UNAUTHORIZED" };
+    const input = { name: "CloudEvents", kind: "MESSAGE" as const };
+    expect(await createTraitAction({ level: "TENANT", tenantId: "t" }, input)).toEqual(notAuthenticated);
+    expect(await updateTraitAction("t1", { level: "DOMAIN", domainId: "d1" }, { name: "x" })).toEqual(notAuthenticated);
+    expect(await deleteTraitAction("t1", { level: "DOMAIN", domainId: "d1" })).toEqual(notAuthenticated);
+    for (const fn of [h.createTrait, h.updateTrait, h.deleteTrait, h.getActiveTenantId, h.revalidatePath]) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("returns service failures with code + details and does not revalidate", async () => {
+    for (const fn of [h.createTrait, h.updateTrait, h.deleteTrait]) fn.mockResolvedValue(FAIL);
+    const expected = { success: false, error: "read-only", code: "FORBIDDEN", details: { x: 1 } };
+    expect(await createTraitAction({ level: "DOMAIN", domainId: "d1" }, { name: "x", kind: "OPERATION" })).toEqual(expected);
+    expect(await updateTraitAction("t1", { level: "DOMAIN", domainId: "d1" }, { name: "x" })).toEqual(expected);
+    expect(await deleteTraitAction("t1", { level: "DOMAIN", domainId: "d1" })).toEqual(expected);
+    expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("passes a malformed (non-object) target through untouched so the service rejects it instead of the action throwing", async () => {
+    h.createTrait.mockResolvedValue({ success: false, error: { code: "VALIDATION_ERROR", message: "Scope target must be an object" } });
+    const result = await createTraitAction(null as never, { name: "x", kind: "MESSAGE" });
+    expect(result).toEqual({ success: false, error: "Scope target must be an object", code: "VALIDATION_ERROR" });
+    expect(h.createTrait).toHaveBeenCalledWith(null, { name: "x", kind: "MESSAGE" }, CTX);
+    expect(h.getActiveTenantId).not.toHaveBeenCalled();
+    expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 });

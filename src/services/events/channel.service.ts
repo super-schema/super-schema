@@ -7,6 +7,9 @@ import { assertOwnedBy } from "@/lib/events/ownership";
 import type { ChannelDetail, ChannelSpec, JsonSchemaDialect, PayloadFormat } from "@/lib/events/types";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
+import {
+  guardRead, optionalString, parseIdList, parseScopeTarget, requireId, requireString,
+} from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -44,16 +47,32 @@ interface NormalizedChannel {
   spec: ChannelSpec;
 }
 
-function normalizeChannel(input: ChannelInput): Result<NormalizedChannel> {
-  const name = normalizeCatalogName(input.name, "Channel");
+/** Input arrives from the client at runtime: check shapes before any string method runs on a field. */
+function normalizeChannel(input: unknown): Result<NormalizedChannel> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return err({ code: "VALIDATION_ERROR", message: "Channel input must be an object" });
+  }
+  const raw = input as Record<string, unknown>;
+  const rawName = requireString(raw.name, "Channel name");
+  if (!rawName.success) return rawName;
+  const rawProtocol = requireString(raw.protocol, "Protocol");
+  if (!rawProtocol.success) return rawProtocol;
+  const rawFormat = requireString(raw.format, "Format");
+  if (!rawFormat.success) return rawFormat;
+  const rawAddress = optionalString(raw.address, "Address");
+  if (!rawAddress.success) return rawAddress;
+  const rawDialect = optionalString(raw.formatDialect, "Format dialect");
+  if (!rawDialect.success) return rawDialect;
+
+  const name = normalizeCatalogName(rawName.data, "Channel");
   if (!name.success) return name;
-  const protocol = normalizeProtocol(input.protocol);
+  const protocol = normalizeProtocol(rawProtocol.data);
   if (!protocol.success) return protocol;
-  const profile = normalizeFormatProfile(input.format, input.formatDialect);
+  const profile = normalizeFormatProfile(rawFormat.data, rawDialect.data);
   if (!profile.success) return profile;
-  const spec = parseChannelSpec(input.spec ?? {});
+  const spec = parseChannelSpec(raw.spec ?? {});
   if (!spec.success) return spec;
-  const address = input.address?.trim() ? input.address.trim() : null;
+  const address = rawAddress.data?.trim() ? rawAddress.data.trim() : null;
   return ok({ name: name.data, address, protocol: protocol.data, ...profile.data, spec: spec.data });
 }
 
@@ -61,17 +80,26 @@ function columns(n: NormalizedChannel) {
   return { name: n.name, address: n.address, protocol: n.protocol, format: n.format, formatDialect: n.formatDialect, spec: n.spec as unknown as Prisma.InputJsonValue };
 }
 
-async function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise<Result<{ row: ChannelRow; scope: LevelScope }>> {
-  const scope = await resolveScope(ctx.prisma, owner);
-  if (!scope.success) return scope;
-  const row = await ctx.prisma.channel.findUnique({ where: { id }, select: CHANNEL_SELECT });
-  if (!row) return err({ code: "NOT_FOUND", message: `Channel "${id}" not found` });
-  const owned = assertOwnedBy(row, scope.data, `Channel "${row.name}"`);
-  if (!owned.success) return owned;
-  return ok({ row, scope: scope.data });
+/** Validates the id + owner shapes, then reads the row and checks ownership; a DB throw becomes DB_ERROR. */
+async function loadOwned(ctx: ServiceContext, id: unknown, owner: unknown): Promise<Result<{ row: ChannelRow; scope: LevelScope }>> {
+  const channelId = requireId(id, "Channel id");
+  if (!channelId.success) return channelId;
+  const target = parseScopeTarget(owner);
+  if (!target.success) return target;
+  return guardRead(async () => {
+    const scope = await resolveScope(ctx.prisma, target.data);
+    if (!scope.success) return scope;
+    const row = await ctx.prisma.channel.findUnique({ where: { id: channelId.data }, select: CHANNEL_SELECT });
+    if (!row) return err({ code: "NOT_FOUND", message: `Channel "${channelId.data}" not found` });
+    const owned = assertOwnedBy(row, scope.data, `Channel "${row.name}"`);
+    if (!owned.success) return owned;
+    return ok({ row, scope: scope.data });
+  });
 }
 
 export async function createChannel(productId: string, input: ChannelInput, ctx: ServiceContext): Promise<Result<ChannelDetail>> {
+  const product = requireId(productId, "productId");
+  if (!product.success) return product;
   const n = normalizeChannel(input);
   if (!n.success) return n;
   return auditedWrite({
@@ -79,7 +107,7 @@ export async function createChannel(productId: string, input: ChannelInput, ctx:
     run: async () => {
       const created = await createInScope(ctx.prisma, {
         kind: "channel",
-        target: { level: "PRODUCT", productId },
+        target: { level: "PRODUCT", productId: product.data },
         name: n.data.name,
         write: (tx, scope) => tx.channel.create({ data: { ...columns(n.data), ...scope }, select: CHANNEL_SELECT }),
       });
@@ -88,6 +116,13 @@ export async function createChannel(productId: string, input: ChannelInput, ctx:
   });
 }
 
+/**
+ * Full replace of the editable columns: `name`, `address`, `protocol`, `format`, `formatDialect` and `spec` all
+ * take the input's value, so an omitted `address` becomes null, an omitted `spec` resets to `{}`, and an omitted
+ * `formatDialect` on a JSON Schema channel falls back to the default dialect (`draft-07`).
+ * Preserved: the id, the level columns (tenant / domain / product) and the allowed messages — those change only
+ * through `setChannelMessages`.
+ */
 export async function updateChannel(id: string, input: ChannelInput, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<ChannelDetail>> {
   const n = normalizeChannel(input);
   if (!n.success) return n;
@@ -105,12 +140,23 @@ export async function updateChannel(id: string, input: ChannelInput, owner: Scop
   });
 }
 
+/**
+ * Replace the channel's allowed-message set. `messageIds` must be an array of at most 200 non-empty strings
+ * (duplicates collapse); every id must be a message of the channel's tenant (messages of other products in
+ * the tenant are fine, other tenants' are "unknown"). A failed call changes nothing. A successful one also
+ * bumps the channel's `updatedAt` (the set lives in a join table, so the row would otherwise look unchanged).
+ */
 export async function setChannelMessages(id: string, messageIds: string[], owner: ScopeTarget, ctx: ServiceContext): Promise<Result<ChannelDetail>> {
+  const ids = parseIdList(messageIds, "messageIds");
+  if (!ids.success) return ids;
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
-  const unique = [...new Set(messageIds)];
-  const found = await ctx.prisma.message.findMany({ where: { id: { in: unique }, tenantId: owned.data.row.tenantId }, select: { id: true } });
-  const missing = unique.filter((m) => !found.some((f) => f.id === m));
+  const unique = ids.data;
+  const found = await guardRead(async () =>
+    ok(await ctx.prisma.message.findMany({ where: { id: { in: unique }, tenantId: owned.data.row.tenantId }, select: { id: true } }))
+  );
+  if (!found.success) return found;
+  const missing = unique.filter((m) => !found.data.some((f) => f.id === m));
   if (missing.length > 0) {
     return err({ code: "VALIDATION_ERROR", message: `Unknown message(s): ${missing.join(", ")}`, details: { problems: missing.map((m) => `Message "${m}" not found`) } });
   }
@@ -122,6 +168,7 @@ export async function setChannelMessages(id: string, messageIds: string[], owner
           await ctx.prisma.$transaction(async (tx) => {
             await tx.channelMessage.deleteMany({ where: { channelId: id } });
             if (unique.length > 0) await tx.channelMessage.createMany({ data: unique.map((messageId) => ({ channelId: id, messageId })) });
+            await tx.channel.update({ where: { id }, data: { updatedAt: new Date() } });
             return tx.channel.findUniqueOrThrow({ where: { id }, select: CHANNEL_SELECT });
           })
         )
@@ -142,8 +189,12 @@ export async function deleteChannel(id: string, owner: ScopeTarget, ctx: Service
 }
 
 export async function getChannel(id: string, ctx: ServiceContext): Promise<Result<ChannelDetail>> {
-  const row = await ctx.prisma.channel.findUnique({ where: { id }, select: CHANNEL_SELECT });
-  return row ? ok(toDetail(row)) : err({ code: "NOT_FOUND", message: `Channel "${id}" not found` });
+  const channelId = requireId(id, "Channel id");
+  if (!channelId.success) return channelId;
+  return guardRead(async () => {
+    const row = await ctx.prisma.channel.findUnique({ where: { id: channelId.data }, select: CHANNEL_SELECT });
+    return row ? ok(toDetail(row)) : err({ code: "NOT_FOUND", message: `Channel "${channelId.data}" not found` });
+  });
 }
 
 /** Read-side reuse by the page loaders (Task 15). */
