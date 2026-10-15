@@ -116,7 +116,7 @@ export function DomainTabs({
   return (
     <div className="animate-auth-fade-up">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
         <Link href="/schemas" className="hover:text-foreground transition-colors">
           Domains
         </Link>

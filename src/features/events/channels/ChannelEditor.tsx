@@ -7,9 +7,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import {
   deleteChannelAction, setChannelMessagesAction, updateChannelAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/channel-actions";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { noticeFor, settleAction, type ActionNotice } from "@/lib/action-error";
 import { formatJsonText, JSON_SCHEMA_DIALECTS, KNOWN_PROTOCOLS, parseJsonObjectText, PAYLOAD_FORMATS } from "@/lib/events/inputs";
 import type { ChannelSpec, JsonObject } from "@/lib/events/types";
@@ -27,6 +29,7 @@ function compact<T extends object>(value: T): T {
 
 export function ChannelEditor({ channel, productId, crumbs, listHref, messageOptions }: ChannelPageData) {
   const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [name, setName] = useState(channel.name);
   const [address, setAddress] = useState(channel.address ?? "");
   const [protocol, setProtocol] = useState(channel.protocol);
@@ -88,6 +91,7 @@ export function ChannelEditor({ channel, productId, crumbs, listHref, messageOpt
       setBusy(false);
       return setNotice(noticeFor(deleted));
     }
+    void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted row stays until a reload
     router.push(listHref); // stays busy: the page is going away, and a second click would only report "not found"
   }
 
@@ -95,6 +99,7 @@ export function ChannelEditor({ channel, productId, crumbs, listHref, messageOpt
 
   return (
     <div className="animate-auth-fade-up space-y-space-6">
+      <HideEmptyRightPanel />
       <EventBreadcrumb crumbs={crumbs} />
       <div className="flex items-center justify-between">
         <h1 className="flex items-center gap-space-2 text-display text-foreground"><Radio className="w-6 h-6" /> {channel.name}</h1>

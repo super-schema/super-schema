@@ -7,7 +7,9 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import { deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { noticeFor, settleAction, type ActionNotice } from "@/lib/action-error";
 import { formatJsonText, parseJsonObjectText } from "@/lib/events/inputs";
 import type { EntityPin } from "@/lib/events/types";
@@ -19,6 +21,7 @@ import type { TraitPageData } from "./load-trait-page";
 
 export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: TraitPageData) {
   const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [name, setName] = useState(trait.name);
   const [specText, setSpecText] = useState(formatJsonText(trait.spec) || "{}");
   const [headers, setHeaders] = useState<EntityPin | null>(trait.headers);
@@ -52,11 +55,13 @@ export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: T
       setBusy(false);
       return setNotice(noticeFor(deleted));
     }
+    void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted row stays until a reload
     router.push(listHref); // stays busy: the page is going away, and a second click would only report "not found"
   }
 
   return (
     <div className="animate-auth-fade-up space-y-space-6">
+      <HideEmptyRightPanel />
       <EventBreadcrumb crumbs={crumbs} />
       <div className="flex items-center justify-between">
         <h1 className="flex items-center gap-space-2 text-display text-foreground">

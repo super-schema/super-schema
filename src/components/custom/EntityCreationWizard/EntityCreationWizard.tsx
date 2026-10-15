@@ -339,6 +339,7 @@ export function EntityCreationWizard({
         }
       }
 
+      invalidateDomainsTree();
       router.push(
         assetHref({ kind: "product", domainSlug: product.domainSlug, productSlug: product.productSlug })
       );

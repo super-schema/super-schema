@@ -25,6 +25,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/lib/recent-entities", () => ({ trackRecentEntity: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }));
+vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => vi.fn() }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions", () => ({
   getVersionHistoryAction: mocks.getHistory,
   updateEntityMetadataAction: mocks.updateMetadata,

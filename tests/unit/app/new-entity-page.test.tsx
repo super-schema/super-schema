@@ -125,7 +125,25 @@ describe("NewEntityPage", () => {
       productSlug: "default",
     });
   });
+
+  it("labels its breadcrumb landmark so it is distinguishable from the other navigation regions", async () => {
+    const page = await NewEntityPage({
+      params: Promise.resolve({ domainSlug: "cascade-test-1782425718902", productSlug: "default" }),
+    });
+    expect(findByType(page, "nav")?.props["aria-label"]).toBe("Breadcrumb");
+  });
 });
+
+function findByType(node: React.ReactNode, type: string): React.ReactElement<Record<string, unknown>> | null {
+  if (!React.isValidElement(node)) return null;
+  const element = node as React.ReactElement<{ children?: React.ReactNode } & Record<string, unknown>>;
+  if (element.type === type) return element;
+  for (const child of React.Children.toArray(element.props.children)) {
+    const found = findByType(child, type);
+    if (found) return found;
+  }
+  return null;
+}
 
 function findElement(
   node: React.ReactNode,
