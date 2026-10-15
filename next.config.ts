@@ -2,6 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // D14: the AsyncAPI preview iframe fallback reads these files at runtime (standalone output must ship them).
+  outputFileTracingIncludes: {
+    "/api/asyncapi-preview/[asset]": [
+      "./node_modules/@asyncapi/react-component/browser/standalone/index.js",
+      "./node_modules/@asyncapi/react-component/styles/default.min.css",
+    ],
+  },
   turbopack: {
     root: __dirname,
   },
