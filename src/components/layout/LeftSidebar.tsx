@@ -19,7 +19,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDomainsTree } from "@/hooks/useDomainsTree";
-import { assetHref, type EventsSection } from "@/lib/navigation/asset-href";
+import {
+  EVENT_SEGMENT,
+  TRAITS_SEGMENT,
+  assetHref,
+  normalizeEventsSection,
+} from "@/lib/navigation/asset-href";
 import type {
   ExplorerDomain,
   ExplorerEntity,
@@ -52,7 +57,7 @@ function isWithin(pathname: string, base: string) {
 
 // Detail pages of the non-entity kinds (messages / channels / event specs / traits) live
 // under the same level base as entity URLs; the Entities row must not light up for them.
-const NON_ENTITY_SEGMENTS = ["messages", "channels", "specs", "traits"];
+const NON_ENTITY_SEGMENTS: readonly string[] = [...Object.values(EVENT_SEGMENT), TRAITS_SEGMENT];
 function isNonEntityDetail(pathname: string, base: string) {
   return NON_ENTITY_SEGMENTS.some((segment) => isWithin(pathname, `${base}/${segment}`));
 }
@@ -102,7 +107,7 @@ function ExplorerSidebar({
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = searchParams?.get("tab") ?? null;
-  const activeSection = searchParams?.get("section") ?? null;
+  const activeSection = normalizeEventsSection(searchParams?.get("section"));
   const currentQuery = searchParams?.toString() ?? "";
   const currentUrl = currentQuery ? `${pathname}?${currentQuery}` : pathname;
   const [search, setSearch] = useState("");
@@ -256,10 +261,17 @@ function ExplorerSidebar({
     });
     const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: product.slug });
     const traitsHref = assetHref({ kind: "traits", domainSlug: domain.slug, productSlug: product.slug });
-    const eventLeaves: Array<{ id: string; section: EventsSection; label: string; icon: typeof Mail; count: number }> = [
-      { id: "event-specs", section: "specs", label: "Event Specs", icon: FileCode2, count: product.counts.eventSpecs },
-      { id: "messages", section: "messages", label: "Messages", icon: Mail, count: product.counts.messages },
-      { id: "channels", section: "channels", label: "Channels", icon: Radio, count: product.counts.channels },
+    // A leaf's Events-tab section is also the URL segment of its detail pages (EVENT_SEGMENT).
+    const eventLeaves: Array<{
+      id: string;
+      kind: keyof typeof EVENT_SEGMENT;
+      label: string;
+      icon: typeof Mail;
+      count: number;
+    }> = [
+      { id: "event-specs", kind: "eventSpec", label: "Event Specs", icon: FileCode2, count: product.counts.eventSpecs },
+      { id: "messages", kind: "message", label: "Messages", icon: Mail, count: product.counts.messages },
+      { id: "channels", kind: "channel", label: "Channels", icon: Radio, count: product.counts.channels },
     ];
     const key = productKey(product.id);
     const entitiesKey = productEntitiesKey(product.id);
@@ -335,18 +347,19 @@ function ExplorerSidebar({
             {eventLeaves
               .filter((leaf) => leaf.count > 0)
               .map((leaf) => {
+                const segment = EVENT_SEGMENT[leaf.kind];
                 const href = assetHref({
                   kind: "events",
                   domainSlug: domain.slug,
                   productSlug: product.slug,
-                  section: leaf.section,
+                  section: segment,
                 });
-                const onList = pathname === base && activeTab === "events" && (activeSection ?? "specs") === leaf.section;
+                const onList = pathname === base && activeTab === "events" && activeSection === segment;
                 return (
                   <SidebarLeafCategory
                     key={leaf.id}
                     testId={`product-${product.id}-${leaf.id}`}
-                    active={onList || isWithin(pathname, `${base}/${leaf.section}`)}
+                    active={onList || isWithin(pathname, `${base}/${segment}`)}
                     count={leaf.count}
                     icon={leaf.icon}
                     label={leaf.label}
@@ -360,7 +373,7 @@ function ExplorerSidebar({
             {product.counts.traits > 0 && (
               <SidebarLeafCategory
                 testId={`product-${product.id}-traits`}
-                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/traits`)}
+                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/${TRAITS_SEGMENT}`)}
                 count={product.counts.traits}
                 icon={Puzzle}
                 label="Traits"
@@ -440,7 +453,7 @@ function ExplorerSidebar({
             {domain.counts.traits > 0 && (
               <SidebarLeafCategory
                 testId={`domain-${domain.id}-traits`}
-                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/traits`)}
+                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/${TRAITS_SEGMENT}`)}
                 count={domain.counts.traits}
                 icon={Puzzle}
                 label="Traits"
@@ -500,7 +513,7 @@ function ExplorerSidebar({
                 testId="enterprise-traits"
                 active={
                   (pathname === enterpriseHref && activeTab === "traits") ||
-                  isWithin(pathname, `${enterpriseHref}/traits`)
+                  isWithin(pathname, `${enterpriseHref}/${TRAITS_SEGMENT}`)
                 }
                 count={enterpriseTraits}
                 icon={Puzzle}

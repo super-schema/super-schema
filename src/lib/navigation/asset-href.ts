@@ -3,7 +3,21 @@
  * sidebar, command palette, cards, breadcrumbs, cross-product references,
  * version deep links — goes through here.
  */
-export type EventsSection = "specs" | "messages" | "channels";
+/**
+ * URL segment of each events kind's detail pages (`<level>/<segment>/<id>`). The Events tab's
+ * `section` values are the same strings, so `EventsSection` is derived from it.
+ */
+export const EVENT_SEGMENT = { message: "messages", channel: "channels", eventSpec: "specs" } as const;
+/** URL segment of trait detail pages at every level (`<level>/traits/<id>`). */
+export const TRAITS_SEGMENT = "traits";
+
+export type EventsSection = (typeof EVENT_SEGMENT)[keyof typeof EVENT_SEGMENT];
+const EVENTS_SECTIONS: readonly string[] = Object.values(EVENT_SEGMENT);
+
+/** The Events tab section named by `?section=`; a missing or unknown value falls back to "specs". */
+export function normalizeEventsSection(raw: string | null | undefined): EventsSection {
+  return EVENTS_SECTIONS.includes(raw ?? "") ? (raw as EventsSection) : EVENT_SEGMENT.eventSpec;
+}
 
 export type AssetRef =
   | { kind: "enterprise" }
@@ -43,8 +57,6 @@ function entityBase(slug: string, domainSlug: string | null, productSlug: string
   return `${levelBase(domainSlug, productSlug)}/${enc(slug)}`;
 }
 
-const EVENT_SEGMENT = { message: "messages", channel: "channels", eventSpec: "specs" } as const;
-
 function path(ref: AssetRef): { path: string; query: Record<string, string> } {
   switch (ref.kind) {
     case "enterprise":
@@ -64,13 +76,13 @@ function path(ref: AssetRef): { path: string; query: Record<string, string> } {
     case "traits":
       return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "traits" } };
     case "trait":
-      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/traits/${enc(ref.id)}`, query: {} };
+      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${TRAITS_SEGMENT}/${enc(ref.id)}`, query: {} };
     case "message":
     case "channel":
     case "eventSpec":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${EVENT_SEGMENT[ref.kind]}/${enc(ref.id)}`, query: {} };
     case "events":
-      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "events", section: ref.section ?? "specs" } };
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "events", section: normalizeEventsSection(ref.section) } };
     case "newEntity":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/new`, query: {} };
   }
