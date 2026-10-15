@@ -4,6 +4,7 @@ import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec, sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
 import { compileTypeSpecWithGovernance } from "@/lib/compiler/typespec-compiler";
+import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -51,6 +52,19 @@ export function stubUnresolvedReferences(source: string, names: string[]): strin
 /** True when publish must regenerate the source: there is none stored, or field/entity edits left it stale. */
 export function needsRegeneration(stored: string | null, stale: boolean): boolean {
   return !stored || stale;
+}
+
+/**
+ * Phase 2 for a fresh stored source (no regeneration): it is frozen verbatim — except that a source stored
+ * before Story 16.6 may still carry the invalid `@tag("...")` decorators (a publish wrote the generator's
+ * text back into `entity.typespecSource`), which would freeze uncompilable text into an immutable version.
+ * `upgradeLegacyTagDecorators` rewrites them losslessly; when it changed anything the caller freezes the
+ * upgraded text and writes it back in the same transaction (`upgraded`), so the canonical source stays equal
+ * to the frozen one. A current source comes back unchanged and untouched (`upgraded: false`).
+ */
+export function freezableStoredSource(stored: string): { source: string; upgraded: boolean } {
+  const source = upgradeLegacyTagDecorators(stored);
+  return { source, upgraded: source !== stored };
 }
 
 /**
