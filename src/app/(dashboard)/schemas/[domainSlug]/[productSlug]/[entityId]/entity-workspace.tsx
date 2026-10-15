@@ -57,6 +57,7 @@ import { assetHref } from "@/lib/navigation/asset-href";
 import { getPublishPreviewAction, publishEntityAction, listEntityVersionsAction } from "./version-actions";
 import { PublishEntityDialog } from "./components/PublishEntityDialog";
 import { EntityVersionList } from "./components/EntityVersionList";
+import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
 import type { PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import type { DraftVersionState } from "@/lib/entity-versioning/draft-label";
@@ -774,6 +775,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
             ) : (
               <EntityVersionList versions={publishedVersions} />
             )}
+
+            <UsedByPanel subject={{ kind: "entity", entityId: entity.id }} />
 
             <div className="border-t border-border/50 pt-space-4 space-y-space-3">
               <h3 className="text-heading-3 text-foreground">Legacy history (read-only)</h3>

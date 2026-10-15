@@ -1,0 +1,79 @@
+import { describe, it, expect } from "vitest";
+import { describeUsage, parseUsageSubject, type UsageLookups } from "@/lib/events/usage";
+
+const at = { domainSlug: "payments", productSlug: "checkout" };
+const lookups: UsageLookups = {
+  entityVersions: {
+    ev1: { label: "2.1", entity: { name: "Order", slug: "order", ...at } },
+    evT: { label: "1.0", entity: { name: "Party", slug: "party", domainSlug: null, productSlug: null } },
+  },
+  messages: { m1: { id: "m1", name: "OrderCreated", ...at } },
+  messageVersions: { mv1: { label: "1.3", message: { id: "m1", name: "OrderCreated", ...at } } },
+  eventSpecs: { s1: { id: "s1", name: "checkout-service", ...at } },
+  eventSpecVersions: { sv1: { label: "2.0", eventSpec: { id: "s1", name: "checkout-service", ...at } } },
+  traits: {
+    t1: { id: "t1", name: "CloudEvents", domainSlug: null, productSlug: null },
+    t2: { id: "t2", name: "Audit", domainSlug: "payments", productSlug: null },
+  },
+};
+const ref = (fromKind: string, fromId: string, role = "PAYLOAD", isDraft = false) => ({ id: `${fromKind}-${fromId}`, fromKind, fromId, role, isDraft, toId: "target" });
+
+describe("describeUsage", () => {
+  it("labels every referencing kind and links only to routes that exist (events kinds -> list pages)", () => {
+    const targets = { target: "Order v2.1" };
+    // Message / spec / trait detail routes arrive with the Wave 5 pages; until then the link is the owning list page.
+    expect(describeUsage(ref("MESSAGE_VERSION", "mv1"), lookups, targets)).toMatchObject({
+      label: "Message OrderCreated v1.3", href: "/schemas/payments/checkout?tab=events&section=messages", target: "Order v2.1", role: "PAYLOAD",
+    });
+    expect(describeUsage(ref("MESSAGE", "m1", "KEY", true), lookups, targets)).toMatchObject({
+      label: "Message OrderCreated (draft)", href: "/schemas/payments/checkout?tab=events&section=messages", isDraft: true,
+    });
+    expect(describeUsage(ref("EVENT_SPEC_VERSION", "sv1", "MESSAGE"), lookups, targets)).toMatchObject({
+      label: "Event spec checkout-service v2.0", href: "/schemas/payments/checkout?tab=events&section=specs",
+    });
+    expect(describeUsage(ref("EVENT_SPEC", "s1", "MESSAGE", true), lookups, targets)).toMatchObject({
+      label: "Event spec checkout-service (draft)", href: "/schemas/payments/checkout?tab=events&section=specs",
+    });
+    expect(describeUsage(ref("TRAIT", "t1", "HEADERS"), lookups, targets)).toMatchObject({
+      label: "Trait CloudEvents", href: "/schemas/enterprise?tab=traits",
+    });
+    expect(describeUsage(ref("TRAIT", "t2", "HEADERS"), lookups, targets)).toMatchObject({
+      label: "Trait Audit", href: "/schemas/payments?tab=traits",
+    });
+  });
+
+  it("deep-links entity referrers (the entity route exists), including tenant-level entities", () => {
+    expect(describeUsage(ref("ENTITY_VERSION", "ev1", "FIELD"), lookups, {})).toMatchObject({
+      label: "Entity Order v2.1", href: "/schemas/payments/checkout/order?version=2.1",
+    });
+    expect(describeUsage(ref("ENTITY_VERSION", "evT", "FIELD"), lookups, {})).toMatchObject({
+      label: "Entity Party v1.0", href: "/schemas/enterprise/entities/party?version=1.0",
+    });
+  });
+
+  it("keeps rows whose source disappeared (no link, no throw)", () => {
+    expect(describeUsage(ref("MESSAGE_VERSION", "gone"), lookups, {})).toMatchObject({ label: "Message version gone (deleted)", href: null, target: "target" });
+    expect(describeUsage(ref("ENTITY_VERSION", "gone", "FIELD"), lookups, {})).toMatchObject({ label: "Entity version gone (deleted)", href: null });
+    expect(describeUsage(ref("TRAIT", "gone", "HEADERS"), lookups, {})).toMatchObject({ label: "Trait gone (deleted)", href: null });
+    expect(describeUsage(ref("UNKNOWN_KIND", "x"), lookups, {})).toMatchObject({ label: "UNKNOWN_KIND x (deleted)", href: null });
+  });
+
+  it("falls back to the raw target id when the target label is unknown", () => {
+    expect(describeUsage(ref("MESSAGE", "m1"), lookups, {}).target).toBe("target");
+  });
+});
+
+describe("parseUsageSubject", () => {
+  it("accepts an entity or message subject with a non-empty id and strips extra keys", () => {
+    expect(parseUsageSubject({ kind: "entity", entityId: "e1", extra: 1 })).toEqual({ success: true, data: { kind: "entity", entityId: "e1" } });
+    expect(parseUsageSubject({ kind: "message", messageId: "m1" })).toEqual({ success: true, data: { kind: "message", messageId: "m1" } });
+  });
+
+  it("rejects untrusted shapes", () => {
+    for (const bad of [null, undefined, "x", 1, [], {}, { kind: "entity" }, { kind: "entity", entityId: "" }, { kind: "entity", entityId: 3 }, { kind: "message", entityId: "e1" }, { kind: "trait", id: "t" }]) {
+      const r = parseUsageSubject(bad);
+      expect(r.success).toBe(false);
+      expect(!r.success && r.error.code).toBe("VALIDATION_ERROR");
+    }
+  });
+});
