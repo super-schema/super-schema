@@ -325,3 +325,108 @@ describe("SchemaWorkbench — import affordances", () => {
     expect(screen.getByTestId("detail-panel-changes").textContent).toMatch(/removed/);
   });
 });
+
+describe("SchemaWorkbench — confirms before discarding work", () => {
+  const confirmBox = () => screen.queryByTestId("workbench-discard-confirm");
+
+  function buildEmailForm() {
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    fireEvent.change(screen.getByPlaceholderText("propertyName"), { target: { value: "email" } });
+  }
+  function pasteIntoTextarea(text: string) {
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), { target: { value: text } });
+    fireEvent.click(screen.getByTestId("workbench-load-button"));
+  }
+
+  it("asks before loading pasted text over a built form; Cancel keeps the form", () => {
+    setup();
+    buildEmailForm();
+    const built = panel().value;
+    pasteIntoTextarea(AVRO);
+
+    expect(confirmBox()?.textContent).toMatch(/discards the form you built/);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(confirmBox()).toBeNull();
+    expect(panel().value).toBe(built);
+  });
+
+  it("loads the pasted text once the discard is confirmed", async () => {
+    setup();
+    buildEmailForm();
+    pasteIntoTextarea(AVRO);
+    fireEvent.click(screen.getByRole("button", { name: "Discard & load" }));
+    await waitFor(() => expect(panel().value).toBe(AVRO));
+    expect(screen.queryByTestId("jsonschema-visual-editor")).toBeNull();
+  });
+
+  it("asks before a dropped file replaces a built form, and does not load until confirmed", async () => {
+    setup();
+    buildEmailForm();
+    const built = panel().value;
+    fireEvent.click(screen.getByRole("button", { name: "Drop file" }));
+    const file = new File([AVRO], "customer.avsc");
+    fireEvent.drop(screen.getByTestId("workbench-dropzone"), { dataTransfer: { files: [file] } });
+
+    expect(confirmBox()).not.toBeNull();
+    expect(panel().value).toBe(built);
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard & load" }));
+    await waitFor(() => expect(panel().value).toBe(AVRO));
+  });
+
+  it("asks before replacing an imported schema the user has edited", async () => {
+    setup();
+    await pasteLoad(AVRO);
+    fireEvent.change(panel(), { target: { value: AVRO.replace("Customer", "Client") } });
+    pasteIntoTextarea(AVRO);
+    expect(confirmBox()?.textContent).toMatch(/discards your edits/);
+  });
+
+  it("does not ask when replacing an untouched import, or when nothing is loaded", async () => {
+    setup();
+    pasteIntoTextarea(AVRO);
+    expect(confirmBox()).toBeNull();
+    await waitFor(() => expect(panel().value).toBe(AVRO));
+
+    pasteIntoTextarea(AVRO.replace("Customer", "Other"));
+    expect(confirmBox()).toBeNull();
+    await waitFor(() => expect(panel().value).toContain("Other"));
+  });
+
+  it("asks before switching the Build-form format when the form has content", () => {
+    setup();
+    buildEmailForm();
+    fireEvent.click(screen.getByRole("button", { name: "Avro" }));
+    expect(confirmBox()?.textContent).toMatch(/Switching format/);
+    expect(screen.getByTestId("jsonschema-visual-editor")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByTestId("jsonschema-visual-editor")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Avro" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard form" }));
+    expect(screen.getByTestId("avro-visual-editor")).toBeDefined();
+    expect(panel().value).toBe("");
+  });
+
+  it("switches format without asking when the form is empty", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    fireEvent.click(screen.getByRole("button", { name: "Protobuf" }));
+    expect(confirmBox()).toBeNull();
+    expect(screen.getByTestId("protobuf-visual-editor")).toBeDefined();
+  });
+
+  it("does not ask when re-selecting the current format", () => {
+    setup();
+    buildEmailForm();
+    fireEvent.click(screen.getByRole("button", { name: "JSON Schema" }));
+    expect(confirmBox()).toBeNull();
+    expect(fieldNameValue()).toBe("email");
+  });
+
+  function fieldNameValue() {
+    return (screen.getByPlaceholderText("propertyName") as HTMLInputElement).value;
+  }
+});

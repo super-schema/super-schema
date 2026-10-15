@@ -80,7 +80,7 @@ Transitions: `loadImport(text, format, filename)`, `startForm(format)`, `formCha
 
 - Drop and Paste both call `loadImport`. Format comes from `format-detector.ts`.
 - The panel is editable. Lines that differ from `baselineText` are highlighted red (line-level diff, LCS-based, added/changed lines shown red, removed lines shown as red gutter markers). **Reset to original** restores `baselineText`.
-- No parse into the form. If the user switches to **Build form** from an imported origin, show a confirm ("This discards the imported schema") before `startForm`.
+- No parse into the form. Every action that would throw away work shows one inline confirm first: switching to **Build form** from an import; loading a dropped/pasted file over a built form or over an import the user has edited; and switching the Build-form format while the form has content. Nothing is asked when there is nothing to lose (untouched import, empty form, re-selecting the current format).
 - Existing diagnostics from the paste flow (errors/warnings, `hasErrors`) carry over as a strip under the panel.
 
 ### 5.7 Global panel route flag
