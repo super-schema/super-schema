@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({ tenantId: "" }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => h.tenantId }));
 
 import { loadMessagePage } from "@/features/events/messages/load-message-page";
+import { Prisma } from "@/generated/prisma/client";
+import { prisma as appPrisma } from "@/lib/db";
 import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 
@@ -117,6 +119,42 @@ describe("loadMessagePage", () => {
     expect(await loadMessagePage({ ...ownRoute(), messageId: "no-such-message" })).toBeNull();
     expect(await loadMessagePage({ domainSlug: own.domain.slug, productSlug: "no-such-product", messageId: ownSeed.message.id })).toBeNull();
     expect(await loadMessagePage({ domainSlug: "no-such-domain", productSlug: own.product.slug, messageId: ownSeed.message.id })).toBeNull();
+  });
+
+  // An out-of-range label must not reach the integer columns (it would throw -> 500 for an existing message only: an existence oracle).
+  it("answers an oversized ?version with the same 404 for an own, another product's and a nonexistent message", async () => {
+    const oversized = ["99999999999.0", "1.99999999999", "2147483648.0", "1.2147483648", `${"9".repeat(400)}.0`, `1.${"9".repeat(400)}`];
+    for (const version of oversized) {
+      for (const messageId of [ownSeed.message.id, otherSeed.message.id, "no-such-message"]) {
+        expect(await loadMessagePage({ ...ownRoute(), messageId, version }), `${messageId} ${version.slice(0, 20)}`).toBeNull();
+      }
+    }
+    // The largest representable label is still just an unknown version, not an error.
+    expect(await loadMessagePage({ ...ownRoute(), messageId: ownSeed.message.id, version: "2147483647.2147483647" })).toBeNull();
+  });
+
+  // The label parser keeps oversized values from ever reaching Prisma; this covers the safety net behind it.
+  it("treats a version lookup Prisma refuses as an unknown version, and lets every other failure through", async () => {
+    const lookup = vi.spyOn(appPrisma.messageVersion, "findUnique");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const load = () => loadMessagePage({ ...ownRoute(), messageId: ownSeed.message.id, version: "1.0" });
+    const meta = { clientVersion: "test" };
+    try {
+      lookup.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("out of range", { code: "P2020", ...meta }));
+      expect(await load()).toBeNull();
+      lookup.mockRejectedValueOnce(new Prisma.PrismaClientValidationError("bad value", meta));
+      expect(await load()).toBeNull();
+      expect(logged).toHaveBeenCalledTimes(2);
+
+      lookup.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("database unreachable", { code: "P1001", ...meta }));
+      await expect(load()).rejects.toThrow("database unreachable");
+      lookup.mockRejectedValueOnce(new Error("boom"));
+      await expect(load()).rejects.toThrow("boom");
+    } finally {
+      lookup.mockRestore();
+      logged.mockRestore();
+    }
+    expect((await load())?.viewing?.label).toBe("1.0");
   });
 
   it("serves another product's PUBLISHED version read-only, with the owner named and its draft withheld", async () => {

@@ -22,6 +22,8 @@ export function MessagePage({
   const ref = { kind: "message", id: message.id, domainSlug, productSlug } as const;
   const draftHref = assetHref(ref);
   const versionHref = (label: string) => assetHref(ref, { version: label });
+  // Another product's message is never editable or publishable from here, whatever else the props say (defence in depth).
+  const editable = !viewing && !owner;
   const pins = viewing
     ? (["payload", "headers", "key"] as const).flatMap((role) => {
         const pin = viewing.resolvedSpec[role];
@@ -39,7 +41,7 @@ export function MessagePage({
           <Badge variant="secondary">{message.latestVersionLabel ? `latest v${message.latestVersionLabel}` : "unpublished"}</Badge>
           {message.latestVersionLabel && message.hasUnpublishedChanges && <Badge variant="outline">unpublished changes</Badge>}
         </div>
-        {!viewing && (
+        {editable && (
           <PublishVersionButton
             subjectName={message.name}
             description="Publishing freezes this draft — pinned entity versions included — as an immutable message version event specs can pin."
@@ -50,7 +52,7 @@ export function MessagePage({
         )}
       </div>
 
-      {viewing ? (
+      {viewing && (
         <section className="space-y-space-3 rounded-lg border border-border/60 p-space-4" data-testid="message-version-view">
           <p className="text-body-small text-foreground">
             Viewing v{viewing.label} (published, read-only).{" "}
@@ -69,7 +71,8 @@ export function MessagePage({
           </ul>
           <pre className="max-h-96 overflow-auto rounded-md bg-muted/30 p-space-3 text-caption font-mono">{JSON.stringify(viewing.resolvedSpec.spec, null, 2)}</pre>
         </section>
-      ) : (
+      )}
+      {editable && (
         <MessageEditor key={message.id} message={message} productId={productId} listHref={listHref} entityOptions={entityOptions} traitOptions={traitOptions} />
       )}
 

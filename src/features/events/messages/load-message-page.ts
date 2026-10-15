@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { Prisma } from "@/generated/prisma/client";
 import { parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { EventVersionSummary, MessageDetail, MessageResolvedSpec } from "@/lib/events/types";
@@ -38,6 +39,23 @@ function publishedOnly(detail: MessageDetail): MessageDetail {
 }
 
 /**
+ * One frozen version by label. `parseVersionLabel` already bounds both parts to Int range, so Prisma cannot refuse the
+ * value; if it still does (a value no row can hold: out of range, non-finite) that is "no such version", not a server error.
+ * It is logged, and every other failure (connection loss, a broken query) still propagates.
+ */
+async function findVersion(messageId: string, { major, minor }: { major: number; minor: number }) {
+  try {
+    return await prisma.messageVersion.findUnique({ where: { messageId_major_minor: { messageId, major, minor } }, select: { resolvedSpec: true } });
+  } catch (e: unknown) {
+    if (e instanceof Prisma.PrismaClientValidationError || (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2020")) {
+      console.error("[loadMessagePage] version lookup refused by Prisma", e.name);
+      return null;
+    }
+    throw e;
+  }
+}
+
+/**
  * `null` means 404, for every reason alike (unknown route, unknown id, another tenant's message, malformed or unknown
  * `?version`), so the page cannot be used to probe what exists. The message is looked up inside the route's tenant;
  * `getMessage` / `getMessageVersion` are unscoped by-id reads and are deliberately not used here.
@@ -48,18 +66,17 @@ export async function loadMessagePage(params: { domainSlug: string; productSlug:
   const row = await prisma.message.findFirst({ where: { id: params.messageId, tenantId: route.tenantId }, select: PAGE_SELECT });
   if (!row) return null;
 
-  // Spec §10: other products read a message's PUBLISHED versions, read-only — never its draft, so `?version` is mandatory there.
-  const ownerProduct = row.productId === route.product.id ? null : row.product;
-  if (row.productId !== route.product.id && (!ownerProduct || !params.version)) return null;
+  // Spec decision log ("cross-product references: allowed, read-only, by ID") + §4.4: other products read a message's
+  // PUBLISHED versions, read-only — never its draft, so `?version` is mandatory there. (§10 only covers writes: FORBIDDEN.)
+  const placement =
+    row.productId === route.product.id ? ({ own: true } as const) : row.product && params.version ? ({ own: false, owner: row.product } as const) : null;
+  if (!placement) return null;
 
   let viewing: MessagePageData["viewing"] = null;
   if (params.version) {
     const label = parseVersionLabel(params.version);
     if (!label.success) return null;
-    const v = await prisma.messageVersion.findUnique({
-      where: { messageId_major_minor: { messageId: row.id, major: label.data.major, minor: label.data.minor } },
-      select: { resolvedSpec: true },
-    });
+    const v = await findVersion(row.id, label.data);
     if (!v) return null;
     viewing = { label: `${label.data.major}.${label.data.minor}`, resolvedSpec: v.resolvedSpec as unknown as MessageResolvedSpec };
   }
@@ -81,12 +98,13 @@ export async function loadMessagePage(params: { domainSlug: string; productSlug:
     viewing,
   };
 
-  if (!ownerProduct) {
+  if (placement.own) {
     const listHref = assetHref({ kind: "events", domainSlug: route.domain.slug, productSlug: route.product.slug, section: "messages" });
     return { ...shared, message: toMessageDetail(row), crumbs: productCrumbs(route, { label: "Messages", href: listHref }, row.name), listHref };
   }
 
   // Crumbs and the owner link name the owning product; version links keep the reader on this read-only page.
+  const ownerProduct = placement.owner;
   const at = { domainSlug: ownerProduct.domain.slug, productSlug: ownerProduct.slug };
   const listHref = assetHref({ kind: "events", ...at, section: "messages" });
   return {

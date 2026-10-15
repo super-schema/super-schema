@@ -92,4 +92,10 @@ describe("MessagePage", () => {
     expect(screen.getByRole("link", { name: "v1.3" }).getAttribute("href")).toBe("/schemas/payments/checkout/messages/m1?version=1.3");
     expect(screen.getByTestId("used-by")).toBeDefined();
   });
+
+  it("never offers the editor or publish for another product's message, even if no version is being viewed", () => {
+    render(<MessagePage {...base} owner={{ label: "Fraud / Scoring", href: "/schemas/fraud/scoring/messages/m1" }} viewing={null} />);
+    expect(screen.queryByTestId("message-editor")).toBeNull();
+    expect(screen.queryByTestId("publish")).toBeNull();
+  });
 });
