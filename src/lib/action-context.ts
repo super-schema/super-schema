@@ -55,3 +55,25 @@ export async function runMutation<T>(run: (ctx: ServiceContext) => Promise<Resul
   if (result.success) revalidatePath("/schemas", "layout");
   return toActionResult(result);
 }
+
+export const GENERIC_ACTION_ERROR = "Something went wrong. Try again; if it keeps happening, contact an administrator.";
+
+/**
+ * Keeps raw database / driver text out of the browser for actions whose services can surface it: pass a service Result (or the
+ * promise of one). A `DB_ERROR` failure — or a rejection — becomes a generic message (`DB_ERROR` / `INTERNAL_ERROR`) and the
+ * original is logged server-side with `label`. Every other failure (planner codes, blockers in `details`, `suggestedFix`,
+ * CONFLICT, NOT_FOUND, FORBIDDEN…) and every success passes through untouched. Lives here, not in a "use server" module.
+ */
+export async function sanitizeActionError<T>(result: Result<T> | Promise<Result<T>>, label = "action"): Promise<Result<T>> {
+  try {
+    const settled = await result;
+    if (!settled.success && settled.error.code === "DB_ERROR") {
+      console.error(`[${label}] database error`, settled.error.message);
+      return { success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } };
+    }
+    return settled;
+  } catch (e: unknown) {
+    console.error(`[${label}] unexpected error`, e);
+    return { success: false, error: { code: "INTERNAL_ERROR", message: GENERIC_ACTION_ERROR } };
+  }
+}
