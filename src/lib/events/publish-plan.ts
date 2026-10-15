@@ -2,7 +2,7 @@ import { ok, err, type Result } from "@/types/result";
 import type { BumpKind, ChangeKind, VersionNumber } from "@/lib/entity-versioning/types";
 import { INITIAL_VERSION, formatVersionLabel, nextVersionNumber, resolveBump } from "@/lib/entity-versioning/version-math";
 import type { Diagnostic } from "@/lib/event-specs/types";
-import { classifyEventSpecBump, classifyMessageBump, type BumpDecision, type EventSpecBumpSide } from "./bump-rules";
+import { classifyEventSpecBump, classifyMessageBump, findUnresolvedMessageVersions, type BumpDecision, type EventSpecBumpSide } from "./bump-rules";
 import type { MessageResolvedSpec, MessageSpec, PinRole, ResolvedPin } from "./types";
 
 export type EventPublishBlockerKind =
@@ -47,7 +47,7 @@ export interface VersionedPublishInput {
 }
 
 export function analyzeVersionedPublish(input: VersionedPublishInput): EventPublishAnalysis {
-  const blockers = [...input.blockers];
+  const blockers = input.blockers.map((b) => ({ ...b }));
   if (input.latest && !input.hasChanges) {
     blockers.unshift({ kind: "NO_CHANGES", message: `No unpublished changes since v${formatVersionLabel(input.latest)}.` });
   }
@@ -64,7 +64,7 @@ export function analyzeVersionedPublish(input: VersionedPublishInput): EventPubl
       MINOR: formatVersionLabel(nextVersionNumber(input.latest, "MINOR").version),
     },
     initialLabel,
-    reasons: input.bump?.reasons ?? [],
+    reasons: [...(input.bump?.reasons ?? [])],
     blockers,
   };
 }
@@ -81,18 +81,29 @@ export function planVersionedPublish(input: VersionedPublishInput, requested?: B
     });
   }
   if (!input.latest) {
-    return ok({ version: INITIAL_VERSION, label: formatVersionLabel(INITIAL_VERSION), sequence: 1, changeKind: "INITIAL", reasons: [] });
+    return ok({ version: { ...INITIAL_VERSION }, label: formatVersionLabel(INITIAL_VERSION), sequence: 1, changeKind: "INITIAL", reasons: [] });
   }
-  const bump = resolveBump(analysis.suggestedBump ?? "MINOR", requested);
+  // Fail closed: a republish whose changes could not be classified must not silently default to MINOR.
+  if (analysis.suggestedBump === null) {
+    return err({
+      code: "INVALID_PLAN_INPUT",
+      message: "The changes since the latest version could not be classified, so no version can be planned.",
+      suggestedFix: "Reload and try again; report this if it persists.",
+    });
+  }
+  const bump = resolveBump(analysis.suggestedBump, requested);
   if (!bump.success) return bump;
   const { version, changeKind } = nextVersionNumber(input.latest, bump.data);
-  return ok({ version, label: formatVersionLabel(version), sequence: input.latest.sequence + 1, changeKind, reasons: analysis.reasons });
+  return ok({ version, label: formatVersionLabel(version), sequence: input.latest.sequence + 1, changeKind, reasons: [...analysis.reasons] });
 }
 
-/** Label a publish would get with the suggested bump — used to emit `info.version` when blockers prevent planning. */
+/**
+ * Label a publish would get with the suggested bump — used to emit `info.version` when blockers prevent planning.
+ * An unclassified bump (null) yields the MAJOR candidate, never a silently low MINOR; it is only ever a preview label.
+ */
 export function provisionalLabel(analysis: EventPublishAnalysis): string {
   if (analysis.isFirstPublish || !analysis.candidateLabels) return analysis.initialLabel;
-  return analysis.candidateLabels[analysis.suggestedBump ?? "MINOR"];
+  return analysis.candidateLabels[analysis.suggestedBump ?? "MAJOR"];
 }
 
 // ── Message ────────────────────────────────────────────────────────────────
@@ -126,6 +137,7 @@ const ROLE_LABEL: Record<PinRole, string> = { payload: "Payload", headers: "Head
 export function messagePublishInput(state: MessagePublishState): { input: VersionedPublishInput; resolved: MessageResolvedSpec | null } {
   const blockers: EventPublishBlocker[] = [];
   const pins: Partial<Record<PinRole, ResolvedPin>> = {};
+  if (!state.pins.some((pin) => pin.role === "payload")) blockers.push({ kind: "MISSING_ENTITY", message: "Payload is required" });
   for (const pin of state.pins) {
     const label = ROLE_LABEL[pin.role];
     if (pin.entityName === null) blockers.push({ kind: "MISSING_ENTITY", message: `${label} entity "${pin.entityId}" no longer exists` });
@@ -147,7 +159,7 @@ export function messagePublishInput(state: MessagePublishState): { input: Versio
   const pinsResolved = !blockers.some((b) => b.kind === "UNPUBLISHED_PIN" || b.kind === "MISSING_ENTITY");
   const resolved: MessageResolvedSpec | null =
     pins.payload && pinsResolved
-      ? { name: state.name, spec: state.spec, payload: pins.payload, headers: pins.headers ?? null, key: pins.key ?? null }
+      ? { name: state.name, spec: structuredClone(state.spec), payload: pins.payload, headers: pins.headers ?? null, key: pins.key ?? null }
       : null;
   const bump = state.latest && resolved ? classifyMessageBump(state.latest.resolved, resolved, state.traitNames) : null;
   const latest = state.latest ? { major: state.latest.major, minor: state.latest.minor, sequence: state.latest.sequence } : null;
@@ -173,6 +185,19 @@ const MAX_DIAGNOSTIC_BLOCKERS = 20;
 export function eventSpecPublishInput(facts: EventSpecPublishFacts): VersionedPublishInput {
   const blockers: EventPublishBlocker[] = [];
   for (const p of facts.unresolved) blockers.push({ kind: "UNRESOLVED_REFERENCE", message: p.message, pointer: p.pointer });
+  // Message-version ids the bump rules cannot interpret (the resolver may already have reported the current-side ones).
+  const draftIds = new Set(facts.unpublishedMessages.map((m) => m.id));
+  const reportedPointers = new Set(facts.unresolved.map((p) => p.pointer));
+  for (const u of findUnresolvedMessageVersions(facts.previous, facts.current, draftIds)) {
+    if (u.side === "previous") {
+      blockers.push({
+        kind: "UNRESOLVED_REFERENCE",
+        message: `The latest published version references message version "${u.id}" in "${u.operation}", which cannot be resolved`,
+      });
+    } else if (!reportedPointers.has(u.pointer)) {
+      blockers.push({ kind: "UNRESOLVED_REFERENCE", message: `Message version "${u.id}" in "${u.operation}" not found`, pointer: u.pointer });
+    }
+  }
   for (const m of facts.unpublishedMessages) {
     blockers.push({ kind: "UNPUBLISHED_MESSAGE", message: `Message ${m.name} is an unpublished draft — publish it and pick its version` });
   }
@@ -182,6 +207,11 @@ export function eventSpecPublishInput(facts: EventSpecPublishFacts): VersionedPu
     blockers.push({ kind: "VALIDATION_ERROR", message: `…and ${errors.length - MAX_DIAGNOSTIC_BLOCKERS} more validation error(s)` });
   }
   if (facts.nameConflict) blockers.push({ kind: "NAME_CONFLICT", message: facts.nameConflict });
-  const bump = facts.previous ? classifyEventSpecBump(facts.previous, facts.current) : null;
-  return { latest: facts.latest, hasChanges: facts.hasChanges, blockers, bump };
+  let bump: BumpDecision | null = null;
+  if (facts.previous) {
+    const decision = classifyEventSpecBump(facts.previous, facts.current, { draftMessageIds: draftIds });
+    // Draft messages have no version yet, so only a definite MAJOR is reported; MINOR stays pending until they are published.
+    bump = draftIds.size > 0 && decision.bump === "MINOR" ? null : decision;
+  }
+  return { latest: facts.latest ? { ...facts.latest } : null, hasChanges: facts.hasChanges, blockers, bump };
 }
