@@ -181,6 +181,12 @@ describe("property names keep the wire name (real TypeSpec compiler)", () => {
     const parsed = parseTypeSpecDocument(source);
     expect(parsed.models[0].fields.map((f) => f.name)).toEqual(WIRE_NAMES);
   });
+
+  it("the regex parser reads quoted enum members back as the wire symbols", () => {
+    const symbols = ["in-progress", "en US", "1", "model", "done", "日本語", 'say "hi"', "a:b", "a${b}"];
+    const { source } = generate([field({ name: "status", type: "enum", aliases: symbols })]);
+    expect(parseTypeSpecDocument(source).enums[0].values).toEqual(symbols);
+  });
 });
 
 describe("enum members keep the wire symbols (real TypeSpec compiler)", () => {
