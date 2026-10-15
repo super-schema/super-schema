@@ -10,6 +10,9 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockEnsureDefault
       findUnique: vi.fn(),
       create: vi.fn(),
     },
+    domain: {
+      findUnique: vi.fn(),
+    },
     auditLog: {
       create: vi.fn(),
     },
@@ -35,6 +38,8 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
+
 vi.mock("@/lib/org-defaults", () => ({
   ensureDefaultProductId: mockEnsureDefaultProductId,
 }));
@@ -55,6 +60,7 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
       user: { id: "stale-user-id", email: "owner@example.com" },
     });
     mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+    mockPrisma.domain.findUnique.mockResolvedValue({ tenantId: "tenant-1" });
     mockPrisma.product.findUnique.mockResolvedValue({
       id: "prd-default",
       domainId: "domain-1",

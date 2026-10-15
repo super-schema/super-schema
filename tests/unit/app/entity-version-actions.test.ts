@@ -6,9 +6,15 @@ const h = vi.hoisted(() => ({
   publishEntity: vi.fn(),
   listEntityVersions: vi.fn(),
   revalidatePath: vi.fn(),
+  inActiveTenant: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
+// The by-id ownership guard (the real one is tested in tests/unit/app/by-id-misc-actions-tenant.test.ts): here every entity is the active tenant's.
+vi.mock("@/lib/action-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/action-context")>()),
+  inActiveTenant: h.inActiveTenant,
+}));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/services/rbac.service", () => ({
@@ -34,6 +40,7 @@ const SUMMARY = {
 beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "user-1" } });
+  h.inActiveTenant.mockResolvedValue(true);
 });
 
 describe("entity version actions", () => {

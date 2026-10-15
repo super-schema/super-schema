@@ -4,6 +4,9 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
+import { getActiveTenantId } from "@/lib/active-tenant";
+import { isInActiveTenant, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
+import { isPlainObject } from "@/lib/editable-fields";
 import { domainLabel } from "@/lib/entity-placement";
 import { metadataChangesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 
@@ -14,7 +17,10 @@ export async function getEntitiesForRetentionAction() {
   }
 
   try {
+    // The entities of the ACTIVE tenant (the same scope `updateRetentionPolicyAction` enforces): an Enterprise, domain- or
+    // product-level entity all carry their tenant, so the default tenant still lists everything it owns.
     const entities = await prisma.entity.findMany({
+      where: { tenantId: await getActiveTenantId() },
       select: {
         id: true,
         name: true,
@@ -34,8 +40,8 @@ export async function getEntitiesForRetentionAction() {
         fields: e.fields.map((f) => ({ name: f.name, type: f.type, classification: f.classification })),
       })),
     };
-  } catch {
-    return { error: "Failed to load entities", entities: [] };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("getEntitiesForRetentionAction", e), entities: [] };
   }
 }
 
@@ -48,12 +54,16 @@ export async function updateRetentionPolicyAction(
     return { error: "Not authenticated" };
   }
 
+  // `retentionPolicy` is stored as metadata: only a plain object is a policy (a Date or Map would still mark the draft changed).
+  if (!isPlainObject(retentionPolicy)) return { error: "The retention policy must be an object", code: "VALIDATION_ERROR" };
+
   try {
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
     const mergedMeta = { ...existingMeta, retentionPolicy };
@@ -74,7 +84,6 @@ export async function updateRetentionPolicyAction(
     revalidatePath("/governance/retention");
     return { success: true };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to update retention policy";
-    return { error: message };
+    return { ...unexpectedFailure("updateRetentionPolicyAction", e) };
   }
 }

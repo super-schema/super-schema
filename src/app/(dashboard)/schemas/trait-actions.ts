@@ -1,7 +1,7 @@
 "use server";
 
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { runMutation, sanitizeActionError } from "@/lib/action-context";
+import { runMutation, sanitizeActionError, withOwnedTarget } from "@/lib/action-context";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import { createTrait, deleteTrait, updateTrait, type TraitInput } from "@/services/events/trait.service";
 import type { TraitDetail } from "@/lib/events/types";
@@ -18,16 +18,20 @@ async function serverTarget(target: ScopeTarget): Promise<ScopeTarget> {
 
 /**
  * `runMutation` (session + `/schemas` layout revalidation on success) around a service call whose ownership check runs before any
- * write. `sanitizeActionError` also covers the tenant lookup above: raw database text never reaches the forms that render the result.
+ * write. The owner target is CLIENT-supplied below the tenant level (a domain / product id) and the service only compares the row
+ * against it, so `withOwnedTarget` first requires a well-formed target to lie in the ACTIVE tenant (a foreign one is the
+ * NOT_FOUND of an unknown domain / product and the service never runs; a malformed target is left to the service's own
+ * VALIDATION_ERROR). `sanitizeActionError` also covers the tenant lookup above: raw database text never reaches the forms that
+ * render the result.
  */
 export async function createTraitAction(target: ScopeTarget, input: TraitInput): Promise<ActionResult<TraitDetail>> {
-  return runMutation((ctx) => sanitizeActionError((async () => createTrait(await serverTarget(target), input, ctx))(), "createTraitAction"));
+  return runMutation((ctx) => sanitizeActionError((async () => { const owner = await serverTarget(target); return withOwnedTarget(owner, async () => createTrait(owner, input, ctx)); })(), "createTraitAction"));
 }
 
 export async function updateTraitAction(traitId: string, owner: ScopeTarget, input: Omit<TraitInput, "kind">): Promise<ActionResult<TraitDetail>> {
-  return runMutation((ctx) => sanitizeActionError((async () => updateTrait(traitId, input, await serverTarget(owner), ctx))(), "updateTraitAction"));
+  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => updateTrait(traitId, input, target, ctx)); })(), "updateTraitAction"));
 }
 
 export async function deleteTraitAction(traitId: string, owner: ScopeTarget): Promise<ActionResult<{ id: string }>> {
-  return runMutation((ctx) => sanitizeActionError((async () => deleteTrait(traitId, await serverTarget(owner), ctx))(), "deleteTraitAction"));
+  return runMutation((ctx) => sanitizeActionError((async () => { const target = await serverTarget(owner); return withOwnedTarget(target, async () => deleteTrait(traitId, target, ctx)); })(), "deleteTraitAction"));
 }
