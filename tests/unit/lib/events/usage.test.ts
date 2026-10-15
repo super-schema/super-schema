@@ -42,12 +42,12 @@ describe("describeUsage", () => {
     });
   });
 
-  it("deep-links entity referrers (the entity route exists), including tenant-level entities", () => {
+  it("links entity referrers to the entity page (no ?version= until a read-only view exists), including tenant-level entities", () => {
     expect(describeUsage(ref("ENTITY_VERSION", "ev1", "FIELD"), lookups, {})).toMatchObject({
-      label: "Entity Order v2.1", href: "/schemas/payments/checkout/order?version=2.1",
+      label: "Entity Order v2.1", href: "/schemas/payments/checkout/order",
     });
     expect(describeUsage(ref("ENTITY_VERSION", "evT", "FIELD"), lookups, {})).toMatchObject({
-      label: "Entity Party v1.0", href: "/schemas/enterprise/entities/party?version=1.0",
+      label: "Entity Party v1.0", href: "/schemas/enterprise/entities/party",
     });
   });
 

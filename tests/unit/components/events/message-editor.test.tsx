@@ -2,7 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), updateMessageAction: vi.fn(), deleteMessageAction: vi.fn() }));
+const h = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn(), invalidate: vi.fn(), updateMessageAction: vi.fn(), deleteMessageAction: vi.fn() }));
+vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => h.invalidate }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push, refresh: h.refresh }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-actions", () => ({ updateMessageAction: h.updateMessageAction, deleteMessageAction: h.deleteMessageAction }));
@@ -176,9 +177,21 @@ describe("MessageEditor", () => {
     expect(screen.getByText("Delete the event spec first")).toBeDefined();
     expect(h.push).not.toHaveBeenCalled();
 
+    // Neither a declined confirmation nor a refused delete refreshes the explorer: nothing was deleted.
+    expect(h.invalidate).not.toHaveBeenCalled();
+
     await waitFor(() => expect(del.disabled).toBe(false));
     fireEvent.click(del);
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(props.listHref));
     expect(h.deleteMessageAction).toHaveBeenLastCalledWith("m1", "p1");
+    // The explorer's React Query cache only refreshes through invalidate (revalidatePath does not reach it).
+    expect(h.invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh the explorer after a plain save", async () => {
+    render(<MessageEditor {...props} />);
+    fireEvent.click(screen.getByTestId("message-save"));
+    await waitFor(() => expect(h.refresh).toHaveBeenCalled());
+    expect(h.invalidate).not.toHaveBeenCalled();
   });
 });

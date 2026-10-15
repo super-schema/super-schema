@@ -150,4 +150,16 @@ describe("LeftSidebar — events leaves (spec §4.6)", () => {
     expect(active("enterprise-entities")).toBe("true");
     expect(active("entity-e2")).toBe("true");
   });
+
+  it("highlights the Enterprise Entities row on the explicit ?tab=entities URL the workspace writes, and no other row", () => {
+    visit("/schemas/enterprise", "tab=entities");
+    expect(active("enterprise-entities")).toBe("true");
+    expect(active("enterprise-traits")).toBe("false");
+    visit("/schemas/enterprise");
+    expect(active("enterprise-entities")).toBe("true");
+    visit("/schemas/enterprise", "tab=data-types");
+    expect(active("enterprise-entities")).toBe("false");
+    visit("/schemas/enterprise", "tab=traits");
+    expect(active("enterprise-entities")).toBe("false");
+  });
 });

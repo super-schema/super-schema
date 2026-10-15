@@ -73,7 +73,9 @@ export function describeUsage(ref: ReferenceLike, lookups: UsageLookups, targetL
     case "ENTITY_VERSION": {
       const v = lookups.entityVersions[ref.fromId];
       if (!v) return missing("Entity version");
-      const href = assetHref({ kind: "entity", slug: v.entity.slug, domainSlug: v.entity.domainSlug, productSlug: v.entity.productSlug }, { version: v.label });
+      // The entity page has no read-only `?version=` view yet (it always opens the live draft), so the row links to the entity
+      // itself and keeps the version only as label text; a `{ version }` deep link would land on the draft and mislead.
+      const href = assetHref({ kind: "entity", slug: v.entity.slug, domainSlug: v.entity.domainSlug, productSlug: v.entity.productSlug });
       return { ...base, label: `Entity ${v.entity.name} v${v.label}`, href };
     }
     case "MESSAGE": {

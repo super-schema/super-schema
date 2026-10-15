@@ -110,6 +110,7 @@ describe("normalizeDomainTab", () => {
 describe("DomainTabs", () => {
   it("shows Data Types tab with inherited enterprise section", () => {
     renderTabs();
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeDefined();
     expect(screen.getByRole("tab", { name: "Products" })).toBeDefined();
     expect(screen.getByRole("tab", { name: "Data Types", selected: true })).toBeDefined();
     expect(screen.getByRole("tab", { name: "APIs" })).toBeDefined();

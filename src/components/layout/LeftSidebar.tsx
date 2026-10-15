@@ -528,7 +528,7 @@ function ExplorerSidebar({
               <>
                 <SidebarCategory
                   testId="enterprise-entities"
-                  active={inRoute && !activeTab && !isNonEntityDetail(pathname, enterpriseHref)}
+                  active={inRoute && (!activeTab || activeTab === "entities") && !isNonEntityDetail(pathname, enterpriseHref)}
                   count={enterpriseEntities.length}
                   expanded={entitiesExpanded}
                   icon={Database}
