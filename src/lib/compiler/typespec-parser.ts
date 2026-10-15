@@ -11,6 +11,13 @@
  */
 
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
+import {
+  CLASSIFICATION_EXTENSION_KEY,
+  TAGS_EXTENSION_KEY,
+  classificationFromEnterpriseMember,
+  parseStringTuple,
+  unescapeTypeSpecString,
+} from "./governance-decorators";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -30,7 +37,13 @@ export interface ParsedTypeSpecDecorators {
   deprecated?: string;
   encode?: string;
   encodeSubType?: string;
+  /** Legacy: a field `@tag(...)` — `@tag("classification:PII")` was the pre-16.6 classification form. */
   tag?: string;
+  /**
+   * Classification as the app's level, from `@Enterprise.dataClassification(...)` (member mapped back) or the
+   * `x-classification` extension (Story 16.6). The legacy `@tag` form stays in `tag`.
+   */
+  classification?: string;
   summary?: string;
   minItems?: number;
   maxItems?: number;
@@ -568,16 +581,34 @@ function collectDiscriminator(lines: string[], idx: number): string | undefined 
   return undefined;
 }
 
+/** Optional `TypeSpec.` / `OpenAPI.` qualifier in front of `extension`. */
+const EXTENSION_DECORATOR = String.raw`@(?:TypeSpec\.)?(?:OpenAPI\.)?extension`;
+
+/** `@TypeSpec.OpenAPI.extension("x-tags", #[...])` (qualified or bare) → the tuple text. */
+const TAGS_EXTENSION_LINE = new RegExp(
+  String.raw`^${EXTENSION_DECORATOR}\("${TAGS_EXTENSION_KEY}"\s*,\s*(#\[.*\])\)$`
+);
+
+/** `@TypeSpec.OpenAPI.extension("x-classification", "LEVEL")` (qualified or bare) → the escaped level. */
+const CLASSIFICATION_EXTENSION_LINE = new RegExp(
+  String.raw`^${EXTENSION_DECORATOR}\("${CLASSIFICATION_EXTENSION_KEY}"\s*,\s*"((?:[^"\\]|\\.)*)"\)$`
+);
+
+/** Model tags in source order: the `x-tags` extension (Story 16.6) and legacy model-level `@tag("...")`. */
 function collectModelTags(lines: string[], idx: number): string[] {
   const tags: string[] = [];
   for (let i = idx - 1; i >= 0; i--) {
     const line = lines[i].trim();
     if (line === "") continue;
+    if (!line.startsWith("@") && !line.startsWith("#")) break;
     const tagMatch = line.match(/^@tag\("(.*)"\)$/);
     if (tagMatch) {
-      tags.push(tagMatch[1]);
+      tags.unshift(tagMatch[1]);
+      continue;
     }
-    if (!line.startsWith("@") && !line.startsWith("#")) break;
+    const extMatch = line.match(TAGS_EXTENSION_LINE);
+    const values = extMatch ? parseStringTuple(extMatch[1]) : undefined;
+    if (values) tags.unshift(...values);
   }
   return tags;
 }
@@ -1022,6 +1053,19 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
       .map((s) => s.replace(/^Lifecycle\./, ""))
       .filter(Boolean);
     return { decorators: { visibility: phases } };
+  }
+
+  // @Enterprise.dataClassification(Enterprise.DataClassification.PII), or unqualified with `using Enterprise;`
+  const dataClassificationMatch = line.match(/^@(?:Enterprise\.)?dataClassification\(\s*([\w.]+)\s*\)$/);
+  if (dataClassificationMatch) {
+    const level = classificationFromEnterpriseMember(dataClassificationMatch[1]);
+    return level ? { decorators: { classification: level } } : null;
+  }
+
+  // @TypeSpec.OpenAPI.extension("x-classification", "LEVEL") — a level with no Enterprise member
+  const classificationExtMatch = line.match(CLASSIFICATION_EXTENSION_LINE);
+  if (classificationExtMatch) {
+    return { decorators: { classification: unescapeTypeSpecString(classificationExtMatch[1]) } };
   }
 
   // @extension("key", "value")

@@ -135,6 +135,33 @@ model User {
     });
   });
 
+  describe("classification from the governance decorators (Story 16.6)", () => {
+    const classificationOf = (decoratorLine: string) => {
+      const result = parseTypeSpecSchema(`model User {\n  ${decoratorLine}\n  email: string;\n}`);
+      return result.success ? result.data.fields[0].classification : "PARSE_FAILED";
+    };
+
+    it("maps the Enterprise decorator member back to the app level", () => {
+      expect(classificationOf("@Enterprise.dataClassification(Enterprise.DataClassification.PII)")).toBe("PII");
+      expect(classificationOf("@Enterprise.dataClassification(Enterprise.DataClassification.Confidential)")).toBe("SENSITIVE");
+      expect(classificationOf("@Enterprise.dataClassification(Enterprise.DataClassification.Restricted)")).toBe("NEVER_STORED");
+      // Hand-written with `using Enterprise;`
+      expect(classificationOf("@dataClassification(DataClassification.Internal)")).toBe("INTERNAL");
+    });
+
+    it("reads an admin-defined level from the x-classification extension (qualified or bare)", () => {
+      expect(classificationOf('@TypeSpec.OpenAPI.extension("x-classification", "TOP_SECRET")')).toBe("TOP_SECRET");
+      expect(classificationOf('@extension("x-classification", "TOP SECRET")')).toBe("TOP SECRET");
+    });
+
+    it("an explicit classification wins over the @secret → SENSITIVE inference", () => {
+      const result = parseTypeSpecSchema(
+        "model User {\n  @secret\n  @Enterprise.dataClassification(Enterprise.DataClassification.PII)\n  ssn: string;\n}"
+      );
+      expect(result.success && result.data.fields[0].classification).toBe("PII");
+    });
+  });
+
   describe("@secret decorator", () => {
     it('maps @secret to classification = "SENSITIVE"', () => {
       const content = `model User {

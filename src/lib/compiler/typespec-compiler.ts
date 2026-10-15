@@ -33,6 +33,11 @@ import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { mapTypeSpecType } from "./typespec-parser";
 import * as gov from "@superschema/typespec-enterprise";
+import {
+  CLASSIFICATION_EXTENSION_KEY,
+  TAGS_EXTENSION_KEY,
+  classificationFromEnterpriseMember,
+} from "./governance-decorators";
 import type {
   ParsedTypeSpecDocument,
   ParsedTypeSpecModel,
@@ -172,6 +177,12 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
         break;
       case "secret": d.secret = true; break;
       case "tag": if (s0) d.tag = s0; break;
+      // Story 16.6 classification: the governance enum member, mapped back to the app's level.
+      case "dataClassification": {
+        const level = classificationFromEnterpriseMember(s0);
+        if (level) d.classification = level;
+        break;
+      }
       case "deprecated": d.deprecated = s0 ?? ""; break;
       case "discriminator": if (s0) d.discriminator = s0; break;
       case "error": d.error = true; break;
@@ -185,6 +196,13 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
         break;
       }
       case "extension":
+        // Story 16.6 overlay keys are consumed, not kept as generic extensions: x-classification is the
+        // level of a field with no Enterprise member; x-tags (model tags) is read by modelTags().
+        if (s0 === CLASSIFICATION_EXTENSION_KEY) {
+          if (typeof args[1] === "string") d.classification = args[1];
+          break;
+        }
+        if (s0 === TAGS_EXTENSION_KEY) break;
         // @extension("x-key", value) → { "x-key": "value" }
         if (s0) d.extensions = { ...(d.extensions ?? {}), [s0]: String(args[1] ?? "") };
         break;
@@ -222,11 +240,31 @@ function exprToArgValue(node: unknown): string | number | boolean | undefined {
 }
 
 /** Read decorator names + resolved args directly from a type's AST node. */
+/** String elements of a value tuple argument (`#["a", "b"]`), or [] for anything else. */
+function exprToStringArray(node: unknown): string[] {
+  const values = (node as { values?: unknown[] } | undefined)?.values;
+  if (!Array.isArray(values)) return [];
+  return values.map(exprToArgValue).filter((v): v is string => typeof v === "string");
+}
+
+/**
+ * Model tags in source order: the `x-tags` extension (Story 16.6) and legacy `@tag("...")` lines (stored
+ * pre-16.6 sources; invalid on a model, but this import reader ignores diagnostics and the AST keeps them).
+ */
+function modelTags(type: Type): string[] | undefined {
+  const tags: string[] = [];
+  for (const { name, args, rawArgs } of readAstDecorators(type)) {
+    if (name === "tag" && typeof args[0] === "string") tags.push(args[0]);
+    if (name === "extension" && args[0] === TAGS_EXTENSION_KEY) tags.push(...exprToStringArray(rawArgs[1]));
+  }
+  return tags.length > 0 ? tags : undefined;
+}
+
 function readAstDecorators(
   type: Type
-): Array<{ name: string; args: Array<string | number | boolean | undefined> }> {
+): Array<{ name: string; args: Array<string | number | boolean | undefined>; rawArgs: unknown[] }> {
   const node = (type as { node?: { decorators?: unknown[] } }).node;
-  const out: Array<{ name: string; args: Array<string | number | boolean | undefined> }> = [];
+  const out: Array<{ name: string; args: Array<string | number | boolean | undefined>; rawArgs: unknown[] }> = [];
   for (const raw of node?.decorators ?? []) {
     const deco = raw as {
       target?: { sv?: string; id?: { sv?: string } };
@@ -234,7 +272,8 @@ function readAstDecorators(
     };
     const name = (deco.target?.sv ?? deco.target?.id?.sv ?? "").replace(/^@/, "");
     if (!name) continue;
-    out.push({ name, args: (deco.arguments ?? []).map(exprToArgValue) });
+    const rawArgs = deco.arguments ?? [];
+    out.push({ name, args: rawArgs.map(exprToArgValue), rawArgs });
   }
   return out;
 }
@@ -269,6 +308,7 @@ function extractModel(program: Program, model: Model): ParsedTypeSpecModel {
     extends: model.baseModel?.name,
     isError: decorators.error,
     friendlyName: decorators.friendlyName,
+    tags: modelTags(model),
     discriminator: decorators.discriminator,
   };
 }
@@ -494,7 +534,7 @@ export async function compileTypeSpecWithGovernance(
       const modelInfo: ModelGovernanceInfo = {
         businessOwner: gov.getBusinessOwner(program, m),
         steward: gov.getSteward(program, m),
-        classification: gov.getDataClassification(program, m),
+        classification: classificationFromEnterpriseMember(gov.getDataClassification(program, m)),
         retentionPolicy: gov.getRetentionPolicy(program, m),
         avroNamespace: gov.getAvroNamespace(program, m),
         avroRecordAliases: avroAliases && avroAliases.length > 0 ? avroAliases : undefined,
@@ -506,7 +546,8 @@ export async function compileTypeSpecWithGovernance(
 
       for (const [, prop] of m.properties) {
         const fieldInfo: FieldGovernanceInfo = {
-          classification: gov.getDataClassification(program, prop),
+          // The governance enum member mapped back to the app's level (`Internal` → `INTERNAL`).
+          classification: classificationFromEnterpriseMember(gov.getDataClassification(program, prop)),
           pii: gov.isPii(program, prop) || undefined,
           retentionPolicy: gov.getRetentionPolicy(program, prop),
           anonymization: gov.getAnonymization(program, prop),

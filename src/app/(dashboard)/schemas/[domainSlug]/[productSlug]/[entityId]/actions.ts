@@ -35,6 +35,8 @@ import {
   type GovernanceDiagnostic,
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { classificationFromDecorators } from "@/lib/compiler/governance-decorators";
+import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import {
   markEntityDraftChanged,
@@ -696,8 +698,10 @@ export async function applyTypeSpecAction(
       if (governance && Object.values(governance).some((v) => v !== undefined)) {
         decoratorsJson.governance = governance;
       }
+      // Governance accessor value (already the app's level) first; else the parsed decorators —
+      // x-classification for a level with no Enterprise member, or the legacy @tag("classification:…").
       const classification =
-        governance?.classification ?? extractClassification(pf.decorators.tag as string | undefined);
+        governance?.classification ?? classificationFromDecorators(pf.decorators) ?? null;
 
       if (!existing) {
         // Create new field
@@ -867,12 +871,6 @@ function buildDecoratorsJson(
 /**
  * Extract classification from @tag("classification:...") value.
  */
-function extractClassification(tag: string | undefined): string | null {
-  if (!tag) return null;
-  const match = tag.match(/^classification:(.+)$/);
-  return match ? match[1] : null;
-}
-
 // ---------------------------------------------------------------------------
 // Schema version management (stored in entity metadata JSONB)
 // ---------------------------------------------------------------------------
@@ -1632,7 +1630,10 @@ export async function getTypeSpecSourceAction(entityId: string) {
   if (!entity) return { error: "Entity not found" };
 
   if (entity.typespecSource && !isSourceStale(entity.metadata)) {
-    return { success: true as const, source: entity.typespecSource, generated: false };
+    // A source stored before Story 16.6 (a publish wrote the generator's text back) can carry `@tag(...)`
+    // on the model / properties, which real TypeSpec rejects; rewrite it losslessly into the valid
+    // governance decorators so the tab can save it. A no-op (same string) for any other source.
+    return { success: true as const, source: upgradeLegacyTagDecorators(entity.typespecSource), generated: false };
   }
 
   // Lazy-generate from current field rows — this entity hasn't been opened

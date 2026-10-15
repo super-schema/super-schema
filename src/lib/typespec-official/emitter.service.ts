@@ -9,7 +9,6 @@ import type {
   PrismaEntityInput,
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
-import { toCompilableTypeSpec } from "@/lib/compiler/compilable-source";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
@@ -146,11 +145,14 @@ function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): strin
     return buildDbTypeSpecSource(model, targetKey);
   }
 
-  // Real TypeSpec rejects the `@tag(...)` decorators generateTypeSpec() emits (field classification and
-  // model tags), so they are stripped at the real-compile boundary. toCompilableTypeSpec is shared with the
-  // publish compile gate; model-level tags are stripped too since R46 (before that an entity with tags failed
-  // `decorator-wrong-target` on every typespec-cli target).
-  const baseSource = toCompilableTypeSpec(generateTypeSpec(model).trim());
+  // Emission source = the generator's text WITHOUT the governance overlay (Story 16.6): field classification
+  // (`@Enterprise.dataClassification` / `x-classification`), entity tags (`x-tags`) and their imports. It is
+  // an explicit projection, not a strip — the canonical source (Source tab, publish gate, frozen versions)
+  // carries the overlay and compiles as is. Omitted here because no typespec-cli emitter reads it
+  // (@typespec/avro reads only its avro* decorators by name), and importing @superschema/typespec-enterprise
+  // would leak its enums (DataClassification, AvroLogicalType, …) into the java-pojo and json-schema output.
+  // Opt a target in here if an emitter ever starts consuming the overlay.
+  const baseSource = generateTypeSpec(model, { governance: false }).trim();
 
   switch (targetKey) {
     case "json-schema":

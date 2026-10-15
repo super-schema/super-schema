@@ -13,8 +13,10 @@
  * - @key decorator -> isKey
  * - @doc decorator -> description
  * - @format decorator -> format hint
- * - @secret decorator -> classification = "SENSITIVE"
- * - @tag("classification:XXX") -> classification
+ * - @Enterprise.dataClassification(...) / @extension("x-classification", "…") -> classification (Story 16.6)
+ * - @tag("classification:XXX") -> classification (legacy form, sources stored before Story 16.6)
+ * - @secret decorator -> classification = "SENSITIVE" (only when no explicit classification)
+ * - model @extension("x-tags", #[...]) / legacy model @tag("…") -> tags
  * - @minLength, @maxLength, @minValue, @maxValue, @pattern -> constraints
  * - @deprecated -> deprecated flag
  * - Array types (e.g. string[])
@@ -30,6 +32,7 @@ import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ImportFormat, ParsedEntity, ParsedField, ParsedFieldConstraint } from "./types";
 import { parseTypeSpec } from "@/lib/compiler/typespec-parser";
+import { classificationFromDecorators } from "@/lib/compiler/governance-decorators";
 import type {
   ParsedTypeSpecDecoratorDefinition,
   ParsedTypeSpecField,
@@ -49,6 +52,8 @@ import type {
 
 export interface TypeSpecImportModel extends ParsedEntity {
   extends?: string;
+  /** Model tags (`x-tags` extension, or legacy model `@tag`) — become the created entity's metadata.tags. */
+  tags?: string[];
   referencedModelNames: string[];
   referencedByModelNames: string[];
   recommendedAsEntity: boolean;
@@ -101,17 +106,16 @@ export interface TypeSpecImportResult {
 // ---------------------------------------------------------------------------
 
 function extractClassification(decorators: ParsedTypeSpecDecorators): string | undefined {
-  // @secret -> SENSITIVE
-  if (decorators.secret) {
-    return "SENSITIVE";
+  // Explicit classification wins: @Enterprise.dataClassification(...) / x-classification (Story 16.6),
+  // then the legacy @tag("classification:PII") form of sources stored before it.
+  const explicit = classificationFromDecorators(decorators);
+  if (explicit) {
+    return explicit;
   }
 
-  // @tag("classification:PII") -> PII
-  if (decorators.tag) {
-    const classMatch = decorators.tag.match(/^classification:(.+)$/);
-    if (classMatch) {
-      return classMatch[1];
-    }
+  // @secret -> SENSITIVE (inferred only when nothing explicit is present)
+  if (decorators.secret) {
+    return "SENSITIVE";
   }
 
   return undefined;
@@ -404,6 +408,7 @@ export function mapDocumentToImportResult(
       sourceFormat: "typespec" as const,
       originalContent: content,
       extends: model.extends,
+      ...(model.tags && model.tags.length > 0 ? { tags: model.tags } : {}),
       referencedModelNames,
       referencedByModelNames,
       recommendedAsEntity: isRecommendedEntityModel(

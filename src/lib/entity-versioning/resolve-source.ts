@@ -4,7 +4,6 @@ import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec, sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
 import { compileTypeSpecWithGovernance } from "@/lib/compiler/typespec-compiler";
-import { toCompilableTypeSpec } from "@/lib/compiler/compilable-source";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -63,11 +62,11 @@ export function needsRegeneration(stored: string | null, stale: boolean): boolea
  * rows are all rendered into it; every edit outside the TypeSpec source tab sets
  * `metadata.sourceStale`. A source that does not compile blocks the publish with the diagnostics.
  *
- * The text handed to the compiler differs from the generated text in two ways, both for the check
- * only: unresolved reference names get empty stub models (`stubUnresolvedReferences`), and the
- * `@tag(...)` decorators real TypeSpec rejects are removed (`toCompilableTypeSpec`, shared with the
- * typespec-cli emitters; the proper fix is Story 16.6). What this returns, and what the caller stores
- * and freezes, is the generator's own text.
+ * The text handed to the compiler differs from the generated text in one way, for the check only:
+ * unresolved reference names get empty stub models (`stubUnresolvedReferences`). Nothing is stripped —
+ * since Story 16.6 the generator emits valid governance decorators (`@Enterprise.dataClassification`,
+ * `x-classification`, `x-tags`) instead of `@tag(...)`. What this returns, and what the caller stores and
+ * freezes, is the generator's own text.
  *
  * Trade-off: regeneration works from the field rows, so TypeSpec that fields cannot represent is not
  * carried over. If such constructs (custom decorators, unions, hand-declared enums, scalars or nested
@@ -86,9 +85,7 @@ export async function compileRegeneratedSource(
   if (!model.success) return model;
 
   const generated = deps.generate(model.data);
-  const compiled = await deps.compile(
-    toCompilableTypeSpec(stubUnresolvedReferences(generated, referencedModelNames(model.data)))
-  );
+  const compiled = await deps.compile(stubUnresolvedReferences(generated, referencedModelNames(model.data)));
   if (!compiled.success) {
     const errors = compiled.diagnostics.filter((d) => d.severity === "error");
     const summary = (errors.length > 0 ? errors : compiled.diagnostics)

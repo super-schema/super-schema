@@ -720,7 +720,7 @@ describe("TypeSpec Decorator Compliance — Generator Emission", () => {
     expect(source).toContain('@friendlyName("User")');
   });
 
-  it("emits @tag on model", () => {
+  it("emits entity tags as an x-tags extension on the model (never @tag, Story 16.6)", () => {
     const model = buildModel({
       entityOverrides: {
         name: "Tagged",
@@ -728,8 +728,8 @@ describe("TypeSpec Decorator Compliance — Generator Emission", () => {
       },
     });
     const source = generateTypeSpec(model);
-    expect(source).toContain('@tag("GroupA")');
-    expect(source).toContain('@tag("GroupB")');
+    expect(source).toContain('@TypeSpec.OpenAPI.extension("x-tags", #["GroupA", "GroupB"])');
+    expect(source).not.toContain("@tag(");
   });
 
   it("emits @encodedName on field", () => {
