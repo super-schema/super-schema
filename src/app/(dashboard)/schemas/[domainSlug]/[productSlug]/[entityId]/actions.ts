@@ -44,6 +44,7 @@ import {
   isSourceStale,
   withSourceStale,
   CLEAR_SOURCE_STALE_SQL,
+  SET_ENTITY_TAGS_SQL,
   MARK_DRAFT_CHANGED_SQL,
 } from "@/lib/entity-versioning/draft-state";
 
@@ -868,9 +869,6 @@ function buildDecoratorsJson(
   return result;
 }
 
-/**
- * Extract classification from @tag("classification:...") value.
- */
 // ---------------------------------------------------------------------------
 // Schema version management (stored in entity metadata JSONB)
 // ---------------------------------------------------------------------------
@@ -1706,6 +1704,17 @@ export async function compileAndApplyTypeSpecSourceAction(
     }
   }
 
+  // The source is canonical: its model tags (`x-tags`, or a legacy `@tag`) become the entity's tags, so a
+  // tag edit made here persists and is not reverted by the next regeneration from `metadata.tags`.
+  // Only written when they differ, so a save that does not touch tags leaves the metadata alone.
+  const sourceTagList = model.tags ?? [];
+  const storedTags = (entity.metadata as { tags?: unknown } | null)?.tags;
+  const currentTagList = Array.isArray(storedTags) ? storedTags : [];
+  const sourceTags =
+    sourceTagList.length === currentTagList.length && sourceTagList.every((t, i) => t === currentTagList[i])
+      ? null
+      : sourceTagList;
+
   const applyResult = await applyTypeSpecAction(
     entityId,
     model.fields.map((f) => ({
@@ -1738,6 +1747,9 @@ export async function compileAndApplyTypeSpecSourceAction(
           where: { id: entityId },
           data: { typespecSource: source, hasUnpublishedChanges: true },
         }),
+        ...(sourceTags
+          ? [prisma.$executeRawUnsafe(SET_ENTITY_TAGS_SQL, entityId, JSON.stringify(sourceTags))]
+          : []),
         prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, entityId),
       ]);
       return updated;

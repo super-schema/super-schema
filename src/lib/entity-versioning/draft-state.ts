@@ -72,6 +72,15 @@ export const MARK_DRAFT_CHANGED_SQL =
   `UPDATE "entities" SET "hasUnpublishedChanges" = true, "updatedAt" = CURRENT_TIMESTAMP, ` +
   `"metadata" = jsonb_set(${METADATA_AS_OBJECT}, '{sourceStale}', 'true'::jsonb, true) WHERE "id" = $1`;
 
+/**
+ * $1 = entity id, $2 = JSON array text of the tags. Sets `metadata.tags` and nothing else (one key, so a
+ * concurrent metadata write is never clobbered). Used by the TypeSpec source save: the source is canonical,
+ * so its `x-tags` become the entity's tags and survive the next regeneration.
+ */
+export const SET_ENTITY_TAGS_SQL =
+  `UPDATE "entities" SET "metadata" = jsonb_set(${METADATA_AS_OBJECT}, '{tags}', $2::jsonb, true) ` +
+  `WHERE "id" = $1`;
+
 /** $1 = entity id. Clears the stale marker (the TypeSpec source save wrote source + fields consistently). */
 export const CLEAR_SOURCE_STALE_SQL =
   `UPDATE "entities" SET "metadata" = "metadata" - 'sourceStale' ` +

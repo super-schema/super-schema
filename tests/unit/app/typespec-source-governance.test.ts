@@ -29,6 +29,7 @@ import {
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { CLEAR_SOURCE_STALE_SQL, SET_ENTITY_TAGS_SQL } from "@/lib/entity-versioning/draft-state";
 
 const fld = (name: string, classification: string | null, i: number): PrismaFieldInput => ({
   id: `f-${name}`, name, type: "string", precision: null, scale: null, nullable: i > 0, isKey: i === 0,
@@ -72,6 +73,51 @@ describe("TypeSpec Source tab save accepts the canonical source of a tagged + cl
       where: { id: "ent-1" },
       data: { typespecSource: source, hasUnpublishedChanges: true },
     });
+  }, 60_000);
+});
+
+describe("TypeSpec Source tab save applies the model's x-tags to metadata.tags (R53)", () => {
+  const entityRow = (tags: string[] | undefined) => ({
+    id: "ent-1", typespecSource: null, metadata: tags === undefined ? null : { tags },
+  });
+  const sourceWithTags = (tags: string[]) =>
+    generateTypeSpec(
+      compileEntity(
+        {
+          id: "ent-1", name: "Customer", description: "", status: "DRAFT", version: 1, domainId: null,
+          metadata: { tags }, domain: null,
+        },
+        [fld("id", null, 0)]
+      )
+    );
+  const tagWrites = () =>
+    mockPrisma.$executeRawUnsafe.mock.calls.filter(([sql]) => sql === SET_ENTITY_TAGS_SQL);
+
+  it("persists a tag edit made in the source, in the same transaction as the source and the stale clear", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue(entityRow(["old"]));
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", sourceWithTags(["sales", "core"]));
+    expect(res.success).toBe(true);
+    expect(tagWrites()).toEqual([[SET_ENTITY_TAGS_SQL, "ent-1", '["sales","core"]']]);
+    // update + tags + clear in one batch, tags before the stale clear.
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$transaction.mock.calls[0][0]).toHaveLength(3);
+    const sqls = mockPrisma.$executeRawUnsafe.mock.calls.map(([sql]) => sql);
+    expect(sqls.indexOf(SET_ENTITY_TAGS_SQL)).toBeLessThan(sqls.indexOf(CLEAR_SOURCE_STALE_SQL));
+  }, 60_000);
+
+  it("clears the entity's tags when the saved source carries none", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue(entityRow(["old"]));
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n}\n");
+    expect(res.success).toBe(true);
+    expect(tagWrites()).toEqual([[SET_ENTITY_TAGS_SQL, "ent-1", "[]"]]);
+  }, 60_000);
+
+  it("leaves metadata alone when the source's tags equal the stored ones (or both are empty)", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue(entityRow(["sales", "core"]));
+    await compileAndApplyTypeSpecSourceAction("ent-1", sourceWithTags(["sales", "core"]));
+    mockPrisma.entity.findUnique.mockResolvedValue(entityRow(undefined));
+    await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n}\n");
+    expect(tagWrites()).toEqual([]);
   }, 60_000);
 });
 
