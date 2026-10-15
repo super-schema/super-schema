@@ -99,3 +99,28 @@ describe("blockers and pins", () => {
     });
   });
 });
+
+describe("unresolved reference names", () => {
+  it("are a warning, not a blocker", () => {
+    const s = state({ unresolvedReferenceNames: ["Ghost", "Phantom"] });
+    const analysis = analyzePublish(s);
+    expect(analysis.blockers).toEqual([]);
+    expect(analysis.warnings).toEqual([
+      {
+        kind: "UNRESOLVED_REFERENCE",
+        entityName: "Ghost",
+        message: 'Reference "Ghost" does not match any entity in this line; it will not be pinned.',
+      },
+      {
+        kind: "UNRESOLVED_REFERENCE",
+        entityName: "Phantom",
+        message: 'Reference "Phantom" does not match any entity in this line; it will not be pinned.',
+      },
+    ]);
+    expect(planPublish(s).success).toBe(true);
+  });
+
+  it("no warnings when every reference resolved", () => {
+    expect(analyzePublish(state()).warnings).toEqual([]);
+  });
+});

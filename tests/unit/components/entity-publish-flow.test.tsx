@@ -77,7 +77,7 @@ function props(entity: Partial<EntityWorkspaceProps["entity"]> = {}): EntityWork
 
 const PREVIEW = {
   isFirstPublish: true, latestLabel: null, suggestedBump: null, candidateLabels: null, initialLabel: "1.0",
-  reasons: [], diffSummary: { added: 1, removed: 0, modified: 0 }, blockers: [], pins: [],
+  reasons: [], diffSummary: { added: 1, removed: 0, modified: 0 }, blockers: [], warnings: [], pins: [],
 };
 
 describe("published versions tab", () => {
