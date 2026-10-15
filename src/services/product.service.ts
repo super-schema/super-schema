@@ -4,7 +4,10 @@ import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { Product, ProductTier } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
-import { generateSlug } from "@/lib/slug";
+import { generateSlug, isReservedProductRouteSlug } from "@/lib/slug";
+import { combineBlockers, EVENTS_ASSET_COUNT_SELECT, productDeleteBlocker } from "@/lib/product-deletion";
+import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
+import { findCrossProductPins } from "@/services/events/delete-guards";
 
 export interface ProductListItem {
   id: string;
@@ -115,6 +118,15 @@ export async function createProduct(
     });
   }
 
+  const slug = generateSlug(name);
+  if (isReservedProductRouteSlug(slug)) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: `"${slug}" is reserved for a domain-level utility page.`,
+      suggestedFix: "Choose a different product name.",
+    });
+  }
+
   try {
     const product = await withAudit({
       action: "CREATE",
@@ -126,7 +138,7 @@ export async function createProduct(
           data: {
             domainId: input.domainId,
             name,
-            slug: generateSlug(name),
+            slug,
             description: input.description ?? "",
             tierId: input.tierId ?? null,
             ownerTeam: input.ownerTeam ?? null,
@@ -162,8 +174,16 @@ export async function updateProduct(
     if (!name) {
       return err({ code: "VALIDATION_ERROR", message: "Product name is required" });
     }
+    const slug = generateSlug(name);
+    if (isReservedProductRouteSlug(slug)) {
+      return err({
+        code: "VALIDATION_ERROR",
+        message: `"${slug}" is reserved for a domain-level utility page.`,
+        suggestedFix: "Choose a different product name.",
+      });
+    }
     data.name = name;
-    data.slug = generateSlug(name);
+    data.slug = slug;
   }
   if (input.description !== undefined) data.description = input.description;
   if (input.tierId !== undefined) data.tierId = input.tierId;
@@ -195,7 +215,19 @@ export async function deleteProduct(
 ): Promise<Result<{ id: string }>> {
   const existing = await ctx.prisma.product.findUnique({
     where: { id },
-    include: { _count: { select: { entities: true } } },
+    include: {
+      domain: { select: { tenantId: true } },
+      _count: {
+        select: {
+          entities: true,
+          sharedEnums: true,
+          customScalars: true,
+          unionTypes: true,
+          services: true,
+          ...EVENTS_ASSET_COUNT_SELECT,
+        },
+      },
+    },
   });
   if (!existing) {
     return err({ code: "NOT_FOUND", message: `Product "${id}" not found` });
@@ -206,11 +238,23 @@ export async function deleteProduct(
       message: "System products cannot be deleted",
     });
   }
-  if (existing._count.entities > 0) {
+  // Entities, product-level Data Types / APIs and Events assets (channels, messages, traits, event specs) all
+  // cascade with the product (FK ON DELETE CASCADE), so any of them blocks the delete. Events assets also block
+  // while a published event spec of ANOTHER product still pins or froze one of them (immutable versions) — that
+  // reason is reported together with the content counts, naming the specs and their products.
+  const pins = await findCrossProductPins(ctx.prisma, {
+    kind: "product",
+    productId: id,
+    tenantId: existing.domain.tenantId,
+  });
+  const blocker = combineBlockers([productDeleteBlocker(existing._count), crossProductPinBlocker(pins)]);
+  if (blocker) {
     return err({
       code: "VALIDATION_ERROR",
-      message: "Delete the product's entities before removing it",
-      suggestedFix: "Remove or move all entities, then delete the product.",
+      message: blocker,
+      ...(pins.length > 0 && { details: { eventSpecs: pins } }),
+      suggestedFix:
+        "Remove or move the product's entities, Data Types, APIs and Events assets (channels, messages, traits, event specs), then delete the product.",
     });
   }
 

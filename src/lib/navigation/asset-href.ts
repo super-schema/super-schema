@@ -1,0 +1,97 @@
+/**
+ * The single source of truth for in-app URLs (spec §4.5). Every link —
+ * sidebar, command palette, cards, breadcrumbs, cross-product references,
+ * version deep links — goes through here.
+ */
+/**
+ * URL segment of each events kind's detail pages (`<level>/<segment>/<id>`). The Events tab's
+ * `section` values are the same strings, so `EventsSection` is derived from it.
+ */
+export const EVENT_SEGMENT = { message: "messages", channel: "channels", eventSpec: "specs" } as const;
+/** URL segment of trait detail pages at every level (`<level>/traits/<id>`). */
+export const TRAITS_SEGMENT = "traits";
+
+export type EventsSection = (typeof EVENT_SEGMENT)[keyof typeof EVENT_SEGMENT];
+const EVENTS_SECTIONS: readonly string[] = Object.values(EVENT_SEGMENT);
+
+/** The Events tab section named by `?section=`; a missing or unknown value falls back to "specs". */
+export function normalizeEventsSection(raw: string | null | undefined): EventsSection {
+  return EVENTS_SECTIONS.includes(raw ?? "") ? (raw as EventsSection) : EVENT_SEGMENT.eventSpec;
+}
+
+export type AssetRef =
+  | { kind: "enterprise" }
+  | { kind: "domain"; domainSlug: string }
+  | { kind: "product"; domainSlug: string; productSlug: string }
+  | { kind: "entity"; slug: string; domainSlug: string | null; productSlug: string | null }
+  | { kind: "dataTypes"; domainSlug: string | null; productSlug: string | null }
+  | { kind: "apis"; domainSlug: string; productSlug: string | null }
+  | { kind: "traits"; domainSlug: string | null; productSlug: string | null }
+  | { kind: "trait"; id: string; domainSlug: string | null; productSlug: string | null }
+  | { kind: "message" | "channel" | "eventSpec"; id: string; domainSlug: string; productSlug: string }
+  | { kind: "field"; entitySlug: string; fieldId: string; domainSlug: string | null; productSlug: string | null }
+  | { kind: "events"; domainSlug: string; productSlug: string; section?: EventsSection }
+  | { kind: "newEntity"; domainSlug: string | null; productSlug: string | null };
+
+/**
+ * URL segments of the tenant-level (Enterprise) scope. A route that receives
+ * `[domainSlug]=ENTERPRISE_ROUTE_SEGMENT` and `[productSlug]=ENTERPRISE_ENTITIES_SEGMENT`
+ * is a tenant-level entity URL. They are exported so route code that must detect
+ * that shape reads the literals from here, never re-declares them.
+ */
+export const ENTERPRISE_ROUTE_SEGMENT = "enterprise";
+export const ENTERPRISE_ENTITIES_SEGMENT = "entities";
+
+const ROOT = "/schemas";
+const ENTERPRISE = `${ROOT}/${ENTERPRISE_ROUTE_SEGMENT}`;
+const enc = encodeURIComponent;
+
+function levelBase(domainSlug: string | null, productSlug: string | null): string {
+  if (!domainSlug) return ENTERPRISE;
+  if (!productSlug) return `${ROOT}/${enc(domainSlug)}`;
+  return `${ROOT}/${enc(domainSlug)}/${enc(productSlug)}`;
+}
+
+function entityBase(slug: string, domainSlug: string | null, productSlug: string | null): string {
+  if (!domainSlug || !productSlug) return `${ENTERPRISE}/${ENTERPRISE_ENTITIES_SEGMENT}/${enc(slug)}`;
+  return `${levelBase(domainSlug, productSlug)}/${enc(slug)}`;
+}
+
+function path(ref: AssetRef): { path: string; query: Record<string, string> } {
+  switch (ref.kind) {
+    case "enterprise":
+      return { path: ENTERPRISE, query: {} };
+    case "domain":
+      return { path: levelBase(ref.domainSlug, null), query: {} };
+    case "product":
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: {} };
+    case "entity":
+      return { path: entityBase(ref.slug, ref.domainSlug, ref.productSlug), query: {} };
+    case "field":
+      return { path: `${entityBase(ref.entitySlug, ref.domainSlug, ref.productSlug)}/fields/${enc(ref.fieldId)}`, query: {} };
+    case "dataTypes":
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "data-types" } };
+    case "apis":
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "apis" } };
+    case "traits":
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "traits" } };
+    case "trait":
+      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${TRAITS_SEGMENT}/${enc(ref.id)}`, query: {} };
+    case "message":
+    case "channel":
+    case "eventSpec":
+      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${EVENT_SEGMENT[ref.kind]}/${enc(ref.id)}`, query: {} };
+    case "events":
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "events", section: normalizeEventsSection(ref.section) } };
+    case "newEntity":
+      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/new`, query: {} };
+  }
+}
+
+export function assetHref(ref: AssetRef, opts: { version?: string; query?: Record<string, string> } = {}): string {
+  const { path: p, query } = path(ref);
+  const qs = new URLSearchParams({ ...query, ...(opts.query ?? {}) });
+  if (opts.version) qs.set("version", opts.version);
+  const s = qs.toString();
+  return s ? `${p}?${s}` : p;
+}

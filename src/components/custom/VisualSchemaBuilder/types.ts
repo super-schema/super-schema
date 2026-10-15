@@ -9,11 +9,12 @@
  *   1. a visual editor component implementing VisualEditorProps
  *   2. an importer that already parses that format's text
  *
- * JSON Schema is implemented today; Avro and Protobuf are registered as
- * disabled slots so adding them later is additive, not a refactor.
+ * JSON Schema, Avro and Protobuf are implemented. An editor may also accept a
+ * `hydrate` prop so the Schema Workbench can push Detail Panel edits back into it.
  */
 
 import type { ImportFormat } from "@/lib/importers/types";
+import type { FormState } from "@/lib/schema-workbench/form-state";
 
 export interface VisualEditorProps {
   /** Suggested initial entity/schema name. */
@@ -29,6 +30,12 @@ export interface VisualEditorProps {
    * (so the dispatcher can disable "Review & Import").
    */
   onContentChange: (content: string | null) => void;
+  /**
+   * Replace the editor's state from outside (Schema Workbench: Detail Panel
+   * edits flowing back into the form). Applied whenever `nonce` changes and the
+   * state's format matches the editor's. Omit for a fully uncontrolled editor.
+   */
+  hydrate?: { nonce: number; state: FormState };
 }
 
 export interface VisualFormat {

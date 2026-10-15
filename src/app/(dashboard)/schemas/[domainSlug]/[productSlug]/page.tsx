@@ -1,9 +1,29 @@
 import { prisma } from "@/lib/db";
-import { auth } from "@/lib/auth";
-import { resolveGlobalAdminAccess } from "@/lib/access-control";
 import { notFound, redirect } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
+import { assetHref } from "@/lib/navigation/asset-href";
+import { loadProductEventsData } from "@/features/events/workspace/load-events-tab-data";
+import {
+  classificationCountsFromGroups,
+  emptyClassificationCounts,
+} from "@/lib/classification-counts";
+import {
+  buildProductInheritedDataTypes,
+  buildProductInheritedServices,
+  mapCustomScalarRows,
+  mapServiceRows,
+  mapSharedEnumRows,
+  mapUnionTypeRows,
+} from "../map-asset-rows";
+
+const SERVICE_INCLUDE = {
+  entity: { select: { id: true, name: true, slug: true } },
+  operations: {
+    orderBy: { name: "asc" },
+    include: { parameters: true, responses: true },
+  },
+} as const;
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string }>;
@@ -15,35 +35,24 @@ export default async function ProductWorkspacePage({
   searchParams,
 }: Props) {
   const { domainSlug, productSlug } = await params;
-  const resolvedSearchParams: Record<string, string | string[] | undefined> =
-    (await searchParams) ?? {};
-  const [session, tenantId] = await Promise.all([auth(), getActiveTenantId()]);
+  const tenantId = await getActiveTenantId();
 
+  // Domain and product resolve in a single query. The tenant-scoped lookup
+  // wins; the unscoped one is only a fallback for a slug outside the active tenant.
+  const findDomain = (where: { slug: string; tenantId?: string }) =>
+    prisma.domain.findFirst({
+      where,
+      include: { products: { where: { slug: productSlug }, take: 1 } },
+    });
   const domain =
-    (await prisma.domain.findFirst({
-      where: { slug: domainSlug, tenantId },
-    })) ??
-    (await prisma.domain.findFirst({ where: { slug: domainSlug } }));
+    (await findDomain({ slug: domainSlug, tenantId })) ??
+    (await findDomain({ slug: domainSlug }));
 
   if (!domain) {
     notFound();
   }
 
-  const [product, access] = await Promise.all([
-    prisma.product.findFirst({
-      where: { slug: productSlug, domainId: domain.id },
-      include: {
-        entities: {
-          orderBy: { updatedAt: "desc" },
-          include: {
-            _count: { select: { fields: true } },
-            fields: { select: { classification: true } },
-          },
-        },
-      },
-    }),
-    resolveGlobalAdminAccess(session?.user),
-  ]);
+  const product = domain.products[0];
 
   if (!product) {
     // Back-compat: legacy 2-segment entity links (/schemas/<domain>/<entity>)
@@ -54,6 +63,8 @@ export default async function ProductWorkspacePage({
       select: { slug: true, product: { select: { slug: true } } },
     });
     if (legacyEntity) {
+      const resolvedSearchParams: Record<string, string | string[] | undefined> =
+        (await searchParams) ?? {};
       const qs = new URLSearchParams();
       for (const [key, value] of Object.entries(resolvedSearchParams)) {
         if (Array.isArray(value)) {
@@ -63,185 +74,150 @@ export default async function ProductWorkspacePage({
         }
       }
       const suffix = qs.toString();
-      redirect(
-        `/schemas/${domainSlug}/${legacyEntity.product.slug}/${legacyEntity.slug}${
-          suffix ? `?${suffix}` : ""
-        }`
-      );
+      // The query is forwarded verbatim (it may repeat a key), so it is appended
+      // to the assetHref path rather than passed through assetHref's single-value query.
+      const canonical = assetHref({
+        kind: "entity",
+        slug: legacyEntity.slug,
+        domainSlug,
+        productSlug: legacyEntity.product?.slug ?? null,
+      });
+      redirect(suffix ? `${canonical}?${suffix}` : canonical);
     }
     notFound();
   }
 
+  // Everything else is independent of each other: one parallel stage.
   const [
-    counts,
-    modelDefinitions,
-    decoratorDefinitions,
+    entityRows,
+    classificationGroups,
     sharedEnumsRaw,
     customScalarsRaw,
     unionTypesRaw,
     servicesRaw,
+    domainEnumsRaw,
+    domainScalarsRaw,
+    domainUnionsRaw,
+    domainServicesRaw,
+    tenantEnumsRaw,
+    tenantScalarsRaw,
+    tenantUnionsRaw,
+    eventsData,
   ] = await Promise.all([
-    prisma.domain.findUnique({
-      where: { id: domain.id },
-      select: {
-        _count: {
-          select: {
-            entities: true,
-            modelDefinitions: true,
-            decoratorDefinitions: true,
-            sharedEnums: true,
-            customScalars: true,
-            unionTypes: true,
-            services: true,
-            interfaces: true,
-            userRoles: true,
-          },
-        },
-      },
+    prisma.entity.findMany({
+      where: { productId: product.id },
+      orderBy: { updatedAt: "desc" },
+      include: { _count: { select: { fields: true } } },
     }),
-    prisma.modelDefinition.findMany({
-      where: { domainId: domain.id },
-      orderBy: { name: "asc" },
-      include: { fields: { orderBy: { sortOrder: "asc" } } },
+    // Classification tallies without loading every field row.
+    prisma.field.groupBy({
+      by: ["entityId", "classification"],
+      where: { entity: { productId: product.id } },
+      _count: true,
     }),
-    prisma.decoratorDefinition.findMany({
-      where: { domainId: domain.id },
-      orderBy: { name: "asc" },
-    }),
+    // Product-level assets (managed on this page).
     prisma.sharedEnum.findMany({
-      where: { domainId: domain.id },
+      where: { productId: product.id },
       orderBy: { name: "asc" },
     }),
     prisma.customScalar.findMany({
-      where: { domainId: domain.id },
+      where: { productId: product.id },
       orderBy: { name: "asc" },
     }),
     prisma.unionType.findMany({
-      where: { domainId: domain.id },
+      where: { productId: product.id },
+      orderBy: { name: "asc" },
+    }),
+    // Includes entity-scoped APIs: those live at their entity's product scope.
+    prisma.serviceDefinition.findMany({
+      where: { productId: product.id },
+      orderBy: { name: "asc" },
+      include: SERVICE_INCLUDE,
+    }),
+    // Inherited from the domain (read-only).
+    prisma.sharedEnum.findMany({
+      where: { domainId: domain.id, productId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.customScalar.findMany({
+      where: { domainId: domain.id, productId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.unionType.findMany({
+      where: { domainId: domain.id, productId: null },
       orderBy: { name: "asc" },
     }),
     prisma.serviceDefinition.findMany({
-      where: { domainId: domain.id },
+      where: { domainId: domain.id, productId: null },
       orderBy: { name: "asc" },
-      include: {
-        entity: { select: { id: true, name: true, slug: true } },
-        operations: {
-          orderBy: { name: "asc" },
-          include: { parameters: true, responses: true },
-        },
-      },
+      include: SERVICE_INCLUDE,
+    }),
+    // Inherited from the Enterprise (read-only).
+    prisma.sharedEnum.findMany({
+      where: { tenantId: domain.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.customScalar.findMany({
+      where: { tenantId: domain.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+    prisma.unionType.findMany({
+      where: { tenantId: domain.tenantId, domainId: null },
+      orderBy: { name: "asc" },
+    }),
+    // Events + Traits tabs, scoped by the route's tenant, domain and product.
+    loadProductEventsData({
+      tenantId: domain.tenantId,
+      domainId: domain.id,
+      productId: product.id,
+      domainSlug,
+      productSlug,
     }),
   ]);
 
-  const entities = product.entities.map((e) => {
-    const classifications = {
-      NEVER_STORED: 0,
-      PII: 0,
-      SENSITIVE: 0,
-      INTERNAL: 0,
-      PUBLIC: 0,
-    };
-    for (const f of e.fields) {
-      const cls = f.classification ?? "SENSITIVE";
-      if (cls in classifications) {
-        classifications[cls as keyof typeof classifications]++;
-      }
-    }
-    return {
-      id: e.id,
-      name: e.name,
-      slug: e.slug,
-      description: e.description,
-      status: e.status,
-      version: e.version,
-      fieldCount: e._count.fields,
-      updatedAt: e.updatedAt,
-      classifications,
-    };
-  });
-
-  const sharedEnums = sharedEnumsRaw.map((e) => ({
+  const classificationsByEntity = classificationCountsFromGroups(
+    classificationGroups,
+    entityRows.map((e) => e.id)
+  );
+  const entities = entityRows.map((e) => ({
     id: e.id,
     name: e.name,
-    values: e.values,
+    slug: e.slug,
     description: e.description,
+    status: e.status,
+    version: e.version,
+    fieldCount: e._count.fields,
+    updatedAt: e.updatedAt,
+    classifications: classificationsByEntity.get(e.id) ?? emptyClassificationCounts(),
   }));
 
-  const customScalars = customScalarsRaw.map((s) => ({
-    id: s.id,
-    name: s.name,
-    baseType: s.baseType,
-    format: s.format,
-    pattern: s.pattern,
-    description: s.description,
-  }));
+  const sharedEnums = mapSharedEnumRows(sharedEnumsRaw);
+  const customScalars = mapCustomScalarRows(customScalarsRaw);
+  const unionTypes = mapUnionTypeRows(unionTypesRaw);
 
-  const unionTypes = unionTypesRaw.map((u) => ({
-    id: u.id,
-    name: u.name,
-    memberTypes: u.memberTypes,
-    description: u.description,
-  }));
+  const services = mapServiceRows(servicesRaw);
 
-  const models = modelDefinitions.map((model) => ({
-    id: model.id,
-    name: model.name,
-    description: model.description,
-    extendsModelName: model.extendsModelName,
-    fieldCount: model.fields.length,
-    updatedAt: model.updatedAt,
-    fields: model.fields.map((field) => ({
-      id: field.id,
-      name: field.name,
-      type: field.type,
-      nullable: field.nullable,
-      isKey: field.isKey,
-      description: field.description,
-    })),
-  }));
-
-  const decorators = decoratorDefinitions.map((decorator) => ({
-    id: decorator.id,
-    name: decorator.name,
-    description: decorator.description,
-    signature: decorator.signature,
-    targetTypes: decorator.targetTypes,
-  }));
-
-  const services = servicesRaw.map((s) => ({
-    id: s.id,
-    name: s.name,
-    description: s.description,
-    basePath: s.basePath,
-    scope: s.scope,
-    entity: s.entity
-      ? { id: s.entity.id, name: s.entity.name, slug: s.entity.slug }
-      : null,
-    operations: s.operations.map((op) => ({
-      id: op.id,
-      name: op.name,
-      httpMethod: op.httpMethod,
-      httpPath: op.httpPath,
-      description: op.description,
-      parameters: op.parameters.map((pr) => ({
-        name: pr.name,
-        type: pr.type,
-        location: pr.location,
-        required: pr.required,
-        description: pr.description,
-      })),
-      responses: op.responses.map((r) => ({
-        statusCode: r.statusCode,
-        type: r.type,
-        description: r.description,
-      })),
-    })),
-  }));
+  const inheritedDataTypes = buildProductInheritedDataTypes({
+    domainSlug,
+    domain: {
+      sharedEnums: mapSharedEnumRows(domainEnumsRaw),
+      customScalars: mapCustomScalarRows(domainScalarsRaw),
+      unionTypes: mapUnionTypeRows(domainUnionsRaw),
+    },
+    enterprise: {
+      sharedEnums: mapSharedEnumRows(tenantEnumsRaw),
+      customScalars: mapCustomScalarRows(tenantScalarsRaw),
+      unionTypes: mapUnionTypeRows(tenantUnionsRaw),
+    },
+  });
+  const inheritedServices = buildProductInheritedServices({
+    domainSlug,
+    domain: mapServiceRows(domainServicesRaw),
+  });
 
   const domainPolicy =
     (domain as { policyTemplate?: Record<string, unknown> }).policyTemplate ??
     null;
-  const c = counts?._count;
 
   return (
     <DomainWorkspace
@@ -254,25 +230,16 @@ export default async function ProductWorkspacePage({
       domainDescription={domain.description}
       isSystemDomain={domain.isSystem}
       canDeleteDomain={false}
-      deletionImpact={{
-        entities: c?.entities ?? 0,
-        modelDefinitions: c?.modelDefinitions ?? 0,
-        decoratorDefinitions: c?.decoratorDefinitions ?? 0,
-        sharedEnums: c?.sharedEnums ?? 0,
-        customScalars: c?.customScalars ?? 0,
-        unionTypes: c?.unionTypes ?? 0,
-        services: c?.services ?? 0,
-        interfaces: c?.interfaces ?? 0,
-        userRoles: c?.userRoles ?? 0,
-      }}
       domainPolicy={domainPolicy as Record<string, unknown> | null}
       entities={entities}
-      models={models}
       sharedEnums={sharedEnums}
       customScalars={customScalars}
       unionTypes={unionTypes}
-      decoratorDefinitions={decorators}
       services={services}
+      inheritedDataTypes={inheritedDataTypes}
+      inheritedServices={inheritedServices}
+      events={eventsData.events}
+      traits={eventsData.traits}
     />
   );
 }

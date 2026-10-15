@@ -6,6 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import Link from "next/link";
+import type { ScopeTarget } from "@/lib/asset-scope";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import {
   createServiceAction,
   deleteServiceAction,
@@ -55,10 +58,27 @@ export interface ServiceData {
   operations: OperationData[];
 }
 
+/** Services owned by a broader level, shown read-only with a link to their source. */
+export interface InheritedServices {
+  label: string;
+  href: string;
+  services: ServiceData[];
+}
+
 interface DomainApisTabProps {
   domainId: string;
+  /** Level new services are created at (domain page, product page, ...). */
+  target: ScopeTarget;
   services: ServiceData[];
   entities: { id: string; name: string }[];
+  inherited?: InheritedServices[];
+}
+
+/** Name of the level a target creates at; labels the non-entity service group. */
+function levelNoun(target: ScopeTarget): string {
+  if (target.level === "PRODUCT") return "Product";
+  if (target.level === "TENANT") return "Enterprise";
+  return "Domain";
 }
 
 // ---------------------------------------------------------------------------
@@ -79,12 +99,14 @@ const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"];
 // Component
 // ---------------------------------------------------------------------------
 
-export function DomainApisTab({ domainId, services, entities }: DomainApisTabProps) {
+export function DomainApisTab({ domainId, target, services, entities, inherited }: DomainApisTabProps) {
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [expandedOp, setExpandedOp] = useState<string | null>(null);
   const [isAddingService, setIsAddingService] = useState(false);
   const [addingOpFor, setAddingOpFor] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  // The explorer tree's APIs counts come from /api/domains-tree, not revalidatePath.
+  const invalidateDomainsTree = useInvalidateDomainsTree();
 
   // New service form state
   const [newServiceName, setNewServiceName] = useState("");
@@ -100,16 +122,21 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
   function submitNewService() {
     if (!newServiceName.trim()) return;
     startTransition(async () => {
-      const result = await createServiceAction(domainId, {
-        name: newServiceName.trim(),
-        basePath: newServiceBasePath || "/",
-        scope: newServiceScope,
-        entityId: newServiceScope === "ENTITY" ? newServiceEntityId : undefined,
-      });
+      const result = await createServiceAction(
+        domainId,
+        {
+          name: newServiceName.trim(),
+          basePath: newServiceBasePath || "/",
+          scope: newServiceScope,
+          entityId: newServiceScope === "ENTITY" ? newServiceEntityId : undefined,
+        },
+        target
+      );
       if ("error" in result) {
         toast.error(result.error);
         return;
       }
+      void invalidateDomainsTree();
       setIsAddingService(false);
       setNewServiceName("");
       setNewServiceBasePath("/");
@@ -120,6 +147,7 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
     startTransition(async () => {
       const result = await deleteServiceAction(serviceId);
       if ("error" in result) toast.error(result.error);
+      else void invalidateDomainsTree();
     });
   }
 
@@ -135,6 +163,7 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
         toast.error(result.error);
         return;
       }
+      void invalidateDomainsTree();
       setAddingOpFor(null);
       setNewOpName("");
       setNewOpMethod("GET");
@@ -146,12 +175,25 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
     startTransition(async () => {
       const result = await deleteOperationAction(operationId);
       if ("error" in result) toast.error(result.error);
+      else void invalidateDomainsTree();
     });
   }
 
   const totalOps = services.reduce((sum, s) => sum + s.operations.length, 0);
   const entityServices = services.filter((service) => service.scope === "ENTITY");
   const domainServices = services.filter((service) => service.scope !== "ENTITY");
+  // Entity-scoped APIs belong to an entity's product. Where no entities are
+  // offered (the domain page) they can neither be created nor listed here.
+  const canScopeToEntity = entities.length > 0;
+  const noun = levelNoun(target);
+  // A group with nothing in it carries no information — hide it.
+  const inheritedGroups = (inherited ?? []).filter((g) => g.services.length > 0);
+  const serviceGroups = [
+    { title: `${noun} APIs`, services: domainServices },
+    ...(canScopeToEntity || entityServices.length > 0
+      ? [{ title: "Entity APIs", services: entityServices }]
+      : []),
+  ];
 
   return (
     <div className="space-y-space-3" data-testid="domain-apis-tab">
@@ -169,7 +211,7 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
       {isAddingService && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-space-4 space-y-space-3">
           <h3 className="text-body-small font-semibold text-foreground">New API Service</h3>
-          <div className="grid grid-cols-2 gap-space-2">
+          <div className={canScopeToEntity ? "grid grid-cols-2 gap-space-2" : "grid grid-cols-1 gap-space-2"}>
             <Input
               value={newServiceName}
               onChange={(e) => setNewServiceName(e.target.value)}
@@ -177,14 +219,16 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
               className="h-8"
               autoFocus
             />
-            <select
-              value={newServiceScope}
-              onChange={(e) => setNewServiceScope(e.target.value as "DOMAIN" | "ENTITY")}
-              className="h-8 rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
-            >
-              <option value="DOMAIN">Domain-scoped</option>
-              <option value="ENTITY">Entity-scoped</option>
-            </select>
+            {canScopeToEntity && (
+              <select
+                value={newServiceScope}
+                onChange={(e) => setNewServiceScope(e.target.value as "DOMAIN" | "ENTITY")}
+                className="h-8 rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
+              >
+                <option value="DOMAIN">{`${noun}-scoped`}</option>
+                <option value="ENTITY">Entity-scoped</option>
+              </select>
+            )}
           </div>
           {newServiceScope === "ENTITY" && (
             <select
@@ -221,10 +265,7 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
           </p>
         </div>
       ) : (
-        [
-          { title: "Domain APIs", services: domainServices },
-          { title: "Entity APIs", services: entityServices },
-        ].map(({ title, services: groupedServices }) => (
+        serviceGroups.map(({ title, services: groupedServices }) => (
         <div key={title} className="space-y-space-2">
           <div className="flex items-center justify-between">
             <h3 className="text-body-small font-medium text-foreground">{title}</h3>
@@ -256,7 +297,7 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
                   {service.name}
                 </span>
                 <Badge variant="outline" className="text-[10px] h-4 px-1.5 uppercase">
-                  {service.scope === "ENTITY" ? "entity" : "domain"}
+                  {service.scope === "ENTITY" ? "entity" : noun.toLowerCase()}
                 </Badge>
                 {service.entity && (
                   <span className="text-caption text-muted-foreground">
@@ -440,7 +481,60 @@ export function DomainApisTab({ domainId, services, entities }: DomainApisTabPro
         </div>
         ))
       )}
+
+      {inheritedGroups.map((group) => (
+        <InheritedServicesSection key={group.label} group={group} />
+      ))}
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Read-only services inherited from a broader level
+// ---------------------------------------------------------------------------
+
+function InheritedServicesSection({ group }: { group: InheritedServices }) {
+  return (
+    <section
+      className="mt-space-6 border-t border-border/50 pt-space-4 space-y-space-2"
+      data-testid="inherited-services"
+    >
+      <div className="flex items-center gap-space-2">
+        <h3 className="text-body-small font-semibold text-foreground">
+          <Link href={group.href} className="hover:text-primary hover:underline">
+            {group.label}
+          </Link>
+        </h3>
+        <Badge variant="outline" className="text-[10px] h-4 px-1.5">Read-only</Badge>
+      </div>
+      {group.services.map((service) => (
+        <div key={service.id} className="rounded-lg border border-border/30 p-space-3">
+          <div className="flex items-center gap-space-2 flex-wrap">
+            <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <span className="font-mono text-body-small text-foreground font-medium">{service.name}</span>
+            {service.basePath !== "/" && (
+              <span className="font-mono text-caption text-muted-foreground">{service.basePath}</span>
+            )}
+            <Badge variant="secondary" className="text-[10px] h-4 px-1.5 ml-auto">
+              {service.operations.length} op{service.operations.length !== 1 ? "s" : ""}
+            </Badge>
+          </div>
+          {service.description && <p className="text-caption text-muted-foreground mt-1">{service.description}</p>}
+          {service.operations.length > 0 && (
+            <div className="mt-space-2 space-y-0.5">
+              {service.operations.map((op) => (
+                <div key={op.id} className="flex items-center gap-2">
+                  <Badge className={`text-[10px] h-4 font-mono font-bold border ${METHOD_COLORS[op.httpMethod] ?? METHOD_COLORS.GET}`}>
+                    {op.httpMethod}
+                  </Badge>
+                  <span className="font-mono text-caption text-foreground">{op.httpPath}</span>
+                  <span className="text-caption text-muted-foreground truncate">{op.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}

@@ -39,6 +39,7 @@ export function AvroVisualEditor({
   defaultName = "NewEntity",
   referenceTargets = [],
   onContentChange,
+  hydrate,
 }: VisualEditorProps) {
   const [name, setName] = useState(defaultName);
   const [namespace, setNamespace] = useState("");
@@ -49,6 +50,16 @@ export function AvroVisualEditor({
   useEffect(() => {
     onContentChange(serializeAvroSchema(name, namespace, doc, fields));
   }, [name, namespace, doc, fields, onContentChange]);
+
+  useEffect(() => {
+    if (!hydrate || hydrate.state.format !== "avro") return;
+    setName(hydrate.state.name);
+    setNamespace(hydrate.state.namespace);
+    setDoc(hydrate.state.doc);
+    setFields(hydrate.state.fields.length > 0 ? hydrate.state.fields : [newField()]);
+    setExpanded(new Set());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply only when the nonce changes
+  }, [hydrate?.nonce]);
 
   const update = useCallback((id: string, patch: Partial<AvroField>) => {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));

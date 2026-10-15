@@ -1,0 +1,60 @@
+{
+  "type": "record",
+  "name": "Order",
+  "namespace": "com.shop.orders",
+  "doc": "A customer order.",
+  "fields": [
+    { "name": "id", "type": "string", "doc": "Order identifier" },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "OrderStatus",
+        "doc": "Lifecycle of an order.",
+        "symbols": ["PENDING", "PAID", "SHIPPED"]
+      }
+    },
+    {
+      "name": "shipping_address",
+      "type": {
+        "type": "record",
+        "name": "Address",
+        "doc": "Postal address.",
+        "fields": [
+          { "name": "street", "type": "string" },
+          { "name": "city", "type": "string" },
+          {
+            "name": "country",
+            "type": {
+              "type": "enum",
+              "name": "Country",
+              "namespace": "com.shop.geo",
+              "symbols": ["US", "DE", "IN"]
+            }
+          }
+        ]
+      }
+    },
+    { "name": "billing_address", "type": ["null", "Address"], "default": null },
+    {
+      "name": "items",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "LineItem",
+          "fields": [
+            { "name": "sku", "type": "string" },
+            { "name": "quantity", "type": "int" },
+            { "name": "checksum", "type": { "type": "fixed", "name": "MD5", "size": 16 } }
+          ]
+        }
+      }
+    },
+    { "name": "previous_status", "type": ["null", "com.shop.orders.OrderStatus"], "default": null },
+    { "name": "items_by_sku", "type": { "type": "map", "values": "LineItem" } },
+    { "name": "signature", "type": "MD5" },
+    { "name": "home_country", "type": "com.shop.geo.Country" },
+    { "name": "created_at", "type": { "type": "long", "logicalType": "timestamp-millis" } }
+  ]
+}

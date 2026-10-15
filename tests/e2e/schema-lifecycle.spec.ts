@@ -20,6 +20,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, unique } from "./helpers/auth";
+import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 
 const ALL_TYPES_TSP = readFileSync(
   path.join(__dirname, "fixtures/all-types.tsp"),
@@ -54,10 +55,20 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
   // "New Entity" buttons, incl. the sidebar's 2-segment variant).
   await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
   await expect(page).toHaveURL(/\/new$/);
-  await expect(page.getByText(/create new entity/i)).toBeVisible();
-  await page.getByRole("button", { name: /import schema/i }).first().click();
-  await page.locator("textarea").first().fill(tsp);
-  await page.getByRole("button", { name: /parse schema/i }).click();
+  // Role query, not getByText: the route streams behind a loading.tsx, so the
+  // heading transiently exists twice (the hidden streamed copy plus the visible
+  // one) and getByText trips strict mode. getByRole only sees the visible one.
+  await expect(page.getByRole("heading", { name: /create new entity/i })).toBeVisible();
+  // ...and the transient duplicate must settle to exactly one rendered copy.
+  await expect(page.getByText(/create new entity/i)).toHaveCount(1);
+  // Unified workbench: card → Paste → Load schema → Review & Import. The Detail
+  // Panel textarea is separate from the paste textarea, so target by test id.
+  await page.getByRole("button", { name: /import or build schema/i }).first().click();
+  await page.getByRole("button", { name: "Paste", exact: true }).click();
+  await page.getByTestId("workbench-paste-textarea").fill(tsp);
+  await page.getByTestId("workbench-load-button").click();
+  await expect(page.getByTestId("detail-panel-textarea")).toHaveValue(tsp);
+  await page.getByTestId("workbench-review-button").click();
   // TypeSpec imports go to the multi-model review screen.
   await expect(page.getByText(/AllTypes/i).first()).toBeVisible();
   // Register AllTypes as an entity only (uncheck the model to avoid a same-named
@@ -70,10 +81,25 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
 }
 
 test.describe("schema lifecycle", () => {
+  // Domains this spec creates through the UI; deleted afterwards (cascades to their
+  // products, entities and imported assets) so runs stop accumulating e2e rows.
+  const createdDomains: string[] = [];
+
+  test.afterAll(async () => {
+    try {
+      await deleteDomainsByName(createdDomains);
+    } catch (error) {
+      console.warn(`schema-lifecycle cleanup failed for ${createdDomains.join(", ")}: ${String(error)}`);
+    } finally {
+      await disconnectDb();
+    }
+  });
+
   test("create domain → product → all-types entity (real compiler) under product", async ({
     authedPage: page,
   }) => {
     const domain = unique("e2e-domain");
+    createdDomains.push(domain);
     const product = unique("e2e-product");
 
     // 1. Domain + product

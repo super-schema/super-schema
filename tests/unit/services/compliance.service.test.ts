@@ -325,6 +325,57 @@ describe("Compliance Service", () => {
   });
 
   // ============================================================
+  // Route slugs for entity links (assetHref consumers)
+  // ============================================================
+  describe("route slugs", () => {
+    const tenantLevelEntity = {
+      id: "ent-t",
+      name: "Customer",
+      slug: "customer",
+      domain: null,
+      product: null,
+    };
+
+    it("queryFields carries the placed entity's real domain and product slugs", async () => {
+      vi.mocked(prisma.field.count).mockResolvedValue(1);
+      vi.mocked(prisma.field.findMany).mockResolvedValue([makeField()] as never);
+
+      const result = await queryFields({}, { page: 1, pageSize: 25, sortBy: "entityName", sortOrder: "asc" }, mockCtx);
+
+      expect(result.success && result.data.fields[0]).toMatchObject({
+        entitySlug: "customer",
+        domainSlug: "commerce",
+        productSlug: "orders",
+      });
+    });
+
+    it("queryFields carries null slugs for a tenant-level entity", async () => {
+      vi.mocked(prisma.field.count).mockResolvedValue(1);
+      vi.mocked(prisma.field.findMany).mockResolvedValue([makeField({ entity: tenantLevelEntity })] as never);
+
+      const result = await queryFields({}, { page: 1, pageSize: 25, sortBy: "entityName", sortOrder: "asc" }, mockCtx);
+
+      expect(result.success && result.data.fields[0]).toMatchObject({
+        domain: "Enterprise",
+        domainSlug: null,
+        productSlug: null,
+      });
+    });
+
+    it("detectGaps carries null slugs for a tenant-level entity", async () => {
+      vi.mocked(prisma.field.findMany).mockResolvedValue([makeField({ entity: tenantLevelEntity })] as never);
+
+      const result = await detectGaps({}, mockCtx);
+
+      expect(result.success && result.data.gaps[0]).toMatchObject({
+        entitySlug: "customer",
+        domainSlug: null,
+        productSlug: null,
+      });
+    });
+  });
+
+  // ============================================================
   // Story 6.2 — detectGaps
   // ============================================================
   describe("detectGaps", () => {

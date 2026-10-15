@@ -53,7 +53,7 @@ interface FieldQuickEditPanelProps {
   field: FieldData;
   entityId: string;
   entitySlug?: string;
-  domainSlug: string;
+  domainSlug: string | null;
   isReadOnly?: boolean;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;

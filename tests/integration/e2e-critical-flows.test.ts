@@ -13,23 +13,38 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock: Prisma client
 // ---------------------------------------------------------------------------
 
-const { mockPrisma } = vi.hoisted(() => {
+const { mockPrisma } = await vi.hoisted(async () => {
+  const { emptyRegistryDelegates } = await import("../helpers/registry-mocks");
   return {
     mockPrisma: {
+      // Name-registry finders for every kind (real registry runs against this mock; no rows = no conflicts).
+      // Spread first: the explicit `entity` mock below overrides the registry's entity delegate.
+      ...emptyRegistryDelegates(),
       user: {
         findUnique: vi.fn().mockResolvedValue({ id: "user-1" }),
       },
       entity: {
         create: vi.fn(),
         findUnique: vi.fn(),
-        findMany: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
         update: vi.fn(),
         delete: vi.fn(),
       },
+      // The domain the entity is created in belongs to the active tenant (the by-id ownership guard reads it).
+      domain: {
+        findUnique: vi.fn().mockResolvedValue({ id: "dom-1", tenantId: "tenant-1" }),
+      },
       product: {
-        findUnique: vi.fn().mockResolvedValue({ id: "prod-default" }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: "prod-default",
+          domainId: "dom-1",
+          domain: { tenantId: "tenant-1" },
+        }),
         create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
+      $executeRaw: vi.fn(),
+      $executeRawUnsafe: vi.fn(),
+      $transaction: vi.fn(),
       field: {
         create: vi.fn(),
         findFirst: vi.fn(),
@@ -68,6 +83,11 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+// Field updates are scoped to the caller's active tenant (the cookie is not available outside a request).
+vi.mock("@/lib/active-tenant", () => ({
+  getActiveTenantId: vi.fn().mockResolvedValue("tenant-1"),
+}));
+
 // ---------------------------------------------------------------------------
 // Mock: RBAC service
 // ---------------------------------------------------------------------------
@@ -99,6 +119,8 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Interactive transactions (tenant name lock) run their callback against the same mock client.
+  mockPrisma.$transaction.mockImplementation(async (arg: unknown) => (Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma)));
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
 });
 
@@ -215,6 +237,7 @@ describe("E2E Critical Flows", () => {
       // emitter. Provide real fields and assert on the genuine DDL output.
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-e2e-1",
+        tenantId: "tenant-1",
         name: "Order",
         slug: "order",
         description: null,
@@ -261,6 +284,7 @@ describe("E2E Critical Flows", () => {
 
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-e2e-1",
+        tenantId: "tenant-1",
         metadata: {
           schemaVersions: {
             bigquery: [draftVersion],
@@ -307,7 +331,7 @@ describe("E2E Critical Flows", () => {
         sortOrder: 0,
       };
 
-      mockPrisma.field.findUnique.mockResolvedValue(existingField);
+      mockPrisma.field.findUnique.mockResolvedValue({ ...existingField, entity: { tenantId: "tenant-1" } });
       mockPrisma.field.update.mockResolvedValue({
         ...existingField,
         name: "New Field Name",
@@ -345,7 +369,7 @@ describe("E2E Critical Flows", () => {
         sortOrder: 0,
       };
 
-      mockPrisma.field.findUnique.mockResolvedValue(existingField);
+      mockPrisma.field.findUnique.mockResolvedValue({ ...existingField, entity: { tenantId: "tenant-1" } });
       mockPrisma.field.update.mockResolvedValue({
         ...existingField,
         description: "Updated description",
@@ -383,7 +407,7 @@ describe("E2E Critical Flows", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
       mockPrisma.entity.update.mockResolvedValue({
         ...existingEntity,
         status: "ACTIVE",
@@ -410,7 +434,7 @@ describe("E2E Critical Flows", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
 
       const result = await updateEntityStatusAction("ent-e2e-1", "DEPRECATED");
 
@@ -433,7 +457,7 @@ describe("E2E Critical Flows", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
 
       const result = await updateEntityStatusAction("ent-e2e-1", "RETIRED");
 

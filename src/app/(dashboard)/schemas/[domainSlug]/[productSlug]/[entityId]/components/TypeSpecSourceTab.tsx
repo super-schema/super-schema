@@ -14,9 +14,11 @@ interface TypeSpecSourceTabProps {
   entityId: string;
   entityName: string;
   readOnly?: boolean;
+  /** Called after a successful save (the draft changed). */
+  onSaved?: () => void;
 }
 
-export function TypeSpecSourceTab({ entityId, entityName, readOnly }: TypeSpecSourceTabProps) {
+export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: TypeSpecSourceTabProps) {
   const [source, setSource] = useState("");
   const [savedSource, setSavedSource] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -64,6 +66,7 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly }: TypeSpecSo
     setSavedSource(source);
     setLastApplied(result.applied ?? null);
     setWasGenerated(false);
+    onSaved?.();
     const { added = 0, updated = 0, removed = [] } = result.applied ?? {};
     toast.success(
       `TypeSpec compiled and applied — ${added} added, ${updated} updated${

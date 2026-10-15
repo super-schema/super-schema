@@ -132,7 +132,8 @@ export function highlightYAML(line: string): React.ReactNode {
     tokens.push(<span key="c">{colon}</span>);
 
     if (value !== undefined && value.length > 0) {
-      tokens.push(highlightYAMLValue(value));
+      // Keyed like its siblings: an unkeyed element in this array is React's "unique key" warning on every YAML line with a value.
+      tokens.push(<React.Fragment key="v">{highlightYAMLValue(value)}</React.Fragment>);
     }
 
     return <>{tokens}</>;

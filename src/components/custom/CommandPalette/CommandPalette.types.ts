@@ -3,8 +3,10 @@ export interface CommandPaletteEntity {
   name: string;
   slug?: string;
   domainName: string;
-  domainSlug: string;
-  productSlug?: string;
+  /** null for tenant-level (enterprise) entities. */
+  domainSlug: string | null;
+  /** null / undefined for tenant-level (enterprise) entities. */
+  productSlug?: string | null;
   status?: string;
   fieldCount?: number;
 }
@@ -17,8 +19,10 @@ export interface CommandPaletteField {
   entityId: string;
   entitySlug?: string;
   entityName: string;
-  domainSlug: string;
-  productSlug?: string;
+  /** null for tenant-level (enterprise) entities. */
+  domainSlug: string | null;
+  /** null for tenant-level (enterprise) entities. */
+  productSlug: string | null;
 }
 
 export interface CommandPaletteAction {

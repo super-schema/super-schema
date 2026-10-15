@@ -1,0 +1,104 @@
+"use server";
+
+import { prisma } from "@/lib/db";
+import { auth } from "@/lib/auth";
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
+import { revalidatePath } from "next/cache";
+import { getActiveTenantId } from "@/lib/active-tenant";
+import { unexpectedFailure } from "@/lib/action-context";
+import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
+import { mapFieldCreateInput } from "@/lib/entity-field-input";
+import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
+import type { CreateFieldInput } from "../[domainSlug]/actions";
+
+/**
+ * Create an Enterprise (tenant-level) entity: no domain, no product. Goes through the
+ * shared scoped-create pattern — placement matrix (`entity` is allowed at TENANT) and
+ * the line-unique name registry under the tenant lock — and is audited.
+ *
+ * A tenant-level entity has no `@@unique([slug, productId])` protection (NULL product
+ * ids never collide), so slug uniqueness among Enterprise entities is checked here,
+ * inside the same lock, to keep `/schemas/enterprise/entities/<slug>` unambiguous.
+ */
+export async function createTenantEntityAction(data: {
+  name: string;
+  description: string;
+  fields: CreateFieldInput[];
+}): Promise<{ success: true; entity: { id: string; slug: string } } | { error: string }> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { error: "You must be logged in" };
+  }
+
+  // `data` and its name arrive from the browser untyped: neither may throw before the `try`.
+  const name = typeof data?.name === "string" ? data.name.trim() : "";
+  if (name.length === 0) {
+    return { error: "Entity name is required" };
+  }
+  if (name.length > 128) {
+    return { error: "Entity name must be 128 characters or less" };
+  }
+
+  // Reserved URL segments are rejected before any database work.
+  const reservedMsg = reservedEntitySlugMessage(name);
+  if (reservedMsg) {
+    return { error: reservedMsg };
+  }
+
+  const slug = generateSlug(name);
+
+  try {
+    const [tenantId, userId] = await Promise.all([
+      getActiveTenantId(),
+      resolveCurrentUserId(session.user),
+    ]);
+
+    const entity = await withAudit({
+      action: "CREATE",
+      entityType: "Entity",
+      entityId: "pending",
+      userId,
+      fn: async () => {
+        const created = await createInScope(prisma, {
+          kind: "entity",
+          target: { level: "TENANT", tenantId },
+          name,
+          write: async (tx, scope) => {
+            const slugTaken = await tx.entity.findFirst({
+              where: { ...scope, slug },
+              select: { id: true },
+            });
+            if (slugTaken) {
+              throw new ServiceErrorRejection({
+                code: "NAME_CONFLICT",
+                message: `An Enterprise entity with the URL name "${slug}" already exists`,
+              });
+            }
+            return tx.entity.create({
+              data: {
+                name,
+                slug,
+                ...scope,
+                description: data.description,
+                ownerId: userId,
+                ...(data.fields.length > 0 && {
+                  fields: { create: data.fields.map(mapFieldCreateInput) },
+                }),
+              },
+            });
+          },
+        });
+        if (!created.success) throw new ServiceErrorRejection(created.error);
+        return created.data;
+      },
+    });
+
+    revalidatePath("/schemas");
+    return { success: true, entity: { id: entity.id, slug: entity.slug } };
+  } catch (e: unknown) {
+    if (e instanceof ServiceErrorRejection) return { error: e.message };
+    if (e instanceof AuditUserMissingError) return { error: STALE_SESSION_ENTITY_ERROR };
+    return { error: unexpectedFailure("createTenantEntityAction", e).error };
+  }
+}

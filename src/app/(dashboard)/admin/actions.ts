@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getEffectiveRole } from "@/services/rbac.service";
@@ -23,6 +24,17 @@ import {
   createDomainAdmin,
 } from "@/services/domain-admin.service";
 import type { CreateDomainAdminInput } from "@/types/schemas/domain-policy";
+
+/**
+ * `/schemas` pages are served from the client router cache for 30s
+ * (`experimental.staleTimes.dynamic`); only a revalidating server action evicts
+ * it. Admin mutations change what those pages render (domains, role-based
+ * access, emitter configuration, user names), so each one revalidates the
+ * whole `/schemas` subtree after it succeeds.
+ */
+function revalidateSchemas() {
+  revalidatePath("/schemas", "layout");
+}
 
 async function resolveCtx(): Promise<
   { ok: true; ctx: ServiceContext } | { ok: false; error: string }
@@ -49,6 +61,7 @@ export async function updateUserNameAction(id: string, name: string) {
   if (!auth.ok) return { error: auth.error };
   const result = await updateUser({ id, name }, auth.ctx);
   if (!result.success) return { error: result.error.message };
+  revalidateSchemas();
   return { success: true, data: result.data };
 }
 
@@ -57,6 +70,7 @@ export async function assignRoleAction(input: AssignRoleInput) {
   if (!auth.ok) return { error: auth.error };
   const result = await assignRole(input, auth.ctx);
   if (!result.success) return { error: result.error.message };
+  revalidateSchemas();
   return { success: true, data: result.data };
 }
 
@@ -65,6 +79,7 @@ export async function removeRoleAction(roleId: string) {
   if (!auth.ok) return { error: auth.error };
   const result = await removeRole(roleId, auth.ctx);
   if (!result.success) return { error: result.error.message };
+  revalidateSchemas();
   return { success: true };
 }
 
@@ -105,6 +120,7 @@ export async function updateEmitterConfigAction(input: UpdateEmitterConfigInput)
   if (!auth.ok) return { error: auth.error };
   const result = await updateEmitterConfig(input, auth.ctx);
   if (!result.success) return { error: result.error.message };
+  revalidateSchemas();
   return { success: true as const, data: result.data };
 }
 
@@ -121,5 +137,6 @@ export async function createDomainAdminAction(input: CreateDomainAdminInput) {
   if (!auth.ok) return { error: auth.error };
   const result = await createDomainAdmin(input, auth.ctx);
   if (!result.success) return { error: result.error.message };
+  revalidateSchemas();
   return { success: true as const, data: result.data };
 }

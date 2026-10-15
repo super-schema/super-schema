@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Loader2, ExternalLink, X, Search } from "lucide-react";
 import {
@@ -26,6 +26,7 @@ import {
   getFieldCompleteness,
 } from "@/lib/validation/field-completeness";
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
+import { assetHref } from "@/lib/navigation/asset-href";
 import {
   getFieldNameSuggestions,
   type AutocompleteSuggestion,
@@ -51,11 +52,16 @@ interface FieldData {
   sortOrder: number;
 }
 
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 5 } };
+const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
+
 interface FieldEditorProps {
   entityId: string;
   entitySlug?: string;
-  domainSlug: string;
-  productSlug: string;
+  /** null for tenant-level (Enterprise) entities. */
+  domainSlug: string | null;
+  /** null for tenant-level (Enterprise) entities. */
+  productSlug: string | null;
   fields: FieldData[];
   domainFields?: DomainField[];
   domainPolicy: Record<string, unknown> | null;
@@ -155,9 +161,34 @@ export function FieldEditor({
     return result;
   }, [fields, searchQuery, typeFilter, classificationFilter, completenessFilter]);
 
-  function navigateToFieldStudio(fieldId: string) {
-    router.push(`/schemas/${domainSlug}/${productSlug}/${entitySlug || entityId}/fields/${fieldId}`);
-  }
+  const navigateToFieldStudio = useCallback(
+    (fieldId: string) => {
+      router.push(assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId, domainSlug, productSlug }));
+    },
+    [router, entitySlug, entityId, domainSlug, productSlug]
+  );
+
+  // Parents hand over fresh inline handlers on every render, but FieldCard is
+  // memoized. Rows get wrappers whose identity never changes and which always
+  // call the latest handler, so a workspace re-render doesn't re-render every row.
+  // Updated in a layout effect so an event between commit and the passive-effect
+  // flush never calls a stale handler.
+  const latestHandlers = useRef({ onUpdateField, onDeleteField, onFieldSelect });
+  useLayoutEffect(() => {
+    latestHandlers.current = { onUpdateField, onDeleteField, onFieldSelect };
+  });
+  const updateFieldStable = useCallback(
+    (id: string, data: Partial<FieldData>) => latestHandlers.current.onUpdateField(id, data),
+    []
+  );
+  const deleteFieldStable = useCallback(
+    (id: string) => latestHandlers.current.onDeleteField(id),
+    []
+  );
+  const selectFieldStable = useCallback(
+    (fieldId: string) => latestHandlers.current.onFieldSelect?.(fieldId),
+    []
+  );
 
   // Listen for "/" slash command from global keyboard shortcuts
   useEffect(() => {
@@ -233,7 +264,7 @@ export function FieldEditor({
       if (fieldSlugOrId) {
         // Use window.location for hard navigation — router.push gets killed by
         // revalidatePath re-rendering the parent server component
-        window.location.href = `/schemas/${domainSlug}/${productSlug}/${entitySlug || entityId}/fields/${fieldSlugOrId}`;
+        window.location.href = assetHref({ kind: "field", entitySlug: entitySlug || entityId, fieldId: fieldSlugOrId, domainSlug, productSlug });
         return; // Don't reset isCreating — we're navigating away
       }
     } catch {
@@ -258,13 +289,15 @@ export function FieldEditor({
 
   const completeness = getEntityCompleteness(fields);
 
-  // Drag-and-drop sensors
+  // Drag-and-drop sensors. Stable option objects + a memoized id list keep the
+  // dnd-kit contexts from changing on every render (they would otherwise
+  // re-render every memoized FieldCard, because each row subscribes to them).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR_OPTIONS)
   );
 
-  const fieldIds = fields.map((f) => f.id);
+  const fieldIds = useMemo(() => fields.map((f) => f.id), [fields]);
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
@@ -394,9 +427,9 @@ export function FieldEditor({
                 index={index}
                 isSelected={selectedFieldId === field.id}
                 isReadOnly={isReadOnly}
-                onFieldSelect={onFieldSelect}
-                onUpdateField={onUpdateField}
-                onDeleteField={onDeleteField}
+                onFieldSelect={selectFieldStable}
+                onUpdateField={updateFieldStable}
+                onDeleteField={deleteFieldStable}
                 onNavigateStudio={navigateToFieldStudio}
               />
             ))}

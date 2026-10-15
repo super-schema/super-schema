@@ -11,23 +11,38 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock: Prisma client (use vi.hoisted so the variable is available in factory)
 // ---------------------------------------------------------------------------
 
-const { mockPrisma } = vi.hoisted(() => {
+const { mockPrisma } = await vi.hoisted(async () => {
+  const { emptyRegistryDelegates } = await import("../helpers/registry-mocks");
   return {
     mockPrisma: {
+      // Name-registry finders for every kind (real registry runs against this mock; no rows = no conflicts).
+      // Spread first: the explicit `entity` mock below overrides the registry's entity delegate.
+      ...emptyRegistryDelegates(),
       user: {
         findUnique: vi.fn().mockResolvedValue({ id: "user-1" }),
       },
       entity: {
         create: vi.fn(),
         findUnique: vi.fn(),
-        findMany: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
         update: vi.fn(),
         delete: vi.fn(),
       },
+      // The domain the entity is created in belongs to the active tenant (the by-id ownership guard reads it).
+      domain: {
+        findUnique: vi.fn().mockResolvedValue({ id: "dom-1", tenantId: "tenant-1" }),
+      },
       product: {
-        findUnique: vi.fn().mockResolvedValue({ id: "prod-default" }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: "prod-default",
+          domainId: "dom-1",
+          domain: { tenantId: "tenant-1" },
+        }),
         create: vi.fn().mockResolvedValue({ id: "prod-default" }),
       },
+      $executeRaw: vi.fn(),
+      $executeRawUnsafe: vi.fn(),
+      $transaction: vi.fn(),
       field: {
         create: vi.fn(),
         findFirst: vi.fn(),
@@ -63,6 +78,11 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+// Field updates are scoped to the caller's active tenant (the cookie is not available outside a request).
+vi.mock("@/lib/active-tenant", () => ({
+  getActiveTenantId: vi.fn().mockResolvedValue("tenant-1"),
+}));
+
 // ---------------------------------------------------------------------------
 // Mock: RBAC service
 // ---------------------------------------------------------------------------
@@ -92,6 +112,8 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Interactive transactions (tenant name lock) run their callback against the same mock client.
+  mockPrisma.$transaction.mockImplementation(async (arg: unknown) => (Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma)));
   // Re-set audit mock default
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
 });
@@ -162,6 +184,7 @@ describe("Critical Paths - Integration", () => {
       const createCall = mockPrisma.entity.create.mock.calls[0][0];
       expect(createCall.data.name).toBe("Customer");
       expect(createCall.data.domainId).toBe("dom-1");
+      expect(createCall.data.tenantId).toBe("tenant-1");
       expect(createCall.data.fields.create).toHaveLength(3);
 
       // Verify each field in the nested create
@@ -215,7 +238,7 @@ describe("Critical Paths - Integration", () => {
         sortOrder: 0,
       };
 
-      mockPrisma.field.findUnique.mockResolvedValue(existingField);
+      mockPrisma.field.findUnique.mockResolvedValue({ ...existingField, entity: { tenantId: "tenant-1" } });
       mockPrisma.field.update.mockResolvedValue({
         ...existingField,
         description: "User email address",
@@ -289,7 +312,7 @@ describe("Critical Paths - Integration", () => {
         sortOrder: 3,
       };
 
-      mockPrisma.field.findUnique.mockResolvedValue(existingField);
+      mockPrisma.field.findUnique.mockResolvedValue({ ...existingField, entity: { tenantId: "tenant-1" } });
       mockPrisma.field.delete.mockResolvedValue(existingField);
 
       const result = await deleteFieldAction("field-1");
@@ -328,7 +351,7 @@ describe("Critical Paths - Integration", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
       mockPrisma.entity.update.mockResolvedValue({
         ...existingEntity,
         status: "ACTIVE",
@@ -354,7 +377,7 @@ describe("Critical Paths - Integration", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
 
       const result = await updateEntityStatusAction("ent-1", "RETIRED");
 
@@ -428,7 +451,7 @@ describe("Critical Paths - Integration", () => {
         },
       ];
 
-      mockPrisma.entity.findUnique.mockResolvedValue(mockEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...mockEntity, tenantId: "tenant-1" });
       mockPrisma.field.findMany.mockResolvedValue(mockFields);
 
       const result = await generateTypeSpecPreviewAction("ent-1");
@@ -441,8 +464,9 @@ describe("Critical Paths - Integration", () => {
       expect(result.source).toContain("balance");
       // Key field gets @key decorator
       expect(result.source).toContain("@key");
-      // PII field gets classification tag
-      expect(result.source).toContain("classification:PII");
+      // PII field gets the governance classification decorator (Story 16.6)
+      expect(result.source).toContain("@Enterprise.dataClassification(Enterprise.DataClassification.PII)");
+      expect(result.source).not.toContain("@tag(");
       // Nullable field gets optional marker
       expect(result.source).toContain("balance?");
     });

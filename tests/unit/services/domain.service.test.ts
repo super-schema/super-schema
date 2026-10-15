@@ -76,6 +76,20 @@ describe("Domain Service", () => {
       expect(prisma.domain.create).not.toHaveBeenCalled();
     });
 
+    it("rejects 'Enterprise' domain name (reserved for tenant level)", async () => {
+      const result = await createDomain(
+        { name: "Enterprise", description: "Reserved for tenant level" },
+        mockCtx
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+        expect(result.error.message).toContain("reserved");
+      }
+      expect(prisma.domain.create).not.toHaveBeenCalled();
+    });
+
     it("returns error for invalid policyTemplate JSONB", async () => {
       const result = await createDomain(
         {

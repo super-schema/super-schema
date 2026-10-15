@@ -71,9 +71,10 @@ function toNotification(row: PrismaNotification): Notification {
 }
 
 async function enrichEntityRef(entityRef: EntityRef): Promise<EntityRef> {
+  // null slugs mean "tenant-level" and are already resolved; only undefined is not.
   if (
-    entityRef.domainSlug &&
-    entityRef.productSlug &&
+    entityRef.domainSlug !== undefined &&
+    entityRef.productSlug !== undefined &&
     entityRef.entitySlug &&
     (!entityRef.fieldId || entityRef.fieldSlug)
   ) {
@@ -100,8 +101,9 @@ async function enrichEntityRef(entityRef: EntityRef): Promise<EntityRef> {
 
   return {
     ...entityRef,
-    domainSlug: entityRef.domainSlug ?? entity.domain.slug,
-    productSlug: entityRef.productSlug ?? entity.product?.slug,
+    // null for a tenant-level entity; the client links it through assetHref.
+    domainSlug: entityRef.domainSlug ?? entity.domain?.slug ?? null,
+    productSlug: entityRef.productSlug ?? entity.product?.slug ?? null,
     entitySlug: entityRef.entitySlug ?? entity.slug,
     fieldSlug: entityRef.fieldId
       ? entityRef.fieldSlug ?? (entity.fields ? entity.fields[0]?.slug : undefined)

@@ -12,6 +12,7 @@ import {
   type UpdateBusinessConceptInput,
   type BusinessConceptFilter,
 } from "@/types/schemas/business-concept";
+import { domainLabel } from "@/lib/entity-placement";
 
 export async function createConcept(
   input: CreateBusinessConceptInput,
@@ -409,7 +410,7 @@ export async function getConceptUsage(
     fieldId: link.field.id,
     fieldName: link.field.name,
     entityName: link.field.entity.name,
-    domainName: link.field.entity.domain.name,
+    domainName: domainLabel(link.field.entity.domain),
     confidence: link.confidence,
   }));
 

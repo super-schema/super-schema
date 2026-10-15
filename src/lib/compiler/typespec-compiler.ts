@@ -13,9 +13,9 @@ import "server-only";
 
 import {
   compile,
-  NodeHost,
   navigateProgram,
   getSourceLocation,
+  type CompilerHost,
   type Program,
   type Model,
   type ModelProperty,
@@ -32,7 +32,14 @@ import {
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { mapTypeSpecType } from "./typespec-parser";
+import { createLibraryOnlyHost } from "./library-only-host";
+import { assertTypeSpecImportsAllowed, TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
 import * as gov from "@superschema/typespec-enterprise";
+import {
+  CLASSIFICATION_EXTENSION_KEY,
+  TAGS_EXTENSION_KEY,
+  classificationFromEnterpriseMember,
+} from "./governance-decorators";
 import type {
   ParsedTypeSpecDocument,
   ParsedTypeSpecModel,
@@ -57,20 +64,32 @@ import type {
 // import" — confirmed directly during the 2026-10-12 architecture work.
 // Compiling under <project>/.typespec-work instead gives it the project's
 // real node_modules to resolve against.
+//
+// Security (finding C-C1): `compile` LOADS what a source imports, and a `.js` / `.mjs` import is EXECUTED inside
+// this (Next server) process. `compileSource` is the only caller of `compile` and every public entry point below
+// goes through it (Source-tab save, publish gate, TypeSpec / OpenAPI import, migration), so both layers sit here:
+//   1. `assertTypeSpecImportsAllowed` - TypeSpec's own parser decides what the source imports; anything but an
+//      allowed library (`@typespec/*`, `@superschema/typespec-enterprise`) throws `TypeSpecImportGuardError`
+//      BEFORE a temp dir is created or `compile` is called;
+//   2. `createLibraryOnlyHost` - even if (1) were ever bypassed, JavaScript only loads from installed libraries.
 // ---------------------------------------------------------------------------
 
 const WORK_DIR = join(process.cwd(), ".typespec-work");
+
+let sharedHost: CompilerHost | undefined;
+const libraryOnlyHost = (): CompilerHost => (sharedHost ??= createLibraryOnlyHost());
 
 async function compileSource(
   source: string,
   options?: { linterRuleSet?: LinterRuleSet }
 ): Promise<{ program: Program; mainPath: string }> {
+  const { text } = assertTypeSpecImportsAllowed(source);
   await mkdir(WORK_DIR, { recursive: true });
   const dir = await mkdtemp(join(WORK_DIR, "job-"));
   const mainPath = join(dir, "main.tsp");
-  await writeFile(mainPath, source, "utf8");
+  await writeFile(mainPath, text, "utf8");
   try {
-    const program = await compile(NodeHost, mainPath, {
+    const program = await compile(libraryOnlyHost(), mainPath, {
       noEmit: true,
       ...(options?.linterRuleSet ? { linterRuleSet: options.linterRuleSet } : {}),
     });
@@ -172,6 +191,12 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
         break;
       case "secret": d.secret = true; break;
       case "tag": if (s0) d.tag = s0; break;
+      // Story 16.6 classification: the governance enum member, mapped back to the app's level.
+      case "dataClassification": {
+        const level = classificationFromEnterpriseMember(s0);
+        if (level) d.classification = level;
+        break;
+      }
       case "deprecated": d.deprecated = s0 ?? ""; break;
       case "discriminator": if (s0) d.discriminator = s0; break;
       case "error": d.error = true; break;
@@ -185,6 +210,13 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
         break;
       }
       case "extension":
+        // Story 16.6 overlay keys are consumed, not kept as generic extensions: x-classification is the
+        // level of a field with no Enterprise member; x-tags (model tags) is read by modelTags().
+        if (s0 === CLASSIFICATION_EXTENSION_KEY) {
+          if (typeof args[1] === "string") d.classification = args[1];
+          break;
+        }
+        if (s0 === TAGS_EXTENSION_KEY) break;
         // @extension("x-key", value) → { "x-key": "value" }
         if (s0) d.extensions = { ...(d.extensions ?? {}), [s0]: String(args[1] ?? "") };
         break;
@@ -221,12 +253,35 @@ function exprToArgValue(node: unknown): string | number | boolean | undefined {
   return ref.sv ?? ref.id?.sv;
 }
 
-/** Read decorator names + resolved args directly from a type's AST node. */
+/** String elements of a value tuple argument (`#["a", "b"]`), or [] for anything else. */
+function exprToStringArray(node: unknown): string[] {
+  const values = (node as { values?: unknown[] } | undefined)?.values;
+  if (!Array.isArray(values)) return [];
+  return values.map(exprToArgValue).filter((v): v is string => typeof v === "string");
+}
+
+/**
+ * Model tags in source order: the `x-tags` extension (Story 16.6) and legacy `@tag("...")` lines (stored
+ * pre-16.6 sources; invalid on a model, but this import reader ignores diagnostics and the AST keeps them).
+ */
+function modelTags(type: Type): string[] | undefined {
+  const tags: string[] = [];
+  for (const { name, args, rawArgs } of readAstDecorators(type)) {
+    if (name === "tag" && typeof args[0] === "string") tags.push(args[0]);
+    if (name === "extension" && args[0] === TAGS_EXTENSION_KEY) tags.push(...exprToStringArray(rawArgs[1]));
+  }
+  return tags.length > 0 ? tags : undefined;
+}
+
+/**
+ * Read decorator names + resolved args directly from a type's AST node. `rawArgs` keeps the argument
+ * nodes for values `exprToArgValue` does not flatten (e.g. a value tuple).
+ */
 function readAstDecorators(
   type: Type
-): Array<{ name: string; args: Array<string | number | boolean | undefined> }> {
+): Array<{ name: string; args: Array<string | number | boolean | undefined>; rawArgs: unknown[] }> {
   const node = (type as { node?: { decorators?: unknown[] } }).node;
-  const out: Array<{ name: string; args: Array<string | number | boolean | undefined> }> = [];
+  const out: Array<{ name: string; args: Array<string | number | boolean | undefined>; rawArgs: unknown[] }> = [];
   for (const raw of node?.decorators ?? []) {
     const deco = raw as {
       target?: { sv?: string; id?: { sv?: string } };
@@ -234,7 +289,8 @@ function readAstDecorators(
     };
     const name = (deco.target?.sv ?? deco.target?.id?.sv ?? "").replace(/^@/, "");
     if (!name) continue;
-    out.push({ name, args: (deco.arguments ?? []).map(exprToArgValue) });
+    const rawArgs = deco.arguments ?? [];
+    out.push({ name, args: rawArgs.map(exprToArgValue), rawArgs });
   }
   return out;
 }
@@ -269,6 +325,7 @@ function extractModel(program: Program, model: Model): ParsedTypeSpecModel {
     extends: model.baseModel?.name,
     isError: decorators.error,
     friendlyName: decorators.friendlyName,
+    tags: modelTags(model),
     discriminator: decorators.discriminator,
   };
 }
@@ -468,7 +525,18 @@ const GOVERNANCE_RULE_SET: LinterRuleSet = {
 export async function compileTypeSpecWithGovernance(
   source: string
 ): Promise<CompileWithGovernanceResult> {
-  const { program, mainPath } = await compileSource(source, { linterRuleSet: GOVERNANCE_RULE_SET });
+  let compiled: { program: Program; mainPath: string };
+  try {
+    compiled = await compileSource(source, { linterRuleSet: GOVERNANCE_RULE_SET });
+  } catch (e) {
+    // A disallowed import is a normal, user-facing failure of this source (shown like any compile error);
+    // anything else is unexpected and propagates as before.
+    if (e instanceof TypeSpecImportGuardError) {
+      return { success: false, diagnostics: [{ severity: "error", code: e.code, message: e.message }] };
+    }
+    throw e;
+  }
+  const { program, mainPath } = compiled;
 
   const allDiagnostics: GovernanceDiagnostic[] = (program.diagnostics ?? []).map((d: Diagnostic) => ({
     severity: d.severity === "error" ? "error" : "warning",
@@ -494,7 +562,7 @@ export async function compileTypeSpecWithGovernance(
       const modelInfo: ModelGovernanceInfo = {
         businessOwner: gov.getBusinessOwner(program, m),
         steward: gov.getSteward(program, m),
-        classification: gov.getDataClassification(program, m),
+        classification: classificationFromEnterpriseMember(gov.getDataClassification(program, m)),
         retentionPolicy: gov.getRetentionPolicy(program, m),
         avroNamespace: gov.getAvroNamespace(program, m),
         avroRecordAliases: avroAliases && avroAliases.length > 0 ? avroAliases : undefined,
@@ -506,7 +574,8 @@ export async function compileTypeSpecWithGovernance(
 
       for (const [, prop] of m.properties) {
         const fieldInfo: FieldGovernanceInfo = {
-          classification: gov.getDataClassification(program, prop),
+          // The governance enum member mapped back to the app's level (`Internal` → `INTERNAL`).
+          classification: classificationFromEnterpriseMember(gov.getDataClassification(program, prop)),
           pii: gov.isPii(program, prop) || undefined,
           retentionPolicy: gov.getRetentionPolicy(program, prop),
           anonymization: gov.getAnonymization(program, prop),

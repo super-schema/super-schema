@@ -2,7 +2,7 @@
  * Default type mapping policies — static TypeScript configuration.
  *
  * These define how each LogicalType maps to platform-specific types
- * for BigQuery, Avro, and OpenAPI targets.
+ * for BigQuery, Avro, OpenAPI, Spanner, PostgreSQL and Protobuf targets.
  *
  * No Prisma dependency — pure data.
  */
@@ -51,6 +51,9 @@ const BIGQUERY_MAPPINGS: DefaultMappingEntry[] = [
 // Avro default mappings
 // ---------------------------------------------------------------------------
 
+const AVRO_DECIMAL_LOSS =
+  "The Avro emitter currently publishes decimal(precision 38, scale 0) whatever the field's precision/scale — a decimal(12,2) loses its fractional digits (a limitation of the Avro emitter in the separate typespec repo)";
+
 const AVRO_MAPPINGS: DefaultMappingEntry[] = [
   { sourceType: "string", targetFormat: "avro", mappedType: "string", isLossy: false },
   { sourceType: "url", targetFormat: "avro", mappedType: "string", isLossy: false },
@@ -64,12 +67,15 @@ const AVRO_MAPPINGS: DefaultMappingEntry[] = [
   { sourceType: "uint16", targetFormat: "avro", mappedType: "int", isLossy: false },
   { sourceType: "uint32", targetFormat: "avro", mappedType: "long", isLossy: false },
   { sourceType: "uint64", targetFormat: "avro", mappedType: "long", isLossy: true, lossDescription: "uint64 values above 2^63-1 cannot be represented in signed long" },
-  { sourceType: "numeric", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: false },
+  // The typespec-cli Avro emitter (@superschema/typespec-avro, a separate repo) hardcodes `decimal(precision 38, scale 0)`
+  // for numeric / decimal / decimal128 and does not read the field's precision / scale — so `decimal(12,2)` is published as
+  // `decimal(38,0)` and fractional digits are lost. Marked lossy until the emitter carries @precision / @scale.
+  { sourceType: "numeric", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: true, lossDescription: AVRO_DECIMAL_LOSS },
   { sourceType: "float", targetFormat: "avro", mappedType: "double", isLossy: false },
   { sourceType: "float32", targetFormat: "avro", mappedType: "float", isLossy: false },
   { sourceType: "float64", targetFormat: "avro", mappedType: "double", isLossy: false },
-  { sourceType: "decimal", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: false },
-  { sourceType: "decimal128", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: false },
+  { sourceType: "decimal", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: true, lossDescription: AVRO_DECIMAL_LOSS },
+  { sourceType: "decimal128", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: true, lossDescription: AVRO_DECIMAL_LOSS },
   { sourceType: "boolean", targetFormat: "avro", mappedType: "boolean", isLossy: false },
   { sourceType: "bytes", targetFormat: "avro", mappedType: "bytes", isLossy: false },
   { sourceType: "plainDate", targetFormat: "avro", mappedType: "int/date", isLossy: false },
@@ -200,6 +206,52 @@ const POSTGRESQL_MAPPINGS: DefaultMappingEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Protobuf (proto3) default mappings
+//
+// Mirrors what the official @typespec/protobuf emitter actually produces after
+// the protobuf-target source projection
+// (src/lib/typespec-official/protobuf-source.ts) — pinned by
+// tests/integration/protobuf-all-types.test.ts, which asserts every scalar's
+// emitted proto type equals the mappedType below.
+// ---------------------------------------------------------------------------
+
+const PROTOBUF_MAPPINGS: DefaultMappingEntry[] = [
+  { sourceType: "string", targetFormat: "protobuf", mappedType: "string", isLossy: false },
+  { sourceType: "url", targetFormat: "protobuf", mappedType: "string", isLossy: false },
+  { sourceType: "integer", targetFormat: "protobuf", mappedType: "int64", isLossy: false },
+  { sourceType: "int8", targetFormat: "protobuf", mappedType: "int32", isLossy: false },
+  { sourceType: "int16", targetFormat: "protobuf", mappedType: "int32", isLossy: false },
+  { sourceType: "int32", targetFormat: "protobuf", mappedType: "int32", isLossy: false },
+  { sourceType: "int64", targetFormat: "protobuf", mappedType: "int64", isLossy: false },
+  { sourceType: "safeint", targetFormat: "protobuf", mappedType: "int64", isLossy: false },
+  { sourceType: "uint8", targetFormat: "protobuf", mappedType: "uint32", isLossy: false },
+  { sourceType: "uint16", targetFormat: "protobuf", mappedType: "uint32", isLossy: false },
+  { sourceType: "uint32", targetFormat: "protobuf", mappedType: "uint32", isLossy: false },
+  { sourceType: "uint64", targetFormat: "protobuf", mappedType: "uint64", isLossy: false },
+  { sourceType: "numeric", targetFormat: "protobuf", mappedType: "string", isLossy: true, lossDescription: "proto3 has no arbitrary-precision numeric type — value is carried as decimal text in a string; consumers must parse it and no numeric range is enforced" },
+  { sourceType: "float", targetFormat: "protobuf", mappedType: "double", isLossy: false },
+  { sourceType: "float32", targetFormat: "protobuf", mappedType: "float", isLossy: false },
+  { sourceType: "float64", targetFormat: "protobuf", mappedType: "double", isLossy: false },
+  { sourceType: "decimal", targetFormat: "protobuf", mappedType: "string", isLossy: true, lossDescription: "proto3 has no decimal type — exact decimal is carried as decimal text in a string (same encoding as google.type.Decimal); precision/scale are not enforced by the schema" },
+  { sourceType: "decimal128", targetFormat: "protobuf", mappedType: "string", isLossy: true, lossDescription: "proto3 has no decimal type — decimal128 is carried as decimal text in a string (same encoding as google.type.Decimal); precision/scale are not enforced by the schema" },
+  { sourceType: "boolean", targetFormat: "protobuf", mappedType: "bool", isLossy: false },
+  { sourceType: "bytes", targetFormat: "protobuf", mappedType: "bytes", isLossy: false },
+  { sourceType: "plainDate", targetFormat: "protobuf", mappedType: "google.type.Date", isLossy: false },
+  { sourceType: "plainTime", targetFormat: "protobuf", mappedType: "google.type.TimeOfDay", isLossy: false },
+  { sourceType: "utcDateTime", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: false },
+  { sourceType: "offsetDateTime", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: true, lossDescription: "UTC offset information is lost — google.protobuf.Timestamp is an absolute UTC instant" },
+  { sourceType: "duration", targetFormat: "protobuf", mappedType: "google.protobuf.Duration", isLossy: true, lossDescription: "google.protobuf.Duration is an exact seconds+nanos span — calendar components of an ISO 8601 duration (years, months, days) have no fixed length and must be normalized to seconds" },
+  { sourceType: "unixTimestamp32", targetFormat: "protobuf", mappedType: "google.protobuf.Timestamp", isLossy: false },
+  // isLossy: true on the next two rows is what makes the mapping UI surface
+  // the note (mapping-intelligence only shows a lossDescription when isLossy).
+  { sourceType: "enum", targetFormat: "protobuf", mappedType: "enum", isLossy: true, lossDescription: "Proto enum ordinals are positional: a <ENUM>_UNSPECIFIED = 0 sentinel is added and members are numbered 1..n in their current order, with no persisted numbers. Inserting, removing or reordering a member renumbers later members — a wire-breaking change for existing consumers (Buf breaking / Schema Registry compatibility). Only append new members at the end." },
+  { sourceType: "array", targetFormat: "protobuf", mappedType: "repeated", isLossy: false },
+  { sourceType: "map", targetFormat: "protobuf", mappedType: "map", isLossy: false },
+  { sourceType: "object", targetFormat: "protobuf", mappedType: "google.protobuf.Struct", isLossy: true, lossDescription: "Nested object emitted as dynamic google.protobuf.Struct — nested field types are not preserved" },
+  { sourceType: "reference", targetFormat: "protobuf", mappedType: "message", isLossy: true, lossDescription: "Cross-entity references are not emitted yet: the referenced entity's message is not in the same compile unit, so protobuf emission fails with \"Unknown identifier\" (multi-model emission gap). The intended mapping is a reference to the referenced entity's message." },
+];
+
+// ---------------------------------------------------------------------------
 // Combined default mappings
 // ---------------------------------------------------------------------------
 
@@ -209,6 +261,7 @@ export const DEFAULT_MAPPINGS: DefaultMappingEntry[] = [
   ...OPENAPI_MAPPINGS,
   ...SPANNER_MAPPINGS,
   ...POSTGRESQL_MAPPINGS,
+  ...PROTOBUF_MAPPINGS,
 ];
 
 // ---------------------------------------------------------------------------

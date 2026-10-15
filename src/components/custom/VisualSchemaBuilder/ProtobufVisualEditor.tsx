@@ -34,6 +34,7 @@ export function ProtobufVisualEditor({
   defaultName = "NewEntity",
   referenceTargets = [],
   onContentChange,
+  hydrate,
 }: VisualEditorProps) {
   const [name, setName] = useState(defaultName);
   const [packageName, setPackageName] = useState("");
@@ -42,6 +43,14 @@ export function ProtobufVisualEditor({
   useEffect(() => {
     onContentChange(serializeProtobufSchema(name, packageName, fields));
   }, [name, packageName, fields, onContentChange]);
+
+  useEffect(() => {
+    if (!hydrate || hydrate.state.format !== "protobuf") return;
+    setName(hydrate.state.name);
+    setPackageName(hydrate.state.packageName);
+    setFields(hydrate.state.fields.length > 0 ? hydrate.state.fields : [newField([])]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply only when the nonce changes
+  }, [hydrate?.nonce]);
 
   const update = useCallback((id: string, patch: Partial<ProtoField>) => {
     setFields((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));

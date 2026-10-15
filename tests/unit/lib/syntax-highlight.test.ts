@@ -2,7 +2,7 @@
  * Unit tests for syntax highlighting tokenizers
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { highlightSQL, highlightJSON, highlightYAML, highlightLine } from "@/lib/syntax-highlight";
 
@@ -84,6 +84,19 @@ describe("highlightJSON", () => {
 // ---------------------------------------------------------------------------
 
 describe("highlightYAML", () => {
+  it("returns a keyed list for a `key: value` line (no React 'unique key' warning)", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const line of ["type: object", "  address: payments.orders", "  $ref: '#/components/messages/a'", "enabled: true # note"]) {
+        render(highlightYAML(line));
+      }
+      const keyWarnings = errors.mock.calls.filter((call) => String(call[0]).includes("unique \"key\" prop"));
+      expect(keyWarnings).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it("highlights YAML keys in blue", () => {
     const result = render(highlightYAML("type: object"));
     expect(result).toContain("text-blue-400");

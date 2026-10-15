@@ -40,8 +40,9 @@ export async function GET(request: Request) {
         entityId: f.entity.id,
         entitySlug: f.entity.slug,
         entityName: f.entity.name,
-        domainSlug: f.entity.domain.slug,
-        productSlug: f.entity.product?.slug ?? "default",
+        // null for a tenant-level entity; the client builds links with assetHref.
+        domainSlug: f.entity.domain?.slug ?? null,
+        productSlug: f.entity.product?.slug ?? null,
       }))
     );
   } catch {

@@ -1,0 +1,169 @@
+/**
+ * `experimental.staleTimes.dynamic = 30` serves /schemas from the client router
+ * cache; only a revalidating server action evicts it. Every server action that
+ * mutates data those pages render must therefore call revalidatePath on success
+ * (and only on success).
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  auth: vi.fn(),
+  revalidatePath: vi.fn(),
+  getEffectiveRole: vi.fn(),
+  assignRole: vi.fn(),
+  removeRole: vi.fn(),
+  updateUser: vi.fn(),
+  updateEmitterConfig: vi.fn(),
+  createDomainAdmin: vi.fn(),
+  approveRequest: vi.fn(),
+  rejectRequest: vi.fn(),
+  createGlobalOverride: vi.fn(),
+  createEntityOverride: vi.fn(),
+  acknowledgeLossyMapping: vi.fn(),
+  inActiveTenant: vi.fn(),
+}));
+
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
+vi.mock("@/lib/db", () => ({ prisma: {} }));
+// The by-id ownership guard (the real one is tested in tests/unit/app/by-id-entity-actions-tenant.test.ts): here every entity is the active tenant's.
+vi.mock("@/lib/action-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/action-context")>()),
+  inActiveTenant: mocks.inActiveTenant,
+}));
+vi.mock("@/services/rbac.service", () => ({
+  getEffectiveRole: mocks.getEffectiveRole,
+  assignRole: mocks.assignRole,
+  removeRole: mocks.removeRole,
+}));
+vi.mock("@/services/user.service", () => ({
+  getUsers: vi.fn(),
+  updateUser: mocks.updateUser,
+}));
+vi.mock("@/services/health.service", () => ({
+  runHealthCheck: vi.fn(),
+  getUsageMetrics: vi.fn(),
+  getActivityMetrics: vi.fn(),
+  getErrorSummary: vi.fn(),
+}));
+vi.mock("@/services/emitter-config.service", () => ({
+  getEmitterConfigs: vi.fn(),
+  updateEmitterConfig: mocks.updateEmitterConfig,
+}));
+vi.mock("@/services/domain-admin.service", () => ({
+  getDomainsAdmin: vi.fn(),
+  createDomainAdmin: mocks.createDomainAdmin,
+}));
+vi.mock("@/services/governance.service", () => ({
+  getAllRequests: vi.fn(),
+  approveRequest: mocks.approveRequest,
+  rejectRequest: mocks.rejectRequest,
+}));
+vi.mock("@/services/type-mapping.service", () => ({
+  createGlobalOverride: mocks.createGlobalOverride,
+  createEntityOverride: mocks.createEntityOverride,
+  acknowledgeLossyMapping: mocks.acknowledgeLossyMapping,
+}));
+
+import {
+  assignRoleAction,
+  createDomainAdminAction,
+  removeRoleAction,
+  updateEmitterConfigAction,
+  updateUserNameAction,
+} from "@/app/(dashboard)/admin/actions";
+import {
+  approveGovernanceRequestAction,
+  rejectGovernanceRequestAction,
+} from "@/app/(dashboard)/governance/actions";
+import {
+  acknowledgeLossyMappingAction,
+  createTypeMappingOverrideAction,
+} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
+
+const OK = { success: true, data: { id: "x" } };
+const FAIL = { success: false, error: { code: "FORBIDDEN", message: "nope" } };
+
+const OVERRIDE_INPUT = {
+  sourceType: "string",
+  targetFormat: "avro",
+  mappedType: "string",
+  justification: "because",
+  entityId: "ent-1",
+  isLossy: false,
+};
+
+// One row per mutating action: how to call it and which service decides its outcome.
+const ACTIONS: Array<{
+  name: string;
+  service: keyof typeof mocks;
+  call: () => Promise<unknown>;
+  paths: Array<[string, string]>;
+}> = [
+  { name: "assignRoleAction", service: "assignRole", call: () => assignRoleAction({} as never), paths: [["/schemas", "layout"]] },
+  { name: "removeRoleAction", service: "removeRole", call: () => removeRoleAction("role-1"), paths: [["/schemas", "layout"]] },
+  { name: "createDomainAdminAction", service: "createDomainAdmin", call: () => createDomainAdminAction({} as never), paths: [["/schemas", "layout"]] },
+  { name: "updateEmitterConfigAction", service: "updateEmitterConfig", call: () => updateEmitterConfigAction({} as never), paths: [["/schemas", "layout"]] },
+  { name: "updateUserNameAction", service: "updateUser", call: () => updateUserNameAction("u1", "New Name"), paths: [["/schemas", "layout"]] },
+  {
+    name: "approveGovernanceRequestAction",
+    service: "approveRequest",
+    call: () => approveGovernanceRequestAction("req-1", null),
+    paths: [["/schemas", "layout"], ["/governance", "layout"]],
+  },
+  {
+    name: "rejectGovernanceRequestAction",
+    service: "rejectRequest",
+    call: () => rejectGovernanceRequestAction("req-1", null),
+    paths: [["/schemas", "layout"], ["/governance", "layout"]],
+  },
+  {
+    name: "createTypeMappingOverrideAction (global)",
+    service: "createGlobalOverride",
+    call: () => createTypeMappingOverrideAction({ ...OVERRIDE_INPUT, scope: "global" }),
+    paths: [["/schemas", "layout"]],
+  },
+  {
+    name: "createTypeMappingOverrideAction (per-entity)",
+    service: "createEntityOverride",
+    call: () => createTypeMappingOverrideAction({ ...OVERRIDE_INPUT, scope: "per-entity" }),
+    paths: [["/schemas", "layout"]],
+  },
+  {
+    name: "acknowledgeLossyMappingAction",
+    service: "acknowledgeLossyMapping",
+    call: () => acknowledgeLossyMappingAction({ entityId: "ent-1", sourceType: "string", targetFormat: "avro" }),
+    paths: [["/schemas", "layout"]],
+  },
+];
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
+  mocks.getEffectiveRole.mockResolvedValue({ success: true, data: "ADMIN" });
+  mocks.inActiveTenant.mockResolvedValue(true);
+  for (const { service } of ACTIONS) mocks[service].mockResolvedValue(OK);
+});
+
+describe.each(ACTIONS)("$name", ({ service, call, paths }) => {
+  it("revalidates after a successful mutation", async () => {
+    await call();
+    expect(mocks[service]).toHaveBeenCalledTimes(1);
+    expect(mocks.revalidatePath.mock.calls).toEqual(paths);
+  });
+
+  it("does not revalidate when the service rejects the mutation", async () => {
+    mocks[service].mockResolvedValue(FAIL);
+    const result = (await call()) as { error?: string };
+    expect(result.error).toBe("nope");
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("does not revalidate (or mutate) when unauthenticated", async () => {
+    mocks.auth.mockResolvedValue(null);
+    const result = (await call()) as { error?: string };
+    expect(result.error).toBe("Not authenticated");
+    expect(mocks[service]).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+});

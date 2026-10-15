@@ -1,16 +1,17 @@
 "use client";
 
-import { BookOpen, Wand2, Upload, Plus, Table2 } from "lucide-react";
+import { BookOpen, Wand2, FileInput, Plus } from "lucide-react";
 
 export type CreationMethod =
   | "standards"
   | "natural-language"
-  | "import"
-  | "visual"
+  | "schema"
   | "blank";
 
 interface TemplateSelectorProps {
   onSelect: (method: CreationMethod) => void;
+  /** Methods that do not apply to the current target (e.g. AI generation needs a domain). */
+  hiddenMethods?: readonly CreationMethod[];
 }
 
 const METHODS = [
@@ -31,20 +32,12 @@ const METHODS = [
     borderColor: "hover:border-purple-400/40",
   },
   {
-    id: "import" as const,
-    icon: Upload,
-    title: "Import Schema",
-    description: "Import from Avro, BigQuery DDL, Protobuf, JSON Schema, or paste schema content",
+    id: "schema" as const,
+    icon: FileInput,
+    title: "Import or Build Schema",
+    description: "Drop a schema file, paste one, or build it field by field. Avro, Protobuf, JSON Schema, BigQuery DDL, TypeSpec and OpenAPI",
     color: "text-emerald-400",
     borderColor: "hover:border-emerald-400/40",
-  },
-  {
-    id: "visual" as const,
-    icon: Table2,
-    title: "Build Visually",
-    description: "Build a JSON Schema field-by-field with a visual editor (Avro & Protobuf coming soon)",
-    color: "text-cyan-400",
-    borderColor: "hover:border-cyan-400/40",
   },
   {
     id: "blank" as const,
@@ -56,10 +49,10 @@ const METHODS = [
   },
 ] as const;
 
-export function TemplateSelector({ onSelect }: TemplateSelectorProps) {
+export function TemplateSelector({ onSelect, hiddenMethods = [] }: TemplateSelectorProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-space-4">
-      {METHODS.map((method) => {
+      {METHODS.filter((method) => !hiddenMethods.includes(method.id)).map((method) => {
         const Icon = method.icon;
         return (
           <button

@@ -83,7 +83,9 @@ export async function emitEntity(entityId: string): Promise<EmissionResult> {
         name: target.key,
         targetFormat: target.targetFormat,
         output: result.output,
-        isValid: result.validationStatus === "VALID",
+        // A WARNING target (e.g. Avro enum symbols that had to be renamed) produced a usable schema: valid, with warnings —
+        // the same meaning `emitFromData` gives `isValid` (the native emitters set it from `validate()`, never from warnings).
+        isValid: result.validationStatus !== "INVALID",
         validationStatus: result.validationStatus,
         warnings: result.warnings.map((message) => ({ message })),
         errors: result.errors,

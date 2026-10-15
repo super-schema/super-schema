@@ -361,7 +361,7 @@ describe("TypeSpec Generator", () => {
       expect(source).toContain('@doc("User email address")');
     });
 
-    it("generates classification tag", () => {
+    it("generates the Enterprise classification decorator, never @tag (Story 16.6)", () => {
       const source = compileAndGenerate({}, [
         makeField({
           name: "ssn",
@@ -371,7 +371,8 @@ describe("TypeSpec Generator", () => {
         }),
       ]);
 
-      expect(source).toContain('@tag("classification:PII")');
+      expect(source).toContain("  @Enterprise.dataClassification(Enterprise.DataClassification.PII)\n  ssn: string;");
+      expect(source).not.toContain("@tag(");
     });
 
     it("generates @minLength and @maxLength", () => {
@@ -609,5 +610,77 @@ describe("TypeSpec Generator", () => {
       const statusEntries = sourceMap.filter((e) => e.fieldName === "status");
       expect(statusEntries.length).toBeGreaterThanOrEqual(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Governance overlay (Story 16.6): valid decorators instead of @tag
+// ---------------------------------------------------------------------------
+
+describe("TypeSpec Generator — governance overlay (Story 16.6)", () => {
+  const taggedClassified = () =>
+    compileEntity(makeEntity({ metadata: { tags: ["sales", "core"] } }), [
+      makeField({ id: "f1", name: "id", type: "string", isKey: true, sortOrder: 0 }),
+      makeField({ id: "f2", name: "email", type: "string", nullable: true, classification: "PII", sortOrder: 1 }),
+      makeField({ id: "f3", name: "note", type: "string", nullable: true, classification: "SENSITIVE", sortOrder: 2 }),
+      makeField({ id: "f4", name: "code", type: "string", nullable: true, classification: "TOP_SECRET", sortOrder: 3 }),
+    ]);
+
+  it("emits entity tags as one x-tags extension on the model, never @tag", () => {
+    const source = generateTypeSpec(taggedClassified());
+    expect(source).toContain('@TypeSpec.OpenAPI.extension("x-tags", #["sales", "core"])\nmodel Customer {');
+    expect(source).not.toContain("@tag(");
+  });
+
+  it("emits mapped classifications as Enterprise decorators and an unmapped level as x-classification", () => {
+    const source = generateTypeSpec(taggedClassified());
+    expect(source).toContain("  @Enterprise.dataClassification(Enterprise.DataClassification.PII)\n  email?: string;");
+    expect(source).toContain("  @Enterprise.dataClassification(Enterprise.DataClassification.Confidential)\n  note?: string;");
+    expect(source).toContain('  @TypeSpec.OpenAPI.extension("x-classification", "TOP_SECRET")\n  code?: string;');
+  });
+
+  it("emits the library imports the overlay needs, first in the file", () => {
+    const source = generateTypeSpec(taggedClassified());
+    expect(source.startsWith('import "@superschema/typespec-enterprise";\nimport "@typespec/openapi";\n\n')).toBe(true);
+  });
+
+  it("emits only the import that is used", () => {
+    const enterpriseOnly = generateTypeSpec(
+      compileEntity(makeEntity(), [makeField({ name: "email", classification: "PII" })])
+    );
+    expect(enterpriseOnly).toContain('import "@superschema/typespec-enterprise";');
+    expect(enterpriseOnly).not.toContain('import "@typespec/openapi";');
+
+    const openapiOnly = generateTypeSpec(
+      compileEntity(makeEntity({ metadata: { tags: ["sales"] } }), [makeField({ name: "id" })])
+    );
+    expect(openapiOnly).toContain('import "@typespec/openapi";');
+    expect(openapiOnly).not.toContain("typespec-enterprise");
+  });
+
+  it("emits no import for an entity without tags or classification (output unchanged)", () => {
+    const source = generateTypeSpec(compileEntity(makeEntity(), [makeField({ name: "id" })]));
+    expect(source).not.toContain("import ");
+    expect(source.startsWith('@doc("A customer entity")\nmodel Customer {')).toBe(true);
+  });
+
+  it("omits the whole overlay (decorators and imports) with governance: false", () => {
+    const source = generateTypeSpec(taggedClassified(), { governance: false });
+    expect(source).not.toContain("import ");
+    expect(source).not.toContain("Enterprise");
+    expect(source).not.toContain("x-tags");
+    expect(source).not.toContain("x-classification");
+    expect(source).not.toContain("@tag(");
+    expect(source).toContain("email?: string;");
+  });
+
+  it("keeps the source map aligned with the import lines", () => {
+    const { source, sourceMap } = generateTypeSpecWithSourceMap(taggedClassified());
+    const lines = source.split("\n");
+    const email = sourceMap.find((e) => e.fieldName === "email")!;
+    expect(lines.slice(email.startLine - 1, email.endLine)).toEqual([
+      "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      "  email?: string;",
+    ]);
   });
 });

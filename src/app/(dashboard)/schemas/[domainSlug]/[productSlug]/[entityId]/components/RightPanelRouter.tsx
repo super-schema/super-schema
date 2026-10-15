@@ -28,7 +28,7 @@ interface RightPanelRouterProps {
   selectedField: FieldData | null;
   entityId: string;
   entitySlug?: string;
-  domainSlug: string;
+  domainSlug: string | null;
   isReadOnly: boolean;
   rightPanelTab: RightPanelTab;
   onTabChange: (tab: RightPanelTab) => void;

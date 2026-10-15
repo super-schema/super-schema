@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Save, Zap, Globe, Rocket, FileCode } from "lucide-react";
+import { Zap, Globe, Rocket, FileCode, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FieldEditor } from "./field-editor";
@@ -14,7 +14,6 @@ import {
   emitEntityAction,
   createTypeMappingOverrideAction,
   acknowledgeLossyMappingAction,
-  createVersionAction,
   getVersionHistoryAction,
   compareVersionsAction,
   getChangeHistoryAction,
@@ -37,6 +36,7 @@ import { formatDateTime } from "@/lib/date-format";
 import { isReadOnly } from "@/lib/entity-lifecycle";
 import { trackRecentEntity } from "@/lib/recent-entities";
 import { EntityHeader } from "./components/EntityHeader";
+import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import { EntityToolbar } from "./components/EntityToolbar";
 import { RightPanelRouter } from "./components/RightPanelRouter";
 import { InlineEntityMeta } from "./components/InlineEntityMeta";
@@ -53,11 +53,23 @@ import {
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
-import { classifyChangeLevel } from "@/lib/validation/change-level";
-
+import { assetHref } from "@/lib/navigation/asset-href";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import { getPublishPreviewAction, publishEntityAction, listEntityVersionsAction } from "./version-actions";
+import { PublishEntityDialog } from "./components/PublishEntityDialog";
+import { EntityVersionList } from "./components/EntityVersionList";
+import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
+import type { PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
+import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
+import type { DraftVersionState } from "@/lib/entity-versioning/draft-label";
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api" | "deployments" | "typespec";
 type RightPanelTab = "field-edit" | "typespec-preview";
+
+/** Message for a thrown value (server actions reject on network or server failures). */
+function errorMessage(e: unknown): string {
+  return e instanceof Error && e.message ? e.message : "Unexpected error";
+}
 
 interface FieldData {
   id: string;
@@ -76,7 +88,12 @@ interface FieldData {
   sortOrder: number;
 }
 
-interface EntityWorkspaceProps {
+export interface EntityWorkspaceProps {
+  /**
+   * Where the entity lives. TENANT (Enterprise) entities have no domain or
+   * product, so features that need one (the APIs tab) are hidden.
+   */
+  level: "TENANT" | "PRODUCT";
   entity: {
     id: string;
     name: string;
@@ -84,20 +101,32 @@ interface EntityWorkspaceProps {
     description: string;
     status: string;
     version: number;
-    domainId: string;
+    /** null for tenant-level entities (no domain placement). */
+    domainId: string | null;
     domainName: string;
-    domainSlug: string;
-    productSlug: string;
-    productName: string;
+    /** null for tenant-level entities (no domain placement). */
+    domainSlug: string | null;
+    /** null for tenant-level entities (no product placement). */
+    productSlug: string | null;
+    /** null for tenant-level entities (no product placement). */
+    productName: string | null;
     metadata: Record<string, unknown> | null;
+    /** Draft + Publish state (spec §5.3). Optional so loaders that predate Phase 2a still compile. */
+    hasUnpublishedChanges?: boolean;
+    latestVersionLabel?: string | null;
   };
   fields: FieldData[];
   domainPolicy: Record<string, unknown> | null;
   apiServiceId: string | null;
   apiOperations: ApiOperationData[];
+  /**
+   * The entity named by `metadata.deprecation.replacementEntityId`, resolved by the
+   * loader. null when none is named or it cannot be found in the tenant.
+   */
+  replacementEntity?: ReplacementEntityLink | null;
 }
 
-export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, apiOperations }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -107,8 +136,10 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
       domainSlug: entity.domainSlug,
       entityName: entity.name,
       domainName: entity.domainName,
+      slug: entity.slug,
+      productSlug: entity.productSlug,
     });
-  }, [entity.id, entity.domainSlug, entity.name, entity.domainName]);
+  }, [entity.id, entity.domainSlug, entity.name, entity.domainName, entity.slug, entity.productSlug]);
 
   const [isPending, startTransition] = useTransition();
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -127,12 +158,12 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
 
   // Entity delete state
   const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
 
   // Version history state
   const [versionHistory, setVersionHistory] = useState<VersionSnapshot[]>([]);
-  const [isCreatingVersion, setIsCreatingVersion] = useState(false);
 
   // Diff viewer state
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
@@ -140,6 +171,37 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
 
   // View tab state
   const [activeTab, setActiveTab] = useState<ViewTab>("editor");
+
+  // Draft + Publish state (spec §5.3). Server props are the source of truth;
+  // saves flip the local copy until the next server render (React "adjust
+  // state when props change" pattern — no effect).
+  const serverVersionKey = `${entity.latestVersionLabel ?? ""}|${entity.hasUnpublishedChanges ?? true}`;
+  const [versionStateKey, setVersionStateKey] = useState(serverVersionKey);
+  const [versionState, setVersionState] = useState<DraftVersionState>({
+    latestVersionLabel: entity.latestVersionLabel ?? null,
+    hasUnpublishedChanges: entity.hasUnpublishedChanges ?? true,
+  });
+  if (versionStateKey !== serverVersionKey) {
+    setVersionStateKey(serverVersionKey);
+    setVersionState({
+      latestVersionLabel: entity.latestVersionLabel ?? null,
+      hasUnpublishedChanges: entity.hasUnpublishedChanges ?? true,
+    });
+  }
+  const markDraftDirty = useCallback(() => {
+    setVersionState((s) => (s.hasUnpublishedChanges ? s : { ...s, hasUnpublishedChanges: true }));
+  }, []);
+
+  // Publish dialog + published versions
+  const [publishedVersions, setPublishedVersions] = useState<EntityVersionSummary[]>([]);
+  // The versions tab must not say "Not published yet" before the first load finishes, or when it failed.
+  const [versionsLoaded, setVersionsLoaded] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishPreview, setPublishPreview] = useState<PublishAnalysis | null>(null);
+  const [publishLoadError, setPublishLoadError] = useState<string | null>(null);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   // Right panel state
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
@@ -183,72 +245,18 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
 
   const alertCount = entityAlerts.length;
 
-  // Helper: bump semantic version in entity metadata
-  const bumpSemanticVersion = useCallback(async (level: "major" | "minor") => {
-    const meta = (entity.metadata ?? {}) as Record<string, unknown>;
-    const sv = (meta.semanticVersion as { major?: number; minor?: number }) ?? {};
-    const currentMajor = sv.major ?? entity.version;
-    const currentMinor = sv.minor ?? 0;
-
-    let newMajor = currentMajor;
-    let newMinor = currentMinor;
-    if (level === "major") {
-      newMajor = currentMajor + 1;
-      newMinor = 0;
-    } else {
-      newMinor = currentMinor + 1;
-    }
-
-    await updateEntityMetadataAction(entity.id, {
-      semanticVersion: { major: newMajor, minor: newMinor },
-    });
-  }, [entity.id, entity.metadata, entity.version]);
-
-  // Field update handler — saves field, creates version, bumps semantic version
+  // Field save — Story 2-22's explicit Save stays; saving updates the draft
+  // only (spec D1). Versions are cut by Publish, never by Save.
   const handleUpdateField = useCallback(async (id: string, data: Record<string, unknown>) => {
-    // Determine which properties changed by comparing to original field
-    const originalField = fields.find((f) => f.id === id);
-    const changedProps: string[] = [];
-    if (originalField) {
-      for (const key of Object.keys(data)) {
-        if (key === "decorators") {
-          const origTs = (originalField.decorators?.typespec ?? {}) as Record<string, unknown>;
-          const newTs = ((data.decorators as Record<string, unknown>)?.typespec ?? {}) as Record<string, unknown>;
-          if (JSON.stringify(origTs) !== JSON.stringify(newTs)) {
-            const origIdentity = (origTs.identity ?? {}) as Record<string, unknown>;
-            const newIdentity = (newTs.identity ?? {}) as Record<string, unknown>;
-            if (JSON.stringify(origIdentity) !== JSON.stringify(newIdentity)) {
-              if (origIdentity.format !== newIdentity.format) changedProps.push("format");
-              if (origIdentity.defaultValue !== newIdentity.defaultValue) changedProps.push("defaultValue");
-              if (origIdentity.secret !== newIdentity.secret) changedProps.push("secret");
-            }
-            if (JSON.stringify(origTs.documentation) !== JSON.stringify(newTs.documentation)) {
-              changedProps.push("summary");
-            }
-          }
-        } else {
-          const origVal = (originalField as unknown as Record<string, unknown>)[key];
-          if (JSON.stringify(origVal) !== JSON.stringify(data[key])) {
-            changedProps.push(key);
-          }
-        }
-      }
-    }
-
-    await updateFieldAction(id, data);
+    const result = await updateFieldAction(id, data);
     setTypeSpecTrigger((n) => n + 1);
-
-    // Create version snapshot and bump semantic version
-    const level = classifyChangeLevel(changedProps);
-    try {
-      await createVersionAction(entity.id);
-      await bumpSemanticVersion(level);
-    } catch {
-      // Version creation failure should not block the save
+    if (result?.error) {
+      toast.error(result.error);
+      return;
     }
-
+    markDraftDirty();
     flashSaved();
-  }, [entity.id, fields, bumpSemanticVersion, flashSaved]);
+  }, [flashSaved, markDraftDirty]);
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -298,32 +306,65 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
     }
   }, [entity.id]);
 
-  const handleCreateVersion = useCallback(async () => {
-    setIsCreatingVersion(true);
+  const handleOpenHistory = useCallback(async () => {
+    // allSettled: a failure in one list must not hide the other, and nothing may go unreported.
+    const [published, legacy] = await Promise.allSettled([
+      listEntityVersionsAction(entity.id),
+      getVersionHistoryAction(entity.id),
+    ]);
+    if (published.status === "rejected") {
+      setVersionsError(errorMessage(published.reason));
+    } else if ("error" in published.value) {
+      setVersionsError(published.value.error);
+    } else {
+      setVersionsError(null);
+      setPublishedVersions(published.value.versions);
+    }
+    if (legacy.status === "fulfilled" && legacy.value.versions) {
+      setVersionHistory(legacy.value.versions as VersionSnapshot[]);
+    }
+    setVersionsLoaded(true);
+  }, [entity.id]);
+
+  const handleOpenPublish = useCallback(async () => {
+    if (fieldDirtyRef.current) {
+      const confirmed = window.confirm("You have unsaved field edits. Publish the last saved draft without them?");
+      if (!confirmed) return;
+    }
+    setPublishOpen(true);
+    setPublishPreview(null);
+    setPublishLoadError(null);
+    setPublishError(null);
     try {
-      const response = await createVersionAction(entity.id);
-      if (response.error) {
-        toast.error(response.error);
-        return;
-      }
-      toast.success(`Version v${response.version?.version} created`);
-      const historyResponse = await getVersionHistoryAction(entity.id);
-      if (historyResponse.versions) {
-        setVersionHistory(historyResponse.versions as VersionSnapshot[]);
-      }
-    } catch {
-      toast.error("Failed to create version");
-    } finally {
-      setIsCreatingVersion(false);
+      const res = await getPublishPreviewAction(entity.id);
+      if ("error" in res) setPublishLoadError(res.error);
+      else setPublishPreview(res.preview);
+    } catch (e) {
+      // Without this the dialog would spin on "Checking changes…" forever.
+      setPublishLoadError(`Could not load the publish preview: ${errorMessage(e)}`);
     }
   }, [entity.id]);
 
-  const handleOpenHistory = useCallback(async () => {
-    const response = await getVersionHistoryAction(entity.id);
-    if (response.versions) {
-      setVersionHistory(response.versions as VersionSnapshot[]);
+  const handleConfirmPublish = useCallback(async (input: PublishInput) => {
+    setIsPublishing(true);
+    setPublishError(null);
+    try {
+      const res = await publishEntityAction(entity.id, input);
+      if ("error" in res) {
+        setPublishError(res.error);
+        return;
+      }
+      setVersionState({ latestVersionLabel: res.version.label, hasUnpublishedChanges: false });
+      setPublishedVersions((prev) => [res.version, ...prev]);
+      setPublishOpen(false);
+      toast.success(`Published ${entity.name} v${res.version.label}`);
+      router.refresh();
+    } catch (e) {
+      setPublishError(`Publishing failed: ${errorMessage(e)}`);
+    } finally {
+      setIsPublishing(false);
     }
-  }, [entity.id]);
+  }, [entity.id, entity.name, router]);
 
   const handleCompare = useCallback(async (versionA: number, versionB: number) => {
     const response = await compareVersionsAction(entity.id, versionA, versionB);
@@ -404,7 +445,12 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
         toast.error(result.error);
       } else {
         toast.success(`"${entity.name}" deleted`);
-        router.push(`/schemas/${entity.domainSlug}/${entity.productSlug}`);
+        void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted entity row stays until a reload
+        router.push(
+          entity.domainSlug && entity.productSlug
+            ? assetHref({ kind: "product", domainSlug: entity.domainSlug, productSlug: entity.productSlug })
+            : assetHref({ kind: "enterprise" })
+        );
       }
     } catch {
       toast.error("Failed to delete entity");
@@ -412,18 +458,13 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
       setIsDeletingEntity(false);
       setDeleteConfirmOpen(false);
     }
-  }, [entity.id, entity.name, entity.domainSlug, entity.productSlug, router]);
+  }, [entity.id, entity.name, entity.domainSlug, entity.productSlug, router, invalidateDomainsTree]);
 
-  // Metadata save handler — creates version + bumps minor
-  const handleMetaSaved = useCallback(async () => {
-    try {
-      await createVersionAction(entity.id);
-      await bumpSemanticVersion("minor");
-    } catch {
-      // Version creation failure should not block the save
-    }
+  // Metadata save (tags / owner) — updates the draft only (spec D1).
+  const handleMetaSaved = useCallback(() => {
+    markDraftDirty();
     flashSaved();
-  }, [entity.id, bumpSemanticVersion, flashSaved]);
+  }, [flashSaved, markDraftDirty]);
 
   // Navigation guard: tab switching
   const handleTabChange = useCallback((tab: ViewTab) => {
@@ -511,12 +552,16 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
     )}
     <div className="animate-auth-fade-up">
       <EntityHeader
+        level={level}
         entity={entity}
         onStatusChange={handleStatusChange}
         readOnly={readOnly_}
         isPending={isPending}
         statusError={statusError}
         showSaved={showSaved}
+        versionState={versionState}
+        onPublish={readOnly_ ? undefined : handleOpenPublish}
+        replacementEntity={replacementEntity}
         toolbar={
           <EntityToolbar
             onDelete={readOnly_ ? undefined : () => setDeleteConfirmOpen(true)}
@@ -597,18 +642,20 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
           <Zap className="w-3 h-3" />
           Schemas
         </button>
-        <button
-          onClick={() => handleTabChange("api")}
-          className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
-            activeTab === "api"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-primary"
-          }`}
-          data-testid="tab-api"
-        >
-          <Globe className="w-3 h-3" />
-          API
-        </button>
+        {level === "PRODUCT" && (
+          <button
+            onClick={() => handleTabChange("api")}
+            className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === "api"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-primary"
+            }`}
+            data-testid="tab-api"
+          >
+            <Globe className="w-3 h-3" />
+            API
+          </button>
+        )}
         <button
           onClick={() => handleTabChange("deployments")}
           className={`flex items-center gap-1 px-space-3 py-space-2 text-body-small font-medium transition-colors border-b-2 -mb-px ${
@@ -658,19 +705,25 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
                 onAddField={async (name, type, opts) => {
                   const result = await addFieldAction(entity.id, name, type, opts);
                   setTypeSpecTrigger((n) => n + 1);
+                  if (result?.error) toast.error(result.error);
+                  else markDraftDirty();
                   return result;
                 }}
                 onUpdateField={async (id, data) => {
-                  await updateFieldAction(id, data);
+                  const result = await updateFieldAction(id, data);
                   setTypeSpecTrigger((n) => n + 1);
+                  if (result?.error) toast.error(result.error);
+                  else markDraftDirty();
                 }}
                 onDeleteField={async (id) => {
-                  await deleteFieldAction(id);
+                  const result = await deleteFieldAction(id);
                   if (selectedFieldId === id) {
                     setSelectedFieldId(null);
                     setRightPanelTab("typespec-preview");
                   }
                   setTypeSpecTrigger((n) => n + 1);
+                  if (result?.error) toast.error(result.error);
+                  else markDraftDirty();
                 }}
               />
             </>
@@ -698,76 +751,78 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
         )}
 
         {activeTab === "typespec" && (
-          <TypeSpecSourceTab entityId={entity.id} entityName={entity.name} readOnly={readOnly_} />
+          <TypeSpecSourceTab entityId={entity.id} entityName={entity.name} readOnly={readOnly_} onSaved={markDraftDirty} />
         )}
 
         {activeTab === "versions" && (
           <div className="space-y-space-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-heading-2 text-foreground">Version History</h2>
+              <h2 className="text-heading-2 text-foreground">Published Versions</h2>
               {!readOnly_ && (
                 <Button
                   variant="outline"
-                  onClick={handleCreateVersion}
-                  disabled={isCreatingVersion}
+                  onClick={handleOpenPublish}
                   className="gap-1.5"
+                  data-testid="versions-publish-button"
                 >
-                  {isCreatingVersion ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      Create Version
-                    </>
-                  )}
+                  <Upload className="w-4 h-4" />
+                  Publish
                 </Button>
               )}
             </div>
-
-            {/* Diff viewer */}
-            {showDiff && diffResult && (
-              <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
-            )}
-
-            {/* Version list */}
-            {versionHistory.length > 0 ? (
-              <div className="space-y-space-2">
-                {versionHistory.map((v, idx) => (
-                  <div
-                    key={v.version}
-                    className="flex items-center justify-between rounded-lg border border-border/50 px-space-4 py-space-3"
-                  >
-                    <div>
-                      <span className="text-body-small font-medium text-foreground">
-                        v{v.version}
-                      </span>
-                      <span className="text-caption text-muted-foreground ml-space-3">
-                        {formatDateTime(v.timestamp)}
-                      </span>
-                    </div>
-                    {idx < versionHistory.length - 1 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          handleViewDiff(v.version, versionHistory[idx + 1].version)
-                        }
-                        className="text-caption"
-                      >
-                        View Diff
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-body-small text-muted-foreground">
-                No versions created yet.
+            {versionsError ? (
+              <p role="alert" data-testid="versions-error" className="text-body-small text-destructive">
+                Could not load published versions: {versionsError}
               </p>
+            ) : !versionsLoaded ? (
+              <p data-testid="versions-loading" className="text-body-small text-muted-foreground">
+                Loading published versions…
+              </p>
+            ) : (
+              <EntityVersionList versions={publishedVersions} />
             )}
+
+            <UsedByPanel subject={{ kind: "entity", entityId: entity.id }} />
+
+            <div className="border-t border-border/50 pt-space-4 space-y-space-3">
+              <h3 className="text-heading-3 text-foreground">Legacy history (read-only)</h3>
+              {showDiff && diffResult && (
+                <DiffViewer diff={diffResult} onClose={handleCloseDiff} />
+              )}
+              {versionHistory.length > 0 ? (
+                <div className="space-y-space-2">
+                  {versionHistory.map((v, idx) => (
+                    <div
+                      key={v.version}
+                      className="flex items-center justify-between rounded-lg border border-border/50 px-space-4 py-space-3"
+                    >
+                      <div>
+                        <span className="text-body-small font-medium text-foreground">
+                          v{v.version}
+                        </span>
+                        <span className="text-caption text-muted-foreground ml-space-3">
+                          {formatDateTime(v.timestamp)}
+                        </span>
+                      </div>
+                      {idx < versionHistory.length - 1 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            handleViewDiff(v.version, versionHistory[idx + 1].version)
+                          }
+                          className="text-caption"
+                        >
+                          View Diff
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-body-small text-muted-foreground">No legacy snapshots.</p>
+              )}
+            </div>
 
             {/* Change log */}
             <div className="border-t border-border/50 pt-space-4">
@@ -796,9 +851,14 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
                 return null;
               })()}
               onSave={async (_entityId, policy) => {
-                await updateEntityMetadataAction(entity.id, {
+                const res = await updateEntityMetadataAction(entity.id, {
                   retentionPolicy: policy as unknown as Record<string, unknown>,
                 });
+                if (res?.error) {
+                  toast.error(res.error);
+                  return;
+                }
+                markDraftDirty();
                 toast.success("Retention policy saved");
               }}
             />
@@ -821,7 +881,7 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
           </div>
         )}
 
-        {activeTab === "api" && (
+        {level === "PRODUCT" && activeTab === "api" && (
           <ApiTab
             entityId={entity.id}
             entityName={entity.name}
@@ -833,6 +893,17 @@ export function EntityWorkspace({ entity, fields, domainPolicy, apiServiceId, ap
           />
         )}
       </div>
+
+      <PublishEntityDialog
+        open={publishOpen}
+        entityName={entity.name}
+        preview={publishPreview}
+        loadError={publishLoadError}
+        isPublishing={isPublishing}
+        publishError={publishError}
+        onOpenChange={setPublishOpen}
+        onConfirm={handleConfirmPublish}
+      />
 
       {/* Type Mapping Override Dialog */}
       <TypeMappingOverrideDialog

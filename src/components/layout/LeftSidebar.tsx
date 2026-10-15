@@ -1,22 +1,42 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { Suspense, useCallback, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  ChevronDown,
-  ChevronRight,
+  Building2,
   Database,
+  FileCode2,
   Folder,
   FolderOpen,
   Globe,
   Hash,
-  Plus,
+  Mail,
+  Package,
+  Puzzle,
+  Radio,
   RefreshCcw,
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDomainsTree } from "@/hooks/useDomainsTree";
-import { cn } from "@/lib/utils";
+import {
+  EVENT_SEGMENT,
+  TRAITS_SEGMENT,
+  assetHref,
+  normalizeEventsSection,
+} from "@/lib/navigation/asset-href";
+import type {
+  ExplorerDomain,
+  ExplorerEntity,
+  ExplorerProduct,
+} from "@/lib/navigation/build-explorer-tree";
+import {
+  SidebarCategory,
+  SidebarEntityRow,
+  SidebarLeafCategory,
+  SidebarNodeRow,
+  type SidebarNavigate,
+} from "@/components/layout/sidebar/SidebarNodes";
 
 interface LeftSidebarProps {
   width: number;
@@ -25,7 +45,59 @@ interface LeftSidebarProps {
   onDoubleClick: () => void;
 }
 
-export function LeftSidebar({
+const ENTERPRISE_KEY = "enterprise";
+const ENTERPRISE_ENTITIES_KEY = "enterprise:entities";
+const domainKey = (id: string) => `d:${id}`;
+const productKey = (id: string) => `p:${id}`;
+const productEntitiesKey = (id: string) => `p:${id}:entities`;
+
+function isWithin(pathname: string, base: string) {
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
+// Detail pages of the non-entity kinds (messages / channels / event specs / traits) live
+// under the same level base as entity URLs; the Entities row must not light up for them.
+const NON_ENTITY_SEGMENTS: readonly string[] = [...Object.values(EVENT_SEGMENT), TRAITS_SEGMENT];
+function isNonEntityDetail(pathname: string, base: string) {
+  return NON_ENTITY_SEGMENTS.some((segment) => isWithin(pathname, `${base}/${segment}`));
+}
+
+// `types` is the legacy alias of the `data-types` workspace tab.
+function isDataTypesTab(tab: string | null) {
+  return tab === "data-types" || tab === "types";
+}
+
+/**
+ * `useSearchParams` opts a client component out of static prerendering, and
+ * the dashboard layout wraps statically rendered pages — so the explorer
+ * lives behind a Suspense boundary with a skeleton of the same width.
+ */
+export function LeftSidebar(props: LeftSidebarProps) {
+  return (
+    <Suspense fallback={<LeftSidebarFallback {...props} />}>
+      <ExplorerSidebar {...props} />
+    </Suspense>
+  );
+}
+
+function LeftSidebarFallback({ width, isCollapsed }: LeftSidebarProps) {
+  if (isCollapsed || width === 0) {
+    return <div data-testid="left-sidebar" data-collapsed="true" className="relative" />;
+  }
+
+  return (
+    <div
+      data-testid="left-sidebar"
+      data-collapsed="false"
+      className="relative surface-1 border-r border-border flex flex-col overflow-hidden"
+      style={{ width, minWidth: width }}
+    >
+      <SidebarSkeleton />
+    </div>
+  );
+}
+
+function ExplorerSidebar({
   width,
   isCollapsed,
   onMouseDown,
@@ -33,122 +105,445 @@ export function LeftSidebar({
 }: LeftSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab = searchParams?.get("tab") ?? null;
+  const activeSection = normalizeEventsSection(searchParams?.get("section"));
+  const currentQuery = searchParams?.toString() ?? "";
+  const currentUrl = currentQuery ? `${pathname}?${currentQuery}` : pathname;
   const [search, setSearch] = useState("");
-  const [userExpandedDomains, setUserExpandedDomains] = useState<Set<string>>(new Set());
-  const [userCollapsedDomains, setUserCollapsedDomains] = useState<Set<string>>(new Set());
-  const [userExpandedCategories, setUserExpandedCategories] = useState<Set<string>>(new Set());
-  const [userCollapsedCategories, setUserCollapsedCategories] = useState<Set<string>>(new Set());
-  const {
-    data: domains = [],
-    isError,
-    isLoading,
-    refetch,
-  } = useDomainsTree();
+  // Explicit user choices; anything absent falls back to the route-derived defaults.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  // Toggles made while a search is active live apart so they never leak into
+  // the browsing state; they reset when the query clears.
+  const [searchOverrides, setSearchOverrides] = useState<Record<string, boolean>>({});
+  const { data: tree, isError, isLoading, refetch } = useDomainsTree();
+
+  const domains = useMemo(() => tree?.domains ?? [], [tree]);
 
   const activeDomain = useMemo(() => {
     const match = pathname.match(/^\/schemas\/([^/]+)/);
-
-    if (!match) {
-      return undefined;
-    }
-
-    return domains.find((candidate) => candidate.slug === match[1]);
+    return match ? domains.find((candidate) => candidate.slug === match[1]) : undefined;
   }, [pathname, domains]);
 
-  const expandedDomains = useMemo(() => {
-    const defaults = domains
-      .filter((domain) => domain.isSystem)
-      .map((domain) => domain.id);
-    const next = new Set(defaults);
-
+  const defaultExpanded = useMemo(() => {
+    const next = new Set<string>([ENTERPRISE_KEY, ENTERPRISE_ENTITIES_KEY]);
     if (activeDomain) {
-      next.add(activeDomain.id);
+      next.add(domainKey(activeDomain.id));
+      for (const product of activeDomain.products) {
+        next.add(productKey(product.id));
+        next.add(productEntitiesKey(product.id));
+      }
     }
-
-    userExpandedDomains.forEach((id) => next.add(id));
-    userCollapsedDomains.forEach((id) => next.delete(id));
-
     return next;
-  }, [activeDomain, domains, userCollapsedDomains, userExpandedDomains]);
+  }, [activeDomain]);
 
-  const expandedCategories = useMemo(() => {
-    const defaults = domains
-      .filter((domain) => domain.isSystem)
-      .map((domain) => `${domain.id}:entities`);
-    const next = new Set(defaults);
+  const query = search.trim().toLowerCase();
+  const searching = query !== "";
 
-    if (activeDomain) {
-      next.add(`${activeDomain.id}:entities`);
-    }
+  // While searching, every node that survives the filter is expanded so the
+  // matching entities are visible.
+  const isExpanded = (key: string) =>
+    searching ? (searchOverrides[key] ?? true) : (overrides[key] ?? defaultExpanded.has(key));
 
-    userExpandedCategories.forEach((key) => next.add(key));
-    userCollapsedCategories.forEach((key) => next.delete(key));
+  // Row callbacks are stable across pathname changes (they read the live URL
+  // through a ref and flip expansion via functional updates), so the memoized
+  // rows are not re-rendered by navigation alone.
+  const [isPending, startTransition] = useTransition();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  // Layout effect, not a passive one: a click landing between a navigation's
+  // commit and the passive-effect flush must still compare against the new URL.
+  const currentUrlRef = useRef(currentUrl);
+  useLayoutEffect(() => {
+    currentUrlRef.current = currentUrl;
+  }, [currentUrl]);
+  const { push } = router;
 
-    return next;
-  }, [activeDomain, domains, userCollapsedCategories, userExpandedCategories]);
+  const expand = useCallback(
+    (key: string) => {
+      const apply = (prev: Record<string, boolean>) => ({ ...prev, [key]: true });
+      if (searching) setSearchOverrides(apply);
+      else setOverrides(apply);
+    },
+    [searching]
+  );
+  const toggle = useCallback(
+    (key: string) => {
+      const flip = (prev: Record<string, boolean>) => ({
+        ...prev,
+        [key]: !(prev[key] ?? (searching || defaultExpanded.has(key))),
+      });
+      if (searching) setSearchOverrides(flip);
+      else setOverrides(flip);
+    },
+    [searching, defaultExpanded]
+  );
+  // Every navigation runs in a transition so the clicked row can show a pending
+  // state, and never pushes the URL we are already on (it only expands).
+  const navigate = useCallback<SidebarNavigate>(
+    (href, expandKey) => {
+      if (expandKey) expand(expandKey);
+      if (href === currentUrlRef.current) return;
+      setPendingHref(href);
+      startTransition(() => {
+        push(href);
+      });
+    },
+    [expand, push]
+  );
+  const pendingTarget = isPending ? pendingHref : null;
+  const enterpriseEntities = useMemo(
+    () =>
+      query
+        ? (tree?.enterprise.entities ?? []).filter((e) => e.name.toLowerCase().includes(query))
+        : (tree?.enterprise.entities ?? []),
+    [tree, query]
+  );
 
-  const filteredDomains = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    if (!query) {
-      return domains;
-    }
+  const filteredDomains = useMemo<ExplorerDomain[]>(() => {
+    if (!query) return domains;
+    const matches = (name: string) => name.toLowerCase().includes(query);
 
     return domains
       .map((domain) => ({
         ...domain,
-        entities: domain.entities.filter((entity) =>
-          entity.name.toLowerCase().includes(query)
-        ),
+        products: domain.products
+          .map((product) => ({
+            ...product,
+            entities: product.entities.filter((entity) => matches(entity.name)),
+          }))
+          .filter((product) => matches(product.name) || product.entities.length > 0),
       }))
-      .filter(
-        (domain) =>
-          domain.name.toLowerCase().includes(query) || domain.entities.length > 0
-      );
-  }, [domains, search]);
-
-  function toggleDomain(id: string) {
-    if (expandedDomains.has(id)) {
-      setUserCollapsedDomains((prev) => new Set([...prev, id]));
-      setUserExpandedDomains((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      return;
-    }
-
-    setUserExpandedDomains((prev) => new Set([...prev, id]));
-    setUserCollapsedDomains((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }
-
-  function toggleCategory(key: string) {
-    if (expandedCategories.has(key)) {
-      setUserCollapsedCategories((prev) => new Set([...prev, key]));
-      setUserExpandedCategories((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      return;
-    }
-
-    setUserExpandedCategories((prev) => new Set([...prev, key]));
-    setUserCollapsedCategories((prev) => {
-      const next = new Set(prev);
-      next.delete(key);
-      return next;
-    });
-  }
+      .filter((domain) => matches(domain.name) || domain.products.length > 0);
+  }, [domains, query]);
 
   if (isCollapsed || width === 0) {
     return (
       <div data-testid="left-sidebar" data-collapsed="true" className="relative">
         <ResizeHandle onMouseDown={onMouseDown} onDoubleClick={onDoubleClick} />
+      </div>
+    );
+  }
+
+  const enterpriseHref = assetHref({ kind: "enterprise" });
+  const enterpriseAddHref = assetHref({ kind: "newEntity", domainSlug: null, productSlug: null });
+  const enterpriseDataTypesHref = assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null });
+  const enterpriseDataTypes = tree?.enterprise.counts.dataTypes ?? 0;
+  const enterpriseTraitsHref = assetHref({ kind: "traits", domainSlug: null, productSlug: null });
+  const enterpriseTraits = tree?.enterprise.counts.traits ?? 0;
+
+  function renderEntities(
+    entities: ExplorerEntity[],
+    domainSlug: string | null,
+    productSlug: string | null
+  ) {
+    return entities.map((entity) => {
+      const href = assetHref({ kind: "entity", slug: entity.slug, domainSlug, productSlug });
+      return (
+        <SidebarEntityRow
+          key={entity.id}
+          active={pathname === href}
+          entity={entity}
+          href={href}
+          onNavigate={navigate}
+          pending={pendingTarget === href}
+        />
+      );
+    });
+  }
+
+  function renderProduct(domain: ExplorerDomain, product: ExplorerProduct) {
+    const base = assetHref({ kind: "product", domainSlug: domain.slug, productSlug: product.slug });
+    const addHref = assetHref({ kind: "newEntity", domainSlug: domain.slug, productSlug: product.slug });
+    const dataTypesHref = assetHref({
+      kind: "dataTypes",
+      domainSlug: domain.slug,
+      productSlug: product.slug,
+    });
+    const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: product.slug });
+    const traitsHref = assetHref({ kind: "traits", domainSlug: domain.slug, productSlug: product.slug });
+    // A leaf's Events-tab section is also the URL segment of its detail pages (EVENT_SEGMENT).
+    const eventLeaves: Array<{
+      id: string;
+      kind: keyof typeof EVENT_SEGMENT;
+      label: string;
+      icon: typeof Mail;
+      count: number;
+    }> = [
+      { id: "event-specs", kind: "eventSpec", label: "Event Specs", icon: FileCode2, count: product.counts.eventSpecs },
+      { id: "messages", kind: "message", label: "Messages", icon: Mail, count: product.counts.messages },
+      { id: "channels", kind: "channel", label: "Channels", icon: Radio, count: product.counts.channels },
+    ];
+    const key = productKey(product.id);
+    const entitiesKey = productEntitiesKey(product.id);
+    const expanded = isExpanded(key);
+    const entitiesExpanded = isExpanded(entitiesKey);
+    const inRoute = isWithin(pathname, base);
+
+    return (
+      <div key={product.id} className="mb-0.5">
+        <SidebarNodeRow
+          testId={`product-${product.id}`}
+          active={pathname === base}
+          inRoute={inRoute}
+          expanded={expanded}
+          icon={Package}
+          label={product.name}
+          addTitle="New Entity"
+          nodeKey={key}
+          href={base}
+          addHref={addHref}
+          pending={pendingTarget === base || pendingTarget === addHref}
+          onToggle={toggle}
+          onNavigate={navigate}
+        />
+
+        {expanded && (
+          <div className="ml-3 border-l border-border/50 pl-1 py-0.5">
+            {product.entities.length > 0 && (
+              <>
+                <SidebarCategory
+                  testId={`product-${product.id}-entities`}
+                  active={inRoute && !activeTab && !isNonEntityDetail(pathname, base)}
+                  count={product.entities.length}
+                  expanded={entitiesExpanded}
+                  icon={Database}
+                  label="Entities"
+                  nodeKey={entitiesKey}
+                  href={base}
+                  pending={pendingTarget === base}
+                  onToggle={toggle}
+                  onNavigate={navigate}
+                />
+                {entitiesExpanded && renderEntities(product.entities, domain.slug, product.slug)}
+              </>
+            )}
+
+            {product.counts.dataTypes > 0 && (
+              <SidebarLeafCategory
+                testId={`product-${product.id}-data-types`}
+                active={pathname === base && isDataTypesTab(activeTab)}
+                count={product.counts.dataTypes}
+                icon={Hash}
+                label="Data Types"
+                href={dataTypesHref}
+                pending={pendingTarget === dataTypesHref}
+                onNavigate={navigate}
+              />
+            )}
+
+            {product.counts.apis > 0 && (
+              <SidebarLeafCategory
+                testId={`product-${product.id}-apis`}
+                active={pathname === base && activeTab === "apis"}
+                count={product.counts.apis}
+                icon={Globe}
+                label="APIs"
+                href={apisHref}
+                pending={pendingTarget === apisHref}
+                onNavigate={navigate}
+              />
+            )}
+
+            {eventLeaves
+              .filter((leaf) => leaf.count > 0)
+              .map((leaf) => {
+                const segment = EVENT_SEGMENT[leaf.kind];
+                const href = assetHref({
+                  kind: "events",
+                  domainSlug: domain.slug,
+                  productSlug: product.slug,
+                  section: segment,
+                });
+                const onList = pathname === base && activeTab === "events" && activeSection === segment;
+                return (
+                  <SidebarLeafCategory
+                    key={leaf.id}
+                    testId={`product-${product.id}-${leaf.id}`}
+                    active={onList || isWithin(pathname, `${base}/${segment}`)}
+                    count={leaf.count}
+                    icon={leaf.icon}
+                    label={leaf.label}
+                    href={href}
+                    pending={pendingTarget === href}
+                    onNavigate={navigate}
+                  />
+                );
+              })}
+
+            {product.counts.traits > 0 && (
+              <SidebarLeafCategory
+                testId={`product-${product.id}-traits`}
+                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/${TRAITS_SEGMENT}`)}
+                count={product.counts.traits}
+                icon={Puzzle}
+                label="Traits"
+                href={traitsHref}
+                pending={pendingTarget === traitsHref}
+                onNavigate={navigate}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderDomain(domain: ExplorerDomain) {
+    const base = assetHref({ kind: "domain", domainSlug: domain.slug });
+    // Entities live in products: "+" creates one in the first product. A domain with no
+    // products has nowhere to put it, so "+" opens the domain's Products tab (its default tab).
+    const firstProduct = domain.products[0];
+    const addHref = firstProduct
+      ? assetHref({ kind: "newEntity", domainSlug: domain.slug, productSlug: firstProduct.slug })
+      : base;
+    const addTitle = firstProduct ? "New Entity" : "Create a product first";
+    const dataTypesHref = assetHref({ kind: "dataTypes", domainSlug: domain.slug, productSlug: null });
+    const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: null });
+    const traitsHref = assetHref({ kind: "traits", domainSlug: domain.slug, productSlug: null });
+    const key = domainKey(domain.id);
+    const expanded = isExpanded(key);
+
+    return (
+      <div key={domain.id} className="mb-1">
+        <SidebarNodeRow
+          testId={`domain-${domain.id}`}
+          active={pathname === base}
+          inRoute={isWithin(pathname, base)}
+          expanded={expanded}
+          icon={Folder}
+          expandedIcon={FolderOpen}
+          label={domain.name}
+          addTitle={addTitle}
+          nodeKey={key}
+          href={base}
+          addHref={addHref}
+          pending={pendingTarget === base || pendingTarget === addHref}
+          onToggle={toggle}
+          onNavigate={navigate}
+        />
+
+        {expanded && (
+          <div className="ml-3 border-l border-border/50 pl-1 py-0.5">
+            {domain.counts.dataTypes > 0 && (
+              <SidebarLeafCategory
+                testId={`domain-${domain.id}-data-types`}
+                active={pathname === base && isDataTypesTab(activeTab)}
+                count={domain.counts.dataTypes}
+                icon={Hash}
+                label="Data Types"
+                href={dataTypesHref}
+                pending={pendingTarget === dataTypesHref}
+                onNavigate={navigate}
+              />
+            )}
+
+            {domain.counts.apis > 0 && (
+              <SidebarLeafCategory
+                testId={`domain-${domain.id}-apis`}
+                active={pathname === base && activeTab === "apis"}
+                count={domain.counts.apis}
+                icon={Globe}
+                label="APIs"
+                href={apisHref}
+                pending={pendingTarget === apisHref}
+                onNavigate={navigate}
+              />
+            )}
+
+            {domain.counts.traits > 0 && (
+              <SidebarLeafCategory
+                testId={`domain-${domain.id}-traits`}
+                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/${TRAITS_SEGMENT}`)}
+                count={domain.counts.traits}
+                icon={Puzzle}
+                label="Traits"
+                href={traitsHref}
+                pending={pendingTarget === traitsHref}
+                onNavigate={navigate}
+              />
+            )}
+
+            {domain.products.map((product) => renderProduct(domain, product))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderEnterprise() {
+    const expanded = isExpanded(ENTERPRISE_KEY);
+    const entitiesExpanded = isExpanded(ENTERPRISE_ENTITIES_KEY);
+    const inRoute = isWithin(pathname, enterpriseHref);
+
+    return (
+      <div className="mb-1">
+        <SidebarNodeRow
+          testId="enterprise"
+          active={pathname === enterpriseHref}
+          inRoute={inRoute}
+          expanded={expanded}
+          icon={Building2}
+          label="Enterprise"
+          addTitle="New Entity"
+          nodeKey={ENTERPRISE_KEY}
+          href={enterpriseHref}
+          addHref={enterpriseAddHref}
+          pending={pendingTarget === enterpriseHref || pendingTarget === enterpriseAddHref}
+          onToggle={toggle}
+          onNavigate={navigate}
+        />
+
+        {expanded && (
+          <div className="ml-3 border-l border-border/50 pl-1 py-0.5">
+            {enterpriseDataTypes > 0 && (
+              <SidebarLeafCategory
+                testId="enterprise-data-types"
+                active={pathname === enterpriseHref && isDataTypesTab(activeTab)}
+                count={enterpriseDataTypes}
+                icon={Hash}
+                label="Data Types"
+                href={enterpriseDataTypesHref}
+                pending={pendingTarget === enterpriseDataTypesHref}
+                onNavigate={navigate}
+              />
+            )}
+
+            {enterpriseTraits > 0 && (
+              <SidebarLeafCategory
+                testId="enterprise-traits"
+                active={
+                  (pathname === enterpriseHref && activeTab === "traits") ||
+                  isWithin(pathname, `${enterpriseHref}/${TRAITS_SEGMENT}`)
+                }
+                count={enterpriseTraits}
+                icon={Puzzle}
+                label="Traits"
+                href={enterpriseTraitsHref}
+                pending={pendingTarget === enterpriseTraitsHref}
+                onNavigate={navigate}
+              />
+            )}
+
+            {enterpriseEntities.length > 0 && (
+              <>
+                <SidebarCategory
+                  testId="enterprise-entities"
+                  active={inRoute && (!activeTab || activeTab === "entities") && !isNonEntityDetail(pathname, enterpriseHref)}
+                  count={enterpriseEntities.length}
+                  expanded={entitiesExpanded}
+                  icon={Database}
+                  label="Entities"
+                  nodeKey={ENTERPRISE_ENTITIES_KEY}
+                  href={enterpriseHref}
+                  pending={pendingTarget === enterpriseHref}
+                  onToggle={toggle}
+                  onNavigate={navigate}
+                />
+                {entitiesExpanded && renderEntities(enterpriseEntities, null, null)}
+              </>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -167,7 +562,11 @@ export function LeftSidebar({
             type="text"
             placeholder="Filter domains, entities..."
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (!value.trim()) setSearchOverrides({});
+              setSearch(value);
+            }}
             className="bg-transparent text-body-small text-foreground placeholder:text-muted-foreground/40 outline-none w-full"
           />
         </div>
@@ -189,249 +588,20 @@ export function LeftSidebar({
           <SidebarSkeleton />
         ) : isError ? (
           <SidebarError onRetry={() => void refetch()} />
-        ) : filteredDomains.length === 0 ? (
-          <SidebarEmptyState hasSearch={Boolean(search.trim())} />
         ) : (
-          filteredDomains.map((domain) => {
-            const domainPath = `/schemas/${domain.slug}`;
-            const isDomainExpanded = expandedDomains.has(domain.id);
-            const isDomainRoute =
-              pathname === domainPath || pathname.startsWith(`${domainPath}/`);
-            const activeTab = getActiveTab();
-            const isDomainRoot = pathname === domainPath;
-            const isEntitiesActive = isDomainRoute && !activeTab;
-            const typesCount =
-              domain.sharedEnumCount +
-              domain.customScalarCount +
-              domain.unionTypeCount;
-            const isEntitiesExpanded = expandedCategories.has(
-              `${domain.id}:entities`
-            );
-            // Entities live under a product (Domain › Product › Entity). The
-            // flat "Entities" group routes to that product's workspace; use the
-            // listed entities' product, falling back to the default product.
-            const entitiesProductSlug =
-              domain.entities[0]?.productSlug ?? "default";
-            const productPath = `${domainPath}/${entitiesProductSlug}`;
-
-            return (
-              <div key={domain.id} className="mb-1">
-                <div
-                  data-active={isDomainRoot ? "true" : "false"}
-                  className={cn(
-                    "group flex items-center gap-space-1 px-space-2 py-1 rounded-md cursor-pointer transition-colors",
-                    isDomainRoot && "bg-accent text-foreground font-medium",
-                    !isDomainRoot &&
-                      isDomainRoute &&
-                      "text-foreground",
-                    !isDomainRoute &&
-                      "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                  )}
-                  onClick={() => {
-                    toggleDomain(domain.id);
-                    router.push(domainPath);
-                  }}
-                >
-                  {isDomainExpanded ? (
-                    <ChevronDown className="w-3 h-3 shrink-0" />
-                  ) : (
-                    <ChevronRight className="w-3 h-3 shrink-0" />
-                  )}
-                  {isDomainExpanded ? (
-                    <FolderOpen className="w-4 h-4 shrink-0 text-primary" />
-                  ) : (
-                    <Folder className="w-4 h-4 shrink-0" />
-                  )}
-                  <span className="text-body-small truncate flex-1">
-                    {domain.name}
-                  </span>
-                  <button
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      router.push(`${domainPath}/${entitiesProductSlug}/new`);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-accent rounded transition-opacity"
-                    title="New Entity"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                </div>
-
-                {isDomainExpanded && (
-                  <div className="ml-3 border-l border-border/50 pl-1 py-0.5">
-                    <SidebarCategory
-                      active={isEntitiesActive}
-                      count={domain.entities.length}
-                      expanded={isEntitiesExpanded}
-                      icon={<Database className="w-3 h-3 shrink-0" />}
-                      label="Entities"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleCategory(`${domain.id}:entities`);
-                        router.push(productPath);
-                      }}
-                    />
-
-                    {isEntitiesExpanded &&
-                      domain.entities.map((entity) => {
-                        const entityPath = `${domainPath}/${entity.productSlug}/${entity.slug}`;
-                        const isEntityActive = pathname === entityPath;
-
-                        return (
-                          <div
-                            key={entity.id}
-                            data-active={isEntityActive ? "true" : "false"}
-                            className={cn(
-                              "flex items-center gap-1.5 px-space-2 py-0.5 rounded-md cursor-pointer transition-colors ml-4",
-                              isEntityActive
-                                ? "bg-accent text-foreground font-medium"
-                                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                            )}
-                            onClick={() => router.push(entityPath)}
-                          >
-                            <span
-                              className={cn(
-                                "w-1.5 h-1.5 rounded-full shrink-0",
-                                getStatusColor(entity.status)
-                              )}
-                            />
-                            <span
-                              className={cn(
-                                "text-[11px] truncate",
-                                entity.status === "RETIRED" && "line-through"
-                              )}
-                            >
-                              {entity.name}
-                            </span>
-                          </div>
-                        );
-                      })}
-
-                    <SidebarLeafCategory
-                      active={isDomainRoute && activeTab === "types"}
-                      count={typesCount}
-                      icon={<Hash className="w-3 h-3 shrink-0" />}
-                      label="Types"
-                      onClick={() => router.push(`${domainPath}?tab=types`)}
-                    />
-
-                    <SidebarLeafCategory
-                      active={isDomainRoute && activeTab === "apis"}
-                      count={domain.serviceCount}
-                      icon={<Globe className="w-3 h-3 shrink-0" />}
-                      label="APIs"
-                      onClick={() => router.push(`${domainPath}?tab=apis`)}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })
+          <>
+            {renderEnterprise()}
+            {filteredDomains.length === 0 ? (
+              <SidebarEmptyState hasSearch={Boolean(query)} />
+            ) : (
+              filteredDomains.map(renderDomain)
+            )}
+          </>
         )}
       </div>
 
       <ResizeHandle onMouseDown={onMouseDown} onDoubleClick={onDoubleClick} />
     </div>
-  );
-}
-
-function getActiveTab() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return new URLSearchParams(window.location.search).get("tab");
-}
-
-function getStatusColor(status: string) {
-  switch (status) {
-    case "ACTIVE":
-      return "bg-success";
-    case "DRAFT":
-      return "bg-warning";
-    case "DEPRECATED":
-      return "bg-[#e88a3b]";
-    case "RETIRED":
-      return "bg-muted-foreground";
-    default:
-      return "bg-muted-foreground";
-  }
-}
-
-function SidebarCategory({
-  active,
-  count,
-  expanded,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  count: number;
-  expanded: boolean;
-  icon: React.ReactNode;
-  label: string;
-  onClick: (event: React.MouseEvent<HTMLDivElement>) => void;
-}) {
-  return (
-    <div
-      data-active={active ? "true" : "false"}
-      className={cn(
-        "flex items-center gap-1.5 px-space-2 py-0.5 rounded-md cursor-pointer transition-colors",
-        active
-          ? "text-primary font-medium bg-primary/5"
-          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-      )}
-      onClick={onClick}
-    >
-      {expanded ? (
-        <ChevronDown className="w-2.5 h-2.5 shrink-0" />
-      ) : (
-        <ChevronRight className="w-2.5 h-2.5 shrink-0" />
-      )}
-      {icon}
-      <span className="text-[11px] truncate flex-1">{label}</span>
-      <CountBadge count={count} />
-    </div>
-  );
-}
-
-function SidebarLeafCategory({
-  active,
-  count,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  count: number;
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      data-active={active ? "true" : "false"}
-      className={cn(
-        "flex items-center gap-1.5 px-space-2 py-0.5 rounded-md cursor-pointer transition-colors",
-        active
-          ? "text-primary font-medium bg-primary/5"
-          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-      )}
-      onClick={onClick}
-    >
-      <span className="ml-[14px]">{icon}</span>
-      <span className="text-[11px] truncate flex-1">{label}</span>
-      {count > 0 && <CountBadge count={count} />}
-    </div>
-  );
-}
-
-function CountBadge({ count }: { count: number }) {
-  return (
-    <span className="rounded-full bg-muted px-1.5 py-px text-[10px] leading-none text-muted-foreground">
-      {count}
-    </span>
   );
 }
 

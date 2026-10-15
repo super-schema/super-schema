@@ -48,10 +48,11 @@ export function NotificationCenter() {
   const handleNotificationClick = async (
     notification: NotificationItemData
   ) => {
+    const url = getNavigationUrl(notification);
+    if (!url) return;
     if (!notification.read) {
       await markAsRead(notification.id);
     }
-    const url = getNavigationUrl(notification);
     setOpen(false);
     router.push(url);
   };
@@ -135,7 +136,10 @@ export function NotificationCenter() {
                     <NotificationItem
                       key={notification.id}
                       notification={notification}
-                      onClick={handleNotificationClick}
+                      // Only a notification that resolves to a real URL is clickable.
+                      onClick={
+                        getNavigationUrl(notification) ? handleNotificationClick : undefined
+                      }
                     />
                   ))}
                 </div>

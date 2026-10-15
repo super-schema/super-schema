@@ -20,27 +20,51 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   getRecentEntityEntries,
+  hasStoredEntityLocation,
   trackRecentEntity,
   type RecentEntityEntry,
 } from "@/lib/recent-entities";
+import { assetHref } from "@/lib/navigation/asset-href";
+import type { ExplorerTree } from "@/lib/navigation/build-explorer-tree";
 import type {
   CommandPaletteProps,
   CommandPaletteEntity,
   CommandPaletteField,
 } from "./CommandPalette.types";
 
-interface DomainTreeNode {
-  id: string;
-  name: string;
-  slug: string;
-  isSystem: boolean;
-  entities: {
-    id: string;
-    name: string;
-    slug: string;
-    status: string;
-    productSlug: string;
-  }[];
+const ENTERPRISE_LABEL = "Enterprise";
+
+/**
+ * Flatten the explorer tree into palette entries: tenant-level (enterprise)
+ * entities first, then every product's entities. Tenant-level entities carry
+ * `domainSlug`/`productSlug` of null so `assetHref` resolves their canonical URL.
+ */
+function flattenExplorerEntities(tree: ExplorerTree): CommandPaletteEntity[] {
+  const list: CommandPaletteEntity[] = tree.enterprise.entities.map((entity) => ({
+    id: entity.id,
+    name: entity.name,
+    slug: entity.slug,
+    domainName: ENTERPRISE_LABEL,
+    domainSlug: null,
+    productSlug: null,
+    status: entity.status,
+  }));
+  for (const domain of tree.domains) {
+    for (const product of domain.products) {
+      for (const entity of product.entities) {
+        list.push({
+          id: entity.id,
+          name: entity.name,
+          slug: entity.slug,
+          domainName: domain.name,
+          domainSlug: domain.slug,
+          productSlug: product.slug,
+          status: entity.status,
+        });
+      }
+    }
+  }
+  return list;
 }
 
 export function CommandPalette({
@@ -68,23 +92,8 @@ export function CommandPalette({
       try {
         const res = await fetch("/api/domains-tree");
         if (!res.ok) return;
-        const domains: DomainTreeNode[] = await res.json();
-
-        const entityList: CommandPaletteEntity[] = [];
-        domains.forEach((domain) => {
-          domain.entities.forEach((entity) => {
-            entityList.push({
-              id: entity.id,
-              name: entity.name,
-              slug: entity.slug,
-              domainName: domain.name,
-              domainSlug: domain.slug,
-              productSlug: entity.productSlug,
-              status: entity.status,
-            });
-          });
-        });
-        setEntities(entityList);
+        const tree: ExplorerTree = await res.json();
+        setEntities(flattenExplorerEntities(tree));
 
         // Fetch fields for command palette
         try {
@@ -126,11 +135,16 @@ export function CommandPalette({
         domainSlug: entity.domainSlug,
         entityName: entity.name,
         domainName: entity.domainName,
+        slug: entity.slug,
+        productSlug: entity.productSlug ?? null,
       });
       router.push(
-        entity.productSlug
-          ? `/schemas/${entity.domainSlug}/${entity.productSlug}/${entity.slug || entity.id}`
-          : `/schemas/${entity.domainSlug}/${entity.slug || entity.id}`
+        assetHref({
+          kind: "entity",
+          slug: entity.slug || entity.id,
+          domainSlug: entity.domainSlug,
+          productSlug: entity.productSlug ?? null,
+        })
       );
       onClose();
     },
@@ -140,30 +154,39 @@ export function CommandPalette({
   const navigateToField = useCallback(
     (field: CommandPaletteField) => {
       router.push(
-        field.productSlug
-          ? `/schemas/${field.domainSlug}/${field.productSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
-          : `/schemas/${field.domainSlug}/${field.entitySlug || field.entityId}/fields/${field.slug || field.id}`
+        assetHref({
+          kind: "field",
+          entitySlug: field.entitySlug || field.entityId,
+          fieldId: field.slug || field.id,
+          domainSlug: field.domainSlug,
+          productSlug: field.productSlug,
+        })
       );
       onClose();
     },
     [router, onClose]
   );
 
-  // Build recent entities from entries + fetched entities
+  // Build recent entities from entries + fetched entities. The fetched list
+  // wins (it has the current slugs); otherwise an entry navigates from the
+  // slugs stored with it. A legacy entry without stored slugs is hidden until
+  // the list resolves it — its URL is never guessed from the id.
   const recentEntities = useMemo(() => {
-    return recentEntries
-      .map((entry) => {
-        const found = entities.find((e) => e.id === entry.entityId);
-        if (found) return found;
-        // Use stored data as fallback
-        return {
+    return recentEntries.flatMap((entry): CommandPaletteEntity[] => {
+      const found = entities.find((e) => e.id === entry.entityId);
+      if (found) return [found];
+      if (!entry.entityName || !hasStoredEntityLocation(entry)) return [];
+      return [
+        {
           id: entry.entityId,
           name: entry.entityName,
+          slug: entry.slug,
           domainName: entry.domainName,
           domainSlug: entry.domainSlug,
-        };
-      })
-      .filter((e) => e.name); // filter out entries with no name
+          productSlug: entry.productSlug,
+        },
+      ];
+    });
   }, [recentEntries, entities]);
 
   // Default actions

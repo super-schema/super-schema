@@ -8,9 +8,17 @@ const MAX_RECENT = 5;
 
 export interface RecentEntityEntry {
   entityId: string;
-  domainSlug: string;
+  /** null for tenant-level (enterprise) entities. */
+  domainSlug: string | null;
   entityName: string;
   domainName: string;
+  /**
+   * Entity slug, needed to rebuild the canonical URL. Absent on legacy
+   * entries stored before slugs were persisted.
+   */
+  slug?: string;
+  /** null for tenant-level entities; absent on legacy entries. */
+  productSlug?: string | null;
 }
 
 const ENTRIES_KEY = "super-schema:recent-entity-entries";
@@ -31,6 +39,18 @@ export function getRecentEntityEntries(): RecentEntityEntry[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * A recent entry can be navigated from its stored data only when it carries
+ * the slug the canonical URL is built from. Legacy entries (id + names only)
+ * must be resolved against the fetched entity list instead — a URL is never
+ * fabricated from the id.
+ */
+export function hasStoredEntityLocation(
+  entry: RecentEntityEntry
+): entry is RecentEntityEntry & { slug: string; productSlug: string | null } {
+  return Boolean(entry.slug) && entry.productSlug !== undefined;
 }
 
 export function trackRecentEntity(entry: RecentEntityEntry): void {

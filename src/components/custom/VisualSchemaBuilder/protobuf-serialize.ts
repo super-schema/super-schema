@@ -1,16 +1,13 @@
 /**
  * Pure serialization for the visual Protobuf builder (.proto text).
  *
- * Mirrors serialize.ts's pattern. Type vocabulary matches protobuf.importer.ts's
- * PROTO_TYPE_MAP exactly, and the generated field-line text shape matches
- * parseProtoField's regex (`[optional|repeated] type name = number; // doc`)
- * so a schema built here parses back cleanly through the real importer.
+ * Mirrors serialize.ts's pattern. Type vocabulary is a subset of what
+ * protobuf.importer.ts (protobufjs) maps, and trailing `// doc` comments are
+ * read back as field descriptions, so a schema built here parses back cleanly
+ * through the real importer.
  *
- * oneof groups are emitted as real nested `oneof NAME { ... }` blocks — the
- * importer's line-by-line field regex matches fields inside them fine (it
- * doesn't track brace nesting, it just skips the `oneof NAME {`/`}` lines),
- * it just doesn't preserve the grouping on import (same category of accepted
- * loss as "nested records are low-confidence").
+ * oneof groups are emitted as real nested `oneof NAME { ... }` blocks; the
+ * importer records the grouping as `governance.protobufOneofGroup`.
  */
 
 export type ProtoFieldType =

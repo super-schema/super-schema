@@ -3,12 +3,14 @@
 import type React from "react";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ChevronRight, Check } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ChevronRight, Check, Upload } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { DeprecationBanner } from "@/components/custom/DeprecationBanner";
+import { DeprecationBanner, type ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import { RetirementBanner } from "@/components/custom/RetirementBanner";
+import { assetHref } from "@/lib/navigation/asset-href";
+import { levelLabel } from "@/lib/levels";
+import { describeDraftState, type DraftVersionState } from "@/lib/entity-versioning/draft-label";
 
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 
@@ -24,6 +26,8 @@ function getStatusOption(status: string) {
 }
 
 interface EntityHeaderProps {
+  /** TENANT entities get an "Enterprise › <Entity>" breadcrumb. */
+  level: "TENANT" | "PRODUCT";
   entity: {
     id: string;
     name: string;
@@ -31,9 +35,11 @@ interface EntityHeaderProps {
     status: string;
     version: number;
     domainName: string;
-    domainSlug: string;
-    productSlug: string;
-    productName: string;
+    /** null for tenant-level entities. */
+    domainSlug: string | null;
+    /** null for tenant-level entities. */
+    productSlug: string | null;
+    productName: string | null;
     metadata: Record<string, unknown> | null;
   };
   onStatusChange: (newStatus: EntityStatus, metadata?: Record<string, unknown>) => void;
@@ -42,9 +48,16 @@ interface EntityHeaderProps {
   statusError: string | null;
   toolbar?: React.ReactNode;
   showSaved?: boolean;
+  /** Draft + Publish state (spec §5.3). */
+  versionState: DraftVersionState;
+  /** Opens the publish dialog; omit for read-only entities. */
+  onPublish?: () => void;
+  /** The deprecation replacement, resolved server-side (null = named but not found). */
+  replacementEntity?: ReplacementEntityLink | null;
 }
 
 export function EntityHeader({
+  level,
   entity,
   onStatusChange,
   readOnly,
@@ -52,6 +65,9 @@ export function EntityHeader({
   statusError,
   toolbar,
   showSaved = false,
+  versionState,
+  onPublish,
+  replacementEntity,
 }: EntityHeaderProps) {
   const currentStatus = getStatusOption(entity.status);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -112,24 +128,43 @@ export function EntityHeader({
   return (
     <>
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
-        <Link href="/schemas" className="hover:text-foreground transition-colors">
-          Domains
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <Link
-          href={`/schemas/${entity.domainSlug}`}
-          className="hover:text-foreground transition-colors"
-        >
-          {entity.domainName}
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <Link
-          href={`/schemas/${entity.domainSlug}/${entity.productSlug}`}
-          className="hover:text-foreground transition-colors"
-        >
-          {entity.productName}
-        </Link>
+      <nav aria-label="Breadcrumb" className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
+        {level === "TENANT" || !entity.domainSlug ? (
+          <Link
+            href={assetHref({ kind: "enterprise" })}
+            className="hover:text-foreground transition-colors"
+          >
+            {levelLabel("TENANT")}
+          </Link>
+        ) : (
+          <>
+            <Link href="/schemas" className="hover:text-foreground transition-colors">
+              Domains
+            </Link>
+            <ChevronRight className="w-3 h-3" />
+            <Link
+              href={assetHref({ kind: "domain", domainSlug: entity.domainSlug })}
+              className="hover:text-foreground transition-colors"
+            >
+              {entity.domainName}
+            </Link>
+            {entity.productSlug && entity.productName !== null && (
+              <>
+                <ChevronRight className="w-3 h-3" />
+                <Link
+                  href={assetHref({
+                    kind: "product",
+                    domainSlug: entity.domainSlug,
+                    productSlug: entity.productSlug,
+                  })}
+                  className="hover:text-foreground transition-colors"
+                >
+                  {entity.productName}
+                </Link>
+              </>
+            )}
+          </>
+        )}
         <ChevronRight className="w-3 h-3" />
         <span className="text-foreground font-medium font-mono">{entity.name}</span>
       </nav>
@@ -174,13 +209,16 @@ export function EntityHeader({
           )}
         </div>
 
-        <Badge variant="secondary">v{(() => {
-          const meta = (entity.metadata ?? {}) as Record<string, unknown>;
-          const sv = meta.semanticVersion as { major?: number; minor?: number } | undefined;
-          const major = sv?.major ?? entity.version;
-          const minor = sv?.minor ?? 0;
-          return `${major}.${minor}`;
-        })()}</Badge>
+        <span
+          data-testid="entity-version-state"
+          className={`rounded-md border px-2 py-0.5 text-caption ${
+            versionState.hasUnpublishedChanges && versionState.latestVersionLabel
+              ? "border-warning/50 text-warning"
+              : "border-border text-muted-foreground"
+          }`}
+        >
+          {describeDraftState(versionState)}
+        </span>
 
         {/* Saved flash indicator */}
         {showSaved && (
@@ -190,7 +228,15 @@ export function EntityHeader({
         )}
         </div>
 
-        {toolbar}
+        <div className="flex items-center gap-space-2">
+          {onPublish && (
+            <Button size="sm" onClick={onPublish} className="gap-1.5" data-testid="publish-entity-button">
+              <Upload className="w-3.5 h-3.5" />
+              Publish
+            </Button>
+          )}
+          {toolbar}
+        </div>
       </div>
 
       {/* Status transition error */}
@@ -255,7 +301,7 @@ export function EntityHeader({
 
       {/* Banners */}
       {entity.status === "DEPRECATED" && (
-        <DeprecationBanner metadata={entity.metadata} domainSlug={entity.domainSlug} />
+        <DeprecationBanner metadata={entity.metadata} replacementEntity={replacementEntity} />
       )}
       {entity.status === "RETIRED" && (
         <RetirementBanner metadata={entity.metadata} />

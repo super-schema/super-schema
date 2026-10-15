@@ -207,6 +207,8 @@ export interface ComplexTypeInfo {
   // Map
   mapKeyType?: string;
   mapValueType?: string;
+  // Enum symbols of an array element / map value of type "enum"
+  enumValues?: string[];
   // Object/nested
   nestedFields?: NestedFieldInfo[];
   // Reference
@@ -372,7 +374,8 @@ export interface SuperSchemaModel {
     id: string;
     name: string;
     domain: string;
-    domainId: string;
+    /** null for tenant-level entities (no domain placement). */
+    domainId: string | null;
     description: string;
     status: string;
     version: number;

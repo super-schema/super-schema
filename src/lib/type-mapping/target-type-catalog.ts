@@ -186,6 +186,8 @@ const PROTOBUF_OPTIONS: TargetTypeOption[] = [
   { value: "map<string, int64>", label: "map<string, int64>", description: "String-keyed map of integers.", group: "Collections" },
   { value: "google.protobuf.Timestamp", label: "google.protobuf.Timestamp", description: "Well-known timestamp type.", group: "Well-known types" },
   { value: "google.protobuf.Duration", label: "google.protobuf.Duration", description: "Well-known duration type.", group: "Well-known types" },
+  { value: "google.type.Date", label: "google.type.Date", description: "Calendar date without time zone (googleapis common type).", group: "Well-known types" },
+  { value: "google.type.TimeOfDay", label: "google.type.TimeOfDay", description: "Time of day without date or time zone (googleapis common type).", group: "Well-known types" },
   { value: "google.protobuf.Struct", label: "google.protobuf.Struct", description: "Well-known structured value type.", group: "Well-known types" },
   { value: "google.protobuf.Any", label: "google.protobuf.Any", description: "Arbitrary typed payload.", group: "Well-known types" },
   { value: "google.protobuf.StringValue", label: "google.protobuf.StringValue", description: "Optional string wrapper.", group: "Well-known types" },

@@ -7,6 +7,7 @@ import {
   getRecentEntityEntries,
   trackRecentEntity,
   clearRecentEntities,
+  hasStoredEntityLocation,
 } from "@/lib/recent-entities";
 
 function installLocalStorage() {
@@ -151,5 +152,43 @@ describe("Recent Entity Tracking", () => {
       entityName: "Transaction",
       domainName: "Finance",
     });
+  });
+
+  it("round-trips slug and productSlug for product-level and tenant-level entities", () => {
+    trackRecentEntity({
+      entityId: "e1",
+      domainSlug: "payments",
+      entityName: "Order",
+      domainName: "Payments",
+      slug: "order",
+      productSlug: "checkout",
+    });
+    trackRecentEntity({
+      entityId: "e0",
+      domainSlug: null,
+      entityName: "Customer",
+      domainName: "Enterprise",
+      slug: "customer",
+      productSlug: null,
+    });
+
+    const [tenant, product] = getRecentEntityEntries();
+    expect(product).toMatchObject({ slug: "order", productSlug: "checkout", domainSlug: "payments" });
+    expect(tenant).toMatchObject({ slug: "customer", productSlug: null, domainSlug: null });
+    expect(hasStoredEntityLocation(product)).toBe(true);
+    expect(hasStoredEntityLocation(tenant)).toBe(true);
+  });
+
+  it("does not treat a legacy entry without a stored slug as navigable", () => {
+    localStorage.setItem(
+      "super-schema:recent-entity-entries",
+      JSON.stringify([
+        { entityId: "e1", domainSlug: "payments", entityName: "Order", domainName: "Payments" },
+      ])
+    );
+
+    const [legacy] = getRecentEntityEntries();
+    expect(legacy.slug).toBeUndefined();
+    expect(hasStoredEntityLocation(legacy)).toBe(false);
   });
 });

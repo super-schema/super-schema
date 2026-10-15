@@ -1,17 +1,18 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef, useSyncExternalStore } from "react";
+import { useState, useMemo, useEffect, useCallback, useSyncExternalStore, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronRight,
-  ChevronDown,
   Plus,
   LayoutGrid,
   List,
   Database,
   Hash,
   Globe,
+  Radio,
+  Puzzle,
   Trash2,
   Tag,
   FileText,
@@ -38,95 +39,44 @@ import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
 import { deleteDomainAction } from "../actions";
-import { useModKey } from "@/lib/platform";
-import { DomainTypesTab, type DomainTypeCreateIntent, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
-import type { DomainModelData } from "./components/DomainModelsTab";
-import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
+import { CreateDropdown } from "./components/CreateDropdown";
+import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
+import { DomainApisTab, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
+import { EventsTab } from "@/features/events/workspace/EventsTab";
+import { TraitsTab } from "@/features/events/workspace/TraitsTab";
+import {
+  EMPTY_EVENTS_TAB,
+  EMPTY_TRAITS_TAB,
+  type EventsCreateIntent,
+  type EventsTabData,
+  type TraitsTabData,
+} from "@/features/events/workspace/types";
+import { assetHref, normalizeEventsSection, type EventsSection } from "@/lib/navigation/asset-href";
 import { formatDateOnly } from "@/lib/date-format";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
-import type { DecoratorDefinitionData } from "./components/DomainDecoratorsTab";
 import type { DomainDeletionImpact } from "@/types/domain-deletion";
 
-type DomainTab = "entities" | "types" | "apis";
+export type DomainTab = "entities" | "data-types" | "apis" | "events" | "traits";
 
-// ---------------------------------------------------------------------------
-// Create dropdown — New Entity + New Model / Enum / Scalar / Union / API
-// ---------------------------------------------------------------------------
-
-function CreateDropdown({
-  onNewEntity,
-  onNewEnum,
-  onNewScalar,
-  onNewUnion,
-  onNewApi,
-}: {
-  onNewEntity: () => void;
-  onNewEnum: () => void;
-  onNewScalar: () => void;
-  onNewUnion: () => void;
-  onNewApi: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const mod = useModKey();
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
-
-  const items = [
-    { label: "New Entity", icon: Database, action: onNewEntity, description: "Schema entity with fields" },
-    { label: "New Enum", icon: Hash, action: onNewEnum, description: "Shared enum type" },
-    { label: "New Scalar", icon: Hash, action: onNewScalar, description: "Custom scalar type" },
-    { label: "New Union", icon: Hash, action: onNewUnion, description: "Union type (A | B)" },
-    { label: "New API", icon: Globe, action: onNewApi, description: "API service definition" },
-  ];
-
-  return (
-    <div className="relative" ref={ref}>
-      <div className="flex">
-        <Button onClick={onNewEntity} className="gap-2 rounded-r-none" title={`New Entity (${mod}+N)`}>
-          <Plus className="w-4 h-4" />
-          New Entity
-        </Button>
-        <Button
-          onClick={() => setOpen(!open)}
-          className="px-1.5 rounded-l-none border-l border-primary-foreground/20"
-          title="More options"
-        >
-          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
-        </Button>
-      </div>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[220px]">
-          {items.map((item) => (
-            <button
-              key={item.label}
-              onClick={() => { item.action(); setOpen(false); }}
-              className="flex items-start gap-2 w-full text-left px-3 py-2 hover:bg-accent transition-colors"
-            >
-              <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div>
-                <div className="text-body-small text-foreground">{item.label}</div>
-                <div className="text-[10px] text-muted-foreground">{item.description}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+/**
+ * Normalize the `?tab=` query value to a workspace tab. The legacy `types`
+ * value is aliased to `data-types`; anything unknown falls back to `entities`.
+ */
+export function normalizeWorkspaceTab(raw: string | null): DomainTab {
+  if (raw === "types") return "data-types";
+  if (raw === "data-types" || raw === "apis" || raw === "entities" || raw === "events" || raw === "traits") return raw;
+  return "entities";
 }
+
+const tabDomId = (id: DomainTab) => `product-tab-${id}`;
+const PANEL_DOM_ID = "product-tabpanel";
 
 const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: string; id: DomainTab }[] = [
   { icon: Database, label: "Entities", id: "entities" },
-  { icon: Hash, label: "Types", id: "types" },
+  { icon: Hash, label: "Data Types", id: "data-types" },
   { icon: Globe, label: "APIs", id: "apis" },
+  { icon: Radio, label: "Events", id: "events" },
+  { icon: Puzzle, label: "Traits", id: "traits" },
 ];
 
 interface EntityData {
@@ -150,16 +100,28 @@ interface DomainWorkspaceProps {
   productName: string;
   domainDescription: string;
   isSystemDomain?: boolean;
+  /**
+   * Domain deletion is only offered when this is true AND `deletionImpact` is
+   * provided; callers that disable deletion can skip computing the impact.
+   */
   canDeleteDomain?: boolean;
-  deletionImpact: DomainDeletionImpact;
+  deletionImpact?: DomainDeletionImpact;
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
-  models: DomainModelData[];
+  /** Product-level data types (managed here). */
   sharedEnums: SharedEnumData[];
   customScalars: CustomScalarData[];
   unionTypes: UnionTypeData[];
-  decoratorDefinitions: DecoratorDefinitionData[];
+  /** Product-level API services (managed here). */
   services: ServiceData[];
+  /** Data types owned by the domain / Enterprise, shown read-only. */
+  inheritedDataTypes?: InheritedDataTypes[];
+  /** Services owned by the domain, shown read-only. */
+  inheritedServices?: InheritedServices[];
+  /** Product-level Event Specs / Messages / Channels (spec §4.5). */
+  events?: EventsTabData;
+  /** Product traits + read-only domain / Enterprise traits. */
+  traits?: TraitsTabData;
 }
 
 interface InlineField {
@@ -228,16 +190,68 @@ export function DomainWorkspace({
   customScalars,
   unionTypes,
   services,
+  inheritedDataTypes,
+  inheritedServices,
+  events,
+  traits,
 }: DomainWorkspaceProps) {
   const router = useRouter();
   const invalidateDomainsTree = useInvalidateDomainsTree();
   const searchParams = useSearchParams();
-  const initialTab = (searchParams.get("tab") as DomainTab) || "entities";
-  const [activeTab, setActiveTab] = useState<DomainTab>(
-    ["entities", "types", "apis"].includes(initialTab)
-      ? initialTab
-      : "entities"
+  const tabParam = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState<DomainTab>(normalizeWorkspaceTab(tabParam));
+
+  // Follow external URL changes (sidebar leaf links, back/forward).
+  useEffect(() => {
+    setActiveTab(normalizeWorkspaceTab(tabParam));
+  }, [tabParam]);
+
+  // The Events tab's section lives in `?section=` (a missing or unknown value means Event Specs).
+  const sectionParam = searchParams.get("section");
+  const [eventsSection, setEventsSection] = useState<EventsSection>(normalizeEventsSection(sectionParam));
+  useEffect(() => {
+    setEventsSection(normalizeEventsSection(sectionParam));
+  }, [sectionParam]);
+  const [eventsCreateIntent, setEventsCreateIntent] = useState<EventsCreateIntent | null>(null);
+  const [traitCreateIntent, setTraitCreateIntent] = useState<"trait" | null>(null);
+  const consumeEventsIntent = useCallback(() => setEventsCreateIntent(null), []);
+  const consumeTraitIntent = useCallback(() => setTraitCreateIntent(null), []);
+  const selectEventsSection = useCallback(
+    (section: EventsSection) => {
+      setEventsSection(section);
+      window.history.replaceState(null, "", assetHref({ kind: "events", domainSlug, productSlug, section }));
+    },
+    [domainSlug, productSlug]
   );
+
+  function tabHref(tab: DomainTab) {
+    if (tab === "data-types") return assetHref({ kind: "dataTypes", domainSlug, productSlug });
+    if (tab === "apis") return assetHref({ kind: "apis", domainSlug, productSlug });
+    if (tab === "events") return assetHref({ kind: "events", domainSlug, productSlug, section: eventsSection });
+    if (tab === "traits") return assetHref({ kind: "traits", domainSlug, productSlug });
+    return assetHref({ kind: "product", domainSlug, productSlug });
+  }
+
+  // Every tab switch writes the URL so the address bar and visible tab agree.
+  // History API, not `router.replace`: Next syncs `useSearchParams` with it and
+  // no server re-render is needed to switch a client tab.
+  function selectTab(tab: DomainTab) {
+    setActiveTab(tab);
+    window.history.replaceState(null, "", tabHref(tab));
+  }
+
+  // Roving tabindex: arrows / Home / End move between tabs (same keys as the Events section tabs).
+  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let next: number;
+    if (event.key === "ArrowRight") next = (index + 1) % domainTabs.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + domainTabs.length) % domainTabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = domainTabs.length - 1;
+    else return;
+    event.preventDefault();
+    selectTab(domainTabs[next].id);
+    document.getElementById(tabDomId(domainTabs[next].id))?.focus();
+  }
   const viewMode = useSyncExternalStore(
     subscribeToViewMode,
     getViewModeSnapshot,
@@ -245,15 +259,18 @@ export function DomainWorkspace({
   );
   const [showCreate, setShowCreate] = useState(false);
 
+  const newEntityHref = assetHref({ kind: "newEntity", domainSlug, productSlug });
+  const productTarget = { level: "PRODUCT", productId } as const;
+
   // Listen for Cmd+N global shortcut to navigate to wizard
   useEffect(() => {
     function handleNewEntity() {
-      router.push(`/schemas/${domainSlug}/${productSlug}/new`);
+      router.push(newEntityHref);
     }
     document.addEventListener("super-schema:new-entity", handleNewEntity);
     return () =>
       document.removeEventListener("super-schema:new-entity", handleNewEntity);
-  }, [router, domainSlug]);
+  }, [router, newEntityHref]);
 
   const [typeCreateIntent, setTypeCreateIntent] = useState<DomainTypeCreateIntent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
@@ -454,20 +471,24 @@ export function DomainWorkspace({
     }
   }
 
+  const deletionEnabled = canDeleteDomain && !isSystemDomain && deletionImpact !== undefined;
+
   return (
     <div className="animate-auth-fade-up">
-      <DomainDeletionDialog
-        open={domainDeleteOpen}
-        domainName={domainName}
-        impact={deletionImpact}
-        isDeleting={isDeletingDomain}
-        error={domainDeleteError}
-        onOpenChange={(open) => {
-          setDomainDeleteOpen(open);
-          if (!open) setDomainDeleteError(null);
-        }}
-        onConfirm={handleDeleteDomain}
-      />
+      {deletionEnabled && (
+        <DomainDeletionDialog
+          open={domainDeleteOpen}
+          domainName={domainName}
+          impact={deletionImpact}
+          isDeleting={isDeletingDomain}
+          error={domainDeleteError}
+          onOpenChange={(open) => {
+            setDomainDeleteOpen(open);
+            if (!open) setDomainDeleteError(null);
+          }}
+          onConfirm={handleDeleteDomain}
+        />
+      )}
 
       {/* Entity delete confirmation dialog */}
       <Dialog
@@ -508,13 +529,13 @@ export function DomainWorkspace({
       </Dialog>
 
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
         <Link href="/schemas" className="hover:text-foreground transition-colors">
           Domains
         </Link>
         <ChevronRight className="w-3 h-3" />
         <Link
-          href={`/schemas/${domainSlug}`}
+          href={assetHref({ kind: "domain", domainSlug })}
           className="hover:text-foreground transition-colors"
         >
           {domainName}
@@ -550,13 +571,15 @@ export function DomainWorkspace({
             </button>
           </div>
           <CreateDropdown
-            onNewEntity={() => router.push(`/schemas/${domainSlug}/${productSlug}/new`)}
-            onNewEnum={() => { setActiveTab("types"); setTypeCreateIntent("enum"); }}
-            onNewScalar={() => { setActiveTab("types"); setTypeCreateIntent("scalar"); }}
-            onNewUnion={() => { setActiveTab("types"); setTypeCreateIntent("union"); }}
-            onNewApi={() => setActiveTab("apis")}
+            onNewEntity={() => router.push(newEntityHref)}
+            onNewCustomDataType={() => { selectTab("data-types"); setTypeCreateIntent("choose"); }}
+            onNewApi={() => selectTab("apis")}
+            onNewEventSpec={() => { selectTab("events"); setEventsCreateIntent("eventSpec"); }}
+            onNewMessage={() => { selectTab("events"); setEventsCreateIntent("message"); }}
+            onNewChannel={() => { selectTab("events"); setEventsCreateIntent("channel"); }}
+            onNewTrait={() => { selectTab("traits"); setTraitCreateIntent("trait"); }}
           />
-          {canDeleteDomain && !isSystemDomain ? (
+          {deletionEnabled ? (
             <Button
               variant="outline"
               size="sm"
@@ -575,30 +598,40 @@ export function DomainWorkspace({
       </div>
 
       {/* Domain tabs */}
-      <div className="flex items-center gap-space-1 border-b border-border mb-space-6">
-        {domainTabs.map((tab) => (
+      <div role="tablist" aria-label={`${productName} sections`} className="flex items-center gap-space-1 border-b border-border mb-space-6">
+        {domainTabs.map((tab, index) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            id={tabDomId(tab.id)}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls={PANEL_DOM_ID}
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => selectTab(tab.id)}
+            onKeyDown={(e) => onTabKeyDown(e, index)}
             className={`flex items-center gap-space-2 px-space-4 py-space-2 text-body-small transition-colors border-b-2 ${
               activeTab === tab.id
                 ? "border-primary text-primary font-medium"
                 : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
             }`}
           >
-            <tab.icon className="w-4 h-4" />
+            <tab.icon className="w-4 h-4" aria-hidden="true" />
             {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Types tab */}
-      {activeTab === "types" && (
+      <div role="tabpanel" id={PANEL_DOM_ID} aria-labelledby={tabDomId(activeTab)}>
+      {/* Data Types tab */}
+      {activeTab === "data-types" && (
         <DomainTypesTab
           domainId={domainId}
+          target={productTarget}
           sharedEnums={sharedEnums}
           customScalars={customScalars}
           unionTypes={unionTypes}
+          inherited={inheritedDataTypes}
           createIntent={typeCreateIntent}
           onCreateIntentConsumed={() => setTypeCreateIntent(null)}
         />
@@ -608,8 +641,36 @@ export function DomainWorkspace({
       {activeTab === "apis" && (
         <DomainApisTab
           domainId={domainId}
+          target={productTarget}
           services={services}
           entities={entities.map((e) => ({ id: e.id, name: e.name }))}
+          inherited={inheritedServices}
+        />
+      )}
+
+      {/* Events tab */}
+      {activeTab === "events" && (
+        <EventsTab
+          productId={productId}
+          domainSlug={domainSlug}
+          productSlug={productSlug}
+          data={events ?? EMPTY_EVENTS_TAB}
+          section={eventsSection}
+          onSectionChange={selectEventsSection}
+          createIntent={eventsCreateIntent}
+          onCreateIntentConsumed={consumeEventsIntent}
+        />
+      )}
+
+      {/* Traits tab */}
+      {activeTab === "traits" && (
+        <TraitsTab
+          target={productTarget}
+          domainSlug={domainSlug}
+          productSlug={productSlug}
+          data={traits ?? EMPTY_TRAITS_TAB}
+          createIntent={traitCreateIntent}
+          onCreateIntentConsumed={consumeTraitIntent}
         />
       )}
 
@@ -890,7 +951,7 @@ export function DomainWorkspace({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-space-4 w-full max-w-2xl">
             {/* Standards Template */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new?template=standards`)}
+              onClick={() => router.push(assetHref({ kind: "newEntity", domainSlug, productSlug }, { query: { template: "standards" } }))}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <FileText className="w-8 h-8 text-primary mb-space-3 group-hover:scale-110 transition-transform" />
@@ -902,7 +963,7 @@ export function DomainWorkspace({
 
             {/* Describe with AI */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new?mode=ai`)}
+              onClick={() => router.push(assetHref({ kind: "newEntity", domainSlug, productSlug }, { query: { mode: "ai" } }))}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <Sparkles className="w-8 h-8 text-warning mb-space-3 group-hover:scale-110 transition-transform" />
@@ -914,7 +975,7 @@ export function DomainWorkspace({
 
             {/* Start Blank */}
             <button
-              onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/new`)}
+              onClick={() => router.push(newEntityHref)}
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <FilePlus2 className="w-8 h-8 text-muted-foreground mb-space-3 group-hover:text-foreground group-hover:scale-110 transition-all" />
@@ -970,7 +1031,7 @@ export function DomainWorkspace({
                 <tr
                   key={entity.id}
                   className="border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
-                  onClick={() => router.push(`/schemas/${domainSlug}/${productSlug}/${entity.slug}`)}
+                  onClick={() => router.push(assetHref({ kind: "entity", slug: entity.slug, domainSlug, productSlug }))}
                 >
                   <td className="px-space-4 py-space-3 font-mono text-body-small text-foreground">
                     {entity.name}
@@ -1012,6 +1073,7 @@ export function DomainWorkspace({
           </table>
         </div>
       ))}
+      </div>
 
     </div>
   );

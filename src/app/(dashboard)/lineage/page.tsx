@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import type { EntityMetadata } from "@/types/schemas/entity-metadata.schema";
 import { LineagePageClient } from "./lineage-client";
+import { domainLabel } from "@/lib/entity-placement";
 
 export default async function LineagePage() {
   const entities = await prisma.entity.findMany({
@@ -37,9 +38,10 @@ export default async function LineagePage() {
       name: e.name,
       slug: e.slug,
       description: (e as Record<string, unknown>).description as string ?? "",
-      domainName: e.domain.name,
-      domainSlug: e.domain.slug,
-      productSlug: e.product.slug,
+      domainName: domainLabel(e.domain),
+      // null for a tenant-level entity.
+      domainSlug: e.domain?.slug ?? null,
+      productSlug: e.product?.slug ?? null,
       status: e.status,
       fieldCount: e._count.fields,
       piiCount,

@@ -66,6 +66,35 @@ describe("official TypeSpec emitter service", () => {
     expect(result.output).toContain('"properties"');
   });
 
+  describe("an entity with model tags and classified fields (Story 16.6)", () => {
+    // The canonical source now carries valid governance decorators (Enterprise.dataClassification,
+    // x-classification, x-tags). Emission sources omit that overlay: no typespec-cli emitter reads it, and
+    // importing @superschema/typespec-enterprise would leak its enums into java-pojo / json-schema output.
+    const taggedEntity = makeEntity({ metadata: { tags: ["sales", "pii"] } });
+    const classifiedFields = [
+      makeField({ name: "id", type: "string", isKey: true, sortOrder: 0 }),
+      makeField({ name: "email", type: "string", nullable: true, sortOrder: 1, classification: "PII" }),
+      makeField({ name: "note", type: "string", nullable: true, sortOrder: 2, classification: "SENSITIVE" }),
+      makeField({ name: "code", type: "string", nullable: true, sortOrder: 3, classification: "TOP_SECRET" }),
+    ];
+    const LEAKED_ENTERPRISE_TYPES = ["DataClassification", "AnonymizationStrategy", "AvroLogicalType", "AvroFieldOrder"];
+
+    it.each(["openapi3", "json-schema", "avro", "java-pojo", "protobuf"])(
+      "%s emits VALID output with every field and no leaked Enterprise types",
+      async (target) => {
+        const result = await emitOfficialTypeSpecTargetFromData(taggedEntity, classifiedFields, target);
+
+        expect(result.errors).toEqual([]);
+        expect(result.validationStatus).toBe("VALID");
+        for (const name of ["email", "note", "code"]) expect(result.output).toContain(name);
+        for (const leaked of LEAKED_ENTERPRISE_TYPES) expect(result.output).not.toContain(leaked);
+        expect(result.output).not.toContain("x-tags");
+        expect(result.output).not.toContain("x-classification");
+      },
+      30_000
+    );
+  });
+
   it("emits OpenAPI output with the official openapi3 emitter", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(
       entity,
@@ -92,6 +121,21 @@ describe("official TypeSpec emitter service", () => {
     expect(result.output).toContain("string id = 1;");
     expect(result.output).toContain("string name = 2;");
   });
+
+  it("emits Protobuf for a tenant-level entity with no domain (namespace falls back to the keyword `unknown`)", async () => {
+    // Entity.domainId is optional (tenant-level entities, Story 13.5);
+    // compileEntity() then reports the domain as "unknown" — a reserved
+    // TypeSpec keyword that must be escaped when used as the namespace.
+    const result = await emitOfficialTypeSpecTargetFromData(
+      makeEntity({ domainId: null, domain: null }),
+      fields,
+      "protobuf"
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.validationStatus).toBe("VALID");
+    expect(result.output).toContain("message Customer");
+  }, 30_000);
 
   it("rejects multi-file code generators in the Schemas tab flow", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(

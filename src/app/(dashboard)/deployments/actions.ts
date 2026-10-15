@@ -11,6 +11,7 @@ import {
   type DeploymentOverviewRow,
 } from "@/services/deployment.service";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
+import { domainLabel } from "@/lib/entity-placement";
 
 async function resolveCtx(): Promise<
   { ok: true; ctx: ServiceContext } | { ok: false; error: string }
@@ -43,7 +44,7 @@ export async function getDeploymentOverviewAction() {
   const input = entitiesRes.data.map((e) => ({
     entityId: e.id,
     entityName: e.name,
-    domain: domainById.get(e.domainId)?.name ?? "—",
+    domain: e.domainId ? (domainById.get(e.domainId)?.name ?? "—") : domainLabel(null),
     currentVersion: e.version != null ? `v${e.version}` : null,
     targets: targets.map((t) => ({ id: `${e.id}:${t.key}`, format: t.targetFormat })),
   }));
@@ -52,16 +53,33 @@ export async function getDeploymentOverviewAction() {
   if (!overview.success) return { error: overview.error.message };
 
   // Enrich rows with slugs for entity links (service does not carry them).
+  const productIds = [...new Set(entitiesRes.data.flatMap((e) => (e.productId ? [e.productId] : [])))];
+  const productSlugById = new Map(
+    (productIds.length
+      ? await prisma.product.findMany({
+          where: { id: { in: productIds } },
+          select: { id: true, slug: true },
+        })
+      : []
+    ).map((p) => [p.id, p.slug])
+  );
   const slugById = new Map(
     entitiesRes.data.map((e) => [
       e.id,
-      { entitySlug: e.slug, domainSlug: domainById.get(e.domainId)?.slug },
+      {
+        entitySlug: e.slug,
+        // Tenant-level entities have no domain or product: null slugs make assetHref
+        // emit their /schemas/enterprise/entities/<slug> URL.
+        domainSlug: e.domainId ? domainById.get(e.domainId)?.slug : null,
+        productSlug: e.productId ? productSlugById.get(e.productId) : null,
+      },
     ])
   );
   const rows: DeploymentOverviewRow[] = overview.data.rows.map((r) => ({
     ...r,
     entitySlug: slugById.get(r.entityId)?.entitySlug,
     domainSlug: slugById.get(r.entityId)?.domainSlug,
+    productSlug: slugById.get(r.entityId)?.productSlug,
   }));
 
   return { success: true as const, data: { rows, targetFormats } };

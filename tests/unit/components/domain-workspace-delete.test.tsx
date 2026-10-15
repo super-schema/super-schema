@@ -27,6 +27,12 @@ vi.mock("@/app/(dashboard)/schemas/actions", () => ({
   deleteDomainAction: deleteDomainMock,
 }));
 
+// The Events / Traits tabs import server-action modules that pull in NextAuth.
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/channel-actions", () => ({ createChannelAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-actions", () => ({ createMessageAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions", () => ({ createEventSpecAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/schemas/trait-actions", () => ({ createTraitAction: vi.fn() }));
+
 vi.mock("@/components/custom/EntityCard", () => ({
   EntityCard: ({ name, onDelete }: { name: string; onDelete?: (id: string, name: string) => void }) => (
     <div data-testid={`entity-card-${name}`}>
@@ -116,6 +122,8 @@ const BASE_PROPS = {
   canDeleteDomain: true,
   deletionImpact: {
     entities: 0,
+    products: 0,
+    productLevelAssets: 0,
     modelDefinitions: 0,
     decoratorDefinitions: 0,
     sharedEnums: 0,
@@ -124,14 +132,16 @@ const BASE_PROPS = {
     services: 0,
     interfaces: 0,
     userRoles: 0,
+    channels: 0,
+    messages: 0,
+    traits: 0,
+    eventSpecs: 0,
   },
   domainPolicy: null,
   entities: [],
-  models: [],
   sharedEnums: [],
   customScalars: [],
   unionTypes: [],
-  decoratorDefinitions: [],
   services: [],
 };
 
@@ -154,6 +164,21 @@ describe("DomainWorkspace — domain delete button", () => {
         isSystemDomain={false}
       />
     );
+    expect(screen.queryByTitle("Delete domain")).toBeNull();
+  });
+
+  it("offers no delete UI when deletion is enabled but no deletionImpact was computed", () => {
+    const { deletionImpact: _unused, ...withoutImpact } = BASE_PROPS;
+    void _unused;
+    renderWithQueryClient(<DomainWorkspace {...withoutImpact} isSystemDomain={false} />);
+    expect(screen.queryByTitle("Delete domain")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("renders without deletionImpact when deletion is disabled", () => {
+    const { deletionImpact: _unused, ...withoutImpact } = BASE_PROPS;
+    void _unused;
+    renderWithQueryClient(<DomainWorkspace {...withoutImpact} canDeleteDomain={false} />);
     expect(screen.queryByTitle("Delete domain")).toBeNull();
   });
 

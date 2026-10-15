@@ -8,6 +8,11 @@ import { revalidatePath } from "next/cache";
 import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
 import { ensureDefaultTenantId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { isInActiveTenant, unexpectedFailure } from "@/lib/action-context";
+import { domainDeleteBlocker } from "@/lib/domain-deletion";
+import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
+import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
+import { findCrossProductPins } from "@/services/events/delete-guards";
 
 export async function getDomainsAction() {
   const session = await auth();
@@ -74,8 +79,7 @@ export async function createDomainAction(formData: FormData) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `A domain named "${name}" already exists` };
     }
-    const message = e instanceof Error ? e.message : "Failed to create domain";
-    return { error: message };
+    return { ...unexpectedFailure("createDomainAction", e) };
   }
 }
 
@@ -104,6 +108,7 @@ export async function deleteDomainAction(domainId: string) {
         _count: {
           select: {
             entities: true,
+            products: true,
             modelDefinitions: true,
             decoratorDefinitions: true,
             sharedEnums: true,
@@ -112,12 +117,14 @@ export async function deleteDomainAction(domainId: string) {
             services: true,
             interfaces: true,
             userRoles: true,
+            ...EVENTS_ASSET_COUNT_SELECT,
           },
         },
       },
     });
 
-    if (!domain) {
+    // Ownership: the domain must belong to the active tenant; anything else reads as missing (same answer, nothing deleted).
+    if (!domain || !(await isInActiveTenant(domain.tenantId))) {
       return { error: "Domain not found" };
     }
 
@@ -125,11 +132,19 @@ export async function deleteDomainAction(domainId: string) {
       return { error: "System domains cannot be deleted" };
     }
 
-    if (domain._count.entities > 0) {
-      const isSingleEntity = domain._count.entities === 1;
-      return {
-        error: `Cannot delete - ${domain._count.entities} ${isSingleEntity ? "entity exists" : "entities exist"} in this domain. Move or delete ${isSingleEntity ? "it" : "them"} first.`,
-      };
+    // Entities (domain- or product-level) and Events assets (channels, messages, event specs and traits, at either
+    // level) block the delete. Everything else — the domain's products and every domain- AND product-level Data
+    // Type / API (productId FKs cascade too) — is deleted with it; the confirmation dialog lists those counts
+    // (DomainDeletionImpact) before the admin confirms. A published event spec of ANOTHER domain's product that
+    // pins or froze one of the domain's Events assets is reported together with the counts, naming spec + product.
+    const pins = await findCrossProductPins(prisma, {
+      kind: "domain",
+      domainId,
+      tenantId: domain.tenantId,
+    });
+    const blocker = combineBlockers([domainDeleteBlocker(domain._count), crossProductPinBlocker(pins)]);
+    if (blocker) {
+      return { error: blocker };
     }
 
     await withAudit({
@@ -152,7 +167,6 @@ export async function deleteDomainAction(domainId: string) {
           "Your session is stale. Sign out and sign in again, then delete the domain.",
       };
     }
-    const message = e instanceof Error ? e.message : "Failed to delete domain";
-    return { error: message };
+    return { ...unexpectedFailure("deleteDomainAction", e) };
   }
 }

@@ -2,20 +2,23 @@
 
 import Link from "next/link";
 import { AlertTriangle } from "lucide-react";
+import { assetHref } from "@/lib/navigation/asset-href";
+
+/** The replacement entity, resolved server-side. Slugs are null for a tenant-level entity. */
+export interface ReplacementEntityLink {
+  name: string;
+  slug: string;
+  domainSlug: string | null;
+  productSlug: string | null;
+}
 
 interface DeprecationBannerProps {
   metadata: Record<string, unknown> | null;
-  domainSlug: string;
-  replacementEntityName?: string;
-  replacementEntityId?: string;
+  /** null / undefined when the metadata names no replacement, or it could not be found. */
+  replacementEntity?: ReplacementEntityLink | null;
 }
 
-export function DeprecationBanner({
-  metadata,
-  domainSlug,
-  replacementEntityName,
-  replacementEntityId,
-}: DeprecationBannerProps) {
+export function DeprecationBanner({ metadata, replacementEntity }: DeprecationBannerProps) {
   const deprecation = (metadata?.deprecation || {}) as {
     since?: string;
     replacementEntityId?: string;
@@ -24,8 +27,8 @@ export function DeprecationBanner({
   };
 
   const since = deprecation.since || "unknown date";
-  const replId = replacementEntityId || deprecation.replacementEntityId;
-  const replName = replacementEntityName || deprecation.replacement || replId;
+  const replId = deprecation.replacementEntityId;
+  const replName = replacementEntity?.name || deprecation.replacement || replId;
 
   return (
     <div
@@ -43,13 +46,23 @@ export function DeprecationBanner({
         {replId && (
           <span className="text-foreground">
             {" "}Replacement:{" "}
-            <Link
-              href={`/schemas?entityId=${encodeURIComponent(replId)}`}
-              className="font-medium underline"
-              style={{ color: "#6ba3e8" }}
-            >
-              {replName}
-            </Link>
+            {replacementEntity ? (
+              <Link
+                href={assetHref({
+                  kind: "entity",
+                  slug: replacementEntity.slug,
+                  domainSlug: replacementEntity.domainSlug,
+                  productSlug: replacementEntity.productSlug,
+                })}
+                className="font-medium underline"
+                style={{ color: "#6ba3e8" }}
+              >
+                {replName}
+              </Link>
+            ) : (
+              // The named entity is gone or out of scope: show it, never link a dead target.
+              <span className="font-medium">{replName}</span>
+            )}
           </span>
         )}
         {deprecation.migrationNotes && (

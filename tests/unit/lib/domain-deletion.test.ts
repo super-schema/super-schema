@@ -1,0 +1,42 @@
+import { describe, expect, it } from "vitest";
+import { domainDeleteBlocker } from "@/lib/domain-deletion";
+
+const EMPTY = { entities: 0, channels: 0, messages: 0, traits: 0, eventSpecs: 0 };
+
+describe("domainDeleteBlocker", () => {
+  it("allows deleting a domain with no entities and no Events assets", () => {
+    expect(domainDeleteBlocker(EMPTY)).toBeNull();
+  });
+
+  it("keeps the long-standing entity-only wording", () => {
+    expect(domainDeleteBlocker({ ...EMPTY, entities: 1 })).toBe(
+      "Cannot delete - 1 entity exists in this domain or its products. Move or delete it first."
+    );
+    expect(domainDeleteBlocker({ ...EMPTY, entities: 3 })).toBe(
+      "Cannot delete - 3 entities exist in this domain or its products. Move or delete them first."
+    );
+  });
+
+  it.each([
+    [{ channels: 1 }, "Cannot delete - 1 channel exists in this domain or its products. Move or delete it first."],
+    [{ messages: 1 }, "Cannot delete - 1 message exists in this domain or its products. Move or delete it first."],
+    [{ traits: 1 }, "Cannot delete - 1 trait exists in this domain or its products. Move or delete it first."],
+    [{ eventSpecs: 1 }, "Cannot delete - 1 event spec exists in this domain or its products. Move or delete it first."],
+    [{ channels: 2 }, "Cannot delete - 2 channels exist in this domain or its products. Move or delete them first."],
+    [{ eventSpecs: 5 }, "Cannot delete - 5 event specs exist in this domain or its products. Move or delete them first."],
+  ])("blocks on Events assets alone: %j", (counts, message) => {
+    expect(domainDeleteBlocker({ ...EMPTY, ...counts })).toBe(message);
+  });
+
+  it("lists entities and every Events kind together", () => {
+    expect(domainDeleteBlocker({ entities: 1, channels: 2, messages: 3, traits: 1, eventSpecs: 1 })).toBe(
+      "Cannot delete - 1 entity, 2 channels, 3 messages, 1 trait and 1 event spec exist in this domain or its products. Move or delete them first."
+    );
+  });
+
+  it("uses the plural form for two single-item kinds", () => {
+    expect(domainDeleteBlocker({ ...EMPTY, entities: 1, channels: 1 })).toBe(
+      "Cannot delete - 1 entity and 1 channel exist in this domain or its products. Move or delete them first."
+    );
+  });
+});

@@ -11,6 +11,13 @@
  */
 
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
+import {
+  CLASSIFICATION_EXTENSION_KEY,
+  TAGS_EXTENSION_KEY,
+  classificationFromEnterpriseMember,
+  parseStringTuple,
+  unescapeTypeSpecString,
+} from "./governance-decorators";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -30,7 +37,13 @@ export interface ParsedTypeSpecDecorators {
   deprecated?: string;
   encode?: string;
   encodeSubType?: string;
+  /** Legacy: a field `@tag(...)` — `@tag("classification:PII")` was the pre-16.6 classification form. */
   tag?: string;
+  /**
+   * Classification as the app's level, from `@Enterprise.dataClassification(...)` (member mapped back) or the
+   * `x-classification` extension (Story 16.6). The legacy `@tag` form stays in `tag`.
+   */
+  classification?: string;
   summary?: string;
   minItems?: number;
   maxItems?: number;
@@ -368,8 +381,8 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
         .map((l) => l.trim())
         .filter((l) => l && !l.startsWith("//") && !l.startsWith("@"))
         .map((l) => l.replace(/[,;]$/, "").trim())
-        // Handle `Value: "string_value"` syntax
-        .map((l) => l.split(":")[0].trim())
+        // Handle `Value: "string_value"` syntax; a member may itself be quoted (`"in-progress"`)
+        .map((l) => leadingMemberName(l))
         .filter(Boolean);
       result.enums.push({
         name: enumMatch[1],
@@ -568,16 +581,34 @@ function collectDiscriminator(lines: string[], idx: number): string | undefined 
   return undefined;
 }
 
+/** Optional `TypeSpec.` / `OpenAPI.` qualifier in front of `extension`. */
+const EXTENSION_DECORATOR = String.raw`@(?:TypeSpec\.)?(?:OpenAPI\.)?extension`;
+
+/** `@TypeSpec.OpenAPI.extension("x-tags", #[...])` (qualified or bare) → the tuple text. */
+const TAGS_EXTENSION_LINE = new RegExp(
+  String.raw`^${EXTENSION_DECORATOR}\("${TAGS_EXTENSION_KEY}"\s*,\s*(#\[.*\])\)$`
+);
+
+/** `@TypeSpec.OpenAPI.extension("x-classification", "LEVEL")` (qualified or bare) → the escaped level. */
+const CLASSIFICATION_EXTENSION_LINE = new RegExp(
+  String.raw`^${EXTENSION_DECORATOR}\("${CLASSIFICATION_EXTENSION_KEY}"\s*,\s*"((?:[^"\\]|\\.)*)"\)$`
+);
+
+/** Model tags in source order: the `x-tags` extension (Story 16.6) and legacy model-level `@tag("...")`. */
 function collectModelTags(lines: string[], idx: number): string[] {
   const tags: string[] = [];
   for (let i = idx - 1; i >= 0; i--) {
     const line = lines[i].trim();
     if (line === "") continue;
+    if (!line.startsWith("@") && !line.startsWith("#")) break;
     const tagMatch = line.match(/^@tag\("(.*)"\)$/);
     if (tagMatch) {
-      tags.push(tagMatch[1]);
+      tags.unshift(tagMatch[1]);
+      continue;
     }
-    if (!line.startsWith("@") && !line.startsWith("#")) break;
+    const extMatch = line.match(TAGS_EXTENSION_LINE);
+    const values = extMatch ? parseStringTuple(extMatch[1]) : undefined;
+    if (values) tags.unshift(...values);
   }
   return tags;
 }
@@ -679,9 +710,10 @@ function parseModelBody(bodyLines: string[]): { fields: ParsedTypeSpecField[]; s
     }
 
     // Field declaration: `name: type;` or `name?: type;` or `name: type = defaultValue;`
-    const fieldMatch = line.match(/^(\w+)(\?)?\s*:\s*(.+?)(?:\s*=\s*(.+?))?\s*;\s*$/);
+    // (`name` may be a backticked identifier: `` `in-progress`: string; ``)
+    const fieldMatch = line.match(/^(\w+|`(?:[^`\\]|\\.)*`)(\?)?\s*:\s*(.+?)(?:\s*=\s*(.+?))?\s*;\s*$/);
     if (fieldMatch) {
-      const fieldName = fieldMatch[1];
+      const fieldName = fieldMatch[1].startsWith("`") ? leadingMemberName(fieldMatch[1]) : fieldMatch[1];
       const isOptional = fieldMatch[2] === "?";
       const typeExpr = fieldMatch[3].trim();
       const defaultValue = fieldMatch[4]?.trim();
@@ -1024,6 +1056,19 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
     return { decorators: { visibility: phases } };
   }
 
+  // @Enterprise.dataClassification(Enterprise.DataClassification.PII), or unqualified with `using Enterprise;`
+  const dataClassificationMatch = line.match(/^@(?:Enterprise\.)?dataClassification\(\s*([\w.]+)\s*\)$/);
+  if (dataClassificationMatch) {
+    const level = classificationFromEnterpriseMember(dataClassificationMatch[1]);
+    return level ? { decorators: { classification: level } } : null;
+  }
+
+  // @TypeSpec.OpenAPI.extension("x-classification", "LEVEL") — a level with no Enterprise member
+  const classificationExtMatch = line.match(CLASSIFICATION_EXTENSION_LINE);
+  if (classificationExtMatch) {
+    return { decorators: { classification: unescapeTypeSpecString(classificationExtMatch[1]) } };
+  }
+
   // @extension("key", "value")
   const extensionMatch = line.match(/^@extension\("([^"]+)"\s*,\s*"([^"]*)"\)$/);
   if (extensionMatch) {
@@ -1062,11 +1107,39 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
 // ---------------------------------------------------------------------------
 
 function unescapeString(str: string): string {
-  return str
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\"/g, '"')
-    .replace(/\\\\/g, "\\");
+  // One pass: `\\n` is a backslash then `n`, not a newline. Handles the escapes TypeSpec defines and the generator
+  // writes (`\n \r \t \" \\ \$ \@ \``); any other backslash sequence is kept as written (`\.` in a regex).
+  return str.replace(/\\(.)/g, (whole, ch: string) => {
+    switch (ch) {
+      case "n":
+        return "\n";
+      case "r":
+        return "\r";
+      case "t":
+        return "\t";
+      case '"':
+      case "\\":
+      case "$":
+      case "@":
+      case "`":
+        return ch;
+      default:
+        return whole;
+    }
+  });
+}
+
+/**
+ * The name at the start of a model property / enum member line: a bare identifier, a backticked identifier or
+ * (enum members) a quoted string. Quoted forms are unescaped, so `` `in-progress` `` and `"in-progress"` both
+ * yield `in-progress` — what the TypeSpec compiler reports as the member / property name.
+ */
+const QUOTED_NAME = /^(?:`((?:[^`\\]|\\.)*)`|"((?:[^"\\]|\\.)*)")/;
+
+function leadingMemberName(line: string): string {
+  const quoted = QUOTED_NAME.exec(line);
+  if (quoted) return unescapeString(quoted[1] ?? quoted[2] ?? "");
+  return line.split(":")[0].trim();
 }
 
 // ---------------------------------------------------------------------------

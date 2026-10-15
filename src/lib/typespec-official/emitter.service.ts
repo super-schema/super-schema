@@ -10,11 +10,16 @@ import type {
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { protobufFieldName, quoteIdentifier, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
+import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
+import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
+import { ok, err, type Result } from "@/types/result";
+import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
 
 const execFileAsync = promisify(execFile);
 
@@ -104,9 +109,18 @@ export async function emitOfficialTypeSpecTargetFromData(
   }
 
   const model = compileEntity(entity, fields);
-  const source = buildSourceForTarget(model, target.key);
+  const built = buildSourceForTarget(model, target.key);
+  if (built.errors.length > 0) {
+    return { output: "", validationStatus: "INVALID", warnings: built.warnings, errors: built.errors.map((message) => ({ message })) };
+  }
   const options = buildEmitterOptions(target.key, model);
-  return runTypeSpecEmitter(target.packageName ?? "", source, options);
+  const result = await runTypeSpecEmitter(target.packageName ?? "", built.source, options);
+  if (built.warnings.length === 0) return result;
+  return {
+    ...result,
+    warnings: [...built.warnings, ...result.warnings],
+    validationStatus: result.validationStatus === "VALID" ? "WARNING" : result.validationStatus,
+  };
 }
 
 function buildEmitterOptions(
@@ -139,37 +153,44 @@ function buildEmitterOptions(
   }
 }
 
-function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): string {
+/** The `main.tsp` for a target, plus what the projection for that target had to change (warnings) or could not (errors). */
+interface TargetSource {
+  source: string;
+  warnings: string[];
+  errors: string[];
+}
+
+const plainSource = (source: string): TargetSource => ({ source, warnings: [], errors: [] });
+
+function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): TargetSource {
   if (isDbTypeSpecTarget(targetKey)) {
-    return buildDbTypeSpecSource(model, targetKey);
+    return plainSource(buildDbTypeSpecSource(model, targetKey));
   }
 
-  const baseSource = stripRealCompileInvalidDecorators(generateTypeSpec(model).trim());
+  // Emission source = the generator's text WITHOUT the governance overlay (Story 16.6): field classification
+  // (`@Enterprise.dataClassification` / `x-classification`), entity tags (`x-tags`) and their imports. It is
+  // an explicit projection, not a strip — the canonical source (Source tab, publish gate, frozen versions)
+  // carries the overlay and compiles as is. Omitted here because no typespec-cli emitter reads it
+  // (@typespec/avro reads only its avro* decorators by name), and importing @superschema/typespec-enterprise
+  // would leak its enums (DataClassification, AvroLogicalType, …) into the java-pojo and json-schema output.
+  // Opt a target in here if an emitter ever starts consuming the overlay.
+  const baseSource = generateTypeSpec(model, { governance: false }).trim();
 
   switch (targetKey) {
     case "json-schema":
-      return ['import "@typespec/json-schema";', "", baseSource, ""].join("\n");
+      return plainSource(['import "@typespec/json-schema";', "", baseSource, ""].join("\n"));
     case "openapi3":
-      return buildOpenApi3Source(baseSource, model);
+      return plainSource(buildOpenApi3Source(baseSource, model));
     case "protobuf":
-      return buildProtobufSource(baseSource, model);
+      return plainSource(buildProtobufSource(baseSource, model));
+    case "avro": {
+      // An Avro enum symbol must be [A-Za-z_][A-Za-z0-9_]*; the canonical source keeps wire values (see avro-source.ts).
+      const projection = projectTypeSpecSourceForAvro(baseSource);
+      return { source: projection.source, ...describeAvroProjection(projection) };
+    }
     default:
-      return baseSource;
+      return plainSource(baseSource);
   }
-}
-
-/**
- * `generateTypeSpec()` emits `@tag("classification:...")` on fields so the
- * regex-based Paste-Import round trip (`typespec.importer.ts#extractClassification`)
- * can read it back. Real TypeSpec's `@tag` only accepts Namespace | Interface |
- * Operation targets, so a real `tsp compile` (every typespec-cli target routed
- * through this file) rejects it outright with `decorator-wrong-target`. Strip
- * it here, at the real-compile boundary, rather than stop emitting it —
- * that would silently break the paste-import round trip, which never goes
- * through a real compile and has no other way to carry classification today.
- */
-function stripRealCompileInvalidDecorators(source: string): string {
-  return source.replace(/^[ \t]*@tag\("classification:[^"]*"\)\n/gm, "");
 }
 
 function buildOpenApi3Source(baseSource: string, model: SuperSchemaModel): string {
@@ -191,8 +212,16 @@ function buildOpenApi3Source(baseSource: string, model: SuperSchemaModel): strin
   ].join("\n");
 }
 
+/**
+ * The canonical source uses TypeSpec stdlib scalars (decimal, utcDateTime,
+ * plainDate, duration, …), `Record<…>` and value-less enums that the official
+ * protobuf emitter rejects. `projectTypeSpecSourceForProtobuf` substitutes the
+ * proto representations (google.protobuf.Timestamp, decimal text, map<>, …)
+ * for this target only — every other target still compiles the canonical text.
+ */
 function buildProtobufSource(baseSource: string, model: SuperSchemaModel): string {
-  const withNamespace = ensureNamespace(baseSource, deriveNamespace(model), "@package");
+  const protobufSource = projectTypeSpecSourceForProtobuf(baseSource);
+  const withNamespace = ensureNamespace(protobufSource, deriveNamespace(model), "@package");
   const withFieldNumbers = injectProtobufFieldDecorators(withNamespace, model);
 
   return [
@@ -229,16 +258,23 @@ function injectProtobufFieldDecorators(
   source: string,
   model: SuperSchemaModel
 ): string {
-  const modelName = sanitizeIdentifier(model.entity.name);
-  const modelStart = source.indexOf(`model ${modelName}`);
-  if (modelStart === -1) {
-    return source;
-  }
+  return injectProtobufFieldNumbers(source, sanitizeIdentifier(model.entity.name), model.fields);
+}
 
-  const openBrace = source.indexOf("{", modelStart);
-  if (openBrace === -1) {
-    return source;
-  }
+/**
+ * Inject `@field(n)` before every listed property of `model <modelName>` — n is the
+ * field's stored number, else its 1-based position. The model is matched by exact name
+ * (`Order` never matches `OrderKey`); property lines keep their indentation.
+ */
+export function injectProtobufFieldNumbers(
+  source: string,
+  modelName: string,
+  fields: ReadonlyArray<{ name: string; fieldNumber?: number | null }>
+): string {
+  const header = new RegExp(`\\bmodel\\s+${escapeRegExp(modelName)}(?![A-Za-z0-9_])`).exec(source);
+  if (!header) return source;
+  const openBrace = source.indexOf("{", header.index);
+  if (openBrace === -1) return source;
 
   let depth = 0;
   let closeBrace = -1;
@@ -252,37 +288,87 @@ function injectProtobufFieldDecorators(
       }
     }
   }
-
-  if (closeBrace === -1) {
-    return source;
-  }
+  if (closeBrace === -1) return source;
 
   const before = source.slice(0, openBrace + 1);
   let body = source.slice(openBrace + 1, closeBrace);
   const after = source.slice(closeBrace);
 
-  model.fields.forEach((field, index) => {
-    const safeName = sanitizeIdentifier(field.name);
+  fields.forEach((field, index) => {
+    // The property is written as the protobuf projection leaves it: the bare name (the generator keeps every
+    // reserved-for-future word bare), the backticked wire name (a hard keyword such as `op` / `model`, which the
+    // projection keeps) or the `_`-replaced name of a non-identifier. The decorator goes in front of whichever it is.
     const fieldNumber = field.fieldNumber ?? index + 1;
-    const matcher = new RegExp(`^(\\s*)${escapeRegExp(safeName)}(\\??:)`, "m");
+    const matcher = new RegExp(
+      `^([ \\t]*)(${escapeRegExp(protobufFieldName(field.name))}|${escapeRegExp(quoteIdentifier(field.name))})(\\??:)`,
+      "m"
+    );
     if (matcher.test(body)) {
-      body = body.replace(
-        matcher,
-        `$1@field(${fieldNumber})\n$1${safeName}$2`
-      );
+      body = body.replace(matcher, (_whole, indent: string, name: string, tail: string) => `${indent}@field(${fieldNumber})\n${indent}${name}${tail}`);
     }
   });
 
   return `${before}${body}${after}`;
 }
 
-async function runTypeSpecEmitter(
+export interface EmittedFile {
+  relativePath: string;
+  content: string;
+}
+
+/** A hung `tsp` is killed after this long (`EMITTER_TIMEOUT`). */
+export const DEFAULT_EMITTER_TIMEOUT_MS = 120_000;
+
+/**
+ * An allowlisted NAME is not enough for the `tsp` CLI: it resolves a library by walking up from the workspace
+ * (under `os.tmpdir()`), so a name that is not installed in `<cwd>/node_modules` could still be found in
+ * `<tmpdir>/node_modules/...` or any other `node_modules` above the workspace, and that package's JavaScript
+ * would run. The workspace's own `node_modules` is a symlink to `<cwd>/node_modules` and is searched first, so
+ * requiring every imported library to be installed there pins resolution to the project's installed packages.
+ * Returns the first imported library that is not installed, if any.
+ */
+async function findUninstalledLibrary(specifiers: readonly string[]): Promise<string | null> {
+  for (const specifier of new Set(specifiers)) {
+    const installed = await fs.stat(path.join(process.cwd(), "node_modules", specifier)).then((s) => s.isDirectory(), () => false);
+    if (!installed) return specifier;
+  }
+  return null;
+}
+
+/**
+ * Run one TypeSpec emitter in a throw-away workspace; every file it wrote, sorted by path. Never throws: a
+ * workspace that cannot be created, a failed compile and a `tsp` that outlives `timeoutMs` (SIGKILL) are errors.
+ *
+ * `tsp` LOADS (and, for `.js` / `.mjs`, executes) whatever the source imports, so the source is checked first with
+ * the TypeSpec parser (`checkTypeSpecImports`): any import that is not an allowed library is
+ * `TYPESPEC_IMPORT_NOT_ALLOWED` and no workspace is created; so is an allowed name that is not installed in
+ * `<cwd>/node_modules` (`findUninstalledLibrary`). This is the single choke point for every `tsp` run
+ * (Schemas-tab targets and the events renderer alike).
+ */
+export async function runTypeSpecEmitterFiles(
   packageName: string,
   source: string,
-  emitterOptions: Record<string, unknown>
-): Promise<OfficialTypeSpecTargetResult> {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
+  emitterOptions: Record<string, unknown>,
+  runOptions: { timeoutMs?: number } = {}
+): Promise<Result<EmittedFile[]>> {
+  const imports = checkTypeSpecImports(source);
+  if (!imports.success) return imports;
+  const uninstalled = await findUninstalledLibrary(imports.data.imports.map((i) => i.specifier));
+  if (uninstalled !== null) {
+    return err({
+      code: TYPESPEC_IMPORT_NOT_ALLOWED,
+      message: `import "${uninstalled}" is not allowed: it is not an installed TypeSpec library`,
+      details: { specifier: uninstalled },
+    });
+  }
+  let workspace: string;
+  try {
+    workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
+  } catch (error) {
+    return err({ code: "EMITTER_FAILED", message: `Could not create a TypeSpec workspace: ${error instanceof Error ? error.message : String(error)}` });
+  }
   const outputDir = path.join(workspace, "out");
+  const timeoutMs = runOptions.timeoutMs ?? DEFAULT_EMITTER_TIMEOUT_MS;
 
   try {
     await fs.symlink(
@@ -311,20 +397,19 @@ async function runTypeSpecEmitter(
     await execFileAsync(getTspBinaryPath(), ["compile", mainFile, "--config", configFile, "--pretty", "false"], {
       cwd: workspace,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
     });
 
     const files = await collectTextFiles(outputDir);
     if (files.length === 0) {
-      return invalidResult(`Emitter "${packageName}" completed but did not write any files.`);
+      return err({ code: "EMITTER_NO_OUTPUT", message: `Emitter "${packageName}" completed but did not write any files.` });
     }
-
-    return {
-      output: bundleGeneratedFiles(files),
-      validationStatus: "VALID",
-      warnings: [],
-      errors: [],
-    };
+    return ok(files);
   } catch (error) {
+    if (typeof error === "object" && error !== null && (error as { killed?: boolean }).killed === true) {
+      return err({ code: "EMITTER_TIMEOUT", message: `Emitter "${packageName}" did not finish within ${timeoutMs} ms and was killed.` });
+    }
     const message = error instanceof Error ? error.message : "TypeSpec emitter failed";
     const details = typeof error === "object" && error !== null && "stdout" in error
       ? [String((error as { stdout?: string }).stdout ?? ""), String((error as { stderr?: string }).stderr ?? "")]
@@ -333,14 +418,59 @@ async function runTypeSpecEmitter(
           .trim()
       : "";
 
-    return invalidResult(details || message);
+    return err({ code: "EMITTER_FAILED", message: details || message });
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-async function collectTextFiles(rootDir: string): Promise<Array<{ relativePath: string; content: string }>> {
-  const files: Array<{ relativePath: string; content: string }> = [];
+async function runTypeSpecEmitter(
+  packageName: string,
+  source: string,
+  emitterOptions: Record<string, unknown>
+): Promise<OfficialTypeSpecTargetResult> {
+  const files = await runTypeSpecEmitterFiles(packageName, source, emitterOptions);
+  if (!files.success) return invalidResult(files.error.message);
+  return targetResultFromFiles(packageName, files.data);
+}
+
+/** What an emitter run wrote, as a target result: VALID only when the output is usable (see {@link unusableOutputReason}). */
+export function targetResultFromFiles(packageName: string, files: EmittedFile[]): OfficialTypeSpecTargetResult {
+  const output = bundleGeneratedFiles(files);
+  const unusable = unusableOutputReason(packageName, output);
+  if (unusable) return invalidResult(unusable);
+  if (packageName === "@typespec/avro") {
+    // Safety net behind the Avro projection: a symbol it could not fix (a numeric-valued member) must fail here, naming
+    // the enum, not later as dozens of opaque AsyncAPI parser errors.
+    const problems = describeInvalidAvroSymbols(files.flatMap((file) => findInvalidAvroSymbols(parseJsonOrNull(file.content))));
+    if (problems.length > 0) {
+      return { output: "", validationStatus: "INVALID", warnings: [], errors: problems.map((message) => ({ message })) };
+    }
+  }
+  return { output, validationStatus: "VALID", warnings: [], errors: [] };
+}
+
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An emitter can finish "successfully" and still write nothing useful. The protobuf emitter silently drops a message
+ * whose fields lack `@field(n)` and then writes only `syntax = "proto3";` — that is not a valid result, so say so.
+ */
+export function unusableOutputReason(packageName: string, output: string): string | null {
+  if (packageName === "@typespec/protobuf" && !/^\s*message\s+\S+\s*\{/m.test(output)) {
+    return "The protobuf emitter wrote no message: none of the model's fields received a @field(n) number, so it dropped the whole message.";
+  }
+  return null;
+}
+
+async function collectTextFiles(rootDir: string): Promise<EmittedFile[]> {
+  const files: EmittedFile[] = [];
 
   async function walk(currentDir: string) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
@@ -363,7 +493,7 @@ async function collectTextFiles(rootDir: string): Promise<Array<{ relativePath: 
   return files;
 }
 
-function bundleGeneratedFiles(files: Array<{ relativePath: string; content: string }>): string {
+function bundleGeneratedFiles(files: EmittedFile[]): string {
   if (files.length === 1) {
     return files[0].content;
   }
@@ -395,18 +525,36 @@ function deriveNamespace(model: SuperSchemaModel): string {
   return sanitizeNamespace(model.namespace || model.entity.domain || model.entity.name);
 }
 
-function sanitizeIdentifier(name: string): string {
-  let safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
-  if (/^[0-9]/.test(safe)) {
-    safe = `_${safe}`;
-  }
-  return safe;
+/** A namespace segment: invalid characters become `_`; a keyword is backticked by {@link sanitizeNamespace}, not renamed. */
+function sanitizeNamespaceSegment(name: string): string {
+  const safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
+  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
 }
+
+/**
+ * TypeSpec keywords (incl. reserved-for-future ones) from the
+ * @typespec/compiler 1.10 scanner. A bare keyword used as an identifier fails
+ * the real compile with `reserved-identifier`; it must be backtick-escaped.
+ * Reachable in practice: a tenant-level entity has no domain, so
+ * `compileEntity()` reports its domain as "unknown" — a keyword.
+ */
+const TYPESPEC_KEYWORDS = new Set([
+  "import", "model", "scalar", "namespace", "interface", "union", "if", "else",
+  "projection", "using", "op", "extends", "is", "enum", "alias", "dec", "fn",
+  "valueof", "typeof", "const", "init", "true", "false", "return", "void",
+  "never", "unknown", "extern", "internal", "statemachine", "macro", "package",
+  "metadata", "env", "arg", "declare", "array", "struct", "record", "module",
+  "mod", "sym", "context", "prop", "property", "scenario", "pub", "sub",
+  "typeref", "trait", "this", "self", "super", "keyof", "with", "implements",
+  "impl", "satisfies", "flag", "auto", "partial", "private", "public",
+  "protected", "sealed", "local", "async",
+]);
 
 function sanitizeNamespace(value: string): string {
   return value
     .split(".")
-    .map((segment) => sanitizeIdentifier(segment))
+    .map((segment) => sanitizeNamespaceSegment(segment))
+    .map((segment) => (TYPESPEC_KEYWORDS.has(segment) ? `\`${segment}\`` : segment))
     .join(".");
 }
 

@@ -58,8 +58,9 @@ export type ComplianceFieldResult = {
   entityId: string;
   entityName: string;
   entitySlug?: string;
-  domainSlug?: string;
-  productSlug?: string;
+  /** Route slugs for links; `null` for a tenant-level (Enterprise) entity. */
+  domainSlug: string | null;
+  productSlug: string | null;
   fieldId: string;
   fieldName: string;
   fieldType: string;
@@ -69,7 +70,8 @@ export type ComplianceFieldResult = {
   encryption: string | null;
   targetSystems: string[];
   domain: string;
-  domainId: string;
+  /** null for tenant-level entities (no domain placement). */
+  domainId: string | null;
 };
 
 // ============================================================
@@ -91,8 +93,9 @@ export type ComplianceGap = {
   entityId: string;
   entityName: string;
   entitySlug?: string;
-  domainSlug?: string;
-  productSlug?: string;
+  /** Route slugs for links; `null` for a tenant-level (Enterprise) entity. */
+  domainSlug: string | null;
+  productSlug: string | null;
   fieldId: string;
   fieldName: string;
   gapType: GapType;

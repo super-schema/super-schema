@@ -13,6 +13,9 @@ interface RightPanelContentState {
   registerCollapseHandler: (handler: () => void) => void;
   isPanelCollapsed: boolean;
   registerCollapsedState: (collapsed: boolean) => void;
+  /** Opt-in: while true and no content is pushed, the shell hides the empty "Detail Panel" placeholder. */
+  hideWhenEmpty: boolean;
+  setHideWhenEmpty: (hide: boolean) => void;
 }
 
 const RightPanelContentContext = createContext<RightPanelContentState>({
@@ -26,11 +29,14 @@ const RightPanelContentContext = createContext<RightPanelContentState>({
   registerCollapseHandler: () => {},
   isPanelCollapsed: false,
   registerCollapsedState: () => {},
+  hideWhenEmpty: false,
+  setHideWhenEmpty: () => {},
 });
 
 export function RightPanelContentProvider({ children }: { children: ReactNode }) {
   const [content, setContentState] = useState<ReactNode | null>(null);
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
+  const [hideWhenEmpty, setHideWhenEmpty] = useState(false);
 
   // Use refs to avoid stale closure issues with handlers
   const expandHandlerRef = useRef<(() => void) | null>(null);
@@ -80,6 +86,8 @@ export function RightPanelContentProvider({ children }: { children: ReactNode })
       registerCollapseHandler,
       isPanelCollapsed,
       registerCollapsedState,
+      hideWhenEmpty,
+      setHideWhenEmpty,
     }}>
       {children}
     </RightPanelContentContext.Provider>

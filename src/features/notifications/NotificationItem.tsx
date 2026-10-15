@@ -43,19 +43,17 @@ function getTypeIcon(type: NotificationType) {
 
 type NotificationItemProps = {
   notification: NotificationItemData;
-  onClick: (notification: NotificationItemData) => void;
+  /** Omit for a notification with nowhere to navigate; it then renders non-interactive. */
+  onClick?: (notification: NotificationItemData) => void;
 };
 
 export function NotificationItem({
   notification,
   onClick,
 }: NotificationItemProps) {
-  return (
-    <button
-      data-testid={`notification-item-${notification.id}`}
-      className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-accent/30 rounded-md transition-colors"
-      onClick={() => onClick(notification)}
-    >
+  const className = "w-full flex items-start gap-2 px-3 py-2 text-left rounded-md";
+  const content = (
+    <>
       {/* Unread dot */}
       <div className="flex-shrink-0 mt-1.5 w-2">
         {!notification.read && (
@@ -85,6 +83,24 @@ export function NotificationItem({
       <span className="flex-shrink-0 text-[10px] text-muted-foreground mt-0.5">
         {formatRelativeTime(notification.createdAt)}
       </span>
+    </>
+  );
+
+  if (!onClick) {
+    return (
+      <div data-testid={`notification-item-${notification.id}`} className={className}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      data-testid={`notification-item-${notification.id}`}
+      className={`${className} hover:bg-accent/30 transition-colors`}
+      onClick={() => onClick(notification)}
+    >
+      {content}
     </button>
   );
 }

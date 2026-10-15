@@ -3,13 +3,16 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Package, Plus, Search, Trash2, Users } from "lucide-react";
+import { Package, Plus, Search, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { formatDateOnly } from "@/lib/date-format";
+import { assetHref } from "@/lib/navigation/asset-href";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import { NO_EVENTS_ASSETS, productDeleteBlocker, type EventsAssetCounts } from "@/lib/product-deletion";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import {
   createProductAction,
   deleteProductAction,
@@ -23,6 +26,12 @@ export interface ProductGridItem {
   ownerTeam: string | null;
   isSystem: boolean;
   entityCount: number;
+  /** Product-level Data Types (enums + scalars + unions) — cascade with the product. */
+  dataTypeCount: number;
+  /** Product-level APIs (service definitions) — cascade with the product. */
+  apiCount: number;
+  /** Events assets (channels, messages, traits, event specs) — cascade with the product; absent = none known. */
+  eventsAssets?: EventsAssetCounts;
   updatedAt: Date | string;
   tier: {
     id: string;
@@ -44,9 +53,20 @@ interface ProductGridProps {
   domainId: string;
   domainName: string;
   domainSlug: string;
-  domainDescription: string;
   products: ProductGridItem[];
   tiers: TierOption[];
+}
+
+/** Same rule as the server guard: anything that would cascade blocks the delete. */
+function deleteBlocker(product: ProductGridItem): string | null {
+  return productDeleteBlocker({
+    entities: product.entityCount,
+    sharedEnums: product.dataTypeCount,
+    customScalars: 0,
+    unionTypes: 0,
+    services: product.apiCount,
+    ...(product.eventsAssets ?? NO_EVENTS_ASSETS),
+  });
 }
 
 function tierLabel(name: string) {
@@ -57,7 +77,6 @@ export function ProductGrid({
   domainId,
   domainName,
   domainSlug,
-  domainDescription,
   products,
   tiers,
 }: ProductGridProps) {
@@ -99,70 +118,60 @@ export function ProductGrid({
     }
     setIsCreating(true);
     setCreateError(null);
-    const result = await createProductAction({
-      domainId,
-      name: name.trim(),
-      description,
-      tierId: tierId || null,
-      ownerTeam: ownerTeam.trim() || null,
-    });
-    setIsCreating(false);
-    if (result.error) {
-      setCreateError(result.error);
-      return;
-    }
-    invalidateDomainsTree();
-    resetCreate();
-    if (result.slug) {
-      router.push(`/schemas/${domainSlug}/${result.slug}`);
-    } else {
-      router.refresh();
+    try {
+      const result = await createProductAction({
+        domainId,
+        name: name.trim(),
+        description,
+        tierId: tierId || null,
+        ownerTeam: ownerTeam.trim() || null,
+      });
+      if (result.error) {
+        setCreateError(result.error);
+        return;
+      }
+      invalidateDomainsTree();
+      resetCreate();
+      if (result.slug) {
+        router.push(assetHref({ kind: "product", domainSlug, productSlug: result.slug }));
+      } else {
+        router.refresh();
+      }
+    } catch (e: unknown) {
+      // A rejected action (network, serialization, an unwrapped server throw) must not leave the form stuck on "Creating…".
+      console.error("[product-grid] create product failed", e);
+      setCreateError(GENERIC_ACTION_ERROR);
+    } finally {
+      setIsCreating(false);
     }
   }
 
   async function handleDelete(product: ProductGridItem) {
-    if (product.entityCount > 0) {
-      toast.error("Delete the product's entities before removing it");
+    const blocker = deleteBlocker(product);
+    if (blocker) {
+      toast.error(blocker);
       return;
     }
-    const result = await deleteProductAction(product.id);
-    if (result.error) {
-      toast.error(result.error);
-      return;
+    try {
+      const result = await deleteProductAction(product.id);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`"${product.name}" deleted`);
+      void invalidateDomainsTree();
+      router.refresh();
+    } catch (e: unknown) {
+      console.error("[product-grid] delete product failed", e);
+      toast.error(GENERIC_ACTION_ERROR);
     }
-    toast.success(`"${product.name}" deleted`);
-    void invalidateDomainsTree();
-    router.refresh();
   }
 
   return (
-    <div className="animate-auth-fade-up">
-      {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
-        <Link href="/schemas" className="hover:text-foreground transition-colors">
-          Domains
-        </Link>
-        <ChevronRight className="w-3 h-3" />
-        <span className="text-foreground font-medium">{domainName}</span>
-      </nav>
-
-      {/* Header */}
-      <div className="flex items-center justify-between mb-space-4">
-        <div>
-          <h1 className="text-display text-foreground">{domainName}</h1>
-          <p className="text-body text-muted-foreground mt-space-1">
-            {domainDescription || "Select a product to manage its schemas"}
-          </p>
-        </div>
-        <Button onClick={() => setShowCreate(true)} className="gap-2">
-          <Plus className="w-4 h-4" />
-          New Product
-        </Button>
-      </div>
-
-      {/* Search */}
-      <div className="flex items-center gap-space-2 mb-space-6 max-w-md">
-        <div className="relative flex-1">
+    <div>
+      {/* Toolbar (the domain header lives above the tabs in DomainTabs) */}
+      <div className="flex items-center justify-between gap-space-4 mb-space-6">
+        <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search products..."
@@ -171,6 +180,10 @@ export function ProductGrid({
             className="pl-9 h-9"
           />
         </div>
+        <Button onClick={() => setShowCreate(true)} className="gap-2">
+          <Plus className="w-4 h-4" />
+          New Product
+        </Button>
       </div>
 
       {/* Create form */}
@@ -271,14 +284,15 @@ export function ProductGrid({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-space-4">
           {filtered.map((product) => {
-            const canDelete = !product.isSystem && product.entityCount === 0;
+            const blocker = deleteBlocker(product);
+            const canDelete = !product.isSystem && blocker === null;
             return (
               <div
                 key={product.id}
                 className="group relative surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/40 hover:shadow-lg"
               >
                 <Link
-                  href={`/schemas/${domainSlug}/${product.slug}`}
+                  href={assetHref({ kind: "product", domainSlug, productSlug: product.slug })}
                   className="block"
                 >
                   <div className="flex items-center gap-space-2 mb-space-2 pr-9">
@@ -334,11 +348,7 @@ export function ProductGrid({
                     onClick={() => handleDelete(product)}
                     disabled={!canDelete}
                     aria-label={`Delete product ${product.name}`}
-                    title={
-                      canDelete
-                        ? `Delete ${product.name}`
-                        : "Delete entities in this product before removing it"
-                    }
+                    title={canDelete ? `Delete ${product.name}` : (blocker ?? undefined)}
                     className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                   >
                     <Trash2 className="w-4 h-4" />

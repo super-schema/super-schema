@@ -43,6 +43,11 @@ export function buildDecoratorsFromParsedField(
   }
   if (field.minValueExclusive != null) validation.minValueExclusive = field.minValueExclusive;
   if (field.maxValueExclusive != null) validation.maxValueExclusive = field.maxValueExclusive;
+  // Enum symbols ride in `pattern` ("A|B"): typespec-generator reads them from there
+  // for enum fields (and never emits @pattern for an enum).
+  if (field.type === "enum" && field.enumValues?.length && validation.pattern == null) {
+    validation.pattern = field.enumValues.join("|");
+  }
   if (Object.keys(validation).length > 0) typespec.validation = validation;
 
   // --- typespec.documentation ---
@@ -81,6 +86,20 @@ export function buildDecoratorsFromParsedField(
   if (field.arrayElementType) {
     decorators.arrayElementType = field.arrayElementType;
   }
+  if (field.mapKeyType) decorators.mapKeyType = field.mapKeyType;
+  if (field.mapValueType) decorators.mapValueType = field.mapValueType;
+  if (field.enumName) decorators.enumName = field.enumName;
+  // Symbols of an enum array element / map value (read by compiler.service → generator).
+  if (field.type !== "enum" && field.enumValues?.length) decorators.enumValues = field.enumValues;
+
+  // --- governance: format bindings (same keys the TypeSpec governance path stores) ---
+  const governance: Record<string, unknown> = {};
+  if (field.fieldNumber != null) governance.protobufFieldNumber = field.fieldNumber;
+  if (field.governance?.protobufOneofGroup) {
+    governance.protobufOneofGroup = field.governance.protobufOneofGroup;
+  }
+  if (field.governance?.avroFixedSize != null) governance.avroFixedSize = field.governance.avroFixedSize;
+  if (Object.keys(governance).length > 0) decorators.governance = governance;
 
   // --- semantics ---
   if (field.description) {

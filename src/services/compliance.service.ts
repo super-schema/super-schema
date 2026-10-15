@@ -13,6 +13,7 @@ import type {
   AuditPagination,
   AuditTrailEntry,
 } from "@/types/schemas/compliance";
+import { domainLabel } from "@/lib/entity-placement";
 
 // ============================================================
 // RBAC helpers
@@ -128,8 +129,8 @@ export async function queryFields(
           entityId: f.entity.id,
           entityName: f.entity.name,
           entitySlug: f.entity.slug,
-          domainSlug: f.entity.domain.slug,
-          productSlug: f.entity.product.slug,
+          domainSlug: f.entity.domain?.slug ?? null,
+          productSlug: f.entity.product?.slug ?? null,
           fieldId: f.id,
           fieldName: f.name,
           fieldType: f.type,
@@ -138,8 +139,8 @@ export async function queryFields(
           anonymization: policy.anonymization || null,
           encryption: policy.encryption || null,
           targetSystems: [] as string[],
-          domain: f.entity.domain.name,
-          domainId: f.entity.domain.id,
+          domain: domainLabel(f.entity.domain),
+          domainId: f.entity.domain?.id ?? null,
         };
       })
       .filter((r) => {
@@ -288,8 +289,8 @@ export async function detectGaps(
         entityId: field.entity.id,
         entityName: field.entity.name,
         entitySlug: field.entity.slug,
-        domainSlug: field.entity.domain.slug,
-        productSlug: field.entity.product.slug,
+        domainSlug: field.entity.domain?.slug ?? null,
+        productSlug: field.entity.product?.slug ?? null,
       };
 
       // Unclassified
