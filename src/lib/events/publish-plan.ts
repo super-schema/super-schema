@@ -176,6 +176,12 @@ export interface EventSpecPublishFacts {
   current: EventSpecBumpSide;
   unresolved: Array<{ pointer: string; message: string }>;
   unpublishedMessages: Array<{ id: string; name: string }>;
+  /**
+   * Referenced traits whose headers entity is not pinned to a published version. The renderer would render the entity's mutable
+   * draft and freeze it unpinned (no version to record, later edits would not register), so each one blocks like an unpinned
+   * message pin. Optional so callers that have no traits can omit it.
+   */
+  unpinnedTraitHeaders?: Array<{ id: string; name: string }>;
   diagnostics: Diagnostic[];
   nameConflict: string | null;
 }
@@ -200,6 +206,12 @@ export function eventSpecPublishInput(facts: EventSpecPublishFacts): VersionedPu
   }
   for (const m of facts.unpublishedMessages) {
     blockers.push({ kind: "UNPUBLISHED_MESSAGE", message: `Message ${m.name} is an unpublished draft — publish it and pick its version` });
+  }
+  for (const t of facts.unpinnedTraitHeaders ?? []) {
+    blockers.push({
+      kind: "UNPUBLISHED_PIN",
+      message: `Trait ${t.name}: its headers entity is not pinned to a published version — pin a published entity version on the trait, then publish again`,
+    });
   }
   const errors = facts.diagnostics.filter((d) => d.severity === "error");
   for (const d of errors.slice(0, MAX_DIAGNOSTIC_BLOCKERS)) blockers.push({ kind: "VALIDATION_ERROR", message: `${d.code}: ${d.message}`, pointer: d.pointer });

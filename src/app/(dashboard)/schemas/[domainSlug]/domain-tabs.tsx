@@ -3,8 +3,10 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ChevronRight, Globe, Layers, Package } from "lucide-react";
+import { ChevronRight, Globe, Layers, Package, Puzzle } from "lucide-react";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { TraitsTab } from "@/features/events/workspace/TraitsTab";
+import { EMPTY_TRAITS_TAB, type TraitsTabData } from "@/features/events/workspace/types";
 import { ProductGrid, type ProductGridItem, type TierOption } from "./product-grid";
 import {
   DomainTypesTab,
@@ -15,7 +17,7 @@ import {
 } from "./components/DomainTypesTab";
 import { DomainApisTab, type ServiceData } from "./components/DomainApisTab";
 
-export type DomainPageTab = "products" | "data-types" | "apis";
+export type DomainPageTab = "products" | "data-types" | "apis" | "traits";
 
 /**
  * Normalize the `?tab=` query value to a domain page tab. The legacy `types`
@@ -23,7 +25,7 @@ export type DomainPageTab = "products" | "data-types" | "apis";
  */
 export function normalizeDomainTab(raw: string | null): DomainPageTab {
   if (raw === "types") return "data-types";
-  if (raw === "data-types" || raw === "apis" || raw === "products") return raw;
+  if (raw === "data-types" || raw === "apis" || raw === "products" || raw === "traits") return raw;
   return "products";
 }
 
@@ -31,6 +33,7 @@ const TABS: { id: DomainPageTab; label: string; icon: typeof Package }[] = [
   { id: "products", label: "Products", icon: Package },
   { id: "data-types", label: "Data Types", icon: Layers },
   { id: "apis", label: "APIs", icon: Globe },
+  { id: "traits", label: "Traits", icon: Puzzle },
 ];
 
 function tabDomId(id: DomainPageTab) {
@@ -55,6 +58,8 @@ export interface DomainTabsProps {
   inheritedDataTypes?: InheritedDataTypes[];
   /** Domain-level API services. */
   services: ServiceData[];
+  /** Domain traits + read-only Enterprise traits. */
+  traits?: TraitsTabData;
 }
 
 export function DomainTabs({
@@ -63,6 +68,7 @@ export function DomainTabs({
   dataTypes,
   inheritedDataTypes,
   services,
+  traits,
 }: DomainTabsProps) {
   const tabParam = useSearchParams().get("tab");
   const [activeTab, setActiveTab] = useState<DomainPageTab>(normalizeDomainTab(tabParam));
@@ -78,6 +84,9 @@ export function DomainTabs({
     }
     if (tab === "apis") {
       return assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: null });
+    }
+    if (tab === "traits") {
+      return assetHref({ kind: "traits", domainSlug: domain.slug, productSlug: null });
     }
     return assetHref({ kind: "domain", domainSlug: domain.slug });
   }
@@ -187,6 +196,10 @@ export function DomainTabs({
             services={services}
             entities={[]}
           />
+        )}
+
+        {activeTab === "traits" && (
+          <TraitsTab target={target} domainSlug={domain.slug} productSlug={null} data={traits ?? EMPTY_TRAITS_TAB} />
         )}
       </div>
     </div>

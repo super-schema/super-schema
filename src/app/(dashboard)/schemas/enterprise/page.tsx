@@ -9,6 +9,7 @@ import {
   classificationCountsFromGroups,
   emptyClassificationCounts,
 } from "@/lib/classification-counts";
+import { loadLevelTraits } from "@/features/events/workspace/load-events-tab-data";
 import { EnterpriseWorkspace } from "./enterprise-workspace";
 
 export default async function EnterprisePage() {
@@ -17,7 +18,7 @@ export default async function EnterprisePage() {
   // Tenant-level entities carry neither a domain nor a product.
   const tenantEntities = { tenantId, domainId: null, productId: null };
 
-  const [entities, classificationGroups, enums, scalars, unions] = await Promise.all([
+  const [entities, classificationGroups, enums, scalars, unions, traits] = await Promise.all([
     prisma.entity.findMany({
       where: tenantEntities,
       orderBy: { updatedAt: "desc" },
@@ -41,6 +42,7 @@ export default async function EnterprisePage() {
       where: { tenantId, domainId: null },
       orderBy: { name: "asc" },
     }),
+    loadLevelTraits({ scope: { tenantId, domainId: null, productId: null }, domainSlug: null }),
   ]);
 
   const classificationsByEntity = classificationCountsFromGroups(
@@ -67,6 +69,7 @@ export default async function EnterprisePage() {
         customScalars: mapCustomScalarRows(scalars),
         unionTypes: mapUnionTypeRows(unions),
       }}
+      traits={traits}
     />
   );
 }
