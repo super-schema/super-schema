@@ -7,3 +7,18 @@
 export type ActionResult<T> =
   | { success: true; data: T }
   | { success: false; error: string; code?: string; details?: object; suggestedFix?: string };
+
+/** Shown in place of raw database / driver text (server-side `sanitizeActionError` and client forms share it). */
+export const GENERIC_ACTION_ERROR = "Something went wrong. Try again; if it keeps happening, contact an administrator.";
+
+/** Failure codes whose service message may carry raw database / driver text: never shown to the user. */
+const OPAQUE_ERROR_CODES: readonly string[] = ["DB_ERROR", "INTERNAL_ERROR"];
+
+/**
+ * The one line a form shows for a failed action result: the service's message plus its suggested fix,
+ * except for `DB_ERROR` / `INTERNAL_ERROR`, which become the generic message (no fix either).
+ */
+export function actionErrorText(failure: { error: string; code?: string; suggestedFix?: string }): string {
+  if (failure.code && OPAQUE_ERROR_CODES.includes(failure.code)) return GENERIC_ACTION_ERROR;
+  return failure.suggestedFix ? `${failure.error} ${failure.suggestedFix}` : failure.error;
+}

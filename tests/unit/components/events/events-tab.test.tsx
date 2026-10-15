@@ -11,6 +11,7 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions
 
 import { EventsTab } from "@/features/events/workspace/EventsTab";
 import type { EventsTabData } from "@/features/events/workspace/types";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 const data: EventsTabData = {
   eventSpecs: [{ id: "s1", name: "checkout-service", summary: "", updatedAt: "", latestVersionLabel: "2.0", hasUnpublishedChanges: true, operationCount: 1, href: "/schemas/payments/checkout/specs/s1" }],
@@ -29,7 +30,7 @@ function renderTab(props: Partial<Parameters<typeof EventsTab>[0]> = {}) {
   return { onSectionChange };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => vi.resetAllMocks());
 afterEach(() => cleanup());
 
 describe("EventsTab", () => {
@@ -97,7 +98,7 @@ describe("EventsTab", () => {
   });
 
   it("shows the service's suggested fix under a failed create and never navigates", async () => {
-    h.createEventSpecAction.mockResolvedValue({ success: false, error: 'Event spec name "a b" is invalid', suggestedFix: "Use 1–128 letters, digits, '.', '_' or '-'." });
+    h.createEventSpecAction.mockResolvedValue({ success: false, code: "VALIDATION_ERROR", error: 'Event spec name "a b" is invalid', suggestedFix: "Use 1–128 letters, digits, '.', '_' or '-'." });
     renderTab({ createIntent: "eventSpec" });
     fireEvent.change(screen.getByLabelText("Event spec name"), { target: { value: "a b" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
@@ -118,5 +119,159 @@ describe("EventsTab", () => {
     renderTab({ section: "channels" });
     fireEvent.click(screen.getByTestId("events-new"));
     expect(screen.getByTestId("new-channel-form")).toBeDefined();
+  });
+});
+
+describe("EventsTab create forms — error display and submit guard", () => {
+  const RAW_DB_TEXT = "Invalid `prisma.channel.create()` invocation in /app/src/services/events/channel.service.ts:88 — Can't reach database server at `localhost:5432`";
+
+  function submitChannelForm(name = "refunds") {
+    renderTab({ createIntent: "channel" });
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: name } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  }
+
+  it("shows the generic message, never the raw text, for a DB_ERROR result", async () => {
+    h.createChannelAction.mockResolvedValue({ success: false, code: "DB_ERROR", error: RAW_DB_TEXT, suggestedFix: "Check DATABASE_URL" });
+    submitChannelForm();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(GENERIC_ACTION_ERROR);
+    expect(document.body.textContent).not.toMatch(/prisma|database server|localhost|DATABASE_URL/);
+    // A failure makes the form editable again.
+    expect(screen.getByRole("button", { name: "Create" }).hasAttribute("disabled")).toBe(false);
+    expect(h.push).not.toHaveBeenCalled();
+  });
+
+  it("shows the generic message for an INTERNAL_ERROR result on every create form", async () => {
+    h.createMessageAction.mockResolvedValue({ success: false, code: "INTERNAL_ERROR", error: RAW_DB_TEXT });
+    renderTab({ createIntent: "message" });
+    fireEvent.change(screen.getByLabelText("Message name"), { target: { value: "OrderCreated" } });
+    fireEvent.change(screen.getByLabelText("Payload entity"), { target: { value: "e1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(GENERIC_ACTION_ERROR);
+    cleanup();
+
+    h.createEventSpecAction.mockResolvedValue({ success: false, code: "DB_ERROR", error: RAW_DB_TEXT });
+    renderTab({ createIntent: "eventSpec" });
+    fireEvent.change(screen.getByLabelText("Event spec name"), { target: { value: "checkout-service" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(GENERIC_ACTION_ERROR);
+    expect(document.body.textContent).not.toMatch(/prisma|database server/);
+  });
+
+  it("shows the generic message when the action throws, and the form is not left busy", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    h.createChannelAction.mockRejectedValue(new Error(RAW_DB_TEXT));
+    submitChannelForm();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(GENERIC_ACTION_ERROR);
+    expect(document.body.textContent).not.toMatch(/prisma|database server/);
+    const create = screen.getByRole("button", { name: "Create" });
+    expect(create.hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Cancel" }).hasAttribute("disabled")).toBe(false);
+    expect(h.push).not.toHaveBeenCalled();
+    // And it can be submitted again.
+    h.createChannelAction.mockResolvedValue({ success: true, data: { id: "c9" } });
+    fireEvent.click(create);
+    await waitFor(() => expect(h.push).toHaveBeenCalledWith("/schemas/payments/checkout/channels/c9"));
+    consoleError.mockRestore();
+  });
+
+  it("still shows a non-DB error's message and its suggested fix (NAME_CONFLICT)", async () => {
+    h.createChannelAction.mockResolvedValue({
+      success: false, code: "NAME_CONFLICT", error: '"refunds" is already used by Channel "refunds" at Product level.', suggestedFix: "Pick another name.",
+    });
+    submitChannelForm();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe('"refunds" is already used by Channel "refunds" at Product level. Pick another name.');
+  });
+
+  it("stays busy after a successful create: Create is disabled and a second submit does not call the action again", async () => {
+    h.createChannelAction.mockResolvedValue({ success: true, data: { id: "c9" } });
+    submitChannelForm();
+    await waitFor(() => expect(h.push).toHaveBeenCalledTimes(1));
+    const create = screen.getByRole("button", { name: "Creating…" });
+    expect(create.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Cancel" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(create);
+    fireEvent.submit(screen.getByTestId("new-channel-form"));
+    expect(h.createChannelAction).toHaveBeenCalledTimes(1);
+    expect(h.push).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a second submit while the first is still in flight", async () => {
+    let finish: (r: { success: true; data: { id: string } }) => void = () => {};
+    h.createChannelAction.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    submitChannelForm();
+    const form = screen.getByTestId("new-channel-form");
+    expect(screen.getByRole("button", { name: "Creating…" }).hasAttribute("disabled")).toBe(true);
+    // Enter in a field submits the form without going through the disabled button.
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(h.createChannelAction).toHaveBeenCalledTimes(1);
+    finish({ success: true, data: { id: "c9" } });
+    await waitFor(() => expect(h.push).toHaveBeenCalledWith("/schemas/payments/checkout/channels/c9"));
+    expect(h.createChannelAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("EventsTab section tabs — keyboard and roving tabindex", () => {
+  const tab = (id: string) => screen.getByTestId(`events-section-${id}`);
+
+  function renderSections(section: "specs" | "messages" | "channels") {
+    const onSectionChange = vi.fn();
+    const ui = (s: typeof section) => (
+      <QueryClientProvider client={new QueryClient()}>
+        <EventsTab productId="p1" domainSlug="payments" productSlug="checkout" data={data} section={s} onSectionChange={onSectionChange} />
+      </QueryClientProvider>
+    );
+    const view = render(ui(section));
+    return { onSectionChange, rerenderAt: (s: typeof section) => view.rerender(ui(s)) };
+  }
+
+  it("only the selected section is in the tab order and the tabs are wired to the panel", () => {
+    const { rerenderAt } = renderSections("specs");
+    expect(["specs", "messages", "channels"].map((id) => tab(id).getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe("events-tab-specs");
+    expect(tab("specs").getAttribute("aria-controls")).toBe(screen.getByRole("tabpanel").id);
+    rerenderAt("channels");
+    expect(["specs", "messages", "channels"].map((id) => tab(id).getAttribute("tabindex"))).toEqual(["-1", "-1", "0"]);
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe("events-tab-channels");
+  });
+
+  it("ArrowRight / ArrowLeft move to the neighbouring section, wrap around, and move focus", () => {
+    const { onSectionChange } = renderSections("specs");
+    fireEvent.keyDown(tab("specs"), { key: "ArrowRight" });
+    expect(onSectionChange).toHaveBeenLastCalledWith("messages");
+    expect(document.activeElement).toBe(tab("messages"));
+
+    fireEvent.keyDown(tab("channels"), { key: "ArrowRight" });
+    expect(onSectionChange).toHaveBeenLastCalledWith("specs");
+    expect(document.activeElement).toBe(tab("specs"));
+
+    fireEvent.keyDown(tab("specs"), { key: "ArrowLeft" });
+    expect(onSectionChange).toHaveBeenLastCalledWith("channels");
+    expect(document.activeElement).toBe(tab("channels"));
+
+    fireEvent.keyDown(tab("channels"), { key: "ArrowLeft" });
+    expect(onSectionChange).toHaveBeenLastCalledWith("messages");
+    expect(document.activeElement).toBe(tab("messages"));
+  });
+
+  it("Home and End jump to the first and last section", () => {
+    const { onSectionChange } = renderSections("messages");
+    fireEvent.keyDown(tab("messages"), { key: "End" });
+    expect(onSectionChange).toHaveBeenLastCalledWith("channels");
+    expect(document.activeElement).toBe(tab("channels"));
+    fireEvent.keyDown(tab("channels"), { key: "Home" });
+    expect(onSectionChange).toHaveBeenLastCalledWith("specs");
+    expect(document.activeElement).toBe(tab("specs"));
+  });
+
+  it("keys that are not tab navigation do nothing", () => {
+    const { onSectionChange } = renderSections("specs");
+    fireEvent.keyDown(tab("specs"), { key: "ArrowDown" });
+    fireEvent.keyDown(tab("specs"), { key: "a" });
+    expect(onSectionChange).not.toHaveBeenCalled();
   });
 });

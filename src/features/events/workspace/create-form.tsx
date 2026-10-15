@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 /** Inline create-form pieces shared by the Events and Traits tabs. */
 
 export const selectClass = "w-full rounded-md border border-border bg-background px-space-2 py-1.5 text-body-small";
-
-/** Mirrors GENERIC_ACTION_ERROR (server-only module): shown when a server action itself throws. */
-const GENERIC_ERROR = "Something went wrong. Try again; if it keeps happening, contact an administrator.";
 
 export function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
   return (
@@ -42,26 +40,47 @@ export function FormShell({ title, testId, error, busy, onCancel, onSubmit, chil
   );
 }
 
-/** A create action's result: the id of the new asset, or the service's message (+ its one-line remedy). */
-type CreateResult = { success: true; data: { id: string } } | { success: false; error: string; suggestedFix?: string };
+/**
+ * A create action's result: the id of the new asset, or the service's message (+ its code and one-line remedy).
+ * The `code` matters: `DB_ERROR` / `INTERNAL_ERROR` messages may carry raw driver text and are never displayed.
+ */
+type CreateResult =
+  | { success: true; data: { id: string } }
+  | { success: false; error: string; code?: string; suggestedFix?: string };
 
-/** Busy / error state around one create action; `onCreated` receives the new asset's id. */
+/**
+ * Busy / error state around one create action; `onCreated` receives the new asset's id. After a successful
+ * create the form stays busy (it is about to navigate away; re-enabling Create meanwhile would let a second
+ * click create a duplicate); only a failure or a thrown action makes it editable again.
+ */
 export function useCreateForm(onCreated: (id: string) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A second submit in the same tick would still see `busy === false` in its closure.
+  const inFlight = useRef(false);
 
   async function run(action: () => Promise<CreateResult>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
+    let result: CreateResult;
     try {
-      const result = await action();
-      if (result.success) onCreated(result.data.id);
-      else setError(result.suggestedFix ? `${result.error} ${result.suggestedFix}` : result.error);
-    } catch {
-      setError(GENERIC_ERROR);
-    } finally {
+      result = await action();
+    } catch (e: unknown) {
+      console.error("[create-form] the create action threw", e);
+      setError(GENERIC_ACTION_ERROR);
       setBusy(false);
+      inFlight.current = false;
+      return;
     }
+    if (result.success) {
+      onCreated(result.data.id);
+      return;
+    }
+    setError(actionErrorText(result));
+    setBusy(false);
+    inFlight.current = false;
   }
   return { busy, error, run };
 }
