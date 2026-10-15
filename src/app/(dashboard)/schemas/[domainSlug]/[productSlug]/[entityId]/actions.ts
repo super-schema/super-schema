@@ -11,6 +11,11 @@ import { updateEntity } from "@/services/entity.service";
 import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
 import { getEffectiveRole } from "@/services/rbac.service";
+import { GENERIC_ACTION_ERROR, isInActiveTenant } from "@/lib/action-context";
+import {
+  isBoolean, isInt, isIntOrNull, isPlainObject, isString, isStringArray, isStringOrNull, pickEditable,
+} from "@/lib/editable-fields";
+import { requireId } from "@/services/events/service-guards";
 import {
   buildSchemaTargetFieldMappings,
   parseSchemaTargetTypeOverrides,
@@ -134,25 +139,29 @@ export async function addFieldAction(
       entityId: "pending",
       userId: session.user.id,
       fn: async () => {
-        const created = await prisma.field.create({
-          data: {
-            entityId,
-            name,
-            slug: generateSlug(name),
-            type,
-            sortOrder: maxField ? maxField.sortOrder + 1 : 0,
-            ...(opts?.description != null && { description: opts.description }),
-            classification: opts?.classification !== undefined ? opts.classification : "SENSITIVE",
-            ...(opts?.nullable != null && { nullable: opts.nullable }),
-            ...(opts?.isKey != null && { isKey: opts.isKey }),
-            ...(opts?.precision !== undefined && { precision: opts.precision }),
-            ...(opts?.scale !== undefined && { scale: opts.scale }),
-            fieldNumber: assignedFieldNumber,
-            ...(opts?.aliases && { aliases: opts.aliases }),
-            ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
-          },
-        });
-        await markEntityDraftChanged(prisma, entityId);
+        // The field write and the draft + stale-source mark are ONE atomic batch: a failure between them can never
+        // leave a changed field with `hasUnpublishedChanges` still false (publish would answer NO_CHANGES).
+        const [created] = await prisma.$transaction([
+          prisma.field.create({
+            data: {
+              entityId,
+              name,
+              slug: generateSlug(name),
+              type,
+              sortOrder: maxField ? maxField.sortOrder + 1 : 0,
+              ...(opts?.description != null && { description: opts.description }),
+              classification: opts?.classification !== undefined ? opts.classification : "SENSITIVE",
+              ...(opts?.nullable != null && { nullable: opts.nullable }),
+              ...(opts?.isKey != null && { isKey: opts.isKey }),
+              ...(opts?.precision !== undefined && { precision: opts.precision }),
+              ...(opts?.scale !== undefined && { scale: opts.scale }),
+              fieldNumber: assignedFieldNumber,
+              ...(opts?.aliases && { aliases: opts.aliases }),
+              ...(opts?.decorators && { decorators: opts.decorators as Prisma.InputJsonValue }),
+            },
+          }),
+          prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+        ]);
         return created;
       },
     });
@@ -166,6 +175,26 @@ export async function addFieldAction(
     return { error: message };
   }
 }
+
+/**
+ * Editable columns of an entity field (the quick editor, the field studio and drag-reorder send exactly these; `sortOrder`
+ * is the reorder). `id`, `entityId` (the move-to-another-entity column), `slug` (derived from `name` here), the timestamps
+ * and everything else are deliberately absent: an update that names anything else is rejected with VALIDATION_ERROR.
+ */
+const FIELD_EDITABLE = {
+  name: isString,
+  type: isString,
+  nullable: isBoolean,
+  isKey: isBoolean,
+  description: isString,
+  classification: isStringOrNull,
+  precision: isIntOrNull,
+  scale: isIntOrNull,
+  fieldNumber: isIntOrNull,
+  aliases: isStringArray,
+  decorators: isPlainObject,
+  sortOrder: isInt,
+};
 
 export async function updateFieldAction(
   fieldId: string,
@@ -186,13 +215,20 @@ export async function updateFieldAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const existing = await prisma.field.findUnique({ where: { id: fieldId } });
-  if (!existing) return { error: "Field not found" };
+  const fieldIdCheck = requireId(fieldId, "Field id");
+  if (!fieldIdCheck.success) return { error: fieldIdCheck.error.message, code: fieldIdCheck.error.code };
+  const picked = pickEditable(data, FIELD_EDITABLE, "a field");
+  if (!picked.success) return { error: picked.error.message, code: picked.error.code };
+  const { decorators, ...rest } = picked.data as { decorators?: Record<string, unknown> } & Record<string, unknown>;
 
-  const { decorators, ...rest } = data;
+  // Ownership: the field's entity must belong to the caller's active tenant; anything else reads as missing.
+  const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
+  if (!loaded) return { error: "Field not found", code: "NOT_FOUND" };
+  const { entity: owner, ...existing } = loaded;
+  if (!(await isInActiveTenant(owner.tenantId))) return { error: "Field not found", code: "NOT_FOUND" };
 
-  // Regenerate slug when name changes
-  if (rest.name && rest.name !== existing.name) {
+  // Regenerate slug when name changes (the slug is server-derived: a client-supplied `slug` was rejected above)
+  if (typeof rest.name === "string" && rest.name && rest.name !== existing.name) {
     (rest as Record<string, unknown>).slug = generateSlug(rest.name);
   }
 
@@ -205,17 +241,18 @@ export async function updateFieldAction(
   }
 
   // Validate field number uniqueness
-  if (data.fieldNumber != null) {
+  const fieldNumber = rest.fieldNumber as number | null | undefined;
+  if (fieldNumber != null) {
     const conflict = await prisma.field.findFirst({
       where: {
         entityId: existing.entityId,
-        fieldNumber: data.fieldNumber,
+        fieldNumber,
         id: { not: fieldId },
       },
       select: { name: true },
     });
     if (conflict) {
-      return { error: `Field number ${data.fieldNumber} is already assigned to field '${conflict.name}'` };
+      return { error: `Field number ${fieldNumber} is already assigned to field '${conflict.name}'` };
     }
   }
 
@@ -227,14 +264,17 @@ export async function updateFieldAction(
       userId: session.user.id,
       beforeState: existing as unknown as object,
       fn: async () => {
-        const updated = await prisma.field.update({
-          where: { id: fieldId },
-          data: {
-            ...rest,
-            ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
-          },
-        });
-        await markEntityDraftChanged(prisma, existing.entityId);
+        // The field write and the draft + stale-source mark are ONE atomic batch (see addFieldAction).
+        const [updated] = await prisma.$transaction([
+          prisma.field.update({
+            where: { id: fieldId },
+            data: {
+              ...(rest as Prisma.FieldUpdateInput),
+              ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
+            },
+          }),
+          prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, existing.entityId),
+        ]);
         return updated;
       },
     });
@@ -245,8 +285,8 @@ export async function updateFieldAction(
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `A field with that name already exists` };
     }
-    const message = e instanceof Error ? e.message : "Failed to update field";
-    return { error: message };
+    console.error("[updateFieldAction] unexpected error", e);
+    return { error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" };
   }
 }
 
@@ -622,8 +662,11 @@ export async function deleteFieldAction(fieldId: string) {
       userId: session.user.id,
       beforeState: existing as unknown as object,
       fn: async () => {
-        await prisma.field.delete({ where: { id: fieldId } });
-        await markEntityDraftChanged(prisma, existing.entityId);
+        // Delete + draft / stale-source mark in ONE atomic batch (see addFieldAction).
+        await prisma.$transaction([
+          prisma.field.delete({ where: { id: fieldId } }),
+          prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, existing.entityId),
+        ]);
         return null;
       },
     });

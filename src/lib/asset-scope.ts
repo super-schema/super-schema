@@ -10,7 +10,13 @@ export type ScopeTarget =
   | { level: "PRODUCT"; productId: string };
 
 export async function resolveScope(db: Db, target: ScopeTarget): Promise<Result<LevelScope>> {
-  if (target.level === "TENANT") return ok({ tenantId: target.tenantId, domainId: null, productId: null });
+  if (target.level === "TENANT") {
+    // The tenant must exist: a write under an unknown tenant would otherwise fail later on its foreign key (P2003),
+    // which the audited-write mapping reports as "IN_USE".
+    const t = await db.tenant.findUnique({ where: { id: target.tenantId }, select: { id: true } });
+    if (!t) return err({ code: "NOT_FOUND", message: `Tenant "${target.tenantId}" not found` });
+    return ok({ tenantId: t.id, domainId: null, productId: null });
+  }
   if (target.level === "DOMAIN") {
     const d = await db.domain.findUnique({ where: { id: target.domainId }, select: { id: true, tenantId: true } });
     if (!d) return err({ code: "NOT_FOUND", message: `Domain "${target.domainId}" not found` });

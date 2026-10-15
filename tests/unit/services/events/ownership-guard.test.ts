@@ -60,7 +60,7 @@ describe("loadOwnedRow (the shared ownership read)", () => {
     const db = fakePrisma({ domain: { findUnique: vi.fn().mockResolvedValue({ id: "d1", tenantId: "t1" }) } });
     expect((await loadOwnedRow(db, { kind: "Trait", id: "t1", owner: { level: "DOMAIN", domainId: "d1" }, load })).success).toBe(true);
     const tenantLoad = vi.fn().mockResolvedValue({ tenantId: "t1", domainId: null, productId: null });
-    expect((await loadOwnedRow(fakePrisma({}), { kind: "Trait", id: "t1", owner: { level: "TENANT", tenantId: "t1" }, load: tenantLoad })).success).toBe(true);
+    expect((await loadOwnedRow(fakePrisma({ tenant: { findUnique: vi.fn().mockResolvedValue({ id: "t1" }) } }), { kind: "Trait", id: "t1", owner: { level: "TENANT", tenantId: "t1" }, load: tenantLoad })).success).toBe(true);
   });
 
   it.each(FOREIGN_ROWS)("refuses %s with FORBIDDEN, no details, labelled by the caller's id and never by the row's name", async (_label, level) => {

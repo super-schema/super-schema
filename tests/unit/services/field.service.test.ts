@@ -36,6 +36,8 @@ const mockCtx: ServiceContext = {
 describe("Field Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The field write and the draft mark run as one `$transaction([...])` batch: resolve every operation, in order.
+    vi.mocked(prisma.$transaction).mockImplementation((async (ops: Promise<unknown>[]) => Promise.all(ops)) as never);
   });
 
   describe("createField", () => {
@@ -217,6 +219,85 @@ describe("Field Service", () => {
       vi.mocked(prisma.$transaction).mockResolvedValue([]);
       await reorderFields("ent-1", ["fld-1"], mockCtx);
       expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "ent-1");
+    });
+  });
+
+  /**
+   * The field write and the draft + stale-source mark must be ONE atomic batch. The fake below models Prisma's lazy
+   * operations: a write only takes effect when it is AWAITED, and `$transaction([...])` rolls every effect back when
+   * a later operation rejects. A service that awaited the field write on its own, then marked the draft separately, would
+   * leave the committed write behind when the mark fails (a changed field with `hasUnpublishedChanges` still false, so
+   * publish would answer NO_CHANGES).
+   */
+  describe("atomic field writes", () => {
+    let committed: string[];
+
+    const lazy = (label: string, effect?: () => void, result: unknown = { id: "fld-1", entityId: "ent-1" }) =>
+      ({
+        then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+          Promise.resolve()
+            .then(() => {
+              if (effect) effect();
+              committed.push(label);
+              return result;
+            })
+            .then(resolve, reject),
+      }) as unknown as Promise<unknown>;
+
+    beforeEach(() => {
+      committed = [];
+      vi.mocked(prisma.$transaction).mockImplementation((async (ops: Promise<unknown>[]) => {
+        const snapshot = [...committed];
+        try {
+          const out: unknown[] = [];
+          for (const op of ops) out.push(await op);
+          return out;
+        } catch (e) {
+          committed.length = 0;
+          committed.push(...snapshot);
+          throw e;
+        }
+      }) as never);
+      vi.mocked(prisma.$executeRawUnsafe).mockImplementation((() =>
+        lazy("mark", () => {
+          throw new Error("connection lost");
+        })) as never);
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ id: "ent-1" } as never);
+      vi.mocked(prisma.field.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.field.findUnique).mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email" } as never);
+      vi.mocked(prisma.field.findMany).mockResolvedValue([{ id: "fld-1", sortOrder: 0 }] as never);
+      vi.mocked(prisma.field.create).mockImplementation((() => lazy("create-field")) as never);
+      vi.mocked(prisma.field.update).mockImplementation((() => lazy("update-field")) as never);
+      vi.mocked(prisma.field.delete).mockImplementation((() => lazy("delete-field")) as never);
+    });
+
+    it("createField: a failing mark rolls the new field back", async () => {
+      await expect(createField("ent-1", { name: "email", type: "string" }, mockCtx)).rejects.toThrow("connection lost");
+      expect(committed).toEqual([]);
+    });
+
+    it("updateField: a failing mark rolls the field change back", async () => {
+      await expect(updateField("fld-1", { description: "x" }, mockCtx)).rejects.toThrow("connection lost");
+      expect(committed).toEqual([]);
+    });
+
+    it("deleteField: a failing mark rolls the delete back", async () => {
+      await expect(deleteField("fld-1", mockCtx)).rejects.toThrow("connection lost");
+      expect(committed).toEqual([]);
+    });
+
+    it("reorderFields: a failing mark rolls every sortOrder write back", async () => {
+      await expect(reorderFields("ent-1", ["fld-1"], mockCtx)).rejects.toThrow("connection lost");
+      expect(committed).toEqual([]);
+    });
+
+    it("on success the field write and the mark are committed together, in one batch", async () => {
+      vi.mocked(prisma.$executeRawUnsafe).mockImplementation((() => lazy("mark")) as never);
+      const result = await updateField("fld-1", { description: "x" }, mockCtx);
+      expect(result.success).toBe(true);
+      expect(committed).toEqual(["update-field", "mark"]);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(prisma.$transaction).mock.calls[0][0]).toHaveLength(2);
     });
   });
 });
