@@ -85,6 +85,17 @@ export const WRITE_BACK_SOURCE_SQL =
   `UPDATE "entities" SET "typespecSource" = $2, "updatedAt" = CURRENT_TIMESTAMP, ` +
   `"metadata" = (${METADATA_AS_OBJECT} - 'sourceStale' - 'typespecMigration') WHERE "id" = $1`;
 
+/**
+ * $1 = entity id, $2 = the stored source the caller compared against the field rows. Marks only the
+ * source stale (draft flags untouched: the draft did not change, its source just lags), and only when
+ * the source is still exactly that text and not already stale — idempotent, and a TypeSpec source save
+ * that lands in between wins. Used by the one-time `db:flag-stale-sources` backfill (pre-R42 entities).
+ */
+export const MARK_SOURCE_STALE_IF_UNCHANGED_SQL =
+  `UPDATE "entities" SET "metadata" = jsonb_set(${METADATA_AS_OBJECT}, '{sourceStale}', 'true'::jsonb, true) ` +
+  `WHERE "id" = $1 AND "typespecSource" = $2 ` +
+  `AND NOT COALESCE("metadata" @> '{"sourceStale": true}'::jsonb, false)`;
+
 /** True when entity metadata carries the stale-source marker. */
 export function isSourceStale(metadata: unknown): boolean {
   return asRecord(metadata).sourceStale === true;
