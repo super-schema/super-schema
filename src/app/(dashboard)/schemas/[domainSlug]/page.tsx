@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { loadLevelTraits } from "@/features/events/workspace/load-events-tab-data";
 import { productDataTypeCount } from "@/lib/product-deletion";
 import { DomainTabs } from "./domain-tabs";
 import {
@@ -70,6 +71,7 @@ export default async function DomainProductsPage({ params }: Props) {
     tenantEnums,
     tenantScalars,
     tenantUnions,
+    traits,
   ] = await Promise.all([
     prisma.productTier.findMany({ orderBy: { sortOrder: "asc" } }),
     prisma.sharedEnum.findMany({
@@ -106,6 +108,11 @@ export default async function DomainProductsPage({ params }: Props) {
     prisma.unionType.findMany({
       where: { tenantId: resolved.tenantId, domainId: null },
       orderBy: { name: "asc" },
+    }),
+    // Domain traits + the Enterprise traits read-only, scoped by the domain's tenant.
+    loadLevelTraits({
+      scope: { tenantId: resolved.tenantId, domainId: resolved.id, productId: null },
+      domainSlug,
     }),
   ]);
 
@@ -166,6 +173,7 @@ export default async function DomainProductsPage({ params }: Props) {
       }}
       inheritedDataTypes={hasEnterpriseDataTypes ? [enterpriseDataTypes] : []}
       services={mapServiceRows(services)}
+      traits={traits}
     />
   );
 }

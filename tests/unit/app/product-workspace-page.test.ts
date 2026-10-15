@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  loadProductEventsData: vi.fn(),
   getActiveTenantId: vi.fn(),
   domainFindFirst: vi.fn(),
   entityFindFirst: vi.fn(),
@@ -27,6 +28,10 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId }));
+vi.mock("@/features/events/workspace/load-events-tab-data", () => ({
+  loadProductEventsData: mocks.loadProductEventsData,
+  loadLevelTraits: vi.fn(async () => ({ own: [], inherited: [] })),
+}));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
     throw new Error("not found");
@@ -63,8 +68,14 @@ function entityRow(id: string, fields: number) {
   };
 }
 
+const EVENTS_DATA = {
+  events: { eventSpecs: [], messages: [], channels: [], payloadEntities: [] },
+  traits: { own: [], inherited: [] },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.loadProductEventsData.mockResolvedValue(EVENTS_DATA);
   mocks.getActiveTenantId.mockResolvedValue("tenant-1");
   mocks.domainFindFirst.mockResolvedValue(DOMAIN);
   mocks.empty.mockResolvedValue([]);
@@ -121,6 +132,35 @@ describe("ProductWorkspacePage", () => {
       domainSlug: "payments",
       productSlug: "checkout",
     });
+  });
+
+  it("loads the events and traits tab data for the resolved domain and product, and passes it on", async () => {
+    const events = {
+      eventSpecs: [], messages: [], payloadEntities: [],
+      channels: [{ id: "c1", name: "orders", summary: "", updatedAt: "", address: null, protocol: "kafka", format: "avro", href: "/schemas/payments/checkout/channels/c1" }],
+    };
+    const traits = { own: [], inherited: [{ label: "From Enterprise", href: "/schemas/enterprise?tab=traits", traits: [] }] };
+    mocks.loadProductEventsData.mockResolvedValue({ events, traits });
+
+    const element = await ProductWorkspacePage({ params });
+
+    expect(mocks.loadProductEventsData).toHaveBeenCalledTimes(1);
+    expect(mocks.loadProductEventsData).toHaveBeenCalledWith({
+      tenantId: "tenant-1",
+      domainId: "dom-1",
+      productId: "prod-1",
+      domainSlug: "payments",
+      productSlug: "checkout",
+    });
+    expect(element.props.events).toBe(events);
+    expect(element.props.traits).toBe(traits);
+  });
+
+  it("does not load events data for a legacy entity redirect or a 404", async () => {
+    mocks.domainFindFirst.mockResolvedValue({ ...DOMAIN, products: [] });
+    mocks.entityFindFirst.mockResolvedValue(null);
+    await expect(ProductWorkspacePage({ params })).rejects.toThrow("not found");
+    expect(mocks.loadProductEventsData).not.toHaveBeenCalled();
   });
 
   it("falls back to an unscoped domain lookup when the slug is outside the active tenant", async () => {

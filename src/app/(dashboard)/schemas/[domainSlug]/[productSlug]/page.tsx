@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { loadProductEventsData } from "@/features/events/workspace/load-events-tab-data";
 import {
   classificationCountsFromGroups,
   emptyClassificationCounts,
@@ -101,6 +102,7 @@ export default async function ProductWorkspacePage({
     tenantEnumsRaw,
     tenantScalarsRaw,
     tenantUnionsRaw,
+    eventsData,
   ] = await Promise.all([
     prisma.entity.findMany({
       where: { productId: product.id },
@@ -162,6 +164,14 @@ export default async function ProductWorkspacePage({
     prisma.unionType.findMany({
       where: { tenantId: domain.tenantId, domainId: null },
       orderBy: { name: "asc" },
+    }),
+    // Events + Traits tabs, scoped by the route's tenant, domain and product.
+    loadProductEventsData({
+      tenantId: domain.tenantId,
+      domainId: domain.id,
+      productId: product.id,
+      domainSlug,
+      productSlug,
     }),
   ]);
 
@@ -228,6 +238,8 @@ export default async function ProductWorkspacePage({
       services={services}
       inheritedDataTypes={inheritedDataTypes}
       inheritedServices={inheritedServices}
+      events={eventsData.events}
+      traits={eventsData.traits}
     />
   );
 }

@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Database, FilePlus2, Hash } from "lucide-react";
+import { Database, FilePlus2, Hash, Puzzle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EntityCard } from "@/components/custom/EntityCard";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { TraitsTab } from "@/features/events/workspace/TraitsTab";
+import { EMPTY_TRAITS_TAB, type TraitsTabData } from "@/features/events/workspace/types";
 import { levelLabel } from "@/lib/levels";
 import { CreateDropdown } from "../[domainSlug]/components/CreateDropdown";
 import {
@@ -16,7 +18,7 @@ import {
   type UnionTypeData,
 } from "../[domainSlug]/components/DomainTypesTab";
 
-export type EnterpriseTab = "entities" | "data-types";
+export type EnterpriseTab = "entities" | "data-types" | "traits";
 
 /**
  * Normalize the `?tab=` query value to an Enterprise tab. The legacy `types` value
@@ -25,13 +27,14 @@ export type EnterpriseTab = "entities" | "data-types";
  */
 export function normalizeEnterpriseTab(raw: string | null, fallback: EnterpriseTab): EnterpriseTab {
   if (raw === "types") return "data-types";
-  if (raw === "data-types" || raw === "entities") return raw;
+  if (raw === "data-types" || raw === "entities" || raw === "traits") return raw;
   return fallback;
 }
 
 const TABS: { id: EnterpriseTab; label: string; icon: typeof Database }[] = [
   { id: "entities", label: "Entities", icon: Database },
   { id: "data-types", label: "Data Types", icon: Hash },
+  { id: "traits", label: "Traits", icon: Puzzle },
 ];
 
 function tabDomId(id: EnterpriseTab) {
@@ -44,9 +47,9 @@ function panelDomId(id: EnterpriseTab) {
 
 /** Every tab writes an explicit `?tab=` so the URL never depends on the default. */
 function tabHref(tab: EnterpriseTab) {
-  return tab === "data-types"
-    ? assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null })
-    : assetHref({ kind: "enterprise" }, { query: { tab: "entities" } });
+  if (tab === "data-types") return assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null });
+  if (tab === "traits") return assetHref({ kind: "traits", domainSlug: null, productSlug: null });
+  return assetHref({ kind: "enterprise" }, { query: { tab: "entities" } });
 }
 
 export interface EnterpriseEntityRow {
@@ -71,14 +74,18 @@ export interface EnterpriseWorkspaceProps {
     customScalars: CustomScalarData[];
     unionTypes: UnionTypeData[];
   };
+  /** Tenant-level traits (managed here). */
+  traits?: TraitsTabData;
 }
 
-export function EnterpriseWorkspace({ tenantId, entities, dataTypes }: EnterpriseWorkspaceProps) {
+export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: EnterpriseWorkspaceProps) {
   const router = useRouter();
   const tabParam = useSearchParams().get("tab");
   const defaultTab: EnterpriseTab = entities.length > 0 ? "entities" : "data-types";
   const [activeTab, setActiveTab] = useState<EnterpriseTab>(normalizeEnterpriseTab(tabParam, defaultTab));
   const [typeCreateIntent, setTypeCreateIntent] = useState<DomainTypeCreateIntent | null>(null);
+  const [traitCreateIntent, setTraitCreateIntent] = useState<"trait" | null>(null);
+  const consumeTraitIntent = useCallback(() => setTraitCreateIntent(null), []);
 
   // Follow external URL changes (sidebar links, back/forward).
   useEffect(() => {
@@ -114,7 +121,7 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes }: Enterpris
         <div>
           <h1 className="text-display text-foreground">{label}</h1>
           <p className="text-body text-muted-foreground mt-space-1">
-            Entities and data types shared across every domain.
+            Entities, data types and traits shared across every domain.
           </p>
         </div>
         <CreateDropdown
@@ -122,6 +129,10 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes }: Enterpris
           onNewCustomDataType={() => {
             selectTab("data-types");
             setTypeCreateIntent("choose");
+          }}
+          onNewTrait={() => {
+            selectTab("traits");
+            setTraitCreateIntent("trait");
           }}
         />
       </div>
@@ -195,6 +206,17 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes }: Enterpris
             unionTypes={dataTypes.unionTypes}
             createIntent={typeCreateIntent}
             onCreateIntentConsumed={() => setTypeCreateIntent(null)}
+          />
+        )}
+
+        {activeTab === "traits" && (
+          <TraitsTab
+            target={{ level: "TENANT", tenantId }}
+            domainSlug={null}
+            productSlug={null}
+            data={traits ?? EMPTY_TRAITS_TAB}
+            createIntent={traitCreateIntent}
+            onCreateIntentConsumed={consumeTraitIntent}
           />
         )}
       </div>
