@@ -93,6 +93,95 @@ describe("combineTypeSpecSources", () => {
       expect(!r.success && r.error.details, specifier).toEqual({ label: "Bad@1.0", specifier });
     }
   });
+
+  // Final review C-C1: the allowlist used to be bypassed by anything the hand-written scanner did not read as an
+  // import. Imports are now found by TypeSpec's own parser, so every form below is seen and refused.
+  describe("import allowlist cannot be bypassed (C-C1)", () => {
+    const notAllowed = (source: string) => combineTypeSpecSources([{ label: "Evil@1.0", source }]);
+
+    it.each([
+      ["no space between `import` and the string", 'import"/tmp/x.mjs";\nmodel A { x: string; }\n', "/tmp/x.mjs"],
+      ["an import after a closing brace on the same line", 'model A { x: string; } import "/tmp/x.mjs";\n', "/tmp/x.mjs"],
+      ["an import after a closing brace, no space either", 'model A { x: string; }import"/tmp/x.mjs";\n', "/tmp/x.mjs"],
+      ["a relative path", 'import "./evil.mjs";\nmodel A { x: string; }\n', "./evil.mjs"],
+      ["a relative path, no space", 'import"../evil.mjs";\nmodel A { x: string; }\n', "../evil.mjs"],
+      ["an absolute path", 'import "/etc/passwd";\nmodel A { x: string; }\n', "/etc/passwd"],
+      ["a .tsp file", 'import "./x.tsp";\nmodel A { x: string; }\n', "./x.tsp"],
+      ["an import after a block comment", '/* harmless */ import "/tmp/x.mjs";\nmodel A { x: string; }\n', "/tmp/x.mjs"],
+      ["an import after a line comment's newline", '// note\nimport "/tmp/x.mjs";\nmodel A { x: string; }\n', "/tmp/x.mjs"],
+      ["an import hidden after an allowed import on the same line", 'import "@typespec/http"; import"/tmp/x.mjs";\nmodel A { x: string; }\n', "/tmp/x.mjs"],
+      ["several imports on one line", 'import "@typespec/http";import"@typespec/rest";import "./x.mjs";', "./x.mjs"],
+      ["an import in a namespace block", 'namespace N { import "/tmp/x.mjs"; model A { x: string; } }\n', "/tmp/x.mjs"],
+      ["a string that continues past a doc comment mention", '/** import "@typespec/http"; */\nmodel A { x: string; } import "/tmp/x.mjs";\n', "/tmp/x.mjs"],
+      ["a leading byte-order mark", '\uFEFFimport"/tmp/x.mjs";\n', "/tmp/x.mjs"],
+    ])("refuses %s", (_name, source, specifier) => {
+      const r = notAllowed(source);
+      expect(!r.success && r.error.code).toBe("TYPESPEC_IMPORT_NOT_ALLOWED");
+      expect(!r.success && r.error.details).toEqual({ label: "Evil@1.0", specifier });
+    });
+
+    it("refuses an import in ANY part, naming the part", () => {
+      const r = combineTypeSpecSources([
+        { label: "Good@1.0", source: 'import "@typespec/http";\nmodel Good { a: string; }\n' },
+        { label: "Evil@2.0", source: 'model Evil { a: string; } import"/tmp/x.mjs";\n' },
+      ]);
+      expect(!r.success && r.error.code).toBe("TYPESPEC_IMPORT_NOT_ALLOWED");
+      expect(!r.success && r.error.message).toContain("Evil@2.0");
+    });
+
+    it("does not mistake the word `import` in strings, comments, doc comments or decorator arguments for an import", () => {
+      const source = [
+        'import "@typespec/http";',
+        '/** import "/tmp/x.mjs"; */',
+        '// import "/tmp/y.mjs";',
+        '/* import"/tmp/z.mjs"; */',
+        '@doc("import \\"/tmp/w.mjs\\";")',
+        "model A {",
+        '  @doc("""',
+        '  import "/tmp/v.mjs";',
+        '  """)',
+        "  importer: string;",
+        '  note: "import \\"x\\";";',
+        "}",
+        "",
+      ].join("\n");
+      const r = combineTypeSpecSources([{ label: "A@1.0", source }]);
+      expect(r.success && r.data.imports).toEqual(['import "@typespec/http";']);
+      expect(r.success && r.data.body).toContain("model A {");
+    });
+
+    it("hoists an allowed import written without a space, and one that trails a closing brace", () => {
+      const r = combineTypeSpecSources([
+        { label: "A@1.0", source: 'import"@typespec/json-schema";\nmodel A { x: string; }\n' },
+        { label: "B@1.0", source: 'model B { y: string; } import "@typespec/http";\n' },
+      ]);
+      expect(r.success && r.data.imports).toEqual(['import "@typespec/json-schema";', 'import "@typespec/http";']);
+      expect(r.success && r.data.body).toBe("model A { x: string; }\n\nmodel B { y: string; }");
+    });
+
+    it("de-duplicates the same library written differently and keeps a multi-model source intact", () => {
+      const r = combineTypeSpecSources([
+        {
+          label: "Order@1.0",
+          source: 'import "@typespec/http";\nimport  "@typespec/rest" ;\nusing TypeSpec.Http;\nenum Status { Active }\nmodel Order { id: string; status: Status; line: Line; }\nmodel Line { sku: string; }\n',
+        },
+        { label: "Customer@1.0", source: 'import"@typespec/http";\nmodel Customer { name: string; }\n' },
+      ]);
+      expect(r.success && r.data.imports).toEqual(['import "@typespec/http";', 'import "@typespec/rest";']);
+      expect(r.success && r.data.usings).toEqual(["using TypeSpec.Http;"]);
+      expect(r.success && r.data.body).toBe(
+        "enum Status { Active }\n\nmodel Order { id: string; status: Status; line: Line; }\n\nmodel Line { sku: string; }\n\nmodel Customer { name: string; }"
+      );
+    });
+
+    it("returns a clean error, never a throw, for a source the TypeSpec parser cannot make sense of", () => {
+      for (const source of ['import "', "model A {", 'import"/tmp/x.mjs"', "import ;", "\u0000\u0000", "@@@@", '"""', "/*"]) {
+        expect(() => combineTypeSpecSources([{ label: "Bad@1.0", source }]), source).not.toThrow();
+      }
+      const r = combineTypeSpecSources([{ label: "Bad@1.0", source: 'import"/tmp/x.mjs"' }]); // no `;`: the parser still reads the import
+      expect(!r.success && r.error.code).toBe("TYPESPEC_IMPORT_NOT_ALLOWED");
+    });
+  });
 });
 
 describe("levelNamespace / findRootModelName", () => {

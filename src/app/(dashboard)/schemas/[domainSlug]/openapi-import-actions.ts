@@ -12,64 +12,102 @@
  *
  *   OpenAPI YAML/JSON → parseYaml() → convertOpenAPI3Document() (official)
  *     → TypeSpec source → compileTypeSpecDocument() → mapDocumentToImportResult()
+ *
+ * Like the TypeSpec import it runs a converter and the compiler on caller-supplied text, so it is
+ * authenticated, size-capped and time-bounded (`@/lib/compiler/import-limits`) and never echoes raw
+ * converter / compiler / host text: each stage reports a fixed sentence, the original error is logged
+ * server-side, and anything unexpected becomes the generic message (`sanitizeActionError`).
  */
 
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, YAMLParseError } from "yaml";
 import { convertOpenAPI3Document } from "@typespec/openapi3";
 import type { Result } from "@/types/result";
 import { ok, err } from "@/types/result";
+import { getActionContext, sanitizeActionError } from "@/lib/action-context";
 import { compileTypeSpecDocument } from "@/lib/compiler/typespec-compiler";
+import { checkImportSize, withCompileTimeout } from "@/lib/compiler/import-limits";
+import { TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
 import {
   mapDocumentToImportResult,
   isEmptyTypeSpecDocument,
   type TypeSpecImportResult,
 } from "@/lib/importers/typespec.importer";
 
+const LABEL = "importOpenApiDocumentAction";
+
 export async function importOpenApiDocumentAction(
   content: string
 ): Promise<Result<TypeSpecImportResult>> {
-  if (!content || !content.trim()) {
+  return sanitizeActionError(runOpenApiImport(content), LABEL);
+}
+
+/** Only the position of a YAML syntax error is shown; the parser's message quotes the caller's own text. */
+function describeYamlError(e: unknown): string {
+  const pos = e instanceof YAMLParseError ? e.linePos?.[0] : undefined;
+  return pos ? `The OpenAPI document is not valid YAML or JSON (line ${pos.line}, column ${pos.col})` : "The OpenAPI document is not valid YAML or JSON";
+}
+
+async function runOpenApiImport(content: string): Promise<Result<TypeSpecImportResult>> {
+  const ctx = await getActionContext();
+  if (!ctx) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
+
+  if (typeof content !== "string" || !content.trim()) {
     return err({
       code: "PARSE_ERROR",
       message: "Empty OpenAPI content",
       suggestedFix: "Provide an OpenAPI 3.x document (JSON or YAML).",
     });
   }
+  const size = checkImportSize(content, "OpenAPI document");
+  if (!size.success) return size;
 
   let openApiDoc: unknown;
   try {
     openApiDoc = parseYaml(content);
   } catch (e) {
+    console.error(`[${LABEL}] OpenAPI document did not parse`, e);
     return err({
       code: "PARSE_ERROR",
-      message: e instanceof Error ? e.message : "Failed to parse OpenAPI document",
+      message: describeYamlError(e),
       suggestedFix: "Ensure the content is valid YAML or JSON.",
     });
   }
 
-  let tspSource: string;
-  try {
-    tspSource = await convertOpenAPI3Document(
-      openApiDoc as Parameters<typeof convertOpenAPI3Document>[0]
-    );
-  } catch (e) {
+  const converted = await withCompileTimeout(async () => {
+    try {
+      return await convertOpenAPI3Document(openApiDoc as Parameters<typeof convertOpenAPI3Document>[0]);
+    } catch (e) {
+      console.error(`[${LABEL}] OpenAPI conversion failed`, e);
+      return null;
+    }
+  });
+  if (!converted.success) return converted;
+  if (converted.data === null) {
     return err({
       code: "PARSE_ERROR",
-      message: e instanceof Error ? e.message : "Failed to convert OpenAPI document",
+      message: "The OpenAPI document could not be converted to TypeSpec",
       suggestedFix: "Check that the document is a valid OpenAPI 3.x specification.",
     });
   }
+  const tspSource = converted.data;
+  const tspSize = checkImportSize(tspSource, "converted TypeSpec");
+  if (!tspSize.success) return tspSize;
 
-  let doc;
+  let compiled;
   try {
-    doc = await compileTypeSpecDocument(tspSource);
+    compiled = await withCompileTimeout(() => compileTypeSpecDocument(tspSource));
   } catch (e) {
-    return err({
-      code: "PARSE_ERROR",
-      message: e instanceof Error ? e.message : "Failed to compile converted TypeSpec",
-      suggestedFix: "The OpenAPI document converted to TypeSpec that failed to compile.",
-    });
+    if (e instanceof TypeSpecImportGuardError) {
+      return err({
+        code: e.code,
+        message: e.message,
+        suggestedFix: "The OpenAPI document converted to TypeSpec that imports something other than a TypeSpec library.",
+      });
+    }
+    throw e; // sanitizeActionError logs it and returns the generic message
   }
+  if (!compiled.success) return compiled;
+  const doc = compiled.data;
 
   if (isEmptyTypeSpecDocument(doc)) {
     return err({

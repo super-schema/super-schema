@@ -17,6 +17,7 @@ import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { ok, err, type Result } from "@/types/result";
+import { checkTypeSpecImports } from "@/lib/typespec/import-guard";
 
 const execFileAsync = promisify(execFile);
 
@@ -289,6 +290,11 @@ export const DEFAULT_EMITTER_TIMEOUT_MS = 120_000;
 /**
  * Run one TypeSpec emitter in a throw-away workspace; every file it wrote, sorted by path. Never throws: a
  * workspace that cannot be created, a failed compile and a `tsp` that outlives `timeoutMs` (SIGKILL) are errors.
+ *
+ * `tsp` LOADS (and, for `.js` / `.mjs`, executes) whatever the source imports, so the source is checked first with
+ * the TypeSpec parser (`checkTypeSpecImports`): any import that is not an allowed library is
+ * `TYPESPEC_IMPORT_NOT_ALLOWED` and no workspace is created. This is the single choke point for every `tsp` run
+ * (Schemas-tab targets and the events renderer alike).
  */
 export async function runTypeSpecEmitterFiles(
   packageName: string,
@@ -296,6 +302,8 @@ export async function runTypeSpecEmitterFiles(
   emitterOptions: Record<string, unknown>,
   runOptions: { timeoutMs?: number } = {}
 ): Promise<Result<EmittedFile[]>> {
+  const imports = checkTypeSpecImports(source);
+  if (!imports.success) return imports;
   let workspace: string;
   try {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
