@@ -93,6 +93,39 @@ describe("AsyncApiParserValidator (real @asyncapi/parser)", { timeout: 60_000 },
     });
   });
 
+  describe("Kafka key (the Kafka binding types `key` as a JSON Schema Object)", () => {
+    const avroKeyedDocument = (key: SchemaArtifact, channelRef: ReturnType<typeof channel>) =>
+      assembleAsyncApi3(
+        spec({
+          channels: [channelRef],
+          messages: [message({ id: "m", name: "M", keys: [key] })],
+          operations: [operation({ key: "o", channelRef: channelRef.id, messageRefs: ["m"] })],
+        }),
+      ).document;
+
+    it("accepts an Avro RECORD key on an Avro channel (tagged as a Multi Format Schema Object, never a bare record)", async () => {
+      const avroChannel = channel({ id: "ch-avro", name: "orders", profile: { format: "avro" } });
+      const document = avroKeyedDocument(
+        { format: "avro", schema: { type: "record", name: "OrderKey", namespace: "acme.test", fields: [{ name: "id", type: "string" }] } },
+        avroChannel,
+      );
+      const key = ((document.components as { messages: { M: { bindings: { kafka: { key: JsonObject } } } } }).messages.M.bindings.kafka).key;
+      expect(key).toEqual({
+        schemaFormat: "application/vnd.apache.avro+json;version=1.9.0",
+        schema: { type: "record", name: "OrderKey", namespace: "acme.test", fields: [{ name: "id", type: "string" }] },
+      });
+      expect(errorsOf(await validate(document))).toEqual([]);
+    });
+
+    it("accepts a JSON Schema key on a JSON Schema Kafka channel", async () => {
+      const document = avroKeyedDocument(
+        { format: "json-schema", dialect: "draft-07", schema: { type: "object", properties: { id: { type: "string" } } } },
+        jsonDraft07Channel,
+      );
+      expect(errorsOf(await validate(document))).toEqual([]);
+    });
+  });
+
   describe("embedded JSON Schema $ref rebasing (plan decision D8)", () => {
     it("accepts a draft-07 payload whose refs the assembler rebased onto the document", async () => {
       const document = jsonPayloadDocument(DRAFT_07_WITH_DEFINITIONS);

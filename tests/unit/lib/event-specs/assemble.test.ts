@@ -182,7 +182,11 @@ describe("message schemas", () => {
       }),
     );
     expect(at(document, "components", "messages", "M_avro", "bindings")).toEqual({
-      kafka: { key: { type: "string" }, schemaIdLocation: "header" },
+      kafka: {
+        // The Kafka binding takes a JSON Schema Object: an Avro key is tagged with its schemaFormat (a bare record would be rejected).
+        key: { schemaFormat: "application/vnd.apache.avro+json;version=1.9.0", schema: { type: "string" } },
+        schemaIdLocation: "header",
+      },
     });
     expect(at(document, "components", "messages", "M_json", "bindings")).toEqual({
       kafka: { key: { type: "string", format: "uuid" }, schemaIdLocation: "header" },

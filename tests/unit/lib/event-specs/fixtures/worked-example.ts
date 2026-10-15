@@ -158,7 +158,9 @@ components:
         schema: { type: record, name: Order, namespace: acme.payments.checkout, fields: [] }
       bindings:
         kafka:
-          key: { type: string }
+          key:
+            schemaFormat: application/vnd.apache.avro+json;version=1.9.0
+            schema: { type: string }
   messageTraits:
     CloudEvents:
       headers:
