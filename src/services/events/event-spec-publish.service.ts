@@ -95,6 +95,8 @@ async function gatherFacts(db: Db, snapshot: DraftSnapshot): Promise<Result<Fact
     current: bumpSide(snapshot.document, snapshot.channels, snapshot.traits, published, snapshot.messageVersionInfo),
     unresolved: snapshot.unresolved,
     unpublishedMessages: snapshot.messages.filter((m) => m.unpublished).map((m) => ({ id: m.messageId, name: m.name })),
+    // R73: a trait whose headers entity has no pinned version would be rendered from the entity's mutable draft and frozen unpinned.
+    unpinnedTraitHeaders: snapshot.traits.filter((t) => t.headersEntityId && !t.headersEntityVersionId).map((t) => ({ id: t.id, name: t.name })),
     nameConflict: name.success ? null : name.error.message,
   });
 }

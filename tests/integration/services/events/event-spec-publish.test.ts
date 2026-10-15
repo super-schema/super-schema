@@ -12,6 +12,7 @@ import { createEventSpec, updateEventSpecDocument } from "@/services/events/even
 import { emitEventSpec } from "@/services/events/event-spec-emit.service";
 import { listEventSpecVersions, previewEventSpecPublish, publishEventSpec } from "@/services/events/event-spec-publish.service";
 import { createMessage, deleteMessage } from "@/services/events/message.service";
+import { createTrait, updateTrait } from "@/services/events/trait.service";
 import { createForeignTenant } from "./foreign-tenant";
 import { cleanupDomains, connectTestDb, createProductScope, testContext, unwrap } from "./helpers";
 
@@ -50,13 +51,17 @@ async function frozenEntity(sc: Scope, name: string) {
 }
 
 /** A product with a pinned-payload draft message, a Kafka/Avro channel and an empty event spec. */
-async function fixture(label = "evt") {
+async function fixture(
+  label = "evt",
+  options: { messageTraitIds?: (sc: Scope) => Promise<string[]>; channel?: { format: string; formatDialect?: string } } = {}
+) {
   const sc = await createProductScope(prisma, ctx, label);
   const order = await frozenEntity(sc, "Order");
+  const traitIds = (await options.messageTraitIds?.(sc)) ?? [];
   const message = unwrap(await createMessage(sc.product.id, {
-    name: `OrderCreated-${sc.s}`, spec: { contentType: "avro/binary", traitIds: [] }, payload: { entityId: order.entity.id, entityVersionId: order.version.id },
+    name: `OrderCreated-${sc.s}`, spec: { contentType: "avro/binary", traitIds }, payload: { entityId: order.entity.id, entityVersionId: order.version.id },
   }, ctx));
-  const channelInput = { name: `orders-${sc.s}`, address: "payments.orders.v1", protocol: "kafka", format: "avro" };
+  const channelInput = { name: `orders-${sc.s}`, address: "payments.orders.v1", protocol: "kafka", format: "avro", ...options.channel };
   const channel = unwrap(await createChannel(sc.product.id, channelInput, ctx));
   const spec = unwrap(await createEventSpec(sc.product.id, { name: `checkout-service-${sc.s}`, title: "checkout-service" }, ctx));
   const doc = (messageRef: string, channelId = channel.id) => ({
@@ -70,7 +75,7 @@ async function fixture(label = "evt") {
       data: {
         messageId: message.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, payloadEntityVersionId: order.version.id,
         resolvedSpec: {
-          name: message.name, spec: { contentType: "avro/binary", traitIds: [] }, headers: null, key: null,
+          name: message.name, spec: { contentType: "avro/binary", traitIds }, headers: null, key: null,
           payload: { entityId: order.entity.id, entityName: "Order", entityVersionId: order.version.id, label: "1.0", major: 1 },
         },
       },
@@ -279,6 +284,63 @@ describe.sequential("event spec publish (spec §6.1, §7.4, D8, D11, R66, R67)",
       expect(await prisma.eventSpecVersion.count({ where: { eventSpecId: spec.id } })).toBe(0);
     } finally {
       consoleError.mockRestore();
+      await cleanupDomains(prisma, [domainId]);
+    }
+  }, 240_000);
+
+  it("blocks a trait whose headers entity is unpinned (with the other blockers), publishes once it is pinned; warnings never block and land in compatReport (R73)", async () => {
+    let domainId: string | undefined;
+    try {
+      let headers: Awaited<ReturnType<typeof frozenEntity>> | undefined;
+      let trait: { id: string; name: string } | undefined;
+      // A 2020-12 JSON Schema channel: @asyncapi/parser cannot validate it, so the document always carries a PAYLOAD_NOT_VALIDATED warning.
+      const f = await fixture("trt", {
+        channel: { format: "json-schema", formatDialect: "2020-12" },
+        messageTraitIds: async (sc) => {
+          headers = await frozenEntity(sc, "CloudEventsHeaders");
+          trait = unwrap(await createTrait({ level: "DOMAIN", domainId: sc.domain.id }, {
+            name: `CloudEvents-${sc.s}`, kind: "MESSAGE", headers: { entityId: headers.entity.id, entityVersionId: null },
+          }, ctx));
+          return [trait.id];
+        },
+      });
+      domainId = f.sc.domain.id;
+      const { sc, spec, doc, owner, deps } = f;
+      if (!headers || !trait) throw new Error("fixture did not create the trait");
+      const mv = await f.freezeMessage();
+      unwrap(await updateEventSpecDocument(spec.id, doc(mv.id), owner, ctx));
+      // A second, unrelated blocker (a trait in the same line carrying the spec's name) must be reported together with the pin.
+      const clash = await prisma.trait.create({ data: { name: spec.name, kind: "OPERATION", tenantId: sc.domain.tenantId, domainId: sc.domain.id } });
+
+      const preview = unwrap(await previewEventSpecPublish(spec.id, sc.product.id, ctx, deps));
+      expect(blockerKinds(preview)).toEqual(["UNPUBLISHED_PIN", "NAME_CONFLICT"]);
+      expect(preview.blockers[0].message).toBe(
+        `Trait ${trait.name}: its headers entity is not pinned to a published version — pin a published entity version on the trait, then publish again`
+      );
+      const refused = await publishEventSpec(spec.id, sc.product.id, {}, ctx, deps);
+      expect(failure(refused)?.code).toBe("PUBLISH_BLOCKED");
+      expect((failure(refused)?.details as { blockers: Array<{ kind: string }> }).blockers.map((b) => b.kind)).toEqual(["UNPUBLISHED_PIN", "NAME_CONFLICT"]);
+      expect(await prisma.eventSpecVersion.count({ where: { eventSpecId: spec.id } })).toBe(0);
+      expect(await prisma.eventSpec.findUniqueOrThrow({ where: { id: spec.id } })).toMatchObject({ latestVersionId: null, hasUnpublishedChanges: true });
+
+      // Only the pin blocks once the clash is gone.
+      await prisma.trait.delete({ where: { id: clash.id } });
+      expect(blockerKinds(unwrap(await previewEventSpecPublish(spec.id, sc.product.id, ctx, deps)))).toEqual(["UNPUBLISHED_PIN"]);
+
+      // Pin the trait's headers to the published entity version: no blocker remains (the warning does not block) and the publish succeeds.
+      unwrap(await updateTrait(trait.id, { name: trait.name, headers: { entityId: headers.entity.id, entityVersionId: headers.version.id } }, { level: "DOMAIN", domainId: sc.domain.id }, ctx));
+      expect(unwrap(await previewEventSpecPublish(spec.id, sc.product.id, ctx, deps))).toMatchObject({ isFirstPublish: true, blockers: [] });
+      const v1 = unwrap(await publishEventSpec(spec.id, sc.product.id, {}, ctx, deps));
+      expect(v1.label).toBe("1.0");
+
+      const stored = await prisma.eventSpecVersion.findUniqueOrThrow({ where: { id: v1.id } });
+      expect(stored.frozenTraits).toMatchObject([{ id: trait.id, headersEntityId: headers.entity.id, headersEntityVersionId: headers.version.id }]);
+      const report = stored.compatReport as { reasons: string[]; diagnostics: Array<{ severity: string; code: string }> };
+      expect(report.diagnostics.map((d) => [d.severity, d.code])).toContainEqual(["warning", "PAYLOAD_NOT_VALIDATED"]);
+      expect(report.diagnostics.some((d) => d.severity === "error")).toBe(false);
+      // …and the warning is what a reader of the published version sees.
+      expect(unwrap(await emitEventSpec(spec.id, { versionLabel: "1.0" }, ctx)).diagnostics.map((d) => d.code)).toContain("PAYLOAD_NOT_VALIDATED");
+    } finally {
       await cleanupDomains(prisma, [domainId]);
     }
   }, 240_000);
