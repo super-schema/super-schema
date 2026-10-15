@@ -16,9 +16,21 @@ import type { BumpKind, PublishInput } from "@/lib/entity-versioning/types";
 
 const BUMPS: BumpKind[] = ["MINOR", "MAJOR"];
 
+/**
+ * The subset of a publish analysis the dialog renders — entity, message and event spec analyses
+ * all satisfy it. `warnings` is optional because only entity publishes produce them.
+ */
+export type PublishPreview = Pick<
+  PublishAnalysis,
+  "isFirstPublish" | "latestLabel" | "suggestedBump" | "candidateLabels" | "initialLabel" | "reasons"
+> & {
+  blockers: ReadonlyArray<{ kind: string; message: string }>;
+  warnings?: ReadonlyArray<{ kind: string; message: string }>;
+};
+
 interface PublishEntityFormProps {
   entityName: string;
-  preview: PublishAnalysis;
+  preview: PublishPreview;
   isPublishing: boolean;
   publishError: string | null;
   onCancel: () => void;
@@ -54,7 +66,7 @@ export function PublishEntityForm({
         </div>
       )}
 
-      {preview.warnings.length > 0 && (
+      {(preview.warnings?.length ?? 0) > 0 && (
         <div
           data-testid="publish-warnings"
           className="rounded-lg border border-warning/30 bg-warning/5 p-space-3"
@@ -63,7 +75,7 @@ export function PublishEntityForm({
             <AlertTriangle className="size-4" aria-hidden="true" /> Warnings
           </p>
           <ul className="mt-space-1 list-disc pl-5 text-caption text-foreground">
-            {preview.warnings.map((w, i) => (
+            {preview.warnings?.map((w, i) => (
               <li key={`${w.kind}-${i}`}>{w.message}</li>
             ))}
           </ul>
@@ -160,7 +172,9 @@ export function PublishEntityForm({
 interface PublishEntityDialogProps {
   open: boolean;
   entityName: string;
-  preview: PublishAnalysis | null;
+  /** Overrides the default explanation (entity wording) — used by message and event spec publishes. */
+  description?: string;
+  preview: PublishPreview | null;
   loadError: string | null;
   isPublishing: boolean;
   publishError: string | null;
@@ -171,6 +185,7 @@ interface PublishEntityDialogProps {
 export function PublishEntityDialog({
   open,
   entityName,
+  description,
   preview,
   loadError,
   isPublishing,
@@ -191,7 +206,7 @@ export function PublishEntityDialog({
         <DialogHeader>
           <DialogTitle className="text-heading-3 text-foreground">Publish {entityName}</DialogTitle>
           <DialogDescription className="text-body-small text-muted-foreground">
-            Publishing freezes the current draft as an immutable version that messages and other entities can pin.
+            {description ?? "Publishing freezes the current draft as an immutable version that messages and other entities can pin."}
           </DialogDescription>
         </DialogHeader>
         {loadError ? (
