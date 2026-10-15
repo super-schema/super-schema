@@ -190,6 +190,37 @@ export function combineTypeSpecSources(parts: SourcePart[]): Result<CombinedSour
   return ok({ imports: [...imports], usings: [...usings], body: body.join("\n\n"), warnings });
 }
 
+/** The overlay decorators `generateTypeSpec()` emits (governance-decorators.ts): each is fully qualified and alone on its line. */
+const GOVERNANCE_DECORATOR_LINE =
+  /^[ \t]*@(?:Enterprise\.dataClassification\(.*\)|TypeSpec\.OpenAPI\.extension\("(?:x-tags|x-classification)",.*\))[ \t]*(?:\r?\n|$)/gm;
+const ENTERPRISE_IMPORT_LINE = /^[ \t]*import\s+"@superschema\/typespec-enterprise"\s*;[ \t]*(?:\r?\n|$)/gm;
+const OPENAPI_IMPORT_LINE = /^[ \t]*import\s+"@typespec\/openapi"\s*;[ \t]*(?:\r?\n|$)/gm;
+
+/**
+ * Story 16.6 overlay → render projection. Frozen `resolvedSource` text carries the governance overlay
+ * (`@Enterprise.dataClassification(...)`, `@TypeSpec.OpenAPI.extension("x-tags" | "x-classification", ...)` and
+ * the imports they need). No payload emitter reads it, and importing `@superschema/typespec-enterprise` makes the
+ * JSON Schema emitter (`emitAllModels`) write the library's enums (`DataClassification`, `AvroLogicalType`, …)
+ * into the payload's `$defs`. So the renderer compiles the source WITHOUT the overlay — the same explicit
+ * projection the Schemas-tab emission path applies via `generateTypeSpec(model, { governance: false })`.
+ *
+ * Removes the overlay decorator lines, then each library import that nothing else in the source refers to
+ * (`Enterprise` / `OpenAPI` identifiers outside strings and comments). A source without overlay lines is
+ * returned unchanged. Pure.
+ */
+export function stripGovernanceOverlay(source: string): string {
+  let removed = 0;
+  let out = source.replace(GOVERNANCE_DECORATOR_LINE, () => {
+    removed++;
+    return "";
+  });
+  if (removed === 0) return source;
+  const code = codeOnly(out);
+  if (!/\bEnterprise\b/.test(code)) out = out.replace(ENTERPRISE_IMPORT_LINE, "");
+  if (!/\bOpenAPI\b/.test(code)) out = out.replace(OPENAPI_IMPORT_LINE, "");
+  return out;
+}
+
 function pascalSegment(slug: string): string {
   const pascal = slug
     .split(/[^A-Za-z0-9]+/)

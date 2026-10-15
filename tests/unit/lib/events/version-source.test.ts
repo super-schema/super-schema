@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { combineTypeSpecSources, findRootModelName, levelNamespace, splitTypeSpecStatements } from "@/lib/events/version-source";
+import { combineTypeSpecSources, findRootModelName, levelNamespace, splitTypeSpecStatements, stripGovernanceOverlay } from "@/lib/events/version-source";
 
 describe("splitTypeSpecStatements", () => {
   it("keeps decorators + comments with their statement; braces / semicolons inside strings do not split", () => {
@@ -59,5 +59,61 @@ describe("levelNamespace / findRootModelName", () => {
     expect(findRootModelName("enum S { A }\nmodel Line { a: string; }\nmodel Order { l: Line; }", "Order")).toBe("Order");
     expect(findRootModelName("model Line { a: string; }", "Order Line")).toBe("Line");
     expect(findRootModelName("enum S { A }", "Order")).toBeNull();
+  });
+});
+
+describe("stripGovernanceOverlay", () => {
+  const overlay = [
+    'import "@superschema/typespec-enterprise";',
+    'import "@typespec/openapi";',
+    "",
+    '@TypeSpec.OpenAPI.extension("x-tags", #["sales", "core"])',
+    "model Order {",
+    "  id: string;",
+    "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+    "  email: string;",
+    '  @TypeSpec.OpenAPI.extension("x-classification", "CUSTOM (x)")',
+    '  @doc("keeps @Enterprise.dataClassification(x) inside strings")',
+    "  note?: string;",
+    "}",
+    "",
+  ].join("\n");
+
+  it("removes the generator's overlay decorators and the library imports nothing else uses", () => {
+    expect(stripGovernanceOverlay(overlay)).toBe(
+      [
+        "",
+        "model Order {",
+        "  id: string;",
+        "  email: string;",
+        '  @doc("keeps @Enterprise.dataClassification(x) inside strings")',
+        "  note?: string;",
+        "}",
+        "",
+      ].join("\n")
+    );
+  });
+
+  it("keeps an import that other code still needs, and leaves overlay-free sources untouched", () => {
+    const authored = [
+      'import "@superschema/typespec-enterprise";',
+      'import "@typespec/openapi";',
+      "using TypeSpec.OpenAPI;",
+      "model A {",
+      "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      "  a: string;",
+      '  @extension("x-other", "1")',
+      "  b: string;",
+      "  @Enterprise.avroOrder(Enterprise.AvroFieldOrder.ignore)",
+      "  c: string;",
+      "}",
+    ].join("\n");
+    const stripped = stripGovernanceOverlay(authored);
+    expect(stripped).not.toContain("dataClassification");
+    expect(stripped).toContain('import "@superschema/typespec-enterprise";');
+    expect(stripped).toContain('import "@typespec/openapi";');
+    expect(stripped).toContain("@Enterprise.avroOrder(");
+    const plain = 'import "@typespec/openapi";\nmodel B { x: string; }\n';
+    expect(stripGovernanceOverlay(plain)).toBe(plain);
   });
 });

@@ -3,8 +3,8 @@ import { placeRootMessageFirst } from "@/lib/event-specs/proto-root";
 import type { JsonObject, PayloadFormat, SchemaArtifact } from "@/lib/event-specs/types";
 import { isJsonObject } from "@/lib/events/inputs";
 import { inlineJsonSchemaBundle } from "@/lib/events/json-schema-bundle";
-import { combineTypeSpecSources, findRootModelName, levelNamespace, type CombinedSource } from "@/lib/events/version-source";
-import { toCompilableTypeSpec } from "@/lib/compiler/compilable-source";
+import { combineTypeSpecSources, findRootModelName, levelNamespace, stripGovernanceOverlay, type CombinedSource } from "@/lib/events/version-source";
+import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { collectReferencedEntityIds } from "@/lib/entity-versioning/reference-targets";
@@ -173,12 +173,16 @@ const FORMAT_HEADER: Record<PayloadFormat, { imports: string[]; usings: string[]
 };
 
 /**
- * Real TypeSpec rejects the legacy `@tag(...)` lines that frozen `resolvedSource` text (and the canonical
- * generator, until Track F lands) may still carry. This is the renderer's only use of the legacy-tag shim —
- * when `toCompilableTypeSpec` is retired, replace this body with an identity function (or inline it away).
+ * The one place a frozen / stored source is prepared for the real compiler (per source, before the programs are
+ * combined so added imports hoist):
+ * 1. `upgradeLegacyTagDecorators` — versions frozen before Story 16.6 may still hold invalid `@tag(...)` lines
+ *    (`decorator-wrong-target`); they are rewritten into the current overlay decorators.
+ * 2. `stripGovernanceOverlay` — the overlay is then projected away (no payload emitter reads it, and importing
+ *    the governance library leaks its enums into the JSON Schema `$defs`), as the Schemas-tab emission path does.
+ * Drop step 1 when legacy stored sources are no longer possible; it is independent of step 2.
  */
 function toRealCompilable(source: string): string {
-  return toCompilableTypeSpec(source);
+  return stripGovernanceOverlay(upgradeLegacyTagDecorators(source));
 }
 
 /** The `main.tsp` for one format (D9). */
@@ -186,7 +190,7 @@ export function buildTargetSource(format: PayloadFormat, combined: CombinedSourc
   const header = FORMAT_HEADER[format];
   const imports = [...new Set([...header.imports, ...combined.imports])];
   const usings = [...new Set([...header.usings, ...combined.usings])];
-  let body = toRealCompilable(combined.body);
+  let body = combined.body;
   if (format === "protobuf") {
     body = projectTypeSpecSourceForProtobuf(body);
     for (const part of [program.root, ...program.deps]) body = injectProtobufFieldNumbers(body, part.rootModel, part.fields);
@@ -265,7 +269,7 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
     const program = await loadProgram(options.db, subject);
     if (!program.success) return program;
     const parts = [program.data.root, ...program.data.deps];
-    const combined = combineTypeSpecSources(parts.map((p) => ({ label: p.label, source: p.source })));
+    const combined = combineTypeSpecSources(parts.map((p) => ({ label: p.label, source: toRealCompilable(p.source) })));
     if (!combined.success) return combined;
     const packageName = getSchemaTargetDefinition(format)?.packageName;
     if (!packageName) return err({ code: "UNSUPPORTED_FORMAT", message: `No TypeSpec emitter for format "${format}"` });

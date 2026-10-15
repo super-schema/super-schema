@@ -109,7 +109,7 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
   };
   const avroFiles = [{ relativePath: "Legacy.avsc.json", content: '{"type":"record","name":"Legacy"}' }];
 
-  it("strips legacy @tag lines (frozen pre-Track-F resolvedSource) before compiling, in every format", async () => {
+  it("upgrades legacy @tag lines (frozen pre-Track-F resolvedSource) and projects the overlay away before compiling, in every format", async () => {
     for (const format of ["avro", "json-schema", "protobuf"] as const) {
       const emitFiles = vi.fn<EmitFiles>(async () => ({
         success: true,
@@ -124,8 +124,45 @@ describe("artifact renderer — legacy @tag lines and draft subjects", () => {
       expect(r.success).toBe(true);
       const source = emitFiles.mock.calls[0][1];
       expect(source).not.toMatch(/^\s*@tag\(/m);
+      expect(source).not.toMatch(/Enterprise|x-tags|x-classification|typespec-enterprise|@typespec\/openapi/);
       expect(source).toContain("model Legacy {");
       expect(source).toContain('@doc("mentions @tag(x) inline")');
+    }
+  });
+
+  it("compiles frozen Story 16.6 sources without the governance overlay (decorators and library imports), in every format", async () => {
+    const governed: V = {
+      id: "vGoverned", entityId: "eGoverned", major: 1, minor: 0, entity: { name: "Governed" },
+      fieldSnapshot: [{ name: "id", fieldNumber: 1 }, { name: "email", fieldNumber: 2 }],
+      resolvedSource: [
+        'import "@superschema/typespec-enterprise";',
+        'import "@typespec/openapi";',
+        "",
+        '@TypeSpec.OpenAPI.extension("x-tags", #["sales"])',
+        "model Governed {",
+        "  id: string;",
+        "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+        "  email: string;",
+        "}",
+        "",
+      ].join("\n"),
+    };
+    for (const format of ["avro", "json-schema", "protobuf"] as const) {
+      const emitFiles = vi.fn<EmitFiles>(async () => ({
+        success: true,
+        data: format === "json-schema"
+          ? [{ relativePath: "Governed", content: JSON.stringify({ $id: "Governed", $defs: { Governed: { $id: "Governed.json", type: "object" } } }) }]
+          : format === "protobuf"
+            ? [{ relativePath: "main.proto", content: "message Governed {\n  string id = 1;\n}\n" }]
+            : [{ relativePath: "Governed.avsc.json", content: '{"type":"record","name":"Governed"}' }],
+      }));
+      const db = { ...fakeDb(), entityVersion: { findUnique: vi.fn(async () => governed) } };
+      const r = await createArtifactRenderer({ db: db as never, emitFiles }).render({ kind: "version", entityVersionId: "vGoverned" }, format);
+      expect(r.success).toBe(true);
+      const source = emitFiles.mock.calls[0][1];
+      expect(source).not.toMatch(/Enterprise|x-tags|typespec-enterprise|@typespec\/openapi/);
+      expect(source).toContain("model Governed {");
+      if (format === "protobuf") expect(source).toContain("@field(2)\n  email: string;");
     }
   });
 
