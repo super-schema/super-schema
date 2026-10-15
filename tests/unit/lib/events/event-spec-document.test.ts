@@ -45,6 +45,28 @@ describe("EventSpecDocument", () => {
     ]);
   });
 
+  it("rejects keys that collide with Object.prototype (__proto__ matches the key pattern but would vanish)", () => {
+    const r = parseEventSpecDocument({
+      info: { title: "x" },
+      servers: [
+        { key: "__proto__", protocol: "kafka", host: "h" },
+        { key: "constructor", protocol: "kafka", host: "h" },
+        { key: "prototype", protocol: "kafka", host: "h" },
+        { key: "proto", protocol: "kafka", host: "h" },
+      ],
+      operations: [op({ key: "__proto__" }), op({ key: "constructor" }), op({ key: "prototype" }), op({ key: "toString" })],
+    });
+    expect(r.success).toBe(false);
+    expect(!r.success && (r.error.details as { problems: unknown[] }).problems).toEqual([
+      { pointer: "/servers/0/key", message: 'Server key "__proto__" is reserved and cannot be used — choose another key' },
+      { pointer: "/servers/1/key", message: 'Server key "constructor" is reserved and cannot be used — choose another key' },
+      { pointer: "/servers/2/key", message: 'Server key "prototype" is reserved and cannot be used — choose another key' },
+      { pointer: "/operations/0/key", message: 'Operation key "__proto__" is reserved and cannot be used — choose another key' },
+      { pointer: "/operations/1/key", message: 'Operation key "constructor" is reserved and cannot be used — choose another key' },
+      { pointer: "/operations/2/key", message: 'Operation key "prototype" is reserved and cannot be used — choose another key' },
+    ]);
+  });
+
   it("collects channel, message and trait references in first-reference order", () => {
     const parsed = parseEventSpecDocument({
       info: { title: "x" },

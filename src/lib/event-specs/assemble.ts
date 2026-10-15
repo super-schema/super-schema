@@ -15,6 +15,7 @@ import { jsonPointer, localRef } from "./json-pointer";
 import { contentTypeFor, formatSuffix, normalizeProfile, schemaFormatFor } from "./schema-format";
 import { qualifyNames, type NameCandidate } from "./qualify";
 import { headersSchema, kafkaKeyProfile, placeKafkaKey, selectArtifact } from "./message-schemas";
+import { isReservedKey, setOwn } from "./own-property";
 
 /**
  * Spec §7.2 steps 3–5: assemble an AsyncAPI 3.0.0 document from a
@@ -40,7 +41,7 @@ type MessageVariant = {
 /** Build an object with keys in the given order, dropping `undefined` values. */
 function ordered(entries: Array<[string, JsonValue | undefined]>): JsonObject {
   const out: JsonObject = {};
-  for (const [key, value] of entries) if (value !== undefined) out[key] = value;
+  for (const [key, value] of entries) if (value !== undefined) setOwn(out, key, value);
   return out;
 }
 
@@ -49,7 +50,8 @@ function sortedRecord(record: Record<string, JsonValue> | undefined): JsonObject
   const keys = Object.keys(record).sort(compareStrings);
   if (keys.length === 0) return undefined;
   const out: JsonObject = {};
-  for (const key of keys) out[key] = structuredClone(record[key]);
+  // `setOwn`: a key named `__proto__` must become an entry, not the object's prototype
+  for (const key of keys) setOwn(out, key, structuredClone(record[key]));
   return out;
 }
 
@@ -81,6 +83,17 @@ function indexById<T extends { id: string }>(items: T[], kind: string, diagnosti
 
 export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
   const diagnostics: Diagnostic[] = [];
+  /**
+   * `__proto__` / `constructor` / `prototype` collide with `Object.prototype`: as a document key they would be
+   * silently dropped (or reshape the object). They are never valid names — fail with a clear message (the key is
+   * still written as an own entry, so references resolve and no confusing "unresolved ref" follows it).
+   */
+  const rejectReservedKey = (kind: string, key: string, pointer: string): void => {
+    if (!isReservedKey(key)) return;
+    diagnostics.push(
+      diagnostic("error", "RESERVED_KEY", `${kind} "${key}" is reserved and cannot be used as a document key — rename it`, pointer),
+    );
+  };
   const channelsById = indexById(spec.channels, "channel", diagnostics);
   const messagesById = indexById(spec.messages, "message", diagnostics);
   const traitsById = indexById(spec.traits, "trait", diagnostics);
@@ -121,6 +134,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
 
   for (const op of operations) {
     const opPointer = jsonPointer("operations", op.key);
+    rejectReservedKey("Operation key", op.key, opPointer);
     if (operationKeys.has(op.key)) {
       diagnostics.push(
         diagnostic("error", "DUPLICATE_OPERATION_KEY", `Operation key "${op.key}" is used more than once`, opPointer),
@@ -331,21 +345,26 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ? msg.contentType
         : contentTypeFor(variant.profile);
 
-    componentMessages[name] = ordered([
-      ["name", name !== msg.name ? msg.name : undefined],
-      ["title", msg.title],
-      ["summary", msg.summary],
-      ["description", msg.description],
-      ["contentType", contentType],
-      ["correlationId", clone(msg.correlationId)],
-      ["traits", traitRefs.length > 0 ? traitRefs : undefined],
-      ["headers", headers],
-      ["payload", payload],
-      ["tags", clone(msg.tags)],
-      ["externalDocs", clone(msg.externalDocs)],
-      ["bindings", bindings],
-      ["examples", clone(msg.examples)],
-    ]);
+    rejectReservedKey("Message name", name, jsonPointer(...base));
+    setOwn(
+      componentMessages,
+      name,
+      ordered([
+        ["name", name !== msg.name ? msg.name : undefined],
+        ["title", msg.title],
+        ["summary", msg.summary],
+        ["description", msg.description],
+        ["contentType", contentType],
+        ["correlationId", clone(msg.correlationId)],
+        ["traits", traitRefs.length > 0 ? traitRefs : undefined],
+        ["headers", headers],
+        ["payload", payload],
+        ["tags", clone(msg.tags)],
+        ["externalDocs", clone(msg.externalDocs)],
+        ["bindings", bindings],
+        ["examples", clone(msg.examples)],
+      ]),
+    );
   }
 
   // ── 4. components.messageTraits / operationTraits ──
@@ -356,17 +375,22 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
       t,
     ]),
   )) {
+    rejectReservedKey("Message trait name", name, jsonPointer("components", "messageTraits", name));
     if (!trait.headers) {
-      componentMessageTraits[name] = structuredClone(trait.spec);
+      setOwn(componentMessageTraits, name, structuredClone(trait.spec));
       continue;
     }
     const h = headersSchema(trait.headers, jsonPointer("components", "messageTraits", name, "headers"));
     diagnostics.push(...h.diagnostics);
     const rest = Object.entries(trait.spec).filter(([k]) => k !== "headers");
-    componentMessageTraits[name] = ordered([
-      ["headers", h.schema],
-      ...rest.map(([k, v]): [string, JsonValue] => [k, structuredClone(v)]),
-    ]);
+    setOwn(
+      componentMessageTraits,
+      name,
+      ordered([
+        ["headers", h.schema],
+        ...rest.map(([k, v]): [string, JsonValue] => [k, structuredClone(v)]),
+      ]),
+    );
   }
   const componentOperationTraits: JsonObject = {};
   for (const [name, trait] of byName(
@@ -375,7 +399,8 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
       t,
     ]),
   )) {
-    componentOperationTraits[name] = structuredClone(trait.spec);
+    rejectReservedKey("Operation trait name", name, jsonPointer("components", "operationTraits", name));
+    setOwn(componentOperationTraits, name, structuredClone(trait.spec));
   }
 
   // ── 5. channels ──
@@ -385,18 +410,23 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
   )) {
     const messages: JsonObject = {};
     const keys = [...(channelVariants.get(channel.id) ?? [])].map(messageKey).sort(compareStrings);
-    for (const key of keys) messages[key] = ref("components", "messages", key);
-    channels[name] = ordered([
-      ["address", channel.address],
-      ["messages", nonEmpty(messages)],
-      ["title", channel.title],
-      ["summary", channel.summary],
-      ["description", channel.description],
-      ["parameters", sortedRecord(channel.parameters)],
-      ["tags", clone(channel.tags)],
-      ["externalDocs", clone(channel.externalDocs)],
-      ["bindings", clone(channel.bindings)],
-    ]);
+    for (const key of keys) setOwn(messages, key, ref("components", "messages", key));
+    rejectReservedKey("Channel name", name, jsonPointer("channels", name));
+    setOwn(
+      channels,
+      name,
+      ordered([
+        ["address", channel.address],
+        ["messages", nonEmpty(messages)],
+        ["title", channel.title],
+        ["summary", channel.summary],
+        ["description", channel.description],
+        ["parameters", sortedRecord(channel.parameters)],
+        ["tags", clone(channel.tags)],
+        ["externalDocs", clone(channel.externalDocs)],
+        ["bindings", clone(channel.bindings)],
+      ]),
+    );
   }
 
   // ── 6. operations ──
@@ -429,16 +459,20 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
       );
     }
 
-    operationsOut[op.key] = ordered([
-      ["action", op.action],
-      ["channel", ref("channels", cKey)],
-      ["summary", op.summary],
-      ["description", op.description],
-      ["bindings", clone(op.bindings)],
-      ["traits", traitRefs.length > 0 ? traitRefs : undefined],
-      ["messages", messageRefs.length > 0 ? messageRefs : undefined],
-      ["reply", reply],
-    ]);
+    setOwn(
+      operationsOut,
+      op.key,
+      ordered([
+        ["action", op.action],
+        ["channel", ref("channels", cKey)],
+        ["summary", op.summary],
+        ["description", op.description],
+        ["bindings", clone(op.bindings)],
+        ["traits", traitRefs.length > 0 ? traitRefs : undefined],
+        ["messages", messageRefs.length > 0 ? messageRefs : undefined],
+        ["reply", reply],
+      ]),
+    );
   }
 
   // ── 7. servers ──
@@ -455,14 +489,19 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
       );
       continue;
     }
-    servers[server.key] = ordered([
-      ["host", server.host],
-      ["protocol", server.protocol],
-      ["protocolVersion", server.protocolVersion],
-      ["pathname", server.pathname],
-      ["description", server.description],
-      ["externalDocs", server.externalRef ? { url: server.externalRef } : undefined],
-    ]);
+    rejectReservedKey("Server key", server.key, jsonPointer("servers", server.key));
+    setOwn(
+      servers,
+      server.key,
+      ordered([
+        ["host", server.host],
+        ["protocol", server.protocol],
+        ["protocolVersion", server.protocolVersion],
+        ["pathname", server.pathname],
+        ["description", server.description],
+        ["externalDocs", server.externalRef ? { url: server.externalRef } : undefined],
+      ]),
+    );
   }
 
   // ── 8. document ──
