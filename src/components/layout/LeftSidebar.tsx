@@ -5,17 +5,21 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Building2,
   Database,
+  FileCode2,
   Folder,
   FolderOpen,
   Globe,
   Hash,
+  Mail,
   Package,
+  Puzzle,
+  Radio,
   RefreshCcw,
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDomainsTree } from "@/hooks/useDomainsTree";
-import { assetHref } from "@/lib/navigation/asset-href";
+import { assetHref, type EventsSection } from "@/lib/navigation/asset-href";
 import type {
   ExplorerDomain,
   ExplorerEntity,
@@ -44,6 +48,13 @@ const productEntitiesKey = (id: string) => `p:${id}:entities`;
 
 function isWithin(pathname: string, base: string) {
   return pathname === base || pathname.startsWith(`${base}/`);
+}
+
+// Detail pages of the non-entity kinds (messages / channels / event specs / traits) live
+// under the same level base as entity URLs; the Entities row must not light up for them.
+const NON_ENTITY_SEGMENTS = ["messages", "channels", "specs", "traits"];
+function isNonEntityDetail(pathname: string, base: string) {
+  return NON_ENTITY_SEGMENTS.some((segment) => isWithin(pathname, `${base}/${segment}`));
 }
 
 // `types` is the legacy alias of the `data-types` workspace tab.
@@ -91,6 +102,7 @@ function ExplorerSidebar({
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = searchParams?.get("tab") ?? null;
+  const activeSection = searchParams?.get("section") ?? null;
   const currentQuery = searchParams?.toString() ?? "";
   const currentUrl = currentQuery ? `${pathname}?${currentQuery}` : pathname;
   const [search, setSearch] = useState("");
@@ -211,6 +223,8 @@ function ExplorerSidebar({
   const enterpriseAddHref = assetHref({ kind: "newEntity", domainSlug: null, productSlug: null });
   const enterpriseDataTypesHref = assetHref({ kind: "dataTypes", domainSlug: null, productSlug: null });
   const enterpriseDataTypes = tree?.enterprise.counts.dataTypes ?? 0;
+  const enterpriseTraitsHref = assetHref({ kind: "traits", domainSlug: null, productSlug: null });
+  const enterpriseTraits = tree?.enterprise.counts.traits ?? 0;
 
   function renderEntities(
     entities: ExplorerEntity[],
@@ -241,6 +255,12 @@ function ExplorerSidebar({
       productSlug: product.slug,
     });
     const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: product.slug });
+    const traitsHref = assetHref({ kind: "traits", domainSlug: domain.slug, productSlug: product.slug });
+    const eventLeaves: Array<{ id: string; section: EventsSection; label: string; icon: typeof Mail; count: number }> = [
+      { id: "event-specs", section: "specs", label: "Event Specs", icon: FileCode2, count: product.counts.eventSpecs },
+      { id: "messages", section: "messages", label: "Messages", icon: Mail, count: product.counts.messages },
+      { id: "channels", section: "channels", label: "Channels", icon: Radio, count: product.counts.channels },
+    ];
     const key = productKey(product.id);
     const entitiesKey = productEntitiesKey(product.id);
     const expanded = isExpanded(key);
@@ -271,7 +291,7 @@ function ExplorerSidebar({
               <>
                 <SidebarCategory
                   testId={`product-${product.id}-entities`}
-                  active={inRoute && !activeTab}
+                  active={inRoute && !activeTab && !isNonEntityDetail(pathname, base)}
                   count={product.entities.length}
                   expanded={entitiesExpanded}
                   icon={Database}
@@ -311,6 +331,44 @@ function ExplorerSidebar({
                 onNavigate={navigate}
               />
             )}
+
+            {eventLeaves
+              .filter((leaf) => leaf.count > 0)
+              .map((leaf) => {
+                const href = assetHref({
+                  kind: "events",
+                  domainSlug: domain.slug,
+                  productSlug: product.slug,
+                  section: leaf.section,
+                });
+                const onList = pathname === base && activeTab === "events" && (activeSection ?? "specs") === leaf.section;
+                return (
+                  <SidebarLeafCategory
+                    key={leaf.id}
+                    testId={`product-${product.id}-${leaf.id}`}
+                    active={onList || isWithin(pathname, `${base}/${leaf.section}`)}
+                    count={leaf.count}
+                    icon={leaf.icon}
+                    label={leaf.label}
+                    href={href}
+                    pending={pendingTarget === href}
+                    onNavigate={navigate}
+                  />
+                );
+              })}
+
+            {product.counts.traits > 0 && (
+              <SidebarLeafCategory
+                testId={`product-${product.id}-traits`}
+                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/traits`)}
+                count={product.counts.traits}
+                icon={Puzzle}
+                label="Traits"
+                href={traitsHref}
+                pending={pendingTarget === traitsHref}
+                onNavigate={navigate}
+              />
+            )}
           </div>
         )}
       </div>
@@ -328,6 +386,7 @@ function ExplorerSidebar({
     const addTitle = firstProduct ? "New Entity" : "Create a product first";
     const dataTypesHref = assetHref({ kind: "dataTypes", domainSlug: domain.slug, productSlug: null });
     const apisHref = assetHref({ kind: "apis", domainSlug: domain.slug, productSlug: null });
+    const traitsHref = assetHref({ kind: "traits", domainSlug: domain.slug, productSlug: null });
     const key = domainKey(domain.id);
     const expanded = isExpanded(key);
 
@@ -378,6 +437,19 @@ function ExplorerSidebar({
               />
             )}
 
+            {domain.counts.traits > 0 && (
+              <SidebarLeafCategory
+                testId={`domain-${domain.id}-traits`}
+                active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/traits`)}
+                count={domain.counts.traits}
+                icon={Puzzle}
+                label="Traits"
+                href={traitsHref}
+                pending={pendingTarget === traitsHref}
+                onNavigate={navigate}
+              />
+            )}
+
             {domain.products.map((product) => renderProduct(domain, product))}
           </div>
         )}
@@ -423,11 +495,27 @@ function ExplorerSidebar({
               />
             )}
 
+            {enterpriseTraits > 0 && (
+              <SidebarLeafCategory
+                testId="enterprise-traits"
+                active={
+                  (pathname === enterpriseHref && activeTab === "traits") ||
+                  isWithin(pathname, `${enterpriseHref}/traits`)
+                }
+                count={enterpriseTraits}
+                icon={Puzzle}
+                label="Traits"
+                href={enterpriseTraitsHref}
+                pending={pendingTarget === enterpriseTraitsHref}
+                onNavigate={navigate}
+              />
+            )}
+
             {enterpriseEntities.length > 0 && (
               <>
                 <SidebarCategory
                   testId="enterprise-entities"
-                  active={inRoute && !activeTab}
+                  active={inRoute && !activeTab && !isNonEntityDetail(pathname, enterpriseHref)}
                   count={enterpriseEntities.length}
                   expanded={entitiesExpanded}
                   icon={Database}

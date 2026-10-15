@@ -3,10 +3,23 @@ import { NextResponse } from "next/server";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { buildExplorerTree } from "@/lib/navigation/build-explorer-tree";
 
+type GroupedLevel = { domainId: string | null; productId: string | null; _count: { _all: number } };
+
+/** `groupBy` rows → the level-tagged shape the tree builder counts (one row per level, with its count). */
+const asLevelCounts = (rows: GroupedLevel[]) =>
+  rows.map(({ domainId, productId, _count }) => ({ domainId, productId, count: _count._all }));
+
 export async function GET() {
   const tenantId = await getActiveTenantId();
   const levelSelect = { domainId: true, productId: true } as const;
-  const [domains, products, entities, enums, scalars, unions, services] = await Promise.all([
+  // Events kinds are only counted per level (never listed), so they are aggregated in the
+  // database instead of loading every row.
+  const levelGroup = {
+    by: ["domainId", "productId"] as Array<"domainId" | "productId">,
+    where: { tenantId },
+    _count: { _all: true },
+  } as const;
+  const [domains, products, entities, enums, scalars, unions, services, traits, messages, channels, eventSpecs] = await Promise.all([
     prisma.domain.findMany({
       where: { tenantId },
       orderBy: [{ isSystem: "desc" }, { name: "asc" }],
@@ -25,8 +38,22 @@ export async function GET() {
     prisma.customScalar.findMany({ where: { tenantId }, select: levelSelect }),
     prisma.unionType.findMany({ where: { tenantId }, select: levelSelect }),
     prisma.serviceDefinition.findMany({ where: { tenantId }, select: levelSelect }),
+    prisma.trait.groupBy(levelGroup),
+    prisma.message.groupBy(levelGroup),
+    prisma.channel.groupBy(levelGroup),
+    prisma.eventSpec.groupBy(levelGroup),
   ]);
   return NextResponse.json(
-    buildExplorerTree({ domains, products, entities, dataTypes: [...enums, ...scalars, ...unions], services })
+    buildExplorerTree({
+      domains,
+      products,
+      entities,
+      dataTypes: [...enums, ...scalars, ...unions],
+      services,
+      traits: asLevelCounts(traits),
+      messages: asLevelCounts(messages),
+      channels: asLevelCounts(channels),
+      eventSpecs: asLevelCounts(eventSpecs),
+    })
   );
 }

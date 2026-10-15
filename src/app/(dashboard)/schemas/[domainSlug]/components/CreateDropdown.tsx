@@ -1,25 +1,36 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Database, Globe, Hash, Plus } from "lucide-react";
+import { ChevronDown, Database, FileCode2, Globe, Hash, Mail, Plus, Puzzle, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useModKey } from "@/lib/platform";
 
 // ---------------------------------------------------------------------------
 // Create dropdown — New Entity, New Custom Data Type and (where the level allows
-// it) New API. The kind of custom data type (Enum / Scalar / Union) is chosen on
-// the Data Types tab, not listed here.
+// them) New API and the events items (Event Spec / Message / Channel / Trait). The
+// kind of custom data type (Enum / Scalar / Union) is chosen on the Data Types
+// tab, not listed here.
 // ---------------------------------------------------------------------------
 
 export function CreateDropdown({
   onNewEntity,
   onNewCustomDataType,
   onNewApi,
+  onNewEventSpec,
+  onNewMessage,
+  onNewChannel,
+  onNewTrait,
 }: {
   onNewEntity: () => void;
   onNewCustomDataType: () => void;
   /** Omit where APIs cannot be created (Enterprise level) to hide the item. */
   onNewApi?: () => void;
+  /** Events kinds are product-only (spec §4.1); pass them only on the product workspace. */
+  onNewEventSpec?: () => void;
+  onNewMessage?: () => void;
+  onNewChannel?: () => void;
+  /** Traits exist at every level. */
+  onNewTrait?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -61,6 +72,18 @@ export function CreateDropdown({
         description: "API service definition",
       }
     : null;
+  const optional = (
+    label: string,
+    icon: DropdownItem["icon"],
+    action: (() => void) | undefined,
+    description: string
+  ): DropdownItem | null => (action ? { label, icon, action, description } : null);
+  const eventItems = [
+    optional("New Event Spec", FileCode2, onNewEventSpec, "AsyncAPI event specification"),
+    optional("New Message", Mail, onNewMessage, "Event message with a pinned payload"),
+    optional("New Channel", Radio, onNewChannel, "Topic / queue with a format profile"),
+    optional("New Trait", Puzzle, onNewTrait, "Reusable message or operation trait"),
+  ].filter((item): item is DropdownItem => item !== null);
 
   function renderItem(item: DropdownItem) {
     return (
@@ -99,6 +122,8 @@ export function CreateDropdown({
           {renderItem(entityItem)}
           {renderItem(customDataTypeItem)}
           {apiItem && renderItem(apiItem)}
+          {eventItems.length > 0 && <div role="separator" className="my-1 border-t border-border" />}
+          {eventItems.map(renderItem)}
         </div>
       )}
     </div>

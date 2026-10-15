@@ -41,7 +41,8 @@ export interface ExplorerTree {
   domains: ExplorerDomain[];
 }
 
-type LevelRow = { domainId: string | null; productId: string | null };
+/** A level-tagged row. `count` (default 1) lets a Prisma `groupBy` result stand in for its rows. */
+type LevelRow = { domainId: string | null; productId: string | null; count?: number };
 
 export interface ExplorerRows {
   domains: Array<{ id: string; name: string; slug: string; isSystem: boolean }>;
@@ -49,6 +50,10 @@ export interface ExplorerRows {
   entities: Array<ExplorerEntity & LevelRow>;
   dataTypes: LevelRow[];
   services: LevelRow[];
+  traits?: LevelRow[];
+  messages?: LevelRow[];
+  channels?: LevelRow[];
+  eventSpecs?: LevelRow[];
 }
 
 const TENANT = "__tenant__";
@@ -56,7 +61,7 @@ const keyOf = (r: LevelRow) => r.productId ?? r.domainId ?? TENANT;
 
 function countBy(rows: LevelRow[]): Map<string, number> {
   const m = new Map<string, number>();
-  for (const r of rows) m.set(keyOf(r), (m.get(keyOf(r)) ?? 0) + 1);
+  for (const r of rows) m.set(keyOf(r), (m.get(keyOf(r)) ?? 0) + (r.count ?? 1));
   return m;
 }
 
@@ -64,11 +69,15 @@ function countBy(rows: LevelRow[]): Map<string, number> {
  * Pure shaping of flat level-tagged rows into the Enterprise → Domain →
  * Product explorer tree (spec §4.4). A row's level is derived from its
  * columns: productId → product, else domainId → domain, else tenant.
- * Traits / messages / channels / eventSpecs counts are 0 until Phase 4.
+ * Counts every level-tagged kind; traits at every level, events kinds per product.
  */
 export function buildExplorerTree(input: ExplorerRows): ExplorerTree {
   const dataTypes = countBy(input.dataTypes);
   const services = countBy(input.services);
+  const traits = countBy(input.traits ?? []);
+  const messages = countBy(input.messages ?? []);
+  const channels = countBy(input.channels ?? []);
+  const eventSpecs = countBy(input.eventSpecs ?? []);
   const entitiesByKey = new Map<string, ExplorerEntity[]>();
   for (const e of [...input.entities].sort((a, b) => a.name.localeCompare(b.name))) {
     const k = keyOf(e);
@@ -81,7 +90,7 @@ export function buildExplorerTree(input: ExplorerRows): ExplorerTree {
 
   return {
     enterprise: {
-      counts: { dataTypes: dataTypes.get(TENANT) ?? 0, entities: tenantEntities.length, traits: 0 },
+      counts: { dataTypes: dataTypes.get(TENANT) ?? 0, entities: tenantEntities.length, traits: traits.get(TENANT) ?? 0 },
       entities: tenantEntities,
     },
     domains: input.domains.map((d) => ({
@@ -89,7 +98,7 @@ export function buildExplorerTree(input: ExplorerRows): ExplorerTree {
       name: d.name,
       slug: d.slug,
       isSystem: d.isSystem,
-      counts: { dataTypes: dataTypes.get(d.id) ?? 0, apis: services.get(d.id) ?? 0, traits: 0 },
+      counts: { dataTypes: dataTypes.get(d.id) ?? 0, apis: services.get(d.id) ?? 0, traits: traits.get(d.id) ?? 0 },
       products: input.products
         .filter((p) => p.domainId === d.id)
         .sort((a, b) => Number(b.isSystem) - Number(a.isSystem) || a.name.localeCompare(b.name))
@@ -104,10 +113,10 @@ export function buildExplorerTree(input: ExplorerRows): ExplorerTree {
               dataTypes: dataTypes.get(p.id) ?? 0,
               apis: services.get(p.id) ?? 0,
               entities: entities.length,
-              traits: 0,
-              messages: 0,
-              channels: 0,
-              eventSpecs: 0,
+              traits: traits.get(p.id) ?? 0,
+              messages: messages.get(p.id) ?? 0,
+              channels: channels.get(p.id) ?? 0,
+              eventSpecs: eventSpecs.get(p.id) ?? 0,
             },
             entities,
           };

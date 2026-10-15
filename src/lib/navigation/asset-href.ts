@@ -3,6 +3,8 @@
  * sidebar, command palette, cards, breadcrumbs, cross-product references,
  * version deep links — goes through here.
  */
+export type EventsSection = "specs" | "messages" | "channels";
+
 export type AssetRef =
   | { kind: "enterprise" }
   | { kind: "domain"; domainSlug: string }
@@ -14,6 +16,7 @@ export type AssetRef =
   | { kind: "trait"; id: string; domainSlug: string | null; productSlug: string | null }
   | { kind: "message" | "channel" | "eventSpec"; id: string; domainSlug: string; productSlug: string }
   | { kind: "field"; entitySlug: string; fieldId: string; domainSlug: string | null; productSlug: string | null }
+  | { kind: "events"; domainSlug: string; productSlug: string; section?: EventsSection }
   | { kind: "newEntity"; domainSlug: string | null; productSlug: string | null };
 
 /**
@@ -66,6 +69,8 @@ function path(ref: AssetRef): { path: string; query: Record<string, string> } {
     case "channel":
     case "eventSpec":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${EVENT_SEGMENT[ref.kind]}/${enc(ref.id)}`, query: {} };
+    case "events":
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "events", section: ref.section ?? "specs" } };
     case "newEntity":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/new`, query: {} };
   }
