@@ -79,6 +79,88 @@ describe("EventSpecEditor", () => {
     expect(h.updateEventSpecDocumentAction).not.toHaveBeenCalled();
   });
 
+  describe("a server action that throws", () => {
+    // The page must stay usable: generic message (never the cause), Save enabled again, nothing left unhandled.
+    async function failsWith(which: "rename" | "update") {
+      const unhandled = vi.fn();
+      process.on("unhandledRejection", unhandled);
+      try {
+        const cause = new Error("connect ECONNREFUSED 10.0.0.5:5432 password authentication failed");
+        if (which === "rename") h.renameEventSpecAction.mockRejectedValue(cause);
+        else h.updateEventSpecDocumentAction.mockRejectedValue(cause);
+        render(<EventSpecEditor {...props} onSaved={vi.fn()} />);
+        if (which === "rename") fireEvent.change(screen.getByLabelText("Spec name"), { target: { value: "orders" } });
+        fireEvent.click(screen.getByTestId("spec-save"));
+        expect((await screen.findByRole("alert")).textContent).toContain("Something went wrong");
+        expect(screen.queryByText(/ECONNREFUSED|password/)).toBeNull();
+        await waitFor(() => expect((screen.getByTestId("spec-save") as HTMLButtonElement).disabled).toBe(false));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(unhandled).not.toHaveBeenCalled();
+      } finally {
+        process.off("unhandledRejection", unhandled);
+      }
+    }
+
+    it("rename: shows the generic message, re-enables Save and does not save the document", async () => {
+      await failsWith("rename");
+      expect(h.updateEventSpecDocumentAction).not.toHaveBeenCalled();
+    });
+
+    it("document save: shows the generic message and re-enables Save", async () => {
+      await failsWith("update");
+      expect(h.renameEventSpecAction).not.toHaveBeenCalled();
+    });
+
+    it("can be retried once the action works again", async () => {
+      const onSaved = vi.fn();
+      h.updateEventSpecDocumentAction.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ success: true, data: spec });
+      render(<EventSpecEditor {...props} onSaved={onSaved} />);
+      fireEvent.click(screen.getByTestId("spec-save"));
+      await screen.findByRole("alert");
+      await waitFor(() => expect((screen.getByTestId("spec-save") as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(screen.getByTestId("spec-save"));
+      await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+  });
+
+  it("after a rename succeeded and the document save failed validation: refreshes the header once and a retry does not rename again", async () => {
+    const onRenamed = vi.fn();
+    const onSaved = vi.fn();
+    h.renameEventSpecAction.mockResolvedValue({ success: true, data: { ...spec, name: "orders" } });
+    h.updateEventSpecDocumentAction
+      .mockResolvedValueOnce({ success: false, error: "The event spec document has 1 problem(s)", code: "VALIDATION_ERROR", details: { problems: [{ pointer: "/info/title", message: "Title is required" }] } })
+      .mockResolvedValueOnce({ success: true, data: { ...spec, name: "orders" } });
+    render(<EventSpecEditor {...props} onSaved={onSaved} onRenamed={onRenamed} />);
+    fireEvent.change(screen.getByLabelText("Spec name"), { target: { value: "orders" } });
+    fireEvent.click(screen.getByTestId("spec-save"));
+    expect(await screen.findByText("/info/title: Title is required")).toBeDefined();
+    expect(h.renameEventSpecAction).toHaveBeenCalledTimes(1);
+    expect(onRenamed).toHaveBeenCalledTimes(1);
+    expect(onSaved).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Orders" } });
+    fireEvent.click(screen.getByTestId("spec-save"));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(h.renameEventSpecAction).toHaveBeenCalledTimes(1); // the unchanged name is not sent again
+    expect(h.updateEventSpecDocumentAction).toHaveBeenCalledTimes(2);
+    expect(onRenamed).toHaveBeenCalledTimes(1);
+  });
+
+  it("renames again when the name is edited again after a successful rename", async () => {
+    h.renameEventSpecAction.mockImplementation(async (_id: string, _p: string, name: string) => ({ success: true, data: { ...spec, name } }));
+    h.updateEventSpecDocumentAction.mockResolvedValue({ success: true, data: spec });
+    render(<EventSpecEditor {...props} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Spec name"), { target: { value: "orders" } });
+    fireEvent.click(screen.getByTestId("spec-save"));
+    await waitFor(() => expect(h.updateEventSpecDocumentAction).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect((screen.getByTestId("spec-save") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText("Spec name"), { target: { value: "payments" } });
+    fireEvent.click(screen.getByTestId("spec-save"));
+    await waitFor(() => expect(h.updateEventSpecDocumentAction).toHaveBeenCalledTimes(2));
+    expect(h.renameEventSpecAction.mock.calls.map((c) => c[2])).toEqual(["orders", "payments"]);
+  });
+
   it("never prints raw database text: DB_ERROR / INTERNAL_ERROR results show the generic message", async () => {
     h.updateEventSpecDocumentAction.mockResolvedValue({ success: false, error: 'relation "event_specs" does not exist', code: "DB_ERROR" });
     render(<EventSpecEditor {...props} onSaved={vi.fn()} />);

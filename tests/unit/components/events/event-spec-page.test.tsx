@@ -17,10 +17,11 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-version
   getEventSpecPublishPreviewAction: h.getEventSpecPublishPreviewAction, publishEventSpecAction: h.publishEventSpecAction,
 }));
 vi.mock("@/features/events/event-specs/EventSpecEditor", () => ({
-  EventSpecEditor: (p: { onSaved: (d: unknown) => void }) => (
+  EventSpecEditor: (p: { onSaved: (d: unknown) => void; onRenamed?: () => void }) => (
     <div data-testid="spec-editor">
       <input data-testid="spec-editor-input" />
       <button data-testid="spec-editor-saved" onClick={() => p.onSaved({})} />
+      <button data-testid="spec-editor-renamed" onClick={() => p.onRenamed?.()} />
     </div>
   ),
 }));
@@ -156,6 +157,13 @@ describe("EventSpecPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Editor" }));
     fireEvent.click(screen.getByTestId("spec-editor-saved"));
     await waitFor(() => expect(h.emitEventSpecDraftAction).toHaveBeenCalledTimes(2));
+  });
+
+  it("refreshes the server data (header, crumbs) as soon as a rename succeeded, without re-emitting", () => {
+    render(<EventSpecPage {...base} viewingVersion={null} initialTab="editor" />);
+    fireEvent.click(screen.getByTestId("spec-editor-renamed"));
+    expect(h.refresh).toHaveBeenCalledTimes(1);
+    expect(h.emitEventSpecDraftAction).not.toHaveBeenCalled();
   });
 
   it("passes the owning product to the publish preview and publish actions", () => {

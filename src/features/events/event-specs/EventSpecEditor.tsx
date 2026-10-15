@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   renameEventSpecAction, updateEventSpecDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions";
-import { actionErrorText } from "@/types/action-result";
+import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
 import type { EventSpecDetail, EventSpecDocument } from "@/lib/events/types";
 import type { EventSpecOperation, EventSpecServer } from "@/lib/event-specs/types";
 import type { ChannelOption, MessageRefOption, TraitOption } from "@/features/events/load-options";
@@ -43,7 +43,7 @@ function readProblems(details: object | undefined): Problem[] {
 const toggleIn = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
 
 export function EventSpecEditor({
-  spec, productId, channelOptions, messageOptions, operationTraits, onSaved,
+  spec, productId, channelOptions, messageOptions, operationTraits, onSaved, onRenamed,
 }: {
   spec: EventSpecDetail;
   productId: string;
@@ -51,8 +51,12 @@ export function EventSpecEditor({
   messageOptions: MessageRefOption[];
   operationTraits: TraitOption[];
   onSaved: (detail: EventSpecDetail) => void;
+  /** The name changed server-side (even when the document save that followed failed): the page refreshes its header and crumbs. */
+  onRenamed?: () => void;
 }) {
   const [name, setName] = useState(spec.name);
+  // The last name the server confirmed: a retry after a failed document save must not send an unchanged name again (extra audit row).
+  const [savedName, setSavedName] = useState(spec.name);
   const [doc, setDoc] = useState<EventSpecDocument>(spec.document);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,22 +75,32 @@ export function EventSpecEditor({
     setSaving(true);
     setError(null);
     setProblems([]);
-    if (name.trim() !== spec.name) {
-      const renamed = await renameEventSpecAction(spec.id, productId, name);
-      if (!renamed.success) {
-        setSaving(false);
-        return setError(actionErrorText(renamed));
+    let saved: EventSpecDetail | null = null;
+    try {
+      if (name.trim() !== savedName) {
+        const renamed = await renameEventSpecAction(spec.id, productId, name);
+        if (!renamed.success) return setError(actionErrorText(renamed));
+        setSavedName(renamed.data.name);
+        setName(renamed.data.name);
+        onRenamed?.();
       }
+      const r = await updateEventSpecDocumentAction(spec.id, productId, cleanDocument(doc));
+      if (!r.success) {
+        setError(actionErrorText(r));
+        setProblems(readProblems(r.details));
+        return;
+      }
+      saved = r.data;
+    } catch {
+      // A rejected server action (network drop, serialization error, unwrapped server throw): never leave Save stuck or print the cause.
+      setError(GENERIC_ACTION_ERROR);
+    } finally {
+      setSaving(false);
     }
-    const r = await updateEventSpecDocumentAction(spec.id, productId, cleanDocument(doc));
-    setSaving(false);
-    if (!r.success) {
-      setError(actionErrorText(r));
-      setProblems(readProblems(r.details));
-      return;
+    if (saved) {
+      toast.success("Draft saved");
+      onSaved(saved);
     }
-    toast.success("Draft saved");
-    onSaved(r.data);
   }
 
   return (

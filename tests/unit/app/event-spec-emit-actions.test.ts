@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  auth: vi.fn(), revalidatePath: vi.fn(), resolveCurrentUserId: vi.fn(), emitEventSpec: vi.fn(), getActiveTenantId: vi.fn(), findFirst: vi.fn(),
-}));
-vi.mock("@/lib/db", () => ({ prisma: { eventSpec: { findFirst: h.findFirst } } }));
+const h = vi.hoisted(() => {
+  const findFirst = vi.fn();
+  return {
+    auth: vi.fn(), revalidatePath: vi.fn(), resolveCurrentUserId: vi.fn(), emitEventSpec: vi.fn(), getActiveTenantId: vi.fn(), findFirst,
+    // The one client the actions must hand to the service: carries the old `tag` plus the scope lookup.
+    prisma: { tag: "prisma", eventSpec: { findFirst } },
+  };
+});
+vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
@@ -27,7 +32,9 @@ beforeEach(() => {
 describe("event spec emit actions", () => {
   it("emit the draft or a version without revalidating", async () => {
     expect(await emitEventSpecDraftAction("s1", "p1")).toEqual({ success: true, data: { version: "draft" } });
-    expect(h.emitEventSpec).toHaveBeenCalledWith("s1", { draft: true }, expect.objectContaining({ userId: "u1", userRole: "VIEWER" }));
+    expect(h.emitEventSpec).toHaveBeenCalledWith("s1", { draft: true }, { userId: "u1", userRole: "VIEWER", prisma: h.prisma });
+    // Same client object, not a copy: scoping and emission run on the real connection.
+    expect(h.emitEventSpec.mock.calls[0][2].prisma).toBe(h.prisma);
     await getEventSpecVersionDocumentAction("s1", "2.0");
     expect(h.emitEventSpec).toHaveBeenLastCalledWith("s1", { versionLabel: "2.0" }, expect.anything());
     expect(h.revalidatePath).not.toHaveBeenCalled();

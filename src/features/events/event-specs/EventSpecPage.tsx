@@ -146,6 +146,7 @@ function EventSpecPageBody({
               messageOptions={messageOptions}
               operationTraits={operationTraits}
               onSaved={onSaved}
+              onRenamed={() => router.refresh()}
             />
           </div>
         )}
