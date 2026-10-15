@@ -10,7 +10,7 @@ import { createInScope, writeWithUniqueName } from "@/services/scoped-create.ser
 import { auditedWrite } from "@/services/events/audited";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
-import { loadOwnedRow } from "@/services/events/service-guards";
+import { guardRead, loadOwnedRow, requireId } from "@/services/events/service-guards";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -150,8 +150,12 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
 }
 
 export async function createMessage(productId: string, input: MessageInput, ctx: ServiceContext): Promise<Result<MessageDetail>> {
-  const target = { level: "PRODUCT" as const, productId };
-  const scope = await resolveScope(ctx.prisma, target);
+  // `productId` arrives from the client at runtime: a non-string id is a VALIDATION_ERROR (as in createChannel), an unknown one NOT_FOUND,
+  // and the scope read runs under `guardRead`, so no driver / Prisma validation text can cross the service boundary.
+  const product = requireId(productId, "productId");
+  if (!product.success) return product;
+  const target = { level: "PRODUCT" as const, productId: product.data };
+  const scope = await guardRead(() => resolveScope(ctx.prisma, target));
   if (!scope.success) return scope;
   const n = await normalizeMessage(ctx, scope.data, input);
   if (!n.success) return n;

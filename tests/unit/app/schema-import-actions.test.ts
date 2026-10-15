@@ -333,6 +333,22 @@ describe("schema import actions", () => {
       mockAssertNameAvailable.mock.calls.forEach(([tx]) => expect(tx).toBe(mockTx));
     });
 
+    it("trims data-type and API names before BOTH the registry check and the write (the registry compares trimmed names)", async () => {
+      await createDomainAssetsFromImportAction({
+        ...emptyPayload,
+        sharedEnums: [{ name: "  Status ", values: ["A"] }],
+        customScalars: [{ name: "Money ", baseType: "decimal" }],
+        unionTypes: [{ name: " Either", memberTypes: ["A"] }],
+        services: [{ name: "CustomerApi  ", operations: [] }],
+      });
+
+      expect(mockAssertNameAvailable.mock.calls.map(([, candidate]) => candidate.name)).toEqual(["Status", "Money", "Either", "CustomerApi"]);
+      expect(mockTx.sharedEnum.create).toHaveBeenCalledWith({ data: expect.objectContaining({ name: "Status" }) });
+      expect(mockTx.customScalar.create).toHaveBeenCalledWith({ data: expect.objectContaining({ name: "Money" }) });
+      expect(mockTx.unionType.create).toHaveBeenCalledWith({ data: expect.objectContaining({ name: "Either" }) });
+      expect(mockTx.serviceDefinition.create).toHaveBeenCalledWith({ data: expect.objectContaining({ name: "CustomerApi" }) });
+    });
+
     it("places a service for an entity created in this import at that entity's product scope", async () => {
       await createDomainAssetsFromImportAction({
         ...emptyPayload,

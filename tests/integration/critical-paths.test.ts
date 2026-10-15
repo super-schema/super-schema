@@ -74,6 +74,11 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+// Field updates are scoped to the caller's active tenant (the cookie is not available outside a request).
+vi.mock("@/lib/active-tenant", () => ({
+  getActiveTenantId: vi.fn().mockResolvedValue("tenant-1"),
+}));
+
 // ---------------------------------------------------------------------------
 // Mock: RBAC service
 // ---------------------------------------------------------------------------
@@ -104,7 +109,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   // Interactive transactions (tenant name lock) run their callback against the same mock client.
-  mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma));
+  mockPrisma.$transaction.mockImplementation(async (arg: unknown) => (Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma)));
   // Re-set audit mock default
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
 });
@@ -229,7 +234,7 @@ describe("Critical Paths - Integration", () => {
         sortOrder: 0,
       };
 
-      mockPrisma.field.findUnique.mockResolvedValue(existingField);
+      mockPrisma.field.findUnique.mockResolvedValue({ ...existingField, entity: { tenantId: "tenant-1" } });
       mockPrisma.field.update.mockResolvedValue({
         ...existingField,
         description: "User email address",

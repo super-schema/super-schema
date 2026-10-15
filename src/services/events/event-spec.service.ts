@@ -14,7 +14,7 @@ import { inSameLine } from "@/services/name-registry.service";
 import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
 import { deleteReferencesFrom, replaceReferences } from "@/services/events/schema-references";
-import { loadOwnedRow } from "@/services/events/service-guards";
+import { loadOwnedRow, optionalString, requireId } from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -102,16 +102,31 @@ async function validateDocumentRefs(
   return { problems, messageVersionIds: refs.messageRefIds.filter((id) => versionSet.has(id)) };
 }
 
+/**
+ * Input arrives from the client at runtime: `productId` must be a non-empty string and `input` an object whose `name` is a
+ * string and whose optional `title` / `description` are strings. Anything else is a VALIDATION_ERROR before any query or
+ * string method runs; an unknown (but well-formed) product id is NOT_FOUND from the scope resolution.
+ */
 export async function createEventSpec(productId: string, input: CreateEventSpecInput, ctx: ServiceContext): Promise<Result<EventSpecDetail>> {
-  const name = normalizeCatalogName(input.name, "Event spec");
+  const product = requireId(productId, "productId");
+  if (!product.success) return product;
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return err({ code: "VALIDATION_ERROR", message: "Event spec input must be an object" });
+  }
+  const raw = input as unknown as Record<string, unknown>;
+  const name = normalizeCatalogName(raw.name, "Event spec");
   if (!name.success) return name;
-  const document = emptyEventSpecDocument(input.title?.trim() || name.data, input.description?.trim() || undefined);
+  const title = optionalString(raw.title, "Title");
+  if (!title.success) return title;
+  const description = optionalString(raw.description, "Description");
+  if (!description.success) return description;
+  const document = emptyEventSpecDocument(title.data?.trim() || name.data, description.data?.trim() || undefined);
   return auditedWrite({
     action: "CREATE", entityType: "EventSpec", entityId: "pending", userId: ctx.userId,
     run: async () => {
       const created = await createInScope(ctx.prisma, {
         kind: "eventSpec",
-        target: { level: "PRODUCT", productId },
+        target: { level: "PRODUCT", productId: product.data },
         name: name.data,
         write: (tx, s) => tx.eventSpec.create({ data: { name: name.data, document: document as unknown as Prisma.InputJsonValue, ...s }, select: SPEC_SELECT }),
       });
@@ -151,7 +166,7 @@ export async function updateEventSpecDocument(id: string, document: unknown, own
   });
 }
 
-export async function renameEventSpec(id: string, rawName: string, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<EventSpecDetail>> {
+export async function renameEventSpec(id: string, rawName: unknown, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<EventSpecDetail>> {
   const name = normalizeCatalogName(rawName, "Event spec");
   if (!name.success) return name;
   const owned = await loadOwned(ctx, id, owner);

@@ -1,7 +1,9 @@
 // src/lib/action-context.ts
 import { revalidatePath } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { AuditUserMissingError } from "@/lib/audit";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { resolveCurrentUserId } from "@/lib/current-user";
 import { prisma } from "@/lib/db";
 import { getEffectiveRole } from "@/services/rbac.service";
@@ -29,6 +31,16 @@ export async function getActionContext(): Promise<ServiceContext | null> {
   }
   const role = await getEffectiveRole(userId, null, { userId, userRole: "VIEWER", prisma });
   return { userId, userRole: role.success && role.data ? role.data : "VIEWER", prisma };
+}
+
+/**
+ * Soft-grouping scope guard for rows addressed by a bare id (the older data-type / API / model-field / entity-field actions
+ * take no owner target): the row must belong to the caller's ACTIVE tenant, the same scoping the pages and the Events
+ * actions use. A row of another tenant reads exactly like a missing one (callers answer NOT_FOUND, never FORBIDDEN), so an
+ * id guessed from another tenant reveals nothing.
+ */
+export async function isInActiveTenant(rowTenantId: string | null | undefined): Promise<boolean> {
+  return typeof rowTenantId === "string" && rowTenantId === (await getActiveTenantId());
 }
 
 /**
@@ -71,11 +83,26 @@ export function toActionResult<T>(result: Result<T>, label = "action"): ActionRe
  * Read-only actions use `getActionContext` + `toActionResult` directly and never revalidate. A failed Result goes through
  * `toActionResult`, so a `DB_ERROR` / `INTERNAL_ERROR` never reaches the browser with its raw text (`label` names the action
  * in the server-side log of that failure).
+ *
+ * An unexpected REJECTION from the session lookup or from `run` (a driver / Prisma validation error from a service that
+ * lets malformed client input reach a query, a lost connection) is caught here as well: it is logged server-side and
+ * returned as a generic `INTERNAL_ERROR` instead of an unhandled 500 carrying the raw text. Next's own control-flow throws
+ * (`redirect()`, `notFound()`, `forbidden()`, `unauthorized()`, dynamic-rendering bailouts) are NOT failures: they are
+ * re-thrown untouched through `unstable_rethrow`, which owns the list of such errors (digest `NEXT_REDIRECT`,
+ * `NEXT_HTTP_ERROR_FALLBACK;…`, …), so the framework still sees them. Revalidation sits outside the try: a write that
+ * has already committed is never reported as a failure.
  */
 export async function runMutation<T>(run: (ctx: ServiceContext) => Promise<Result<T>>, label = "mutation"): Promise<ActionResult<T>> {
-  const ctx = await getActionContext();
-  if (!ctx) return NOT_AUTHENTICATED;
-  const result = await run(ctx);
+  let result: Result<T>;
+  try {
+    const ctx = await getActionContext();
+    if (!ctx) return NOT_AUTHENTICATED;
+    result = await run(ctx);
+  } catch (e: unknown) {
+    unstable_rethrow(e);
+    console.error(`[${label}] unexpected error`, e);
+    return { success: false, error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" };
+  }
   if (result.success) revalidatePath("/schemas", "layout");
   return toActionResult(result, label);
 }

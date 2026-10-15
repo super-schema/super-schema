@@ -12,6 +12,7 @@ import { formatDateOnly } from "@/lib/date-format";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { NO_EVENTS_ASSETS, productDeleteBlocker, type EventsAssetCounts } from "@/lib/product-deletion";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import {
   createProductAction,
   deleteProductAction,
@@ -117,24 +118,31 @@ export function ProductGrid({
     }
     setIsCreating(true);
     setCreateError(null);
-    const result = await createProductAction({
-      domainId,
-      name: name.trim(),
-      description,
-      tierId: tierId || null,
-      ownerTeam: ownerTeam.trim() || null,
-    });
-    setIsCreating(false);
-    if (result.error) {
-      setCreateError(result.error);
-      return;
-    }
-    invalidateDomainsTree();
-    resetCreate();
-    if (result.slug) {
-      router.push(assetHref({ kind: "product", domainSlug, productSlug: result.slug }));
-    } else {
-      router.refresh();
+    try {
+      const result = await createProductAction({
+        domainId,
+        name: name.trim(),
+        description,
+        tierId: tierId || null,
+        ownerTeam: ownerTeam.trim() || null,
+      });
+      if (result.error) {
+        setCreateError(result.error);
+        return;
+      }
+      invalidateDomainsTree();
+      resetCreate();
+      if (result.slug) {
+        router.push(assetHref({ kind: "product", domainSlug, productSlug: result.slug }));
+      } else {
+        router.refresh();
+      }
+    } catch (e: unknown) {
+      // A rejected action (network, serialization, an unwrapped server throw) must not leave the form stuck on "Creating…".
+      console.error("[product-grid] create product failed", e);
+      setCreateError(GENERIC_ACTION_ERROR);
+    } finally {
+      setIsCreating(false);
     }
   }
 
@@ -144,14 +152,19 @@ export function ProductGrid({
       toast.error(blocker);
       return;
     }
-    const result = await deleteProductAction(product.id);
-    if (result.error) {
-      toast.error(result.error);
-      return;
+    try {
+      const result = await deleteProductAction(product.id);
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`"${product.name}" deleted`);
+      void invalidateDomainsTree();
+      router.refresh();
+    } catch (e: unknown) {
+      console.error("[product-grid] delete product failed", e);
+      toast.error(GENERIC_ACTION_ERROR);
     }
-    toast.success(`"${product.name}" deleted`);
-    void invalidateDomainsTree();
-    router.refresh();
   }
 
   return (

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockGetActiveTenantId } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockPrisma: {
+    tenant: { findUnique: vi.fn() },
     user: { findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
   },
@@ -31,6 +32,7 @@ describe("createTenantEntityAction", () => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue({ user: { id: "user-1", email: "owner@example.com" } });
     mockGetActiveTenantId.mockResolvedValue("tenant-1");
+    mockPrisma.tenant.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
     mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
     mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
     mockAssertNameAvailable.mockResolvedValue({ success: true, data: undefined });
