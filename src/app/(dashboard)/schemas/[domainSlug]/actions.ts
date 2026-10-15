@@ -799,6 +799,8 @@ export interface BulkImportPayload {
     name: string;
     description?: string;
     extends?: string;
+    /** Model tags from the import (TypeSpec `x-tags`), stored as the entity's metadata.tags. */
+    tags?: string[];
     fields: CreateFieldInput[];
   }>;
   sharedEnums: Array<{ name: string; values: string[]; description?: string }>;
@@ -1125,6 +1127,7 @@ export async function createDomainAssetsFromImportAction(
             description: entity.description ?? "",
             ownerId: currentUserId,
             ...(parentEntityId ? { parentEntityId } : {}),
+            ...(entity.tags && entity.tags.length > 0 ? { metadata: { tags: entity.tags } } : {}),
             fields: {
               create: entity.fields.map((field, index) => mapFieldCreateInput(field, index)),
             },
