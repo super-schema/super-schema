@@ -245,8 +245,8 @@ function inUseError(messageName: string, pins: { specs: PinningSpec[] }): Servic
     details: { eventSpecs: specs },
     suggestedFix:
       specs.length === 0
-        ? "Delete the event specs that publish this message first (published spec versions keep the message versions they pin), or keep the message."
-        : `Move event spec "${specs[0].name}" off this message first: published spec versions keep the message versions they pin, so that event spec has to be deleted before the message${specs.length > 1 ? `, then the other ${specs.length - 1} listed in details` : ""}. Or keep the message.`,
+        ? "Delete the event specs whose published versions pin this message first (published spec versions cannot be changed or deleted on their own), or keep the message."
+        : `Event spec "${specs[0].name}" has published versions that pin this message. Published spec versions cannot be changed or deleted on their own, so delete event spec "${specs[0].name}" (which removes its versions) before deleting the message${specs.length > 1 ? `; ${specs.length - 1} more spec(s) are listed in details` : ""}. Or keep the message.`,
   };
 }
 
@@ -254,14 +254,23 @@ function inUseError(messageName: string, pins: { specs: PinningSpec[] }): Servic
  * Deletes a message and, with it, its immutable versions (the Wave 0 triggers allow that only through the
  * parent). Refused with IN_USE while a published event spec version pins one of those versions.
  *
- * Concurrency contract with the publish paths (R57), because `event_spec_versions.messageVersionIds` has no FK:
- * everything happens in ONE transaction that first takes `SELECT ... FOR UPDATE` on the message row, then
- * re-reads the version ids and re-checks the non-draft edges, so a publish that committed in the meantime is
- * always seen. The publish transactions (Task 10 message publish, Task 12 spec publish) must in turn take
- * `FOR SHARE` on the message rows they pin, AFTER their own row lock (the spec row), and re-verify that the
- * pinned versions still exist. Lock order is spec -> messages everywhere; delete takes messages only, so the
- * two cannot deadlock. Whoever locks the message row first wins: a delete first makes the publish fail its
- * re-verification, a publish first makes the delete return IN_USE.
+ * Concurrency contract with the publish paths (R57 / R60), because `event_spec_versions.messageVersionIds` has
+ * no FK. Everything here happens in ONE transaction that first takes `SELECT ... FOR UPDATE` on the message
+ * row, then re-reads the version ids and re-checks the non-draft edges, so a publish that committed in the
+ * meantime is always seen.
+ *
+ * GLOBAL LOCK ORDER: `event_specs` row -> `messages` rows (FOR SHARE for spec publish, FOR UPDATE for delete)
+ * -> `schema_references` writes. Delete locks the message first and only then touches the rows it removes or
+ * cascades (`message_versions`, `channel_messages`, `schema_references`); it never takes an `event_specs`
+ * lock, so it cannot deadlock against publish.
+ * - Spec publish (Task 12): lock the spec row; then `SELECT ... FROM messages WHERE id IN (<owning messages of
+ *   the pinned message versions>) ORDER BY id FOR SHARE`; verify the pinned message versions still exist; only
+ *   then write the version row and the edges.
+ * - Message publish (Task 10): needs no FOR SHARE. Inserting the `message_versions` row already takes
+ *   `FOR KEY SHARE` on the parent message row through the FK, and it updates `messages`, so it serializes
+ *   against this delete on its own.
+ * Whoever locks the message row first wins: a delete first makes the publish fail its re-verification, a
+ * publish first makes the delete return IN_USE.
  */
 export async function deleteMessage(id: string, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<{ id: string }>> {
   const owned = await loadOwned(ctx, id, owner);

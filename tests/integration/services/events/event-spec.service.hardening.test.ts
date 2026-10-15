@@ -4,7 +4,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { createEventSpec, updateEventSpecDocument } from "@/services/events/event-spec.service";
 import { createMessage } from "@/services/events/message.service";
-import { createForeignTenant } from "./foreign-tenant";
+import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext, unwrap } from "./helpers";
 
 let prisma: PrismaClient;
@@ -139,8 +139,9 @@ describe("event spec service: edges, replies, traits, tenants", () => {
 
   it("treats other tenants' channels, message versions and traits as not found, and other products' drafts as not allowed", async () => {
     const domainIds: Array<string | undefined> = [];
-    const foreign = await createForeignTenant(prisma, ctx);
+    let foreign: Awaited<ReturnType<typeof createForeignTenantFixture>> | undefined;
     try {
+      foreign = await createForeignTenantFixture(prisma, ctx);
       const sc = await createProductScope(prisma, ctx);
       const sibling = await createProductScope(prisma, ctx, "sib");
       domainIds.push(sc.domain.id, sibling.domain.id);
@@ -173,7 +174,7 @@ describe("event spec service: edges, replies, traits, tenants", () => {
       expect(await edgeIds(spec.id)).toEqual([]);
     } finally {
       await cleanupDomains(prisma, domainIds);
-      await foreign.cleanup();
+      await foreign?.cleanup();
     }
   });
 });

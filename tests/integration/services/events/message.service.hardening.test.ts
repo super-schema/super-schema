@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { createMessage, deleteMessage, updateMessage, type MessageInput } from "@/services/events/message.service";
-import { createForeignTenant } from "./foreign-tenant";
+import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext, unwrap } from "./helpers";
 
 let prisma: PrismaClient;
@@ -38,8 +38,14 @@ async function holdMessageRowLock(messageId: string, whileLocked?: (tx: PrismaCl
     )
     .finally(() => other.$disconnect());
   await Promise.race([locked, finished]);
-  return { release, finished };
+  /** For `finally`: releases the lock (idempotent) and waits for the holder's transaction, swallowing its error. */
+  const dispose = async () => {
+    release();
+    await finished.catch(() => undefined);
+  };
+  return { release, finished, dispose };
 }
+type LockHolder = Awaited<ReturnType<typeof holdMessageRowLock>>;
 
 describe("message service: input shape, names, tenants", () => {
   it("rejects malformed input with VALIDATION_ERROR instead of throwing, on create and update", async () => {
@@ -114,8 +120,9 @@ describe("message service: input shape, names, tenants", () => {
 
   it("treats other tenants' entities, entity versions and traits as not found, without leaking names or kinds", async () => {
     const domainIds: Array<string | undefined> = [];
-    const foreign = await createForeignTenant(prisma, ctx);
+    let foreign: Awaited<ReturnType<typeof createForeignTenantFixture>> | undefined;
     try {
+      foreign = await createForeignTenantFixture(prisma, ctx);
       const sc = await createProductScope(prisma, ctx);
       domainIds.push(sc.domain.id);
       const order = await sc.publishedEntity("Order");
@@ -149,7 +156,7 @@ describe("message service: input shape, names, tenants", () => {
       expect(await prisma.message.count({ where: { productId: sc.product.id } })).toBe(0);
     } finally {
       await cleanupDomains(prisma, domainIds);
-      await foreign.cleanup();
+      await foreign?.cleanup();
     }
   });
 });
@@ -216,6 +223,8 @@ describe("message delete: owner, IN_USE details and the row lock", () => {
   it("serializes behind the message row lock and then returns IN_USE for a publish that committed meanwhile", async () => {
     let domainId: string | undefined;
     let stampOfRun = "none";
+    let holder: LockHolder | undefined;
+    let deletion: Promise<unknown> | undefined;
     try {
       const sc = await createProductScope(prisma, ctx);
       domainId = sc.domain.id;
@@ -228,23 +237,27 @@ describe("message delete: owner, IN_USE details and the row lock", () => {
       });
 
       // The "publish" holds the row lock and commits a non-draft pin edge while the delete is already waiting.
-      const holder = await holdMessageRowLock(m.id, (tx) =>
+      holder = await holdMessageRowLock(m.id, (tx) =>
         tx.schemaReference
           .create({ data: { fromKind: "EVENT_SPEC_VERSION", fromId: `esv-${sc.s}`, role: "MESSAGE", toKind: "MESSAGE_VERSION", toId: mv.id } })
           .then(() => undefined)
       );
-      const deletion = deleteMessage(m.id, owner, ctx);
-      const early = await Promise.race([deletion.then(() => "settled"), sleep(600).then(() => "blocked")]);
+      const pending = deleteMessage(m.id, owner, ctx);
+      deletion = pending;
+      const early = await Promise.race([pending.then(() => "settled"), sleep(600).then(() => "blocked")]);
       expect(early).toBe("blocked");
       expect(await prisma.message.count({ where: { id: m.id } })).toBe(1);
 
       holder.release();
       await holder.finished;
-      const result = await deletion;
+      const result = await pending;
       expect(!result.success && result.error.code).toBe("IN_USE");
       expect(await prisma.message.count({ where: { id: m.id } })).toBe(1);
       expect(await prisma.messageVersion.count({ where: { id: mv.id } })).toBe(1);
     } finally {
+      // A failed assertion must not leave the 30 s FOR UPDATE open: release it, let the pending delete settle, then clean up.
+      await holder?.dispose();
+      await deletion?.catch(() => undefined);
       await prisma.schemaReference.deleteMany({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: `esv-${stampOfRun}` } });
       await cleanupDomains(prisma, [domainId]);
     }
@@ -252,6 +265,8 @@ describe("message delete: owner, IN_USE details and the row lock", () => {
 
   it("deletes once the lock holder lets go when nothing pinned the message", async () => {
     let domainId: string | undefined;
+    let holder: LockHolder | undefined;
+    let deletion: Promise<unknown> | undefined;
     try {
       const sc = await createProductScope(prisma, ctx);
       domainId = sc.domain.id;
@@ -259,16 +274,19 @@ describe("message delete: owner, IN_USE details and the row lock", () => {
       const order = await sc.publishedEntity("Order");
       const m = unwrap(await createMessage(sc.product.id, { name: `Free-${sc.s}`, payload: { entityId: order.entity.id } }, ctx));
 
-      const holder = await holdMessageRowLock(m.id);
-      const deletion = deleteMessage(m.id, owner, ctx);
-      const early = await Promise.race([deletion.then(() => "settled"), sleep(600).then(() => "blocked")]);
+      holder = await holdMessageRowLock(m.id);
+      const pending = deleteMessage(m.id, owner, ctx);
+      deletion = pending;
+      const early = await Promise.race([pending.then(() => "settled"), sleep(600).then(() => "blocked")]);
       expect(early).toBe("blocked");
 
       holder.release();
       await holder.finished;
-      expect(unwrap(await deletion)).toEqual({ id: m.id });
+      expect(unwrap(await pending)).toEqual({ id: m.id });
       expect(await prisma.message.count({ where: { id: m.id } })).toBe(0);
     } finally {
+      await holder?.dispose();
+      await deletion?.catch(() => undefined);
       await cleanupDomains(prisma, [domainId]);
     }
   });
