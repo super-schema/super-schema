@@ -17,7 +17,10 @@
  * - Nullable via `required` membership and `type: [..., "null"]` unions
  * - String formats (date, date-time, time, duration, uri, uuid, email, ...)
  * - Validation constraints (minLength/maxLength/pattern/minimum/maximum/items)
- * - Inline enum / const
+ * - Inline enum / const: string values import as a (single-member, for `const`) enum that keeps every symbol
+ *   verbatim. The enum IR holds string symbols only, so a numeric / boolean / mixed enum or const maps to the
+ *   best-fit primitive at LOW confidence (numeric ranges become min/max) — never to an enum with no values,
+ *   which would publish an unsatisfiable `{ "enum": [] }`.
  * - `$defs` / `definitions`: object entries become entities (named by their
  *   key, which is what `$ref` points at), enum entries become shared enums,
  *   any other entry is inlined into the fields that reference it
@@ -138,6 +141,8 @@ interface ResolvedType {
   referencedEntityName?: string;
   enumName?: string;
   enumValues?: string[];
+  /** Constraints implied by the resolution itself (a numeric `const` / `enum` becomes a min/max range). */
+  impliedConstraints?: ParsedFieldConstraint[];
 }
 
 /** One `$defs` / `definitions` entry, keyed by its local JSON pointer. */
@@ -155,9 +160,63 @@ interface ResolveContext {
   rootEntityName?: string;
   /** Guards `$ref` chains through inline definitions. */
   depth: number;
+  /** Guards nested combinators (`oneOf` inside `oneOf` …) — a hostile document can nest them without limit. */
+  nesting: number;
 }
 
 const MAX_REF_DEPTH = 16;
+/** Combinator nesting past this is not a real schema; resolve it as an unknown at low confidence. */
+export const MAX_SCHEMA_NESTING = 200;
+
+/** Every symbol of an `enum` / `const` is a string (nulls aside) — the only shape the enum IR carries. */
+function isStringEnum(values: unknown[]): boolean {
+  const symbols = values.filter((v) => v !== null);
+  return symbols.length > 0 && symbols.every((v) => typeof v === "string");
+}
+
+/**
+ * Resolve the values of an `enum` / `const`.
+ *
+ * - all strings (null aside) → an enum with those symbols, verbatim;
+ * - all numbers → `integer` / `float64` at low confidence, the range kept as min/max;
+ * - booleans → `boolean`;
+ * - anything else (mixed, objects, nothing but null) → `string` at low confidence.
+ *
+ * It never returns an enum without symbols: that would publish an unsatisfiable `{ "enum": [] }`.
+ */
+function resolveLiteralValues(values: unknown[], originalType: string): ResolvedType {
+  const nullable = values.includes(null);
+  const symbols = values.filter((v) => v !== null);
+
+  if (isStringEnum(values)) {
+    const unique = [...new Set(symbols as string[])];
+    // Symbols travel as "A|B|C" (the generator reads them back from the pattern slot), so one that holds the
+    // separator, or is empty, cannot round-trip: flag it rather than silently splitting it.
+    const lossy = unique.some((s) => s === "" || s.includes("|"));
+    return { type: "enum", confidence: lossy ? "low" : "high", nullable, originalType, enumValues: unique };
+  }
+
+  if (symbols.length > 0 && symbols.every((v) => typeof v === "number" && Number.isFinite(v))) {
+    const numbers = symbols as number[];
+    return {
+      type: numbers.every(Number.isInteger) ? "integer" : "float64",
+      confidence: "low",
+      nullable,
+      originalType,
+      impliedConstraints: [
+        { type: "minValue", value: Math.min(...numbers) },
+        { type: "maxValue", value: Math.max(...numbers) },
+      ],
+    };
+  }
+
+  if (symbols.length > 0 && symbols.every((v) => typeof v === "boolean")) {
+    const both = new Set(symbols).size === 2;
+    return { type: "boolean", confidence: both ? "high" : "low", nullable, originalType };
+  }
+
+  return { type: "string", confidence: "low", nullable, originalType };
+}
 
 /** Split a `type` keyword into its non-null base + whether "null" was present. */
 function normalizeType(type: string | string[] | undefined): {
@@ -196,14 +255,14 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
     };
   }
   if (def?.kind === "enum") {
-    const values = (def.node.enum ?? []).filter((v) => v !== null).map(String);
+    const values = (def.node.enum ?? []).filter((v) => v !== null) as string[];
     return {
       type: "enum",
       confidence: "high",
       nullable: (def.node.enum ?? []).includes(null),
       originalType: ref,
       enumName: def.assetName,
-      enumValues: values,
+      enumValues: [...new Set(values)],
     };
   }
   if (def?.kind === "inline" && ctx.depth < MAX_REF_DEPTH) {
@@ -226,39 +285,33 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
     return resolveRef(node.$ref, ctx);
   }
 
-  // const → treat as a fixed single-value enum of the const's primitive type
+  // const → a fixed single-value enum (CloudEvents `specversion: { "const": "1.0" }`)
   if (node.const !== undefined) {
-    return {
-      type: "enum",
-      confidence: "medium",
-      nullable: node.const === null,
-      originalType: `const(${JSON.stringify(node.const)})`,
-    };
+    return resolveLiteralValues([node.const], `const(${JSON.stringify(node.const)})`);
   }
 
   // enum → logical enum
   if (Array.isArray(node.enum)) {
-    const hasNull = node.enum.includes(null);
-    const symbols = node.enum.filter((v) => v !== null);
-    return {
-      type: "enum",
-      confidence: "high",
-      nullable: hasNull,
-      originalType: `enum(${node.enum.map((v) => JSON.stringify(v)).join(",")})`,
-      ...(symbols.every((v) => typeof v === "string") ? { enumValues: symbols as string[] } : {}),
-    };
+    return resolveLiteralValues(node.enum, `enum(${node.enum.map((v) => JSON.stringify(v)).join(",")})`);
   }
 
   // Combinators → take the first non-null member, medium/low confidence
-  const combinator = node.oneOf ?? node.anyOf ?? node.allOf;
-  if (Array.isArray(combinator) && combinator.length > 0) {
+  const rawCombinator = node.oneOf ?? node.anyOf ?? node.allOf;
+  // `oneOf: [null]` / boolean schemas carry no type: only object members are read.
+  const combinator = Array.isArray(rawCombinator)
+    ? rawCombinator.filter((m): m is JsonSchemaNode => typeof m === "object" && m !== null && !Array.isArray(m))
+    : [];
+  if (combinator.length > 0) {
+    const keyword = node.oneOf ? "oneOf" : node.anyOf ? "anyOf" : "allOf";
+    if (ctx.nesting >= MAX_SCHEMA_NESTING) {
+      return { type: "string", confidence: "low", nullable: false, originalType: `${keyword}(nested too deeply)` };
+    }
     const nonNull = combinator.filter(
       (m) => !(m && normalizeType(m.type).base === undefined && normalizeType(m.type).nullableFromType) && normalizeType(m.type).base !== "null"
     );
     const members = nonNull.length > 0 ? nonNull : combinator;
     const hasNull = combinator.some((m) => normalizeType(m.type).base === "null" || normalizeType(m.type).nullableFromType);
-    const first = resolveSchemaType(members[0], ctx);
-    const keyword = node.oneOf ? "oneOf" : node.anyOf ? "anyOf" : "allOf";
+    const first = resolveSchemaType(members[0], { ...ctx, nesting: ctx.nesting + 1 });
     return {
       ...first,
       confidence: members.length === 1 ? first.confidence : "low",
@@ -396,9 +449,11 @@ function indexDefinitions(schema: JsonSchemaNode, rootEntityName: string | undef
     for (const [key, raw] of Object.entries(defs as Record<string, unknown>)) {
       if (!raw || typeof raw !== "object") continue;
       const node = raw as JsonSchemaNode;
+      // A shared enum holds string symbols only; a numeric / mixed / empty `enum` is inlined into the fields that
+      // use it (resolveLiteralValues) instead of becoming a shared enum with stringified or missing values.
       const kind: DefinitionEntry["kind"] = isObjectSchema(node)
         ? "entity"
-        : Array.isArray(node.enum) && typeof node.$ref !== "string"
+        : Array.isArray(node.enum) && typeof node.$ref !== "string" && isStringEnum(node.enum)
           ? "enum"
           : "inline";
 
@@ -425,6 +480,10 @@ function buildFields(objectNode: JsonSchemaNode, ctx: ResolveContext): ParsedFie
     const nullable = resolved.nullable || !isRequired;
 
     const { constraints, minValueExclusive, maxValueExclusive } = extractConstraints(node);
+    // A numeric const / enum implies a range; an explicit keyword on the property wins.
+    for (const implied of resolved.impliedConstraints ?? []) {
+      if (!constraints.some((c) => c.type === implied.type)) constraints.push(implied);
+    }
 
     const field: ParsedField = {
       name,
@@ -479,7 +538,31 @@ function parseStructured(content: string): JsonSchemaNode | null {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function parseJsonSchemaDocument(content: string): Result<MultiEntityImportResult> {
+/** A leading UTF-8 byte-order mark (Windows editors, some exporters) is not part of the document. */
+export function stripBom(content: string): string {
+  return content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+}
+
+/**
+ * Never throws (the `Result` contract): a document nested past the engine's stack, or any other failure while
+ * mapping it, comes back as a `PARSE_ERROR` instead of an unhandled exception in the import action.
+ */
+export function parseJsonSchemaDocument(rawContent: string): Result<MultiEntityImportResult> {
+  try {
+    return importJsonSchemaDocument(stripBom(rawContent));
+  } catch (error) {
+    return err({
+      code: "PARSE_ERROR",
+      message:
+        error instanceof RangeError
+          ? "JSON Schema is nested too deeply to import"
+          : "Could not import the JSON Schema document",
+      suggestedFix: "Simplify the schema (flatten deeply nested combinators) or split it into $defs.",
+    });
+  }
+}
+
+function importJsonSchemaDocument(content: string): Result<MultiEntityImportResult> {
   const schema = parseStructured(content);
   if (schema === null) {
     return err({
@@ -510,7 +593,7 @@ export function parseJsonSchemaDocument(content: string): Result<MultiEntityImpo
   const rootIsEntity = hasProperties(schema);
   const rootEntityName = rootIsEntity ? deriveEntityName(schema) : undefined;
   const definitions = indexDefinitions(schema, rootEntityName);
-  const ctx: ResolveContext = { definitions, rootEntityName, depth: 0 };
+  const ctx: ResolveContext = { definitions, rootEntityName, depth: 0, nesting: 0 };
 
   const entities: ParsedEntity[] = [];
   if (rootIsEntity && rootEntityName) {
@@ -536,7 +619,8 @@ export function parseJsonSchemaDocument(content: string): Result<MultiEntityImpo
     } else if (def.kind === "enum") {
       const parsedEnum: ParsedEnum = {
         name: def.assetName,
-        values: (def.node.enum ?? []).filter((v) => v !== null).map(String),
+        // `kind: "enum"` is only assigned to all-string enums (indexDefinitions).
+        values: [...new Set((def.node.enum ?? []).filter((v) => v !== null) as string[])],
       };
       if (typeof def.node.description === "string") parsedEnum.description = def.node.description;
       enums.push(parsedEnum);

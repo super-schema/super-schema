@@ -80,7 +80,12 @@ interface AvroContext {
   enums: ParsedEnum[];
   scalars: ParsedScalar[];
   warnings: string[];
+  /** Current nesting of `resolveAvroType` (types inside types inside …); see {@link MAX_AVRO_NESTING}. */
+  depth: number;
 }
+
+/** Real schemas nest a handful of levels; past this a document is hostile (the engine's stack is the limit). */
+export const MAX_AVRO_NESTING = 200;
 
 type AvroObject = Record<string, unknown>;
 
@@ -173,8 +178,18 @@ function defineRecord(obj: AvroObject, enclosingNamespace: string | undefined, c
   if (typeof obj.doc === "string" && obj.doc) entity.description = obj.doc;
   ctx.entities.push(entity); // pre-order: a record precedes the records it nests
 
-  const avroFields = Array.isArray(obj.fields) ? (obj.fields as AvroObject[]) : [];
-  entity.fields = avroFields.map((f) => mapField(f, namespace, ctx, `${def.assetName}.${String(f.name)}`));
+  const avroFields = Array.isArray(obj.fields) ? (obj.fields as unknown[]) : [];
+  const fields: ParsedField[] = [];
+  avroFields.forEach((f, index) => {
+    // `"fields": [null]`, a bare string, or a field with no name is malformed — skip it, don't crash the import.
+    if (typeof f !== "object" || f === null || Array.isArray(f) || typeof (f as AvroObject).name !== "string") {
+      ctx.warnings.push(`Record "${def.assetName}": field #${index + 1} is not a field definition (needs a "name") — skipped.`);
+      return;
+    }
+    const field = f as AvroObject;
+    fields.push(mapField(field, namespace, ctx, `${def.assetName}.${String(field.name)}`));
+  });
+  entity.fields = fields;
   return def;
 }
 
@@ -225,6 +240,24 @@ function defineFixed(obj: AvroObject, enclosingNamespace: string | undefined, ct
 // ---------------------------------------------------------------------------
 
 function resolveAvroType(
+  avroType: unknown,
+  namespace: string | undefined,
+  ctx: AvroContext,
+  label: string
+): ResolvedType {
+  if (ctx.depth >= MAX_AVRO_NESTING) {
+    ctx.warnings.push(`Field "${label}": the type is nested more than ${MAX_AVRO_NESTING} levels deep — imported as string.`);
+    return { type: "string", confidence: "low", nullable: false, originalType: "nested too deeply" };
+  }
+  ctx.depth++;
+  try {
+    return resolveAvroTypeAt(avroType, namespace, ctx, label);
+  } finally {
+    ctx.depth--;
+  }
+}
+
+function resolveAvroTypeAt(
   avroType: unknown,
   namespace: string | undefined,
   ctx: AvroContext,
@@ -402,7 +435,24 @@ function mapField(f: AvroObject, namespace: string | undefined, ctx: AvroContext
 // Public API
 // ---------------------------------------------------------------------------
 
-export function parseAvroDocument(content: string): Result<MultiEntityImportResult> {
+/**
+ * Never throws (the `Result` contract): a leading BOM is ignored, and a document nested past the engine's stack
+ * (or any other failure while mapping it) comes back as a `PARSE_ERROR`.
+ */
+export function parseAvroDocument(rawContent: string): Result<MultiEntityImportResult> {
+  try {
+    return importAvroDocument(rawContent.charCodeAt(0) === 0xfeff ? rawContent.slice(1) : rawContent);
+  } catch (error) {
+    return err({
+      code: "PARSE_ERROR",
+      message:
+        error instanceof RangeError ? "Avro schema is nested too deeply to import" : "Could not import the Avro schema",
+      suggestedFix: "Simplify the schema (flatten deeply nested types) or split it into named types.",
+    });
+  }
+}
+
+function importAvroDocument(content: string): Result<MultiEntityImportResult> {
   let schema: AvroObject;
   try {
     schema = JSON.parse(content);
@@ -438,6 +488,7 @@ export function parseAvroDocument(content: string): Result<MultiEntityImportResu
     enums: [],
     scalars: [],
     warnings: [],
+    depth: 0,
   };
   const root = defineRecord(schema, undefined, ctx);
   const rootNamespace = root.fullName.includes(".")
