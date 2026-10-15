@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
-import { GENERIC_ACTION_ERROR, getActionContext } from "@/lib/action-context";
+import { GENERIC_ACTION_ERROR, getActionContext, inActiveTenant } from "@/lib/action-context";
 import { isOpaqueErrorCode } from "@/types/action-result";
 import type { Result } from "@/types/result";
 import {
@@ -20,14 +20,22 @@ const NOT_LOGGED_IN = "You must be logged in";
  * message, except `DB_ERROR` / `INTERNAL_ERROR`, which become the generic message; an unexpected throw (the product service
  * rethrows anything that is not a unique-constraint hit) is logged server-side and answered with the generic message too,
  * so the form never sees raw driver text and never hangs on a rejected action. Next's own control-flow throws pass through.
+ *
+ * `owned` runs before the service: the product actions address a domain (create) or a product (update / delete) by a bare id
+ * from the client, and the service trusts it, so the id must belong to the caller's ACTIVE tenant. The answer for a foreign
+ * id is exactly the service's own answer for a missing one, so an id guessed from another tenant reveals nothing.
  */
 async function runProductAction<T>(
   label: string,
+  owned: { kind: "domain" | "product"; id: unknown },
   run: (ctx: ServiceContext) => Promise<Result<T>>
 ): Promise<{ error: string } | { data: T }> {
   try {
     const ctx = await getActionContext();
     if (!ctx) return { error: NOT_LOGGED_IN };
+    if (!(await inActiveTenant(owned.kind, owned.id))) {
+      return { error: `${owned.kind === "domain" ? "Domain" : "Product"} "${String(owned.id)}" not found` };
+    }
     const result = await run(ctx);
     if (!result.success) {
       return { error: isOpaqueErrorCode(result.error.code) ? GENERIC_ACTION_ERROR : result.error.message };
@@ -47,7 +55,7 @@ export async function createProductAction(input: {
   tierId?: string | null;
   ownerTeam?: string | null;
 }) {
-  const outcome = await runProductAction("createProductAction", (ctx) => createProduct(input, ctx));
+  const outcome = await runProductAction("createProductAction", { kind: "domain", id: input?.domainId }, (ctx) => createProduct(input, ctx));
   if ("error" in outcome) return { error: outcome.error };
 
   revalidatePath("/schemas");
@@ -63,7 +71,7 @@ export async function updateProductAction(
     ownerTeam?: string | null;
   }
 ) {
-  const outcome = await runProductAction("updateProductAction", (ctx) => updateProduct(id, input, ctx));
+  const outcome = await runProductAction("updateProductAction", { kind: "product", id }, (ctx) => updateProduct(id, input, ctx));
   if ("error" in outcome) return { error: outcome.error };
 
   revalidatePath("/schemas");
@@ -71,7 +79,7 @@ export async function updateProductAction(
 }
 
 export async function deleteProductAction(id: string) {
-  const outcome = await runProductAction("deleteProductAction", (ctx) => deleteProduct(id, ctx));
+  const outcome = await runProductAction("deleteProductAction", { kind: "product", id }, (ctx) => deleteProduct(id, ctx));
   if ("error" in outcome) return { error: outcome.error };
 
   revalidatePath("/schemas");

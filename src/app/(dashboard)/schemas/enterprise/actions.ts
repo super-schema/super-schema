@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { unexpectedFailure } from "@/lib/action-context";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
@@ -97,6 +98,6 @@ export async function createTenantEntityAction(data: {
   } catch (e: unknown) {
     if (e instanceof ServiceErrorRejection) return { error: e.message };
     if (e instanceof AuditUserMissingError) return { error: STALE_SESSION_ENTITY_ERROR };
-    return { error: e instanceof Error ? e.message : "Failed to create entity" };
+    return { error: unexpectedFailure("createTenantEntityAction", e).error };
   }
 }

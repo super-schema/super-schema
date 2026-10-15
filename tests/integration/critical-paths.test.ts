@@ -28,6 +28,10 @@ const { mockPrisma } = await vi.hoisted(async () => {
         update: vi.fn(),
         delete: vi.fn(),
       },
+      // The domain the entity is created in belongs to the active tenant (the by-id ownership guard reads it).
+      domain: {
+        findUnique: vi.fn().mockResolvedValue({ id: "dom-1", tenantId: "tenant-1" }),
+      },
       product: {
         findUnique: vi.fn().mockResolvedValue({
           id: "prod-default",
@@ -308,7 +312,7 @@ describe("Critical Paths - Integration", () => {
         sortOrder: 3,
       };
 
-      mockPrisma.field.findUnique.mockResolvedValue(existingField);
+      mockPrisma.field.findUnique.mockResolvedValue({ ...existingField, entity: { tenantId: "tenant-1" } });
       mockPrisma.field.delete.mockResolvedValue(existingField);
 
       const result = await deleteFieldAction("field-1");
@@ -347,7 +351,7 @@ describe("Critical Paths - Integration", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
       mockPrisma.entity.update.mockResolvedValue({
         ...existingEntity,
         status: "ACTIVE",
@@ -373,7 +377,7 @@ describe("Critical Paths - Integration", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
 
       const result = await updateEntityStatusAction("ent-1", "RETIRED");
 
@@ -447,7 +451,7 @@ describe("Critical Paths - Integration", () => {
         },
       ];
 
-      mockPrisma.entity.findUnique.mockResolvedValue(mockEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...mockEntity, tenantId: "tenant-1" });
       mockPrisma.field.findMany.mockResolvedValue(mockFields);
 
       const result = await generateTypeSpecPreviewAction("ent-1");

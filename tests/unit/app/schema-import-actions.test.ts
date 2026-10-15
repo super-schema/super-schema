@@ -6,6 +6,10 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() 
     user: {
       findUnique: vi.fn(),
     },
+    // The domain-ownership check runs before the transaction opens.
+    domain: {
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
   mockTx: {
@@ -58,6 +62,8 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
+
 vi.mock("@/services/name-registry.service", () => ({
   assertNameAvailable: mockAssertNameAvailable,
 }));
@@ -78,6 +84,7 @@ describe("schema import actions", () => {
       id: `entity-${data.name}`,
     }));
     mockTx.domain.findUnique.mockResolvedValue({ id: "domain-1", tenantId: "tenant-1" });
+    mockPrisma.domain.findUnique.mockResolvedValue({ id: "domain-1", tenantId: "tenant-1" });
     mockTx.product.findUnique.mockResolvedValue({
       id: "prd-default",
       domainId: "domain-1",

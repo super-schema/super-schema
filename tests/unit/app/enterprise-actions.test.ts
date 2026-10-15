@@ -155,4 +155,18 @@ describe("createTenantEntityAction", () => {
     expect(result).toEqual({ error: expect.stringContaining("session is stale") });
     expect(mockTx.entity.create).not.toHaveBeenCalled();
   });
+
+  it("answers an unexpected failure with the generic message, never the driver text (path + source excerpt)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockTx.entity.create.mockRejectedValue(
+      new Error("Invalid `prisma.entity.create()` invocation in\n/Users/dev/src/my/super-schema/src/app/enterprise/actions.ts:80:20\n→ 80 tx.entity.create({ data: { name: undefined")
+    );
+
+    const result = (await createTenantEntityAction({ name: "Customer", description: "", fields: [] })) as { error: string };
+
+    expect(result.error).toBe("Something went wrong. Try again; if it keeps happening, contact an administrator.");
+    expect(result.error).not.toMatch(/prisma|Users\/dev|actions\.ts/i);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });

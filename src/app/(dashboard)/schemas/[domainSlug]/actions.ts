@@ -8,9 +8,9 @@ import { revalidatePath } from "next/cache";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { GENERIC_ACTION_ERROR, isInActiveTenant } from "@/lib/action-context";
+import { inActiveTenant, isInActiveTenant, notFoundFailure, targetInActiveTenant, unexpectedFailure } from "@/lib/action-context";
 import {
-  isBoolean, isPlainObject, isString, isStringArray, isStringOrNull, optional, pickEditable, readFields,
+  isBoolean, isInt, isPlainObject, isString, isStringArray, isStringOrNull, optional, pickEditable, readFields,
 } from "@/lib/editable-fields";
 import { parseScopeTarget, requireId } from "@/services/events/service-guards";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
@@ -40,9 +40,11 @@ function requireApiPlacement(scope: LevelScope) {
  * tenant-level (Enterprise) entity cannot own one.
  */
 async function resolveEntityApiTarget(
-  entityId: string | undefined
+  entityId: unknown
 ): Promise<{ target: ScopeTarget } | { error: string }> {
-  if (!entityId) return { error: "Select an entity for an entity-scoped API" };
+  if (typeof entityId !== "string" || !entityId) return { error: "Select an entity for an entity-scoped API" };
+  // An entity of another tenant reads exactly like a missing one (same answer, nothing derived from it).
+  if (!(await inActiveTenant("entity", entityId))) return { error: "Entity not found" };
   const entity = await prisma.entity.findUnique({
     where: { id: entityId },
     select: { id: true, productId: true },
@@ -78,15 +80,17 @@ async function dataTypeTarget(domainId: unknown, target: unknown): Promise<Resul
   return id.success ? ok({ level: "DOMAIN", domainId: id.data }) : id;
 }
 
+/**
+ * An API create's / a bulk import's target carries a domain / product id from the client: it must lie in the active tenant. Null when it does;
+ * otherwise the very `{ error }` a missing target gets (`resolveScope`'s NOT_FOUND text), so a foreign one reveals nothing.
+ */
+async function foreignTarget(target: ScopeTarget): Promise<{ error: string } | null> {
+  const owned = await targetInActiveTenant(target);
+  return owned.success ? null : { error: owned.error.message };
+}
+
 /** The wire shape of the older (non-Result) actions: `{ error }` plus the failure code where there is one. */
 const failure = (error: ServiceError) => ({ error: error.message, code: error.code });
-const notFound = (kind: string) => ({ error: `${kind} not found`, code: "NOT_FOUND" });
-
-/** An unexpected throw: logged server-side, never shown (it may carry driver / Prisma text). */
-function unexpectedFailure(label: string, e: unknown) {
-  console.error(`[${label}] unexpected error`, e);
-  return { error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" };
-}
 
 /** A required, non-blank name, trimmed: the name registry compares trimmed names, so the stored name must be trimmed too. */
 function trimmedName(value: unknown, label: string): Result<string> {
@@ -183,9 +187,12 @@ export async function createEntityWithFieldsAction(
     return { error: "You must be logged in" };
   }
 
+  // The details arrive from the browser untyped: a payload that is not an object, or whose name is not a string, is a
+  // validation failure here instead of a TypeError further down.
+  if (!isPlainObject(data)) return { error: "Entity details are required", code: "VALIDATION_ERROR" };
   const { name, description, fields } = data;
 
-  if (!name || name.trim().length === 0) {
+  if (typeof name !== "string" || name.trim().length === 0) {
     return { error: "Entity name is required" };
   }
 
@@ -194,6 +201,9 @@ export async function createEntityWithFieldsAction(
   }
 
   try {
+    // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") };
+
     const currentUserId = await resolveCurrentUserId(session.user);
 
     const created = await createProductEntity({
@@ -215,8 +225,7 @@ export async function createEntityWithFieldsAction(
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `An entity named "${name}" already exists in this domain` };
     }
-    const message = e instanceof Error ? e.message : "Failed to create entity";
-    return { error: message };
+    return { ...unexpectedFailure("createEntityWithFieldsAction", e) };
   }
 }
 
@@ -226,10 +235,11 @@ export async function createEntityAction(domainId: string, formData: FormData) {
     return { error: "You must be logged in" };
   }
 
-  const name = formData.get("name") as string;
-  const description = (formData.get("description") as string) || "";
+  const name = formData instanceof FormData ? formData.get("name") : null;
+  const rawDescription = formData instanceof FormData ? formData.get("description") : null;
+  const description = typeof rawDescription === "string" ? rawDescription : "";
 
-  if (!name || name.trim().length === 0) {
+  if (typeof name !== "string" || name.trim().length === 0) {
     return { error: "Entity name is required" };
   }
 
@@ -238,6 +248,9 @@ export async function createEntityAction(domainId: string, formData: FormData) {
   }
 
   try {
+    // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") };
+
     const currentUserId = await resolveCurrentUserId(session.user);
 
     const created = await createProductEntity({
@@ -257,8 +270,7 @@ export async function createEntityAction(domainId: string, formData: FormData) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `An entity named "${name}" already exists in this domain` };
     }
-    const message = e instanceof Error ? e.message : "Failed to create entity";
-    return { error: message };
+    return { ...unexpectedFailure("createEntityAction", e) };
   }
 }
 
@@ -273,19 +285,34 @@ export async function addModelFieldAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  const id = requireId(modelId, "Model id");
+  if (!id.success) return failure(id.error);
+  const input = readFields(
+    data,
+    { name: isString, type: isString, nullable: optional(isBoolean), isKey: optional(isBoolean), description: optional(isString) },
+    "a model field"
+  );
+  if (!input.success) return failure(input.error);
+  const name = trimmedName(input.data.name, "Field");
+  if (!name.success) return failure(name.error);
+
   try {
-    const model = await prisma.modelDefinition.findUnique({ where: { id: modelId }, include: { fields: true } });
-    if (!model) return { error: "Model not found" };
+    // Ownership of the PARENT: the model's domain must belong to the active tenant; anything else reads as missing.
+    const model = await prisma.modelDefinition.findUnique({
+      where: { id: id.data },
+      select: { domain: { select: { tenantId: true } }, _count: { select: { fields: true } } },
+    });
+    if (!model || !(await isInActiveTenant(model.domain.tenantId))) return { ...notFoundFailure("Model") };
 
     await prisma.modelFieldDefinition.create({
       data: {
-        modelId,
-        name: data.name,
-        type: data.type,
-        nullable: data.nullable ?? true,
-        isKey: data.isKey ?? false,
-        description: data.description ?? "",
-        sortOrder: model.fields.length,
+        modelId: id.data,
+        name: name.data,
+        type: input.data.type as string,
+        nullable: (input.data.nullable as boolean | undefined) ?? true,
+        isKey: (input.data.isKey as boolean | undefined) ?? false,
+        description: (input.data.description as string | undefined) ?? "",
+        sortOrder: model._count.fields,
       },
     });
 
@@ -293,9 +320,9 @@ export async function addModelFieldAction(
     return { success: true };
   } catch (e: unknown) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
-      return { error: `Field "${data.name}" already exists` };
+      return { error: `Field "${name.data}" already exists`, code: "NAME_CONFLICT" };
     }
-    return { error: e instanceof Error ? e.message : "Failed to add field" };
+    return { ...unexpectedFailure("addModelFieldAction", e) };
   }
 }
 
@@ -330,7 +357,7 @@ export async function updateModelFieldAction(
       where: { id: id.data },
       select: { model: { select: { domain: { select: { tenantId: true } } } } },
     });
-    if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return notFound("Field");
+    if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return { ...notFoundFailure("Field") };
 
     await prisma.modelFieldDefinition.update({ where: { id: id.data }, data: picked.data as Prisma.ModelFieldDefinitionUpdateInput });
     revalidatePath("/schemas");
@@ -339,7 +366,7 @@ export async function updateModelFieldAction(
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `Field "${picked.data.name}" already exists`, code: "NAME_CONFLICT" };
     }
-    return unexpectedFailure("updateModelFieldAction", e);
+    return { ...unexpectedFailure("updateModelFieldAction", e) };
   }
 }
 
@@ -347,12 +374,17 @@ export async function deleteModelFieldAction(fieldId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  const id = requireId(fieldId, "Field id");
+  if (!id.success) return failure(id.error);
+
   try {
-    await prisma.modelFieldDefinition.delete({ where: { id: fieldId } });
+    // Ownership: the field's model's domain must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("modelField", id.data))) return { ...notFoundFailure("Field") };
+    await prisma.modelFieldDefinition.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to delete field" };
+    return { ...unexpectedFailure("deleteModelFieldAction", e) };
   }
 }
 
@@ -376,7 +408,8 @@ export async function deleteEntityAction(entityId: string) {
       where: { id: entityId },
       select: { id: true, name: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // An entity of another tenant reads exactly like a missing one (same answer, nothing deleted).
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
 
     // Messages / traits that pin it, and other entities whose published versions reference one of its versions (no FK:
     // only this guard stops that delete and leaves a dangling edge that breaks rendering of the referencing version).
@@ -437,19 +470,23 @@ export async function createSharedEnumAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return unexpectedFailure("createSharedEnumAction", e);
+    return { ...unexpectedFailure("createSharedEnumAction", e) };
   }
 }
 
 export async function deleteSharedEnumAction(enumId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const id = requireId(enumId, "Enum id");
+  if (!id.success) return failure(id.error);
   try {
-    await prisma.sharedEnum.delete({ where: { id: enumId } });
+    // Ownership: the data type must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("sharedEnum", id.data))) return { ...notFoundFailure("Enum") };
+    await prisma.sharedEnum.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to delete enum" };
+    return { ...unexpectedFailure("deleteSharedEnumAction", e) };
   }
 }
 
@@ -476,12 +513,12 @@ export async function updateSharedEnumAction(
 
   try {
     const row = await prisma.sharedEnum.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return notFound("Enum");
+    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Enum") };
     await prisma.sharedEnum.update({ where: { id: id.data }, data: picked.data as Prisma.SharedEnumUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return unexpectedFailure("updateSharedEnumAction", e);
+    return { ...unexpectedFailure("updateSharedEnumAction", e) };
   }
 }
 
@@ -527,19 +564,23 @@ export async function createCustomScalarAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return unexpectedFailure("createCustomScalarAction", e);
+    return { ...unexpectedFailure("createCustomScalarAction", e) };
   }
 }
 
 export async function deleteCustomScalarAction(scalarId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const id = requireId(scalarId, "Scalar id");
+  if (!id.success) return failure(id.error);
   try {
-    await prisma.customScalar.delete({ where: { id: scalarId } });
+    // Ownership: the data type must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("customScalar", id.data))) return { ...notFoundFailure("Scalar") };
+    await prisma.customScalar.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to delete scalar" };
+    return { ...unexpectedFailure("deleteCustomScalarAction", e) };
   }
 }
 
@@ -557,12 +598,12 @@ export async function updateCustomScalarAction(
 
   try {
     const row = await prisma.customScalar.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return notFound("Scalar");
+    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Scalar") };
     await prisma.customScalar.update({ where: { id: id.data }, data: picked.data as Prisma.CustomScalarUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return unexpectedFailure("updateCustomScalarAction", e);
+    return { ...unexpectedFailure("updateCustomScalarAction", e) };
   }
 }
 
@@ -597,19 +638,23 @@ export async function createUnionTypeAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return unexpectedFailure("createUnionTypeAction", e);
+    return { ...unexpectedFailure("createUnionTypeAction", e) };
   }
 }
 
 export async function deleteUnionTypeAction(unionId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const id = requireId(unionId, "Union id");
+  if (!id.success) return failure(id.error);
   try {
-    await prisma.unionType.delete({ where: { id: unionId } });
+    // Ownership: the data type must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("unionType", id.data))) return { ...notFoundFailure("Union") };
+    await prisma.unionType.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to delete union" };
+    return { ...unexpectedFailure("deleteUnionTypeAction", e) };
   }
 }
 
@@ -627,12 +672,12 @@ export async function updateUnionTypeAction(
 
   try {
     const row = await prisma.unionType.findUnique({ where: { id: id.data }, select: { tenantId: true } });
-    if (!row || !(await isInActiveTenant(row.tenantId))) return notFound("Union");
+    if (!row || !(await isInActiveTenant(row.tenantId))) return { ...notFoundFailure("Union") };
     await prisma.unionType.update({ where: { id: id.data }, data: picked.data as Prisma.UnionTypeUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return unexpectedFailure("updateUnionTypeAction", e);
+    return { ...unexpectedFailure("updateUnionTypeAction", e) };
   }
 }
 
@@ -647,29 +692,53 @@ export async function createServiceAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const input = readFields(
+    data,
+    {
+      name: isString,
+      description: optional(isString),
+      basePath: optional(isString),
+      scope: (v) => v === "DOMAIN" || v === "ENTITY",
+      entityId: optional(isStringOrNull),
+    },
+    "an API"
+  );
+  if (!input.success) return failure(input.error);
+  const name = trimmedName(input.data.name, "API");
+  if (!name.success) return failure(name.error);
+  const scope = input.data.scope as "DOMAIN" | "ENTITY";
+  const entityId = input.data.entityId as string | null | undefined;
+
   try {
-    // An entity-scoped API lives at its entity's product scope; any passed target is ignored.
-    let apiTarget = target;
-    if (data.scope === "ENTITY") {
-      const derived = await resolveEntityApiTarget(data.entityId);
+    // An entity-scoped API lives at its entity's product scope; any passed target is ignored. That entity must belong to
+    // the active tenant (`resolveEntityApiTarget`); every other target is validated, and its domain / product checked below.
+    let apiTarget: ScopeTarget;
+    if (scope === "ENTITY") {
+      const derived = await resolveEntityApiTarget(entityId);
       if ("error" in derived) return { error: derived.error };
       apiTarget = derived.target;
+    } else {
+      const parsed = parseScopeTarget(target);
+      if (!parsed.success) return failure(parsed.error);
+      // A TENANT target is never taken from the client (same rule as data types); an API cannot live there anyway.
+      apiTarget = parsed.data.level === "TENANT" ? { level: "TENANT", tenantId: await getActiveTenantId() } : parsed.data;
     }
+    const notOwned = await foreignTarget(apiTarget);
+    if (notOwned) return { ...notOwned };
 
-    const name = data.name.trim();
     const result = await createInScope(prisma, {
       kind: "api",
       target: apiTarget,
-      name,
-      write: (tx, scope) =>
+      name: name.data,
+      write: (tx, placement) =>
         tx.serviceDefinition.create({
           data: {
-            name,
-            description: data.description ?? "",
-            basePath: data.basePath ?? "/",
-            ...requireApiPlacement(scope),
-            scope: data.scope,
-            entityId: data.scope === "ENTITY" ? data.entityId : undefined,
+            name: name.data,
+            description: (input.data.description as string | undefined) ?? "",
+            basePath: (input.data.basePath as string | undefined) ?? "/",
+            ...requireApiPlacement(placement),
+            scope,
+            entityId: scope === "ENTITY" ? (entityId ?? undefined) : undefined,
           },
         }),
     });
@@ -677,7 +746,7 @@ export async function createServiceAction(
     revalidatePath("/schemas");
     return { success: true, serviceId: result.data.id };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to create API service" };
+    return { ...unexpectedFailure("createServiceAction", e) };
   }
 }
 
@@ -688,15 +757,18 @@ export async function createServiceAction(
 export async function getOrCreateEntityServiceAction(_domainId: string, entityId: string, entityName: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  if (typeof entityName !== "string") return failure({ code: "VALIDATION_ERROR", message: "Entity name is required" });
   try {
+    // The entity is resolved (and checked against the active tenant) BEFORE the existing-service lookup: the lookup
+    // would otherwise hand the service id of another tenant's entity to whoever guessed the entity id.
+    const derived = await resolveEntityApiTarget(entityId);
+    if ("error" in derived) return { error: derived.error };
+
     const existing = await prisma.serviceDefinition.findFirst({
       where: { entityId },
       select: { id: true },
     });
     if (existing) return { success: true, serviceId: existing.id };
-
-    const derived = await resolveEntityApiTarget(entityId);
-    if ("error" in derived) return { error: derived.error };
 
     const name = `${entityName}Api`;
     const result = await createInScope(prisma, {
@@ -712,19 +784,23 @@ export async function getOrCreateEntityServiceAction(_domainId: string, entityId
     revalidatePath("/schemas");
     return { success: true, serviceId: result.data.id };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to create API service" };
+    return { ...unexpectedFailure("getOrCreateEntityServiceAction", e) };
   }
 }
 
 export async function deleteServiceAction(serviceId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const id = requireId(serviceId, "Service id");
+  if (!id.success) return failure(id.error);
   try {
-    await prisma.serviceDefinition.delete({ where: { id: serviceId } });
+    // Ownership: the API must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") };
+    await prisma.serviceDefinition.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to delete API service" };
+    return { ...unexpectedFailure("deleteServiceAction", e) };
   }
 }
 
@@ -742,6 +818,59 @@ export interface OperationResponseInput {
   description?: string;
 }
 
+const isOperationParam = (v: unknown) =>
+  isPlainObject(v) &&
+  isString((v as Record<string, unknown>).name) &&
+  isString((v as Record<string, unknown>).type) &&
+  isString((v as Record<string, unknown>).location) &&
+  isBoolean((v as Record<string, unknown>).required) &&
+  optional(isString)((v as Record<string, unknown>).description);
+
+const isOperationResponse = (v: unknown) =>
+  isPlainObject(v) &&
+  isInt((v as Record<string, unknown>).statusCode) &&
+  optional(isStringOrNull)((v as Record<string, unknown>).type) &&
+  optional(isString)((v as Record<string, unknown>).description);
+
+const isListOf = (check: (v: unknown) => boolean) => (v: unknown) => Array.isArray(v) && v.every(check);
+
+/**
+ * The editor's operation payload, checked at runtime (it arrives from the browser untyped): a missing or malformed
+ * `parameters` / `responses` list, a non-string name... is a VALIDATION_ERROR here, never a TypeError ("Cannot read
+ * properties of undefined") or a Prisma validation message further down. The name is trimmed and must not be blank.
+ */
+function readOperationDetails(data: unknown, listsRequired: boolean) {
+  const lists = listsRequired
+    ? { parameters: isListOf(isOperationParam), responses: isListOf(isOperationResponse) }
+    : { parameters: optional(isListOf(isOperationParam)), responses: optional(isListOf(isOperationResponse)) };
+  const input = readFields(
+    data,
+    { name: isString, httpMethod: isString, httpPath: isString, description: optional(isString), ...lists },
+    "an operation"
+  );
+  if (!input.success) return input;
+  const name = trimmedName(input.data.name, "Operation");
+  if (!name.success) return name;
+  return ok({
+    name: name.data,
+    httpMethod: input.data.httpMethod as string,
+    httpPath: input.data.httpPath as string,
+    description: (input.data.description as string | undefined) ?? "",
+    parameters: ((input.data.parameters as OperationParamInput[] | undefined) ?? []).map((p) => ({
+      name: p.name,
+      type: p.type,
+      location: p.location,
+      required: p.required,
+      description: p.description ?? "",
+    })),
+    responses: ((input.data.responses as OperationResponseInput[] | undefined) ?? []).map((r) => ({
+      statusCode: r.statusCode,
+      type: r.type ?? null,
+      description: r.description ?? "",
+    })),
+  });
+}
+
 export async function createOperationAction(
   serviceId: string,
   data: {
@@ -755,36 +884,31 @@ export async function createOperationAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const id = requireId(serviceId, "Service id");
+  if (!id.success) return failure(id.error);
+  const details = readOperationDetails(data, false);
+  if (!details.success) return failure(details.error);
+
   try {
+    // Ownership of the PARENT: the API must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("service", id.data))) return { ...notFoundFailure("API service") };
+
     const created = await prisma.operation.create({
       data: {
-        serviceId,
-        name: data.name.trim(),
-        httpMethod: data.httpMethod,
-        httpPath: data.httpPath,
-        description: data.description ?? "",
-        parameters: {
-          create: (data.parameters ?? []).map((p) => ({
-            name: p.name,
-            type: p.type,
-            location: p.location,
-            required: p.required,
-            description: p.description ?? "",
-          })),
-        },
-        responses: {
-          create: (data.responses ?? []).map((r) => ({
-            statusCode: r.statusCode,
-            type: r.type ?? null,
-            description: r.description ?? "",
-          })),
-        },
+        serviceId: id.data,
+        name: details.data.name,
+        httpMethod: details.data.httpMethod,
+        httpPath: details.data.httpPath,
+        description: details.data.description,
+        parameters: { create: details.data.parameters },
+        responses: { create: details.data.responses },
       },
     });
     revalidatePath("/schemas");
     return { success: true, operationId: created.id };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to create operation" };
+    return { ...unexpectedFailure("createOperationAction", e) };
   }
 }
 
@@ -814,12 +938,12 @@ export async function updateOperationAction(
   try {
     // Ownership: the operation's API must belong to the caller's active tenant; anything else reads as missing.
     const row = await prisma.operation.findUnique({ where: { id: id.data }, select: { service: { select: { tenantId: true } } } });
-    if (!row || !(await isInActiveTenant(row.service.tenantId))) return notFound("Operation");
+    if (!row || !(await isInActiveTenant(row.service.tenantId))) return { ...notFoundFailure("Operation") };
     await prisma.operation.update({ where: { id: id.data }, data: picked.data as Prisma.OperationUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return unexpectedFailure("updateOperationAction", e);
+    return { ...unexpectedFailure("updateOperationAction", e) };
   }
 }
 
@@ -839,52 +963,53 @@ export async function replaceOperationDetailsAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const id = requireId(operationId, "Operation id");
+  if (!id.success) return failure(id.error);
+  // Both lists are required here (the editor always sends the complete lists): a missing one is a validation failure.
+  const details = readOperationDetails(data, true);
+  if (!details.success) return failure(details.error);
+
   try {
+    // Ownership: the operation's API must belong to the active tenant; anything else reads as missing. Checked before the
+    // batch: its first statements delete the operation's parameters and responses.
+    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") };
+
     await prisma.$transaction([
-      prisma.operationParameter.deleteMany({ where: { operationId } }),
-      prisma.operationResponse.deleteMany({ where: { operationId } }),
+      prisma.operationParameter.deleteMany({ where: { operationId: id.data } }),
+      prisma.operationResponse.deleteMany({ where: { operationId: id.data } }),
       prisma.operation.update({
-        where: { id: operationId },
+        where: { id: id.data },
         data: {
-          name: data.name.trim(),
-          httpMethod: data.httpMethod,
-          httpPath: data.httpPath,
-          description: data.description ?? "",
-          parameters: {
-            create: data.parameters.map((p) => ({
-              name: p.name,
-              type: p.type,
-              location: p.location,
-              required: p.required,
-              description: p.description ?? "",
-            })),
-          },
-          responses: {
-            create: data.responses.map((r) => ({
-              statusCode: r.statusCode,
-              type: r.type ?? null,
-              description: r.description ?? "",
-            })),
-          },
+          name: details.data.name,
+          httpMethod: details.data.httpMethod,
+          httpPath: details.data.httpPath,
+          description: details.data.description,
+          parameters: { create: details.data.parameters },
+          responses: { create: details.data.responses },
         },
       }),
     ]);
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to update operation" };
+    return { ...unexpectedFailure("replaceOperationDetailsAction", e) };
   }
 }
 
 export async function deleteOperationAction(operationId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  const id = requireId(operationId, "Operation id");
+  if (!id.success) return failure(id.error);
   try {
-    await prisma.operation.delete({ where: { id: operationId } });
+    // Ownership: the operation's API must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("operation", id.data))) return { ...notFoundFailure("Operation") };
+    await prisma.operation.delete({ where: { id: id.data } });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to delete operation" };
+    return { ...unexpectedFailure("deleteOperationAction", e) };
   }
 }
 
@@ -1112,6 +1237,11 @@ export async function createDomainAssetsFromImportAction(
 
   try {
     const currentUserId = await resolveCurrentUserId(session.user);
+
+    // The import writes into the payload's domain (and, through it, its products): that domain must belong to the active
+    // tenant. A foreign domain reads exactly like a missing one (same message), before anything is created.
+    const notOwned = await foreignTarget({ level: "DOMAIN", domainId: payload.domainId });
+    if (notOwned) return emptyImportResult([notOwned.error]);
 
     const imported = await prisma.$transaction(async (tx) => {
       const result = emptyImportResult(skipped); // errors aliases `skipped`

@@ -11,7 +11,7 @@ import { updateEntity } from "@/services/entity.service";
 import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
 import type { Relationship } from "@/types/schemas/entity-metadata.schema";
 import { getEffectiveRole } from "@/services/rbac.service";
-import { GENERIC_ACTION_ERROR, isInActiveTenant } from "@/lib/action-context";
+import { failureOf, inActiveTenant, isInActiveTenant, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
 import {
   isBoolean, isInt, isIntOrNull, isPlainObject, isString, isStringArray, isStringOrNull, pickEditable,
 } from "@/lib/editable-fields";
@@ -72,6 +72,15 @@ async function resolveUserRole(userId: string): Promise<string> {
   return "VIEWER";
 }
 
+/**
+ * A field name must be a non-blank string and is stored trimmed: the slug and the name the editor shows both come from the
+ * trimmed text, so a padded or blank name (`FieldCard` sends the raw blur value) is never persisted.
+ */
+function trimmedFieldName(value: unknown): { name: string } | { error: string; code: "VALIDATION_ERROR" } {
+  if (typeof value !== "string" || value.trim() === "") return { error: "Field name is required", code: "VALIDATION_ERROR" };
+  return { name: value.trim() };
+}
+
 export async function addFieldAction(
   entityId: string,
   name: string,
@@ -91,48 +100,56 @@ export async function addFieldAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const maxField = await prisma.field.findFirst({
-    where: { entityId },
-    orderBy: { sortOrder: "desc" },
-    select: { sortOrder: true },
-  });
-
-  // Validate typespec sub-key if present on create
-  if (opts?.decorators?.typespec) {
-    const validation = TypeSpecDecoratorSchema.safeParse(opts.decorators.typespec);
-    if (!validation.success) {
-      return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
-    }
-  }
-
-  // Auto-assign field number if not provided
-  let assignedFieldNumber = opts?.fieldNumber ?? null;
-  if (assignedFieldNumber == null) {
-    const maxFieldNumber = await prisma.field.findFirst({
-      where: { entityId, fieldNumber: { not: null } },
-      orderBy: { fieldNumber: "desc" },
-      select: { fieldNumber: true },
-    });
-    if (maxFieldNumber?.fieldNumber != null) {
-      assignedFieldNumber = maxFieldNumber.fieldNumber + 1;
-    } else {
-      // Fall back to sortOrder + 1 if no field numbers exist
-      assignedFieldNumber = (maxField ? maxField.sortOrder + 1 : 0) + 1;
-    }
-  }
-
-  // Validate field number uniqueness
-  if (assignedFieldNumber != null) {
-    const conflict = await prisma.field.findFirst({
-      where: { entityId, fieldNumber: assignedFieldNumber },
-      select: { name: true },
-    });
-    if (conflict) {
-      return { error: `Field number ${assignedFieldNumber} is already assigned to field '${conflict.name}'` };
-    }
-  }
+  const fieldName = trimmedFieldName(name);
+  if ("error" in fieldName) return fieldName;
+  if (typeof type !== "string") return { error: "Field type is required", code: "VALIDATION_ERROR" };
 
   try {
+    // Ownership of the PARENT: the entity must belong to the active tenant; anything else reads as missing. Checked before
+    // every other read: the lookups below would otherwise answer a foreign entity's field numbers.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+
+    const maxField = await prisma.field.findFirst({
+      where: { entityId },
+      orderBy: { sortOrder: "desc" },
+      select: { sortOrder: true },
+    });
+
+    // Validate typespec sub-key if present on create
+    if (opts?.decorators?.typespec) {
+      const validation = TypeSpecDecoratorSchema.safeParse(opts.decorators.typespec);
+      if (!validation.success) {
+        return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
+      }
+    }
+
+    // Auto-assign field number if not provided
+    let assignedFieldNumber = opts?.fieldNumber ?? null;
+    if (assignedFieldNumber == null) {
+      const maxFieldNumber = await prisma.field.findFirst({
+        where: { entityId, fieldNumber: { not: null } },
+        orderBy: { fieldNumber: "desc" },
+        select: { fieldNumber: true },
+      });
+      if (maxFieldNumber?.fieldNumber != null) {
+        assignedFieldNumber = maxFieldNumber.fieldNumber + 1;
+      } else {
+        // Fall back to sortOrder + 1 if no field numbers exist
+        assignedFieldNumber = (maxField ? maxField.sortOrder + 1 : 0) + 1;
+      }
+    }
+
+    // Validate field number uniqueness
+    if (assignedFieldNumber != null) {
+      const conflict = await prisma.field.findFirst({
+        where: { entityId, fieldNumber: assignedFieldNumber },
+        select: { name: true },
+      });
+      if (conflict) {
+        return { error: `Field number ${assignedFieldNumber} is already assigned to field '${conflict.name}'` };
+      }
+    }
+
     const field = await withAudit({
       action: "CREATE",
       entityType: "Field",
@@ -145,8 +162,8 @@ export async function addFieldAction(
           prisma.field.create({
             data: {
               entityId,
-              name,
-              slug: generateSlug(name),
+              name: fieldName.name,
+              slug: generateSlug(fieldName.name),
               type,
               sortOrder: maxField ? maxField.sortOrder + 1 : 0,
               ...(opts?.description != null && { description: opts.description }),
@@ -169,10 +186,10 @@ export async function addFieldAction(
     return { success: true, field };
   } catch (e: unknown) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
-      return { error: `Field "${name}" already exists` };
+      return { error: `Field "${fieldName.name}" already exists` };
     }
-    const message = e instanceof Error ? e.message : "Failed to create field";
-    return { error: message };
+    // Anything else (a Prisma validation message carries the absolute source path and a code excerpt) is logged, not shown.
+    return { ...unexpectedFailure("addFieldAction", e) };
   }
 }
 
@@ -220,43 +237,49 @@ export async function updateFieldAction(
   const picked = pickEditable(data, FIELD_EDITABLE, "a field");
   if (!picked.success) return { error: picked.error.message, code: picked.error.code };
   const { decorators, ...rest } = picked.data as { decorators?: Record<string, unknown> } & Record<string, unknown>;
-
-  // Ownership: the field's entity must belong to the caller's active tenant; anything else reads as missing.
-  const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
-  if (!loaded) return { error: "Field not found", code: "NOT_FOUND" };
-  const { entity: owner, ...existing } = loaded;
-  if (!(await isInActiveTenant(owner.tenantId))) return { error: "Field not found", code: "NOT_FOUND" };
-
-  // Regenerate slug when name changes (the slug is server-derived: a client-supplied `slug` was rejected above)
-  if (typeof rest.name === "string" && rest.name && rest.name !== existing.name) {
-    (rest as Record<string, unknown>).slug = generateSlug(rest.name);
-  }
-
-  // Validate typespec sub-key if present
-  if (decorators?.typespec) {
-    const validation = TypeSpecDecoratorSchema.safeParse(decorators.typespec);
-    if (!validation.success) {
-      return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
-    }
-  }
-
-  // Validate field number uniqueness
-  const fieldNumber = rest.fieldNumber as number | null | undefined;
-  if (fieldNumber != null) {
-    const conflict = await prisma.field.findFirst({
-      where: {
-        entityId: existing.entityId,
-        fieldNumber,
-        id: { not: fieldId },
-      },
-      select: { name: true },
-    });
-    if (conflict) {
-      return { error: `Field number ${fieldNumber} is already assigned to field '${conflict.name}'` };
-    }
+  // A renamed field is stored trimmed and never blank (the quick editor sends the raw blur value).
+  if (rest.name !== undefined) {
+    const fieldName = trimmedFieldName(rest.name);
+    if ("error" in fieldName) return fieldName;
+    rest.name = fieldName.name;
   }
 
   try {
+    // Ownership: the field's entity must belong to the active tenant; anything else reads as missing.
+    const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
+    if (!loaded) return { ...notFoundFailure("Field") };
+    const { entity: owner, ...existing } = loaded;
+    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") };
+
+    // Regenerate slug when name changes (the slug is server-derived: a client-supplied `slug` was rejected above)
+    if (typeof rest.name === "string" && rest.name && rest.name !== existing.name) {
+      (rest as Record<string, unknown>).slug = generateSlug(rest.name);
+    }
+
+    // Validate typespec sub-key if present
+    if (decorators?.typespec) {
+      const validation = TypeSpecDecoratorSchema.safeParse(decorators.typespec);
+      if (!validation.success) {
+        return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
+      }
+    }
+
+    // Validate field number uniqueness
+    const fieldNumber = rest.fieldNumber as number | null | undefined;
+    if (fieldNumber != null) {
+      const conflict = await prisma.field.findFirst({
+        where: {
+          entityId: existing.entityId,
+          fieldNumber,
+          id: { not: fieldId },
+        },
+        select: { name: true },
+      });
+      if (conflict) {
+        return { error: `Field number ${fieldNumber} is already assigned to field '${conflict.name}'` };
+      }
+    }
+
     await withAudit({
       action: "UPDATE",
       entityType: "Field",
@@ -285,8 +308,7 @@ export async function updateFieldAction(
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `A field with that name already exists` };
     }
-    console.error("[updateFieldAction] unexpected error", e);
-    return { error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" };
+    return { ...unexpectedFailure("updateFieldAction", e) };
   }
 }
 
@@ -298,24 +320,31 @@ export async function updateEntityStatusAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const input: Record<string, unknown> = { status };
-  if (metadata) {
-    input.metadata = metadata;
+  try {
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+
+    const input: Record<string, unknown> = { status };
+    if (metadata) {
+      input.metadata = metadata;
+    }
+
+    const userRole = await resolveUserRole(session.user.id);
+    const result = await updateEntity(entityId, input as UpdateEntityInput, {
+      userId: session.user.id,
+      userRole,
+      prisma,
+    });
+
+    if (!result.success) {
+      return { ...failureOf(result.error, "updateEntityStatusAction") };
+    }
+
+    revalidatePath("/schemas");
+    return { success: true };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("updateEntityStatusAction", e) };
   }
-
-  const userRole = await resolveUserRole(session.user.id);
-  const result = await updateEntity(entityId, input as UpdateEntityInput, {
-    userId: session.user.id,
-    userRole,
-    prisma,
-  });
-
-  if (!result.success) {
-    return { error: result.error.message };
-  }
-
-  revalidatePath("/schemas");
-  return { success: true };
 }
 
 /**
@@ -329,17 +358,20 @@ export async function updateEntityRelationshipsAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const entity = await prisma.entity.findUnique({
-    where: { id: entityId },
-    select: { metadata: true },
-  });
-  if (!entity) return { error: "Entity not found" };
-
-  const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-  // A relationships edit changes the draft, so the stored TypeSpec source is stale (R45).
-  const updatedMeta = withSourceStale(existingMeta, { ...existingMeta, relationships }, true);
+  if (!Array.isArray(relationships)) return { error: "The relationships must be a list", code: "VALIDATION_ERROR" };
 
   try {
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      select: { metadata: true, tenantId: true },
+    });
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+
+    const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
+    // A relationships edit changes the draft, so the stored TypeSpec source is stale (R45).
+    const updatedMeta = withSourceStale(existingMeta, { ...existingMeta, relationships }, true);
+
     await withAudit({
       action: "UPDATE",
       entityType: "Entity",
@@ -356,8 +388,7 @@ export async function updateEntityRelationshipsAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to update relationships";
-    return { error: message };
+    return { ...unexpectedFailure("updateEntityRelationshipsAction", e) };
   }
 }
 
@@ -370,12 +401,13 @@ export async function emitEntityAction(entityId: string) {
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
+    // Ownership: the emitter reads the entity by id and trusts it, so scope it first.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
     const { emitEntity } = await import("@/lib/emission/emission.service");
     const result = await emitEntity(entityId);
     return { success: true, result };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Emission failed";
-    return { error: message };
+    return { ...unexpectedFailure("emitEntityAction", e) };
   }
 }
 
@@ -394,46 +426,57 @@ export async function createTypeMappingOverrideAction(input: {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const { createGlobalOverride, createEntityOverride } = await import(
-    "@/services/type-mapping.service"
-  );
+  if (!isPlainObject(input) || (input.scope !== "global" && input.scope !== "per-entity")) {
+    return { error: "The override must be global or per-entity", code: "VALIDATION_ERROR" };
+  }
 
-  const userRole = await resolveUserRole(session.user.id);
-  const ctx = {
-    userId: session.user.id,
-    userRole,
-    prisma,
-  };
+  try {
+    // A per-entity override names an entity by id: it must belong to the active tenant (a global one names none).
+    if (input.scope === "per-entity" && !(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") };
 
-  if (input.scope === "global") {
-    const result = await createGlobalOverride(
-      {
-        sourceType: input.sourceType,
-        targetFormat: input.targetFormat,
-        mappedType: input.mappedType,
-        justification: input.justification,
-        isLossy: input.isLossy,
-      },
-      ctx
+    const { createGlobalOverride, createEntityOverride } = await import(
+      "@/services/type-mapping.service"
     );
-    if (!result.success) return { error: result.error.message };
-    revalidatePath("/schemas", "layout");
-    return { success: true, override: result.data };
-  } else {
-    const result = await createEntityOverride(
-      {
-        sourceType: input.sourceType,
-        targetFormat: input.targetFormat,
-        mappedType: input.mappedType,
-        justification: input.justification,
-        isLossy: input.isLossy,
-        entityId: input.entityId,
-      },
-      ctx
-    );
-    if (!result.success) return { error: result.error.message };
-    revalidatePath("/schemas", "layout");
-    return { success: true, override: result.data };
+
+    const userRole = await resolveUserRole(session.user.id);
+    const ctx = {
+      userId: session.user.id,
+      userRole,
+      prisma,
+    };
+
+    if (input.scope === "global") {
+      const result = await createGlobalOverride(
+        {
+          sourceType: input.sourceType,
+          targetFormat: input.targetFormat,
+          mappedType: input.mappedType,
+          justification: input.justification,
+          isLossy: input.isLossy,
+        },
+        ctx
+      );
+      if (!result.success) return { ...failureOf(result.error, "createTypeMappingOverrideAction") };
+      revalidatePath("/schemas", "layout");
+      return { success: true, override: result.data };
+    } else {
+      const result = await createEntityOverride(
+        {
+          sourceType: input.sourceType,
+          targetFormat: input.targetFormat,
+          mappedType: input.mappedType,
+          justification: input.justification,
+          isLossy: input.isLossy,
+          entityId: input.entityId,
+        },
+        ctx
+      );
+      if (!result.success) return { ...failureOf(result.error, "createTypeMappingOverrideAction") };
+      revalidatePath("/schemas", "layout");
+      return { success: true, override: result.data };
+    }
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("createTypeMappingOverrideAction", e) };
   }
 }
 
@@ -448,20 +491,29 @@ export async function acknowledgeLossyMappingAction(input: {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const { acknowledgeLossyMapping } = await import(
-    "@/services/type-mapping.service"
-  );
+  if (!isPlainObject(input)) return { error: "The acknowledgement details are required", code: "VALIDATION_ERROR" };
 
-  const userRole = await resolveUserRole(session.user.id);
-  const result = await acknowledgeLossyMapping(input, {
-    userId: session.user.id,
-    userRole,
-    prisma,
-  });
+  try {
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("entity", input.entityId))) return { ...notFoundFailure("Entity") };
 
-  if (!result.success) return { error: result.error.message };
-  revalidatePath("/schemas", "layout");
-  return { success: true };
+    const { acknowledgeLossyMapping } = await import(
+      "@/services/type-mapping.service"
+    );
+
+    const userRole = await resolveUserRole(session.user.id);
+    const result = await acknowledgeLossyMapping(input, {
+      userId: session.user.id,
+      userRole,
+      prisma,
+    });
+
+    if (!result.success) return { ...failureOf(result.error, "acknowledgeLossyMappingAction") };
+    revalidatePath("/schemas", "layout");
+    return { success: true };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("acknowledgeLossyMappingAction", e) };
+  }
 }
 
 /**
@@ -472,6 +524,9 @@ export async function getVersionHistoryAction(entityId: string) {
   if (!session?.user?.id) return { error: "Not authenticated", versions: [] };
 
   try {
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity"), versions: [] };
+
     const { getVersionHistory } = await import(
       "@/services/version-history/version.service"
     );
@@ -483,14 +538,12 @@ export async function getVersionHistoryAction(entityId: string) {
     });
 
     if (!result.success) {
-      return { error: result.error.message, versions: [] };
+      return { ...failureOf(result.error, "getVersionHistoryAction"), versions: [] };
     }
 
     return { success: true, versions: result.data };
   } catch (e: unknown) {
-    const message =
-      e instanceof Error ? e.message : "Failed to get version history";
-    return { error: message, versions: [] };
+    return { ...unexpectedFailure("getVersionHistoryAction", e), versions: [] };
   }
 }
 
@@ -506,6 +559,9 @@ export async function compareVersionsAction(
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+
     const { compareVersionsStructured } = await import(
       "@/services/version-history/version.service"
     );
@@ -517,14 +573,12 @@ export async function compareVersionsAction(
     });
 
     if (!result.success) {
-      return { error: result.error.message };
+      return { ...failureOf(result.error, "compareVersionsAction") };
     }
 
     return { success: true, diff: result.data };
   } catch (e: unknown) {
-    const message =
-      e instanceof Error ? e.message : "Failed to compare versions";
-    return { error: message };
+    return { ...unexpectedFailure("compareVersionsAction", e) };
   }
 }
 
@@ -545,6 +599,9 @@ export async function getChangeHistoryAction(
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+
     const { getChangeHistory } = await import(
       "@/services/change-history.service"
     );
@@ -570,7 +627,7 @@ export async function getChangeHistoryAction(
     );
 
     if (!result.success) {
-      return { error: result.error.message };
+      return { ...failureOf(result.error, "getChangeHistoryAction") };
     }
 
     return {
@@ -580,9 +637,7 @@ export async function getChangeHistoryAction(
       nextCursor: result.data.nextCursor,
     };
   } catch (e: unknown) {
-    const message =
-      e instanceof Error ? e.message : "Failed to get change history";
-    return { error: message };
+    return { ...unexpectedFailure("getChangeHistoryAction", e) };
   }
 }
 
@@ -599,7 +654,8 @@ export async function generateTypeSpecPreviewAction(entityId: string) {
       where: { id: entityId },
       include: { domain: true },
     });
-    if (!entity) return { error: "Entity not found", source: "" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity"), source: "" };
 
     const fields = await prisma.field.findMany({
       where: { entityId },
@@ -621,8 +677,7 @@ export async function generateTypeSpecPreviewAction(entityId: string) {
 
     return { success: true, source };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to generate TypeSpec preview";
-    return { error: message, source: "" };
+    return { ...unexpectedFailure("generateTypeSpecPreviewAction", e), source: "" };
   }
 }
 
@@ -630,10 +685,16 @@ export async function deleteFieldAction(fieldId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const existing = await prisma.field.findUnique({ where: { id: fieldId } });
-  if (!existing) return { error: "Field not found" };
+  const fieldIdCheck = requireId(fieldId, "Field id");
+  if (!fieldIdCheck.success) return { error: fieldIdCheck.error.message, code: fieldIdCheck.error.code };
 
   try {
+    // Ownership: the field's entity must belong to the active tenant; anything else reads as missing.
+    const loaded = await prisma.field.findUnique({ where: { id: fieldId }, include: { entity: { select: { tenantId: true } } } });
+    if (!loaded) return { ...notFoundFailure("Field") };
+    const { entity: owner, ...existing } = loaded;
+    if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") };
+
     // If this is a reference field, clean up relationship from entity metadata
     if (existing.type === "reference") {
       const entity = await prisma.entity.findUnique({
@@ -674,8 +735,7 @@ export async function deleteFieldAction(fieldId: string) {
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to delete field";
-    return { error: message };
+    return { ...unexpectedFailure("deleteFieldAction", e) };
   }
 }
 
@@ -708,6 +768,11 @@ export async function applyTypeSpecAction(
   if (!session?.user?.id) return { added: 0, updated: 0, removed: [], error: "Not authenticated" };
 
   try {
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing. Checked before the first
+    // read: the field list below is the foreign entity's.
+    if (!(await inActiveTenant("entity", entityId))) return { added: 0, updated: 0, removed: [], error: notFoundFailure("Entity").error };
+    if (!Array.isArray(parsedFields)) return { added: 0, updated: 0, removed: [], error: "The parsed fields must be a list" };
+
     // Get existing fields for this entity
     const existingFields = await prisma.field.findMany({
       where: { entityId },
@@ -839,8 +904,7 @@ export async function applyTypeSpecAction(
     revalidatePath("/schemas");
     return { added: addedCount, updated: updatedCount, removed: removedNames };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to apply TypeSpec";
-    return { added: 0, updated: 0, removed: [], error: message };
+    return { added: 0, updated: 0, removed: [], error: unexpectedFailure("applyTypeSpecAction", e).error };
   }
 }
 
@@ -947,9 +1011,10 @@ async function getSchemaTargetFieldMappingsInternal(
 ) {
   const entity = await prisma.entity.findUnique({
     where: { id: entityId },
-    select: { id: true, metadata: true },
+    select: { id: true, metadata: true, tenantId: true },
   });
-  if (!entity) {
+  // An entity of another tenant reads exactly like a missing one: no field rows, no override read, no write.
+  if (!entity || !(await isInActiveTenant(entity.tenantId))) {
     return { error: "Entity not found" as const };
   }
 
@@ -1009,16 +1074,16 @@ export async function getSchemaVersionsAction(entityId: string) {
   try {
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
     return { success: true, schemaVersions };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to get schema versions";
-    return { error: message };
+    return { ...unexpectedFailure("getSchemaVersionsAction", e) };
   }
 }
 
@@ -1029,38 +1094,43 @@ export async function getSchemaTargetFieldMappingsAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const targetDefinition = getSchemaTargetDefinition(target);
-  const targetCatalog = getTargetTypeCatalogEntry(target);
-  if (!targetDefinition) {
-    return { error: `Unknown schema target "${target}"` };
-  }
+  try {
+    const targetDefinition = getSchemaTargetDefinition(target);
+    const targetCatalog = getTargetTypeCatalogEntry(target);
+    if (!targetDefinition) {
+      return { error: `Unknown schema target "${target}"` };
+    }
 
-  if (!targetDefinition.supportsFieldOverrides) {
+    if (!targetDefinition.supportsFieldOverrides) {
+      return {
+        success: true,
+        supported: false,
+        reason:
+          "This target is generated by the external TypeSpec CLI path and does not yet support per-field physical type overrides.",
+        mappings: [],
+        typeCatalog: targetCatalog ?? null,
+      };
+    }
+
+    // The entity (and its tenant) is checked inside: a foreign entity gets the same "Entity not found" as a missing one.
+    const result = await getSchemaTargetFieldMappingsInternal(
+      entityId,
+      target,
+      session.user.id
+    );
+    if ("error" in result) {
+      return { error: result.error };
+    }
+
     return {
       success: true,
-      supported: false,
-      reason:
-        "This target is generated by the external TypeSpec CLI path and does not yet support per-field physical type overrides.",
-      mappings: [],
+      supported: true,
+      mappings: result.mappings,
       typeCatalog: targetCatalog ?? null,
     };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("getSchemaTargetFieldMappingsAction", e) };
   }
-
-  const result = await getSchemaTargetFieldMappingsInternal(
-    entityId,
-    target,
-    session.user.id
-  );
-  if ("error" in result) {
-    return { error: result.error };
-  }
-
-  return {
-    success: true,
-    supported: true,
-    mappings: result.mappings,
-    typeCatalog: targetCatalog ?? null,
-  };
 }
 
 export async function saveSchemaFieldTypeOverrideAction(input: {
@@ -1072,95 +1142,103 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const targetDefinition = getSchemaTargetDefinition(input.target);
-  if (!targetDefinition) {
-    return { error: `Unknown schema target "${input.target}"` };
-  }
+  if (!isPlainObject(input)) return { error: "The override details are required", code: "VALIDATION_ERROR" };
 
-  if (!targetDefinition.supportsFieldOverrides) {
-    return {
-      error:
-        "This target is generated by the external TypeSpec CLI path and does not support per-field physical type overrides.",
+  try {
+    const targetDefinition = getSchemaTargetDefinition(input.target);
+    if (!targetDefinition) {
+      return { error: `Unknown schema target "${input.target}"` };
+    }
+
+    if (!targetDefinition.supportsFieldOverrides) {
+      return {
+        error:
+          "This target is generated by the external TypeSpec CLI path and does not support per-field physical type overrides.",
+      };
+    }
+
+    const targetCatalog = getTargetTypeCatalogEntry(input.target);
+    if (!targetCatalog) {
+      return { error: `No type catalog found for schema target "${input.target}"` };
+    }
+
+    // The entity (and its tenant) is checked inside: a foreign entity gets the same "Entity not found" as a missing one,
+    // and nothing below it runs (no override write, no regeneration).
+    const result = await getSchemaTargetFieldMappingsInternal(
+      input.entityId,
+      input.target,
+      session.user.id
+    );
+    if ("error" in result) {
+      return { error: result.error };
+    }
+
+    const field = result.fieldRows.find((row) => row.id === input.fieldId);
+    if (!field) {
+      return { error: "Field not found" };
+    }
+
+    const mapping = result.mappings.find((row) => row.fieldId === input.fieldId);
+    if (!mapping) {
+      return { error: "Target mapping row not found" };
+    }
+
+    const removesOverride = !input.mappedType || input.mappedType === mapping.defaultMappedType;
+    const validMappedType = targetCatalog.options.some((option) => option.value === input.mappedType);
+    if (!removesOverride && !validMappedType) {
+      return { error: `Invalid ${targetCatalog.displayName} target type "${input.mappedType}"` };
+    }
+
+
+    const nextOverrides: SchemaTargetTypeOverrides =
+      removesOverride
+        ? removeFieldTargetTypeOverride(
+            result.parsedOverrides,
+            input.target,
+            input.fieldId
+          )
+        : upsertFieldTargetTypeOverride(result.parsedOverrides, {
+            target: input.target,
+            fieldId: input.fieldId,
+            fieldName: field.name,
+            sourceType: field.type,
+            mappedType: input.mappedType,
+            defaultMappedType: mapping.defaultMappedType,
+            userId: session.user.id,
+          });
+
+    const existingMeta = (result.entity.metadata as Record<string, unknown>) ?? {};
+    const updatedMeta = {
+      ...existingMeta,
+      schemaTargetTypeOverrides: nextOverrides,
     };
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId: input.entityId,
+      userId: session.user.id,
+      beforeState: { metadata: existingMeta } as unknown as object,
+      fn: () =>
+        prisma.entity.update({
+          where: { id: input.entityId },
+          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+        }),
+    });
+
+    const generation = await generateSchemaAction(input.entityId, input.target);
+    if (generation.error) {
+      return { error: generation.error };
+    }
+
+    revalidatePath("/schemas");
+    return {
+      success: true,
+      schemaVersion: generation.schemaVersion,
+    };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("saveSchemaFieldTypeOverrideAction", e) };
   }
-
-  const targetCatalog = getTargetTypeCatalogEntry(input.target);
-  if (!targetCatalog) {
-    return { error: `No type catalog found for schema target "${input.target}"` };
-  }
-
-  const result = await getSchemaTargetFieldMappingsInternal(
-    input.entityId,
-    input.target,
-    session.user.id
-  );
-  if ("error" in result) {
-    return { error: result.error };
-  }
-
-  const field = result.fieldRows.find((row) => row.id === input.fieldId);
-  if (!field) {
-    return { error: "Field not found" };
-  }
-
-  const mapping = result.mappings.find((row) => row.fieldId === input.fieldId);
-  if (!mapping) {
-    return { error: "Target mapping row not found" };
-  }
-
-  const removesOverride = !input.mappedType || input.mappedType === mapping.defaultMappedType;
-  const validMappedType = targetCatalog.options.some((option) => option.value === input.mappedType);
-  if (!removesOverride && !validMappedType) {
-    return { error: `Invalid ${targetCatalog.displayName} target type "${input.mappedType}"` };
-  }
-
-
-  const nextOverrides: SchemaTargetTypeOverrides =
-    removesOverride
-      ? removeFieldTargetTypeOverride(
-          result.parsedOverrides,
-          input.target,
-          input.fieldId
-        )
-      : upsertFieldTargetTypeOverride(result.parsedOverrides, {
-          target: input.target,
-          fieldId: input.fieldId,
-          fieldName: field.name,
-          sourceType: field.type,
-          mappedType: input.mappedType,
-          defaultMappedType: mapping.defaultMappedType,
-          userId: session.user.id,
-        });
-
-  const existingMeta = (result.entity.metadata as Record<string, unknown>) ?? {};
-  const updatedMeta = {
-    ...existingMeta,
-    schemaTargetTypeOverrides: nextOverrides,
-  };
-
-  await withAudit({
-    action: "UPDATE",
-    entityType: "Entity",
-    entityId: input.entityId,
-    userId: session.user.id,
-    beforeState: { metadata: existingMeta } as unknown as object,
-    fn: () =>
-      prisma.entity.update({
-        where: { id: input.entityId },
-        data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
-      }),
-  });
-
-  const generation = await generateSchemaAction(input.entityId, input.target);
-  if (generation.error) {
-    return { error: generation.error };
-  }
-
-  revalidatePath("/schemas");
-  return {
-    success: true,
-    schemaVersion: generation.schemaVersion,
-  };
 }
 
 /**
@@ -1171,6 +1249,9 @@ export async function generateSchemaAction(entityId: string, target: string) {
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
+    // Ownership FIRST: both emitters read the entity by id and trust it, so a foreign id must stop here.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+
     const targetDefinition = getSchemaTargetDefinition(target);
     if (!targetDefinition) {
       return { error: `Unknown schema target "${target}"` };
@@ -1296,8 +1377,7 @@ export async function generateSchemaAction(entityId: string, target: string) {
       errors: targetOutput.errors,
     };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to generate schema";
-    return { error: message };
+    return { ...unexpectedFailure("generateSchemaAction", e) };
   }
 }
 
@@ -1315,9 +1395,10 @@ export async function publishSchemaAction(
   try {
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1363,8 +1444,7 @@ export async function publishSchemaAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to publish schema";
-    return { error: message };
+    return { ...unexpectedFailure("publishSchemaAction", e) };
   }
 }
 
@@ -1382,9 +1462,10 @@ export async function deploySchemaAction(
   try {
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1425,8 +1506,7 @@ export async function deploySchemaAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to deploy schema";
-    return { error: message };
+    return { ...unexpectedFailure("deploySchemaAction", e) };
   }
 }
 
@@ -1440,12 +1520,17 @@ export async function updateEntityMetadataAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  // The merge below spreads `metadata`: only a plain object is a metadata patch (a Date, Map or string spreads to nothing
+  // or to characters and would still mark the draft changed).
+  if (!isPlainObject(metadata)) return { error: "The metadata changes must be an object", code: "VALIDATION_ERROR" };
+
   try {
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
     const mergedMeta = { ...existingMeta, ...metadata };
@@ -1473,8 +1558,7 @@ export async function updateEntityMetadataAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to update metadata";
-    return { error: message };
+    return { ...unexpectedFailure("updateEntityMetadataAction", e) };
   }
 }
 
@@ -1485,7 +1569,12 @@ export async function updateEntityDescriptionAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  if (typeof description !== "string") return { error: "The description must be text", code: "VALIDATION_ERROR" };
+
   try {
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+
     // The description is rendered into the TypeSpec source (@doc): the write and the draft + stale-source
     // mark are one atomic batch, so the description can never land without the mark (R45).
     await prisma.$transaction([
@@ -1499,8 +1588,7 @@ export async function updateEntityDescriptionAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Failed to update description";
-    return { error: message };
+    return { ...unexpectedFailure("updateEntityDescriptionAction", e) };
   }
 }
 
@@ -1529,6 +1617,12 @@ function buildEmissionTargets(
     });
 }
 
+/** The target key of one of THIS entity's emission target ids (`<entityId>:<target>`), or null for any other id. */
+function emissionTargetKey(entityId: string, targetId: unknown): string | null {
+  const prefix = `${entityId}:`;
+  return typeof targetId === "string" && targetId.startsWith(prefix) && targetId.length > prefix.length ? targetId.slice(prefix.length) : null;
+}
+
 export async function getEntityDeploymentStatusAction(
   entityId: string
 ): Promise<{ success: true; data: DeploymentStatus[] } | { error: string }> {
@@ -1538,19 +1632,20 @@ export async function getEntityDeploymentStatusAction(
   try {
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
     const targets = buildEmissionTargets(entityId, schemaVersions);
 
     const res = await getDeploymentStatus(entityId, targets);
-    if (!res.success) return { error: res.error.message };
+    if (!res.success) return { ...failureOf(res.error, "getEntityDeploymentStatusAction") };
     return { success: true, data: res.data };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to load deployments" };
+    return { ...unexpectedFailure("getEntityDeploymentStatusAction", e) };
   }
 }
 
@@ -1562,13 +1657,20 @@ export async function markEntityDeployedAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  if (typeof environment !== "string") return { error: "The environment is required" };
+
   try {
-    const targetKey = targetId.slice(entityId.length + 1);
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
+
+    // The target id is a second client-supplied id: it must be one of THIS entity's emission targets (`<entityId>:<target>`),
+    // or the deployment record below would be written for another entity's target.
+    const targetKey = emissionTargetKey(entityId, targetId);
+    if (targetKey === null) return { ...notFoundFailure("Emission target") };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1580,13 +1682,13 @@ export async function markEntityDeployedAction(
       { emissionTargetId: targetId, environment, versionId: `v${latest.version}` },
       session.user.id
     );
-    if (!res.success) return { error: res.error.message };
+    if (!res.success) return { ...failureOf(res.error, "markEntityDeployedAction") };
 
     revalidatePath("/schemas");
     revalidatePath("/deployments");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to mark deployed" };
+    return { ...unexpectedFailure("markEntityDeployedAction", e) };
   }
 }
 
@@ -1598,12 +1700,16 @@ export async function checkTargetDriftAction(
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
-    const targetKey = targetId.slice(entityId.length + 1);
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { metadata: true },
+      select: { metadata: true, tenantId: true },
     });
-    if (!entity) return { error: "Entity not found" };
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer).
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
+
+    // The target id must be one of THIS entity's emission targets (see markEntityDeployedAction).
+    const targetKey = emissionTargetKey(entityId, targetId);
+    if (targetKey === null) return { ...notFoundFailure("Emission target") };
 
     const meta = (entity.metadata as Record<string, unknown>) ?? {};
     const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
@@ -1627,21 +1733,21 @@ export async function checkTargetDriftAction(
 
     const targets = buildEmissionTargets(entityId, schemaVersions);
     const statusRes = await getDeploymentStatus(entityId, targets);
-    if (!statusRes.success) return { error: statusRes.error.message };
+    if (!statusRes.success) return { ...failureOf(statusRes.error, "checkTargetDriftAction") };
 
     const target = statusRes.data.find((t) => t.targetId === targetId);
     for (const env of target?.environments ?? []) {
       const upd = await updateDriftStatus(targetId, env.name, driftReport, isDrifted);
-      if (!upd.success) return { error: upd.error.message };
+      if (!upd.success) return { ...failureOf(upd.error, "checkTargetDriftAction") };
     }
 
     const refreshed = await getDeploymentStatus(entityId, targets);
-    if (!refreshed.success) return { error: refreshed.error.message };
+    if (!refreshed.success) return { ...failureOf(refreshed.error, "checkTargetDriftAction") };
 
     revalidatePath("/deployments");
     return { success: true, data: refreshed.data };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to check drift" };
+    return { ...unexpectedFailure("checkTargetDriftAction", e) };
   }
 }
 
@@ -1664,26 +1770,31 @@ export async function getTypeSpecSourceAction(entityId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const entity = await prisma.entity.findUnique({
-    where: { id: entityId },
-    include: { domain: true },
-  });
-  if (!entity) return { error: "Entity not found" };
+  try {
+    const entity = await prisma.entity.findUnique({
+      where: { id: entityId },
+      include: { domain: true },
+    });
+    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
-  if (entity.typespecSource && !isSourceStale(entity.metadata)) {
-    // A source stored before Story 16.6 (a publish wrote the generator's text back) can carry `@tag(...)`
-    // on the model / properties, which real TypeSpec rejects; rewrite it losslessly into the valid
-    // governance decorators so the tab can save it. A no-op (same string) for any other source.
-    return { success: true as const, source: upgradeLegacyTagDecorators(entity.typespecSource), generated: false };
+    if (entity.typespecSource && !isSourceStale(entity.metadata)) {
+      // A source stored before Story 16.6 (a publish wrote the generator's text back) can carry `@tag(...)`
+      // on the model / properties, which real TypeSpec rejects; rewrite it losslessly into the valid
+      // governance decorators so the tab can save it. A no-op (same string) for any other source.
+      return { success: true as const, source: upgradeLegacyTagDecorators(entity.typespecSource), generated: false };
+    }
+
+    // Lazy-generate from current field rows — this entity hasn't been opened
+    // in the TypeSpec Source tab since this feature shipped.
+    const model = await loadEntityModel(prisma, entityId);
+    if (!model.success) return { ...failureOf(model.error, "getTypeSpecSourceAction") };
+
+    const source = generateTypeSpec(model.data);
+    return { success: true as const, source, generated: true };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("getTypeSpecSourceAction", e) };
   }
-
-  // Lazy-generate from current field rows — this entity hasn't been opened
-  // in the TypeSpec Source tab since this feature shipped.
-  const model = await loadEntityModel(prisma, entityId);
-  if (!model.success) return { error: model.error.message };
-
-  const source = generateTypeSpec(model.data);
-  return { success: true as const, source, generated: true };
 }
 
 export interface TypeSpecSourceSaveResult {
@@ -1710,7 +1821,9 @@ export async function compileAndApplyTypeSpecSourceAction(
   }
 
   const entity = await prisma.entity.findUnique({ where: { id: entityId } });
-  if (!entity) {
+  // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer), before the
+  // source is compiled or anything is written.
+  if (!entity || !(await isInActiveTenant(entity.tenantId))) {
     return { success: false, diagnostics: [], error: "Entity not found" };
   }
 

@@ -4,11 +4,12 @@ import { unstable_rethrow } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { AuditUserMissingError } from "@/lib/audit";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { resolveCurrentUserId } from "@/lib/current-user";
 import { prisma } from "@/lib/db";
 import { getEffectiveRole } from "@/services/rbac.service";
 import { GENERIC_ACTION_ERROR, isOpaqueErrorCode, type ActionResult } from "@/types/action-result";
-import type { Result } from "@/types/result";
+import { err, ok, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
 export const NOT_AUTHENTICATED = { success: false, error: "Not authenticated", code: "UNAUTHORIZED" } as const satisfies ActionResult<never>;
@@ -41,6 +42,87 @@ export async function getActionContext(): Promise<ServiceContext | null> {
  */
 export async function isInActiveTenant(rowTenantId: string | null | undefined): Promise<boolean> {
   return typeof rowTenantId === "string" && rowTenantId === (await getActiveTenantId());
+}
+
+/** Reads the tenant a by-id row belongs to (its own `tenantId`, or the one of the parent it hangs under); null / undefined = no such row. */
+const TENANT_OF = {
+  entity: async (id: string) => (await prisma.entity.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
+  field: async (id: string) => (await prisma.field.findUnique({ where: { id }, select: { entity: { select: { tenantId: true } } } }))?.entity.tenantId,
+  domain: async (id: string) => (await prisma.domain.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
+  product: async (id: string) => (await prisma.product.findUnique({ where: { id }, select: { domain: { select: { tenantId: true } } } }))?.domain.tenantId,
+  model: async (id: string) => (await prisma.modelDefinition.findUnique({ where: { id }, select: { domain: { select: { tenantId: true } } } }))?.domain.tenantId,
+  modelField: async (id: string) =>
+    (await prisma.modelFieldDefinition.findUnique({ where: { id }, select: { model: { select: { domain: { select: { tenantId: true } } } } } }))?.model.domain.tenantId,
+  sharedEnum: async (id: string) => (await prisma.sharedEnum.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
+  customScalar: async (id: string) => (await prisma.customScalar.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
+  unionType: async (id: string) => (await prisma.unionType.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
+  service: async (id: string) => (await prisma.serviceDefinition.findUnique({ where: { id }, select: { tenantId: true } }))?.tenantId,
+  operation: async (id: string) => (await prisma.operation.findUnique({ where: { id }, select: { service: { select: { tenantId: true } } } }))?.service.tenantId,
+} as const;
+
+/** The kinds of by-id row `inActiveTenant` can check (one per model the older actions address by a bare id). */
+export type TenantScopedKind = keyof typeof TENANT_OF;
+
+/**
+ * The by-id ownership guard of the older entity / model / API / data-type / product actions: true only when the row `id` names
+ * exists AND (itself, or through its parent: field -> entity, model field -> model -> domain, operation -> service,
+ * product -> domain) belongs to the caller's ACTIVE tenant (`isInActiveTenant`). A malformed id, a missing row and a row of
+ * another tenant are all `false`, so a caller answers the three with the one identical NOT_FOUND and an id guessed from
+ * another tenant reveals nothing. Create-style actions pass their PARENT id (an entity for a field, a model for a model
+ * field, a service for an operation, a domain for a product). Call it before any read of or write to the row.
+ */
+export async function inActiveTenant(kind: TenantScopedKind, id: unknown): Promise<boolean> {
+  if (typeof id !== "string" || id.trim() === "") return false;
+  return isInActiveTenant(await TENANT_OF[kind](id));
+}
+
+/** What `resolveScope` answers for a target that does not exist: a target of another tenant must read exactly like it. */
+const missingTargetMessage = (target: ScopeTarget) =>
+  target.level === "TENANT"
+    ? `Tenant "${target.tenantId}" not found`
+    : target.level === "DOMAIN"
+      ? `Domain "${target.domainId}" not found`
+      : `Product "${target.productId}" not found`;
+
+/**
+ * `inActiveTenant` for a create's `ScopeTarget` (a domain or product id taken from the client): resolves the target and
+ * answers the very NOT_FOUND `resolveScope` gives a missing one when it belongs to another tenant. Success carries nothing:
+ * the write that follows re-resolves the target itself.
+ */
+export async function targetInActiveTenant(target: ScopeTarget): Promise<Result<undefined>> {
+  const scope = await resolveScope(prisma, target);
+  if (!scope.success) return scope;
+  if (!(await isInActiveTenant(scope.data.tenantId))) return err({ code: "NOT_FOUND", message: missingTargetMessage(target) });
+  return ok(undefined);
+}
+
+/** The wire shape of the older (non-Result) by-id actions' not-found answer; a foreign row and a missing one are both exactly this. */
+export const notFoundFailure = (kind: string) => ({ error: `${kind} not found`, code: "NOT_FOUND" as const });
+
+const STALE_SESSION_ERROR = "Your session is stale. Sign out and sign in again, then retry.";
+
+/**
+ * An unexpected throw in an older (non-Result) action: Next's control-flow errors (`redirect()`, `notFound()`, ...) are re-thrown
+ * through `unstable_rethrow` first; a stale session (`AuditUserMissingError`: the session's user no longer exists) is answered
+ * with its one actionable line; everything else is logged server-side (`label` + the original) and answered with the generic
+ * message: raw driver / Prisma / TypeError text (paths, source excerpts, column names) never reaches the browser.
+ */
+export function unexpectedFailure(label: string, e: unknown) {
+  unstable_rethrow(e);
+  if (e instanceof AuditUserMissingError) return { error: STALE_SESSION_ERROR, code: "UNAUTHORIZED" as const };
+  console.error(`[${label}] unexpected error`, e);
+  return { error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" as const };
+}
+
+/**
+ * A failed service Result in an older (non-Result) action's wire shape: the service's message and code, except the opaque
+ * codes (`DB_ERROR` / `INTERNAL_ERROR`), whose message may carry raw database text: those are logged and replaced by the
+ * generic one. Same decision as `sanitizeResult`, for actions that return `{ error, code }`.
+ */
+export function failureOf(error: ServiceError, label: string) {
+  if (!isOpaqueErrorCode(error.code)) return { error: error.message, code: error.code };
+  console.error(`[${label}] ${error.code === "DB_ERROR" ? "database error" : "internal error"}`, error.message);
+  return { error: GENERIC_ACTION_ERROR, code: error.code };
 }
 
 /**

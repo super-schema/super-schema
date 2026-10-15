@@ -191,7 +191,7 @@ describe("level-aware data type and API creates", () => {
 
   describe("createServiceAction with scope ENTITY", () => {
     it("derives the product-level target from the entity, ignoring any passed target", async () => {
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1" });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1", tenantId: "tenant-1" });
 
       const result = await createServiceAction(
         "domain-1",
@@ -211,7 +211,7 @@ describe("level-aware data type and API creates", () => {
     });
 
     it("refuses tenant-level (Enterprise) entities", async () => {
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: null });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: null, tenantId: "tenant-1" });
       const result = await createServiceAction("domain-1", { name: "OrderApi", scope: "ENTITY", entityId: "ent-1" });
       expect(result).toEqual({ error: "Enterprise entities cannot own APIs" });
       expect(mockTx.serviceDefinition.create).not.toHaveBeenCalled();
@@ -237,6 +237,7 @@ describe("level-aware data type and API creates", () => {
     });
 
     it("returns the existing service without touching the registry", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1", tenantId: "tenant-1" });
       mockPrisma.serviceDefinition.findFirst.mockResolvedValue({ id: "svc-existing" });
       const result = await getOrCreateEntityServiceAction("domain-1", "ent-1", "Order");
       expect(result).toEqual({ success: true, serviceId: "svc-existing" });
@@ -244,14 +245,14 @@ describe("level-aware data type and API creates", () => {
     });
 
     it("refuses tenant-level (Enterprise) entities", async () => {
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: null });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: null, tenantId: "tenant-1" });
       const result = await getOrCreateEntityServiceAction("domain-1", "ent-1", "Order");
       expect(result).toEqual({ error: "Enterprise entities cannot own APIs" });
       expect(mockTx.serviceDefinition.create).not.toHaveBeenCalled();
     });
 
     it("creates the service at the product-level scope of a product entity", async () => {
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1" });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1", tenantId: "tenant-1" });
       const result = await getOrCreateEntityServiceAction("domain-1", "ent-1", "Order");
       expect(result).toEqual({ success: true, serviceId: "svc-1" });
       expect(mockAssertNameAvailable).toHaveBeenCalledWith(mockTx, { name: "OrderApi", ...PRODUCT_SCOPE });
@@ -266,7 +267,7 @@ describe("level-aware data type and API creates", () => {
     });
 
     it("returns the registry conflict message and does not create", async () => {
-      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1" });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", productId: "prd-1", tenantId: "tenant-1" });
       mockAssertNameAvailable.mockResolvedValue(CONFLICT);
       const result = await getOrCreateEntityServiceAction("domain-1", "ent-1", "Order");
       expect(result).toEqual({ error: "dup" });

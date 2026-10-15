@@ -47,6 +47,8 @@ beforeEach(() => {
   mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
   mockPrisma.field.findFirst.mockResolvedValue(null);
   mockPrisma.field.findMany.mockResolvedValue([]);
+  // The entity of the active tenant (the by-id ownership guard reads it).
+  mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", tenantId: "tenant-1", metadata: {} });
   // $transaction([...]) batch form: resolve every operation.
   mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
 });
@@ -66,7 +68,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("deleteFieldAction marks the draft changed and the source stale", async () => {
-    mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email", type: "string" });
+    mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email", type: "string", entity: { tenantId: "tenant-1" } });
     mockPrisma.field.delete.mockResolvedValue({ id: "fld-1" });
     expect(await deleteFieldAction("fld-1")).toEqual({ success: true });
     expectFieldsEdited();
@@ -94,7 +96,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("updateEntityRelationshipsAction writes the relationships with the draft flag and sourceStale in one update", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: {} });
+    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: {}, tenantId: "tenant-1" });
     const relationships = [{ targetEntityId: "cust", fieldId: "fld-1", cardinality: "many-to-one" as const }];
     await updateEntityRelationshipsAction("ent-1", relationships);
     expect(mockPrisma.entity.update).toHaveBeenCalledWith({
@@ -104,7 +106,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("updateEntityMetadataAction marks tag edits stale but leaves bookkeeping-only edits fresh", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { tags: ["a"] } });
+    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { tags: ["a"] }, tenantId: "tenant-1" });
     await updateEntityMetadataAction("ent-1", { tags: ["a", "b"] });
     expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
       where: { id: "ent-1" },
@@ -119,7 +121,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("updateEntityMetadataAction never lets an already-stale source go fresh, even on a bookkeeping-only edit", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { tags: ["a"], sourceStale: true } });
+    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { tags: ["a"], sourceStale: true }, tenantId: "tenant-1" });
     await updateEntityMetadataAction("ent-1", { schemaVersions: { avro: [] } });
     expect(mockPrisma.entity.update).toHaveBeenLastCalledWith({
       where: { id: "ent-1" },
@@ -128,7 +130,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("compileAndApplyTypeSpecSourceAction saves source + draft flag and clears sourceStale atomically", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
     mockCompile.mockResolvedValue({
       success: true,
       diagnostics: [],
@@ -148,7 +150,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("compileAndApplyTypeSpecSourceAction leaves sourceStale alone when the source does not compile", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
     mockCompile.mockResolvedValue({ success: false, diagnostics: [{ severity: "error", code: "x", message: "bad" }] });
     const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model {");
     expect(res.success).toBe(false);
@@ -159,7 +161,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
 
 describe("getTypeSpecSourceAction", () => {
   const entityRow = (over: Record<string, unknown>) => ({
-    id: "ent-1", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null, domain: null,
+    id: "ent-1", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null, domain: null, tenantId: "tenant-1",
     metadata: null, typespecSource: "model Order { hand: string; }", ...over,
   });
 

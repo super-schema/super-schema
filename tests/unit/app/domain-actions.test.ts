@@ -40,6 +40,8 @@ vi.mock("next/cache", () => ({
   revalidatePath: mockRevalidatePath,
 }));
 
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
+
 import { deleteDomainAction } from "@/app/(dashboard)/schemas/actions";
 
 const EMPTY_COUNTS = {
