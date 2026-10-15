@@ -299,6 +299,20 @@ describe("schema import actions", () => {
       expect(order(mockTx.$executeRaw)).toBeLessThan(order(mockAssertNameAvailable));
     });
 
+    it("stores an imported entity's model tags as metadata.tags (Story 16.6 x-tags round trip)", async () => {
+      await createDomainAssetsFromImportAction({
+        ...emptyPayload,
+        entities: [
+          { name: "Customer", tags: ["sales", "core"], fields: [] },
+          { name: "Plain", fields: [] },
+        ],
+      });
+
+      const created = mockTx.entity.create.mock.calls.map(([arg]) => arg.data);
+      expect(created.find((d) => d.name === "Customer")?.metadata).toEqual({ tags: ["sales", "core"] });
+      expect(created.find((d) => d.name === "Plain")).not.toHaveProperty("metadata");
+    });
+
     it("checks data types and domain APIs at domain level and entities at product level", async () => {
       await createDomainAssetsFromImportAction({
         ...emptyPayload,

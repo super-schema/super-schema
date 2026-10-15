@@ -35,6 +35,8 @@ import {
   type GovernanceDiagnostic,
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { classificationFromDecorators } from "@/lib/compiler/governance-decorators";
+import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import {
   markEntityDraftChanged,
@@ -42,6 +44,7 @@ import {
   isSourceStale,
   withSourceStale,
   CLEAR_SOURCE_STALE_SQL,
+  SET_ENTITY_TAGS_SQL,
   MARK_DRAFT_CHANGED_SQL,
 } from "@/lib/entity-versioning/draft-state";
 
@@ -696,8 +699,10 @@ export async function applyTypeSpecAction(
       if (governance && Object.values(governance).some((v) => v !== undefined)) {
         decoratorsJson.governance = governance;
       }
+      // Governance accessor value (already the app's level) first; else the parsed decorators —
+      // x-classification for a level with no Enterprise member, or the legacy @tag("classification:…").
       const classification =
-        governance?.classification ?? extractClassification(pf.decorators.tag as string | undefined);
+        governance?.classification ?? classificationFromDecorators(pf.decorators) ?? null;
 
       if (!existing) {
         // Create new field
@@ -862,15 +867,6 @@ function buildDecoratorsJson(
   }
 
   return result;
-}
-
-/**
- * Extract classification from @tag("classification:...") value.
- */
-function extractClassification(tag: string | undefined): string | null {
-  if (!tag) return null;
-  const match = tag.match(/^classification:(.+)$/);
-  return match ? match[1] : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1632,7 +1628,10 @@ export async function getTypeSpecSourceAction(entityId: string) {
   if (!entity) return { error: "Entity not found" };
 
   if (entity.typespecSource && !isSourceStale(entity.metadata)) {
-    return { success: true as const, source: entity.typespecSource, generated: false };
+    // A source stored before Story 16.6 (a publish wrote the generator's text back) can carry `@tag(...)`
+    // on the model / properties, which real TypeSpec rejects; rewrite it losslessly into the valid
+    // governance decorators so the tab can save it. A no-op (same string) for any other source.
+    return { success: true as const, source: upgradeLegacyTagDecorators(entity.typespecSource), generated: false };
   }
 
   // Lazy-generate from current field rows — this entity hasn't been opened
@@ -1705,6 +1704,17 @@ export async function compileAndApplyTypeSpecSourceAction(
     }
   }
 
+  // The source is canonical: its model tags (`x-tags`, or a legacy `@tag`) become the entity's tags, so a
+  // tag edit made here persists and is not reverted by the next regeneration from `metadata.tags`.
+  // Only written when they differ, so a save that does not touch tags leaves the metadata alone.
+  const sourceTagList = model.tags ?? [];
+  const storedTags = (entity.metadata as { tags?: unknown } | null)?.tags;
+  const currentTagList = Array.isArray(storedTags) ? storedTags : [];
+  const sourceTags =
+    sourceTagList.length === currentTagList.length && sourceTagList.every((t, i) => t === currentTagList[i])
+      ? null
+      : sourceTagList;
+
   const applyResult = await applyTypeSpecAction(
     entityId,
     model.fields.map((f) => ({
@@ -1737,6 +1747,9 @@ export async function compileAndApplyTypeSpecSourceAction(
           where: { id: entityId },
           data: { typespecSource: source, hasUnpublishedChanges: true },
         }),
+        ...(sourceTags
+          ? [prisma.$executeRawUnsafe(SET_ENTITY_TAGS_SQL, entityId, JSON.stringify(sourceTags))]
+          : []),
         prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, entityId),
       ]);
       return updated;

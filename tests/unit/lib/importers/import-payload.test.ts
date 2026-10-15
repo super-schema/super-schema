@@ -4,6 +4,8 @@ import { describe, it, expect } from "vitest";
 import { parseProtobufDocument } from "@/lib/importers/protobuf.importer";
 import { toAssetImportResult } from "@/lib/importers/multi-asset";
 import { buildImportAssetsPayload, parsedFieldToCreateFieldInput } from "@/lib/importers/import-payload";
+import { mapDocumentToImportResult } from "@/lib/importers/typespec.importer";
+import { parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
 
 function protoResult() {
   const r = parseProtobufDocument(
@@ -69,6 +71,29 @@ describe("buildImportAssetsPayload", () => {
   it("defaults the source format to typespec for results that do not name one", () => {
     const payload = buildImportAssetsPayload({ ...protoResult(), sourceFormat: undefined }, NO_SELECTION);
     expect(payload.sourceFormat).toBe("typespec");
+  });
+
+  it("carries model tags to the selected entities only, with classification on the fields (Story 16.6)", () => {
+    const source = [
+      'import "@superschema/typespec-enterprise";',
+      'import "@typespec/openapi";',
+      "",
+      '@TypeSpec.OpenAPI.extension("x-tags", #["sales", "core"])',
+      "model Customer {",
+      "  @Enterprise.dataClassification(Enterprise.DataClassification.Confidential)",
+      "  note?: string;",
+      "}",
+      "",
+    ].join("\n");
+    const result = mapDocumentToImportResult(parseTypeSpecDocument(source), source);
+    const payload = buildImportAssetsPayload(result, { ...NO_SELECTION, selectedModels: [0], selectedEntities: [0] });
+
+    expect(payload.entities[0].tags).toEqual(["sales", "core"]);
+    expect(payload.entities[0].fields[0].classification).toBe("SENSITIVE");
+    expect(payload.models[0]).not.toHaveProperty("tags");
+    // A model without tags adds no key.
+    const untagged = buildImportAssetsPayload(protoResult(), { ...NO_SELECTION, selectedEntities: [0] });
+    expect(untagged.entities[0]).not.toHaveProperty("tags");
   });
 });
 

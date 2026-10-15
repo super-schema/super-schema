@@ -7,6 +7,9 @@ import {
   stubUnresolvedReferences,
   type ResolveSourceDeps,
 } from "@/lib/entity-versioning/resolve-source";
+import { compileTypeSpecWithGovernance } from "@/lib/compiler/typespec-compiler";
+import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { compileEntity } from "@/lib/compiler/compiler.service";
 
 function model(over: { name?: string; fields?: unknown[]; parentEntityName?: string; spreadFrom?: string[] } = {}) {
   return {
@@ -92,18 +95,42 @@ describe("compileRegeneratedSource (phase 1, outside the lock)", () => {
     expect(res).toEqual({ success: true, data: "model Order {\n  buyer?: Buyer;\n}\n" });
   });
 
-  it("strips the generator's @tag decorators for the compiler only: model tags and field classification (R46)", async () => {
-    const text = ['@doc("Orders")', '@tag("sales")', "model Order {", '  @tag("classification:PII")', "  email?: string;", "}", ""].join("\n");
+  it("hands the generator's own text to the compiler verbatim: nothing is stripped (Story 16.6)", async () => {
+    const text = [
+      'import "@superschema/typespec-enterprise";',
+      "",
+      '@doc("Orders")',
+      "model Order {",
+      "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      "  email?: string;",
+      "}",
+      "",
+    ].join("\n");
     const d = deps({ generate: vi.fn().mockReturnValue(text) });
     const res = await compileRegeneratedSource(DB, "e1", d);
 
-    const compiled = d.compile.mock.calls[0][0] as string;
-    expect(compiled).not.toContain("@tag(");
-    expect(compiled).toContain('@doc("Orders")');
-    expect(compiled).toContain("email?: string;");
-    // What is frozen and stored is still the generator's text.
+    expect(d.compile).toHaveBeenCalledWith(text);
     expect(res).toEqual({ success: true, data: text });
   });
+
+  it("gates a tagged entity with classified fields through the REAL generator + compiler (Story 16.6)", async () => {
+    const f = (name: string, classification: string | null, i: number) => ({
+      id: `f-${name}`, name, type: "string", precision: null, scale: null, nullable: true, isKey: false,
+      fieldNumber: null, description: "", classification, aliases: [] as string[], decorators: {}, sortOrder: i,
+    });
+    const real = compileEntity(
+      { id: "e1", name: "Order", description: "Orders", status: "DRAFT", version: 1, domainId: null, metadata: { tags: ["sales"] }, domain: null },
+      [f("id", null, 0), f("email", "PII", 1), f("code", "TOP_SECRET", 2)]
+    );
+
+    const res = await compileRegeneratedSource(DB, "e1", {
+      loadModel: vi.fn().mockResolvedValue({ success: true, data: real }),
+      generate: generateTypeSpec,
+      compile: compileTypeSpecWithGovernance,
+    });
+
+    expect(res).toEqual({ success: true, data: generateTypeSpec(real) });
+  }, 60_000);
 });
 
 describe("confirmRegeneratedSource (phase 2, inside the lock)", () => {
