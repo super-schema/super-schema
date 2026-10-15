@@ -18,6 +18,24 @@ describe("formatVersionLabel / parseVersionLabel", () => {
     expect(res.success).toBe(false);
     if (!res.success) expect(res.error.code).toBe("VALIDATION_ERROR");
   });
+
+  // Labels become integer-column lookups: a part beyond Int range must be rejected here, not thrown by the database.
+  it("accepts parts up to 2^31-1 and nothing above, however many digits", () => {
+    expect(parseVersionLabel("2147483647.2147483647")).toEqual({ success: true, data: { major: 2147483647, minor: 2147483647 } });
+    expect(parseVersionLabel("1.2147483647")).toEqual({ success: true, data: { major: 1, minor: 2147483647 } });
+    for (const label of [
+      "2147483648.0", "1.2147483648", "99999999999.0", "1.99999999999", "v99999999999.99999999999",
+      `${"9".repeat(400)}.0`, `1.${"9".repeat(400)}`, `${"9".repeat(400)}.${"9".repeat(400)}`,
+    ]) {
+      const res = parseVersionLabel(label);
+      expect(res.success, label.slice(0, 30)).toBe(false);
+      if (!res.success) expect(res.error.code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it.each(["1.-1", "-5.0", "1.5.", ".5", "1.", "1,5", " ", "v", "1e3.0", "Infinity.0", "0x10.0"])("rejects garbage %j", (label) => {
+    expect(parseVersionLabel(label).success).toBe(false);
+  });
 });
 
 describe("nextVersionNumber", () => {

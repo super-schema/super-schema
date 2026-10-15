@@ -10,12 +10,15 @@ export function formatVersionLabel(v: VersionNumber): string {
 
 const LABEL = /^v?(\d+)\.(\d+)$/;
 
-/** Parse `"2.1"` / `"v2.1"`. Versions start at 1.0. */
+/** Versions live in Postgres `Int` columns: a part beyond this can never exist, and querying it throws instead of finding nothing. */
+const MAX_VERSION_PART = 2_147_483_647;
+
+/** Parse `"2.1"` / `"v2.1"`. Versions start at 1.0; a part above `MAX_VERSION_PART` (including a 400-digit one) is not a label. */
 export function parseVersionLabel(label: string): Result<VersionNumber> {
   const match = LABEL.exec(label.trim());
   const major = match ? Number(match[1]) : NaN;
   const minor = match ? Number(match[2]) : NaN;
-  if (!match || major < 1) {
+  if (!match || major < 1 || major > MAX_VERSION_PART || minor > MAX_VERSION_PART) {
     return err({
       code: "VALIDATION_ERROR",
       message: `"${label}" is not a version label`,
