@@ -15,7 +15,7 @@ import {
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
-import { generateSlug, isReservedEntityRouteSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
 
