@@ -157,6 +157,25 @@ describe("publishMessage (unit)", () => {
       expect(await listMessageVersions("m1", OWNING_PRODUCT, ctxOf(db))).toMatchObject({ success: true, data: [{ id: "mv1", label: "1.0", publishedByName: "Ada" }] });
       expect(db.messageVersion.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { messageId: "m1" } }));
     });
+
+    it("does not resolve a trait from another tenant even when the id matches — the publish state lists it as missing", async () => {
+      const row = { ...MESSAGE_ROW, spec: { traitIds: ["t-foreign"] }, tenantId: "t1" };
+      const db = makeDb([row]);
+      // Before the fix: no tenantId filter → trait is returned → silently resolved (BUG).
+      // After the fix: tenantId: "t1" → foreign trait excluded → MISSING_TRAIT blocker.
+      db.trait.findMany.mockImplementation(async (args: { where: { id: { in: string[] }; tenantId?: string } }) => {
+        if (args.where.tenantId) return []; // fix applied: foreign tenant's trait excluded
+        return [{ id: "t-foreign", name: "ForeignTrait", kind: "MESSAGE" }]; // old behavior: trait leaked
+      });
+      const preview = await previewMessagePublish("m1", OWNING_PRODUCT, ctxOf(db));
+      expect(preview.success).toBe(true);
+      if (!preview.success) return;
+      // After the fix: tenantId filter excludes the foreign trait → MISSING_TRAIT blocker
+      expect(preview.data.blockers.some((b) => b.kind === "MISSING_TRAIT")).toBe(true);
+      // No foreign trait name leaks into reasons or blockers
+      const text = JSON.stringify(preview.data);
+      expect(text).not.toMatch(/ForeignTrait/i);
+    });
   });
 
   it("fails fast on blockers before opening a transaction or auditing, and passes a missing message through", async () => {

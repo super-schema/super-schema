@@ -49,7 +49,9 @@ export async function loadMessagePublishState(db: Db, messageId: string): Promis
   const [entities, versions, traits] = await Promise.all([
     db.entity.findMany({ where: { id: { in: used.map((r) => r[1]) } }, select: { id: true, name: true, latestVersion: { select: { major: true, minor: true } } } }),
     db.entityVersion.findMany({ where: { id: { in: used.map((r) => r[2]).filter(isString) } }, select: { id: true, entityId: true, major: true, minor: true } }),
-    traitIds.length > 0 ? db.trait.findMany({ where: { id: { in: traitIds } }, select: { id: true, name: true, kind: true } }) : Promise.resolve([]),
+    traitIds.length > 0
+      ? db.trait.findMany({ where: { id: { in: traitIds }, tenantId: row.tenantId }, select: { id: true, name: true, kind: true } })
+      : Promise.resolve([]),
   ]);
 
   const pins: PinState[] = used.map(([role, entityId, versionId]) => {

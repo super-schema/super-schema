@@ -60,6 +60,27 @@ describe("catalog mapping", () => {
     expect(plan.get("mv2")).toEqual({ payloadFormats: ["json-schema"], keyFormats: [] });
   });
 
+  it("plans artifact formats for reply messages even when they lack a dedicated reply channel (fallback to op channel)", () => {
+    const channels = new Map([["ch1", { id: "ch1", profile: { format: "avro" as const } } as ResolvedChannel]]);
+    const doc: EventSpecDocument = {
+      info: { title: "t" },
+      servers: [],
+      operations: [
+        {
+          key: "op1",
+          action: "receive",
+          channelId: "ch1",
+          messageVersionIds: ["mv1"],
+          traitIds: [],
+          reply: { messageVersionIds: ["mv2"] }, // reply messages, NO reply channel
+        },
+      ],
+    };
+    const needs = planArtifacts(doc, channels);
+    // mv2 should get its format from the operation's own channel as fallback
+    expect(needs.get("mv2")).toEqual({ payloadFormats: ["avro"], keyFormats: [] });
+  });
+
   it("maps messages and traits to resolved shapes", () => {
     const source = messageSourceFromDraft({
       id: "m2", name: "OrderCancelled", spec: { summary: "s", traitIds: ["t1"] }, payloadEntityId: "e1", payloadEntityVersionId: "v1",

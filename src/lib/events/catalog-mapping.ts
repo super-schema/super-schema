@@ -191,7 +191,10 @@ export function planArtifacts(
   };
   for (const op of doc.operations) {
     add(op.channelId, op.messageVersionIds);
-    add(op.reply?.channelId, op.reply?.messageVersionIds); // reply messages need a reply channel (assembler rule)
+    // Reply messages without their own reply channel inherit the operation's
+    // channel for format planning. The assembler still flags REPLY_CHANNEL_REQUIRED,
+    // but at least the renderer has the right formats to produce coherent diagnostics.
+    add(op.reply?.channelId ?? op.channelId, op.reply?.messageVersionIds);
   }
   return new Map([...needs].map(([id, e]) => [id, { payloadFormats: [...e.payload].sort(), keyFormats: [...e.key].sort() }]));
 }

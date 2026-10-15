@@ -28,15 +28,7 @@ export function parseLocalRef(ref: string): string[] | null {
   return ref
     .slice(2)
     .split("/")
-    .map((raw) => {
-      let decoded = raw;
-      try {
-        decoded = decodeURIComponent(raw);
-      } catch {
-        // keep the raw segment when it is not valid percent-encoding
-      }
-      return unescapePointerSegment(decoded);
-    });
+    .map((raw) => unescapePointerSegment(raw));
 }
 
 export type PointerResolution = { found: true; value: unknown } | { found: false };
