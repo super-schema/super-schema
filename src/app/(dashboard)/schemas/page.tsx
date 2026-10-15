@@ -23,6 +23,19 @@ export default async function SchemasPage() {
           userRoles: true,
         },
       },
+      // Product-level Data Types / APIs cascade with their products when the domain goes.
+      products: {
+        select: {
+          _count: {
+            select: {
+              sharedEnums: true,
+              customScalars: true,
+              unionTypes: true,
+              services: true,
+            },
+          },
+        },
+      },
     },
   });
   const session = await auth();
@@ -43,6 +56,16 @@ export default async function SchemasPage() {
         entityCount: d._count.entities,
         deletionImpact: {
           entities: d._count.entities,
+          products: d.products.length,
+          productLevelAssets: d.products.reduce(
+            (sum, p) =>
+              sum +
+              p._count.sharedEnums +
+              p._count.customScalars +
+              p._count.unionTypes +
+              p._count.services,
+            0
+          ),
           modelDefinitions: d._count.modelDefinitions,
           decoratorDefinitions: d._count.decoratorDefinitions,
           sharedEnums: d._count.sharedEnums,

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { notFound } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { productDataTypeCount } from "@/lib/product-deletion";
 import { DomainTabs } from "./domain-tabs";
 import {
   mapCustomScalarRows,
@@ -9,6 +10,15 @@ import {
   mapSharedEnumRows,
   mapUnionTypeRows,
 } from "./map-asset-rows";
+
+/** Everything a product delete would cascade (see productDeleteBlocker). */
+const PRODUCT_CONTENT_COUNTS = {
+  entities: true,
+  sharedEnums: true,
+  customScalars: true,
+  unionTypes: true,
+  services: true,
+} as const;
 
 interface Props {
   params: Promise<{ domainSlug: string }>;
@@ -25,7 +35,7 @@ export default async function DomainProductsPage({ params }: Props) {
         orderBy: [{ isSystem: "desc" }, { name: "asc" }],
         include: {
           tier: true,
-          _count: { select: { entities: true } },
+          _count: { select: PRODUCT_CONTENT_COUNTS },
         },
       },
     },
@@ -41,7 +51,7 @@ export default async function DomainProductsPage({ params }: Props) {
           orderBy: [{ isSystem: "desc" }, { name: "asc" }],
           include: {
             tier: true,
-            _count: { select: { entities: true } },
+            _count: { select: PRODUCT_CONTENT_COUNTS },
           },
         },
       },
@@ -129,6 +139,8 @@ export default async function DomainProductsPage({ params }: Props) {
           ownerTeam: p.ownerTeam,
           isSystem: p.isSystem,
           entityCount: p._count.entities,
+          dataTypeCount: productDataTypeCount(p._count),
+          apiCount: p._count.services,
           updatedAt: p.updatedAt,
           tier: p.tier
             ? {

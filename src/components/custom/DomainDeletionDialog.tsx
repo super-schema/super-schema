@@ -24,11 +24,12 @@ interface DomainDeletionDialogProps {
 }
 
 const impactLabels: Array<{
-  key: keyof DomainDeletionImpact;
+  key: Exclude<keyof DomainDeletionImpact, "productLevelAssets">;
   singular: string;
   plural: string;
 }> = [
   { key: "entities", singular: "entity", plural: "entities" },
+  { key: "products", singular: "product", plural: "products" },
   { key: "modelDefinitions", singular: "model", plural: "models" },
   {
     key: "decoratorDefinitions",
@@ -105,7 +106,7 @@ export function DomainDeletionDialog({
             <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-space-3">
               <p className="text-body-small text-foreground">
                 {populatedAssets.length > 0
-                  ? "The domain and every asset listed below will be permanently deleted."
+                  ? "The domain, its products, and every asset listed below (including product-level Data Types and APIs) will be permanently deleted."
                   : "This domain is empty. Its domain record will be permanently deleted."}
               </p>
               <p className="mt-space-1 text-caption text-muted-foreground">
@@ -132,6 +133,15 @@ export function DomainDeletionDialog({
                   </li>
                 ))}
               </ul>
+              {impact.productLevelAssets > 0 ? (
+                <p className="mt-space-2 text-caption text-muted-foreground">
+                  Includes {impact.productLevelAssets} product-level{" "}
+                  {impact.productLevelAssets === 1
+                    ? "Data Type or API"
+                    : "Data Types and APIs"}
+                  , deleted together with their products.
+                </p>
+              ) : null}
             </div>
           ) : null}
 

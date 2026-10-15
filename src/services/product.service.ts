@@ -5,6 +5,7 @@ import type { Result } from "@/types/result";
 import type { Product, ProductTier } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { generateSlug, isReservedProductRouteSlug } from "@/lib/slug";
+import { productDeleteBlocker } from "@/lib/product-deletion";
 
 export interface ProductListItem {
   id: string;
@@ -212,7 +213,17 @@ export async function deleteProduct(
 ): Promise<Result<{ id: string }>> {
   const existing = await ctx.prisma.product.findUnique({
     where: { id },
-    include: { _count: { select: { entities: true } } },
+    include: {
+      _count: {
+        select: {
+          entities: true,
+          sharedEnums: true,
+          customScalars: true,
+          unionTypes: true,
+          services: true,
+        },
+      },
+    },
   });
   if (!existing) {
     return err({ code: "NOT_FOUND", message: `Product "${id}" not found` });
@@ -223,11 +234,15 @@ export async function deleteProduct(
       message: "System products cannot be deleted",
     });
   }
-  if (existing._count.entities > 0) {
+  // Entities and product-level Data Types / APIs all cascade with the product
+  // (FK ON DELETE CASCADE), so any of them blocks the delete.
+  const blocker = productDeleteBlocker(existing._count);
+  if (blocker) {
     return err({
       code: "VALIDATION_ERROR",
-      message: "Delete the product's entities before removing it",
-      suggestedFix: "Remove or move all entities, then delete the product.",
+      message: blocker,
+      suggestedFix:
+        "Remove or move the product's entities, Data Types and APIs, then delete the product.",
     });
   }
 

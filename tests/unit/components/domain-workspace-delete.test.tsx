@@ -116,6 +116,8 @@ const BASE_PROPS = {
   canDeleteDomain: true,
   deletionImpact: {
     entities: 0,
+    products: 0,
+    productLevelAssets: 0,
     modelDefinitions: 0,
     decoratorDefinitions: 0,
     sharedEnums: 0,
