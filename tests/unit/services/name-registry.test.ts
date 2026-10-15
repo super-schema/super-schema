@@ -97,6 +97,10 @@ describe("assertNameAvailable", () => {
       customScalar: { findMany: emptyFinder },
       unionType: { findMany: emptyFinder },
       serviceDefinition: { findMany: emptyFinder },
+      trait: { findMany: emptyFinder },
+      message: { findMany: emptyFinder },
+      channel: { findMany: emptyFinder },
+      eventSpec: { findMany: emptyFinder },
       ...over,
     }) as never;
 

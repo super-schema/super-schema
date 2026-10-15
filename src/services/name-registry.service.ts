@@ -4,7 +4,9 @@ import { levelOf, levelLabel } from "@/lib/levels";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export type RegistryKind = "entity" | "sharedEnum" | "customScalar" | "unionType" | "service";
+export type RegistryKind =
+  | "entity" | "sharedEnum" | "customScalar" | "unionType" | "service"
+  | "trait" | "message" | "channel" | "eventSpec";
 
 export interface NamedAsset {
   kind: RegistryKind;
@@ -24,6 +26,10 @@ const KIND_LABEL: Record<RegistryKind, string> = {
   customScalar: "Scalar",
   unionType: "Union",
   service: "API",
+  trait: "Trait",
+  message: "Message",
+  channel: "Channel",
+  eventSpec: "Event Spec",
 };
 
 /** True when one placement is an ancestor-or-self of the other (spec §4.3). */
@@ -60,6 +66,10 @@ const FINDERS: Record<RegistryKind, (db: Db, where: RegistryWhere) => Promise<Na
   customScalar: (db, where) => db.customScalar.findMany({ where, select: NAMED_SELECT }),
   unionType: (db, where) => db.unionType.findMany({ where, select: NAMED_SELECT }),
   service: (db, where) => db.serviceDefinition.findMany({ where, select: NAMED_SELECT }),
+  trait: (db, where) => db.trait.findMany({ where, select: NAMED_SELECT }),
+  message: (db, where) => db.message.findMany({ where, select: NAMED_SELECT }),
+  channel: (db, where) => db.channel.findMany({ where, select: NAMED_SELECT }),
+  eventSpec: (db, where) => db.eventSpec.findMany({ where, select: NAMED_SELECT }),
 };
 
 /** Run every kind's finder and tag each row with its kind. */

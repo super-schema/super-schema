@@ -921,6 +921,11 @@ const IMPORT_KIND_LABEL: Record<RegistryKind, string> = {
   customScalar: "Scalar",
   unionType: "Union",
   service: "API",
+  // Events kinds are never produced by this importer, but the label map must cover every RegistryKind.
+  trait: "Trait",
+  message: "Message",
+  channel: "Channel",
+  eventSpec: "Event Spec",
 };
 
 /**
