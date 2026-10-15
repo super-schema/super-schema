@@ -148,8 +148,102 @@ export async function deleteNavFixtures(fixtures: NavFixtures | undefined) {
   const db = pg();
   // Explicit: tenant-level entities are not reachable through a domain cascade.
   await db.query(`DELETE FROM entities WHERE id = $1`, [fixtures.tenantEntity.id]);
-  // Cascades to the product and its entities/fields.
+  // Edge rows have no FKs, so a specs / messages / entity-versions run leaves them behind: remove them first.
+  await deleteSchemaReferencesForDomain(fixtures.domain.id);
+  // Cascades to the product and its entities/fields, and to any channels, messages, traits, event specs and their
+  // versions a spec created under it. The immutability triggers (20261015 / 20261016 *_no_delete) only refuse a
+  // DIRECT delete of a published version; a delete of the owning row, or of a domain above it, is the sanctioned path.
   await db.query(`DELETE FROM domains WHERE id = $1`, [fixtures.domain.id]);
+}
+
+/**
+ * `schema_references` has no FKs (polymorphic), so deleting a domain cascades to its messages, specs, versions and
+ * entity versions but leaves the edge rows that start at them. This deletes those edges; `deleteNavFixtures` calls it
+ * before the domain delete, and a spec may call it directly.
+ *
+ * Harmless next to the `entity_versions` delete trigger (20261017_schema_reference_ghost_edges) and the AFTER DELETE
+ * triggers of 20261016_events_core_no_delete: they remove the same rows during the cascade, so this call then finds
+ * nothing left. Returns the number of edge rows removed.
+ */
+export async function deleteSchemaReferencesForDomain(domainId: string): Promise<number> {
+  const res = await pg().query(
+    `DELETE FROM schema_references WHERE "fromId" IN (
+       SELECT id FROM messages WHERE "domainId" = $1
+       UNION SELECT mv.id FROM message_versions mv JOIN messages m ON m.id = mv."messageId" WHERE m."domainId" = $1
+       UNION SELECT id FROM event_specs WHERE "domainId" = $1
+       UNION SELECT sv.id FROM event_spec_versions sv JOIN event_specs s ON s.id = sv."eventSpecId" WHERE s."domainId" = $1
+       UNION SELECT ev.id FROM entity_versions ev JOIN entities e ON e.id = ev."entityId" WHERE e."domainId" = $1
+       UNION SELECT id FROM traits WHERE "domainId" = $1) RETURNING id`,
+    [domainId]
+  );
+  return res.rows.length;
+}
+
+/** A second product in a fixture domain (the consumer side of a cross-product reference). Removed with the domain. */
+export async function createProductInDomain(domainId: string): Promise<{ id: string; name: string; slug: string }> {
+  const s = suffix();
+  const product = { id: newId(), name: `e2e-nav-prod2-${s}`, slug: `e2e-nav-prod2-${s}` };
+  await pg().query(`INSERT INTO products (id, name, slug, "domainId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [
+    product.id,
+    product.name,
+    product.slug,
+    domainId,
+  ]);
+  return product;
+}
+
+export interface ForeignTenantSpec {
+  tenantId: string;
+  domainId: string;
+  specId: string;
+}
+
+/**
+ * An event spec that lives in ANOTHER tenant. The tenant is inactive, so `activeTenantId()` and the tenant switcher never
+ * pick it. Its id must answer exactly like an unknown id, over REST and on the page.
+ */
+export async function createForeignTenantSpec(): Promise<ForeignTenantSpec> {
+  const db = pg();
+  const s = suffix();
+  const ids = { tenantId: newId(), domainId: newId(), productId: newId(), specId: newId() };
+  try {
+    await db.query(`INSERT INTO tenants (id, name, slug, "isActive", "updatedAt") VALUES ($1, $2, $3, false, now())`, [
+      ids.tenantId,
+      `e2e-foreign-tenant-${s}`,
+      `e2e-foreign-tenant-${s}`,
+    ]);
+    await db.query(`INSERT INTO domains (id, name, slug, "tenantId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [
+      ids.domainId,
+      `e2e-foreign-dom-${s}`,
+      `e2e-foreign-dom-${s}`,
+      ids.tenantId,
+    ]);
+    await db.query(`INSERT INTO products (id, name, slug, "domainId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [
+      ids.productId,
+      `e2e-foreign-prod-${s}`,
+      `e2e-foreign-prod-${s}`,
+      ids.domainId,
+    ]);
+    await db.query(
+      `INSERT INTO event_specs (id, name, document, "tenantId", "domainId", "productId", "updatedAt")
+       VALUES ($1, $2, '{}'::jsonb, $3, $4, $5, now())`,
+      [ids.specId, `foreign-spec-${s}`, ids.tenantId, ids.domainId, ids.productId]
+    );
+  } catch (error) {
+    // Never leave a half-built fixture behind.
+    await deleteForeignTenantSpec({ tenantId: ids.tenantId, domainId: ids.domainId, specId: ids.specId });
+    throw error;
+  }
+  return { tenantId: ids.tenantId, domainId: ids.domainId, specId: ids.specId };
+}
+
+/** Delete everything `createForeignTenantSpec` made. Safe to call twice or on partial state. */
+export async function deleteForeignTenantSpec(fixture: ForeignTenantSpec | undefined) {
+  if (!fixture) return;
+  const db = pg();
+  // The domain cascade removes its product and event spec; the tenant row is deleted explicitly.
+  await db.query(`DELETE FROM domains WHERE id = $1`, [fixture.domainId]);
+  await db.query(`DELETE FROM tenants WHERE id = $1`, [fixture.tenantId]);
 }
 
 /** Delete domains by exact name (cascades to products/entities/assets). Returns rows deleted. */
