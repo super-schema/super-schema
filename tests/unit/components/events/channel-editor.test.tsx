@@ -3,11 +3,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  push: vi.fn(), refresh: vi.fn(), toastSuccess: vi.fn(),
+  push: vi.fn(), refresh: vi.fn(), invalidate: vi.fn(), toastSuccess: vi.fn(),
   updateChannelAction: vi.fn(), setChannelMessagesAction: vi.fn(), deleteChannelAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push, refresh: h.refresh }) }));
 vi.mock("sonner", () => ({ toast: { success: h.toastSuccess, error: vi.fn() } }));
+vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => h.invalidate }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/channel-actions", () => ({
   updateChannelAction: h.updateChannelAction, setChannelMessagesAction: h.setChannelMessagesAction, deleteChannelAction: h.deleteChannelAction,
 }));
@@ -131,6 +132,8 @@ describe("ChannelEditor", () => {
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(props.listHref));
     expect(h.deleteChannelAction).toHaveBeenCalledWith("c1", "p1");
     expect((screen.getByTestId("channel-delete") as HTMLButtonElement).disabled).toBe(true);
+    // The explorer's React Query cache only refreshes through invalidate (revalidatePath does not reach it).
+    expect(h.invalidate).toHaveBeenCalledTimes(1);
   });
 
   it("does nothing when the delete confirmation is declined, and stays on the page when the delete fails", async () => {
@@ -143,5 +146,6 @@ describe("ChannelEditor", () => {
     fireEvent.click(screen.getByTestId("channel-delete"));
     expect((await screen.findByTestId("channel-error")).textContent).toMatch(/In use/);
     expect(h.push).not.toHaveBeenCalled();
+    expect(h.invalidate).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileCode2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import {
   getEventSpecPublishPreviewAction, publishEventSpecAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-version-actions";
@@ -85,6 +86,7 @@ function EventSpecPageBody({
 
   return (
     <div className="animate-auth-fade-up space-y-space-6">
+      <HideEmptyRightPanel />
       <EventBreadcrumb crumbs={crumbs} />
       <div className="flex flex-wrap items-center justify-between gap-space-3">
         <div className="flex flex-wrap items-center gap-space-2">

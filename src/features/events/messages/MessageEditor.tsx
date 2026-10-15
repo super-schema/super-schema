@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { deleteMessageAction, updateMessageAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-actions";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { formatJsonText, parseJsonObjectArrayText, parseJsonObjectText } from "@/lib/events/inputs";
 import { GENERIC_ACTION_ERROR, isOpaqueErrorCode } from "@/types/action-result";
 import type { EntityPin, MessageDetail, MessageSpec } from "@/lib/events/types";
@@ -44,6 +45,7 @@ export function MessageEditor({
   traitOptions: TraitOption[];
 }) {
   const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const s = message.spec;
   const initialCorrelation = typeof s.correlationId?.location === "string" ? s.correlationId.location : "";
   const [name, setName] = useState(message.name);
@@ -107,6 +109,7 @@ export function MessageEditor({
     try {
       const r = await deleteMessageAction(message.id, productId);
       if (!r.success) return setFailure(toFailure(r));
+      void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted row stays until a reload
       router.push(listHref);
     } catch {
       setFailure({ message: GENERIC_ACTION_ERROR, problems: [] });

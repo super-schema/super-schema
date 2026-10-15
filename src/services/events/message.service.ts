@@ -10,7 +10,7 @@ import { createInScope, writeWithUniqueName } from "@/services/scoped-create.ser
 import { auditedWrite } from "@/services/events/audited";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
-import { loadOwnedRow } from "@/services/events/service-guards";
+import { guardRead, loadOwnedRow, requireId } from "@/services/events/service-guards";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -150,8 +150,12 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
 }
 
 export async function createMessage(productId: string, input: MessageInput, ctx: ServiceContext): Promise<Result<MessageDetail>> {
-  const target = { level: "PRODUCT" as const, productId };
-  const scope = await resolveScope(ctx.prisma, target);
+  // `productId` arrives from the client at runtime: a non-string id is a VALIDATION_ERROR (as in createChannel), an unknown one NOT_FOUND,
+  // and the scope read runs under `guardRead`, so no driver / Prisma validation text can cross the service boundary.
+  const product = requireId(productId, "productId");
+  if (!product.success) return product;
+  const target = { level: "PRODUCT" as const, productId: product.data };
+  const scope = await guardRead(() => resolveScope(ctx.prisma, target));
   if (!scope.success) return scope;
   const n = await normalizeMessage(ctx, scope.data, input);
   if (!n.success) return n;
@@ -209,6 +213,9 @@ interface PinningSpec {
 
 /**
  * Published event spec versions that pin one of the message's versions, or null when none does.
+ * A publish records a pin in TWO places (`event_spec_versions.messageVersionIds` and the non-draft `schema_references`
+ * edge) and the array has no FK, so BOTH are always read: a pin in either one blocks, even when the other is missing
+ * (the array is the authoritative record; an edge can lag or have been lost).
  * Runs on the delete transaction, after the message row lock, so it sees every committed publish.
  */
 async function findPublishedPins(tx: Prisma.TransactionClient, versionIds: string[]): Promise<{ specs: PinningSpec[] } | null> {
@@ -216,13 +223,14 @@ async function findPublishedPins(tx: Prisma.TransactionClient, versionIds: strin
     where: { toKind: "MESSAGE_VERSION", toId: { in: versionIds }, isDraft: false },
     select: { fromKind: true, fromId: true },
   });
-  if (edges.length === 0) return null;
   const edgeSpecVersionIds = edges.filter((e) => e.fromKind === "EVENT_SPEC_VERSION").map((e) => e.fromId);
   const specVersions = await tx.eventSpecVersion.findMany({
     where: { OR: [{ id: { in: edgeSpecVersionIds } }, { messageVersionIds: { hasSome: versionIds } }] },
     select: { major: true, minor: true, eventSpec: { select: { id: true, name: true } } },
     orderBy: [{ eventSpec: { name: "asc" } }, { sequence: "asc" }],
   });
+  // An edge that names no spec version still counts as a pin (as before); no edge and no array entry = unpinned.
+  if (edges.length === 0 && specVersions.length === 0) return null;
   const bySpec = new Map<string, PinningSpec>();
   for (const v of specVersions) {
     const entry = bySpec.get(v.eventSpec.id) ?? { id: v.eventSpec.id, name: v.eventSpec.name, versions: [] };

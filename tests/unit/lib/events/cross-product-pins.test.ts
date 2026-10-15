@@ -46,6 +46,15 @@ describe("crossProductPinBlocker", () => {
     expect(message).toContain('references Trait "A", Trait "B", Trait "C" and 2 more.');
   });
 
+  it("caps long version lists so the message stays bounded", () => {
+    const versions = ["1.0", "1.1", "1.2", "2.0", "2.1", "3.0", "3.1"];
+    const message = crossProductPinBlocker([pin({ versions })]) ?? "";
+    expect(message).toContain('(product "Fraud", v1.0, v1.1, v1.2 and 4 more) references');
+    expect(message).not.toContain("v2.0");
+    // exactly at the cap nothing is elided
+    expect(crossProductPinBlocker([pin({ versions: versions.slice(0, 3) })])).toContain('(product "Fraud", v1.0, v1.1, v1.2) references');
+  });
+
   it("names several specs (plural wording) and caps the list", () => {
     const pins = ["a", "b", "c", "d", "e", "f", "g"].map((name, i) =>
       pin({ specId: `s${i}`, specName: name, productId: `p${i}`, productName: `Prod ${name}` })

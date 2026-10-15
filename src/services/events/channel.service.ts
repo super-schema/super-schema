@@ -6,6 +6,7 @@ import { parseChannelSpec, readChannelSpec } from "@/lib/events/catalog-specs";
 import type { ChannelDetail, ChannelSpec, JsonSchemaDialect, PayloadFormat } from "@/lib/events/types";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
+import { assetInUseError, findChannelReferrers } from "@/services/events/delete-guards";
 import {
   guardRead, loadOwnedRow, optionalString, parseIdList, parseScopeTarget, requireId, requireString,
 } from "@/services/events/service-guards";
@@ -171,15 +172,25 @@ export async function setChannelMessages(id: string, messageIds: string[], owner
   });
 }
 
+/**
+ * Deletes a channel unless something still uses it (IN_USE, naming the same-tenant referrers): a published event spec version
+ * that froze it (in any product of the tenant) or a live event spec draft whose operations use it. A published version is
+ * immutable, so deleting a channel it froze would orphan the pin. The allowed-message rows cascade with the channel. The check
+ * and the delete share one transaction and take no lock of their own.
+ */
 export async function deleteChannel(id: string, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<{ id: string }>> {
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
+  const { name, tenantId } = owned.data.row;
   return auditedWrite({
     action: "DELETE", entityType: "Channel", entityId: id, userId: ctx.userId, beforeState: toDetail(owned.data.row),
-    run: async () => {
-      await ctx.prisma.channel.delete({ where: { id } });
-      return ok({ id });
-    },
+    run: () =>
+      ctx.prisma.$transaction(async (tx): Promise<Result<{ id: string }>> => {
+        const blocked = assetInUseError("Channel", name, await findChannelReferrers(tx, { id, tenantId }));
+        if (blocked) return err(blocked);
+        await tx.channel.delete({ where: { id } });
+        return ok({ id });
+      }),
   });
 }
 

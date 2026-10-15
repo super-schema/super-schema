@@ -13,7 +13,7 @@ import {
   type UpdateFieldInput,
 } from "@/types/schemas/field.schema";
 import type { Prisma } from "@/generated/prisma/client";
-import { markEntityDraftChanged } from "@/lib/entity-versioning/draft-state";
+import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 
 export async function createField(
   entityId: string,
@@ -67,27 +67,31 @@ export async function createField(
       entityId: "pending",
       userId: ctx.userId,
       fn: async () => {
-        const created = await prisma.field.create({
-          data: {
-            entityId,
-            name: parsed.data.name,
-            slug: generateSlug(parsed.data.name),
-            type: parsed.data.type,
-            precision: parsed.data.precision,
-            scale: parsed.data.scale,
-            nullable: parsed.data.nullable,
-            isKey: parsed.data.isKey,
-            fieldNumber: parsed.data.fieldNumber,
-            description: parsed.data.description,
-            aliases: parsed.data.aliases,
-            classification: parsed.data.classification ?? "SENSITIVE",
-            sortOrder: nextSortOrder,
-            decorators:
-              (parsed.data.decorators as unknown as Prisma.InputJsonValue) ??
-              {},
-          },
-        });
-        await markEntityDraftChanged(prisma, entityId);
+        // The field write and the draft + stale-source mark are ONE atomic batch: a failure between them can never
+        // leave a created field with `hasUnpublishedChanges` still false (publish would answer NO_CHANGES).
+        const [created] = await prisma.$transaction([
+          prisma.field.create({
+            data: {
+              entityId,
+              name: parsed.data.name,
+              slug: generateSlug(parsed.data.name),
+              type: parsed.data.type,
+              precision: parsed.data.precision,
+              scale: parsed.data.scale,
+              nullable: parsed.data.nullable,
+              isKey: parsed.data.isKey,
+              fieldNumber: parsed.data.fieldNumber,
+              description: parsed.data.description,
+              aliases: parsed.data.aliases,
+              classification: parsed.data.classification ?? "SENSITIVE",
+              sortOrder: nextSortOrder,
+              decorators:
+                (parsed.data.decorators as unknown as Prisma.InputJsonValue) ??
+                {},
+            },
+          }),
+          prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+        ]);
         return created;
       },
     });
@@ -162,11 +166,14 @@ export async function updateField(
       if (parsed.data.name && parsed.data.name !== existing.name) {
         updateData.slug = generateSlug(parsed.data.name);
       }
-      const updated = await prisma.field.update({
-        where: { id },
-        data: updateData,
-      });
-      await markEntityDraftChanged(prisma, existing.entityId);
+      // The field write and the draft + stale-source mark are ONE atomic batch (see createField).
+      const [updated] = await prisma.$transaction([
+        prisma.field.update({
+          where: { id },
+          data: updateData,
+        }),
+        prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, existing.entityId),
+      ]);
       return updated;
     },
   });
@@ -193,8 +200,11 @@ export async function deleteField(
     userId: ctx.userId,
     beforeState: existing as unknown as object,
     fn: async () => {
-      await prisma.field.delete({ where: { id } });
-      await markEntityDraftChanged(prisma, existing.entityId);
+      // Delete + draft / stale-source mark in ONE atomic batch (see createField).
+      await prisma.$transaction([
+        prisma.field.delete({ where: { id } }),
+        prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, existing.entityId),
+      ]);
       return null;
     },
   });
@@ -244,15 +254,16 @@ export async function reorderFields(
     userId: ctx.userId,
     beforeState: beforeState as unknown as object,
     fn: async () => {
-      await prisma.$transaction(
-        fieldIds.map((fieldId, index) =>
+      // All sortOrder writes + the draft / stale-source mark in ONE atomic batch (see createField).
+      await prisma.$transaction([
+        ...fieldIds.map((fieldId, index) =>
           prisma.field.update({
             where: { id: fieldId },
             data: { sortOrder: index },
           })
-        )
-      );
-      await markEntityDraftChanged(prisma, entityId);
+        ),
+        prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+      ]);
       return null;
     },
   });

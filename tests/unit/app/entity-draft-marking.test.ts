@@ -21,6 +21,7 @@ const { mockPrisma, mockCompile } = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "user-1" } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: mockCompile }));
 
 import { MARK_DRAFT_CHANGED_SQL, CLEAR_SOURCE_STALE_SQL } from "@/lib/entity-versioning/draft-state";
@@ -58,7 +59,7 @@ describe("draft-mutating entity actions set hasUnpublishedChanges", () => {
   });
 
   it("updateFieldAction marks the draft changed and the source stale", async () => {
-    mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email" });
+    mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", name: "email", entity: { tenantId: "tenant-1" } });
     mockPrisma.field.update.mockResolvedValue({ id: "fld-1" });
     expect(await updateFieldAction("fld-1", { description: "Primary email" })).toEqual({ success: true });
     expectFieldsEdited();

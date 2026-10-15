@@ -8,15 +8,20 @@ import { revalidatePath } from "next/cache";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { GENERIC_ACTION_ERROR, isInActiveTenant } from "@/lib/action-context";
+import {
+  isBoolean, isPlainObject, isString, isStringArray, isStringOrNull, optional, pickEditable, readFields,
+} from "@/lib/editable-fields";
+import { parseScopeTarget, requireId } from "@/services/events/service-guards";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
-import { explainEntityDeleteFailure, isForeignKeyViolation } from "@/services/events/entity-pin-usage";
+import { entityDeleteFailure, explainEntityDeleteFailure } from "@/services/events/entity-pin-usage";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { err, ok } from "@/types/result";
-import type { ServiceError } from "@/types/result";
+import type { Result, ServiceError } from "@/types/result";
 
 const STALE_SESSION_IMPORT_ERROR =
   "Your session is stale. Sign out and sign in again, then retry the import.";
@@ -54,14 +59,41 @@ const DATA_TYPE_TARGET_REQUIRED = "A domain or scope target is required";
  * only a domain. Enterprise (TENANT) callers have no domain and always pass a target,
  * but the tenant is never taken from the client: a TENANT target is created under the
  * server-resolved active tenant, whatever `tenantId` the caller supplied.
+ *
+ * Both arguments arrive from the browser untyped: a target that is not a well-formed scope target (unknown level, missing /
+ * non-string id) or a `domainId` that is neither null nor a string is a VALIDATION_ERROR here, before any query, instead of
+ * a Prisma validation message further down.
  */
-async function dataTypeTarget(
-  domainId: string | null,
-  target: ScopeTarget | undefined
-): Promise<ScopeTarget | null> {
-  if (target?.level === "TENANT") return { level: "TENANT", tenantId: await getActiveTenantId() };
-  if (target) return target;
-  return domainId ? { level: "DOMAIN", domainId } : null;
+async function dataTypeTarget(domainId: unknown, target: unknown): Promise<Result<ScopeTarget>> {
+  if (target !== undefined && target !== null) {
+    if (isPlainObject(target) && (target as { level?: unknown }).level === "TENANT") {
+      return ok({ level: "TENANT", tenantId: await getActiveTenantId() });
+    }
+    return parseScopeTarget(target);
+  }
+  if (domainId === null || domainId === undefined || domainId === "") {
+    return err({ code: "VALIDATION_ERROR", message: DATA_TYPE_TARGET_REQUIRED });
+  }
+  const id = requireId(domainId, "domainId");
+  return id.success ? ok({ level: "DOMAIN", domainId: id.data }) : id;
+}
+
+/** The wire shape of the older (non-Result) actions: `{ error }` plus the failure code where there is one. */
+const failure = (error: ServiceError) => ({ error: error.message, code: error.code });
+const notFound = (kind: string) => ({ error: `${kind} not found`, code: "NOT_FOUND" });
+
+/** An unexpected throw: logged server-side, never shown (it may carry driver / Prisma text). */
+function unexpectedFailure(label: string, e: unknown) {
+  console.error(`[${label}] unexpected error`, e);
+  return { error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" };
+}
+
+/** A required, non-blank name, trimmed: the name registry compares trimmed names, so the stored name must be trimmed too. */
+function trimmedName(value: unknown, label: string): Result<string> {
+  if (typeof value !== "string" || value.trim() === "") {
+    return err({ code: "VALIDATION_ERROR", message: `${label} name is required` });
+  }
+  return ok(value.trim());
 }
 
 export interface CreateFieldInput {
@@ -267,6 +299,14 @@ export async function addModelFieldAction(
   }
 }
 
+/**
+ * Editable columns of a model field. `modelId` (the move-to-another-model column), `sortOrder` and every other column are
+ * deliberately absent: an update that names anything else is rejected with VALIDATION_ERROR.
+ */
+const MODEL_FIELD_EDITABLE = {
+  name: isString, type: isString, nullable: isBoolean, isKey: isBoolean, description: isString,
+};
+
 export async function updateModelFieldAction(
   fieldId: string,
   data: { name?: string; type?: string; nullable?: boolean; isKey?: boolean; description?: string }
@@ -274,12 +314,32 @@ export async function updateModelFieldAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  const id = requireId(fieldId, "Field id");
+  if (!id.success) return failure(id.error);
+  const picked = pickEditable(data, MODEL_FIELD_EDITABLE, "a model field");
+  if (!picked.success) return failure(picked.error);
+  if (picked.data.name !== undefined) {
+    const name = trimmedName(picked.data.name, "Field");
+    if (!name.success) return failure(name.error);
+    picked.data.name = name.data;
+  }
+
   try {
-    await prisma.modelFieldDefinition.update({ where: { id: fieldId }, data });
+    // Ownership: the field's model's domain must belong to the caller's active tenant; anything else reads as missing.
+    const row = await prisma.modelFieldDefinition.findUnique({
+      where: { id: id.data },
+      select: { model: { select: { domain: { select: { tenantId: true } } } } },
+    });
+    if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return notFound("Field");
+
+    await prisma.modelFieldDefinition.update({ where: { id: id.data }, data: picked.data as Prisma.ModelFieldDefinitionUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to update field" };
+    if (e instanceof Error && e.message.includes("Unique constraint")) {
+      return { error: `Field "${picked.data.name}" already exists`, code: "NAME_CONFLICT" };
+    }
+    return unexpectedFailure("updateModelFieldAction", e);
   }
 }
 
@@ -300,18 +360,28 @@ export async function deleteModelFieldAction(fieldId: string) {
 // Entity delete
 // ---------------------------------------------------------------------------
 
+/** What the delete toast shows for a blocked entity: the service message plus its one-line remedy. */
+const inUseText = (e: ServiceError) => (e.suggestedFix ? `${e.message}${/[.!?]$/.test(e.message) ? "" : "."} ${e.suggestedFix}` : e.message);
+
 export async function deleteEntityAction(entityId: string) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+  // Declared outside the try: the catch explains a P2003 for this very entity.
+  let entity: { id: string; name: string; tenantId: string } | null = null;
   try {
     const currentUserId = await resolveCurrentUserId(session.user);
 
     // Verify the entity exists before attempting delete
-    const entity = await prisma.entity.findUnique({
+    entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, tenantId: true },
     });
     if (!entity) return { error: "Entity not found" };
+
+    // Messages / traits that pin it, and other entities whose published versions reference one of its versions (no FK:
+    // only this guard stops that delete and leaves a dangling edge that breaks rendering of the referencing version).
+    const inUse = await explainEntityDeleteFailure(prisma, entity);
+    if (inUse) return { error: inUseText(inUse) };
 
     await withAudit({
       action: "DELETE",
@@ -330,13 +400,9 @@ export async function deleteEntityAction(entityId: string) {
     if (e instanceof AuditUserMissingError) {
       return { error: "Your session is stale. Sign out and sign in again, then retry." };
     }
-    // A message / trait pin (NO ACTION FK) keeps the entity alive: name the referencing records.
-    if (isForeignKeyViolation(e)) {
-      const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { id: true, name: true } });
-      const inUse = entity ? await explainEntityDeleteFailure(prisma, entity) : null;
-      if (inUse) return { error: inUse.message };
-    }
-    return { error: e instanceof Error ? e.message : "Failed to delete entity" };
+    // P2003 (a pin that landed since the check) -> IN_USE by name; lock timeout / deadlock -> retryable CONFLICT; anything
+    // else -> the generic message (the driver text is logged, never shown).
+    return { error: inUseText(await entityDeleteFailure(prisma, entity ?? { id: entityId }, e)) };
   }
 }
 
@@ -351,23 +417,27 @@ export async function createSharedEnumAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
-  const scopeTarget = await dataTypeTarget(domainId, target);
-  if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
+  const input = readFields(data, { name: isString, values: isStringArray, description: optional(isString) }, "an enum");
+  if (!input.success) return failure(input.error);
+  const name = trimmedName(input.data.name, "Enum");
+  if (!name.success) return failure(name.error);
   try {
+    const scopeTarget = await dataTypeTarget(domainId, target);
+    if (!scopeTarget.success) return failure(scopeTarget.error);
     const result = await createInScope(prisma, {
       kind: "dataType",
-      target: scopeTarget,
-      name: data.name,
+      target: scopeTarget.data,
+      name: name.data,
       write: (tx, scope) =>
         tx.sharedEnum.create({
-          data: { name: data.name, values: data.values, description: data.description ?? "", ...scope },
+          data: { name: name.data, values: input.data.values as string[], description: (input.data.description as string | undefined) ?? "", ...scope },
         }),
     });
     if (!result.success) return { error: result.error.message };
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to create enum" };
+    return unexpectedFailure("createSharedEnumAction", e);
   }
 }
 
@@ -383,6 +453,15 @@ export async function deleteSharedEnumAction(enumId: string) {
   }
 }
 
+/**
+ * Editable columns of an enum / scalar / union. Placement (`tenantId` / `domainId` / `productId`), `id`, timestamps and
+ * `name` are deliberately absent: a data type has no move or rename path through these actions (a rename would have to go
+ * through the line-unique name registry), so an update that names any of them is rejected with VALIDATION_ERROR.
+ */
+const ENUM_EDITABLE = { values: isStringArray, description: isString };
+const SCALAR_EDITABLE = { baseType: isString, format: isStringOrNull, pattern: isStringOrNull, description: isString };
+const UNION_EDITABLE = { memberTypes: isStringArray, description: isString };
+
 export async function updateSharedEnumAction(
   enumId: string,
   data: { values?: string[]; description?: string }
@@ -390,12 +469,19 @@ export async function updateSharedEnumAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  const id = requireId(enumId, "Enum id");
+  if (!id.success) return failure(id.error);
+  const picked = pickEditable(data, ENUM_EDITABLE, "an enum");
+  if (!picked.success) return failure(picked.error);
+
   try {
-    await prisma.sharedEnum.update({ where: { id: enumId }, data });
+    const row = await prisma.sharedEnum.findUnique({ where: { id: id.data }, select: { tenantId: true } });
+    if (!row || !(await isInActiveTenant(row.tenantId))) return notFound("Enum");
+    await prisma.sharedEnum.update({ where: { id: id.data }, data: picked.data as Prisma.SharedEnumUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to update enum" };
+    return unexpectedFailure("updateSharedEnumAction", e);
   }
 }
 
@@ -410,21 +496,29 @@ export async function createCustomScalarAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
-  const scopeTarget = await dataTypeTarget(domainId, target);
-  if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
+  const input = readFields(
+    data,
+    { name: isString, baseType: isString, format: optional(isStringOrNull), pattern: optional(isStringOrNull), description: optional(isString) },
+    "a scalar"
+  );
+  if (!input.success) return failure(input.error);
+  const name = trimmedName(input.data.name, "Scalar");
+  if (!name.success) return failure(name.error);
   try {
+    const scopeTarget = await dataTypeTarget(domainId, target);
+    if (!scopeTarget.success) return failure(scopeTarget.error);
     const result = await createInScope(prisma, {
       kind: "dataType",
-      target: scopeTarget,
-      name: data.name,
+      target: scopeTarget.data,
+      name: name.data,
       write: (tx, scope) =>
         tx.customScalar.create({
           data: {
-            name: data.name,
-            baseType: data.baseType,
-            format: data.format ?? null,
-            pattern: data.pattern ?? null,
-            description: data.description ?? "",
+            name: name.data,
+            baseType: input.data.baseType as string,
+            format: (input.data.format as string | null | undefined) ?? null,
+            pattern: (input.data.pattern as string | null | undefined) ?? null,
+            description: (input.data.description as string | undefined) ?? "",
             ...scope,
           },
         }),
@@ -433,7 +527,7 @@ export async function createCustomScalarAction(
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to create scalar" };
+    return unexpectedFailure("createCustomScalarAction", e);
   }
 }
 
@@ -456,12 +550,19 @@ export async function updateCustomScalarAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  const id = requireId(scalarId, "Scalar id");
+  if (!id.success) return failure(id.error);
+  const picked = pickEditable(data, SCALAR_EDITABLE, "a scalar");
+  if (!picked.success) return failure(picked.error);
+
   try {
-    await prisma.customScalar.update({ where: { id: scalarId }, data });
+    const row = await prisma.customScalar.findUnique({ where: { id: id.data }, select: { tenantId: true } });
+    if (!row || !(await isInActiveTenant(row.tenantId))) return notFound("Scalar");
+    await prisma.customScalar.update({ where: { id: id.data }, data: picked.data as Prisma.CustomScalarUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to update scalar" };
+    return unexpectedFailure("updateCustomScalarAction", e);
   }
 }
 
@@ -476,23 +577,27 @@ export async function createUnionTypeAction(
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
-  const scopeTarget = await dataTypeTarget(domainId, target);
-  if (!scopeTarget) return { error: DATA_TYPE_TARGET_REQUIRED };
+  const input = readFields(data, { name: isString, memberTypes: isStringArray, description: optional(isString) }, "a union");
+  if (!input.success) return failure(input.error);
+  const name = trimmedName(input.data.name, "Union");
+  if (!name.success) return failure(name.error);
   try {
+    const scopeTarget = await dataTypeTarget(domainId, target);
+    if (!scopeTarget.success) return failure(scopeTarget.error);
     const result = await createInScope(prisma, {
       kind: "dataType",
-      target: scopeTarget,
-      name: data.name,
+      target: scopeTarget.data,
+      name: name.data,
       write: (tx, scope) =>
         tx.unionType.create({
-          data: { name: data.name, memberTypes: data.memberTypes, description: data.description ?? "", ...scope },
+          data: { name: name.data, memberTypes: input.data.memberTypes as string[], description: (input.data.description as string | undefined) ?? "", ...scope },
         }),
     });
     if (!result.success) return { error: result.error.message };
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to create union" };
+    return unexpectedFailure("createUnionTypeAction", e);
   }
 }
 
@@ -515,12 +620,19 @@ export async function updateUnionTypeAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
+  const id = requireId(unionId, "Union id");
+  if (!id.success) return failure(id.error);
+  const picked = pickEditable(data, UNION_EDITABLE, "a union");
+  if (!picked.success) return failure(picked.error);
+
   try {
-    await prisma.unionType.update({ where: { id: unionId }, data });
+    const row = await prisma.unionType.findUnique({ where: { id: id.data }, select: { tenantId: true } });
+    if (!row || !(await isInActiveTenant(row.tenantId))) return notFound("Union");
+    await prisma.unionType.update({ where: { id: id.data }, data: picked.data as Prisma.UnionTypeUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to update union type" };
+    return unexpectedFailure("updateUnionTypeAction", e);
   }
 }
 
@@ -676,18 +788,38 @@ export async function createOperationAction(
   }
 }
 
+/**
+ * Editable columns of an operation. `serviceId` (the move-to-another-API column), `decorators` and everything else are
+ * deliberately absent: an update that names anything else is rejected with VALIDATION_ERROR.
+ */
+const OPERATION_EDITABLE = { name: isString, httpMethod: isString, httpPath: isString, description: isString };
+
 export async function updateOperationAction(
   operationId: string,
   data: { name?: string; httpMethod?: string; httpPath?: string; description?: string }
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const id = requireId(operationId, "Operation id");
+  if (!id.success) return failure(id.error);
+  const picked = pickEditable(data, OPERATION_EDITABLE, "an operation");
+  if (!picked.success) return failure(picked.error);
+  if (picked.data.name !== undefined) {
+    const name = trimmedName(picked.data.name, "Operation");
+    if (!name.success) return failure(name.error);
+    picked.data.name = name.data;
+  }
+
   try {
-    await prisma.operation.update({ where: { id: operationId }, data });
+    // Ownership: the operation's API must belong to the caller's active tenant; anything else reads as missing.
+    const row = await prisma.operation.findUnique({ where: { id: id.data }, select: { service: { select: { tenantId: true } } } });
+    if (!row || !(await isInActiveTenant(row.service.tenantId))) return notFound("Operation");
+    await prisma.operation.update({ where: { id: id.data }, data: picked.data as Prisma.OperationUpdateInput });
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
-    return { error: e instanceof Error ? e.message : "Failed to update operation" };
+    return unexpectedFailure("updateOperationAction", e);
   }
 }
 
@@ -1065,11 +1197,14 @@ export async function createDomainAssetsFromImportAction(
         result.decoratorsCreated++;
       }
 
+      // Names are trimmed before BOTH the registry check and the write: the registry compares trimmed names, so an
+      // untrimmed stored name ("Foo ") would slip past a later "Foo" and break line uniqueness.
       for (const sharedEnum of payload.sharedEnums) {
-        if (!(await isNameFree("sharedEnum", sharedEnum.name, domainScope.data))) continue;
+        const name = sharedEnum.name.trim();
+        if (!(await isNameFree("sharedEnum", name, domainScope.data))) continue;
         await tx.sharedEnum.create({
           data: {
-            name: sharedEnum.name,
+            name,
             values: sharedEnum.values,
             description: sharedEnum.description ?? "",
             ...domainScope.data,
@@ -1079,10 +1214,11 @@ export async function createDomainAssetsFromImportAction(
       }
 
       for (const scalar of payload.customScalars) {
-        if (!(await isNameFree("customScalar", scalar.name, domainScope.data))) continue;
+        const name = scalar.name.trim();
+        if (!(await isNameFree("customScalar", name, domainScope.data))) continue;
         await tx.customScalar.create({
           data: {
-            name: scalar.name,
+            name,
             baseType: scalar.baseType,
             format: scalar.format ?? null,
             pattern: scalar.pattern ?? null,
@@ -1094,10 +1230,11 @@ export async function createDomainAssetsFromImportAction(
       }
 
       for (const unionType of payload.unionTypes) {
-        if (!(await isNameFree("unionType", unionType.name, domainScope.data))) continue;
+        const name = unionType.name.trim();
+        if (!(await isNameFree("unionType", name, domainScope.data))) continue;
         await tx.unionType.create({
           data: {
-            name: unionType.name,
+            name,
             memberTypes: unionType.memberTypes,
             description: unionType.description ?? "",
             ...domainScope.data,
@@ -1185,10 +1322,10 @@ export async function createDomainAssetsFromImportAction(
           ? { ...domainScope.data, productId: entityRef.productId }
           : domainScope.data;
 
-        if (!(await isNameFree("service", service.name, serviceScope))) continue;
+        if (!(await isNameFree("service", service.name.trim(), serviceScope))) continue;
         await tx.serviceDefinition.create({
           data: {
-            name: service.name,
+            name: service.name.trim(),
             description: service.description ?? "",
             basePath: service.basePath ?? "/",
             tenantId,

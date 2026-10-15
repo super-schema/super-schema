@@ -1,7 +1,7 @@
 import type { BumpKind } from "@/lib/entity-versioning/types";
-import type { EventSpecDocument, EventSpecOperation } from "@/lib/event-specs/types";
+import type { EventSpecDocument, EventSpecOperation, JsonSchemaDialect, PayloadFormat } from "@/lib/event-specs/types";
 import { jsonPointer } from "@/lib/event-specs/json-pointer";
-import type { MessageResolvedSpec, MessageSpec, ResolvedPin } from "./types";
+import type { FrozenChannel, FrozenTrait, MessageResolvedSpec, MessageSpec, ResolvedPin } from "./types";
 
 export interface BumpDecision {
   bump: BumpKind;
@@ -74,15 +74,106 @@ export interface MessageVersionInfo {
   label: string;
 }
 
+/** A channel's consumer-visible wire contract: its protocol and format profile (R78). */
+export interface BumpChannelProfile {
+  protocol: string;
+  format: PayloadFormat;
+  /** JSON Schema channels only; an undefined dialect is "unknown" and never counts as a change. */
+  dialect?: JsonSchemaDialect;
+}
+
+/**
+ * What a trait's headers pin identifies: the entity and the pinned version's major (R78). `major` / `label` are null for an
+ * unpinned trait or a version row that no longer resolves: "unknown", never a MAJOR on its own.
+ */
+export interface BumpTraitHeadersPin {
+  entityId: string;
+  entityName?: string;
+  entityVersionId: string | null;
+  major: number | null;
+  label: string | null;
+}
+
 export interface EventSpecBumpSide {
   document: EventSpecDocument;
   /** Channel id → address (frozen copy for the previous side, live for the current side). */
   channelAddresses: Record<string, string | null>;
   channelNames: Record<string, string>;
+  /**
+   * Channel id → protocol + format profile (R78). Optional: a side that lacks it (a version stored before this existed, or a
+   * channel whose frozen copy has no profile) is "unknown" and is never compared, so it cannot produce a false MAJOR.
+   */
+  channelProfiles?: Record<string, BumpChannelProfile>;
+  /**
+   * Trait id → headers pin (`null` = the trait carries no headers entity) (R78). An absent trait id is "unknown" and is not
+   * compared, for the same reason as `channelProfiles`.
+   */
+  traitHeaders?: Record<string, BumpTraitHeadersPin | null>;
   /** MessageVersion id → info, for every version id used by this side. */
   messageVersions: Record<string, MessageVersionInfo>;
   /** Trait id → name, used only to word operation-trait reasons (falls back to the id). */
   traitNames?: Record<string, string>;
+}
+
+/** What an entity version id identifies (the headers pin of a trait): looked up from the immutable `entity_versions` row. */
+export interface EntityVersionFacts {
+  entityId: string;
+  entityName: string;
+  major: number;
+  label: string;
+}
+
+export interface EventSpecBumpSideInput {
+  document: EventSpecDocument;
+  /** Live rows (current side) or the frozen copies of a published version (previous side — possibly an older, thinner shape). */
+  channels: FrozenChannel[];
+  traits: FrozenTrait[];
+  versionIds: string[];
+  messageVersions: Record<string, MessageVersionInfo>;
+  /** EntityVersion id → facts, for every headers pin of `traits`; a missing entry reads as "major unknown". */
+  entityVersions?: ReadonlyMap<string, EntityVersionFacts>;
+}
+
+/**
+ * One side of the Event Spec bump comparison. Built from the same rows for both sides; the previous side reads the stored
+ * frozen copies, which were written by older code. Anything such a copy does not carry (a channel without `profile` /
+ * `protocol`, a trait without a headers pin) is left OUT of `channelProfiles` / `traitHeaders` — unknown, never compared — so a
+ * version published before a rule existed cannot get a false MAJOR from it.
+ */
+export function buildEventSpecBumpSide(input: EventSpecBumpSideInput): EventSpecBumpSide {
+  const channelProfiles: Record<string, BumpChannelProfile> = {};
+  for (const c of input.channels) {
+    const profile = (c as Partial<FrozenChannel>).profile;
+    if (!profile || typeof profile.format !== "string" || typeof c.protocol !== "string") continue;
+    channelProfiles[c.id] = { protocol: c.protocol, format: profile.format, ...(profile.dialect ? { dialect: profile.dialect } : {}) };
+  }
+  const traitHeaders: Record<string, BumpTraitHeadersPin | null> = {};
+  for (const t of input.traits) {
+    const entityId = (t as Partial<FrozenTrait>).headersEntityId;
+    const versionId = (t as Partial<FrozenTrait>).headersEntityVersionId;
+    if (entityId === undefined || versionId === undefined) continue; // not recorded by the code that froze it: unknown
+    if (entityId === null) {
+      traitHeaders[t.id] = null;
+      continue;
+    }
+    const version = versionId ? input.entityVersions?.get(versionId) : undefined;
+    traitHeaders[t.id] = {
+      entityId,
+      ...(version ? { entityName: version.entityName } : {}),
+      entityVersionId: versionId,
+      major: version?.major ?? null,
+      label: version?.label ?? null,
+    };
+  }
+  return {
+    document: input.document,
+    channelAddresses: Object.fromEntries(input.channels.map((c) => [c.id, c.address])),
+    channelNames: Object.fromEntries(input.channels.map((c) => [c.id, c.name])),
+    channelProfiles,
+    traitHeaders,
+    messageVersions: Object.fromEntries(input.versionIds.filter((id) => input.messageVersions[id]).map((id) => [id, input.messageVersions[id]])),
+    traitNames: Object.fromEntries(input.traits.map((t) => [t.id, t.name])),
+  };
 }
 
 /** A message-version id an operation uses that the side's `messageVersions` cannot explain. */
@@ -222,6 +313,43 @@ function compareMessages(
   }
 }
 
+const pinText = (pin: BumpTraitHeadersPin) => `${pin.entityName ?? pin.entityId}${pin.label ? ` v${pin.label}` : ""}`;
+const versionText = (label: string | null) => (label ? `v${label}` : "(unpinned)");
+
+/** R78: a trait's headers pin is part of every message that carries the trait, so moving it to another major is breaking. */
+function compareTraitHeaders(trait: string, prev: BumpTraitHeadersPin | null, next: BumpTraitHeadersPin | null, major: string[], minor: string[]): void {
+  if (!prev && !next) return;
+  if (!prev && next) {
+    major.push(`Trait ${trait}: headers entity added (${pinText(next)})`);
+    return;
+  }
+  if (prev && !next) {
+    major.push(`Trait ${trait}: headers entity removed (was ${pinText(prev)})`);
+    return;
+  }
+  const p = prev as BumpTraitHeadersPin;
+  const n = next as BumpTraitHeadersPin;
+  if (p.entityId !== n.entityId) {
+    major.push(`Trait ${trait}: headers now reference ${n.entityName ?? n.entityId} instead of ${p.entityName ?? p.entityId}`);
+  } else if (p.major !== null && n.major !== null && p.major !== n.major) {
+    major.push(`Trait ${trait}: headers pin moved from ${pinText(p)} to ${versionText(n.label)} (new major)`);
+  } else if (p.entityVersionId !== n.entityVersionId) {
+    // Same major, or a side whose major is unknown: not provably breaking.
+    minor.push(`Trait ${trait}: headers pin moved from ${versionText(p.label)} to ${versionText(n.label)}`);
+  }
+}
+
+/** R78: a referenced channel's format profile, JSON Schema dialect or protocol changing breaks its consumers. */
+function compareChannelProfile(channel: string, prev: BumpChannelProfile, next: BumpChannelProfile, major: string[]): void {
+  if (prev.format !== next.format) major.push(`Channel ${channel}: format ${prev.format} → ${next.format}`);
+  else if (prev.format === "json-schema" && prev.dialect && next.dialect && prev.dialect !== next.dialect) {
+    major.push(`Channel ${channel}: JSON Schema dialect ${prev.dialect} → ${next.dialect}`);
+  }
+  if (prev.protocol !== next.protocol) major.push(`Channel ${channel}: protocol ${prev.protocol} → ${next.protocol}`);
+}
+
+const own = <T>(record: Record<string, T>, key: string): T | undefined => (Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined);
+
 const opDetails = (o: EventSpecOperation) => ({ summary: o.summary, description: o.description, bindings: o.bindings });
 
 export interface EventSpecBumpOptions {
@@ -267,7 +395,25 @@ export function classifyEventSpecBump(prev: EventSpecBumpSide, next: EventSpecBu
     if (after !== before) major.push(`Channel ${next.channelNames[id] ?? prev.channelNames[id] ?? id} address changed from "${before}" to "${after}"`);
   }
 
-  const shell = (d: EventSpecDocument) => ({ info: d.info, servers: d.servers, defaultContentType: d.defaultContentType, components: d.components });
+  const channelName = (id: string) => next.channelNames[id] ?? prev.channelNames[id] ?? id;
+  if (prev.channelProfiles && next.channelProfiles) {
+    for (const [id, before] of Object.entries(prev.channelProfiles)) {
+      const after = own(next.channelProfiles, id);
+      if (after) compareChannelProfile(channelName(id), before, after, major);
+    }
+  }
+  if (prev.traitHeaders && next.traitHeaders) {
+    for (const [id, before] of Object.entries(prev.traitHeaders)) {
+      const after = own(next.traitHeaders, id);
+      if (after !== undefined) compareTraitHeaders(traitName(id), before, after, major, minor);
+    }
+  }
+  // Like a Message's contentType, the spec default decides how every message without its own is decoded (R78).
+  if ((prev.document.defaultContentType ?? "") !== (next.document.defaultContentType ?? "")) {
+    major.push(`defaultContentType changed from "${prev.document.defaultContentType ?? "(none)"}" to "${next.document.defaultContentType ?? "(none)"}"`);
+  }
+
+  const shell = (d: EventSpecDocument) => ({ info: d.info, servers: d.servers, components: d.components });
   if (!same(shell(prev.document), shell(next.document))) minor.push("Info, servers or components changed");
   return decide(major, minor);
 }

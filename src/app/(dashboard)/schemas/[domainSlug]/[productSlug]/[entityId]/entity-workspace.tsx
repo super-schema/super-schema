@@ -54,6 +54,7 @@ import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { getPublishPreviewAction, publishEntityAction, listEntityVersionsAction } from "./version-actions";
 import { PublishEntityDialog } from "./components/PublishEntityDialog";
 import { EntityVersionList } from "./components/EntityVersionList";
@@ -157,6 +158,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
 
   // Entity delete state
   const router = useRouter();
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
 
@@ -443,6 +445,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         toast.error(result.error);
       } else {
         toast.success(`"${entity.name}" deleted`);
+        void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted entity row stays until a reload
         router.push(
           entity.domainSlug && entity.productSlug
             ? assetHref({ kind: "product", domainSlug: entity.domainSlug, productSlug: entity.productSlug })
@@ -455,7 +458,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
       setIsDeletingEntity(false);
       setDeleteConfirmOpen(false);
     }
-  }, [entity.id, entity.name, entity.domainSlug, entity.productSlug, router]);
+  }, [entity.id, entity.name, entity.domainSlug, entity.productSlug, router, invalidateDomainsTree]);
 
   // Metadata save (tags / owner) — updates the draft only (spec D1).
   const handleMetaSaved = useCallback(() => {

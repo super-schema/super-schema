@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { classifyEventSpecBump, classifyMessageBump, findUnresolvedMessageVersions, stableStringify, type EventSpecBumpSide } from "@/lib/events/bump-rules";
-import type { MessageResolvedSpec, ResolvedPin } from "@/lib/events/types";
+import {
+  buildEventSpecBumpSide, classifyEventSpecBump, classifyMessageBump, findUnresolvedMessageVersions, stableStringify,
+  type BumpTraitHeadersPin, type EntityVersionFacts, type EventSpecBumpSide,
+} from "@/lib/events/bump-rules";
+import type { FrozenChannel, FrozenTrait, MessageResolvedSpec, ResolvedPin } from "@/lib/events/types";
 
 const pin = (entityName: string, label: string, entityId = `e-${entityName}`): ResolvedPin => ({
   entityId, entityName, entityVersionId: `${entityName}@${label}`, label, major: Number(label.split(".")[0]),
@@ -246,5 +249,197 @@ describe("operation traits (fix round 1)", () => {
   it("adding an operation trait is MINOR and explicit; reordering is ignored", () => {
     expect(classifyEventSpecBump(withTraits(["t1"]), withTraits(["t1", "t2"]))).toEqual({ bump: "MINOR", reasons: ['Operation "o" trait t2 added'] });
     expect(classifyEventSpecBump(withTraits(["t1", "t2"]), withTraits(["t2", "t1"]))).toEqual({ bump: "MINOR", reasons: [] });
+  });
+});
+
+// ── R78 (final review B-I1): channel profile / protocol / dialect, trait headers pins and the spec default content type ──
+describe("R78: channel format profile, dialect and protocol", () => {
+  const avro = { protocol: "kafka", format: "avro" as const };
+  const withProfile = (profile: NonNullable<EventSpecBumpSide["channelProfiles"]>[string]) =>
+    side([op("o", ["mv-1.3"])], { channelProfiles: { ch: profile } });
+  const base = withProfile(avro);
+
+  it("a format change (any pair) is MAJOR and says so", () => {
+    expect(classifyEventSpecBump(base, withProfile({ protocol: "kafka", format: "json-schema", dialect: "draft-07" }))).toEqual({
+      bump: "MAJOR",
+      reasons: ["Channel orders: format avro → json-schema"],
+    });
+    expect(classifyEventSpecBump(base, withProfile({ protocol: "kafka", format: "protobuf" })).reasons).toEqual(["Channel orders: format avro → protobuf"]);
+    expect(classifyEventSpecBump(withProfile({ protocol: "kafka", format: "protobuf" }), base).reasons).toEqual(["Channel orders: format protobuf → avro"]);
+  });
+
+  it("a JSON Schema dialect change is MAJOR; the dialect is irrelevant when the format itself changed", () => {
+    const draft07 = withProfile({ protocol: "kafka", format: "json-schema", dialect: "draft-07" });
+    const draft2020 = withProfile({ protocol: "kafka", format: "json-schema", dialect: "2020-12" });
+    expect(classifyEventSpecBump(draft07, draft2020)).toEqual({ bump: "MAJOR", reasons: ["Channel orders: JSON Schema dialect draft-07 → 2020-12"] });
+    expect(classifyEventSpecBump(draft2020, draft07).reasons).toEqual(["Channel orders: JSON Schema dialect 2020-12 → draft-07"]);
+    expect(classifyEventSpecBump(draft07, base).reasons).toEqual(["Channel orders: format json-schema → avro"]);
+  });
+
+  it("a protocol change is MAJOR; format and protocol changing together report both", () => {
+    expect(classifyEventSpecBump(base, withProfile({ protocol: "pulsar", format: "avro" }))).toEqual({
+      bump: "MAJOR",
+      reasons: ["Channel orders: protocol kafka → pulsar"],
+    });
+    expect(classifyEventSpecBump(base, withProfile({ protocol: "pulsar", format: "protobuf" })).reasons).toEqual([
+      "Channel orders: format avro → protobuf",
+      "Channel orders: protocol kafka → pulsar",
+    ]);
+  });
+
+  it("an unchanged profile is MINOR with no reasons", () => {
+    expect(classifyEventSpecBump(base, withProfile({ ...avro }))).toEqual({ bump: "MINOR", reasons: [] });
+  });
+
+  it("a channel address change keeps its own reason (still MAJOR) next to a profile change", () => {
+    const next = side([op("o", ["mv-1.3"])], { channelAddresses: { ch: "payments.orders.v2" }, channelProfiles: { ch: { protocol: "kafka", format: "protobuf" } } });
+    expect(classifyEventSpecBump(base, next).reasons).toEqual([
+      'Channel orders address changed from "payments.orders.v1" to "payments.orders.v2"',
+      "Channel orders: format avro → protobuf",
+    ]);
+  });
+
+  it("a channel only on one side, or a side without profiles (a version stored before R78), is never a false MAJOR", () => {
+    const profiled = side([op("o", ["mv-1.3"])], { channelProfiles: { other: { protocol: "kafka", format: "protobuf" } } });
+    expect(classifyEventSpecBump(base, profiled)).toEqual({ bump: "MINOR", reasons: [] });
+    const old = side([op("o", ["mv-1.3"])]); // no channelProfiles at all
+    expect(classifyEventSpecBump(old, withProfile({ protocol: "kafka", format: "protobuf" }))).toEqual({ bump: "MINOR", reasons: [] });
+    expect(classifyEventSpecBump(withProfile({ protocol: "kafka", format: "protobuf" }), old)).toEqual({ bump: "MINOR", reasons: [] });
+  });
+
+  it("a JSON Schema channel whose frozen dialect is unknown is not compared on the dialect", () => {
+    expect(
+      classifyEventSpecBump(withProfile({ protocol: "kafka", format: "json-schema" }), withProfile({ protocol: "kafka", format: "json-schema", dialect: "2020-12" }))
+    ).toEqual({ bump: "MINOR", reasons: [] });
+  });
+});
+
+describe("R78: trait headers pins", () => {
+  const pinOf = (label: string, over: Partial<BumpTraitHeadersPin> = {}): BumpTraitHeadersPin => ({
+    entityId: "e-ce", entityName: "CloudEventsHeaders", entityVersionId: `ce@${label}`, major: Number(label.split(".")[0]), label, ...over,
+  });
+  const withHeaders = (pin: BumpTraitHeadersPin | null) =>
+    side([op("o", ["mv-1.3"])], { traitHeaders: { "t-ce": pin }, traitNames: { "t-ce": "CloudEvents" } });
+
+  it("a pin moving to a different major is MAJOR (up or down) and names the trait and the versions", () => {
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), withHeaders(pinOf("2.0")))).toEqual({
+      bump: "MAJOR",
+      reasons: ["Trait CloudEvents: headers pin moved from CloudEventsHeaders v1.0 to v2.0 (new major)"],
+    });
+    expect(classifyEventSpecBump(withHeaders(pinOf("2.0")), withHeaders(pinOf("1.0"))).bump).toBe("MAJOR");
+  });
+
+  it("a pin moving within the same major is only MINOR (with a reason)", () => {
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), withHeaders(pinOf("1.2")))).toEqual({
+      bump: "MINOR",
+      reasons: ["Trait CloudEvents: headers pin moved from v1.0 to v1.2"],
+    });
+  });
+
+  it("a headers entity added to or removed from a trait is MAJOR", () => {
+    expect(classifyEventSpecBump(withHeaders(null), withHeaders(pinOf("1.0")))).toEqual({
+      bump: "MAJOR",
+      reasons: ["Trait CloudEvents: headers entity added (CloudEventsHeaders v1.0)"],
+    });
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), withHeaders(null))).toEqual({
+      bump: "MAJOR",
+      reasons: ["Trait CloudEvents: headers entity removed (was CloudEventsHeaders v1.0)"],
+    });
+  });
+
+  it("pinning a different entity is MAJOR even at the same major", () => {
+    const other = pinOf("1.0", { entityId: "e-other", entityName: "OtherHeaders", entityVersionId: "o@1.0" });
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), withHeaders(other)).reasons).toEqual([
+      "Trait CloudEvents: headers now reference OtherHeaders instead of CloudEventsHeaders",
+    ]);
+  });
+
+  it("an unchanged pin is MINOR with no reasons; an unknown major (version row gone / unpinned) is never a MAJOR on its own", () => {
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), withHeaders(pinOf("1.0")))).toEqual({ bump: "MINOR", reasons: [] });
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), withHeaders(pinOf("2.0", { major: null, label: null })))).toEqual({
+      bump: "MINOR",
+      reasons: ["Trait CloudEvents: headers pin moved from v1.0 to (unpinned)"],
+    });
+  });
+
+  it("traits that are unknown on either side (old stored versions) or not shared are not compared", () => {
+    expect(classifyEventSpecBump(side([op("o", ["mv-1.3"])]), withHeaders(pinOf("1.0")))).toEqual({ bump: "MINOR", reasons: [] });
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), side([op("o", ["mv-1.3"])]))).toEqual({ bump: "MINOR", reasons: [] });
+    const other = side([op("o", ["mv-1.3"])], { traitHeaders: { "t-other": pinOf("5.0") } });
+    expect(classifyEventSpecBump(withHeaders(pinOf("1.0")), other)).toEqual({ bump: "MINOR", reasons: [] });
+  });
+});
+
+describe("R78: the spec defaultContentType aligns with the Message contentType rule", () => {
+  const withDefault = (defaultContentType?: string, info: { title: string } = { title: "checkout-service" }): EventSpecBumpSide => {
+    const s = side([op("o", ["mv-1.3"])]);
+    return { ...s, document: { ...s.document, info, ...(defaultContentType !== undefined ? { defaultContentType } : {}) } };
+  };
+
+  it("a change, an addition or a removal is MAJOR, with ONE reason (not also the generic shell note)", () => {
+    expect(classifyEventSpecBump(withDefault("application/json"), withDefault("avro/binary"))).toEqual({
+      bump: "MAJOR",
+      reasons: ['defaultContentType changed from "application/json" to "avro/binary"'],
+    });
+    expect(classifyEventSpecBump(withDefault(), withDefault("application/json")).reasons).toEqual(['defaultContentType changed from "(none)" to "application/json"']);
+    expect(classifyEventSpecBump(withDefault("application/json"), withDefault()).bump).toBe("MAJOR");
+  });
+
+  it("an unchanged default is MINOR / no reasons, and info changes stay a MINOR note", () => {
+    expect(classifyEventSpecBump(withDefault("application/json"), withDefault("application/json"))).toEqual({ bump: "MINOR", reasons: [] });
+    expect(classifyEventSpecBump(withDefault("application/json"), withDefault("application/json", { title: "other" }))).toEqual({
+      bump: "MINOR",
+      reasons: ["Info, servers or components changed"],
+    });
+  });
+});
+
+describe("buildEventSpecBumpSide (R78): old stored shapes never produce a false MAJOR", () => {
+  const document = { info: { title: "x" }, servers: [], operations: [] };
+  const channel = (over: Record<string, unknown> = {}): FrozenChannel =>
+    ({ id: "ch", name: "orders", productSlug: "p", address: "a", protocol: "kafka", profile: { format: "avro" }, ...over }) as FrozenChannel;
+  const trait = (over: Record<string, unknown> = {}): FrozenTrait =>
+    ({ id: "t", name: "CloudEvents", kind: "MESSAGE", ownerSlug: "acme", spec: {}, headersEntityId: "e-ce", headersEntityVersionId: "v-ce-1", ...over }) as FrozenTrait;
+  const entityVersions = new Map<string, EntityVersionFacts>([
+    ["v-ce-1", { entityId: "e-ce", entityName: "CloudEventsHeaders", major: 1, label: "1.0" }],
+    ["v-ce-2", { entityId: "e-ce", entityName: "CloudEventsHeaders", major: 2, label: "2.0" }],
+  ]);
+  const build = (channels: FrozenChannel[], traits: FrozenTrait[]) =>
+    buildEventSpecBumpSide({ document, channels, traits, versionIds: [], messageVersions: {}, entityVersions });
+
+  it("records profile, protocol, dialect and the headers pin identity (entity, version id, major, label)", () => {
+    const built = build([channel({ profile: { format: "json-schema", dialect: "2020-12" } })], [trait()]);
+    expect(built.channelProfiles).toEqual({ ch: { protocol: "kafka", format: "json-schema", dialect: "2020-12" } });
+    expect(built.traitHeaders).toEqual({ t: { entityId: "e-ce", entityName: "CloudEventsHeaders", entityVersionId: "v-ce-1", major: 1, label: "1.0" } });
+    expect(built.channelAddresses).toEqual({ ch: "a" });
+    expect(built.traitNames).toEqual({ t: "CloudEvents" });
+  });
+
+  it("a trait without a headers entity is `null`; an unresolvable pinned version has an unknown major", () => {
+    expect(build([], [trait({ headersEntityId: null, headersEntityVersionId: null })]).traitHeaders).toEqual({ t: null });
+    expect(build([], [trait({ headersEntityVersionId: "v-gone" })]).traitHeaders).toEqual({
+      t: { entityId: "e-ce", entityVersionId: "v-gone", major: null, label: null },
+    });
+  });
+
+  it("an old-shape frozen fixture (no profile / protocol on the channel, no headers fields on the trait) is left out as unknown", () => {
+    const oldChannel = { id: "ch", name: "orders", address: "a" } as unknown as FrozenChannel;
+    const oldTrait = { id: "t", name: "CloudEvents", kind: "MESSAGE", ownerSlug: "acme", spec: {} } as unknown as FrozenTrait;
+    const built = build([oldChannel], [oldTrait]);
+    expect(built.channelProfiles).toEqual({});
+    expect(built.traitHeaders).toEqual({});
+    // Against a live, fully described current side the old previous side classifies as unchanged: no false MAJOR.
+    const current = build([channel({ profile: { format: "protobuf" }, protocol: "pulsar" })], [trait({ headersEntityVersionId: "v-ce-2" })]);
+    expect(classifyEventSpecBump(built, current)).toEqual({ bump: "MINOR", reasons: [] });
+    // The same change against a fully described previous side IS the MAJOR the rules promise.
+    const previous = build([channel()], [trait()]);
+    expect(classifyEventSpecBump(previous, current)).toEqual({
+      bump: "MAJOR",
+      reasons: [
+        "Channel orders: format avro → protobuf",
+        "Channel orders: protocol kafka → pulsar",
+        "Trait CloudEvents: headers pin moved from CloudEventsHeaders v1.0 to v2.0 (new major)",
+      ],
+    });
   });
 });

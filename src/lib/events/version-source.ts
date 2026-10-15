@@ -1,4 +1,6 @@
 import { ok, err, type Result } from "@/types/result";
+// Server-only by inheritance: the guard imports `server-only` and the TypeSpec compiler's parser (Node package).
+import { importNotAllowedError, isAllowedTypeSpecImport, scanTypeSpecImports } from "@/lib/typespec/import-guard";
 
 export type StatementKind = "import" | "using" | "namespace" | "declaration" | "other";
 export interface TypeSpecStatement {
@@ -94,7 +96,7 @@ function stripLeadingDecorators(code: string): string {
 
 function classify(text: string): TypeSpecStatement {
   const head = stripLeadingDecorators(codeOnly(text)).trim();
-  if (/^import\s/.test(head)) return { kind: "import", text: (/import\s+"[^"]*"\s*;/.exec(text)?.[0] ?? text).trim() };
+  if (/^import\b/.test(head)) return { kind: "import", text: (/import\s*"[^"]*"\s*;/.exec(text)?.[0] ?? text).trim() };
   if (/^using\s/.test(head)) return { kind: "using", text: (/using\s+[^;]+;/.exec(text)?.[0] ?? text).trim() };
   if (/^namespace\s+[\w.`]+\s*;$/.test(head)) return { kind: "namespace", text };
   const m = DECLARATION_HEAD.exec(head);
@@ -184,20 +186,33 @@ function stripComments(text: string): string {
 const normalizeDeclaration = (text: string): string => stripComments(text).replace(/\s+/g, " ").trim();
 
 /**
- * Hoisted imports are limited to TypeSpec libraries (`@typespec/<package>`) and the governance library: the
- * program is compiled by a real `tsp` process, and entity sources are user-authored (a relative, absolute,
- * `.js` / `.tsp` or URL specifier would let a source read files or run code from the host).
+ * `text` with every hoisted import removed in ONE pass: from the end of the previous top-level statement
+ * (`leadStart`) through the end of the import. That range is the import plus whatever is attached to it in front
+ * (a `/** … *\/` doc comment, other comments, decorators), so none of it is left behind to attach to the NEXT
+ * declaration. Removed characters become spaces and every newline is kept, so offsets and line numbers of
+ * everything after are unchanged. Linear in the text (a source can hold tens of thousands of imports); `imports`
+ * must be in source order, as the scanner returns them.
  */
-const ALLOWED_IMPORT = /^(?:@typespec\/[A-Za-z0-9][A-Za-z0-9_-]*|@superschema\/typespec-enterprise)$/;
-
-function importSpecifier(statement: string): string | null {
-  return /^import\s+"([^"\n]*)"\s*;$/.exec(statement.trim())?.[1] ?? null;
+export function blankImportStatements(text: string, imports: ReadonlyArray<{ leadStart: number; end: number }>): string {
+  const segments: string[] = [];
+  let cursor = 0;
+  for (const { leadStart, end } of imports) {
+    const start = Math.max(leadStart, cursor);
+    if (end <= start) continue;
+    segments.push(text.slice(cursor, start), text.slice(start, end).replace(/[^\r\n]/g, " "));
+    cursor = end;
+  }
+  segments.push(text.slice(cursor));
+  return segments.join("");
 }
 
 /**
  * D9: one TypeSpec program from several sources (pinned root version first, then its closure).
- * - Imports are hoisted and de-duplicated, but only `@typespec/*` and `@superschema/typespec-enterprise`
- *   specifiers are allowed (`TYPESPEC_IMPORT_NOT_ALLOWED`); usings are hoisted and de-duplicated.
+ * - Imports are found by the TypeSpec parser (`@/lib/typespec/import-guard`), never by this file's statement
+ *   splitter, so `import"x";` and an import trailing a `}` on the same line are seen like any other. They are
+ *   hoisted and de-duplicated, but only `@typespec/*` and `@superschema/typespec-enterprise` specifiers are
+ *   allowed (`TYPESPEC_IMPORT_NOT_ALLOWED`: the program is compiled by a real `tsp` process and an import of a
+ *   path would run code from the host); usings are hoisted and de-duplicated.
  * - File-level `namespace X;` statements are dropped (the caller wraps the program in one level-derived namespace).
  * - A declaration name seen twice keeps its first copy only when both copies have the same keyword and the same
  *   body (whitespace and comments ignored). Any other duplicate — a different keyword (`model X` vs `enum X`) or a
@@ -212,19 +227,20 @@ export function combineTypeSpecSources(parts: SourcePart[]): Result<CombinedSour
   const warnings: string[] = [];
 
   for (const part of parts) {
-    const statements = splitTypeSpecStatements(part.source);
+    const scanned = scanTypeSpecImports(part.source);
+    if (!scanned.success) return err({ ...scanned.error, message: `${part.label}: ${scanned.error.message}` });
+    const offender = scanned.data.imports.find((i) => !isAllowedTypeSpecImport(i.specifier));
+    if (offender) return err(importNotAllowedError(offender.specifier, part.label));
+    const hoisted = scanned.data.imports.filter((i) => i.topLevel);
+    for (const i of hoisted) imports.add(`import "${i.specifier}";`);
+    // The splitter never sees the hoisted statements (nor the comments / decorators written in front of them), so it
+    // cannot misplace or misclassify them and a file-header doc comment does not attach to the next declaration.
+    const statements = splitTypeSpecStatements(blankImportStatements(scanned.data.text, hoisted));
     if (!statements.success) return err({ ...statements.error, message: `${part.label}: ${statements.error.message}` });
     for (const s of statements.data) {
       if (s.kind === "import") {
-        const specifier = importSpecifier(s.text);
-        if (specifier === null || !ALLOWED_IMPORT.test(specifier)) {
-          return err({
-            code: "TYPESPEC_IMPORT_NOT_ALLOWED",
-            message: `${part.label}: import "${specifier ?? s.text}" is not allowed; only @typespec/* libraries and @superschema/typespec-enterprise can be imported`,
-            details: { label: part.label, specifier: specifier ?? s.text },
-          });
-        }
-        imports.add(s.text);
+        // The parser found no import here yet the splitter reads one: refuse rather than guess which is right.
+        return err(importNotAllowedError(s.text, part.label));
       } else if (s.kind === "using") usings.add(s.text);
       else if (s.kind === "namespace") continue;
       else if (s.kind === "declaration" && s.name) {

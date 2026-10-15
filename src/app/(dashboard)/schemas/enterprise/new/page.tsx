@@ -21,7 +21,7 @@ export default async function NewEnterpriseEntityPage() {
     <div className="animate-auth-fade-up">
       <HideEmptyRightPanel />
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
+      <nav aria-label="Breadcrumb" className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
         <Link
           href={assetHref({ kind: "enterprise" })}
           className="hover:text-foreground transition-colors"

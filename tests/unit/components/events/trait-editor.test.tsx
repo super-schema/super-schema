@@ -3,10 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  push: vi.fn(), refresh: vi.fn(), toastSuccess: vi.fn(), updateTraitAction: vi.fn(), deleteTraitAction: vi.fn(), listPinnableVersionsAction: vi.fn(),
+  push: vi.fn(), refresh: vi.fn(), invalidate: vi.fn(), toastSuccess: vi.fn(), updateTraitAction: vi.fn(), deleteTraitAction: vi.fn(), listPinnableVersionsAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push, refresh: h.refresh }) }));
 vi.mock("sonner", () => ({ toast: { success: h.toastSuccess, error: vi.fn() } }));
+vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => h.invalidate }));
 vi.mock("@/app/(dashboard)/schemas/trait-actions", () => ({ updateTraitAction: h.updateTraitAction, deleteTraitAction: h.deleteTraitAction }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
 import { TraitEditor } from "@/features/events/traits/TraitEditor";
@@ -105,10 +106,14 @@ describe("TraitEditor", () => {
     fireEvent.click(screen.getByTestId("trait-delete"));
     expect((await screen.findByTestId("trait-error")).textContent).toMatch(/in use/);
     expect(h.push).not.toHaveBeenCalled();
+    // Neither a declined confirmation nor a refused delete refreshes the explorer: nothing was deleted.
+    expect(h.invalidate).not.toHaveBeenCalled();
     h.deleteTraitAction.mockResolvedValueOnce({ success: true, data: { id: "t1" } });
     fireEvent.click(screen.getByTestId("trait-delete"));
     await waitFor(() => expect(h.push).toHaveBeenCalledWith(base.listHref));
     expect(h.deleteTraitAction).toHaveBeenLastCalledWith("t1", base.owner);
     expect((screen.getByTestId("trait-delete") as HTMLButtonElement).disabled).toBe(true);
+    // The explorer's React Query cache only refreshes through invalidate (revalidatePath does not reach it).
+    expect(h.invalidate).toHaveBeenCalledTimes(1);
   });
 });

@@ -21,8 +21,13 @@ export function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function normalizeCatalogName(raw: string, kindLabel: string): Result<string> {
-  const name = (raw ?? "").trim();
+/**
+ * `raw` arrives from the client at runtime: anything that is not a string (number, object, null, undefined) is a
+ * VALIDATION_ERROR before any string method runs on it, never a TypeError.
+ */
+export function normalizeCatalogName(raw: unknown, kindLabel: string): Result<string> {
+  if (typeof raw !== "string") return invalid(`${kindLabel} name must be a string`);
+  const name = raw.trim();
   if (!CATALOG_NAME_PATTERN.test(name)) {
     return invalid(
       `${kindLabel} name "${raw}" is invalid`,
@@ -32,8 +37,9 @@ export function normalizeCatalogName(raw: string, kindLabel: string): Result<str
   return ok(name);
 }
 
-export function normalizeProtocol(raw: string): Result<string> {
-  const protocol = (raw ?? "").trim().toLowerCase();
+export function normalizeProtocol(raw: unknown): Result<string> {
+  if (typeof raw !== "string") return invalid("Protocol must be a string");
+  const protocol = raw.trim().toLowerCase();
   if (!PROTOCOL_PATTERN.test(protocol)) {
     return invalid(`Protocol "${raw}" is invalid`, `Use an AsyncAPI protocol such as ${KNOWN_PROTOCOLS.slice(0, 3).join(", ")}.`);
   }

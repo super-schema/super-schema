@@ -111,6 +111,23 @@ describe("EntityCreationWizard — multi-entity import", () => {
     expect(payload).toMatchObject({ domainId: "dom-1", productId: "prod-1" });
     expect(payload.entities).toHaveLength(4);
     await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/schemas/payments/checkout"));
+    // The explorer's cached tree only refreshes through invalidate: the new entities must show up without a reload.
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh the explorer when the import created nothing", async () => {
+    mocks.createDomainAssetsFromImportAction.mockResolvedValue({
+      modelsCreated: 0, entitiesCreated: 0, enumsCreated: 0, scalarsCreated: 0, unionsCreated: 0,
+      servicesCreated: 0, decoratorsCreated: 0, entityIds: [], modelIds: [], errors: ["Could not create Order"],
+    });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(ORDER_PROTO);
+    await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: /Import \d+ Asset\(s\)/ }));
+    await waitFor(() => expect(mocks.createDomainAssetsFromImportAction).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Import \d+ Asset\(s\)/ })).toBeDefined());
+    expect(mocks.invalidate).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 
   it("keeps a single-message proto on the field preview", async () => {

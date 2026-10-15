@@ -155,8 +155,8 @@ describe("channel service never throws on untrusted input", () => {
 describe("trait service never throws on untrusted input", () => {
   const TRAIT = { name: "CE", kind: "MESSAGE" as const };
 
-  it("createTrait rejects malformed input before touching the DB", async () => {
-    const ctx = fakeCtx();
+  it("createTrait rejects malformed input before touching the DB (a tenant target's scope lookup is the only read)", async () => {
+    const ctx = fakeCtx({ tenant: { findUnique: vi.fn().mockResolvedValue({ id: "tn" }) } });
     const target = { level: "TENANT", tenantId: "tn" } as const;
     for (const input of [null, undefined, "x", 5, []]) expect(code(await createTrait(target, input as never, ctx))).toBe("VALIDATION_ERROR");
     const bads: Array<Record<string, unknown>> = [

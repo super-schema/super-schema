@@ -13,9 +13,9 @@ import "server-only";
 
 import {
   compile,
-  NodeHost,
   navigateProgram,
   getSourceLocation,
+  type CompilerHost,
   type Program,
   type Model,
   type ModelProperty,
@@ -32,6 +32,8 @@ import {
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { mapTypeSpecType } from "./typespec-parser";
+import { createLibraryOnlyHost } from "./library-only-host";
+import { assertTypeSpecImportsAllowed, TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
 import * as gov from "@superschema/typespec-enterprise";
 import {
   CLASSIFICATION_EXTENSION_KEY,
@@ -62,20 +64,32 @@ import type {
 // import" — confirmed directly during the 2026-10-12 architecture work.
 // Compiling under <project>/.typespec-work instead gives it the project's
 // real node_modules to resolve against.
+//
+// Security (finding C-C1): `compile` LOADS what a source imports, and a `.js` / `.mjs` import is EXECUTED inside
+// this (Next server) process. `compileSource` is the only caller of `compile` and every public entry point below
+// goes through it (Source-tab save, publish gate, TypeSpec / OpenAPI import, migration), so both layers sit here:
+//   1. `assertTypeSpecImportsAllowed` - TypeSpec's own parser decides what the source imports; anything but an
+//      allowed library (`@typespec/*`, `@superschema/typespec-enterprise`) throws `TypeSpecImportGuardError`
+//      BEFORE a temp dir is created or `compile` is called;
+//   2. `createLibraryOnlyHost` - even if (1) were ever bypassed, JavaScript only loads from installed libraries.
 // ---------------------------------------------------------------------------
 
 const WORK_DIR = join(process.cwd(), ".typespec-work");
+
+let sharedHost: CompilerHost | undefined;
+const libraryOnlyHost = (): CompilerHost => (sharedHost ??= createLibraryOnlyHost());
 
 async function compileSource(
   source: string,
   options?: { linterRuleSet?: LinterRuleSet }
 ): Promise<{ program: Program; mainPath: string }> {
+  const { text } = assertTypeSpecImportsAllowed(source);
   await mkdir(WORK_DIR, { recursive: true });
   const dir = await mkdtemp(join(WORK_DIR, "job-"));
   const mainPath = join(dir, "main.tsp");
-  await writeFile(mainPath, source, "utf8");
+  await writeFile(mainPath, text, "utf8");
   try {
-    const program = await compile(NodeHost, mainPath, {
+    const program = await compile(libraryOnlyHost(), mainPath, {
       noEmit: true,
       ...(options?.linterRuleSet ? { linterRuleSet: options.linterRuleSet } : {}),
     });
@@ -511,7 +525,18 @@ const GOVERNANCE_RULE_SET: LinterRuleSet = {
 export async function compileTypeSpecWithGovernance(
   source: string
 ): Promise<CompileWithGovernanceResult> {
-  const { program, mainPath } = await compileSource(source, { linterRuleSet: GOVERNANCE_RULE_SET });
+  let compiled: { program: Program; mainPath: string };
+  try {
+    compiled = await compileSource(source, { linterRuleSet: GOVERNANCE_RULE_SET });
+  } catch (e) {
+    // A disallowed import is a normal, user-facing failure of this source (shown like any compile error);
+    // anything else is unexpected and propagates as before.
+    if (e instanceof TypeSpecImportGuardError) {
+      return { success: false, diagnostics: [{ severity: "error", code: e.code, message: e.message }] };
+    }
+    throw e;
+  }
+  const { program, mainPath } = compiled;
 
   const allDiagnostics: GovernanceDiagnostic[] = (program.diagnostics ?? []).map((d: Diagnostic) => ({
     severity: d.severity === "error" ? "error" : "warning",

@@ -5,16 +5,19 @@ const h = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
   getEffectiveRole: vi.fn(),
   resolveCurrentUserId: vi.fn(),
+  getActiveTenantId: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
 vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
 
+import { notFound, redirect } from "next/navigation";
 import { AuditUserMissingError } from "@/lib/audit";
-import { GENERIC_ACTION_ERROR, getActionContext, NOT_AUTHENTICATED, runMutation, sanitizeActionError, toActionResult } from "@/lib/action-context";
+import { GENERIC_ACTION_ERROR, getActionContext, isInActiveTenant, NOT_AUTHENTICATED, runMutation, sanitizeActionError, toActionResult } from "@/lib/action-context";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -170,6 +173,83 @@ describe("runMutation", () => {
   it("logs under a default label when the action does not name itself", async () => {
     await runMutation(async () => ({ success: false as const, error: { code: "DB_ERROR", message: "x" } }));
     expect(consoleError()).toHaveBeenCalledWith("[mutation] database error", "x");
+  });
+
+  describe("an unexpected rejection (central catch)", () => {
+    it("returns a generic INTERNAL_ERROR (no raw text, no revalidation) and logs the original server-side with the label", async () => {
+      const thrown = new Error("Invalid `prisma.message.create()` invocation: Argument `productId` is missing (postgres://admin:s3cret@10.0.0.5/db)");
+      const r = await runMutation(async () => {
+        throw thrown;
+      }, "createMessageAction");
+      expect(r).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" });
+      expect(JSON.stringify(r)).not.toMatch(/prisma|productId|s3cret|10\.0\.0\.5/);
+      expect(h.revalidatePath).not.toHaveBeenCalled();
+      expect(consoleError()).toHaveBeenCalledTimes(1);
+      expect(consoleError()).toHaveBeenCalledWith("[createMessageAction] unexpected error", thrown);
+    });
+
+    it("also catches a rejection from the session / user lookup", async () => {
+      h.resolveCurrentUserId.mockRejectedValueOnce(new Error("connect ECONNREFUSED 10.0.0.5:5432"));
+      const run = vi.fn();
+      const r = await runMutation(run);
+      expect(r).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" });
+      expect(run).not.toHaveBeenCalled();
+      expect(h.revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("catches a non-Error rejection too", async () => {
+      const r = await runMutation(() => Promise.reject("boom"));
+      expect(r).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" });
+    });
+
+    it("re-throws redirect() untouched: not swallowed, not logged, nothing revalidated", async () => {
+      const rejection = await runMutation(async () => {
+        redirect("/schemas/elsewhere");
+      }).catch((e: unknown) => e);
+      expect(rejection).toMatchObject({ digest: expect.stringMatching(/^NEXT_REDIRECT/) });
+      expect(consoleError()).not.toHaveBeenCalled();
+      expect(h.revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("re-throws notFound() untouched (digest NEXT_HTTP_ERROR_FALLBACK): not swallowed, not logged, nothing revalidated", async () => {
+      const rejection = await runMutation(async () => {
+        notFound();
+      }).catch((e: unknown) => e);
+      expect(rejection).toMatchObject({ digest: expect.stringMatching(/^NEXT_HTTP_ERROR_FALLBACK/) });
+      expect(consoleError()).not.toHaveBeenCalled();
+      expect(h.revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("re-throws a forbidden() / unauthorized() style error (digest NEXT_HTTP_ERROR_FALLBACK;403 / ;401) as well", async () => {
+      // forbidden() / unauthorized() are behind `experimental.authInterrupts`; they throw errors with exactly these digests.
+      for (const status of [403, 401]) {
+        const control = Object.assign(new Error(`NEXT_HTTP_ERROR_FALLBACK;${status}`), { digest: `NEXT_HTTP_ERROR_FALLBACK;${status}` });
+        const rejection = await runMutation(async () => {
+          throw control;
+        }).catch((e: unknown) => e);
+        expect(rejection).toBe(control);
+      }
+      expect(consoleError()).not.toHaveBeenCalled();
+    });
+
+    it("leaves the success path unchanged: data returned, /schemas (layout) revalidated once, nothing logged", async () => {
+      const r = await runMutation(async () => ({ success: true as const, data: 42 }));
+      expect(r).toEqual({ success: true, data: 42 });
+      expect(h.revalidatePath).toHaveBeenCalledTimes(1);
+      expect(h.revalidatePath).toHaveBeenCalledWith("/schemas", "layout");
+      expect(consoleError()).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("isInActiveTenant", () => {
+  it("is true only for a row of the active tenant; other tenants and missing tenant ids read as outside", async () => {
+    h.getActiveTenantId.mockResolvedValue("tenant-1");
+    expect(await isInActiveTenant("tenant-1")).toBe(true);
+    expect(await isInActiveTenant("tenant-2")).toBe(false);
+    expect(await isInActiveTenant(null)).toBe(false);
+    expect(await isInActiveTenant(undefined)).toBe(false);
+    expect(await isInActiveTenant("")).toBe(false);
   });
 });
 

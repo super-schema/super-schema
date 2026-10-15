@@ -462,15 +462,15 @@ describe("DomainWorkspace — ?tab= and the URL stay in sync", () => {
   it("clicking a tab writes the matching URL with history.replaceState, not router.replace", () => {
     nav.search = "";
     renderWorkspace();
-    fireEvent.click(screen.getByRole("button", { name: "APIs" }));
+    fireEvent.click(screen.getByRole("tab", { name: "APIs" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=apis");
     expect(screen.getByTestId("domain-apis-tab")).toBeDefined();
 
-    fireEvent.click(screen.getByRole("button", { name: "Data Types" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Data Types" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=data-types");
     expect(screen.getByTestId("domain-types-tab")).toBeDefined();
 
-    fireEvent.click(screen.getByRole("button", { name: "Entities" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Entities" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout");
     expect(nav.replace).not.toHaveBeenCalled();
   });
@@ -549,12 +549,12 @@ describe("DomainWorkspace — Events and Traits tabs", () => {
   it("clicking the Events and Traits tabs writes the matching URL", () => {
     nav.search = "";
     renderWorkspace();
-    fireEvent.click(screen.getByRole("button", { name: "Events" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Events" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=events&section=specs");
     fireEvent.click(screen.getByTestId("events-section-messages"));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=events&section=messages");
     expect(screen.getByTestId("events-section-messages").getAttribute("aria-selected")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Traits" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Traits" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=traits");
     expect(screen.getByTestId("traits-tab")).toBeDefined();
     expect(nav.replace).not.toHaveBeenCalled();
@@ -656,5 +656,63 @@ describe("DomainWorkspace — canonical links", () => {
     renderWorkspace({ entities: [] });
     fireEvent.click(screen.getByText(/Standards/i));
     expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/new?template=standards");
+  });
+
+  it("labels the breadcrumb landmark", () => {
+    nav.search = "";
+    renderWorkspace();
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toBeDefined();
+  });
+});
+
+describe("product tab bar accessibility", () => {
+  it("is a tablist of tabs with selection, a roving tabindex and a labelled panel", () => {
+    nav.search = "tab=apis";
+    renderWorkspace();
+    const list = screen.getByRole("tablist", { name: "Checkout sections" });
+    const tabs = within(list).getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Entities", "Data Types", "APIs", "Events", "Traits"]);
+    const selected = tabs.filter((t) => t.getAttribute("aria-selected") === "true");
+    expect(selected.map((t) => t.textContent)).toEqual(["APIs"]);
+    expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "-1", "0", "-1", "-1"]);
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.id).toBe("product-tabpanel");
+    expect(panel.getAttribute("aria-labelledby")).toBe(selected[0].id);
+    for (const tab of tabs) expect(tab.getAttribute("aria-controls")).toBe(panel.id);
+    expect(within(panel).getByTestId("domain-apis-tab")).toBeDefined();
+  });
+
+  it("moves between tabs with the arrow keys, Home and End (wrapping), writing the URL like a click", () => {
+    nav.search = "";
+    renderWorkspace();
+    const selectedLabel = () =>
+      screen.getAllByRole("tab").find((t) => t.getAttribute("aria-selected") === "true")!.textContent;
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowRight" });
+    expect(selectedLabel()).toBe("Data Types");
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=data-types");
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Data Types" }));
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Data Types" }), { key: "ArrowLeft" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowLeft" });
+    expect(selectedLabel()).toBe("Traits");
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Traits" }), { key: "Home" });
+    expect(selectedLabel()).toBe("Entities");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "End" });
+    expect(selectedLabel()).toBe("Traits");
+
+    // Other keys leave the selection alone.
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Traits" }), { key: "a" });
+    expect(selectedLabel()).toBe("Traits");
+  });
+
+  it("keeps clicking working and the stable ids the e2e suite can target", () => {
+    nav.search = "";
+    renderWorkspace();
+    fireEvent.click(screen.getByRole("tab", { name: "Events" }));
+    expect(document.getElementById("product-tab-events")?.getAttribute("aria-selected")).toBe("true");
+    expect(document.getElementById("product-tab-entities")?.getAttribute("aria-selected")).toBe("false");
   });
 });

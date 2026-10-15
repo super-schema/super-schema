@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Mail } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import {
   getMessagePublishPreviewAction, publishMessageAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-version-actions";
@@ -33,6 +34,7 @@ export function MessagePage({
 
   return (
     <div className="animate-auth-fade-up space-y-space-6">
+      <HideEmptyRightPanel />
       <EventBreadcrumb crumbs={crumbs} />
       <div className="flex flex-wrap items-center justify-between gap-space-3">
         <div className="flex items-center gap-space-2">

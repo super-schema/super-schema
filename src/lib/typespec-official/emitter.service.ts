@@ -17,6 +17,7 @@ import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { ok, err, type Result } from "@/types/result";
+import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
 
 const execFileAsync = promisify(execFile);
 
@@ -287,8 +288,30 @@ export interface EmittedFile {
 export const DEFAULT_EMITTER_TIMEOUT_MS = 120_000;
 
 /**
+ * An allowlisted NAME is not enough for the `tsp` CLI: it resolves a library by walking up from the workspace
+ * (under `os.tmpdir()`), so a name that is not installed in `<cwd>/node_modules` could still be found in
+ * `<tmpdir>/node_modules/...` or any other `node_modules` above the workspace, and that package's JavaScript
+ * would run. The workspace's own `node_modules` is a symlink to `<cwd>/node_modules` and is searched first, so
+ * requiring every imported library to be installed there pins resolution to the project's installed packages.
+ * Returns the first imported library that is not installed, if any.
+ */
+async function findUninstalledLibrary(specifiers: readonly string[]): Promise<string | null> {
+  for (const specifier of new Set(specifiers)) {
+    const installed = await fs.stat(path.join(process.cwd(), "node_modules", specifier)).then((s) => s.isDirectory(), () => false);
+    if (!installed) return specifier;
+  }
+  return null;
+}
+
+/**
  * Run one TypeSpec emitter in a throw-away workspace; every file it wrote, sorted by path. Never throws: a
  * workspace that cannot be created, a failed compile and a `tsp` that outlives `timeoutMs` (SIGKILL) are errors.
+ *
+ * `tsp` LOADS (and, for `.js` / `.mjs`, executes) whatever the source imports, so the source is checked first with
+ * the TypeSpec parser (`checkTypeSpecImports`): any import that is not an allowed library is
+ * `TYPESPEC_IMPORT_NOT_ALLOWED` and no workspace is created; so is an allowed name that is not installed in
+ * `<cwd>/node_modules` (`findUninstalledLibrary`). This is the single choke point for every `tsp` run
+ * (Schemas-tab targets and the events renderer alike).
  */
 export async function runTypeSpecEmitterFiles(
   packageName: string,
@@ -296,6 +319,16 @@ export async function runTypeSpecEmitterFiles(
   emitterOptions: Record<string, unknown>,
   runOptions: { timeoutMs?: number } = {}
 ): Promise<Result<EmittedFile[]>> {
+  const imports = checkTypeSpecImports(source);
+  if (!imports.success) return imports;
+  const uninstalled = await findUninstalledLibrary(imports.data.imports.map((i) => i.specifier));
+  if (uninstalled !== null) {
+    return err({
+      code: TYPESPEC_IMPORT_NOT_ALLOWED,
+      message: `import "${uninstalled}" is not allowed: it is not an installed TypeSpec library`,
+      details: { specifier: uninstalled },
+    });
+  }
   let workspace: string;
   try {
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));

@@ -4,6 +4,7 @@ const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable, mockGetActiveTena
   mockAuth: vi.fn(),
   mockGetActiveTenantId: vi.fn(),
   mockPrisma: {
+    tenant: { findUnique: vi.fn() },
     domain: { findUnique: vi.fn() },
     product: { findUnique: vi.fn() },
     entity: { findUnique: vi.fn() },
@@ -44,6 +45,7 @@ describe("level-aware data type and API creates", () => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue({ user: { id: "user-1" } });
     mockGetActiveTenantId.mockResolvedValue("tenant-1");
+    mockPrisma.tenant.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
     mockPrisma.domain.findUnique.mockResolvedValue({ id: "domain-1", tenantId: "tenant-1" });
     mockPrisma.product.findUnique.mockResolvedValue({
       id: "prd-1",
