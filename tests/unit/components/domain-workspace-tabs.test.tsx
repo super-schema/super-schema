@@ -37,6 +37,11 @@ const actions = vi.hoisted(() => ({
   deleteOperationAction: vi.fn(),
 }));
 
+const eventActions = vi.hoisted(() => ({
+  createChannelAction: vi.fn(),
+  createTraitAction: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: nav.push, replace: nav.replace, refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(nav.search),
@@ -44,6 +49,11 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => actions);
 vi.mock("@/app/(dashboard)/schemas/actions", () => ({ deleteDomainAction: vi.fn() }));
+// The Events / Traits tabs import server-action modules that pull in NextAuth.
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/channel-actions", () => ({ createChannelAction: eventActions.createChannelAction }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-actions", () => ({ createMessageAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions", () => ({ createEventSpecAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/schemas/trait-actions", () => ({ createTraitAction: eventActions.createTraitAction }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));
 vi.mock("@/components/custom/ClassificationPicker", () => ({ ClassificationPicker: () => null }));
@@ -164,6 +174,8 @@ describe("normalizeWorkspaceTab", () => {
     expect(normalizeWorkspaceTab("apis")).toBe("apis");
     expect(normalizeWorkspaceTab("data-types")).toBe("data-types");
     expect(normalizeWorkspaceTab("entities")).toBe("entities");
+    expect(normalizeWorkspaceTab("events")).toBe("events");
+    expect(normalizeWorkspaceTab("traits")).toBe("traits");
   });
   it("falls back to entities", () => {
     expect(normalizeWorkspaceTab(null)).toBe("entities");
@@ -255,7 +267,7 @@ describe("DomainWorkspace — inherited data types", () => {
 });
 
 describe("DomainWorkspace — New menu", () => {
-  it("lists exactly New Entity, New Custom Data Type and New API", () => {
+  it("lists exactly New Entity, New Custom Data Type, New API and the events kinds", () => {
     nav.search = "";
     renderWorkspace();
     const menu = openNewMenu();
@@ -264,6 +276,10 @@ describe("DomainWorkspace — New menu", () => {
       "New Entity",
       "New Custom Data Type",
       "New API",
+      "New Event Spec",
+      "New Message",
+      "New Channel",
+      "New Trait",
     ]);
     expect(within(menu).getByText("Enum, scalar or union")).toBeDefined();
     // Kinds are chosen after the click, never listed individually.
@@ -474,6 +490,135 @@ describe("DomainWorkspace — ?tab= and the URL stay in sync", () => {
     fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Entity/ }));
     expect(replaceState).not.toHaveBeenCalled();
     expect(nav.replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("DomainWorkspace — Events and Traits tabs", () => {
+  const EVENTS = {
+    eventSpecs: [],
+    messages: [],
+    channels: [
+      { id: "c1", name: "orders", summary: "", updatedAt: "", address: "payments.orders.v1", protocol: "kafka", format: "avro" as const, href: "/schemas/payments/checkout/channels/c1" },
+    ],
+    payloadEntities: [],
+  };
+  const TRAIT = { id: "t1", name: "Retry", kind: "MESSAGE" as const, summary: "", updatedAt: "", href: "/schemas/payments/checkout/traits/t1" };
+  const TRAITS = {
+    own: [TRAIT],
+    inherited: [
+      {
+        label: "From Enterprise",
+        href: "/schemas/enterprise?tab=traits",
+        traits: [{ ...TRAIT, id: "t2", name: "CloudEvents", href: "/schemas/enterprise/traits/t2" }],
+      },
+    ],
+  };
+
+  it("opens the Events tab on the section from the URL", () => {
+    nav.search = "tab=events&section=channels";
+    renderWorkspace({ events: EVENTS });
+    expect(screen.getByTestId("events-section-channels").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("link", { name: /orders/ }).getAttribute("href")).toBe("/schemas/payments/checkout/channels/c1");
+  });
+
+  it("falls back to Event Specs for a missing or unknown ?section=", () => {
+    nav.search = "tab=events&section=bogus";
+    renderWorkspace();
+    expect(screen.getByTestId("events-section-specs").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("follows ?section= changes after mount", () => {
+    nav.search = "tab=events&section=messages";
+    const { rerender } = renderWorkspace();
+    expect(screen.getByTestId("events-section-messages").getAttribute("aria-selected")).toBe("true");
+    nav.search = "tab=events&section=channels";
+    rerender(workspaceTree());
+    expect(screen.getByTestId("events-section-channels").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("renders the Events and Traits tabs without loaded data (empty states)", () => {
+    nav.search = "tab=events";
+    renderWorkspace();
+    expect(screen.getByTestId("events-specs-empty")).toBeDefined();
+    cleanup();
+    nav.search = "tab=traits";
+    renderWorkspace();
+    expect(screen.getByTestId("traits-empty")).toBeDefined();
+  });
+
+  it("clicking the Events and Traits tabs writes the matching URL", () => {
+    nav.search = "";
+    renderWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "Events" }));
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=events&section=specs");
+    fireEvent.click(screen.getByTestId("events-section-messages"));
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=events&section=messages");
+    expect(screen.getByTestId("events-section-messages").getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Traits" }));
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=traits");
+    expect(screen.getByTestId("traits-tab")).toBeDefined();
+    expect(nav.replace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["New Event Spec", "specs", "new-event-spec-form"],
+    ["New Message", "messages", "new-message-form"],
+    ["New Channel", "channels", "new-channel-form"],
+  ])("%s opens the Events tab on %s with its create form", (label, section, formTestId) => {
+    nav.search = "";
+    renderWorkspace();
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: new RegExp(label) }));
+    expect(screen.getByTestId("events-tab")).toBeDefined();
+    expect(screen.getByTestId(`events-section-${section}`).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId(formTestId)).toBeDefined();
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", `/schemas/payments/checkout?tab=events&section=${section}`);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("New Event Spec works again after the form was cancelled", () => {
+    nav.search = "";
+    renderWorkspace();
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Event Spec/ }));
+    fireEvent.click(within(screen.getByTestId("new-event-spec-form")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("new-event-spec-form")).toBeNull();
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Event Spec/ }));
+    expect(screen.getByTestId("new-event-spec-form")).toBeDefined();
+  });
+
+  it("creates a channel at the product and opens it", async () => {
+    nav.search = "";
+    eventActions.createChannelAction.mockResolvedValue({ success: true, data: { id: "c9" } });
+    renderWorkspace();
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Channel/ }));
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "refunds" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/channels/c9"));
+    expect(eventActions.createChannelAction).toHaveBeenCalledWith(
+      "prod-1",
+      { name: "refunds", address: null, protocol: "kafka", format: "avro", formatDialect: null }
+    );
+  });
+
+  it("New Trait opens the Traits tab with its create form at the PRODUCT target", async () => {
+    nav.search = "";
+    eventActions.createTraitAction.mockResolvedValue({ success: true, data: { id: "t9" } });
+    renderWorkspace();
+    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Trait/ }));
+    expect(screen.getByTestId("traits-tab")).toBeDefined();
+    expect(screen.getByTestId("new-trait-form")).toBeDefined();
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=traits");
+    fireEvent.change(screen.getByLabelText("Trait name"), { target: { value: "Retry" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/traits/t9"));
+    expect(eventActions.createTraitAction).toHaveBeenCalledWith(PRODUCT_TARGET, { name: "Retry", kind: "MESSAGE" });
+  });
+
+  it("lists the product's traits and the read-only inherited groups", () => {
+    nav.search = "tab=traits";
+    renderWorkspace({ traits: TRAITS });
+    expect(screen.getByRole("link", { name: /Retry/ }).getAttribute("href")).toBe("/schemas/payments/checkout/traits/t1");
+    expect(screen.getByRole("link", { name: "From Enterprise" }).getAttribute("href")).toBe("/schemas/enterprise?tab=traits");
+    expect(screen.getByRole("link", { name: /CloudEvents/ }).getAttribute("href")).toBe("/schemas/enterprise/traits/t2");
   });
 });
 

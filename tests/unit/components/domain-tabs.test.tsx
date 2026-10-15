@@ -14,6 +14,8 @@ const nav = vi.hoisted(() => ({
   push: vi.fn(),
 }));
 
+const traitActions = vi.hoisted(() => ({ createTraitAction: vi.fn() }));
+
 const actions = vi.hoisted(() => ({
   createSharedEnumAction: vi.fn(),
   updateSharedEnumAction: vi.fn(),
@@ -44,6 +46,8 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/product-grid", () => ({
   ProductGrid: () => <div>grid</div>,
 }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => actions);
+// The Traits tab imports a server-action module that pulls in NextAuth.
+vi.mock("@/app/(dashboard)/schemas/trait-actions", () => traitActions);
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const DOMAIN = { id: "d1", name: "Payments", slug: "payments", description: "" };
@@ -94,6 +98,7 @@ describe("normalizeDomainTab", () => {
     expect(normalizeDomainTab("products")).toBe("products");
     expect(normalizeDomainTab("data-types")).toBe("data-types");
     expect(normalizeDomainTab("apis")).toBe("apis");
+    expect(normalizeDomainTab("traits")).toBe("traits");
   });
   it("falls back to products", () => {
     expect(normalizeDomainTab(null)).toBe("products");
@@ -108,6 +113,9 @@ describe("DomainTabs", () => {
     expect(screen.getByRole("tab", { name: "Products" })).toBeDefined();
     expect(screen.getByRole("tab", { name: "Data Types", selected: true })).toBeDefined();
     expect(screen.getByRole("tab", { name: "APIs" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Traits" })).toBeDefined();
+    // Events live on the product, not the domain.
+    expect(screen.queryByRole("tab", { name: "Events" })).toBeNull();
     expect(screen.getByText("From Enterprise")).toBeDefined();
     expect(
       screen.getByRole("link", { name: /From Enterprise/ }).getAttribute("href")
@@ -161,6 +169,55 @@ describe("DomainTabs", () => {
       ],
     });
     expect(screen.queryByText("From Enterprise")).toBeNull();
+  });
+
+  it("selects the Traits tab from ?tab=traits and lists own and inherited traits read-only", () => {
+    nav.search = "tab=traits";
+    renderTabs({
+      traits: {
+        own: [{ id: "t1", name: "Retry", kind: "OPERATION", summary: "", updatedAt: "", href: "/schemas/payments/traits/t1" }],
+        inherited: [
+          {
+            label: "From Enterprise",
+            href: "/schemas/enterprise?tab=traits",
+            traits: [{ id: "t2", name: "CloudEvents", kind: "MESSAGE", summary: "", updatedAt: "", href: "/schemas/enterprise/traits/t2" }],
+          },
+        ],
+      },
+    });
+    expect(screen.getByRole("tab", { name: "Traits", selected: true })).toBeDefined();
+    expect(screen.getByRole("link", { name: /Retry/ }).getAttribute("href")).toBe("/schemas/payments/traits/t1");
+    expect(screen.getByRole("link", { name: "From Enterprise" }).getAttribute("href")).toBe("/schemas/enterprise?tab=traits");
+    expect(screen.getByRole("link", { name: /CloudEvents/ }).getAttribute("href")).toBe("/schemas/enterprise/traits/t2");
+  });
+
+  it("writes ?tab=traits to the URL when the Traits tab is picked", () => {
+    nav.search = "";
+    renderTabs();
+    fireEvent.click(screen.getByRole("tab", { name: "Traits" }));
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments?tab=traits");
+    expect(screen.getByTestId("traits-tab")).toBeDefined();
+  });
+
+  it("has no New menu: the domain's tabs carry their own create buttons", () => {
+    nav.search = "tab=traits";
+    renderTabs();
+    expect(screen.queryByTitle("More options")).toBeNull();
+    expect(screen.getByTestId("traits-new")).toBeDefined();
+  });
+
+  it("creates traits at the DOMAIN level target from the Traits tab's own button", async () => {
+    nav.search = "tab=traits";
+    traitActions.createTraitAction.mockResolvedValue({ success: true, data: { id: "t9" } });
+    renderTabs();
+    fireEvent.click(screen.getByTestId("traits-new"));
+    fireEvent.change(screen.getByLabelText("Trait name"), { target: { value: "Retry" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/traits/t9"));
+    expect(traitActions.createTraitAction).toHaveBeenCalledWith(
+      { level: "DOMAIN", domainId: "d1" },
+      { name: "Retry", kind: "MESSAGE" }
+    );
   });
 
   it("creates data types at the DOMAIN level target", async () => {

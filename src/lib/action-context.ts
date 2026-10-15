@@ -5,7 +5,7 @@ import { AuditUserMissingError } from "@/lib/audit";
 import { resolveCurrentUserId } from "@/lib/current-user";
 import { prisma } from "@/lib/db";
 import { getEffectiveRole } from "@/services/rbac.service";
-import type { ActionResult } from "@/types/action-result";
+import { GENERIC_ACTION_ERROR, type ActionResult } from "@/types/action-result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -56,7 +56,8 @@ export async function runMutation<T>(run: (ctx: ServiceContext) => Promise<Resul
   return toActionResult(result);
 }
 
-export const GENERIC_ACTION_ERROR = "Something went wrong. Try again; if it keeps happening, contact an administrator.";
+/** Defined in the client-safe `@/types/action-result` (forms use it too); re-exported for existing server-side callers. */
+export { GENERIC_ACTION_ERROR };
 
 /**
  * Keeps raw database / driver text out of the browser for actions whose services can surface it: pass a service Result (or the
