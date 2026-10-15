@@ -91,9 +91,10 @@ async function validateDocumentRefs(
     checkMessages(op.messageVersionIds, `${p}/messageVersionIds`);
     op.traitIds.forEach((id, k) => {
       const t = traits.find((x) => x.id === id);
+      // Tenant-scoped lookup above: another tenant's trait id reads exactly like a missing one (no name / kind leak).
       if (!t) problems.push({ pointer: `${p}/traitIds/${k}`, message: `Trait "${id}" not found` });
-      else if (t.kind !== "OPERATION") problems.push({ pointer: `${p}/traitIds/${k}`, message: `Trait "${t.name}" is a MESSAGE trait; operations take OPERATION traits` });
       else if (!inSameLine(t, scope)) problems.push({ pointer: `${p}/traitIds/${k}`, message: `Trait "${t.name}" is not visible from this product` });
+      else if (t.kind !== "OPERATION") problems.push({ pointer: `${p}/traitIds/${k}`, message: `Trait "${t.name}" is a MESSAGE trait; operations take OPERATION traits` });
     });
     if (op.reply?.channelId && !channelSet.has(op.reply.channelId)) {
       problems.push({ pointer: `${p}/reply/channelId`, message: `Channel "${op.reply.channelId}" not found` });

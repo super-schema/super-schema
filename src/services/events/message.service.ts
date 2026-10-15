@@ -2,7 +2,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import type { LevelScope } from "@/lib/levels";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
-import { normalizeCatalogName } from "@/lib/events/inputs";
+import { isJsonObject, normalizeCatalogName } from "@/lib/events/inputs";
 import { parseMessageSpec, readMessageSpec } from "@/lib/events/catalog-specs";
 import { assertOwnedBy } from "@/lib/events/ownership";
 import type { EntityPin, MessageDetail, MessageSpec } from "@/lib/events/types";
@@ -11,9 +11,21 @@ import { createInScope, writeWithUniqueName } from "@/services/scoped-create.ser
 import { auditedWrite } from "@/services/events/audited";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
-import { ok, err, type Result } from "@/types/result";
+import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
+/**
+ * The complete editable state of a message draft. `updateMessage` is a FULL REPLACE of this shape, so an
+ * editor (Task 16) must round-trip everything it loaded; whatever is omitted is reset:
+ *
+ * - `spec` omitted (or `null`) → reset to `{ traitIds: [] }` (all AsyncAPI fields and trait refs cleared).
+ * - `headers` / `key` omitted, `null` or `undefined` → that pin is removed.
+ * - a pin's `entityVersionId` omitted → re-pin to the entity's *latest published version at update time*
+ *   (D5; this silently moves an existing pin forward). Send the exact `entityVersionId` you loaded to keep it.
+ * - a pin's `entityVersionId: null` → explicitly unpinned (draft preview only; publish is blocked).
+ *
+ * Malformed input (non-object input, non-string name / ids, non-array `traitIds`, …) is a `VALIDATION_ERROR`.
+ */
 export interface MessageInput {
   name: string;
   spec?: MessageSpec;
@@ -53,39 +65,67 @@ interface NormalizedMessage {
   key: EntityPin | null;
 }
 
-async function normalizeMessage(ctx: ServiceContext, scope: LevelScope, input: MessageInput): Promise<Result<NormalizedMessage>> {
+const invalid = (problems: string[]) =>
+  err({ code: "VALIDATION_ERROR", message: problems.join("; "), details: { problems } });
+
+/** Shape-checks one pin of untrusted action input (nothing here may throw); problems are pushed, not returned. */
+function readPinInput(value: unknown, label: string, problems: string[]): PinInput | null {
+  if (value === undefined || value === null) return null;
+  if (!isJsonObject(value)) {
+    problems.push(`${label} must be an object`);
+    return null;
+  }
+  const { entityId, entityVersionId } = value;
+  if (typeof entityId !== "string" || entityId.length === 0) {
+    problems.push(`${label}: entityId must be a non-empty string`);
+    return null;
+  }
+  if (entityVersionId !== undefined && entityVersionId !== null && (typeof entityVersionId !== "string" || entityVersionId.length === 0)) {
+    problems.push(`${label}: entityVersionId must be a non-empty string, null or omitted`);
+    return null;
+  }
+  return entityVersionId === undefined ? { entityId } : { entityId, entityVersionId };
+}
+
+async function normalizeMessage(ctx: ServiceContext, scope: LevelScope, input: unknown): Promise<Result<NormalizedMessage>> {
+  if (!isJsonObject(input)) return invalid(["Message input must be an object"]);
+  if (typeof input.name !== "string") return invalid(["Message name must be a string"]);
   const name = normalizeCatalogName(input.name, "Message");
   if (!name.success) return name;
   const spec = parseMessageSpec(input.spec ?? { traitIds: [] });
   if (!spec.success) return spec;
 
   const problems: string[] = [];
-  const pin = async (value: PinInput | null | undefined, label: string): Promise<EntityPin | null> => {
+  const payloadIn = readPinInput(input.payload, "Payload", problems);
+  const headersIn = readPinInput(input.headers, "Headers", problems);
+  const keyIn = readPinInput(input.key, "Key", problems);
+  if (input.payload === undefined || input.payload === null) problems.push("A payload entity is required");
+  if (problems.length > 0 || !payloadIn) return invalid(problems);
+
+  const pin = async (value: PinInput | null, label: string): Promise<EntityPin | null> => {
     if (!value) return null;
     const r = await resolvePin(ctx.prisma, scope.tenantId, value, label);
     if (!r.success) problems.push(r.error.message);
     return r.success ? r.data : null;
   };
-  const payload = await pin(input.payload, "Payload");
-  const headers = await pin(input.headers, "Headers");
-  const key = await pin(input.key, "Key");
+  const payload = await pin(payloadIn, "Payload");
+  const headers = await pin(headersIn, "Headers");
+  const key = await pin(keyIn, "Key");
 
   if (spec.data.traitIds.length > 0) {
+    // Tenant-scoped: a trait id from another tenant must look exactly like a missing one (no name / kind leak).
     const traits = await ctx.prisma.trait.findMany({
-      where: { id: { in: spec.data.traitIds } },
+      where: { id: { in: spec.data.traitIds }, tenantId: scope.tenantId },
       select: { id: true, name: true, kind: true, tenantId: true, domainId: true, productId: true },
     });
     for (const id of spec.data.traitIds) {
       const t = traits.find((x) => x.id === id);
       if (!t) problems.push(`Trait "${id}" not found`);
-      else if (t.kind !== "MESSAGE") problems.push(`Trait "${t.name}" is an OPERATION trait; messages take MESSAGE traits`);
       else if (!inSameLine(t, scope)) problems.push(`Trait "${t.name}" is not visible from this product (use a trait from this product, its domain or the Enterprise)`);
+      else if (t.kind !== "MESSAGE") problems.push(`Trait "${t.name}" is an OPERATION trait; messages take MESSAGE traits`);
     }
   }
-  if (!payload && problems.length === 0) problems.push("A payload entity is required");
-  if (problems.length > 0 || !payload) {
-    return err({ code: "VALIDATION_ERROR", message: problems.join("; "), details: { problems } });
-  }
+  if (problems.length > 0 || !payload) return invalid(problems);
   return ok({ name: name.data, spec: spec.data, payload, headers, key });
 }
 
@@ -135,6 +175,11 @@ export async function createMessage(productId: string, input: MessageInput, ctx:
   });
 }
 
+/**
+ * Full replace of the draft (see `MessageInput` for the exact semantics of every omitted / null field);
+ * always marks the draft as having unpublished changes and rewrites the mirrored draft `SchemaReference` edges.
+ * Task 16's editor must send back the complete `spec` and the exact `entityVersionId` of every pin it loaded.
+ */
 export async function updateMessage(id: string, input: MessageInput, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<MessageDetail>> {
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
@@ -156,34 +201,92 @@ export async function updateMessage(id: string, input: MessageInput, owner: Scop
   });
 }
 
+const MAX_NAMED_SPECS = 5;
+
+interface PinningSpec {
+  id: string;
+  name: string;
+  versions: string[];
+}
+
+/**
+ * Published event spec versions that pin one of the message's versions, or null when none does.
+ * Runs on the delete transaction, after the message row lock, so it sees every committed publish.
+ */
+async function findPublishedPins(tx: Prisma.TransactionClient, versionIds: string[]): Promise<{ specs: PinningSpec[] } | null> {
+  const edges = await tx.schemaReference.findMany({
+    where: { toKind: "MESSAGE_VERSION", toId: { in: versionIds }, isDraft: false },
+    select: { fromKind: true, fromId: true },
+  });
+  if (edges.length === 0) return null;
+  const edgeSpecVersionIds = edges.filter((e) => e.fromKind === "EVENT_SPEC_VERSION").map((e) => e.fromId);
+  const specVersions = await tx.eventSpecVersion.findMany({
+    where: { OR: [{ id: { in: edgeSpecVersionIds } }, { messageVersionIds: { hasSome: versionIds } }] },
+    select: { major: true, minor: true, eventSpec: { select: { id: true, name: true } } },
+    orderBy: [{ eventSpec: { name: "asc" } }, { sequence: "asc" }],
+  });
+  const bySpec = new Map<string, PinningSpec>();
+  for (const v of specVersions) {
+    const entry = bySpec.get(v.eventSpec.id) ?? { id: v.eventSpec.id, name: v.eventSpec.name, versions: [] };
+    entry.versions.push(formatVersionLabel(v));
+    bySpec.set(v.eventSpec.id, entry);
+  }
+  return { specs: [...bySpec.values()] };
+}
+
+function inUseError(messageName: string, pins: { specs: PinningSpec[] }): ServiceError {
+  const { specs } = pins;
+  const described = specs.slice(0, MAX_NAMED_SPECS).map((s) => `"${s.name}" (${s.versions.join(", ")})`);
+  const more = specs.length - described.length;
+  const by = specs.length === 0 ? "a published event spec version" : `published event spec versions of ${described.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
+  return {
+    code: "IN_USE",
+    message: `Message "${messageName}" cannot be deleted: its versions are pinned by ${by}.`,
+    details: { eventSpecs: specs },
+    suggestedFix:
+      specs.length === 0
+        ? "Delete the event specs that publish this message first (published spec versions keep the message versions they pin), or keep the message."
+        : `Move event spec "${specs[0].name}" off this message first: published spec versions keep the message versions they pin, so that event spec has to be deleted before the message${specs.length > 1 ? `, then the other ${specs.length - 1} listed in details` : ""}. Or keep the message.`,
+  };
+}
+
+/**
+ * Deletes a message and, with it, its immutable versions (the Wave 0 triggers allow that only through the
+ * parent). Refused with IN_USE while a published event spec version pins one of those versions.
+ *
+ * Concurrency contract with the publish paths (R57), because `event_spec_versions.messageVersionIds` has no FK:
+ * everything happens in ONE transaction that first takes `SELECT ... FOR UPDATE` on the message row, then
+ * re-reads the version ids and re-checks the non-draft edges, so a publish that committed in the meantime is
+ * always seen. The publish transactions (Task 10 message publish, Task 12 spec publish) must in turn take
+ * `FOR SHARE` on the message rows they pin, AFTER their own row lock (the spec row), and re-verify that the
+ * pinned versions still exist. Lock order is spec -> messages everywhere; delete takes messages only, so the
+ * two cannot deadlock. Whoever locks the message row first wins: a delete first makes the publish fail its
+ * re-verification, a publish first makes the delete return IN_USE.
+ */
 export async function deleteMessage(id: string, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<{ id: string }>> {
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
-  const versionIds = (await ctx.prisma.messageVersion.findMany({ where: { messageId: id }, select: { id: true } })).map((v) => v.id);
-  if (versionIds.length > 0) {
-    const pinned = await ctx.prisma.schemaReference.findFirst({
-      where: { toKind: "MESSAGE_VERSION", toId: { in: versionIds }, isDraft: false },
-      select: { fromId: true },
-    });
-    if (pinned) {
-      return err({
-        code: "IN_USE",
-        message: `Message "${owned.data.row.name}" has versions used by a published event spec version and cannot be deleted.`,
-        suggestedFix: "Deprecate it instead (spec §6.1: versions referenced by published versions are kept).",
-      });
-    }
-  }
+  const name = owned.data.row.name;
   return auditedWrite({
     action: "DELETE", entityType: "Message", entityId: id, userId: ctx.userId, beforeState: toDetail(owned.data.row),
-    run: async () => {
-      await ctx.prisma.$transaction(async (tx) => {
+    run: () =>
+      ctx.prisma.$transaction(async (tx): Promise<Result<{ id: string }>> => {
+        const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "messages" WHERE "id" = ${id} FOR UPDATE`;
+        if (locked.length === 0) return err({ code: "NOT_FOUND", message: `Message "${id}" no longer exists` });
+        const versionIds = (await tx.messageVersion.findMany({ where: { messageId: id }, select: { id: true } })).map((v) => v.id);
+        if (versionIds.length > 0) {
+          const pins = await findPublishedPins(tx, versionIds);
+          if (pins) return err(inUseError(name, pins));
+        }
         await deleteReferencesFrom(tx, "MESSAGE", [id]);
         await deleteReferencesFrom(tx, "MESSAGE_VERSION", versionIds);
-        if (versionIds.length > 0) await tx.schemaReference.deleteMany({ where: { toKind: "MESSAGE_VERSION", toId: { in: versionIds } } });
+        // Only draft spec edges can be left here (a non-draft one returned IN_USE above).
+        if (versionIds.length > 0) {
+          await tx.schemaReference.deleteMany({ where: { toKind: "MESSAGE_VERSION", toId: { in: versionIds }, isDraft: true } });
+        }
         await tx.message.delete({ where: { id } });
-      });
-      return ok({ id });
-    },
+        return ok({ id });
+      }),
   });
 }
 
