@@ -1,6 +1,7 @@
 // src/lib/action-context.ts
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
+import { GENERIC_ACTION_ERROR } from "@/lib/action-error";
 import { AuditUserMissingError } from "@/lib/audit";
 import { resolveCurrentUserId } from "@/lib/current-user";
 import { prisma } from "@/lib/db";
@@ -56,7 +57,8 @@ export async function runMutation<T>(run: (ctx: ServiceContext) => Promise<Resul
   return toActionResult(result);
 }
 
-export const GENERIC_ACTION_ERROR = "Something went wrong. Try again; if it keeps happening, contact an administrator.";
+/** Client-safe copy lives in `@/lib/action-error` (forms import it from there); re-exported for server callers and tests. */
+export { GENERIC_ACTION_ERROR };
 
 /**
  * Keeps raw database / driver text out of the browser for actions whose services can surface it: pass a service Result (or the
