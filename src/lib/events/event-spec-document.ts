@@ -8,8 +8,20 @@ import type {
   JsonObject,
 } from "@/lib/event-specs/types";
 import { isJsonObject } from "./inputs";
+import { isReservedKey } from "@/lib/event-specs/own-property";
 
 export const COMPONENT_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * A server / operation key becomes a key of the AsyncAPI document, so it must match the component-key pattern AND not
+ * be one of the names that collide with `Object.prototype` (`__proto__`, `constructor`, `prototype`): `__proto__`
+ * matches the pattern but, assigned onto a plain object, silently vanishes instead of becoming an entry.
+ */
+function keyProblem(kind: "Server" | "Operation", key: string): string | undefined {
+  if (!COMPONENT_KEY_PATTERN.test(key)) return `${kind} key "${key}" must match ^[A-Za-z0-9._-]+$`;
+  if (isReservedKey(key)) return `${kind} key "${key}" is reserved and cannot be used — choose another key`;
+  return undefined;
+}
 export interface DocumentProblem {
   pointer: string;
   message: string;
@@ -66,7 +78,8 @@ function parseServers(raw: unknown, problems: DocumentProblem[]): EventSpecServe
     const p = `/servers/${i}`;
     const s = asBag(item);
     const key = typeof s.key === "string" ? s.key.trim() : "";
-    if (!COMPONENT_KEY_PATTERN.test(key)) problems.push({ pointer: `${p}/key`, message: `Server key "${key}" must match ^[A-Za-z0-9._-]+$` });
+    const keyIssue = keyProblem("Server", key);
+    if (keyIssue) problems.push({ pointer: `${p}/key`, message: keyIssue });
     else if (keys.has(key)) problems.push({ pointer: `${p}/key`, message: `Duplicate server key "${key}"` });
     keys.add(key);
     const protocol = typeof s.protocol === "string" ? s.protocol.trim() : "";
@@ -96,7 +109,8 @@ function parseOperations(raw: unknown, problems: DocumentProblem[]): EventSpecOp
     const p = `/operations/${i}`;
     const o = asBag(item);
     const key = typeof o.key === "string" ? o.key.trim() : "";
-    if (!COMPONENT_KEY_PATTERN.test(key)) problems.push({ pointer: `${p}/key`, message: `Operation key "${key}" must match ^[A-Za-z0-9._-]+$` });
+    const keyIssue = keyProblem("Operation", key);
+    if (keyIssue) problems.push({ pointer: `${p}/key`, message: keyIssue });
     else if (keys.has(key)) problems.push({ pointer: `${p}/key`, message: `Duplicate operation key "${key}"` });
     keys.add(key);
     const action = o.action === "send" || o.action === "receive" ? o.action : null;

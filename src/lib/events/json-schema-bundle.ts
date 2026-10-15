@@ -1,3 +1,4 @@
+import { setOwn } from "@/lib/event-specs/own-property";
 import { mapSchemaRefs } from "@/lib/event-specs/json-schema-keywords";
 import type { JsonObject } from "@/lib/event-specs/types";
 import { isJsonObject } from "./inputs";
@@ -7,7 +8,7 @@ const DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema";
 
 function withoutKeys(schema: JsonObject, keys: readonly string[]): JsonObject {
   const out: JsonObject = {};
-  for (const [k, v] of Object.entries(schema)) if (!keys.includes(k)) out[k] = v;
+  for (const [k, v] of Object.entries(schema)) if (!keys.includes(k)) setOwn(out, k, v);
   return out;
 }
 
@@ -54,7 +55,7 @@ export function inlineJsonSchemaBundle(bundle: JsonObject, rootModel: string): R
       clashes.push(name);
       continue;
     }
-    allDefs[name] = mapSchemaRefs(withoutKeys(schema, ["$schema", "$id"]), rewrite(name));
+    setOwn(allDefs, name, mapSchemaRefs(withoutKeys(schema, ["$schema", "$id"]), rewrite(name)));
   }
 
   // Only what the root reaches stays: the emitter writes every model it saw (`emitAllModels`), including library
@@ -62,7 +63,7 @@ export function inlineJsonSchemaBundle(bundle: JsonObject, rootModel: string): R
   const body = withoutKeys(rootSchema, ["$defs"]);
   const reachable = reachableDefs(body, allDefs);
   const defs: JsonObject = {};
-  for (const name of Object.keys(allDefs)) if (reachable.has(name)) defs[name] = allDefs[name];
+  for (const name of Object.keys(allDefs)) if (reachable.has(name)) setOwn(defs, name, allDefs[name]);
 
   const problems = [
     ...(problemsByOwner.get(rootModel) ?? []),

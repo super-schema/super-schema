@@ -1,3 +1,4 @@
+import { setOwn } from "./own-property";
 import type { JsonObject, JsonValue } from "./types";
 
 /**
@@ -55,26 +56,26 @@ export function mapSchemaRefs(schema: JsonObject, mapRef: (ref: string) => strin
   const schemaMap = (value: JsonValue): JsonValue => {
     if (!isObject(value)) return structuredClone(value);
     const out: JsonObject = {};
-    for (const [name, sub] of Object.entries(value)) out[name] = subschema(sub);
+    for (const [name, sub] of Object.entries(value)) setOwn(out, name, subschema(sub));
     return out;
   };
   const dependencies = (value: JsonValue): JsonValue => {
     if (!isObject(value)) return structuredClone(value);
     const out: JsonObject = {};
-    for (const [name, dep] of Object.entries(value)) out[name] = Array.isArray(dep) ? structuredClone(dep) : subschema(dep);
+    for (const [name, dep] of Object.entries(value)) setOwn(out, name, Array.isArray(dep) ? structuredClone(dep) : subschema(dep));
     return out;
   };
 
   function node(current: JsonObject): JsonObject {
     const out: JsonObject = {};
     for (const [key, value] of Object.entries(current)) {
-      if (key === "$ref" && typeof value === "string") out[key] = mapRef(value);
-      else if (SCHEMA_MAP_KEYWORDS.has(key)) out[key] = schemaMap(value);
-      else if (SCHEMA_ARRAY_KEYWORDS.has(key)) out[key] = schemaArray(value);
-      else if (key === "items") out[key] = Array.isArray(value) ? schemaArray(value) : subschema(value);
-      else if (key === "dependencies") out[key] = dependencies(value);
-      else if (SINGLE_SCHEMA_KEYWORDS.has(key)) out[key] = subschema(value);
-      else out[key] = structuredClone(value);
+      if (key === "$ref" && typeof value === "string") setOwn(out, key, mapRef(value));
+      else if (SCHEMA_MAP_KEYWORDS.has(key)) setOwn(out, key, schemaMap(value));
+      else if (SCHEMA_ARRAY_KEYWORDS.has(key)) setOwn(out, key, schemaArray(value));
+      else if (key === "items") setOwn(out, key, Array.isArray(value) ? schemaArray(value) : subschema(value));
+      else if (key === "dependencies") setOwn(out, key, dependencies(value));
+      else if (SINGLE_SCHEMA_KEYWORDS.has(key)) setOwn(out, key, subschema(value));
+      else setOwn(out, key, structuredClone(value));
     }
     return out;
   }

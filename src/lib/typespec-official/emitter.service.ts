@@ -10,11 +10,13 @@ import type {
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { protobufFieldName, quoteIdentifier, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
+import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { ok, err, type Result } from "@/types/result";
 import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
@@ -107,9 +109,18 @@ export async function emitOfficialTypeSpecTargetFromData(
   }
 
   const model = compileEntity(entity, fields);
-  const source = buildSourceForTarget(model, target.key);
+  const built = buildSourceForTarget(model, target.key);
+  if (built.errors.length > 0) {
+    return { output: "", validationStatus: "INVALID", warnings: built.warnings, errors: built.errors.map((message) => ({ message })) };
+  }
   const options = buildEmitterOptions(target.key, model);
-  return runTypeSpecEmitter(target.packageName ?? "", source, options);
+  const result = await runTypeSpecEmitter(target.packageName ?? "", built.source, options);
+  if (built.warnings.length === 0) return result;
+  return {
+    ...result,
+    warnings: [...built.warnings, ...result.warnings],
+    validationStatus: result.validationStatus === "VALID" ? "WARNING" : result.validationStatus,
+  };
 }
 
 function buildEmitterOptions(
@@ -142,9 +153,18 @@ function buildEmitterOptions(
   }
 }
 
-function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): string {
+/** The `main.tsp` for a target, plus what the projection for that target had to change (warnings) or could not (errors). */
+interface TargetSource {
+  source: string;
+  warnings: string[];
+  errors: string[];
+}
+
+const plainSource = (source: string): TargetSource => ({ source, warnings: [], errors: [] });
+
+function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): TargetSource {
   if (isDbTypeSpecTarget(targetKey)) {
-    return buildDbTypeSpecSource(model, targetKey);
+    return plainSource(buildDbTypeSpecSource(model, targetKey));
   }
 
   // Emission source = the generator's text WITHOUT the governance overlay (Story 16.6): field classification
@@ -158,13 +178,18 @@ function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): strin
 
   switch (targetKey) {
     case "json-schema":
-      return ['import "@typespec/json-schema";', "", baseSource, ""].join("\n");
+      return plainSource(['import "@typespec/json-schema";', "", baseSource, ""].join("\n"));
     case "openapi3":
-      return buildOpenApi3Source(baseSource, model);
+      return plainSource(buildOpenApi3Source(baseSource, model));
     case "protobuf":
-      return buildProtobufSource(baseSource, model);
+      return plainSource(buildProtobufSource(baseSource, model));
+    case "avro": {
+      // An Avro enum symbol must be [A-Za-z_][A-Za-z0-9_]*; the canonical source keeps wire values (see avro-source.ts).
+      const projection = projectTypeSpecSourceForAvro(baseSource);
+      return { source: projection.source, ...describeAvroProjection(projection) };
+    }
     default:
-      return baseSource;
+      return plainSource(baseSource);
   }
 }
 
@@ -270,10 +295,17 @@ export function injectProtobufFieldNumbers(
   const after = source.slice(closeBrace);
 
   fields.forEach((field, index) => {
-    const safeName = sanitizeIdentifier(field.name);
+    // The property is written as the protobuf projection leaves it: the bare name (the generator keeps every
+    // reserved-for-future word bare), the backticked wire name (a hard keyword such as `op` / `model`, which the
+    // projection keeps) or the `_`-replaced name of a non-identifier. The decorator goes in front of whichever it is.
     const fieldNumber = field.fieldNumber ?? index + 1;
-    const matcher = new RegExp(`^([ \\t]*)${escapeRegExp(safeName)}(\\??:)`, "m");
-    if (matcher.test(body)) body = body.replace(matcher, `$1@field(${fieldNumber})\n$1${safeName}$2`);
+    const matcher = new RegExp(
+      `^([ \\t]*)(${escapeRegExp(protobufFieldName(field.name))}|${escapeRegExp(quoteIdentifier(field.name))})(\\??:)`,
+      "m"
+    );
+    if (matcher.test(body)) {
+      body = body.replace(matcher, (_whole, indent: string, name: string, tail: string) => `${indent}@field(${fieldNumber})\n${indent}${name}${tail}`);
+    }
   });
 
   return `${before}${body}${after}`;
@@ -399,12 +431,42 @@ async function runTypeSpecEmitter(
 ): Promise<OfficialTypeSpecTargetResult> {
   const files = await runTypeSpecEmitterFiles(packageName, source, emitterOptions);
   if (!files.success) return invalidResult(files.error.message);
-  return {
-    output: bundleGeneratedFiles(files.data),
-    validationStatus: "VALID",
-    warnings: [],
-    errors: [],
-  };
+  return targetResultFromFiles(packageName, files.data);
+}
+
+/** What an emitter run wrote, as a target result: VALID only when the output is usable (see {@link unusableOutputReason}). */
+export function targetResultFromFiles(packageName: string, files: EmittedFile[]): OfficialTypeSpecTargetResult {
+  const output = bundleGeneratedFiles(files);
+  const unusable = unusableOutputReason(packageName, output);
+  if (unusable) return invalidResult(unusable);
+  if (packageName === "@typespec/avro") {
+    // Safety net behind the Avro projection: a symbol it could not fix (a numeric-valued member) must fail here, naming
+    // the enum, not later as dozens of opaque AsyncAPI parser errors.
+    const problems = describeInvalidAvroSymbols(files.flatMap((file) => findInvalidAvroSymbols(parseJsonOrNull(file.content))));
+    if (problems.length > 0) {
+      return { output: "", validationStatus: "INVALID", warnings: [], errors: problems.map((message) => ({ message })) };
+    }
+  }
+  return { output, validationStatus: "VALID", warnings: [], errors: [] };
+}
+
+function parseJsonOrNull(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An emitter can finish "successfully" and still write nothing useful. The protobuf emitter silently drops a message
+ * whose fields lack `@field(n)` and then writes only `syntax = "proto3";` — that is not a valid result, so say so.
+ */
+export function unusableOutputReason(packageName: string, output: string): string | null {
+  if (packageName === "@typespec/protobuf" && !/^\s*message\s+\S+\s*\{/m.test(output)) {
+    return "The protobuf emitter wrote no message: none of the model's fields received a @field(n) number, so it dropped the whole message.";
+  }
+  return null;
 }
 
 async function collectTextFiles(rootDir: string): Promise<EmittedFile[]> {
@@ -463,12 +525,10 @@ function deriveNamespace(model: SuperSchemaModel): string {
   return sanitizeNamespace(model.namespace || model.entity.domain || model.entity.name);
 }
 
-export function sanitizeIdentifier(name: string): string {
-  let safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
-  if (/^[0-9]/.test(safe)) {
-    safe = `_${safe}`;
-  }
-  return safe;
+/** A namespace segment: invalid characters become `_`; a keyword is backticked by {@link sanitizeNamespace}, not renamed. */
+function sanitizeNamespaceSegment(name: string): string {
+  const safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
+  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
 }
 
 /**
@@ -493,7 +553,7 @@ const TYPESPEC_KEYWORDS = new Set([
 function sanitizeNamespace(value: string): string {
   return value
     .split(".")
-    .map((segment) => sanitizeIdentifier(segment))
+    .map((segment) => sanitizeNamespaceSegment(segment))
     .map((segment) => (TYPESPEC_KEYWORDS.has(segment) ? `\`${segment}\`` : segment))
     .join(".");
 }

@@ -159,6 +159,8 @@ const USER_FACING_RENDER_CODES = new Set([
   "SCHEMA_BUNDLE_UNRESOLVED", "REFERENCE_CLOSURE_TOO_LARGE", "CONFLICTING_PINS", "TYPESPEC_DECLARATION_CONFLICT",
   "TYPESPEC_IMPORT_NOT_ALLOWED", "TYPESPEC_PARSE_ERROR", "PROTO_NOT_SELF_CONTAINED", "AVRO_NAME_CONFLICT", "EMITTER_TIMEOUT",
   "UNSUPPORTED_FORMAT",
+  // Written by our own projections / guards (final review F5): the message names the enum, field or message and the values.
+  "AVRO_SYMBOL_COLLISION", "AVRO_INVALID_SYMBOL", "ENUM_NO_VALUES", "ROOT_MESSAGE_NOT_FOUND",
 ]);
 const GENERIC_RENDER_FAILURE = "Artifact render failed";
 const MAX_RENDER_DETAIL = 400;
@@ -203,6 +205,7 @@ export async function resolveSnapshot(
       return undefined;
     }
     for (const w of r.data.warnings) diagnostics.push(diagnostic("warning", "TYPESPEC_DUPLICATE_DECLARATION", `${what}: ${w}`, ""));
+    for (const n of r.data.notes ?? []) diagnostics.push(diagnostic("warning", n.code, `${what}: ${n.message}`, ""));
     return r.data.artifact;
   };
   const isArtifact = (a: SchemaArtifact | undefined): a is SchemaArtifact => a !== undefined;

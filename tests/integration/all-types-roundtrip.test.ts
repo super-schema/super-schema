@@ -56,7 +56,10 @@ function allTypesFields(): PrismaFieldInput[] {
       fieldNumber: i + 1,
       description: `A ${dt.id} field`,
       classification: null,
-      aliases: [],
+      // An enum field's symbols travel as aliases (or the pattern slot); `decorators.enumValues` only carries the
+      // symbols of an array element / map value. A symbol-less enum is no longer emitted (it would publish an
+      // unsatisfiable `{ "enum": [] }`), so this fixture gives the enum its values.
+      aliases: dt.id === "enum" ? ["ALPHA", "BETA"] : [],
       decorators: decoratorsFor(dt.id),
       sortOrder: i,
     } satisfies PrismaFieldInput;

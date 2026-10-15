@@ -93,6 +93,79 @@ describe("resolveSnapshot", () => {
     ]));
   });
 
+  it("turns a renderer's coded notes (an Avro enum symbol that had to be renamed) into warnings carrying their own code", async () => {
+    const note = { code: "AVRO_ENUM_SYMBOL_RENAMED", message: 'Avro enum symbol "in-progress" of Order_status is published as "in_progress"' };
+    const render: ArtifactRenderer["render"] = async (subject, format) =>
+      ok({ artifact: schemaFor(subject, format), warnings: [], ...(format === "avro" && subject.kind === "version" && subject.entityVersionId === "ev-order" ? { notes: [note] } : {}) });
+    const out = await resolveSnapshot(snapshot(), { render }, "draft");
+    expect(out.diagnostics).toEqual([
+      { severity: "warning", code: "AVRO_ENUM_SYMBOL_RENAMED", pointer: "", message: `Message OrderCreated payload: ${note.message}` },
+    ]);
+  });
+
+  describe("failures written by our own Avro / protobuf / enum guards are shown to the user, not replaced by the generic text", () => {
+    const failing = (error: Parameters<typeof err>[0]): ArtifactRenderer["render"] => async (subject, format) => {
+      const id = subject.kind === "version" ? subject.entityVersionId : subject.entityId;
+      return id === "ev-order" ? err(error) : ok({ artifact: schemaFor(subject, format), warnings: [] });
+    };
+    const diagnosticsFor = async (error: Parameters<typeof err>[0]) => (await resolveSnapshot(snapshot(), { render: failing(error) }, "draft")).diagnostics;
+
+    it("AVRO_SYMBOL_COLLISION names the enum and the colliding values", async () => {
+      const diagnostics = await diagnosticsFor({
+        code: "ARTIFACT_RENDER_FAILED",
+        message: 'Order@1.0 → avro: Avro enum Order_status: the values "a-b" and "a b" would all be published as the symbol "a_b" — rename one of them',
+        details: { cause: "AVRO_SYMBOL_COLLISION" },
+      });
+      expect(diagnostics).toEqual([
+        {
+          severity: "error",
+          code: "ARTIFACT_RENDER_FAILED",
+          pointer: "",
+          message:
+            'Message OrderCreated payload (avro): Order@1.0 → avro: Avro enum Order_status: the values "a-b" and "a b" would all be published as the symbol "a_b" — rename one of them [AVRO_SYMBOL_COLLISION]',
+        },
+      ]);
+      expect(diagnostics[0].message).not.toContain("Artifact render failed");
+    });
+
+    it("AVRO_INVALID_SYMBOL (a numeric-valued enum member) names the enum and the symbol", async () => {
+      const diagnostics = await diagnosticsFor({
+        code: "AVRO_INVALID_SYMBOL",
+        message: 'Avro enum Priority has the symbol "1", which is not valid (an Avro symbol must match [A-Za-z_][A-Za-z0-9_]*) — use named members without values',
+      });
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toMatchObject({ severity: "error", code: "AVRO_INVALID_SYMBOL" });
+      expect(diagnostics[0].message).toContain('Avro enum Priority has the symbol "1"');
+      expect(diagnostics[0].message).not.toContain("Artifact render failed");
+    });
+
+    it("ENUM_NO_VALUES names the entity version and the field, with the fix", async () => {
+      const diagnostics = await diagnosticsFor({
+        code: "ARTIFACT_RENDER_FAILED",
+        message: 'Order (draft) → avro: enum field "status" has no values',
+        suggestedFix: "Give the enum field at least one value.",
+        details: { cause: "ENUM_NO_VALUES" },
+      });
+      expect(diagnostics[0].message).toBe(
+        'Message OrderCreated payload (avro): Order (draft) → avro: enum field "status" has no values [ENUM_NO_VALUES] Fix: Give the enum field at least one value.'
+      );
+    });
+
+    it("ROOT_MESSAGE_NOT_FOUND (a protobuf payload without its root message) is shown", async () => {
+      const diagnostics = await diagnosticsFor({ code: "ROOT_MESSAGE_NOT_FOUND", message: 'Top-level message "Order" not found in .proto source' });
+      expect(diagnostics).toEqual([
+        { severity: "error", code: "ROOT_MESSAGE_NOT_FOUND", pointer: "", message: 'Message OrderCreated payload (avro): Top-level message "Order" not found in .proto source' },
+      ]);
+    });
+
+    it("an unknown code is still replaced by the generic text (the allowlist is explicit)", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const diagnostics = await diagnosticsFor({ code: "SOMETHING_NEW", message: "raw detail from /var/folders/ab/superschema-tsp-x/main.tsp" });
+      expect(diagnostics[0].message).toBe("Message OrderCreated payload (avro): Artifact render failed");
+      spy.mockRestore();
+    });
+  });
+
   it("short-circuits on unresolved draft references without rendering anything", async () => {
     const render = vi.fn();
     const out = await resolveSnapshot(

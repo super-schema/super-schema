@@ -1,6 +1,7 @@
 import type { JsonObject, JsonValue } from "./types";
 import { escapePointerSegment, unescapePointerSegment } from "./json-pointer";
 import { SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } from "./json-schema-keywords";
+import { setOwn } from "./own-property";
 
 /**
  * Spec §7.3 / Story 16.2 pure core: down-convert a JSON Schema 2020-12 document
@@ -12,6 +13,9 @@ import { SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } fr
  * - `dependentRequired` / `dependentSchemas` → `dependencies`
  * - `$ref` with validating siblings (ignored by draft-07) → `allOf: [{ $ref }, { …siblings }]`, with a warning
  * - keywords with no draft-07 equivalent are dropped, each with a warning
+ * - `unevaluatedProperties` on a plain object schema (no `allOf` / `anyOf` / `oneOf` / `$ref` / `if` … siblings, no
+ *   `additionalProperties`) is exactly `additionalProperties` and is converted, so a TypeSpec `Record<T>` keeps its
+ *   value type; with composition siblings it cannot be expressed and is dropped with a warning
  *
  * Only schema positions are walked; data keywords (`const`, `enum`, `default`,
  * `examples`) and unknown keywords are copied verbatim. The input is never mutated.
@@ -132,7 +136,7 @@ function convertSchemaArray(value: JsonValue, pointer: string, warnings: DownCon
 function convertSchemaMap(value: JsonValue, pointer: string, warnings: DownConvertWarning[]): JsonValue {
   if (!isObject(value)) return structuredClone(value);
   const out: JsonObject = {};
-  for (const [k, v] of Object.entries(value)) out[k] = convertSubschema(v, at(pointer, k), warnings);
+  for (const [k, v] of Object.entries(value)) setOwn(out, k, convertSubschema(v, at(pointer, k), warnings));
   return out;
 }
 
@@ -149,7 +153,7 @@ function mergeDefinitions(out: JsonObject, incoming: JsonValue, pointer: string,
       });
       continue;
     }
-    target[name] = schema;
+    setOwn(target, name, schema);
   }
   out.definitions = target;
 }
@@ -166,7 +170,11 @@ function mergeDependencies(out: JsonObject, incoming: JsonValue): void {
   if (!isObject(incoming)) return;
   const target: JsonObject = isObject(out.dependencies) ? out.dependencies : {};
   for (const [prop, value] of Object.entries(incoming)) {
-    target[prop] = Object.prototype.hasOwnProperty.call(target, prop) ? combineDependency(target[prop], value) : value;
+    setOwn(
+      target,
+      prop,
+      Object.prototype.hasOwnProperty.call(target, prop) ? combineDependency(target[prop], value) : value,
+    );
   }
   out.dependencies = target;
 }
@@ -182,7 +190,7 @@ function wrapRefSiblings(out: JsonObject, pointer: string, warnings: DownConvert
   const siblings: JsonObject = {};
   for (const [key, value] of Object.entries(out)) {
     if (key === "$ref") continue;
-    (KEEP_OUTSIDE_REF_WRAPPER.has(key) ? outer : siblings)[key] = value;
+    setOwn(KEEP_OUTSIDE_REF_WRAPPER.has(key) ? outer : siblings, key, value);
   }
   const names = Object.keys(siblings);
   if (names.length === 0) return out;
@@ -195,12 +203,50 @@ function wrapRefSiblings(out: JsonObject, pointer: string, warnings: DownConvert
   return { ...outer, allOf: [{ $ref: out.$ref }, siblings] };
 }
 
+/**
+ * Keywords that can EVALUATE properties on behalf of the schema object they sit in (in-place applicators and
+ * composition). `unevaluatedProperties` only means "everything these did not cover", so it is equivalent to
+ * `additionalProperties` only when none of them is present.
+ */
+const PROPERTY_EVALUATING_SIBLINGS: readonly string[] = [
+  "$ref",
+  "$dynamicRef",
+  "$recursiveRef",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "if",
+  "then",
+  "else",
+  "not",
+  "dependentSchemas",
+  "dependencies",
+  "additionalProperties",
+];
+
+/**
+ * True when `unevaluatedProperties` on `node` is exactly `additionalProperties`: a plain object schema whose
+ * only property-evaluating keywords are `properties` / `patternProperties` (both draft-07 keywords with the
+ * same meaning). This is the shape TypeSpec emits for `Record<T>` — `{ type: object, properties: {},
+ * unevaluatedProperties: T }` — so converting keeps the value type in draft-07.
+ */
+function unevaluatedIsAdditional(node: JsonObject): boolean {
+  return !PROPERTY_EVALUATING_SIBLINGS.some((keyword) => keyword in node);
+}
+
 function convertSchema(node: JsonObject, pointer: string, warnings: DownConvertWarning[]): JsonObject {
   const out: JsonObject = {};
   const hasPrefixItems = Array.isArray(node.prefixItems);
+  const convertUnevaluated = "unevaluatedProperties" in node && unevaluatedIsAdditional(node);
 
   for (const [key, value] of Object.entries(node)) {
     const here = at(pointer, key);
+
+    if (key === "unevaluatedProperties" && convertUnevaluated) {
+      // Equivalent, so nothing is lost and there is nothing to warn about (like `$defs` → `definitions`).
+      setOwn(out, "additionalProperties", convertSubschema(value, here, warnings));
+      continue;
+    }
 
     if (DROPPED.has(key)) {
       warnings.push({
@@ -253,10 +299,10 @@ function convertSchema(node: JsonObject, pointer: string, warnings: DownConvertW
         );
         break;
       default:
-        if (SCHEMA_MAP_KEYWORDS.has(key)) out[key] = convertSchemaMap(value, here, warnings);
-        else if (SCHEMA_ARRAY_KEYWORDS.has(key)) out[key] = convertSchemaArray(value, here, warnings);
-        else if (SINGLE_SCHEMA_KEYWORDS.has(key)) out[key] = convertSubschema(value, here, warnings);
-        else out[key] = structuredClone(value);
+        if (SCHEMA_MAP_KEYWORDS.has(key)) setOwn(out, key, convertSchemaMap(value, here, warnings));
+        else if (SCHEMA_ARRAY_KEYWORDS.has(key)) setOwn(out, key, convertSchemaArray(value, here, warnings));
+        else if (SINGLE_SCHEMA_KEYWORDS.has(key)) setOwn(out, key, convertSubschema(value, here, warnings));
+        else setOwn(out, key, structuredClone(value));
     }
   }
   return wrapRefSiblings(out, pointer, warnings);

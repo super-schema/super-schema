@@ -39,11 +39,24 @@ describe("selectArtifact", () => {
       "payload",
       "/components/messages/M/payload/schema",
     );
+    // `unevaluatedProperties: false` on a plain object is exactly `additionalProperties: false` (C-I4): converted, no warning
     expect(res.schema).toEqual({
       type: "object",
       properties: { a: { $ref: "#/components/messages/M/payload/schema/definitions/A" } },
       definitions: { A: { type: "string" } },
+      additionalProperties: false,
     });
+    expect(res.diagnostics).toEqual([]);
+  });
+
+  it("reports a dropped keyword when it cannot be expressed in draft-07 (composition siblings)", () => {
+    const composed: SchemaArtifact = {
+      format: "json-schema",
+      dialect: "2020-12",
+      schema: { allOf: [{ properties: { a: { type: "string" } } }], unevaluatedProperties: false },
+    };
+    const res = selectArtifact([composed], { format: "json-schema", dialect: "draft-07" }, "payload", "/components/messages/M/payload/schema");
+    expect(res.schema).toEqual({ allOf: [{ properties: { a: { type: "string" } } }] });
     expect(res.diagnostics).toEqual([
       {
         severity: "warning",

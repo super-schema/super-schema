@@ -51,6 +51,9 @@ const BIGQUERY_MAPPINGS: DefaultMappingEntry[] = [
 // Avro default mappings
 // ---------------------------------------------------------------------------
 
+const AVRO_DECIMAL_LOSS =
+  "The Avro emitter currently publishes decimal(precision 38, scale 0) whatever the field's precision/scale — a decimal(12,2) loses its fractional digits (a limitation of the Avro emitter in the separate typespec repo)";
+
 const AVRO_MAPPINGS: DefaultMappingEntry[] = [
   { sourceType: "string", targetFormat: "avro", mappedType: "string", isLossy: false },
   { sourceType: "url", targetFormat: "avro", mappedType: "string", isLossy: false },
@@ -64,12 +67,15 @@ const AVRO_MAPPINGS: DefaultMappingEntry[] = [
   { sourceType: "uint16", targetFormat: "avro", mappedType: "int", isLossy: false },
   { sourceType: "uint32", targetFormat: "avro", mappedType: "long", isLossy: false },
   { sourceType: "uint64", targetFormat: "avro", mappedType: "long", isLossy: true, lossDescription: "uint64 values above 2^63-1 cannot be represented in signed long" },
-  { sourceType: "numeric", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: false },
+  // The typespec-cli Avro emitter (@superschema/typespec-avro, a separate repo) hardcodes `decimal(precision 38, scale 0)`
+  // for numeric / decimal / decimal128 and does not read the field's precision / scale — so `decimal(12,2)` is published as
+  // `decimal(38,0)` and fractional digits are lost. Marked lossy until the emitter carries @precision / @scale.
+  { sourceType: "numeric", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: true, lossDescription: AVRO_DECIMAL_LOSS },
   { sourceType: "float", targetFormat: "avro", mappedType: "double", isLossy: false },
   { sourceType: "float32", targetFormat: "avro", mappedType: "float", isLossy: false },
   { sourceType: "float64", targetFormat: "avro", mappedType: "double", isLossy: false },
-  { sourceType: "decimal", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: false },
-  { sourceType: "decimal128", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: false },
+  { sourceType: "decimal", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: true, lossDescription: AVRO_DECIMAL_LOSS },
+  { sourceType: "decimal128", targetFormat: "avro", mappedType: "bytes/decimal", isLossy: true, lossDescription: AVRO_DECIMAL_LOSS },
   { sourceType: "boolean", targetFormat: "avro", mappedType: "boolean", isLossy: false },
   { sourceType: "bytes", targetFormat: "avro", mappedType: "bytes", isLossy: false },
   { sourceType: "plainDate", targetFormat: "avro", mappedType: "int/date", isLossy: false },
