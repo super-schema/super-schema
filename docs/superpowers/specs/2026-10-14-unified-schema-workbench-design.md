@@ -1,7 +1,7 @@
 # Unified Schema Workbench — Design
 
 Date: 2026-10-14
-Status: Draft for review
+Status: Implemented
 Branch context: feat/events-asyncapi (work lands on its own feature branch)
 
 ## 1. Problem
@@ -70,11 +70,11 @@ Transitions: `loadImport(text, format, filename)`, `startForm(format)`, `formCha
 - **Form → panel:** the active editor's `onContentChange(text)` dispatches `formChanged`, which sets `currentText`.
 - **Panel → form:** `panelEdited(text)` is debounced (300 ms). `parseToFormState(format, text)` runs; if `ok`, the editor's state is replaced. If not, the text is kept, `formMappable = false`, and an inline notice reads "Can't map to the form. Fix the schema or keep editing as text." The form does not change and no user text is lost.
 - **Loop guard:** track `lastWrittenText`. A `formChanged` whose text equals the text the panel just pushed down is ignored, and a `panelEdited` whose text equals the last form-serialized text is skipped.
-- **Editors become controllable.** `VisualEditorProps` gains `value?: FormState` (format-specific) and `onStateChange`. Where an editor currently owns state internally (`JsonSchemaVisualEditor.tsx:41`, `AvroVisualEditor.tsx:38`, `ProtobufVisualEditor.tsx:33`), lift it to the controlled pattern while keeping uncontrolled default behaviour so existing callers and tests keep working.
+- **Editors take a `hydrate` prop.** `VisualEditorProps.hydrate?: { nonce: number; state: FormState }` replaces the editor's internal state whenever `nonce` changes and the state's format matches. Optional, so uncontrolled use is unchanged. The workbench keeps the form editor mounted (hidden) while another input is shown, so form state survives tab switches.
 
 ### 5.5 `parseToFormState`
 
-New `src/lib/schema-workbench/parse-to-form-state.ts`. Maps the output of the existing importers (`jsonschema.importer.ts`, `avro.importer.ts`, `protobuf.importer.ts`) onto each editor's field shape. Returns `{ ok: true, state } | { ok: false, reason }`. `ok: false` for invalid text and for constructs the editor cannot represent. Must be the exact inverse of the matching `serialize*` for everything the form can express (round-trip tested).
+`src/lib/schema-workbench/parse-to-form-state.ts`. A strict, direct inverse of `serializeJsonSchema` / `serializeAvroSchema` / `serializeProtobufSchema` (not a mapping from importer IR, which is richer than the form models and lossy to go through). Returns `{ ok: true, state } | { ok: false, reason }`. Only text shaped like the serializers' output is accepted; invalid text and unrepresentable constructs (nested properties, multi-type unions, nested messages, extra keywords) return `ok: false` with a reason. Round-trip tests (`form → serialize → parse → serialize`) define "mappable". `serializeFormState` in `form-state.ts` is the single serialize entry point.
 
 ### 5.6 Imported / pasted origin
 
@@ -115,5 +115,4 @@ New `src/lib/schema-workbench/parse-to-form-state.ts`. Maps the output of the ex
 
 ## 9. Open items for the plan
 
-- Confirm the exact field-state shape per editor when writing the plan (read the three editors in full first).
 - Decide the diff algorithm implementation (small in-repo LCS vs. an existing dependency). Prefer in-repo to avoid a new dependency.

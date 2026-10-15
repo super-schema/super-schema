@@ -2,12 +2,10 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, AlertCircle } from "lucide-react";
 import { TemplateSelector, type CreationMethod } from "./TemplateSelector";
 import { StandardsBrowser } from "./StandardsBrowser";
 import { NaturalLanguageInput } from "./NaturalLanguageInput";
-import { ImportUploader } from "./ImportUploader";
-import { VisualSchemaBuilder } from "@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder";
+import { SchemaWorkbench } from "@/components/custom/SchemaWorkbench";
 import { FieldPreview, type PreviewField } from "./FieldPreview";
 import { createEntityWithFieldsAction, type CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { createTenantEntityAction } from "@/app/(dashboard)/schemas/enterprise/actions";
@@ -503,45 +501,15 @@ export function EntityCreationWizard({
           />
         )}
 
-        {state.step === "configure" && state.method === "import" && (
-          <ImportUploader
-            onSubmit={handleImportSubmit}
+        {state.step === "configure" && state.method === "schema" && (
+          <SchemaWorkbench
+            onCommit={(content, format, filename) => handleImportSubmit(content, filename, format)}
             onBack={goToSelectMethod}
-            isLoading={isLoading}
+            referenceTargets={referenceTargets}
             error={error}
+            isLoading={isLoading}
             detectedFormat={detectedFormat}
           />
-        )}
-
-        {state.step === "configure" && state.method === "visual" && (
-          <div className="space-y-space-4">
-            <button
-              onClick={goToSelectMethod}
-              className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-            <div>
-              <h3 className="text-heading-2 text-foreground mb-space-2">
-                Build Schema Visually
-              </h3>
-              <p className="text-body-small text-muted-foreground mb-space-4">
-                Add fields and pick types. We generate a JSON Schema and take you
-                to review before creating the entity.
-              </p>
-            </div>
-            {error && (
-              <div className="flex items-start gap-space-2 p-space-3 rounded-lg border border-destructive/30 bg-destructive/5">
-                <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-                <p className="text-body-small text-destructive">{error}</p>
-              </div>
-            )}
-            <VisualSchemaBuilder
-              onImport={(content, format) => handleImportSubmit(content, undefined, format)}
-              referenceTargets={referenceTargets}
-            />
-          </div>
         )}
 
         {state.step === "preview-fields" && (

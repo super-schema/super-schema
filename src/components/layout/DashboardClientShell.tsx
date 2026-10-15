@@ -188,6 +188,7 @@ function DashboardShell({
     registerToggleHandler,
     registerCollapseHandler,
     registerCollapsedState,
+    hideWhenEmpty,
   } = useRightPanelContent();
   const { collapse, expand, isCollapsed } = rightPanel;
 
@@ -252,6 +253,7 @@ function DashboardShell({
           onMouseDown={rightPanel.handleMouseDown}
           onDoubleClick={rightPanel.handleDoubleClick}
           onCollapse={rightPanel.collapse}
+          hideWhenEmpty={hideWhenEmpty}
         >
           {rightPanelContent}
         </RightPanel>

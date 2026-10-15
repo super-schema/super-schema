@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 import { levelLabel } from "@/lib/levels";
 
 export default async function NewEnterpriseEntityPage() {
@@ -18,6 +19,7 @@ export default async function NewEnterpriseEntityPage() {
 
   return (
     <div className="animate-auth-fade-up">
+      <HideEmptyRightPanel />
       {/* Breadcrumb */}
       <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
         <Link

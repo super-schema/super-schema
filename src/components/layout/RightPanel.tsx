@@ -9,6 +9,8 @@ interface RightPanelProps {
   onDoubleClick: () => void;
   onCollapse: () => void;
   children?: React.ReactNode;
+  /** Render collapsed (handle only) instead of the empty "Detail Panel" placeholder when there is no content. */
+  hideWhenEmpty?: boolean;
 }
 
 export function RightPanel({
@@ -18,8 +20,9 @@ export function RightPanel({
   onDoubleClick,
   onCollapse,
   children,
+  hideWhenEmpty = false,
 }: RightPanelProps) {
-  if (isCollapsed || width === 0) {
+  if (isCollapsed || width === 0 || (hideWhenEmpty && !children)) {
     return (
       <div
         data-testid="right-panel"

@@ -38,17 +38,6 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions", () => (
   importOpenApiDocumentAction: mocks.importOpenApiDocumentAction,
 }));
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => mocks.invalidate }));
-// The visual builder hands its output over with the format it was built in.
-vi.mock("@/components/custom/VisualSchemaBuilder/VisualSchemaBuilder", () => ({
-  VisualSchemaBuilder: ({ onImport }: { onImport: (content: string, format: string) => void }) => (
-    <button
-      type="button"
-      onClick={() => onImport('syntax = "proto3";\nmessage Visual { string id = 1; }', "protobuf")}
-    >
-      Use builder output
-    </button>
-  ),
-}));
 // Real import service, observed: the wizard must hand over the builder's format.
 vi.mock("@/services/import.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/import.service")>();
@@ -77,12 +66,17 @@ const ORDER_PROTO = readFileSync(
   "utf8"
 );
 
-function pasteAndParse(content: string) {
-  fireEvent.click(screen.getByRole("button", { name: /Import Schema/ }));
-  fireEvent.change(screen.getByPlaceholderText(/Paste your schema content here/), {
+async function pasteAndParse(content: string) {
+  fireEvent.click(screen.getByRole("button", { name: /Import or Build Schema/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+  fireEvent.change(screen.getByTestId("workbench-paste-textarea"), {
     target: { value: content },
   });
-  fireEvent.click(screen.getByRole("button", { name: /Parse Schema/ }));
+  fireEvent.click(screen.getByTestId("workbench-load-button"));
+  await waitFor(() =>
+    expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).toBe(content)
+  );
+  fireEvent.click(screen.getByTestId("workbench-review-button"));
 }
 
 beforeEach(() => {
@@ -106,7 +100,7 @@ afterEach(cleanup);
 describe("EntityCreationWizard — multi-entity import", () => {
   it("sends a multi-message proto through the multi-asset review and persists it in the product", async () => {
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);
-    pasteAndParse(ORDER_PROTO);
+    await pasteAndParse(ORDER_PROTO);
 
     await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());
     expect(screen.getByText("Review Protobuf Import")).toBeDefined();
@@ -121,7 +115,7 @@ describe("EntityCreationWizard — multi-entity import", () => {
 
   it("keeps a single-message proto on the field preview", async () => {
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);
-    pasteAndParse(`syntax = "proto3";\nmessage User { string id = 1; }`);
+    await pasteAndParse(`syntax = "proto3";\nmessage User { string id = 1; }`);
 
     await waitFor(() => expect(screen.getByDisplayValue("User")).toBeDefined());
     expect(screen.queryByTestId("typespec-import-review")).toBeNull();
@@ -130,7 +124,7 @@ describe("EntityCreationWizard — multi-entity import", () => {
   it("persists imported field numbers and map/oneof metadata from the single-entity preview", async () => {
     mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e1" });
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);
-    pasteAndParse(
+    await pasteAndParse(
       `syntax = "proto3";\nmessage User {\n  map<string, int64> scores = 4;\n  oneof contact { string email = 7; }\n}`
     );
     await waitFor(() => expect(screen.getByDisplayValue("User")).toBeDefined());
@@ -153,7 +147,7 @@ describe("EntityCreationWizard — multi-entity import", () => {
 
   it("explains that multi-entity imports go into a product at the Enterprise level", async () => {
     render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
-    pasteAndParse(ORDER_PROTO);
+    await pasteAndParse(ORDER_PROTO);
 
     expect(
       await screen.findByText(
@@ -177,19 +171,23 @@ describe("EntityCreationWizard — visual builder hand-off (Story 15.6)", () => 
     // Detection disagrees with the builder: the builder's format must win.
     vi.mocked(detectFormat).mockImplementation(() => "avro");
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);
-    fireEvent.click(screen.getByRole("button", { name: /Build Visually/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Use builder output" }));
+    fireEvent.click(screen.getByRole("button", { name: /Import or Build Schema/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    fireEvent.click(screen.getByRole("button", { name: "Protobuf" }));
+    fireEvent.change(screen.getByDisplayValue("NewEntity"), { target: { value: "Visual" } });
+    fireEvent.change(screen.getByPlaceholderText("field_name"), { target: { value: "id" } });
+    fireEvent.click(screen.getByTestId("workbench-review-button"));
 
     await waitFor(() => expect(screen.getByDisplayValue("Visual")).toBeDefined());
     expect(importSchemaAssets).toHaveBeenCalledWith(
-      'syntax = "proto3";\nmessage Visual { string id = 1; }',
+      expect.stringContaining("message Visual {"),
       "protobuf"
     );
   });
 
-  it("passes the uploader's detected format for pasted content", async () => {
+  it("passes the detected format for pasted content", async () => {
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);
-    pasteAndParse(`syntax = "proto3";\nmessage User { string id = 1; }`);
+    await pasteAndParse(`syntax = "proto3";\nmessage User { string id = 1; }`);
 
     await waitFor(() => expect(screen.getByDisplayValue("User")).toBeDefined());
     expect(importSchemaAssets).toHaveBeenLastCalledWith(expect.any(String), "protobuf");
@@ -211,7 +209,7 @@ describe("EntityCreationWizard — visual builder hand-off (Story 15.6)", () => 
       },
     });
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);
-    pasteAndParse(`openapi: "3.0.0"\ninfo:\n  title: Pets\n  version: "1"\npaths:\n  /pets: {}\n`);
+    await pasteAndParse(`openapi: "3.0.0"\ninfo:\n  title: Pets\n  version: "1"\npaths:\n  /pets: {}\n`);
 
     await waitFor(() => expect(screen.getByText("Review OpenAPI Import")).toBeDefined());
     expect(mocks.importOpenApiDocumentAction).toHaveBeenCalledTimes(1);

@@ -1,12 +1,11 @@
 "use client";
 
-import { BookOpen, Wand2, Upload, Plus, Table2 } from "lucide-react";
+import { BookOpen, Wand2, FileInput, Plus } from "lucide-react";
 
 export type CreationMethod =
   | "standards"
   | "natural-language"
-  | "import"
-  | "visual"
+  | "schema"
   | "blank";
 
 interface TemplateSelectorProps {
@@ -33,20 +32,12 @@ const METHODS = [
     borderColor: "hover:border-purple-400/40",
   },
   {
-    id: "import" as const,
-    icon: Upload,
-    title: "Import Schema",
-    description: "Import from Avro, BigQuery DDL, Protobuf, JSON Schema, or paste schema content",
+    id: "schema" as const,
+    icon: FileInput,
+    title: "Import or Build Schema",
+    description: "Drop a schema file, paste one, or build it field by field. Avro, Protobuf, JSON Schema, BigQuery DDL, TypeSpec and OpenAPI",
     color: "text-emerald-400",
     borderColor: "hover:border-emerald-400/40",
-  },
-  {
-    id: "visual" as const,
-    icon: Table2,
-    title: "Build Visually",
-    description: "Build a JSON Schema field-by-field with a visual editor (Avro & Protobuf coming soon)",
-    color: "text-cyan-400",
-    borderColor: "hover:border-cyan-400/40",
   },
   {
     id: "blank" as const,

@@ -6,6 +6,7 @@ import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard";
 import { isAiConfigured } from "@/services/ai.service";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { HideEmptyRightPanel } from "@/components/layout/HideEmptyRightPanel";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string }>;
@@ -42,6 +43,7 @@ export default async function NewEntityPage({ params }: Props) {
 
   return (
     <div className="animate-auth-fade-up">
+      <HideEmptyRightPanel />
       {/* Breadcrumb */}
       <nav className="flex items-center gap-space-1 text-body-small text-muted-foreground mb-space-4">
         <Link href="/schemas" className="hover:text-foreground transition-colors">
