@@ -11,12 +11,10 @@
 import type {
   SuperSchemaModel,
   SuperSchemaField,
-  DecoratorSet,
   LogicalType,
   SuperSchemaSharedEnum,
   SuperSchemaCustomScalar,
   SuperSchemaUnionType,
-  SuperSchemaAlias,
   SuperSchemaInterface,
   SuperSchemaOperation,
 } from "@/types/super-schema-model";
