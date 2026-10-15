@@ -26,6 +26,29 @@ import {
   tagsDecorator,
   type GovernanceLibrary,
 } from "./governance-decorators";
+import {
+  enumMemberName,
+  escapeString,
+  propertyName,
+  quoteIdentifier,
+  sanitizeIdentifier,
+  sanitizeIdentifierSegment,
+} from "./typespec-identifiers";
+
+// The identifier rules live in typespec-identifiers.ts (shared with the protobuf / Avro projections and the emitter
+// service); re-exported here so the generator stays the one import for generated-source spelling.
+export {
+  TYPESPEC_HARD_KEYWORDS,
+  TYPESPEC_KEYWORDS,
+  TYPESPEC_RESERVED_FUTURE_WORDS,
+  enumMemberName,
+  escapeString,
+  isPlainIdentifier,
+  propertyName,
+  quoteIdentifier,
+  sanitizeIdentifier,
+  sanitizeIdentifierSegment,
+} from "./typespec-identifiers";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -403,7 +426,7 @@ function createContext(model: SuperSchemaModel): GenContext {
   for (const field of model.fields) {
     if (!needsInlineEnum(field)) continue;
     inlineValues.set(field, normalizeEnumSymbols(extractEnumValues(field)));
-    const base = `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`;
+    const base = `${sanitizeIdentifier(entityName)}_${sanitizeIdentifierSegment(field.name)}`;
     if (sharedNames.has(base)) {
       names.set(field, base);
       reused.add(field);
@@ -418,7 +441,7 @@ function createContext(model: SuperSchemaModel): GenContext {
   return {
     entityName,
     diagnostics,
-    enumNameOf: (field) => names.get(field) ?? `${sanitizeIdentifier(entityName)}_${sanitizeIdentifier(field.name)}`,
+    enumNameOf: (field) => names.get(field) ?? `${sanitizeIdentifier(entityName)}_${sanitizeIdentifierSegment(field.name)}`,
     // An enum without symbols is never declared (see generateFieldDefinition for how the field fails loudly).
     declaresInlineEnum: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) > 0,
     hasNoEnumValues: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) === 0,
@@ -900,68 +923,6 @@ function resolveTypeSpecType(
 // Utilities
 // ---------------------------------------------------------------------------
 
-/**
- * Every word the TypeSpec scanner (`Keywords` in @typespec/compiler core/scanner) will not accept as a bare
- * identifier — statement keywords, literal / type keywords (`true`, `void`, `never`, `unknown`) and the reserved
- * future keywords. A test enumerates the compiler's own `Token` enum and fails when this list falls behind.
- */
-export const TYPESPEC_KEYWORDS: ReadonlySet<string> = new Set([
-  "import", "model", "scalar", "namespace", "interface", "union", "if", "else", "projection", "using", "op",
-  "extends", "is", "enum", "alias", "dec", "fn", "valueof", "typeof", "const", "init", "true", "false", "return",
-  "void", "never", "unknown", "extern", "internal",
-  // reserved for future use
-  "statemachine", "macro", "package", "metadata", "env", "arg", "declare", "array", "struct", "record", "module",
-  "mod", "sym", "context", "prop", "property", "scenario", "pub", "sub", "typeref", "trait", "this", "self",
-  "super", "keyof", "with", "implements", "impl", "satisfies", "flag", "auto", "partial", "private", "public",
-  "protected", "sealed", "local", "async",
-]);
-
-const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-/** A bare TypeSpec identifier: ASCII word characters, not starting with a digit, not a keyword. */
-export function isPlainIdentifier(name: string): boolean {
-  return PLAIN_IDENTIFIER.test(name) && !TYPESPEC_KEYWORDS.has(name);
-}
-
-export function sanitizeIdentifier(name: string): string {
-  // Replace non-alphanumeric characters with underscores
-  let safe = name.replace(/[^a-zA-Z0-9_]/g, "_");
-  // Ensure it doesn't start with a digit
-  if (/^[0-9]/.test(safe)) {
-    safe = `_${safe}`;
-  }
-  // Escape TypeSpec reserved words
-  if (TYPESPEC_KEYWORDS.has(safe)) {
-    safe = `_${safe}`;
-  }
-  return safe;
-}
-
-/**
- * A model property name that keeps the WIRE name: a bare identifier when the name is one, otherwise a backticked
- * identifier (`` `in-progress` ``, `` `op` ``, `` `日本語` ``). Never mangled — the generated contract must describe
- * the property the producer actually sends, and two distinct names can never collapse into one.
- */
-export function propertyName(name: string): string {
-  return isPlainIdentifier(name) ? name : quoteIdentifier(name);
-}
-
-/** An enum member name that keeps the wire symbol: bare when it is an identifier, else the quoted `"…"` form. */
-export function enumMemberName(name: string): string {
-  return isPlainIdentifier(name) ? name : `"${escapeString(name)}"`;
-}
-
-/** A backticked TypeSpec identifier. Backslash, backtick and line breaks are escaped; any other character is literal. */
-export function quoteIdentifier(name: string): string {
-  const escaped = name
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
-  return `\`${escaped}\``;
-}
-
 function oneLine(text: string): string {
   return text.replace(new RegExp("[\\r\\n\\u2028\\u2029]+", "g"), " ");
 }
@@ -974,16 +935,3 @@ function sanitizeNamespace(ns: string): string {
     .join(".");
 }
 
-/**
- * Escape text for a TypeSpec `"…"` string. `${` opens a string template (`"Price in ${currency}"` is an
- * unresolved reference), so its `$` is escaped; a lone `$` is left alone.
- */
-export function escapeString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t")
-    .replace(/\$\{/g, "\\${");
-}

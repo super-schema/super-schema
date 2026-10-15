@@ -93,6 +93,16 @@ describe("resolveSnapshot", () => {
     ]));
   });
 
+  it("turns a renderer's coded notes (an Avro enum symbol that had to be renamed) into warnings carrying their own code", async () => {
+    const note = { code: "AVRO_ENUM_SYMBOL_RENAMED", message: 'Avro enum symbol "in-progress" of Order_status is published as "in_progress"' };
+    const render: ArtifactRenderer["render"] = async (subject, format) =>
+      ok({ artifact: schemaFor(subject, format), warnings: [], ...(format === "avro" && subject.kind === "version" && subject.entityVersionId === "ev-order" ? { notes: [note] } : {}) });
+    const out = await resolveSnapshot(snapshot(), { render }, "draft");
+    expect(out.diagnostics).toEqual([
+      { severity: "warning", code: "AVRO_ENUM_SYMBOL_RENAMED", pointer: "", message: `Message OrderCreated payload: ${note.message}` },
+    ]);
+  });
+
   it("short-circuits on unresolved draft references without rendering anything", async () => {
     const render = vi.fn();
     const out = await resolveSnapshot(

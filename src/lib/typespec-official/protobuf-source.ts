@@ -40,7 +40,7 @@
  * Pure functions — no side effects, no I/O.
  */
 
-import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
+import { protobufFieldName, sanitizeIdentifier, unescapeTypeSpecText } from "@/lib/compiler/typespec-identifiers";
 
 const WELL_KNOWN_TIMESTAMP = "TypeSpec.Protobuf.WellKnown.Timestamp";
 
@@ -136,16 +136,17 @@ export function projectTypeSpecSourceForProtobuf(source: string): string {
 
 const QUOTED_NAME = /^(?:`((?:[^`\\]|\\.)*)`|"((?:[^"\\]|\\.)*)")/;
 
-const unescapeQuoted = (text: string): string =>
-  text.replace(/\\(.)/g, (whole, ch: string) =>
-    ch === "n" ? "\n" : ch === "r" ? "\r" : ch === "t" ? "\t" : '"\\$@`'.includes(ch) ? ch : whole
-  );
-
-/** `` `in-progress`?: `` → `in_progress?:` (an identifier head is returned unchanged). */
+/**
+ * `` `in-progress`?: `` → `in_progress?:`. A name that is already a valid identifier keeps its backticks: `.proto`
+ * allows a field called `op` or `model`, the wire carries the number, and `injectProtobufFieldNumbers` finds the
+ * property by the same {@link protobufFieldName}. An identifier head is returned unchanged.
+ */
 function protobufPropertyHead(head: string): string {
   const quoted = QUOTED_NAME.exec(head);
   if (!quoted) return head;
-  return `${sanitizeIdentifier(unescapeQuoted(quoted[1] ?? quoted[2] ?? ""))}${head.slice(quoted[0].length)}`;
+  const name = unescapeTypeSpecText(quoted[1] ?? quoted[2] ?? "");
+  const projected = protobufFieldName(name);
+  return projected === name ? head : `${projected}${head.slice(quoted[0].length)}`;
 }
 
 /** Rewrite one TypeSpec type expression into its protobuf-representable form. */
@@ -187,7 +188,7 @@ function normalizeEnumsForProtobuf(source: string): string {
       .map((line) => {
         // Wire symbols are quoted (`"in-progress"`); a proto enum value name must be an identifier.
         const quoted = QUOTED_NAME.exec(line);
-        return quoted ? sanitizeIdentifier(unescapeQuoted(quoted[1] ?? quoted[2] ?? "")) : line.split(":")[0].trim();
+        return quoted ? sanitizeIdentifier(unescapeTypeSpecText(quoted[1] ?? quoted[2] ?? "")) : line.split(":")[0].trim();
       })
       .filter(Boolean);
 

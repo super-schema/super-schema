@@ -8,6 +8,7 @@ import { combineTypeSpecSources, findRootModelName, levelNamespace, stripGoverna
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
 import { isSourceStale } from "@/lib/entity-versioning/draft-state";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
@@ -16,9 +17,9 @@ import {
   DEFAULT_EMITTER_TIMEOUT_MS,
   injectProtobufFieldNumbers,
   runTypeSpecEmitterFiles,
-  sanitizeIdentifier,
   type EmittedFile,
 } from "@/lib/typespec-official/emitter.service";
+import { describeAvroProjection, projectTypeSpecSourceForAvro } from "@/lib/typespec-official/avro-source";
 import { projectTypeSpecSourceForProtobuf } from "@/lib/typespec-official/protobuf-source";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { ok, err, type Result } from "@/types/result";
@@ -30,6 +31,11 @@ export interface RenderedArtifact {
   artifact: SchemaArtifact;
   /** Non-fatal program-combination notes — surfaced as diagnostics by the resolver. */
   warnings: string[];
+  /**
+   * Coded notes (present only when there are some): what a format projection changed — an Avro enum symbol that had to
+   * be renamed to a valid one. The resolver turns each into a warning diagnostic carrying its own code.
+   */
+  notes?: Array<{ code: string; message: string }>;
 }
 export interface ArtifactRenderer {
   render(subject: ArtifactSubject, format: PayloadFormat): Promise<Result<RenderedArtifact>>;
@@ -233,6 +239,8 @@ export function buildTargetSource(format: PayloadFormat, combined: CombinedSourc
     body = projectTypeSpecSourceForProtobuf(body);
     for (const part of [program.root, ...program.deps]) body = injectProtobufFieldNumbers(body, part.rootModel, part.fields);
   }
+  // An Avro enum symbol must be [A-Za-z_][A-Za-z0-9_]*: the canonical source keeps wire values (`in-progress`).
+  if (format === "avro") body = projectTypeSpecSourceForAvro(body).source;
   const namespace = format === "protobuf" ? ["@package", `namespace ${program.namespace};`] : [`namespace ${program.namespace};`];
   return [...imports, ...usings, "", ...namespace, "", body, ""].join("\n");
 }
@@ -382,13 +390,24 @@ export function createArtifactRenderer(options: ArtifactRendererOptions): Artifa
     }
     const packageName = getSchemaTargetDefinition(format)?.packageName;
     if (!packageName) return err({ code: "UNSUPPORTED_FORMAT", message: `No TypeSpec emitter for format "${format}"` });
+    // The Avro projection renames what Avro cannot spell; a rename is reported, two values that collide are an error.
+    const avro = format === "avro" ? describeAvroProjection(projectTypeSpecSourceForAvro(combined.data.body)) : undefined;
+    if (avro && avro.errors.length > 0) {
+      return err({
+        code: "ARTIFACT_RENDER_FAILED",
+        message: `${label} → ${format}: ${avro.errors.join("; ")}`,
+        details: { cause: "AVRO_SYMBOL_COLLISION" },
+      });
+    }
     const source = buildTargetSource(format, combined.data, program.data);
     const files = await limit(() => emitWithTimeout(emitFiles, packageName, source, emitterOptions(format, program.data.root.rootModel), timeoutMs));
     if (!files.success) {
       return err({ code: "ARTIFACT_RENDER_FAILED", message: `${label} → ${format}: ${files.error.message}`, details: { cause: files.error.code } });
     }
     const artifact = pickEmittedArtifact(format, files.data, program.data.root.rootModel);
-    return artifact.success ? ok({ artifact: artifact.data, warnings: combined.data.warnings }) : artifact;
+    if (!artifact.success) return artifact;
+    const notes = (avro?.warnings ?? []).map((message) => ({ code: "AVRO_ENUM_SYMBOL_RENAMED", message }));
+    return ok({ artifact: artifact.data, warnings: combined.data.warnings, ...(notes.length > 0 && { notes }) });
   }
 
   /** Never rejects: whatever a loader, the combiner, the emitter or the picker throws is an `ARTIFACT_RENDER_FAILED` result. */

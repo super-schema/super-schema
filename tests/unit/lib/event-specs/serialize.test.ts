@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import { parse } from "yaml";
 import { assembleAsyncApi3 } from "@/lib/event-specs/assemble";
 import { canonicalizeDocumentOrder, toJson, toYaml } from "@/lib/event-specs/serialize";
@@ -49,6 +50,60 @@ describe("serialize", () => {
       const yaml = toYaml(hostile);
       expect(parse(yaml, { version: "1.1" })).toEqual(hostile);
       expect(parse(yaml, { version: "1.2" })).toEqual(hostile);
+    });
+
+    // I3: the library's 1.1 mode still left `=`, `<<` and `0o17` bare: PyYAML raises a ConstructorError for `=` / `<<` (the 1.1
+    // "value" and merge types) and `0o17` is the number 15 under the 1.2 core schema.
+    describe("strings both YAML versions would misread", () => {
+      const operators: JsonObject = {
+        info: { title: "ops", version: "1.0" },
+        components: {
+          schemas: {
+            Operator: { type: "string", enum: ["=", "<", "<<", ">", "0o17", "0o8", "yes"], default: "=" },
+            "<<": { type: "string", const: "<<" },
+            "=": { type: "string" },
+            "0o17": { type: "integer" },
+            Nested: { examples: [{ "<<": "=" }], enum: [["<<", "="]] },
+          },
+        },
+      };
+
+      it("single-quotes `=`, `<<` and 0o<octal> wherever they appear (values, keys, nested)", () => {
+        const yaml = toYaml(operators);
+        expect(yaml).toContain("- '='");
+        expect(yaml).toContain("- '<<'");
+        expect(yaml).toContain("- '0o17'");
+        expect(yaml).toContain("default: '='");
+        expect(yaml).toContain("'<<':");
+        expect(yaml).toContain("'=':");
+        expect(yaml).toContain("'0o17':");
+        expect(yaml).toContain("const: '<<'");
+        // not over-quoted: plain strings and a non-octal `0o8` stay as they were
+        expect(yaml).toContain("- <\n");
+        expect(yaml).toContain("- 0o8\n");
+        expect(yaml).toContain("type: string");
+        // no bare `<<` / `=` scalar survives anywhere
+        expect(yaml).not.toMatch(/(^|[\s:-])<<(\s|$)/m);
+        expect(yaml).not.toMatch(/(^|[\s:-])=(\s|$)/m);
+      });
+
+      it("reads back identically under the 1.1 and the 1.2 core schema", () => {
+        const yaml = toYaml(operators);
+        expect(parse(yaml, { version: "1.1" })).toEqual(operators);
+        expect(parse(yaml, { version: "1.2" })).toEqual(operators);
+      });
+
+      const pyYaml = spawnSync("python3", ["-c", "import yaml"]).status === 0;
+      it.skipIf(!pyYaml)("reads back identically in PyYAML (a real YAML 1.1 reader)", () => {
+        const yaml = toYaml(operators);
+        const py = spawnSync(
+          "python3",
+          ["-c", "import sys, json, yaml; print(json.dumps(yaml.safe_load(sys.stdin.read()), sort_keys=True))"],
+          { input: yaml, encoding: "utf8" },
+        );
+        expect(py.stderr).toBe("");
+        expect(JSON.parse(py.stdout)).toEqual(operators);
+      });
     });
 
     it("is deterministic and leaves ordinary documents (including the worked example) byte-stable", () => {

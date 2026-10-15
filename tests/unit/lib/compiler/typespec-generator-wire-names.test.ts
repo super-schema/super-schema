@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { compileEntity } from "@/lib/compiler/compiler.service";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import {
+  TYPESPEC_HARD_KEYWORDS,
   TYPESPEC_KEYWORDS,
+  TYPESPEC_RESERVED_FUTURE_WORDS,
   enumMemberName,
   escapeString,
   generateTypeSpec,
@@ -143,16 +145,56 @@ describe("identifier helpers", () => {
     expect(sanitizeIdentifier("Order")).toBe("Order");
   });
 
-  it("TYPESPEC_KEYWORDS covers every keyword of the installed TypeSpec compiler's scanner", () => {
-    // `Keywords` (statement + literal + reserved-for-future words) in the scanner source: ["import", Token.ImportKeyword], …
+  // The scanner's `Keywords` table (statement + literal + reserved-for-future words): ["import", Token.ImportKeyword], …
+  const scannerKeywords = (): string[] => {
     const scanner = readFileSync(join(process.cwd(), "node_modules/@typespec/compiler/dist/src/core/scanner.js"), "utf8");
     const table = /export const Keywords = new Map\(\[([\s\S]*?)\]\);/.exec(scanner)?.[1] ?? "";
-    const fromCompiler = [...table.matchAll(/\["([a-z]+)", Token\.\w+\]/g)].map((m) => m[1]);
+    return [...table.matchAll(/\["([a-z]+)", Token\.\w+\]/g)].map((m) => m[1]);
+  };
+
+  it("TYPESPEC_KEYWORDS = hard keywords + reserved-for-future words = every keyword of the installed scanner", () => {
+    const fromCompiler = scannerKeywords();
     expect(fromCompiler.length).toBeGreaterThan(60);
-    const missing = fromCompiler.filter((word) => !TYPESPEC_KEYWORDS.has(word));
-    expect(missing).toEqual([]);
-    for (const word of fromCompiler) expect(isPlainIdentifier(word)).toBe(false);
+    expect(fromCompiler.filter((word) => !TYPESPEC_KEYWORDS.has(word))).toEqual([]);
+    expect([...TYPESPEC_KEYWORDS].filter((word) => !fromCompiler.includes(word))).toEqual([]);
+    expect(TYPESPEC_HARD_KEYWORDS.size).toBe(27);
+    for (const word of TYPESPEC_RESERVED_FUTURE_WORDS) expect(TYPESPEC_HARD_KEYWORDS.has(word)).toBe(false);
+    expect(TYPESPEC_HARD_KEYWORDS.size + TYPESPEC_RESERVED_FUTURE_WORDS.size).toBe(TYPESPEC_KEYWORDS.size);
   });
+
+  it("only the hard keywords are quoted as a property name / enum member; every other word stays bare (I1)", () => {
+    for (const word of TYPESPEC_HARD_KEYWORDS) {
+      expect(propertyName(word)).toBe("`" + word + "`");
+      expect(enumMemberName(word)).toBe(`"${word}"`);
+    }
+    for (const word of TYPESPEC_RESERVED_FUTURE_WORDS) {
+      expect(propertyName(word)).toBe(word);
+      expect(enumMemberName(word)).toBe(word);
+      expect(isPlainIdentifier(word)).toBe(true);
+    }
+  });
+
+  it("the split is exact in the real compiler: every hard keyword fails bare, every other keyword compiles bare", async () => {
+    // hard keywords: a bare property / enum member is a compile error ...
+    for (const word of TYPESPEC_HARD_KEYWORDS) {
+      expect((await compileTypeSpecWithGovernance(`model A { ${word}: string }`)).success, `property ${word}`).toBe(false);
+      expect((await compileTypeSpecWithGovernance(`enum E { ${word} }`)).success, `enum member ${word}`).toBe(false);
+    }
+    // ... every reserved-for-future word and `extern` / `internal` compiles bare (what the generator has always emitted)
+    const soft = [...TYPESPEC_RESERVED_FUTURE_WORDS];
+    const source = `model A {\n${soft.map((w) => `  ${w}: string;`).join("\n")}\n}\nenum E {\n${soft.map((w) => `  ${w},`).join("\n")}\n}\n`;
+    const r = await compileTypeSpecWithGovernance(source);
+    if (!r.success) throw new Error(r.diagnostics.map((d) => d.message).join("\n"));
+    expect(r.document.models[0].fields.map((f) => f.name)).toEqual(soft);
+    expect(r.document.enums[0].values).toEqual(soft);
+  }, 240_000);
+
+  it("a type NAME is still protected by the full keyword list (none of the reserved-for-future words compiles as a model name)", async () => {
+    for (const word of ["record", "metadata", "internal", "extern", "public"]) {
+      expect(sanitizeIdentifier(word)).toBe(`_${word}`);
+      expect((await compileTypeSpecWithGovernance(`model ${word} { x: string }`)).success, `model ${word}`).toBe(false);
+    }
+  }, 60_000);
 });
 
 describe("property names keep the wire name (real TypeSpec compiler)", () => {

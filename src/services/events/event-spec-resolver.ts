@@ -203,6 +203,7 @@ export async function resolveSnapshot(
       return undefined;
     }
     for (const w of r.data.warnings) diagnostics.push(diagnostic("warning", "TYPESPEC_DUPLICATE_DECLARATION", `${what}: ${w}`, ""));
+    for (const n of r.data.notes ?? []) diagnostics.push(diagnostic("warning", n.code, `${what}: ${n.message}`, ""));
     return r.data.artifact;
   };
   const isArtifact = (a: SchemaArtifact | undefined): a is SchemaArtifact => a !== undefined;

@@ -1,4 +1,4 @@
-import { stringify } from "yaml";
+import { stringify, type ScalarTag } from "yaml";
 import type { JsonObject } from "./types";
 
 /**
@@ -34,6 +34,27 @@ export function toJson(document: JsonObject): string {
   return `${JSON.stringify(document, null, 2)}\n`;
 }
 
+/**
+ * Strings the `yaml` library's 1.1 mode still leaves bare although a reader gets a different value:
+ * - `=` is the YAML 1.1 "value" type — PyYAML raises a `ConstructorError` for the whole document;
+ * - `<<` is the 1.1 merge key — as a value (or a key) PyYAML treats it as a merge (error / dropped entry); the library's own
+ *   merge tag stringifies it bare whatever scalar style is requested, so it needs a tag in front of the merge tag;
+ * - `0o17` is a plain string in 1.1 but the integer 15 under the YAML 1.2 core schema.
+ * Single quotes make each of them a string for every reader.
+ */
+const AMBIGUOUS_STRING = /^(=|<<|0o[0-7]+)$/;
+
+const quoteAmbiguousStrings: ScalarTag = {
+  identify: (value) => typeof value === "string" && AMBIGUOUS_STRING.test(value),
+  // When several tags identify a value the library keeps only those that have a `test`; the merge tag has one, so without
+  // this the merge tag would win for `<<` and write it bare.
+  test: AMBIGUOUS_STRING,
+  default: true, // an ordinary string: no `!!str` prefix
+  tag: "tag:yaml.org,2002:str",
+  resolve: (str) => str,
+  stringify: (item) => `'${String(item.value)}'`,
+};
+
 export function toYaml(document: JsonObject): string {
   return stringify(document, {
     // Quote what a YAML 1.1 reader (PyYAML, Ruby/Psych, many Java parsers) misreads. The default (1.2 core) writes
@@ -41,6 +62,7 @@ export function toYaml(document: JsonObject): string {
     // and the keys `no` / `n` collapse into one. `version: "1.1"` quotes them all; the output is a plain subset of YAML
     // 1.2 as well (no `%YAML` directive is emitted), so 1.2 readers see the same document.
     version: "1.1",
+    customTags: (tags) => [quoteAmbiguousStrings, ...tags], // `=`, `<<`, `0o17` — see AMBIGUOUS_STRING
     aliasDuplicateObjects: false, // never emit &anchors / *aliases for repeated schemas
     lineWidth: 0, // never fold long descriptions
     singleQuote: true, // '2.0', '#/components/...' — matches spec §6.2
