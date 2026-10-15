@@ -11,22 +11,22 @@ const UNEXPECTED_FAILURE = {
 } as const satisfies ActionResult<never>;
 
 /** Read-style action: authenticate, call the service, never revalidate. An unexpected throw is logged and returned generically. */
-async function emitAction(specId: string, target: EmitTarget): Promise<ActionResult<EventSpecEmission>> {
+async function emitAction(specId: string, target: EmitTarget, label: string): Promise<ActionResult<EventSpecEmission>> {
   try {
     const ctx = await getActionContext();
     if (!ctx) return NOT_AUTHENTICATED;
-    return toActionResult(await emitEventSpec(specId, target, ctx));
+    return toActionResult(await emitEventSpec(specId, target, ctx), label);
   } catch (e: unknown) {
-    console.error("[event-spec-emit-actions] unexpected failure:", e);
+    console.error(`[${label}] unexpected failure:`, e);
     return UNEXPECTED_FAILURE;
   }
 }
 
 /** Read-only: no revalidation. Draft emission renders artifacts on demand (D9) and validates with @asyncapi/parser. */
 export async function emitEventSpecDraftAction(specId: string): Promise<ActionResult<EventSpecEmission>> {
-  return emitAction(specId, { draft: true });
+  return emitAction(specId, { draft: true }, "emitEventSpecDraftAction");
 }
 
 export async function getEventSpecVersionDocumentAction(specId: string, label: string): Promise<ActionResult<EventSpecEmission>> {
-  return emitAction(specId, { versionLabel: label });
+  return emitAction(specId, { versionLabel: label }, "getEventSpecVersionDocumentAction");
 }

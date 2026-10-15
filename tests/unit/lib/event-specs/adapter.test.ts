@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parse } from "yaml";
 import { ok, err, type Result } from "@/types/result";
 import { AsyncApi3Adapter, getEventSpecAdapter } from "@/lib/event-specs/adapter";
+import { GENERIC_VALIDATION_FAILURE } from "@/lib/event-specs/validator";
 import type { EventSpecValidator } from "@/lib/event-specs/validator";
 import type { Diagnostic } from "@/lib/event-specs/types";
 import { checkoutServiceSpec } from "./fixtures/worked-example";
@@ -73,13 +74,26 @@ describe("AsyncApi3Adapter", () => {
     if (!res.success) expect(res.error.code).toBe("PARSER_UNAVAILABLE");
   });
 
-  it("turns a throwing validator into VALIDATOR_FAILED instead of throwing", async () => {
-    const throwing = new AsyncApi3Adapter({ validators: [new FakeParserValidator(new Error("boom"))] });
-    const res = await throwing.validate({});
-    expect(res).toEqual({
-      success: false,
-      error: { code: "VALIDATOR_FAILED", message: 'Validator "asyncapi-parser" threw: boom' },
-    });
+  it("turns a throwing validator into VALIDATOR_FAILED instead of throwing, with a generic message and the original logged server-side", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const raw = new Error("parser exploded: connection string postgres://admin:s3cret@10.0.0.5/db at /srv/app/node_modules/spectral.js:42");
+      const throwing = new AsyncApi3Adapter({ validators: [new FakeParserValidator(raw)] });
+      const res = await throwing.validate({});
+      expect(res).toEqual({ success: false, error: { code: "VALIDATOR_FAILED", message: GENERIC_VALIDATION_FAILURE } });
+      expect(JSON.stringify(res)).not.toMatch(/s3cret|exploded|10\.0\.0\.5|spectral|asyncapi-parser/);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('validator "asyncapi-parser"'), raw);
+      expect(String(consoleError.mock.calls[0][0])).toContain("VALIDATOR_FAILED");
+
+      // A non-Error throw is sanitized the same way (and the thrown value is logged as is).
+      const primitive = new AsyncApi3Adapter({ validators: [{ name: "custom", validate: () => Promise.reject("raw string with s3cret") }] });
+      const emitted = await primitive.emit(checkoutServiceSpec);
+      expect(emitted).toEqual({ success: false, error: { code: "VALIDATOR_FAILED", message: GENERIC_VALIDATION_FAILURE } });
+      expect(consoleError).toHaveBeenLastCalledWith(expect.stringContaining('validator "custom"'), "raw string with s3cret");
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("import is not implemented yet", async () => {

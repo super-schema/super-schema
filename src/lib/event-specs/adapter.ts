@@ -3,7 +3,7 @@ import type { Diagnostic, EmitOutput, ImportedEventSpec, ResolvedEventSpec } fro
 import { normalizeDiagnostics } from "./diagnostics";
 import { assembleAsyncApi3 } from "./assemble";
 import { toJson, toYaml } from "./serialize";
-import { StructuralAsyncApi3Validator, type EventSpecValidator } from "./validator";
+import { StructuralAsyncApi3Validator, validatorFailure, type EventSpecValidator } from "./validator";
 
 /**
  * Spec §7.1. One adapter per `EventSpec.specType`. A new emission scope (whole
@@ -62,10 +62,8 @@ export class AsyncApi3Adapter implements EventSpecAdapter {
       try {
         result = await validator.validate(document);
       } catch (e) {
-        return err({
-          code: "VALIDATOR_FAILED",
-          message: `Validator "${validator.name}" threw: ${e instanceof Error ? e.message : String(e)}`,
-        });
+        // Raw exception text stays in the server log; callers (and through them the browser) get the generic message.
+        return validatorFailure("VALIDATOR_FAILED", `validator "${validator.name}"`, e);
       }
       if (!result.success) return result;
       all.push(...result.data);

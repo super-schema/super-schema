@@ -8,6 +8,7 @@ vi.mock("@/lib/audit", () => {
 
 import { auditedWrite } from "@/services/events/audited";
 import { AuditUserMissingError } from "@/lib/audit";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 beforeEach(() => {
   h.withAudit.mockReset();
@@ -34,7 +35,23 @@ describe("auditedWrite", () => {
     expect(await auditedWrite({ ...base, run: vi.fn() })).toMatchObject({ success: false, error: { code: "IN_USE" } });
     h.withAudit.mockRejectedValueOnce(Object.assign(new Error("dup"), { code: "P2002" }));
     expect(await auditedWrite({ ...base, run: vi.fn() })).toMatchObject({ success: false, error: { code: "CONFLICT" } });
-    h.withAudit.mockRejectedValueOnce(new Error("boom"));
-    expect(await auditedWrite({ ...base, run: vi.fn() })).toEqual({ success: false, error: { code: "DB_ERROR", message: "boom" } });
+  });
+
+  it("never puts driver text in a DB_ERROR: the Result is generic and the original is logged server-side", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const raw = Object.assign(new Error('Invalid `prisma.channel.create()` invocation: relation "channels" does not exist (10.0.0.5:5432)'), { code: "P2021" });
+      h.withAudit.mockRejectedValueOnce(raw);
+      const r = await auditedWrite({ ...base, run: vi.fn() });
+      expect(r).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+      expect(JSON.stringify(r)).not.toMatch(/prisma|channels|10\.0\.0\.5/);
+      expect(consoleError).toHaveBeenCalledWith("[auditedWrite CREATE Channel pending] database error", raw);
+
+      // A non-Error rejection gets the same treatment.
+      h.withAudit.mockRejectedValueOnce("boom");
+      expect(await auditedWrite({ ...base, run: vi.fn() })).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

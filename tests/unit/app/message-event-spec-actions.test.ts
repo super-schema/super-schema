@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(), revalidatePath: vi.fn(), resolveCurrentUserId: vi.fn(),
@@ -19,6 +19,7 @@ import { createMessageAction, deleteMessageAction, updateMessageAction } from "@
 import {
   createEventSpecAction, deleteEventSpecAction, renameEventSpecAction, updateEventSpecDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 const CTX = { userId: "u1", userRole: "AUTHOR", prisma: { tag: "prisma" } };
 const OWNER = { level: "PRODUCT", productId: "p1" };
@@ -78,5 +79,36 @@ describe("message + event spec actions", () => {
     expect(await deleteEventSpecAction("s1", "p1")).toMatchObject({ success: false, code: "UNAUTHORIZED" });
     for (const fn of SERVICE_MOCKS) expect(fn).not.toHaveBeenCalled();
     expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  describe("raw database text never reaches the browser (these actions have no per-action sanitizer; runMutation is the backstop)", () => {
+    const RAW = 'Invalid `prisma.message.update()` invocation: relation "messages" does not exist at 10.0.0.5:5432';
+    let consoleError: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    });
+    afterEach(() => consoleError.mockRestore());
+
+    it("replaces a DB_ERROR / INTERNAL_ERROR from any message or event spec action with the generic message, logs it under the action name, and does not revalidate", async () => {
+      const calls: Array<[string, () => Promise<unknown>]> = [
+        ["createMessageAction", () => createMessageAction("p1", { name: "OrderCreated", payload: { entityId: "e1" } })],
+        ["updateMessageAction", () => updateMessageAction("m1", "p1", { name: "OrderCreated", payload: { entityId: "e1" } })],
+        ["deleteMessageAction", () => deleteMessageAction("m1", "p1")],
+        ["createEventSpecAction", () => createEventSpecAction("p1", { name: "checkout-service" })],
+        ["updateEventSpecDocumentAction", () => updateEventSpecDocumentAction("s1", "p1", {})],
+        ["renameEventSpecAction", () => renameEventSpecAction("s1", "p1", "renamed")],
+        ["deleteEventSpecAction", () => deleteEventSpecAction("s1", "p1")],
+      ];
+      for (const code of ["DB_ERROR", "INTERNAL_ERROR"]) {
+        for (const fn of SERVICE_MOCKS) fn.mockResolvedValue({ success: false, error: { code, message: RAW, details: { host: "10.0.0.5" }, suggestedFix: "Check DATABASE_URL" } });
+        for (const [name, call] of calls) {
+          const r = await call();
+          expect(r).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code });
+          expect(JSON.stringify(r)).not.toMatch(/prisma|messages|10\.0\.0\.5|DATABASE_URL/);
+          expect(consoleError).toHaveBeenCalledWith(`[${name}] ${code === "DB_ERROR" ? "database error" : "internal error"}`, RAW);
+        }
+      }
+      expect(h.revalidatePath).not.toHaveBeenCalled();
+    });
   });
 });

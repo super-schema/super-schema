@@ -4,13 +4,13 @@ import type { LevelScope } from "@/lib/levels";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { isJsonObject, normalizeCatalogName } from "@/lib/events/inputs";
 import { parseMessageSpec, readMessageSpec } from "@/lib/events/catalog-specs";
-import { assertOwnedBy } from "@/lib/events/ownership";
 import type { EntityPin, MessageDetail, MessageSpec } from "@/lib/events/types";
 import { inSameLine } from "@/services/name-registry.service";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
+import { loadOwnedRow } from "@/services/events/service-guards";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -141,14 +141,12 @@ function columns(n: NormalizedMessage) {
 const draftEdges = (n: NormalizedMessage) =>
   pinEdges({ payload: n.payload.entityVersionId, headers: n.headers?.entityVersionId ?? null, key: n.key?.entityVersionId ?? null });
 
-async function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise<Result<{ row: MessageRow; scope: LevelScope }>> {
-  const scope = await resolveScope(ctx.prisma, owner);
-  if (!scope.success) return scope;
-  const row = await ctx.prisma.message.findUnique({ where: { id }, select: MESSAGE_SELECT });
-  if (!row) return err({ code: "NOT_FOUND", message: `Message "${id}" not found` });
-  const owned = assertOwnedBy(row, scope.data, `Message "${row.name}"`);
-  if (!owned.success) return owned;
-  return ok({ row, scope: scope.data });
+/** Ownership read (spec §10) through the shared guard: the FORBIDDEN / NOT_FOUND text is labelled by the caller's own id, never `row.name`. */
+function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise<Result<{ row: MessageRow; scope: LevelScope }>> {
+  return loadOwnedRow(ctx.prisma, {
+    kind: "Message", id, owner,
+    load: (messageId) => ctx.prisma.message.findUnique({ where: { id: messageId }, select: MESSAGE_SELECT }),
+  });
 }
 
 export async function createMessage(productId: string, input: MessageInput, ctx: ServiceContext): Promise<Result<MessageDetail>> {

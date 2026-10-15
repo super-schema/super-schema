@@ -9,6 +9,7 @@ vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: vi.fn().mockResolv
 vi.mock("@/services/events/event-spec-emit.service", () => ({ emitEventSpec: h.emitEventSpec }));
 
 import { emitEventSpecDraftAction, getEventSpecVersionDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-emit-actions";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -44,5 +45,21 @@ describe("event spec emit actions", () => {
     expect(JSON.stringify(result)).not.toMatch(/ECONNREFUSED|password|10\.0\.0\.5/);
     expect(log).toHaveBeenCalled();
     log.mockRestore();
+  });
+
+  it.each(["DB_ERROR", "INTERNAL_ERROR"])("never returns the raw text of a %s result (the emit service's failure reaches the browser through toActionResult)", async (code) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const raw = 'Invalid `prisma.eventSpec.findUnique()` invocation: password authentication failed for user "app"';
+      h.emitEventSpec.mockResolvedValue({ success: false, error: { code, message: raw, suggestedFix: "Check DATABASE_URL" } });
+      for (const result of [await emitEventSpecDraftAction("s1"), await getEventSpecVersionDocumentAction("s1", "1.0")]) {
+        expect(result).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code });
+      }
+      const kind = code === "DB_ERROR" ? "database error" : "internal error";
+      expect(log).toHaveBeenCalledWith(`[emitEventSpecDraftAction] ${kind}`, raw);
+      expect(log).toHaveBeenCalledWith(`[getEventSpecVersionDocumentAction] ${kind}`, raw);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

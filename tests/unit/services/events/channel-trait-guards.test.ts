@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // withAudit only runs the callback here; the real one needs the app's Prisma singleton.
 vi.mock("@/lib/audit", () => {
@@ -12,8 +12,16 @@ import type { Result } from "@/types/result";
 import { createChannel, deleteChannel, getChannel, setChannelMessages, updateChannel } from "@/services/events/channel.service";
 import { createTrait, deleteTrait, getTrait, updateTrait } from "@/services/events/trait.service";
 import { MAX_ID_LIST, parseIdList, parseScopeTarget } from "@/services/events/service-guards";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 const boom = () => Promise.reject(new Error("connection lost"));
+
+// Every guarded DB failure below is logged server-side (and returned generically); keep the test output quiet and let a test assert the log.
+let consoleError: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+afterEach(() => consoleError.mockRestore());
 
 /** A Prisma stand-in: any model / method not given in `models` throws if touched (validation must stop before it). */
 function fakeCtx(models: Record<string, Record<string, unknown>> = {}): ServiceContext {
@@ -115,7 +123,11 @@ describe("channel service never throws on untrusted input", () => {
     expect(code(await updateChannel("c1", CHANNEL, PRODUCT, scopeDown))).toBe("DB_ERROR");
     expect(code(await deleteChannel("c1", PRODUCT, scopeDown))).toBe("DB_ERROR");
     expect(code(await setChannelMessages("c1", ["m1"], PRODUCT, scopeDown))).toBe("DB_ERROR");
-    expect(message(await deleteChannel("c1", PRODUCT, scopeDown))).toBe("connection lost");
+    // The driver text never leaves the service: the Result is generic and the original is logged server-side.
+    const generic = await deleteChannel("c1", PRODUCT, scopeDown);
+    expect(message(generic)).toBe(GENERIC_ACTION_ERROR);
+    expect(JSON.stringify(generic)).not.toContain("connection lost");
+    expect(consoleError).toHaveBeenCalledWith("[guardRead] database error", expect.objectContaining({ message: "connection lost" }));
 
     // channel row load throws
     const rowDown = fakeCtx({ product, channel: { findUnique: boom } });

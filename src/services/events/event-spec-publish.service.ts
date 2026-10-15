@@ -1,10 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { resolveScope } from "@/lib/asset-scope";
 import { isBumpKind, type BumpKind, type PublishInput } from "@/lib/entity-versioning/types";
-import { normalizeDiagnostics, type Diagnostic, type EmitOutput, type EventSpecDocument, type ResolvedChannel } from "@/lib/event-specs";
+import { GENERIC_VALIDATION_FAILURE, normalizeDiagnostics, type Diagnostic, type EmitOutput, type EventSpecDocument, type ResolvedChannel } from "@/lib/event-specs";
 import { stableStringify, type EventSpecBumpSide, type MessageVersionInfo } from "@/lib/events/bump-rules";
-import { assertOwnedBy } from "@/lib/events/ownership";
 import {
   analyzeVersionedPublish, eventSpecPublishInput, planVersionedPublish, provisionalLabel,
   type EventPublishAnalysis, type EventSpecPublishFacts, type VersionedPublishInput,
@@ -17,8 +15,9 @@ import { getSharedArtifactRenderer } from "./artifact-renderer";
 import { auditedWrite } from "./audited";
 import { emitResolved, type EmitDeps } from "./event-spec-emit.service";
 import { loadDraftSnapshot, resolveSnapshot, type DraftSnapshot } from "./event-spec-resolver";
+import { isConcurrentWriteFailure } from "./publish-concurrency";
 import { replaceReferences } from "./schema-references";
-import { guardRead, requireId } from "./service-guards";
+import { guardRead, loadOwnedRow, requireId } from "./service-guards";
 import { toEventVersionSummary, VERSION_SUMMARY_SELECT } from "./version-summary";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -27,39 +26,28 @@ type Facts = Omit<EventSpecPublishFacts, "diagnostics">;
 const notFound = (specId: string) => err({ code: "NOT_FOUND", message: `Event spec "${specId}" not found` });
 const isString = (v: string | undefined): v is string => typeof v === "string";
 
-/** The retryable "something changed under the publish" failure (lock re-verification, unique index, FK to a removed row). */
+/** The retryable "something changed under the publish" failure (lock re-verification, unique index, FK to a removed row, lock timeout / deadlock — see `isConcurrentWriteFailure`). */
 const changedDuringPublish = (message = "The event spec changed while publishing.") =>
   err({ code: "CONFLICT", message, suggestedFix: "Reload the event spec and publish again." });
 const PINNED_MESSAGE_REMOVED = "A message pinned by this spec was removed; reload and retry";
 
 /**
- * Prisma codes that mean a concurrent writer beat this publish: P2002 (unique version label / sequence), P2003 (FK to a row a
- * concurrent delete removed — auditedWrite would misreport it as IN_USE) and P2034 (write conflict / deadlock).
- */
-const CONCURRENT_WRITE_CODES = new Set(["P2002", "P2003", "P2034"]);
-function isConcurrentWriteFailure(e: unknown): boolean {
-  const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : undefined;
-  return typeof code === "string" && CONCURRENT_WRITE_CODES.has(code);
-}
-
-/**
  * Spec §10 ownership, checked ONCE per call before anything is read, rendered or written (a spec's level columns never change):
- * the page's product must own the spec — the same scope + `assertOwnedBy` checks as `updateEventSpecDocument` (unknown spec or
+ * the page's product must own the spec — the same shared `loadOwnedRow` guard as `updateEventSpecDocument` (unknown spec or
  * product → NOT_FOUND, another product's or tenant's spec → FORBIDDEN). Neither error carries `details`, and the label is the
  * caller's own id (never the row's name), so a foreign spec's name, document, versions or publishers never leak.
- *
- * Same shape as `assertOwnedMessage` in message-publish.service.ts (that helper is message-specific and private there).
  */
 async function assertOwnedEventSpec(db: PrismaClient, specId: string, productId: string): Promise<Result<void>> {
   const specIdOk = requireId(specId, "specId");
   if (!specIdOk.success) return specIdOk;
   const productIdOk = requireId(productId, "productId");
   if (!productIdOk.success) return productIdOk;
-  const scope = await resolveScope(db, { level: "PRODUCT", productId: productIdOk.data });
-  if (!scope.success) return scope;
-  const row = await db.eventSpec.findUnique({ where: { id: specId }, select: { tenantId: true, domainId: true, productId: true } });
-  if (!row) return notFound(specId);
-  return assertOwnedBy(row, scope.data, `Event spec "${specId}"`);
+  const owned = await loadOwnedRow(db, {
+    kind: "Event spec", id: specId, owner: { level: "PRODUCT", productId: productIdOk.data },
+    // Only the level columns: nothing of a foreign spec is read.
+    load: (id) => db.eventSpec.findUnique({ where: { id }, select: { tenantId: true, domainId: true, productId: true } }),
+  });
+  return owned.success ? ok(undefined) : owned;
 }
 
 function bumpSide(
@@ -110,15 +98,14 @@ interface Prepared {
   diagnostics: Diagnostic[];
 }
 
-const GENERIC_EMIT_FAILURE = "The event spec could not be validated. Try again; if it keeps failing, contact an administrator.";
-
 /**
- * The adapter's own failures (a validator or the @asyncapi/parser threw) carry raw exception text: it is logged server-side
- * only and the browser gets a generic message under the same code (R67).
+ * The adapter's own failures (a validator or the @asyncapi/parser threw). The adapter and the parser validator already log the
+ * raw exception and return the generic message (`validatorFailure`); this stays as the backstop for any other adapter failure
+ * code: logged server-side only, the browser gets the generic message under the same code (R67).
  */
 function emitFailure(specId: string, error: ServiceError): Result<never> {
   console.error(`[event-spec-publish] emission of ${specId} failed (${error.code}):`, error.message);
-  return err({ code: error.code, message: GENERIC_EMIT_FAILURE });
+  return err({ code: error.code, message: GENERIC_VALIDATION_FAILURE });
 }
 
 /**

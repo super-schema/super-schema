@@ -1,4 +1,4 @@
-import { ok, type Result } from "@/types/result";
+import { ok, err, type Result } from "@/types/result";
 import type { Diagnostic } from "./types";
 import { diagnostic, normalizeDiagnostics } from "./diagnostics";
 import { jsonPointer, parseLocalRef, resolveLocalRef } from "./json-pointer";
@@ -16,6 +16,19 @@ export interface EventSpecValidator {
   readonly name: string;
   /** Never throws; an infrastructure failure is an `err` Result, document problems are diagnostics. */
   validate(document: object): Promise<Result<Diagnostic[]>>;
+}
+
+/** The only text a crashed validator puts in a failure Result: the browser, REST clients and forms never see parser / driver text. */
+export const GENERIC_VALIDATION_FAILURE = "The event spec could not be validated. Try again; if it keeps failing, contact an administrator.";
+
+/**
+ * An infrastructure failure of a validator (it threw, or `@asyncapi/parser` itself crashed) as an `err` Result: the original
+ * (raw exception text can carry connection strings, file paths, schema content) is logged server-side under `source`, and
+ * the Result keeps `code` with the generic message, so it can flow through `emitDraft` / `toActionResult` unchanged.
+ */
+export function validatorFailure(code: string, source: string, cause: unknown): Result<never> {
+  console.error(`[event-specs] ${source} failed (${code}):`, cause);
+  return err({ code, message: GENERIC_VALIDATION_FAILURE });
 }
 
 export class StructuralAsyncApi3Validator implements EventSpecValidator {
