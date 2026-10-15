@@ -159,18 +159,17 @@ describe("findUsages", () => {
     }
   });
 
-  it("tolerates ghost referrers (deleted subjects) without crashing", async () => {
+  it("tolerates ghost referrers (sources that no longer exist) without crashing", async () => {
     let domainId: string | undefined;
     const ghostIds: string[] = [];
     try {
       const sc = await createProductScope(prisma, ctx);
       domainId = sc.domain.id;
       const address = await seedEntity(sc, "Address");
-      const customer = await seedEntity(sc, "Customer");
-      // Customer v1.0 references Address v1.0 (FIELD edge), then Customer is deleted: ENTITY_VERSION-sourced edges
-      // are not cleaned up on entity deletion (Track B gap), so the row now points at a version that no longer exists.
+      // Deleting an entity now removes the edges from its versions (20261017 trigger), so such a ghost can only come
+      // from rows that predate the trigger or were written without a source row: insert it directly.
       const fieldEdge = await prisma.schemaReference.create({
-        data: { fromKind: "ENTITY_VERSION", fromId: customer.version.id, role: "FIELD", toKind: "ENTITY_VERSION", toId: address.version.id },
+        data: { fromKind: "ENTITY_VERSION", fromId: `gone-entity-version-${sc.s}`, role: "FIELD", toKind: "ENTITY_VERSION", toId: address.version.id },
       });
       ghostIds.push(fieldEdge.id);
       // An event-side ghost whose source row was removed behind the triggers' back.
@@ -178,18 +177,57 @@ describe("findUsages", () => {
         data: { fromKind: "MESSAGE_VERSION", fromId: `gone-${sc.s}`, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: address.version.id },
       });
       ghostIds.push(messageGhost.id);
-      await prisma.entity.delete({ where: { id: customer.entity.id } });
 
       const uses = unwrap(await findUsages({ kind: "entity", entityId: address.entity.id }, ctx, TENANT));
       expect(summary(uses).sort()).toEqual(
         [
-          [`Entity version ${customer.version.id} (deleted)`, false, "Address v1.0"],
+          [`Entity version gone-entity-version-${sc.s} (deleted)`, false, "Address v1.0"],
           [`Message version gone-${sc.s} (deleted)`, false, "Address v1.0"],
         ].sort(),
       );
       expect(uses.every((u) => u.href === null)).toBe(true);
     } finally {
       await prisma.schemaReference.deleteMany({ where: { id: { in: ghostIds } } });
+      await cleanupDomains(prisma, [domainId]);
+    }
+  });
+
+  it("leaves no ghost when a referring entity is deleted: ENTITY_VERSION-sourced edges follow their versions", async () => {
+    let domainId: string | undefined;
+    try {
+      const sc = await createProductScope(prisma, ctx);
+      domainId = sc.domain.id;
+      const address = await seedEntity(sc, "Address");
+      const customer = await seedEntity(sc, "Customer");
+      const other = await seedEntity(sc, "Other");
+      // Customer v1.0 and Other v1.0 reference Address v1.0 (FIELD edges); only Customer is deleted.
+      for (const referrer of [customer, other]) {
+        await prisma.schemaReference.create({
+          data: { fromKind: "ENTITY_VERSION", fromId: referrer.version.id, role: "FIELD", toKind: "ENTITY_VERSION", toId: address.version.id },
+        });
+      }
+      expect(summary(unwrap(await findUsages({ kind: "entity", entityId: address.entity.id }, ctx, TENANT))).sort()).toEqual(
+        [
+          ["Entity Customer v1.0", false, "Address v1.0"],
+          ["Entity Other v1.0", false, "Address v1.0"],
+        ].sort(),
+      );
+
+      await prisma.entity.delete({ where: { id: customer.entity.id } });
+
+      // The edge is gone from the table, so "Who uses Address?" lists only the surviving referrer: no "(deleted)" ghost.
+      expect(await prisma.schemaReference.count({ where: { fromKind: "ENTITY_VERSION", fromId: customer.version.id } })).toBe(0);
+      expect(summary(unwrap(await findUsages({ kind: "entity", entityId: address.entity.id }, ctx, TENANT)))).toEqual([
+        ["Entity Other v1.0", false, "Address v1.0"],
+      ]);
+      expect(await prisma.schemaReference.count({ where: { fromKind: "ENTITY_VERSION", fromId: other.version.id } })).toBe(1);
+
+      // Removing the whole domain cascades the remaining entities and takes their edges along (no helper clean-up here:
+      // cleanupDomains would delete the edges itself and prove nothing).
+      await prisma.domain.delete({ where: { id: domainId } });
+      domainId = undefined;
+      expect(await prisma.schemaReference.count({ where: { fromKind: "ENTITY_VERSION", fromId: { in: [address.version.id, other.version.id] } } })).toBe(0);
+    } finally {
       await cleanupDomains(prisma, [domainId]);
     }
   });

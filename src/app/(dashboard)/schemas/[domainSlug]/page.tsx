@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { loadLevelTraits } from "@/features/events/workspace/load-events-tab-data";
-import { productDataTypeCount } from "@/lib/product-deletion";
+import { EVENTS_ASSET_COUNT_SELECT, productDataTypeCount } from "@/lib/product-deletion";
 import { DomainTabs } from "./domain-tabs";
 import {
   mapCustomScalarRows,
@@ -19,6 +19,7 @@ const PRODUCT_CONTENT_COUNTS = {
   customScalars: true,
   unionTypes: true,
   services: true,
+  ...EVENTS_ASSET_COUNT_SELECT,
 } as const;
 
 interface Props {
@@ -148,6 +149,12 @@ export default async function DomainProductsPage({ params }: Props) {
           entityCount: p._count.entities,
           dataTypeCount: productDataTypeCount(p._count),
           apiCount: p._count.services,
+          eventsAssets: {
+            channels: p._count.channels,
+            messages: p._count.messages,
+            traits: p._count.traits,
+            eventSpecs: p._count.eventSpecs,
+          },
           updatedAt: p.updatedAt,
           tier: p.tier
             ? {

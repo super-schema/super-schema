@@ -24,8 +24,8 @@ function inTenant<T>(rows: T[], idOf: (r: T) => string, tenantOf: (r: T) => stri
  * `tenantId` is the server-resolved active tenant (the action never takes it from the client): a subject outside
  * it looks exactly like a missing one, and referrers outside it are dropped before anything is returned. Foreign
  * referrers are filtered after the lookup rather than by the query's `where` on purpose — a `where` miss is
- * indistinguishable from a deleted referrer, and deleted ones must still be listed as "(deleted)" ghosts
- * (EntityVersion-sourced edges are not cleaned up when an entity is deleted).
+ * indistinguishable from a deleted referrer, and a referrer whose row is gone is still listed as a "(deleted)" ghost
+ * (defensive: the delete triggers, incl. 20261017 for EntityVersion-sourced edges, remove the edges they source).
  */
 export async function findUsages(subject: UsageSubject, ctx: ServiceContext, tenantId: string): Promise<Result<UsageRow[]>> {
   const parsed = parseUsageSubject(subject);

@@ -8,6 +8,10 @@ import { revalidatePath } from "next/cache";
 import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
 import { ensureDefaultTenantId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { domainDeleteBlocker } from "@/lib/domain-deletion";
+import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
+import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
+import { findCrossProductPins } from "@/services/events/delete-guards";
 
 export async function getDomainsAction() {
   const session = await auth();
@@ -113,6 +117,7 @@ export async function deleteDomainAction(domainId: string) {
             services: true,
             interfaces: true,
             userRoles: true,
+            ...EVENTS_ASSET_COUNT_SELECT,
           },
         },
       },
@@ -126,16 +131,19 @@ export async function deleteDomainAction(domainId: string) {
       return { error: "System domains cannot be deleted" };
     }
 
-    // Entities (domain- or product-level) block the delete. Everything else — the
-    // domain's products and every domain- AND product-level Data Type / API
-    // (productId FKs cascade too) — is deleted with it; the confirmation dialog
-    // lists those counts (DomainDeletionImpact) before the admin confirms.
-
-    if (domain._count.entities > 0) {
-      const isSingleEntity = domain._count.entities === 1;
-      return {
-        error: `Cannot delete - ${domain._count.entities} ${isSingleEntity ? "entity exists" : "entities exist"} in this domain or its products. Move or delete ${isSingleEntity ? "it" : "them"} first.`,
-      };
+    // Entities (domain- or product-level) and Events assets (channels, messages, event specs and traits, at either
+    // level) block the delete. Everything else — the domain's products and every domain- AND product-level Data
+    // Type / API (productId FKs cascade too) — is deleted with it; the confirmation dialog lists those counts
+    // (DomainDeletionImpact) before the admin confirms. A published event spec of ANOTHER domain's product that
+    // pins or froze one of the domain's Events assets is reported together with the counts, naming spec + product.
+    const pins = await findCrossProductPins(prisma, {
+      kind: "domain",
+      domainId,
+      tenantId: domain.tenantId,
+    });
+    const blocker = combineBlockers([domainDeleteBlocker(domain._count), crossProductPinBlocker(pins)]);
+    if (blocker) {
+      return { error: blocker };
     }
 
     await withAudit({

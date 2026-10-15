@@ -66,7 +66,8 @@ function eventsListHref(at: { domainSlug: string; productSlug: string }, section
 
 export function describeUsage(ref: ReferenceLike, lookups: UsageLookups, targetLabels: Record<string, string>): UsageRow {
   const base = { id: ref.id, fromKind: ref.fromKind as UsageFromKind, role: ref.role, isDraft: ref.isDraft, target: targetLabels[ref.toId] ?? ref.toId };
-  // Ghost edge: EntityVersion-sourced rows are not cleaned when an entity is deleted, so the referrer can be gone.
+  // Defensive ghost edge: deleting an entity / message / spec / trait removes the edges it sources (DB triggers), so a
+  // referrer can only be missing for rows that predate those triggers or were written without a source row.
   const missing = (what: string): UsageRow => ({ ...base, label: `${what} ${ref.fromId} (deleted)`, href: null });
   switch (ref.fromKind) {
     case "ENTITY_VERSION": {
