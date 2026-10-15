@@ -118,10 +118,23 @@ export function readMessageSpec(value: unknown): MessageSpec {
 const EXAMPLE_KEYS = new Set(["name", "summary", "headers", "payload"]);
 const CORRELATION_PREFIXES = ["$message.header#", "$message.payload#"];
 
+// RFC 9110 §8.3.1 media-type = type "/" subtype *( OWS ";" OWS parameter ); parameter = token "=" ( token / quoted-string ).
+const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+const QUOTED_STRING = '"(?:[\\t \\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t \\x21-\\x7E\\x80-\\xFF])*"';
+const PARAMETER = `${TOKEN}=(?:${TOKEN}|${QUOTED_STRING})`;
+const MEDIA_TYPE = new RegExp(`^${TOKEN}/${TOKEN}(?:[\\t ]*;[\\t ]*${PARAMETER})*$`);
+
+/** True for `type/subtype` with optional `; name=value` parameters (quoted values allowed). */
+export function isMediaType(value: string): boolean {
+  return MEDIA_TYPE.test(value);
+}
+
 /** Semantic checks a structurally valid MessageSpec must also pass before publish. */
 export function validateMessageSpec(spec: MessageSpec): string[] {
   const problems: string[] = [];
-  if (spec.contentType !== undefined && /\s/.test(spec.contentType)) problems.push("contentType must not contain whitespace");
+  if (spec.contentType !== undefined && !isMediaType(spec.contentType)) {
+    problems.push(`contentType "${spec.contentType}" is not a valid media type (expected type/subtype with optional "; name=value" parameters)`);
+  }
   if (spec.correlationId !== undefined) {
     const location = spec.correlationId.location;
     if (typeof location !== "string" || !CORRELATION_PREFIXES.some((p) => location.startsWith(p))) {

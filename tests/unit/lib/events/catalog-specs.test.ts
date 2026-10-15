@@ -37,11 +37,56 @@ describe("message spec", () => {
         traitIds: ["t1", "t1"],
       })
     ).toEqual([
-      "contentType must not contain whitespace",
+      'contentType "avro binary" is not a valid media type (expected type/subtype with optional "; name=value" parameters)',
       'correlationId.location must start with "$message.header#" or "$message.payload#"',
       'examples[0] has unsupported key "foo" (allowed: name, summary, headers, payload)',
       'trait "t1" is listed more than once',
     ]);
     expect(validateMessageSpec({ correlationId: { location: "$message.header#/ce_id" }, traitIds: [] })).toEqual([]);
   });
+
+  it("accepts RFC 9110 media types, including parameters and whitespace around ';'", () => {
+    for (const contentType of [
+      "application/json",
+      "avro/binary",
+      "application/vnd.apache.avro+json",
+      "application/json; charset=utf-8",
+      "application/cloudevents+json; charset=UTF-8",
+      "application/json;charset=utf-8",
+      "application/json ;  charset=utf-8",
+      "application/json\t;\tcharset=utf-8",
+      'multipart/form-data; boundary="a b;c"',
+      'text/plain; note="say \\"hi\\""',
+      "application/x-protobuf; messageType=acme.Order; version=2",
+      "application/*",
+    ]) {
+      expect(validateMessageSpec({ contentType, traitIds: [] }), contentType).toEqual([]);
+    }
+  });
+
+  it("rejects values that are not a type/subtype with well-formed parameters", () => {
+    for (const contentType of [
+      "avro binary",
+      "json",
+      "application/",
+      "/json",
+      "application/json/extra",
+      "application/json;",
+      "application/json; charset",
+      "application/json; =utf-8",
+      "application/json; charset=",
+      "application/json; charset=utf 8",
+      'application/json; charset="unterminated',
+      "application/js(on",
+      " application/json",
+      "application/json ",
+      "application/json, text/plain",
+      "",
+    ]) {
+      const problems = validateMessageSpec({ contentType, traitIds: [] });
+      expect(problems, JSON.stringify(contentType)).toHaveLength(1);
+      expect(problems[0]).toMatch(/^contentType .* is not a valid media type/);
+    }
+  });
 });
+
