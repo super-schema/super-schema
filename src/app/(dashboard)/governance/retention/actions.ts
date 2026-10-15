@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/generated/prisma/client";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { isInActiveTenant, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
 import { isPlainObject } from "@/lib/editable-fields";
 import { domainLabel } from "@/lib/entity-placement";
@@ -16,7 +17,10 @@ export async function getEntitiesForRetentionAction() {
   }
 
   try {
+    // The entities of the ACTIVE tenant (the same scope `updateRetentionPolicyAction` enforces): an Enterprise, domain- or
+    // product-level entity all carry their tenant, so the default tenant still lists everything it owns.
     const entities = await prisma.entity.findMany({
+      where: { tenantId: await getActiveTenantId() },
       select: {
         id: true,
         name: true,
@@ -36,8 +40,8 @@ export async function getEntitiesForRetentionAction() {
         fields: e.fields.map((f) => ({ name: f.name, type: f.type, classification: f.classification })),
       })),
     };
-  } catch {
-    return { error: "Failed to load entities", entities: [] };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("getEntitiesForRetentionAction", e), entities: [] };
   }
 }
 

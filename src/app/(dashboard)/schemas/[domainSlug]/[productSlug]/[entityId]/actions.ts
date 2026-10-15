@@ -1820,10 +1820,32 @@ export async function compileAndApplyTypeSpecSourceAction(
     return { success: false, diagnostics: [], error: "Not authenticated" };
   }
 
+  try {
+    return await compileAndApplyTypeSpecSource(session.user.id, entityId, source);
+  } catch (e: unknown) {
+    // Anything unexpected (a driver / Prisma message with an absolute path, a compiler crash) is logged and answered
+    // generically, in the shape the Source tab reads: the tab leaves "Saving..." and shows `error` in a toast. A disallowed
+    // import (TYPESPEC_IMPORT_NOT_ALLOWED) is NOT unexpected: the compiler returns it as an ordinary diagnostic below.
+    return { success: false, diagnostics: [], error: unexpectedFailure("compileAndApplyTypeSpecSourceAction", e).error };
+  }
+}
+
+async function compileAndApplyTypeSpecSource(
+  userId: string,
+  entityId: string,
+  source: string
+): Promise<TypeSpecSourceSaveResult> {
+  // Ownership BEFORE anything is loaded: a malformed, missing or foreign id is the same "Entity not found" (a malformed id
+  // is rejected without a query, so it never reaches a Prisma validator), before the source is compiled or written.
+  if (!(await inActiveTenant("entity", entityId))) {
+    return { success: false, diagnostics: [], error: "Entity not found" };
+  }
+  if (typeof source !== "string") {
+    return { success: false, diagnostics: [], error: "The TypeSpec source must be text" };
+  }
+
   const entity = await prisma.entity.findUnique({ where: { id: entityId } });
-  // Ownership: the entity must belong to the active tenant; anything else reads as missing (same answer), before the
-  // source is compiled or anything is written.
-  if (!entity || !(await isInActiveTenant(entity.tenantId))) {
+  if (!entity) {
     return { success: false, diagnostics: [], error: "Entity not found" };
   }
 
@@ -1893,7 +1915,7 @@ export async function compileAndApplyTypeSpecSourceAction(
     action: "UPDATE",
     entityType: "Entity",
     entityId,
-    userId: session.user.id,
+    userId,
     beforeState: { typespecSource: entity.typespecSource } as unknown as object,
     fn: async () => {
       // Source + fields were just written consistently: save the source and clear

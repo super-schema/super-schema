@@ -35,14 +35,19 @@ vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: mockRevalidate }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mockGetActiveTenantId }));
+vi.mock("@/lib/org-defaults", () => ({ ensureDefaultProductId: vi.fn().mockResolvedValue("p-own") }));
 
 import {
   addModelFieldAction,
+  createCustomScalarAction,
   createDomainAssetsFromImportAction,
+  createEntitiesFromImportAction,
   createEntityAction,
   createEntityWithFieldsAction,
   createOperationAction,
   createServiceAction,
+  createSharedEnumAction,
+  createUnionTypeAction,
   deleteCustomScalarAction,
   deleteEntityAction,
   deleteModelFieldAction,
@@ -92,6 +97,7 @@ beforeEach(() => {
   }
   mockPrisma.operation.create.mockResolvedValue({ id: "op-new" });
   mockPrisma.serviceDefinition.create.mockResolvedValue({ id: "svc-new" });
+  mockPrisma.$executeRaw.mockResolvedValue(0);
   mockPrisma.operationParameter.deleteMany.mockResolvedValue({ count: 0 });
   mockPrisma.operationResponse.deleteMany.mockResolvedValue({ count: 0 });
 });
@@ -557,5 +563,128 @@ describe("createDomainAssetsFromImportAction guards its domain", () => {
     expect(JSON.stringify(foreign)).toBe(JSON.stringify(missing));
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     expect(mockRevalidate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Data-type creates: a DOMAIN / PRODUCT target is a client id and must lie in the active tenant
+// ---------------------------------------------------------------------------
+
+describe("data-type creates check their DOMAIN / PRODUCT target against the active tenant", () => {
+  const CREATES = [
+    { label: "createSharedEnumAction", model: "sharedEnum" as const, run: (domainId: string | null, target?: unknown) => createSharedEnumAction(domainId, { name: "Squat", values: ["A"] }, asAny(target)) },
+    { label: "createCustomScalarAction", model: "customScalar" as const, run: (domainId: string | null, target?: unknown) => createCustomScalarAction(domainId, { name: "Squat", baseType: "string" }, asAny(target)) },
+    { label: "createUnionTypeAction", model: "unionType" as const, run: (domainId: string | null, target?: unknown) => createUnionTypeAction(domainId, { name: "Squat", memberTypes: ["A"] }, asAny(target)) },
+  ];
+
+  describe.each(CREATES)("$label", ({ model, run }) => {
+    it("creates in a domain / product of the active tenant", async () => {
+      expect(await run("d-own")).toEqual({ success: true });
+      expect(await run(null, { level: "PRODUCT", productId: "p-own" })).toEqual({ success: true });
+      expect(mockPrisma[model].create).toHaveBeenCalledTimes(2);
+    });
+
+    it("refuses a DOMAIN target of ANOTHER tenant with the NOT_FOUND of an unknown domain; no registry check, no create (it used to squat the other tenant's name line)", async () => {
+      const foreign = await run("d-foreign");
+      const missing = await run("d-none");
+      expect(foreign).toEqual({ error: 'Domain "d-foreign" not found' });
+      expect(missing).toEqual({ error: 'Domain "d-none" not found' });
+      expect(JSON.stringify(foreign).replace("d-foreign", "x")).toBe(JSON.stringify(missing).replace("d-none", "x"));
+      expect(mockPrisma[model].create).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockRevalidate).not.toHaveBeenCalled();
+    });
+
+    it("refuses a PRODUCT target of another tenant's domain the same way", async () => {
+      mockPrisma.product.findUnique.mockResolvedValue({ id: "p-foreign", domainId: "d-foreign", domain: { tenantId: OTHER } });
+      expect(await run(null, { level: "PRODUCT", productId: "p-foreign" })).toEqual({ error: 'Product "p-foreign" not found' });
+      expect(mockPrisma[model].create).not.toHaveBeenCalled();
+    });
+
+    it("a TENANT target is still the active tenant whatever the client says", async () => {
+      expect(await run(null, { level: "TENANT", tenantId: OTHER })).toEqual({ success: true });
+      expect(mockPrisma[model].create).toHaveBeenCalledWith({ data: expect.objectContaining({ tenantId: T, domainId: null, productId: null }) });
+    });
+
+    it("follows the ACTIVE tenant", async () => {
+      expect(await run("d-foreign")).toMatchObject({ error: expect.stringMatching(/not found/) });
+      mockGetActiveTenantId.mockResolvedValue(OTHER);
+      expect(await run("d-foreign")).toEqual({ success: true });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bulk import: no raw driver / TypeError text; user-facing rejections unchanged
+// ---------------------------------------------------------------------------
+
+describe("createDomainAssetsFromImportAction error hygiene", () => {
+  const payload = (over: Record<string, unknown> = {}) => ({
+    domainId: "d-own", productId: "p-own", models: [], entities: [], sharedEnums: [], customScalars: [], unionTypes: [], services: [], decoratorDefinitions: [], ...over,
+  });
+  const run = (data: unknown) => createDomainAssetsFromImportAction(asAny(data));
+  const errorsOf = (r: { errors: string[] }) => r.errors.join(" | ");
+
+  it("a non-string domainId is the NOT_FOUND of an unknown domain WITHOUT a query (it used to surface as 'Invalid `db.domain.findUnique()` invocation in /Users/...')", async () => {
+    for (const domainId of [5, {}, [], null, undefined, "", "  "]) {
+      const result = await run(payload({ domainId }));
+      expect(result).toMatchObject({ entitiesCreated: 0, modelsCreated: 0 });
+      expect(errorsOf(result)).toMatch(/^Domain ".*" not found$/);
+      expect(errorsOf(result)).not.toMatch(LEAKS);
+    }
+    expect(mockPrisma.domain.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("a payload that is not an object (null, string, array) is refused before a property is read: no 'Cannot read properties of null'", async () => {
+    for (const bad of [null, undefined, "x", 5, []]) {
+      const result = await run(bad);
+      expect(result).toMatchObject({ entitiesCreated: 0, modelsCreated: 0, errors: ["The import payload must be an object"] });
+      expect(await createEntitiesFromImportAction(asAny(bad))).toMatchObject({ errors: ["The import payload must be an object"] });
+    }
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("a malformed list inside the payload (a TypeError in the transaction) is generic, logged, and rolls back", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = await run(payload({ models: "not-a-list" }));
+    expect(errorsOf(result)).toBe(GENERIC_ACTION_ERROR);
+    expect(result).toMatchObject({ modelsCreated: 0, entitiesCreated: 0 });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("a driver error thrown inside the transaction is generic (the Prisma text with its absolute path never reaches the dialog)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockPrisma.$executeRaw.mockRejectedValue(new Error(PRISMA_TEXT));
+    const result = await run(payload());
+    expect(errorsOf(result)).toBe(GENERIC_ACTION_ERROR);
+    expect(errorsOf(result)).not.toMatch(LEAKS);
+    spy.mockRestore();
+  });
+
+  it("user-facing placement / scope rejections still reach the dialog unchanged", async () => {
+    // an explicit product that does not exist, then one that belongs to another domain
+    expect(errorsOf(await run(payload({ productId: "p-missing" })))).toBe('Product "p-missing" not found');
+    mockPrisma.product.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+      where.id === "p-elsewhere" ? { id: "p-elsewhere", domainId: "d-other", domain: { tenantId: T } } : null
+    );
+    expect(errorsOf(await run(payload({ productId: "p-elsewhere" })))).toBe("Product does not belong to this domain");
+  });
+
+  it("a domain deleted between the ownership check and the transaction is the user-facing 'not found', not a generic failure", async () => {
+    mockPrisma.domain.findUnique.mockResolvedValueOnce({ id: "d-own", tenantId: T }).mockResolvedValueOnce(null);
+    expect(errorsOf(await run(payload()))).toBe('Domain "d-own" not found');
+  });
+
+  it("a stale session still gets its sign-in line", async () => {
+    mockPrisma.user.findUnique.mockResolvedValue(null);
+    expect(errorsOf(await run(payload()))).toMatch(/session is stale/);
+  });
+
+  it("a Next control-flow error thrown inside the import is re-thrown, not swallowed into the result", async () => {
+    const redirect = Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/schemas;307;" });
+    mockPrisma.$executeRaw.mockRejectedValue(redirect);
+    await expect(run(payload())).rejects.toBe(redirect);
   });
 });

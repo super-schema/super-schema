@@ -69,6 +69,7 @@ vi.mock("@/services/name-registry.service", () => ({
 }));
 
 import { createDomainAssetsFromImportAction } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
+import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
 describe("schema import actions", () => {
   beforeEach(() => {
@@ -533,7 +534,7 @@ describe("schema import actions", () => {
       expect(mockTx.customScalar.create).not.toHaveBeenCalled();
     });
 
-    it("rolls back with zero counters and the real cause when the registry check fails mid-import", async () => {
+    it("rolls back with zero counters and a generic cause (not the driver text) when the registry check fails mid-import", async () => {
       mockTx.sharedEnum.create.mockResolvedValue({ id: "enum-Status" });
       mockAssertNameAvailable.mockImplementation(async (_tx, candidate) =>
         candidate.name === "Money"
@@ -554,11 +555,11 @@ describe("schema import actions", () => {
         unionTypes: [{ name: "Either", memberTypes: ["A"] }],
       });
 
-      expect(result).toEqual(rolledBack(['Enum "Skipped" already exists — skipped', "connection lost"]));
+      expect(result).toEqual(rolledBack(['Enum "Skipped" already exists — skipped', GENERIC_ACTION_ERROR]));
       expect(mockTx.unionType.create).not.toHaveBeenCalled();
     });
 
-    it("rolls back with zero counters when an unexpected database error escapes a create", async () => {
+    it("rolls back with zero counters and a generic cause when an unexpected database error escapes a create", async () => {
       mockTx.sharedEnum.create.mockRejectedValue(new Error("deadlock detected"));
 
       const result = await createDomainAssetsFromImportAction({
@@ -567,7 +568,7 @@ describe("schema import actions", () => {
         sharedEnums: [{ name: "Status", values: ["A"] }],
       });
 
-      expect(result).toEqual(rolledBack(["deadlock detected"]));
+      expect(result).toEqual(rolledBack([GENERIC_ACTION_ERROR]));
     });
 
     it("rolls back with zero counters and creates nothing when the explicit product belongs to another domain", async () => {

@@ -31,7 +31,8 @@ export async function createTenantEntityAction(data: {
     return { error: "You must be logged in" };
   }
 
-  const name = data.name?.trim() ?? "";
+  // `data` and its name arrive from the browser untyped: neither may throw before the `try`.
+  const name = typeof data?.name === "string" ? data.name.trim() : "";
   if (name.length === 0) {
     return { error: "Entity name is required" };
   }

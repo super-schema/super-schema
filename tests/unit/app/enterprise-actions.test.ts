@@ -156,6 +156,13 @@ describe("createTenantEntityAction", () => {
     expect(mockTx.entity.create).not.toHaveBeenCalled();
   });
 
+  it("a payload with no usable name (null, a non-string name) is a validation message, not a TypeError before the try", async () => {
+    for (const bad of [null, undefined, { name: 5, description: "", fields: [] }, { description: "", fields: [] }]) {
+      expect(await createTenantEntityAction(bad as never)).toEqual({ error: "Entity name is required" });
+    }
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+  });
+
   it("answers an unexpected failure with the generic message, never the driver text (path + source excerpt)", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mockTx.entity.create.mockRejectedValue(

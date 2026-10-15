@@ -5,6 +5,12 @@ const h = vi.hoisted(() => ({
   createMessage: vi.fn(), updateMessage: vi.fn(), deleteMessage: vi.fn(),
   createEventSpec: vi.fn(), updateEventSpecDocument: vi.fn(), renameEventSpec: vi.fn(), deleteEventSpec: vi.fn(),
 }));
+// The Events actions check their (client-supplied) parent against the active tenant; the real check is covered by
+// tests/unit/app/events-actions-tenant-guard.test.ts. Here every parent is the active tenant's.
+vi.mock("@/lib/action-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/action-context")>()),
+  withOwnedTarget: async (_target: unknown, run: () => Promise<unknown>) => run(),
+}));
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));

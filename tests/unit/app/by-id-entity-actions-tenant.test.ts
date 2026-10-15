@@ -207,7 +207,7 @@ const CASES: Case[] = [
   },
   {
     label: "getSchemaVersionsAction", call: () => actions.getSchemaVersionsAction("ent-1"),
-    lookup: entityLookup, row: (t) => entityRow(t), mustNotRun: ALL_EFFECTS, main: () => entityLookup(), failing: null, revalidates: false,
+    lookup: entityLookup, row: (t) => entityRow(t), mustNotRun: ALL_EFFECTS, main: () => entityLookup(), failing: () => [entityLookup()], revalidates: false,
   },
   {
     label: "getSchemaTargetFieldMappingsAction", call: () => actions.getSchemaTargetFieldMappingsAction("ent-1", "bigquery"),
@@ -256,12 +256,12 @@ const CASES: Case[] = [
   },
   {
     label: "getTypeSpecSourceAction", call: () => actions.getTypeSpecSourceAction("ent-1"),
-    lookup: entityLookup, row: (t) => entityRow(t), mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => entityLookup(), failing: null, revalidates: false,
+    lookup: entityLookup, row: (t) => entityRow(t), mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => entityLookup(), failing: () => [entityLookup()], revalidates: false,
   },
   {
     label: "compileAndApplyTypeSpecSourceAction", call: () => actions.compileAndApplyTypeSpecSourceAction("ent-1", "model Order {}"),
     lookup: entityLookup, row: (t) => entityRow(t), notFound: { success: false, diagnostics: [], error: "Entity not found" },
-    mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => mk(p.entity.update), failing: null,
+    mustNotRun: () => [mk(p.field.findMany), ...ALL_EFFECTS()], main: () => mk(p.entity.update), failing: () => [mk(p.entity.update)],
   },
 ];
 
@@ -309,7 +309,7 @@ describe.each(CASES)("$label", (c) => {
   });
 
   it("returns the generic message (and logs the original) when the lookup throws a Prisma error with a path and a source excerpt", async () => {
-    if (!c.failing) return; // compile-and-apply / pure reads have no catch of their own (an unhandled throw is hidden by Next in production)
+    if (!c.failing) return;
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     c.lookup().mockRejectedValue(new Error(PRISMA_TEXT));
     const result = (await c.call()) as { error?: string };
@@ -528,5 +528,71 @@ describe("the draft mark still rides with the write (F2 atomicity is intact)", (
     expect(p.$transaction).toHaveBeenCalledTimes(1);
     expect(p.$transaction.mock.calls[0][0]).toHaveLength(2);
     expect(p.$executeRawUnsafe).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "ent-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compileAndApplyTypeSpecSourceAction: the Source tab save (ownership before any load, a catch in the tab's result shape)
+// ---------------------------------------------------------------------------
+
+describe("compileAndApplyTypeSpecSourceAction (Source tab save)", () => {
+  const save = (id: unknown, source: unknown = "model Order {}") => actions.compileAndApplyTypeSpecSourceAction(asAny(id), asAny(source));
+  const TAB_FAILURE = (error: string) => ({ success: false, diagnostics: [], error });
+
+  it.each([[undefined], [null], [5], [{}], [["ent-1"]], [""], ["   "]])("a malformed entity id %j is 'Entity not found' WITHOUT a query (it used to reach Prisma and come back with an absolute path)", async (id) => {
+    expect(await save(id)).toEqual(TAB_FAILURE("Entity not found"));
+    expect(p.entity.findUnique).not.toHaveBeenCalled();
+    expect(h.compile).not.toHaveBeenCalled();
+    expect(p.entity.update).not.toHaveBeenCalled();
+  });
+
+  it("a source that is not text is refused before it is compiled (after the ownership check)", async () => {
+    for (const bad of [undefined, null, 5, {}]) {
+      expect(await actions.compileAndApplyTypeSpecSourceAction("ent-1", asAny(bad))).toEqual(TAB_FAILURE("The TypeSpec source must be text"));
+    }
+    expect(h.compile).not.toHaveBeenCalled();
+  });
+
+  it("an unexpected throw (compiler crash, driver message with a path) comes back in the tab's shape, generic, so 'Saving...' ends", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    h.compile.mockRejectedValue(new Error(PRISMA_TEXT));
+    const result = await save("ent-1");
+    expect(result).toEqual(TAB_FAILURE(GENERIC_ACTION_ERROR));
+    expect(JSON.stringify(result)).not.toMatch(LEAKS);
+    expect(spy).toHaveBeenCalledWith("[compileAndApplyTypeSpecSourceAction] unexpected error", expect.objectContaining({ message: PRISMA_TEXT }));
+    spy.mockRestore();
+  });
+
+  it("a throw while writing (the source / tags / stale-clear batch) is generic too", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    p.$transaction.mockRejectedValue(new Error(PRISMA_TEXT));
+    expect(await save("ent-1")).toEqual(TAB_FAILURE(GENERIC_ACTION_ERROR));
+    spy.mockRestore();
+  });
+
+  it("a disallowed import (F1's TYPESPEC_IMPORT_NOT_ALLOWED diagnostic) reaches the tab unchanged and nothing is read or written", async () => {
+    const diagnostics = [{ severity: "error", code: "TYPESPEC_IMPORT_NOT_ALLOWED", message: 'Import "./evil.js" is not allowed: only TypeSpec libraries can be imported.' }];
+    h.compile.mockResolvedValue({ success: false, diagnostics });
+    expect(await save("ent-1", 'import "./evil.js";')).toEqual({ success: false, diagnostics });
+    expect(p.field.findMany).not.toHaveBeenCalled();
+    expect(p.entity.update).not.toHaveBeenCalled();
+    expect(p.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("compile diagnostics and the no-model diagnostic still come back as before", async () => {
+    h.compile.mockResolvedValue({ success: true, diagnostics: [], document: { models: [] }, fieldGovernance: {} });
+    expect(await save("ent-1")).toMatchObject({ success: false, diagnostics: [{ code: "no-model" }] });
+  });
+
+  it("a Next control-flow error (redirect) thrown while compiling is re-thrown, not swallowed", async () => {
+    const redirect = Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/schemas;307;" });
+    h.compile.mockRejectedValue(redirect);
+    await expect(save("ent-1")).rejects.toBe(redirect);
+  });
+
+  it("a successful save keeps its shape and writes the source in one batch", async () => {
+    const result = await save("ent-1", "model Order {}");
+    expect(result).toMatchObject({ success: true, diagnostics: [], applied: { added: 0, updated: 0, removed: ["email"] } });
+    expect(p.entity.update).toHaveBeenCalledWith({ where: { id: "ent-1" }, data: { typespecSource: "model Order {}", hasUnpublishedChanges: true } });
   });
 });

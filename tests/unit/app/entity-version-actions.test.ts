@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
-// The by-id ownership guard (the real one is tested in tests/unit/app/by-id-tenant-guards.test.ts): here every entity is the active tenant's.
+// The by-id ownership guard (the real one is tested in tests/unit/app/by-id-misc-actions-tenant.test.ts): here every entity is the active tenant's.
 vi.mock("@/lib/action-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/action-context")>()),
   inActiveTenant: h.inActiveTenant,

@@ -296,10 +296,18 @@ describe("level-aware data type and API creates", () => {
       });
     });
 
-    it("does not consult the active tenant for DOMAIN and PRODUCT targets", async () => {
+    it("creates at DOMAIN and PRODUCT targets of the active tenant (the scope comes from the target's row, never from the client)", async () => {
       await createSharedEnumAction("domain-1", { name: "Status", values: [] });
       await createSharedEnumAction("domain-1", { name: "Status2", values: [] }, { level: "PRODUCT", productId: "prd-1" });
-      expect(mockGetActiveTenantId).not.toHaveBeenCalled();
+      expect(mockTx.sharedEnum.create).toHaveBeenCalledTimes(2);
+    });
+
+    it("refuses a DOMAIN target of another tenant with the NOT_FOUND of an unknown domain, and creates nothing", async () => {
+      mockPrisma.domain.findUnique.mockResolvedValue({ id: "domain-1", tenantId: "tenant-2" });
+      const result = await createSharedEnumAction("domain-1", { name: "Status", values: [] });
+      expect(result).toEqual({ error: 'Domain "domain-1" not found' });
+      expect(mockAssertNameAvailable).not.toHaveBeenCalled();
+      expect(mockTx.sharedEnum.create).not.toHaveBeenCalled();
     });
   });
 });

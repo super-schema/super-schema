@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError } from "@/lib/audit";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
+import { parseScopeTarget } from "@/services/events/service-guards";
 import { resolveCurrentUserId } from "@/lib/current-user";
 import { prisma } from "@/lib/db";
 import { getEffectiveRole } from "@/services/rbac.service";
@@ -76,24 +77,55 @@ export async function inActiveTenant(kind: TenantScopedKind, id: unknown): Promi
   return isInActiveTenant(await TENANT_OF[kind](id));
 }
 
-/** What `resolveScope` answers for a target that does not exist: a target of another tenant must read exactly like it. */
-const missingTargetMessage = (target: ScopeTarget) =>
-  target.level === "TENANT"
-    ? `Tenant "${target.tenantId}" not found`
+/** The id a scope target names and the label `resolveScope` uses for it. */
+function targetId(target: ScopeTarget): { label: string; id: unknown } {
+  return target.level === "TENANT"
+    ? { label: "Tenant", id: target.tenantId }
     : target.level === "DOMAIN"
-      ? `Domain "${target.domainId}" not found`
-      : `Product "${target.productId}" not found`;
+      ? { label: "Domain", id: target.domainId }
+      : { label: "Product", id: target.productId };
+}
+
+/**
+ * What `resolveScope` answers for a target that does not exist: a target of another tenant must read exactly like it. A
+ * non-string id (never a real one) is not echoed.
+ */
+const missingTargetMessage = (target: ScopeTarget) => {
+  const { label, id } = targetId(target);
+  return `${label} "${typeof id === "string" ? id : ""}" not found`;
+};
 
 /**
  * `inActiveTenant` for a create's `ScopeTarget` (a domain or product id taken from the client): resolves the target and
- * answers the very NOT_FOUND `resolveScope` gives a missing one when it belongs to another tenant. Success carries nothing:
- * the write that follows re-resolves the target itself.
+ * answers the very NOT_FOUND `resolveScope` gives a missing one when it belongs to another tenant. A malformed target (not an
+ * object, a non-string or blank id) is NOT_FOUND too, WITHOUT a query: it can never reach a Prisma validator and come back as
+ * its message. Success carries nothing: the write that follows re-resolves the target itself.
  */
 export async function targetInActiveTenant(target: ScopeTarget): Promise<Result<undefined>> {
+  if (typeof target !== "object" || target === null) return err({ code: "NOT_FOUND", message: "Target not found" });
+  const { id } = targetId(target);
+  if (typeof id !== "string" || id.trim() === "") return err({ code: "NOT_FOUND", message: missingTargetMessage(target) });
   const scope = await resolveScope(prisma, target);
   if (!scope.success) return scope;
   if (!(await isInActiveTenant(scope.data.tenantId))) return err({ code: "NOT_FOUND", message: missingTargetMessage(target) });
   return ok(undefined);
+}
+
+/**
+ * The PARENT check of the Events actions (channels, messages, event specs, traits and their publish / preview / list actions):
+ * they take a CLIENT-supplied product (or owner target) and the services only compare the row against that owner, so an owner
+ * of another tenant would be self-consistent. A well-formed `target` must lie in the ACTIVE tenant, else its failure is exactly
+ * the NOT_FOUND `resolveScope` gives an unknown one and `run` (the service call) never starts. A malformed target skips the
+ * check on purpose: the service parses it with the same `parseScopeTarget` and answers its own VALIDATION_ERROR, so no write is
+ * reachable and that answer stays unchanged. The service-level `assertOwnedBy` stays behind this check.
+ */
+export async function withOwnedTarget<T>(target: unknown, run: () => Promise<Result<T>>): Promise<Result<T>> {
+  const parsed = parseScopeTarget(target);
+  if (parsed.success) {
+    const owned = await targetInActiveTenant(parsed.data);
+    if (!owned.success) return owned;
+  }
+  return run();
 }
 
 /** The wire shape of the older (non-Result) by-id actions' not-found answer; a foreign row and a missing one are both exactly this. */

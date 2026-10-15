@@ -27,6 +27,7 @@ import {
   targetInActiveTenant,
   unexpectedFailure,
   type TenantScopedKind,
+  withOwnedTarget,
 } from "@/lib/action-context";
 import { AuditUserMissingError } from "@/lib/audit";
 import { resolveScope } from "@/lib/asset-scope";
@@ -130,6 +131,58 @@ describe("targetInActiveTenant", () => {
     // ...and the message is the one resolveScope itself gives a missing target (so callers that used to forward it see no change).
     const viaResolveScope = await resolveScope(mockPrisma as never, target);
     expect(foreignAnswer).toEqual(viaResolveScope);
+  });
+});
+
+describe("targetInActiveTenant with a malformed target", () => {
+  it.each([
+    [{ level: "DOMAIN", domainId: 5 }], [{ level: "DOMAIN", domainId: "" }], [{ level: "PRODUCT", productId: "  " }], [{ level: "PRODUCT", productId: {} }],
+    [{ level: "TENANT", tenantId: null }], [{ level: "DOMAIN" }], [null], [undefined], ["domain-1"],
+  ])("%j is NOT_FOUND without any query (it can never reach a Prisma validator)", async (target) => {
+    const result = await targetInActiveTenant(target as never);
+    expect(result).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+    expect(JSON.stringify(result)).not.toMatch(/prisma|invocation|Argument|Cannot read/i);
+    expect(mockPrisma.domain.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.product.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.tenant.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("withOwnedTarget (the Events actions' parent check)", () => {
+  const ok = { success: true as const, data: "ran" };
+
+  it("runs the service for a well-formed target of the active tenant", async () => {
+    mockPrisma.product.findUnique.mockResolvedValue({ id: "p1", domainId: "d1", domain: { tenantId: T } });
+    const run = vi.fn().mockResolvedValue(ok);
+    expect(await withOwnedTarget({ level: "PRODUCT", productId: "p1" }, run)).toBe(ok);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers a target of another tenant with the NOT_FOUND of an unknown one and never starts the service", async () => {
+    mockPrisma.product.findUnique.mockResolvedValue({ id: "p1", domainId: "d1", domain: { tenantId: "tenant-2" } });
+    const run = vi.fn().mockResolvedValue(ok);
+    const foreign = await withOwnedTarget({ level: "PRODUCT", productId: "p1" }, run);
+    mockPrisma.product.findUnique.mockResolvedValue(null);
+    const missing = await withOwnedTarget({ level: "PRODUCT", productId: "p1" }, run);
+    expect(foreign).toEqual({ success: false, error: { code: "NOT_FOUND", message: 'Product "p1" not found' } });
+    expect(JSON.stringify(foreign)).toBe(JSON.stringify(missing));
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("leaves a malformed target to the service (no query here; the service answers its own VALIDATION_ERROR)", async () => {
+    const run = vi.fn().mockResolvedValue(ok);
+    for (const bad of [null, undefined, "p1", { level: "PRODUCT" }, { level: "PRODUCT", productId: 5 }, { level: "NOPE" }]) {
+      expect(await withOwnedTarget(bad, run)).toBe(ok);
+    }
+    expect(run).toHaveBeenCalledTimes(6);
+    expect(mockPrisma.product.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("lets a lookup failure propagate (the caller's catch answers it generically)", async () => {
+    mockPrisma.domain.findUnique.mockRejectedValue(new Error("connection lost"));
+    const run = vi.fn();
+    await expect(withOwnedTarget({ level: "DOMAIN", domainId: "d1" }, run)).rejects.toThrow("connection lost");
+    expect(run).not.toHaveBeenCalled();
   });
 });
 

@@ -20,6 +20,7 @@ import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
+import { isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok } from "@/types/result";
 import type { Result, ServiceError } from "@/types/result";
 
@@ -81,7 +82,7 @@ async function dataTypeTarget(domainId: unknown, target: unknown): Promise<Resul
 }
 
 /**
- * An API create's / a bulk import's target carries a domain / product id from the client: it must lie in the active tenant. Null when it does;
+ * A create's target (data type, API, bulk import) carries a domain / product id from the client: it must lie in the active tenant. Null when it does;
  * otherwise the very `{ error }` a missing target gets (`resolveScope`'s NOT_FOUND text), so a foreign one reveals nothing.
  */
 async function foreignTarget(target: ScopeTarget): Promise<{ error: string } | null> {
@@ -457,6 +458,9 @@ export async function createSharedEnumAction(
   try {
     const scopeTarget = await dataTypeTarget(domainId, target);
     if (!scopeTarget.success) return failure(scopeTarget.error);
+    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant (a foreign one reads exactly like a missing one).
+    const notOwned = await foreignTarget(scopeTarget.data);
+    if (notOwned) return { ...notOwned };
     const result = await createInScope(prisma, {
       kind: "dataType",
       target: scopeTarget.data,
@@ -544,6 +548,9 @@ export async function createCustomScalarAction(
   try {
     const scopeTarget = await dataTypeTarget(domainId, target);
     if (!scopeTarget.success) return failure(scopeTarget.error);
+    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant (a foreign one reads exactly like a missing one).
+    const notOwned = await foreignTarget(scopeTarget.data);
+    if (notOwned) return { ...notOwned };
     const result = await createInScope(prisma, {
       kind: "dataType",
       target: scopeTarget.data,
@@ -625,6 +632,9 @@ export async function createUnionTypeAction(
   try {
     const scopeTarget = await dataTypeTarget(domainId, target);
     if (!scopeTarget.success) return failure(scopeTarget.error);
+    // A DOMAIN / PRODUCT target is a client id: it must lie in the active tenant (a foreign one reads exactly like a missing one).
+    const notOwned = await foreignTarget(scopeTarget.data);
+    if (notOwned) return { ...notOwned };
     const result = await createInScope(prisma, {
       kind: "dataType",
       target: scopeTarget.data,
@@ -1162,6 +1172,15 @@ function inferResponseFromReturnType(
   };
 }
 
+/**
+ * A failed placement / scope / registry Result thrown out of the import transaction (so it rolls back): its message is
+ * user-facing and reaches the dialog. An opaque failure (`DB_ERROR` / `INTERNAL_ERROR`) is a plain Error instead: the catch
+ * answers it generically.
+ */
+function rejection(error: ServiceError): Error {
+  return isOpaqueErrorCode(error.code) ? new Error(error.message) : new ServiceErrorRejection(error);
+}
+
 function emptyImportResult(errors: string[] = []): BulkImportResult {
   return {
     modelsCreated: 0,
@@ -1230,6 +1249,9 @@ export async function createDomainAssetsFromImportAction(
   if (!session?.user?.id) {
     return emptyImportResult(["Not authenticated"]);
   }
+  // The payload arrives from the browser untyped: anything but an object is refused before a property is read (a null payload
+  // would otherwise surface as "Cannot read properties of null").
+  if (!isPlainObject(payload)) return emptyImportResult(["The import payload must be an object"]);
 
   // Skip messages accumulated so far; kept outside the transaction so a later
   // failure can report them alongside its own error.
@@ -1248,11 +1270,11 @@ export async function createDomainAssetsFromImportAction(
 
       // 1. Resolve + validate every scope before the first create.
       const domainScope = await resolveScope(tx, { level: "DOMAIN", domainId: payload.domainId });
-      if (!domainScope.success) throw new Error(domainScope.error.message);
+      if (!domainScope.success) throw rejection(domainScope.error);
       const dataTypeScope = validateScope("dataType", domainScope.data);
-      if (!dataTypeScope.success) throw new Error(dataTypeScope.error.message);
+      if (!dataTypeScope.success) throw rejection(dataTypeScope.error);
       const apiScope = validateScope("api", domainScope.data);
-      if (!apiScope.success) throw new Error(apiScope.error.message);
+      if (!apiScope.success) throw rejection(apiScope.error);
       const { tenantId } = domainScope.data;
 
       // Serialize name checks + writes for this tenant (spec §4.3).
@@ -1261,12 +1283,12 @@ export async function createDomainAssetsFromImportAction(
       const importProductId =
         payload.productId ?? (await ensureDefaultProductId(payload.domainId, tx));
       const productScope = await resolveScope(tx, { level: "PRODUCT", productId: importProductId });
-      if (!productScope.success) throw new Error(productScope.error.message);
+      if (!productScope.success) throw rejection(productScope.error);
       if (productScope.data.domainId !== payload.domainId) {
-        throw new Error("Product does not belong to this domain");
+        throw new ServiceErrorRejection({ code: "INVALID_SCOPE", message: "Product does not belong to this domain" });
       }
       const entityScope = validateScope("entity", productScope.data);
-      if (!entityScope.success) throw new Error(entityScope.error.message);
+      if (!entityScope.success) throw rejection(entityScope.error);
 
       // Registry check right before each create, so later checks also see this batch's
       // earlier rows. Returns true when the asset is free; on a conflict it records the
@@ -1274,7 +1296,7 @@ export async function createDomainAssetsFromImportAction(
       const isNameFree = async (kind: RegistryKind, name: string, scope: LevelScope) => {
         const free = await assertNameAvailable(tx, { name, ...scope });
         if (free.success) return true;
-        if (free.error.code !== "NAME_CONFLICT") throw new Error(free.error.message);
+        if (free.error.code !== "NAME_CONFLICT") throw rejection(free.error);
         skipped.push(importConflictMessage(kind, name, scope, free.error));
         return false;
       };
@@ -1494,14 +1516,16 @@ export async function createDomainAssetsFromImportAction(
     revalidatePath("/schemas");
     return imported;
   } catch (e: unknown) {
-    // The transaction rolled back (or never started): nothing from this import exists,
-    // so report zero counts with every skip message so far plus the real cause.
+    // The transaction rolled back (or never started): nothing from this import exists, so report zero counts with every skip
+    // message so far plus the cause. Only a user-facing rejection (placement / scope / registry: `ServiceErrorRejection`) and
+    // the stale session say what happened; anything else (a driver or Prisma error, a malformed payload's TypeError) is
+    // logged server-side and answered generically (Next control-flow errors are re-thrown first).
     const message =
       e instanceof AuditUserMissingError
         ? STALE_SESSION_IMPORT_ERROR
-        : e instanceof Error
+        : e instanceof ServiceErrorRejection
           ? e.message
-          : "Bulk import failed";
+          : unexpectedFailure("createDomainAssetsFromImportAction", e).error;
     return emptyImportResult([...skipped, message]);
   }
 }
@@ -1517,6 +1541,7 @@ export async function createEntitiesFromImportAction(
     namespace?: string;
   }
 ): Promise<BulkImportResult> {
+  if (!isPlainObject(payload)) return emptyImportResult(["The import payload must be an object"]);
   return createDomainAssetsFromImportAction({
     namespace: payload.namespace,
     models: payload.models ?? [],

@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   listEntityVersions: vi.fn(),
   resolveGlobalAdminAccess: vi.fn(),
   prisma: {
-    entity: { findUnique: vi.fn(), update: vi.fn() },
+    entity: { findUnique: vi.fn(), update: vi.fn(), findMany: vi.fn() },
     domain: { findUnique: vi.fn(), delete: vi.fn() },
     messageVersion: { findMany: vi.fn() },
     channel: { findMany: vi.fn() },
@@ -42,7 +42,7 @@ import {
   listEntityVersionsAction,
   publishEntityAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/version-actions";
-import { updateRetentionPolicyAction } from "@/app/(dashboard)/governance/retention/actions";
+import { getEntitiesForRetentionAction, updateRetentionPolicyAction } from "@/app/(dashboard)/governance/retention/actions";
 import { createDomainAction, deleteDomainAction } from "@/app/(dashboard)/schemas/actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
@@ -169,6 +169,43 @@ describe("updateRetentionPolicyAction", () => {
     const result = await retention({ period: "P1Y" });
     expect(result).toEqual({ error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" });
     expect(JSON.stringify(result)).not.toMatch(LEAKS);
+    spy.mockRestore();
+  });
+});
+
+describe("getEntitiesForRetentionAction lists the ACTIVE tenant's entities (the write is scoped, so the list is too)", () => {
+  const row = (id: string) => ({ id, name: id, metadata: { retentionPolicy: { period: "P1Y" } }, domain: null, fields: [{ name: "email", type: "string", classification: "PII" }] });
+
+  it("filters by the active tenant and maps the rows (Enterprise, domain and product entities all carry their tenant)", async () => {
+    p.entity.findMany.mockResolvedValue([row("ent-1"), row("ent-2")]);
+    const result = (await getEntitiesForRetentionAction()) as { entities: Array<{ id: string }>; error?: string };
+    expect(result.error).toBeUndefined();
+    expect(result.entities.map((e) => e.id)).toEqual(["ent-1", "ent-2"]);
+    expect(p.entity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: T } }));
+  });
+
+  it("follows the active tenant", async () => {
+    p.entity.findMany.mockResolvedValue([]);
+    h.getActiveTenantId.mockResolvedValue(OTHER);
+    await getEntitiesForRetentionAction();
+    expect(p.entity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: OTHER } }));
+  });
+
+  it("requires a session before any query", async () => {
+    h.auth.mockResolvedValue(null);
+    expect(await getEntitiesForRetentionAction()).toEqual({ error: "Not authenticated", entities: [] });
+    expect(p.entity.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a failing query is the generic message (logged), keeping the empty list the page expects; control flow is re-thrown", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    p.entity.findMany.mockRejectedValue(new Error(PRISMA_TEXT));
+    const result = await getEntitiesForRetentionAction();
+    expect(result).toMatchObject({ error: GENERIC_ACTION_ERROR, entities: [] });
+    expect(JSON.stringify(result)).not.toMatch(LEAKS);
+    const redirect = Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;replace;/schemas;307;" });
+    p.entity.findMany.mockRejectedValue(redirect);
+    await expect(getEntitiesForRetentionAction()).rejects.toBe(redirect);
     spy.mockRestore();
   });
 });
