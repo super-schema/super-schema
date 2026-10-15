@@ -165,6 +165,36 @@ describe("eventSpecPublishInput", () => {
     expect(input.blockers.at(-1)).toEqual({ kind: "VALIDATION_ERROR", message: "…and 2 more validation error(s)" });
     expect(input.bump).toBeNull();
   });
+
+  it("blocks every trait whose headers entity is unpinned (UNPUBLISHED_PIN, named by the trait), together with the other blockers", () => {
+    const input = eventSpecPublishInput({
+      latest: null, hasChanges: true, previous: null, current,
+      unresolved: [{ pointer: "/operations/0/channelId", message: 'Channel "c9" not found' }],
+      unpublishedMessages: [{ id: "m1", name: "OrderCreated" }],
+      unpinnedTraitHeaders: [{ id: "t1", name: "CloudEvents" }, { id: "t2", name: "Tracing" }],
+      diagnostics: [{ severity: "error", code: "E", message: "bad", pointer: "/p" }],
+      nameConflict: "taken",
+    });
+    expect(input.blockers.map((b) => b.kind)).toEqual(["UNRESOLVED_REFERENCE", "UNPUBLISHED_MESSAGE", "UNPUBLISHED_PIN", "UNPUBLISHED_PIN", "VALIDATION_ERROR", "NAME_CONFLICT"]);
+    const pins = input.blockers.filter((b) => b.kind === "UNPUBLISHED_PIN").map((b) => b.message);
+    expect(pins[0]).toBe("Trait CloudEvents: its headers entity is not pinned to a published version — pin a published entity version on the trait, then publish again");
+    expect(pins[1]).toContain("Trait Tracing:");
+    expect(planVersionedPublish(input)).toMatchObject({ success: false, error: { code: "PUBLISH_BLOCKED" } });
+  });
+
+  it("pinned traits (empty or omitted unpinnedTraitHeaders) add no blocker, and warnings / info diagnostics never block", () => {
+    const base = {
+      latest: null, hasChanges: true, previous: null, current, unresolved: [], unpublishedMessages: [],
+      diagnostics: [
+        { severity: "warning" as const, code: "PAYLOAD_NOT_VALIDATED", message: "w", pointer: "/x" },
+        { severity: "info" as const, code: "UNPUBLISHED_MESSAGE", message: "i", pointer: "" },
+      ],
+      nameConflict: null,
+    };
+    expect(eventSpecPublishInput(base).blockers).toEqual([]);
+    expect(eventSpecPublishInput({ ...base, unpinnedTraitHeaders: [] }).blockers).toEqual([]);
+    expect(planVersionedPublish(eventSpecPublishInput({ ...base, unpinnedTraitHeaders: [] }))).toMatchObject({ success: true, data: { label: "1.0" } });
+  });
 });
 
 describe("eventSpecPublishInput: classification and fail-closed inputs (fix round 1)", () => {
