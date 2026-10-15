@@ -3,6 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { JsonObject } from "@/lib/event-specs/types";
 import type { ServiceContext } from "@/types/service-context";
+import { levelNamespace } from "@/lib/events/version-source";
 import { createArtifactRenderer } from "@/services/events/artifact-renderer";
 import { publishEntity } from "@/services/entity-version.service";
 import { cleanupDomains, connectTestDb, createProductScope, testContext, unwrap } from "./helpers";
@@ -12,6 +13,7 @@ let ctx: ServiceContext;
 let domainId: string | undefined;
 let scope: Awaited<ReturnType<typeof createProductScope>>;
 let addressVersionId: string;
+let addressEntityId: string;
 let orderVersionId: string;
 
 /**
@@ -35,6 +37,16 @@ async function insertVersion(entityId: string, resolvedSource: string, fields: s
   return version;
 }
 
+/** The level-derived namespace of a version's entity, from the real slugs (spec §4.4). */
+async function levelNamespaceOf(versionId: string): Promise<string> {
+  const row = await prisma.entityVersion.findUniqueOrThrow({
+    where: { id: versionId },
+    select: { entity: { select: { tenant: { select: { slug: true } }, domain: { select: { slug: true } }, product: { select: { slug: true } } } } },
+  });
+  const { tenant, domain, product } = row.entity;
+  return levelNamespace({ tenantSlug: tenant.slug, domainSlug: domain?.slug ?? null, productSlug: product?.slug ?? null });
+}
+
 beforeAll(async () => {
   prisma = connectTestDb();
   ctx = await testContext(prisma);
@@ -43,6 +55,7 @@ beforeAll(async () => {
 
   const address = await scope.publishedEntity("Address", [{ name: "street", type: "string" }]);
   addressVersionId = address.version.id;
+  addressEntityId = address.entity.id;
 
   // typespecSource null → publish regenerates the source from the rows with the generator's governance overlay
   // (`@Enterprise.dataClassification` on the PII field, `@TypeSpec.OpenAPI.extension("x-tags", …)` on the model).
@@ -50,7 +63,9 @@ beforeAll(async () => {
     { name: "id", type: "string" },
     { name: "email", type: "string" },
     { name: "total", type: "int32" },
-    { name: "address", type: "reference", ref: { id: address.entity.id, name: "Address" } },
+    // by name only, like every real creation path: publish pins the target by resolving the name in the entity's line
+    { name: "address", type: "reference", ref: { id: address.entity.id, name: "Address", nameOnly: true } },
+    { name: "shipping", type: "reference", ref: { id: address.entity.id, name: "Address", nameOnly: true } },
   ]);
   await prisma.field.updateMany({ where: { entityId: order.id, name: "email" }, data: { classification: "PII" } });
   await prisma.entity.update({ where: { id: order.id }, data: { typespecSource: null, metadata: { tags: ["sales", "core"] } } });
@@ -74,7 +89,14 @@ describe.sequential("artifact renderer — real @typespec emitters", () => {
 
     const avro = unwrap(await renderer.render(subject, "avro"));
     expect(avro.artifact).toMatchObject({ format: "avro", schema: { type: "record", name: "Order" } });
-    expect(JSON.stringify(avro.artifact.schema)).toContain('"name":"Address"');
+    // Level-derived namespace (spec §4.4), and the doubly used reference: the record is declared once (first use), the
+    // second use refers to it by its full name.
+    const avroSchema = avro.artifact.schema as { namespace: string; fields: Array<{ name: string; type: unknown }> };
+    expect(avroSchema.namespace).toBe(`com.superschema.${(await levelNamespaceOf(orderVersionId)).toLowerCase()}`);
+    const byName = Object.fromEntries(avroSchema.fields.map((f) => [f.name, f.type]));
+    expect(byName.address).toMatchObject({ type: "record", name: "Address", fields: [{ name: "street", type: "string" }] });
+    expect(byName.shipping).toBe(`${avroSchema.namespace}.Address`);
+    expect(JSON.stringify(avro.artifact.schema).match(/"name":"Address"/g)).toHaveLength(1);
 
     const json = unwrap(await renderer.render(subject, "json-schema"));
     const schema = json.artifact.schema as JsonObject;
@@ -90,10 +112,23 @@ describe.sequential("artifact renderer — real @typespec emitters", () => {
     expect(text).toContain("// @RootNode\nmessage Order");
     expect(text.indexOf("message Order")).toBeLessThan(text.indexOf("message Address"));
     expect(text).toContain("string email = 2;");
+    expect(text).toContain("Address address = 4;");
+    expect(text).toContain("Address shipping = 5;");
+    expect(text.match(/^message Address /gm)).toHaveLength(1);
 
-    const draft = await scope.entity("Customer", [{ name: "name", type: "string" }]);
+    // A draft (never published) whose reference carries only `referencedEntityName` resolves in the entity's line.
+    const draft = await scope.entity("Customer", [
+      { name: "name", type: "string" },
+      { name: "home", type: "reference", ref: { id: addressEntityId, name: "Address", nameOnly: true } },
+    ]);
     const draftAvro = unwrap(await renderer.render({ kind: "draft", entityId: draft.id }, "avro"));
-    expect(draftAvro.artifact.schema).toMatchObject({ name: "Customer" });
+    expect(draftAvro.artifact.schema).toMatchObject({ name: "Customer", fields: [{ name: "name" }, { name: "home", type: { name: "Address" } }] });
+
+    // …and a by-name reference that matches nothing in the line is a clear diagnostic, not a tsp "unknown identifier"
+    const dangling = await scope.entity("Dangling", [{ name: "ghost", type: "reference", ref: { id: "none", name: "Ghost", nameOnly: true } }]);
+    const unresolved = await renderer.render({ kind: "draft", entityId: dangling.id }, "avro");
+    expect(!unresolved.success && unresolved.error.code).toBe("UNRESOLVED_REFERENCE");
+    expect(!unresolved.success && unresolved.error.message).toContain("Ghost");
   }, 180_000);
 
   it("renders every format from a version frozen before Story 16.6 (legacy @tag lines, x-classification) with decimal / timestamp / reference fields", async () => {

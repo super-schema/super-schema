@@ -283,14 +283,27 @@ export interface EmittedFile {
   content: string;
 }
 
-/** Run one TypeSpec emitter in a throw-away workspace; every file it wrote, sorted by path. */
+/** A hung `tsp` is killed after this long (`EMITTER_TIMEOUT`). */
+export const DEFAULT_EMITTER_TIMEOUT_MS = 120_000;
+
+/**
+ * Run one TypeSpec emitter in a throw-away workspace; every file it wrote, sorted by path. Never throws: a
+ * workspace that cannot be created, a failed compile and a `tsp` that outlives `timeoutMs` (SIGKILL) are errors.
+ */
 export async function runTypeSpecEmitterFiles(
   packageName: string,
   source: string,
-  emitterOptions: Record<string, unknown>
+  emitterOptions: Record<string, unknown>,
+  runOptions: { timeoutMs?: number } = {}
 ): Promise<Result<EmittedFile[]>> {
-  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
+  let workspace: string;
+  try {
+    workspace = await fs.mkdtemp(path.join(os.tmpdir(), "superschema-tsp-"));
+  } catch (error) {
+    return err({ code: "EMITTER_FAILED", message: `Could not create a TypeSpec workspace: ${error instanceof Error ? error.message : String(error)}` });
+  }
   const outputDir = path.join(workspace, "out");
+  const timeoutMs = runOptions.timeoutMs ?? DEFAULT_EMITTER_TIMEOUT_MS;
 
   try {
     await fs.symlink(
@@ -319,6 +332,8 @@ export async function runTypeSpecEmitterFiles(
     await execFileAsync(getTspBinaryPath(), ["compile", mainFile, "--config", configFile, "--pretty", "false"], {
       cwd: workspace,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
     });
 
     const files = await collectTextFiles(outputDir);
@@ -327,6 +342,9 @@ export async function runTypeSpecEmitterFiles(
     }
     return ok(files);
   } catch (error) {
+    if (typeof error === "object" && error !== null && (error as { killed?: boolean }).killed === true) {
+      return err({ code: "EMITTER_TIMEOUT", message: `Emitter "${packageName}" did not finish within ${timeoutMs} ms and was killed.` });
+    }
     const message = error instanceof Error ? error.message : "TypeSpec emitter failed";
     const details = typeof error === "object" && error !== null && "stdout" in error
       ? [String((error as { stdout?: string }).stdout ?? ""), String((error as { stderr?: string }).stderr ?? "")]
@@ -337,7 +355,7 @@ export async function runTypeSpecEmitterFiles(
 
     return err({ code: "EMITTER_FAILED", message: details || message });
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await fs.rm(workspace, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

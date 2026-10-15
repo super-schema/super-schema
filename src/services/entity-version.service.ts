@@ -17,12 +17,7 @@ import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { toFieldSnapshot } from "@/lib/diff/field-snapshot";
-import {
-  collectReferencedEntityIds,
-  collectReferencedEntityNames,
-  resolveReferencedEntityNames,
-  type NamedEntity,
-} from "@/lib/entity-versioning/reference-targets";
+import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
 import { analyzePublish, planPublish, type PublishAnalysis, type PublishState } from "@/lib/entity-versioning/publish-plan";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
@@ -93,15 +88,9 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
   });
   if (!entity) return entityNotFound(entityId);
 
-  // References stored by name only (every creation path today) are resolved against the entity's line.
-  const names = collectReferencedEntityNames(entity.fields);
-  const byName =
-    names.length > 0
-      ? resolveReferencedEntityNames(entity, names, await loadLineEntities(db, entity))
-      : { entityIds: [], unresolvedNames: [] };
-  const targetIds = [
-    ...new Set([...collectReferencedEntityIds(entity.id, entity.fields, entity.metadata), ...byName.entityIds]),
-  ].sort();
+  // References stored by name only (every creation path today) are resolved against the entity's line
+  // (shared with the draft artifact renderer: src/lib/entity-versioning/line-references.ts).
+  const { targetIds, unresolvedNames } = await resolveEntityReferences(db, entity);
   const targets =
     targetIds.length > 0
       ? await db.entity.findMany({ where: { id: { in: targetIds } }, select: { id: true, name: true, latestVersionId: true } })
@@ -132,18 +121,7 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
       const t = byId.get(id);
       return { entityId: id, entityName: t?.name ?? null, latestVersionId: t?.latestVersionId ?? null };
     }),
-    unresolvedReferenceNames: byName.unresolvedNames,
-  });
-}
-
-/** Entities in `entity`'s line: tenant level, its domain level, and its own product. */
-async function loadLineEntities(db: Db, entity: NamedEntity): Promise<NamedEntity[]> {
-  const levels: Prisma.EntityWhereInput[] = [{ domainId: null }];
-  if (entity.domainId) levels.push({ domainId: entity.domainId, productId: null });
-  if (entity.productId) levels.push({ productId: entity.productId });
-  return db.entity.findMany({
-    where: { tenantId: entity.tenantId, OR: levels },
-    select: { id: true, name: true, tenantId: true, domainId: true, productId: true },
+    unresolvedReferenceNames: unresolvedNames,
   });
 }
 

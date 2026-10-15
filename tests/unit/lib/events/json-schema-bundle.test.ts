@@ -36,4 +36,36 @@ describe("inlineJsonSchemaBundle", () => {
     const noRoot = inlineJsonSchemaBundle({ $id: "Order", $defs: { Other: { type: "object" } } }, "Order");
     expect(!noRoot.success && noRoot.error.code).toBe("ROOT_SCHEMA_NOT_FOUND");
   });
+
+  it("prunes $defs the root does not reach (library enums an emitter wrote), keeping transitive and recursive ones", () => {
+    const bundle = {
+      $schema: S, $id: "Order",
+      $defs: {
+        Order: { $id: "Order.json", type: "object", properties: { address: { $ref: "Address.json" }, tags: { type: "array", items: { $ref: "Order.json" } } } },
+        Address: { $id: "Address.json", type: "object", properties: { geo: { $ref: "Geo.json" }, self: { $ref: "Address.json" }, root: { $ref: "Order.json" } } },
+        Geo: { $id: "Geo.json", type: "object", properties: { lat: { type: "number" } } },
+        DataClassification: { $id: "DataClassification.json", type: "string", enum: ["Public", "PII"] },
+        AvroLogicalType: { $id: "AvroLogicalType.json", type: "string", enum: ["decimal"] },
+        Unreferenced: { $id: "Unreferenced.json", type: "object", properties: { other: { $ref: "DataClassification.json" } } },
+      },
+    };
+    const r = inlineJsonSchemaBundle(bundle, "Order");
+    expect(r.success && Object.keys(r.data.$defs as object)).toEqual(["Address", "Geo"]);
+    expect(r.success && (r.data.$defs as Record<string, unknown>).Address).toEqual({
+      type: "object",
+      properties: { geo: { $ref: "#/$defs/Geo" }, self: { $ref: "#/$defs/Address" }, root: { $ref: "#" } },
+    });
+  });
+
+  it("drops $defs entirely when nothing is referenced, and ignores unresolvable refs in pruned definitions", () => {
+    const bundle = {
+      $id: "Order",
+      $defs: {
+        Order: { $id: "Order.json", type: "object", properties: { id: { type: "string" } } },
+        Leftover: { $id: "Leftover.json", type: "object", properties: { x: { $ref: "Missing.json" } } },
+      },
+    };
+    const r = inlineJsonSchemaBundle(bundle, "Order");
+    expect(r.success && r.data).toEqual({ $schema: S, type: "object", properties: { id: { type: "string" } } });
+  });
 });

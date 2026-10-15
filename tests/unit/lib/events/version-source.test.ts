@@ -34,17 +34,64 @@ describe("splitTypeSpecStatements", () => {
 });
 
 describe("combineTypeSpecSources", () => {
-  it("hoists imports, drops file-level namespaces, dedupes declarations and warns on divergent copies", () => {
+  it("hoists imports, drops file-level namespaces and dedupes identical declarations (first copy wins)", () => {
     const r = combineTypeSpecSources([
       { label: "Order@1.0", source: 'import "@typespec/json-schema";\nnamespace A;\nenum Status { Active }\nmodel Order { id: string; status: Status; address: Address; }\n' },
       { label: "Address@1.0", source: "namespace B;\nenum Status { Active }\nmodel Address { street: string; }\n" },
-      { label: "Customer@2.0", source: "enum Status { Active, Retired }\n" },
     ]);
     expect(r.success && r.data.imports).toEqual(['import "@typespec/json-schema";']);
     expect(r.success && r.data.body).toBe(
       "enum Status { Active }\n\nmodel Order { id: string; status: Status; address: Address; }\n\nmodel Address { street: string; }"
     );
-    expect(r.success && r.data.warnings).toEqual(['"Status" from Customer@2.0 differs from the copy in Order@1.0; the Order@1.0 copy is used']);
+    expect(r.success && r.data.warnings).toEqual([]);
+  });
+
+  it("treats copies that differ only in whitespace and comments as identical", () => {
+    const r = combineTypeSpecSources([
+      { label: "A@1.0", source: "enum Status { Active, Retired }\n" },
+      { label: "B@1.0", source: "// shared\n/** Status */\nenum   Status {\n  Active, // on\n  Retired,\n}\n".replace("Retired,\n", "Retired\n") },
+    ]);
+    expect(r.success && r.data.body).toBe("enum Status { Active, Retired }");
+  });
+
+  it("refuses an edited shared declaration between two pinned versions instead of picking a copy", () => {
+    const r = combineTypeSpecSources([
+      { label: "Order@1.0", source: "enum Status { Active }\nmodel Order { status: Status; }\n" },
+      { label: "Customer@2.0", source: "enum Status { Active, Retired }\n" },
+    ]);
+    expect(!r.success && r.error.code).toBe("TYPESPEC_DECLARATION_CONFLICT");
+    expect(!r.success && r.error.message).toContain('"Status"');
+    expect(!r.success && r.error.message).toContain("Order@1.0");
+    expect(!r.success && r.error.message).toContain("Customer@2.0");
+    expect(!r.success && r.error.details).toEqual({
+      name: "Status",
+      first: { label: "Order@1.0", keyword: "enum" },
+      second: { label: "Customer@2.0", keyword: "enum" },
+    });
+  });
+
+  it("refuses the same name declared as a different kind (model X vs enum X)", () => {
+    const r = combineTypeSpecSources([
+      { label: "A@1.0", source: "model Shared { a: string; }\n" },
+      { label: "B@1.0", source: "enum Shared { One }\n" },
+    ]);
+    expect(!r.success && r.error.code).toBe("TYPESPEC_DECLARATION_CONFLICT");
+    expect(!r.success && r.error.message).toContain("as model in A@1.0 and as enum in B@1.0");
+  });
+
+  it("hoists only @typespec/* and the governance library; any other import specifier is TYPESPEC_IMPORT_NOT_ALLOWED", () => {
+    const ok = combineTypeSpecSources([
+      { label: "A@1.0", source: 'import "@typespec/http";\nimport "@superschema/typespec-enterprise";\nmodel A { a: string; }\n' },
+    ]);
+    expect(ok.success && ok.data.imports).toEqual(['import "@typespec/http";', 'import "@superschema/typespec-enterprise";']);
+    for (const specifier of [
+      "./other.tsp", "../other.tsp", "/etc/passwd", "C:/x.tsp", "lib.js", "other.tsp", "https://example.com/x.tsp",
+      "@typespec/http/../../x", "@typespec/", "@evil/typespec-enterprise", "@superschema/typespec-enterprise/x", "@typespec/http.js",
+    ]) {
+      const r = combineTypeSpecSources([{ label: "Bad@1.0", source: `import "${specifier}";\nmodel Bad { a: string; }\n` }]);
+      expect(!r.success && r.error.code, specifier).toBe("TYPESPEC_IMPORT_NOT_ALLOWED");
+      expect(!r.success && r.error.details, specifier).toEqual({ label: "Bad@1.0", specifier });
+    }
   });
 });
 
@@ -55,10 +102,17 @@ describe("levelNamespace / findRootModelName", () => {
     expect(levelNamespace({ tenantSlug: "1st", domainSlug: null, productSlug: null })).toBe("N1st");
   });
 
-  it("finds the model named after the entity, else the first model", () => {
-    expect(findRootModelName("enum S { A }\nmodel Line { a: string; }\nmodel Order { l: Line; }", "Order")).toBe("Order");
-    expect(findRootModelName("model Line { a: string; }", "Order Line")).toBe("Line");
-    expect(findRootModelName("enum S { A }", "Order")).toBeNull();
+  it("finds the model named after the entity; a single model is the fallback", () => {
+    expect(findRootModelName("enum S { A }\nmodel Line { a: string; }\nmodel Order { l: Line; }", "Order")).toEqual({ success: true, data: "Order" });
+    expect(findRootModelName("model Line { a: string; }", "Order Line")).toEqual({ success: true, data: "Line" });
+    expect(findRootModelName("enum S { A }", "Order")).toEqual({ success: true, data: null });
+  });
+
+  it("refuses to guess among several models when none is named after the entity", () => {
+    const r = findRootModelName("model Line { a: string; }\nmodel Other { b: string; }", "Order");
+    expect(!r.success && r.error.code).toBe("ROOT_MODEL_NOT_FOUND");
+    expect(!r.success && r.error.details).toEqual({ entityName: "Order", models: ["Line", "Other"] });
+    expect(findRootModelName("model A {", "Order").success).toBe(false);
   });
 });
 
@@ -115,5 +169,75 @@ describe("stripGovernanceOverlay", () => {
     expect(stripped).toContain("@Enterprise.avroOrder(");
     const plain = 'import "@typespec/openapi";\nmodel B { x: string; }\n';
     expect(stripGovernanceOverlay(plain)).toBe(plain);
+  });
+
+  it("removes only lines that are solely an overlay decorator: a decorator sharing its line with other content stays", () => {
+    const mixed = [
+      'import "@superschema/typespec-enterprise";',
+      "model M {",
+      '  @Enterprise.dataClassification(Enterprise.DataClassification.PII) @doc("Email")',
+      "  email: string;",
+      "  @Enterprise.dataClassification(Enterprise.DataClassification.PII) phone: string;",
+      "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      "  ssn: string;",
+      '  @Enterprise.dataClassification(Enterprise.DataClassification.PII) // trailing comment',
+      "  dob: string;",
+      "}",
+    ].join("\n");
+    const stripped = stripGovernanceOverlay(mixed);
+    expect(stripped).toBe(
+      [
+        'import "@superschema/typespec-enterprise";',
+        "model M {",
+        '  @Enterprise.dataClassification(Enterprise.DataClassification.PII) @doc("Email")',
+        "  email: string;",
+        "  @Enterprise.dataClassification(Enterprise.DataClassification.PII) phone: string;",
+        "  ssn: string;",
+        '  @Enterprise.dataClassification(Enterprise.DataClassification.PII) // trailing comment',
+        "  dob: string;",
+        "}",
+      ].join("\n")
+    );
+  });
+
+  it("never edits text inside strings, block comments or triple-quoted strings, and balances parentheses with strings", () => {
+    const source = [
+      'import "@superschema/typespec-enterprise";',
+      "/*",
+      "@Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      "*/",
+      '@doc("""',
+      "@Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      '""")',
+      "model M {",
+      '  @Enterprise.dataClassification(Enterprise.DataClassification.PII) @doc("a)")',
+      "  a: string;",
+      '  @TypeSpec.OpenAPI.extension("x-tags", #["a)", "b"])',
+      "  b: string;",
+      "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      "  c: string;",
+      "}",
+    ].join("\n");
+    const stripped = stripGovernanceOverlay(source);
+    expect(stripped.split("\n")).toEqual([
+      'import "@superschema/typespec-enterprise";',
+      "/*",
+      "@Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      "*/",
+      '@doc("""',
+      "@Enterprise.dataClassification(Enterprise.DataClassification.PII)",
+      '""")',
+      "model M {",
+      '  @Enterprise.dataClassification(Enterprise.DataClassification.PII) @doc("a)")',
+      "  a: string;",
+      "  b: string;",
+      "  c: string;",
+      "}",
+    ]);
+  });
+
+  it("leaves other x- extensions and other Enterprise decorators alone", () => {
+    const source = 'model M {\n  @TypeSpec.OpenAPI.extension("x-other", "1")\n  a: string;\n  @Enterprise.avroOrder(Enterprise.AvroFieldOrder.ignore)\n  b: string;\n}\n';
+    expect(stripGovernanceOverlay(source)).toBe(source);
   });
 });

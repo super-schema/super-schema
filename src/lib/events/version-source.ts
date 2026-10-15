@@ -155,34 +155,92 @@ export function splitTypeSpecStatements(source: string): Result<TypeSpecStatemen
   return ok(out);
 }
 
+/** Source text with `//` and block comments removed; string literals are kept verbatim. */
+function stripComments(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '"') {
+      const end = skipString(text, i);
+      const stop = end < 0 ? text.length : end;
+      out += text.slice(i, stop);
+      i = stop;
+    } else if (c === "/" && text[i + 1] === "/") {
+      const nl = text.indexOf("\n", i);
+      i = nl < 0 ? text.length : nl;
+    } else if (c === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2);
+      out += " ";
+      i = close < 0 ? text.length : close + 2;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+const normalizeDeclaration = (text: string): string => stripComments(text).replace(/\s+/g, " ").trim();
+
+/**
+ * Hoisted imports are limited to TypeSpec libraries (`@typespec/<package>`) and the governance library: the
+ * program is compiled by a real `tsp` process, and entity sources are user-authored (a relative, absolute,
+ * `.js` / `.tsp` or URL specifier would let a source read files or run code from the host).
+ */
+const ALLOWED_IMPORT = /^(?:@typespec\/[A-Za-z0-9][A-Za-z0-9_-]*|@superschema\/typespec-enterprise)$/;
+
+function importSpecifier(statement: string): string | null {
+  return /^import\s+"([^"\n]*)"\s*;$/.exec(statement.trim())?.[1] ?? null;
+}
+
 /**
  * D9: one TypeSpec program from several sources (pinned root version first, then its closure).
- * Imports / usings are hoisted and de-duplicated, file-level `namespace X;` statements are dropped
- * (the caller wraps the program in one level-derived namespace), and a declaration name seen twice
- * keeps its first copy — with a warning when the copies differ.
+ * - Imports are hoisted and de-duplicated, but only `@typespec/*` and `@superschema/typespec-enterprise`
+ *   specifiers are allowed (`TYPESPEC_IMPORT_NOT_ALLOWED`); usings are hoisted and de-duplicated.
+ * - File-level `namespace X;` statements are dropped (the caller wraps the program in one level-derived namespace).
+ * - A declaration name seen twice keeps its first copy only when both copies have the same keyword and the same
+ *   body (whitespace and comments ignored). Any other duplicate — a different keyword (`model X` vs `enum X`) or a
+ *   divergent body (an edited shared enum between two pinned versions) — is `TYPESPEC_DECLARATION_CONFLICT`:
+ *   silently picking a copy would render a payload that differs from what one of the pinned versions published.
  */
 export function combineTypeSpecSources(parts: SourcePart[]): Result<CombinedSource> {
   const imports = new Set<string>();
   const usings = new Set<string>();
   const body: string[] = [];
-  const seen = new Map<string, { label: string; normalized: string }>();
+  const seen = new Map<string, { label: string; keyword: string | undefined; normalized: string }>();
   const warnings: string[] = [];
 
   for (const part of parts) {
     const statements = splitTypeSpecStatements(part.source);
     if (!statements.success) return err({ ...statements.error, message: `${part.label}: ${statements.error.message}` });
     for (const s of statements.data) {
-      if (s.kind === "import") imports.add(s.text);
-      else if (s.kind === "using") usings.add(s.text);
+      if (s.kind === "import") {
+        const specifier = importSpecifier(s.text);
+        if (specifier === null || !ALLOWED_IMPORT.test(specifier)) {
+          return err({
+            code: "TYPESPEC_IMPORT_NOT_ALLOWED",
+            message: `${part.label}: import "${specifier ?? s.text}" is not allowed; only @typespec/* libraries and @superschema/typespec-enterprise can be imported`,
+            details: { label: part.label, specifier: specifier ?? s.text },
+          });
+        }
+        imports.add(s.text);
+      } else if (s.kind === "using") usings.add(s.text);
       else if (s.kind === "namespace") continue;
       else if (s.kind === "declaration" && s.name) {
-        const normalized = s.text.replace(/\s+/g, " ").trim();
+        const normalized = normalizeDeclaration(s.text);
         const prior = seen.get(s.name);
         if (prior) {
-          if (prior.normalized !== normalized) warnings.push(`"${s.name}" from ${part.label} differs from the copy in ${prior.label}; the ${prior.label} copy is used`);
-          continue;
+          if (prior.keyword === s.keyword && prior.normalized === normalized) continue;
+          const what = prior.keyword !== s.keyword ? `as ${prior.keyword} in ${prior.label} and as ${s.keyword} in ${part.label}` : `differently in ${prior.label} and ${part.label}`;
+          return err({
+            code: "TYPESPEC_DECLARATION_CONFLICT",
+            message: `"${s.name}" is declared ${what}; one schema cannot contain two different declarations of the same name`,
+            suggestedFix: "Re-publish the referencing entities so they pin versions that agree on the shared declaration.",
+            details: { name: s.name, first: { label: prior.label, keyword: prior.keyword }, second: { label: part.label, keyword: s.keyword } },
+          });
         }
-        seen.set(s.name, { label: part.label, normalized });
+        seen.set(s.name, { label: part.label, keyword: s.keyword, normalized });
         body.push(s.text.trim());
       } else body.push(s.text.trim());
     }
@@ -190,11 +248,70 @@ export function combineTypeSpecSources(parts: SourcePart[]): Result<CombinedSour
   return ok({ imports: [...imports], usings: [...usings], body: body.join("\n\n"), warnings });
 }
 
-/** The overlay decorators `generateTypeSpec()` emits (governance-decorators.ts): each is fully qualified and alone on its line. */
-const GOVERNANCE_DECORATOR_LINE =
-  /^[ \t]*@(?:Enterprise\.dataClassification\(.*\)|TypeSpec\.OpenAPI\.extension\("(?:x-tags|x-classification)",.*\))[ \t]*(?:\r?\n|$)/gm;
 const ENTERPRISE_IMPORT_LINE = /^[ \t]*import\s+"@superschema\/typespec-enterprise"\s*;[ \t]*(?:\r?\n|$)/gm;
 const OPENAPI_IMPORT_LINE = /^[ \t]*import\s+"@typespec\/openapi"\s*;[ \t]*(?:\r?\n|$)/gm;
+const OVERLAY_DECORATOR_HEAD = /^[ \t]*@(Enterprise\.dataClassification|TypeSpec\.OpenAPI\.extension)\(/;
+const OVERLAY_EXTENSION_KEY = /^\s*"(?:x-tags|x-classification)"\s*,/;
+
+/** Indexes of the lines whose first character sits inside a block comment or a triple-quoted string. */
+function linesStartingInsideLiteral(source: string): Set<number> {
+  const inside = new Set<number>();
+  let line = 0;
+  let i = 0;
+  const advanceThrough = (end: number) => {
+    for (; i < end; i++) {
+      if (source[i] === "\n") {
+        line++;
+        inside.add(line);
+      }
+    }
+  };
+  while (i < source.length) {
+    const c = source[i];
+    if (c === "\n") {
+      line++;
+      i++;
+    } else if (source.startsWith('"""', i)) {
+      const close = source.indexOf('"""', i + 3);
+      advanceThrough(close < 0 ? source.length : close + 3);
+    } else if (c === '"') {
+      const end = skipString(source, i);
+      i = end < 0 ? source.indexOf("\n", i) : end;
+      if (i < 0) i = source.length;
+    } else if (c === "/" && source[i + 1] === "/") {
+      const nl = source.indexOf("\n", i);
+      i = nl < 0 ? source.length : nl;
+    } else if (c === "/" && source[i + 1] === "*") {
+      const close = source.indexOf("*/", i + 2);
+      advanceThrough(close < 0 ? source.length : close + 2);
+    } else i++;
+  }
+  return inside;
+}
+
+/**
+ * True when `line` is nothing but one overlay decorator: `@Enterprise.dataClassification(...)` or
+ * `@TypeSpec.OpenAPI.extension("x-tags" | "x-classification", ...)` with balanced parentheses (string literals
+ * skipped) that close at the end of the line. Anything after the closing parenthesis — another decorator, a
+ * property, a comment — makes it a mixed line, which is never touched.
+ */
+function isOverlayDecoratorLine(line: string): boolean {
+  const head = OVERLAY_DECORATOR_HEAD.exec(line);
+  if (!head) return false;
+  const open = head[0].length - 1;
+  if (head[1] === "TypeSpec.OpenAPI.extension" && !OVERLAY_EXTENSION_KEY.test(line.slice(open + 1))) return false;
+  let depth = 0;
+  for (let j = open; j < line.length; j++) {
+    const c = line[j];
+    if (c === '"') {
+      const end = skipString(line, j);
+      if (end < 0) return false;
+      j = end - 1;
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return line.slice(j + 1).trim() === "";
+  }
+  return false;
+}
 
 /**
  * Story 16.6 overlay → render projection. Frozen `resolvedSource` text carries the governance overlay
@@ -204,17 +321,23 @@ const OPENAPI_IMPORT_LINE = /^[ \t]*import\s+"@typespec\/openapi"\s*;[ \t]*(?:\r
  * into the payload's `$defs`. So the renderer compiles the source WITHOUT the overlay — the same explicit
  * projection the Schemas-tab emission path applies via `generateTypeSpec(model, { governance: false })`.
  *
- * Removes the overlay decorator lines, then each library import that nothing else in the source refers to
- * (`Enterprise` / `OpenAPI` identifiers outside strings and comments). A source without overlay lines is
- * returned unchanged. Pure.
+ * Only a line that consists solely of an overlay decorator is removed (the generator puts each on its own line);
+ * a decorator sharing its line with anything else, and anything inside a string or a block comment, is left alone
+ * (the library import then stays, so the line still compiles). Each library import that nothing else in the source
+ * refers to (`Enterprise` / `OpenAPI` identifiers outside strings and comments) is then removed. A source without
+ * removable overlay lines is returned unchanged. Pure.
  */
 export function stripGovernanceOverlay(source: string): string {
+  const lines = source.split("\n");
+  const insideLiteral = linesStartingInsideLiteral(source);
   let removed = 0;
-  let out = source.replace(GOVERNANCE_DECORATOR_LINE, () => {
+  const kept = lines.filter((line, index) => {
+    if (insideLiteral.has(index) || !isOverlayDecoratorLine(line.replace(/\r$/, ""))) return true;
     removed++;
-    return "";
+    return false;
   });
   if (removed === 0) return source;
+  let out = kept.join("\n");
   const code = codeOnly(out);
   if (!/\bEnterprise\b/.test(code)) out = out.replace(ENTERPRISE_IMPORT_LINE, "");
   if (!/\bOpenAPI\b/.test(code)) out = out.replace(OPENAPI_IMPORT_LINE, "");
@@ -238,10 +361,25 @@ export function levelNamespace(slugs: { tenantSlug: string; domainSlug: string |
     .join(".");
 }
 
-export function findRootModelName(source: string, entityName: string): string | null {
+/**
+ * The model the entity's payload is rooted at: the model named after the entity; otherwise the only model of
+ * the source. `ok(null)` when the source declares no model; `ROOT_MODEL_NOT_FOUND` when it declares several and
+ * none is named after the entity (guessing the first would silently render the wrong payload).
+ */
+export function findRootModelName(source: string, entityName: string): Result<string | null> {
   const statements = splitTypeSpecStatements(source);
-  if (!statements.success) return null;
+  if (!statements.success) return statements;
   const models = statements.data.filter((s) => s.kind === "declaration" && s.keyword === "model");
   const safe = entityName.replace(/[^A-Za-z0-9_]/g, "_");
-  return models.find((s) => s.name === safe || s.name === entityName)?.name ?? models[0]?.name ?? null;
+  const named = models.find((s) => s.name === safe || s.name === entityName);
+  if (named?.name) return ok(named.name);
+  if (models.length > 1) {
+    return err({
+      code: "ROOT_MODEL_NOT_FOUND",
+      message: `${entityName}: no model named "${safe}" among ${models.map((m) => m.name).join(", ")}`,
+      suggestedFix: `Name the entity's root model "${safe}".`,
+      details: { entityName, models: models.map((m) => m.name) },
+    });
+  }
+  return ok(models[0]?.name ?? null);
 }
