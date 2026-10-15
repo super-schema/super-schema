@@ -2,8 +2,8 @@ import { ok, err, type Result } from "@/types/result";
 import type { BumpKind, ChangeKind, VersionNumber } from "@/lib/entity-versioning/types";
 import { INITIAL_VERSION, formatVersionLabel, nextVersionNumber, resolveBump } from "@/lib/entity-versioning/version-math";
 import type { Diagnostic } from "@/lib/event-specs/types";
-import { classifyEventSpecBump, classifyMessageBump, findUnresolvedMessageVersions, type BumpDecision, type EventSpecBumpSide } from "./bump-rules";
-import type { MessageResolvedSpec, MessageSpec, PinRole, ResolvedPin } from "./types";
+import { classifyEventSpecBump, classifyMessageBump, findUnresolvedMessageVersions, stableStringify, type BumpDecision, type EventSpecBumpSide } from "./bump-rules";
+import type { FrozenChannel, FrozenTrait, MessageResolvedSpec, MessageSpec, PinRole, ResolvedPin } from "./types";
 
 export type EventPublishBlockerKind =
   | "NO_CHANGES" | "UNPUBLISHED_PIN" | "MISSING_ENTITY" | "MISSING_TRAIT" | "INVALID_SPEC"
@@ -167,6 +167,20 @@ export function messagePublishInput(state: MessagePublishState): { input: Versio
 }
 
 // ── Event Spec ─────────────────────────────────────────────────────────────
+
+/** The channels and traits an Event Spec depends on, in first-reference order. */
+export interface CatalogCopies {
+  channels: FrozenChannel[];
+  traits: FrozenTrait[];
+}
+
+/**
+ * D8: the live Channel / Trait rows differ from the copies frozen into the latest version (ANY difference, key order aside).
+ * One definition for the publish planner's `hasChanges` and for the "unpublished changes" badges, so they cannot disagree.
+ */
+export function hasCatalogDrift(frozen: CatalogCopies, live: CatalogCopies): boolean {
+  return stableStringify(frozen.channels) !== stableStringify(live.channels) || stableStringify(frozen.traits) !== stableStringify(live.traits);
+}
 
 export interface EventSpecPublishFacts {
   latest: LatestVersion | null;

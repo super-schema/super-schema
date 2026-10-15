@@ -1,10 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { isBumpKind, type BumpKind, type PublishInput } from "@/lib/entity-versioning/types";
+import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { GENERIC_VALIDATION_FAILURE, normalizeDiagnostics, type Diagnostic, type EmitOutput, type EventSpecDocument, type ResolvedChannel } from "@/lib/event-specs";
-import { stableStringify, type EventSpecBumpSide, type MessageVersionInfo } from "@/lib/events/bump-rules";
+import { buildEventSpecBumpSide, type EntityVersionFacts, type EventSpecBumpSide, type MessageVersionInfo } from "@/lib/events/bump-rules";
 import {
-  analyzeVersionedPublish, eventSpecPublishInput, planVersionedPublish, provisionalLabel,
+  analyzeVersionedPublish, eventSpecPublishInput, hasCatalogDrift, planVersionedPublish, provisionalLabel,
   type EventPublishAnalysis, type EventSpecPublishFacts, type VersionedPublishInput,
 } from "@/lib/events/publish-plan";
 import type { EventVersionSummary, FrozenTrait } from "@/lib/events/types";
@@ -55,15 +56,25 @@ function bumpSide(
   channels: ResolvedChannel[],
   traits: FrozenTrait[],
   versionIds: string[],
-  info: Record<string, MessageVersionInfo>
+  info: Record<string, MessageVersionInfo>,
+  entityVersions: ReadonlyMap<string, EntityVersionFacts>
 ): EventSpecBumpSide {
-  return {
-    document,
-    channelAddresses: Object.fromEntries(channels.map((c) => [c.id, c.address])),
-    channelNames: Object.fromEntries(channels.map((c) => [c.id, c.name])),
-    messageVersions: Object.fromEntries(versionIds.filter((id) => info[id]).map((id) => [id, info[id]])),
-    traitNames: Object.fromEntries(traits.map((t) => [t.id, t.name])),
-  };
+  return buildEventSpecBumpSide({ document, channels, traits, versionIds, messageVersions: info, entityVersions });
+}
+
+/**
+ * R78: what each trait's headers pin identifies (entity + pinned major) is read from the immutable `entity_versions` rows, for
+ * both sides alike, so a version published before this rule existed (its frozen traits only carry the version id) still resolves.
+ * An id that no longer resolves is simply absent: its major reads as unknown, never as a MAJOR change.
+ */
+async function loadHeaderPinFacts(db: Db, ...traitSets: FrozenTrait[][]): Promise<Map<string, EntityVersionFacts>> {
+  const ids = [...new Set(traitSets.flat().map((t) => t.headersEntityVersionId).filter((id): id is string => typeof id === "string"))];
+  if (ids.length === 0) return new Map();
+  const rows = await db.entityVersion.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, entityId: true, major: true, minor: true, entity: { select: { name: true } } },
+  });
+  return new Map(rows.map((r) => [r.id, { entityId: r.entityId, entityName: r.entity.name, major: r.major, label: formatVersionLabel(r) }]));
 }
 
 async function gatherFacts(db: Db, snapshot: DraftSnapshot): Promise<Result<Facts>> {
@@ -71,16 +82,17 @@ async function gatherFacts(db: Db, snapshot: DraftSnapshot): Promise<Result<Fact
   const published = snapshot.messages.filter((m) => !m.unpublished).map((m) => m.id);
   // D8: live Channel / Trait edits count as spec changes (compare the live rows with the copies frozen into the latest version).
   const liveChanged = latest !== null
-    && (stableStringify(latest.frozenChannels) !== stableStringify(snapshot.channels) || stableStringify(latest.frozenTraits) !== stableStringify(snapshot.traits));
+    && hasCatalogDrift({ channels: latest.frozenChannels, traits: latest.frozenTraits }, { channels: snapshot.channels, traits: snapshot.traits });
   const name = await assertNameAvailable(db, {
     name: spec.name, tenantId: spec.tenantId, domainId: spec.domainId, productId: spec.productId, exclude: { kind: "eventSpec", id: spec.id },
   });
   if (!name.success && name.error.code !== "NAME_CONFLICT") return name;
+  const entityVersions = await loadHeaderPinFacts(db, snapshot.traits, latest?.frozenTraits ?? []);
   return ok({
     latest: latest ? { major: latest.major, minor: latest.minor, sequence: latest.sequence } : null,
     hasChanges: spec.hasUnpublishedChanges || liveChanged,
-    previous: latest ? bumpSide(latest.sourceDocument, latest.frozenChannels, latest.frozenTraits, latest.messageVersionIds, snapshot.messageVersionInfo) : null,
-    current: bumpSide(snapshot.document, snapshot.channels, snapshot.traits, published, snapshot.messageVersionInfo),
+    previous: latest ? bumpSide(latest.sourceDocument, latest.frozenChannels, latest.frozenTraits, latest.messageVersionIds, snapshot.messageVersionInfo, entityVersions) : null,
+    current: bumpSide(snapshot.document, snapshot.channels, snapshot.traits, published, snapshot.messageVersionInfo, entityVersions),
     unresolved: snapshot.unresolved,
     unpublishedMessages: snapshot.messages.filter((m) => m.unpublished).map((m) => ({ id: m.messageId, name: m.name })),
     // R73: a trait whose headers entity has no pinned version would be rendered from the entity's mutable draft and frozen unpinned.

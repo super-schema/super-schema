@@ -9,6 +9,7 @@ import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
+import { isSourceStale } from "@/lib/entity-versioning/draft-state";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import {
@@ -155,7 +156,11 @@ export async function loadProgram(db: Db, subject: ArtifactSubject): Promise<Res
   });
   if (!entity) return err({ code: "NOT_FOUND", message: `Entity "${subject.entityId}" not found` });
   let source = entity.typespecSource;
-  if (!source) {
+  // The same trigger as publish (`needsRegeneration`): no stored source, or one flagged `metadata.sourceStale` because field /
+  // entity edits happened outside the Source tab. A stale stored source would render the schema the entity had when it was last
+  // saved, not the draft the author sees. (`isSourceStale` rather than `needsRegeneration`: that module pulls the server-only
+  // TypeSpec compiler into the renderer.) Drafts are never cached, so the regenerated source is always the current one.
+  if (!source || isSourceStale(entity.metadata)) {
     const model = await loadEntityModel(db, entity.id);
     if (!model.success) return model;
     source = generateTypeSpec(model.data);
