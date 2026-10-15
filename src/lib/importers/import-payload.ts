@@ -50,6 +50,14 @@ function toModelInput(model: ParsedEntity & { extends?: string }) {
   };
 }
 
+/** An entity additionally carries the model's tags (Story 16.6 round trip: `x-tags` → metadata.tags). */
+function toEntityInput(model: ParsedEntity & { extends?: string; tags?: string[] }) {
+  return {
+    ...toModelInput(model),
+    ...(model.tags && model.tags.length > 0 ? { tags: model.tags } : {}),
+  };
+}
+
 export function buildImportAssetsPayload(
   result: TypeSpecImportResult,
   selection: ImportAssetSelection
@@ -58,7 +66,7 @@ export function buildImportAssetsPayload(
     namespace: result.namespace,
     sourceFormat: result.sourceFormat ?? "typespec",
     models: selection.selectedModels.map((idx) => toModelInput(result.models[idx])),
-    entities: selection.selectedEntities.map((idx) => toModelInput(result.models[idx])),
+    entities: selection.selectedEntities.map((idx) => toEntityInput(result.models[idx])),
     sharedEnums: selection.selectedEnums.map((idx) => result.sharedEnums[idx]),
     customScalars: selection.selectedScalars.map((idx) => result.customScalars[idx]),
     unionTypes: selection.selectedUnions.map((idx) => result.unions[idx]),

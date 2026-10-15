@@ -4,7 +4,7 @@ import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import { generateTypeSpec, sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
 import { compileTypeSpecWithGovernance } from "@/lib/compiler/typespec-compiler";
-import { toCompilableTypeSpec } from "@/lib/compiler/compilable-source";
+import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -55,6 +55,19 @@ export function needsRegeneration(stored: string | null, stale: boolean): boolea
 }
 
 /**
+ * Phase 2 for a fresh stored source (no regeneration): it is frozen verbatim — except that a source stored
+ * before Story 16.6 may still carry the invalid `@tag("...")` decorators (a publish wrote the generator's
+ * text back into `entity.typespecSource`), which would freeze uncompilable text into an immutable version.
+ * `upgradeLegacyTagDecorators` rewrites them losslessly; when it changed anything the caller freezes the
+ * upgraded text and writes it back in the same transaction (`upgraded`), so the canonical source stays equal
+ * to the frozen one. A current source comes back unchanged and untouched (`upgraded: false`).
+ */
+export function freezableStoredSource(stored: string): { source: string; upgraded: boolean } {
+  const source = upgradeLegacyTagDecorators(stored);
+  return { source, upgraded: source !== stored };
+}
+
+/**
  * Phase 1 of the source the publish freezes (controller rulings R42, R45, R46): regenerate it from
  * the entity and field rows and gate it with the real compiler. Runs OUTSIDE the publish lock and
  * transaction, so a slow compile never holds a row lock or the single PGlite connection.
@@ -63,11 +76,11 @@ export function needsRegeneration(stored: string | null, stale: boolean): boolea
  * rows are all rendered into it; every edit outside the TypeSpec source tab sets
  * `metadata.sourceStale`. A source that does not compile blocks the publish with the diagnostics.
  *
- * The text handed to the compiler differs from the generated text in two ways, both for the check
- * only: unresolved reference names get empty stub models (`stubUnresolvedReferences`), and the
- * `@tag(...)` decorators real TypeSpec rejects are removed (`toCompilableTypeSpec`, shared with the
- * typespec-cli emitters; the proper fix is Story 16.6). What this returns, and what the caller stores
- * and freezes, is the generator's own text.
+ * The text handed to the compiler differs from the generated text in one way, for the check only:
+ * unresolved reference names get empty stub models (`stubUnresolvedReferences`). Nothing is stripped —
+ * since Story 16.6 the generator emits valid governance decorators (`@Enterprise.dataClassification`,
+ * `x-classification`, `x-tags`) instead of `@tag(...)`. What this returns, and what the caller stores and
+ * freezes, is the generator's own text.
  *
  * Trade-off: regeneration works from the field rows, so TypeSpec that fields cannot represent is not
  * carried over. If such constructs (custom decorators, unions, hand-declared enums, scalars or nested
@@ -86,9 +99,7 @@ export async function compileRegeneratedSource(
   if (!model.success) return model;
 
   const generated = deps.generate(model.data);
-  const compiled = await deps.compile(
-    toCompilableTypeSpec(stubUnresolvedReferences(generated, referencedModelNames(model.data)))
-  );
+  const compiled = await deps.compile(stubUnresolvedReferences(generated, referencedModelNames(model.data)));
   if (!compiled.success) {
     const errors = compiled.diagnostics.filter((d) => d.severity === "error");
     const summary = (errors.length > 0 ? errors : compiled.diagnostics)

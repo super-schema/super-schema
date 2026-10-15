@@ -31,6 +31,7 @@ import {
   needsRegeneration,
   compileRegeneratedSource,
   confirmRegeneratedSource,
+  freezableStoredSource,
 } from "@/lib/entity-versioning/resolve-source";
 import { ServiceErrorRejection } from "@/services/scoped-create.service";
 
@@ -192,14 +193,17 @@ export async function publishEntity(
             const plan = planPublish(state.data, opts.bump);
             if (!plan.success) throw new ServiceErrorRejection(plan.error);
 
-            // Phase 2 — the source to freeze (R42/R45/R46). A fresh stored source is used as-is. A
+            // Phase 2 — the source to freeze (R42/R45/R46). A fresh stored source is used as-is, except
+            // that legacy `@tag` lines (stored before Story 16.6) are upgraded first (R53). A
             // regenerated one is only valid if the text phase 1 compiled is still exactly what the
             // locked rows generate; otherwise an edit landed in between: abort, retryable.
             const stored = state.data.entity.typespecSource;
             let source: string;
-            let regenerated = false;
+            let writeBack = false;
             if (stored && !needsRegeneration(stored, state.data.sourceStale)) {
-              source = stored;
+              const frozen = freezableStoredSource(stored);
+              source = frozen.source;
+              writeBack = frozen.upgraded;
             } else {
               if (precompiled === null) {
                 // Became stale/missing after phase 1 looked.
@@ -212,7 +216,7 @@ export async function publishEntity(
               const confirmed = await confirmRegeneratedSource(tx, entityId, precompiled);
               if (!confirmed.success) throw new ServiceErrorRejection(confirmed.error);
               source = precompiled;
-              regenerated = true;
+              writeBack = true;
             }
 
             const version = await tx.entityVersion.create({
@@ -245,9 +249,9 @@ export async function publishEntity(
               });
             }
 
-            // A regenerated source is written back (and sourceStale cleared) in this same transaction,
-            // so the entity's canonical source matches what was just frozen.
-            if (regenerated) {
+            // A regenerated or upgraded source is written back (and sourceStale cleared) in this same
+            // transaction, so the entity's canonical source matches what was just frozen.
+            if (writeBack) {
               await tx.$executeRawUnsafe(WRITE_BACK_SOURCE_SQL, entityId, source);
             }
 

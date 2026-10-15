@@ -381,7 +381,7 @@ describe("TypeSpec Decorator Generation", () => {
     expect(output).toContain('@friendlyName("MyFriendlyModel")');
   });
 
-  it("emits @tag on model", () => {
+  it("emits entity tags as an x-tags extension on the model (never @tag, Story 16.6)", () => {
     const model = makeModel({
       entityOverrides: {
         name: "TaggedModel",
@@ -401,8 +401,9 @@ describe("TypeSpec Decorator Generation", () => {
       ],
     });
     const output = generateTypeSpec(model);
-    expect(output).toContain('@tag("AuditTest")');
-    expect(output).toContain('@tag("Critical")');
+    // Story 16.6: @tag is not valid on a model; tags travel as one x-tags extension.
+    expect(output).toContain('@TypeSpec.OpenAPI.extension("x-tags", #["AuditTest", "Critical"])');
+    expect(output).not.toContain("@tag(");
   });
 
   it("emits @example on field", () => {

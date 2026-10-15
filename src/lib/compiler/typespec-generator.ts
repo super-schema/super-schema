@@ -21,17 +21,35 @@ import type {
   SuperSchemaOperation,
 } from "@/types/super-schema-model";
 import { getTypeInfo } from "@/lib/data-types";
+import {
+  ENTERPRISE_NAMESPACE,
+  LIBRARY_IMPORTS,
+  classificationDecorator,
+  tagsDecorator,
+  type GovernanceLibrary,
+} from "./governance-decorators";
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
+export interface GenerateTypeSpecOptions {
+  /**
+   * Emit the governance overlay (Story 16.6): field classification
+   * (`@Enterprise.dataClassification(...)` / `x-classification`), entity tags (`x-tags`) and the library
+   * imports they need. Default true — the canonical source carries it. Emission projections pass false
+   * (see `emitter.service.ts#buildSourceForTarget`).
+   */
+  governance?: boolean;
+}
+
 /**
  * Generate TypeSpec source from a SuperSchemaModel.
- * Returns a valid TypeSpec .tsp string.
+ * Returns a valid TypeSpec .tsp string that compiles standalone.
  */
-export function generateTypeSpec(model: SuperSchemaModel): string {
-  const lines: string[] = [];
+export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeSpecOptions = {}): string {
+  const governance = resolveGovernance(model, options);
+  const lines: string[] = [...governanceImportLines(model, governance)];
 
   // Emit namespace if present
   const ns = model.namespace || model.entity.domain;
@@ -87,7 +105,7 @@ export function generateTypeSpec(model: SuperSchemaModel): string {
   }
 
   // Emit model-level decorators
-  lines.push(...generateModelDecorators(model));
+  lines.push(...generateModelDecorators(model, governance));
 
   // Emit model definition with optional extends
   const modelName = sanitizeIdentifier(model.entity.name);
@@ -105,7 +123,7 @@ export function generateTypeSpec(model: SuperSchemaModel): string {
 
   // Emit fields
   for (const field of model.fields) {
-    const fieldLines = generateFieldDefinition(field, model.entity.name);
+    const fieldLines = generateFieldDefinition(field, model.entity.name, governance);
     for (const fl of fieldLines) {
       lines.push(`  ${fl}`);
     }
@@ -145,9 +163,11 @@ export interface SourceMapEntry {
  * Used for mapping compilation errors back to field names.
  */
 export function generateTypeSpecWithSourceMap(
-  model: SuperSchemaModel
+  model: SuperSchemaModel,
+  options: GenerateTypeSpecOptions = {}
 ): { source: string; sourceMap: SourceMapEntry[] } {
-  const lines: string[] = [];
+  const governance = resolveGovernance(model, options);
+  const lines: string[] = [...governanceImportLines(model, governance)];
   const sourceMap: SourceMapEntry[] = [];
 
   // Namespace
@@ -208,7 +228,7 @@ export function generateTypeSpecWithSourceMap(
   }
 
   // Emit model-level decorators
-  lines.push(...generateModelDecorators(model));
+  lines.push(...generateModelDecorators(model, governance));
 
   // Emit model definition
   const modelName = sanitizeIdentifier(model.entity.name);
@@ -227,7 +247,7 @@ export function generateTypeSpecWithSourceMap(
   // Emit fields with source map tracking
   for (const field of model.fields) {
     const startLine = lines.length + 1;
-    const fieldLines = generateFieldDefinition(field, model.entity.name);
+    const fieldLines = generateFieldDefinition(field, model.entity.name, governance);
     for (const fl of fieldLines) {
       lines.push(`  ${fl}`);
     }
@@ -250,7 +270,59 @@ export function generateTypeSpecWithSourceMap(
 // Model-level decorators
 // ---------------------------------------------------------------------------
 
-function generateModelDecorators(model: SuperSchemaModel): string[] {
+/** What the governance overlay does for one generated document. */
+interface Governance {
+  enabled: boolean;
+  /**
+   * A top-level name in the document is `Enterprise`, so `@Enterprise.dataClassification` would not resolve
+   * to the governance library (see {@link ENTERPRISE_NAMESPACE}): every classification is then emitted as
+   * the lossless `x-classification` extension and the enterprise library is not imported.
+   */
+  enterpriseShadowed: boolean;
+}
+
+function resolveGovernance(model: SuperSchemaModel, options: GenerateTypeSpecOptions): Governance {
+  const enabled = options.governance !== false;
+  return { enabled, enterpriseShadowed: enabled && declaresOrReferencesEnterprise(model) };
+}
+
+/**
+ * True when the document declares, references or namespaces a top-level name `Enterprise`: the entity
+ * itself, its parent / spread / reference targets (which the publish gate stubs as `model X {}`), shared
+ * enums, scalars, unions, aliases, interfaces, or a segment of the namespace. Each one either collides with
+ * `namespace Enterprise` of the governance library (duplicate-symbol, global scope) or captures the name
+ * `Enterprise` before the library does (inside a namespace).
+ */
+function declaresOrReferencesEnterprise(model: SuperSchemaModel): boolean {
+  const names: string[] = [model.entity.name, ...(model.entity.spreadFrom ?? [])];
+  if (model.entity.parentEntityName) names.push(model.entity.parentEntityName);
+  for (const field of model.fields) {
+    if (field.complexType?.referencedEntityName) names.push(field.complexType.referencedEntityName);
+  }
+  for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases, model.interfaces]) {
+    for (const declared of group ?? []) names.push(declared.name);
+  }
+  const ns = model.namespace || model.entity.domain;
+  if (model.namespace !== undefined && ns) names.push(...ns.split("."));
+  return names.some((name) => sanitizeIdentifier(name) === ENTERPRISE_NAMESPACE);
+}
+
+/**
+ * `import` lines for the libraries the governance overlay uses (none when it is off or empty), followed by
+ * a blank line. Imports must precede every other statement, so they open the file.
+ */
+function governanceImportLines(model: SuperSchemaModel, governance: Governance): string[] {
+  if (!governance.enabled) return [];
+  const used = new Set<GovernanceLibrary>();
+  if (model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) used.add("openapi");
+  for (const field of model.fields) {
+    if (field.classification) used.add(classificationDecorator(field.classification, governance.enterpriseShadowed).library);
+  }
+  const ordered = (["enterprise", "openapi"] as const).filter((lib) => used.has(lib));
+  return ordered.length > 0 ? [...ordered.map((lib) => LIBRARY_IMPORTS[lib]), ""] : [];
+}
+
+function generateModelDecorators(model: SuperSchemaModel, governance: Governance): string[] {
   const lines: string[] = [];
 
   if (model.entity.description) {
@@ -265,10 +337,9 @@ function generateModelDecorators(model: SuperSchemaModel): string[] {
     lines.push(`@friendlyName("${escapeString(model.entity.metadata.friendlyName)}")`);
   }
 
-  if (model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) {
-    for (const tag of model.entity.metadata.tags) {
-      lines.push(`@tag("${escapeString(tag)}")`);
-    }
+  // Entity tags (Story 16.6): one valid `x-tags` extension — `@tag` is not allowed on a model.
+  if (governance.enabled && model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) {
+    lines.push(tagsDecorator(model.entity.metadata.tags));
   }
 
   return lines;
@@ -477,12 +548,13 @@ function generateOperationDefinition(op: SuperSchemaOperation): string[] {
 
 function generateFieldDefinition(
   field: SuperSchemaField,
-  entityName: string
+  entityName: string,
+  governance: Governance
 ): string[] {
   const lines: string[] = [];
 
   // Field-level decorators
-  lines.push(...generateFieldDecorators(field));
+  lines.push(...generateFieldDecorators(field, governance));
 
   // Build the type expression
   const typeExpr = resolveTypeSpecType(field, entityName);
@@ -504,7 +576,7 @@ function generateFieldDefinition(
 // Field decorators
 // ---------------------------------------------------------------------------
 
-function generateFieldDecorators(field: SuperSchemaField): string[] {
+function generateFieldDecorators(field: SuperSchemaField, governance: Governance): string[] {
   const decorators: string[] = [];
 
   // @key
@@ -617,18 +689,11 @@ function generateFieldDecorators(field: SuperSchemaField): string[] {
     }
   }
 
-  // Classification decorator (custom annotation via @tag). NOTE: real TypeSpec's
-  // `@tag` only accepts Namespace | Interface | Operation — applying it to a
-  // field is invalid TypeSpec and fails a real `tsp compile` (confirmed
-  // 2026-10-12: the old native avro/openapi emitters never actually compiled
-  // this text, so the bug was latent until a real-compiler typespec-cli
-  // target exercised a classified field). Kept here because
-  // `typespec.importer.ts#extractClassification` still parses this exact
-  // `classification:` prefix back out for the regex-based Paste-Import round
-  // trip — stripped instead at the real-compile boundary, in
-  // `emitter.service.ts#buildSourceForTarget`, for every typespec-cli target.
-  if (field.classification) {
-    decorators.push(`@tag("classification:${escapeString(field.classification)}")`);
+  // Classification (Story 16.6): the governance package's `@Enterprise.dataClassification`, or
+  // `x-classification` for a level with no enum member — see governance-decorators.ts. Never `@tag`, which
+  // real TypeSpec rejects on a model property (decorator-wrong-target).
+  if (governance.enabled && field.classification) {
+    decorators.push(classificationDecorator(field.classification, governance.enterpriseShadowed).line);
   }
 
   return decorators;

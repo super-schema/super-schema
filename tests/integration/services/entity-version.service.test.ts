@@ -296,22 +296,23 @@ describe("entity version service", () => {
     }
   });
 
-  it("publishes an entity with model tags or a classified field: the gate strips the generator's @tag lines for the compiler only (R46)", async () => {
+  it("publishes an entity with model tags or a classified field: the gate compiles the generator's valid governance decorators as is (R46, Story 16.6)", async () => {
     let domainId: string | undefined;
     try {
       const sc = await scope();
       domainId = sc.domainId;
 
-      // (a) entity tags -> `@tag("sales")` on the model; stale source.
+      // (a) entity tags -> `x-tags` extension on the model (was an invalid `@tag("sales")`); stale source.
       const tagged = await sc.entity("Tagged");
       await sc.field(tagged.id, "id", { nullable: false });
       await prisma.entity.update({ where: { id: tagged.id }, data: { metadata: { tags: ["sales"], sourceStale: true } } });
       const taggedV = unwrap(await publishEntity(tagged.id, {}, ctx));
       const taggedFrozen = unwrap(await getEntityVersion(tagged.id, taggedV.label, ctx));
-      expect(taggedFrozen.resolvedSource).toContain('@tag("sales")'); // frozen text is the generator's, not the stripped one
+      expect(taggedFrozen.resolvedSource).toContain('@TypeSpec.OpenAPI.extension("x-tags", #["sales"])');
+      expect(taggedFrozen.resolvedSource).not.toContain("@tag(");
       expect((await prisma.entity.findUniqueOrThrow({ where: { id: tagged.id } })).typespecSource).toBe(taggedFrozen.resolvedSource);
 
-      // (b) PII-classified field -> `@tag("classification:PII")` on the field; missing source.
+      // (b) PII-classified field -> `@Enterprise.dataClassification(...)` (was `@tag("classification:PII")`); missing source.
       const classified = await sc.entity("Classified");
       await sc.field(classified.id, "id", { nullable: false });
       await prisma.field.create({
@@ -320,7 +321,8 @@ describe("entity version service", () => {
       await prisma.entity.update({ where: { id: classified.id }, data: { typespecSource: null } });
       const classifiedV = unwrap(await publishEntity(classified.id, {}, ctx));
       const classifiedFrozen = unwrap(await getEntityVersion(classified.id, classifiedV.label, ctx));
-      expect(classifiedFrozen.resolvedSource).toContain('@tag("classification:PII")');
+      expect(classifiedFrozen.resolvedSource).toContain("@Enterprise.dataClassification(Enterprise.DataClassification.PII)");
+      expect(classifiedFrozen.resolvedSource).not.toContain("@tag(");
       expect(classifiedFrozen.resolvedSource).toContain("email");
     } finally {
       await cleanup(domainId);

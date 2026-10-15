@@ -116,8 +116,9 @@ describe("TypeSpec roundtrip: entity -> TypeSpec -> parse -> fields match", () =
     expect(emailField.type).toBe("string");
     expect(emailField.isOptional).toBe(true);
     expect(emailField.decorators.doc).toBe("Contact email");
-    // Classification is emitted as @tag("classification:PII")
-    expect(emailField.decorators.tag).toBe("classification:PII");
+    // Classification is emitted as @Enterprise.dataClassification(...) (Story 16.6) and read back as the level
+    expect(emailField.decorators.classification).toBe("PII");
+    expect(emailField.decorators.tag).toBeUndefined();
 
     // Field: age
     const ageField = parsed!.fields.find((f) => f.name === "age")!;
