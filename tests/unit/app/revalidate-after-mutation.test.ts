@@ -20,11 +20,17 @@ const mocks = vi.hoisted(() => ({
   createGlobalOverride: vi.fn(),
   createEntityOverride: vi.fn(),
   acknowledgeLossyMapping: vi.fn(),
+  inActiveTenant: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
+// The by-id ownership guard (the real one is tested in tests/unit/app/by-id-entity-actions-tenant.test.ts): here every entity is the active tenant's.
+vi.mock("@/lib/action-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/action-context")>()),
+  inActiveTenant: mocks.inActiveTenant,
+}));
 vi.mock("@/services/rbac.service", () => ({
   getEffectiveRole: mocks.getEffectiveRole,
   assignRole: mocks.assignRole,
@@ -135,6 +141,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.auth.mockResolvedValue({ user: { id: "user-1" } });
   mocks.getEffectiveRole.mockResolvedValue({ success: true, data: "ADMIN" });
+  mocks.inActiveTenant.mockResolvedValue(true);
   for (const { service } of ACTIONS) mocks[service].mockResolvedValue(OK);
 });
 

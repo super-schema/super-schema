@@ -62,6 +62,11 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+// Entity actions are scoped to the caller's active tenant (the cookie is not available outside a request).
+vi.mock("@/lib/active-tenant", () => ({
+  getActiveTenantId: vi.fn().mockResolvedValue("tenant-1"),
+}));
+
 // ---------------------------------------------------------------------------
 // Mock: RBAC service
 // ---------------------------------------------------------------------------
@@ -129,6 +134,7 @@ describe("SchemasTab Workflow", () => {
     it("creates a draft version in entity metadata", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         name: "TestEntity",
         version: 1,
         metadata: {},
@@ -172,6 +178,7 @@ describe("SchemasTab Workflow", () => {
       };
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         name: "TestEntity",
         version: 1,
         metadata: {},
@@ -196,6 +203,7 @@ describe("SchemasTab Workflow", () => {
     it("changes draft to published", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         metadata: {
           schemaVersions: {
             bigquery: [
@@ -226,6 +234,7 @@ describe("SchemasTab Workflow", () => {
     it("rejects publishing an already-published version", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         metadata: {
           schemaVersions: {
             bigquery: [
@@ -256,6 +265,7 @@ describe("SchemasTab Workflow", () => {
     it("changes published to deployed", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         metadata: {
           schemaVersions: {
             bigquery: [
@@ -287,6 +297,7 @@ describe("SchemasTab Workflow", () => {
     it("rejects deploying a draft version", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         metadata: {
           schemaVersions: {
             bigquery: [
@@ -345,6 +356,7 @@ describe("SchemasTab Workflow", () => {
 
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         metadata: { schemaVersions },
       });
 
@@ -361,6 +373,7 @@ describe("SchemasTab Workflow", () => {
     it("returns empty map when no schema versions exist", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         metadata: {},
         fields: [],
       });
@@ -384,6 +397,7 @@ describe("SchemasTab Workflow", () => {
     it("rejects physical target types outside the selected target catalog", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         metadata: {},
       });
       mockPrisma.field.findMany.mockResolvedValue([
@@ -424,6 +438,7 @@ describe("SchemasTab Workflow", () => {
     it("increments version number from existing versions", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         name: "TestEntity",
         version: 3,
         metadata: {
@@ -463,6 +478,7 @@ describe("SchemasTab Workflow", () => {
     it("starts at version 1 for a new target", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
+        tenantId: "tenant-1",
         name: "TestEntity",
         version: 1,
         metadata: {

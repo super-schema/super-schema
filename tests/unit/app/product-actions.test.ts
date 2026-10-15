@@ -11,12 +11,17 @@ const h = vi.hoisted(() => ({
   createProduct: vi.fn(),
   updateProduct: vi.fn(),
   deleteProduct: vi.fn(),
+  getActiveTenantId: vi.fn(),
+  findDomain: vi.fn(),
+  findProduct: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
-vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
-vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn() }));
+vi.mock("@/lib/db", () => ({
+  prisma: { tag: "prisma", domain: { findUnique: h.findDomain }, product: { findUnique: h.findProduct } },
+}));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
 vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
 vi.mock("@/services/product.service", () => ({
@@ -39,6 +44,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.auth.mockResolvedValue({ user: { id: "session-id", email: "a@example.test" } });
   h.resolveCurrentUserId.mockResolvedValue("db-user");
+  // The domain / product the actions address belong to the active tenant (the by-id ownership guard reads them).
+  h.getActiveTenantId.mockResolvedValue("tenant-1");
+  h.findDomain.mockResolvedValue({ tenantId: "tenant-1" });
+  h.findProduct.mockResolvedValue({ domain: { tenantId: "tenant-1" } });
   h.getEffectiveRole.mockResolvedValue({ success: true, data: "VIEWER" });
   h.createProduct.mockResolvedValue({ success: true, data: { id: "prd-1", slug: "billing" } });
   h.updateProduct.mockResolvedValue({ success: true, data: { id: "prd-1", slug: "billing-2" } });

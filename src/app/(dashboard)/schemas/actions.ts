@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
 import { ensureDefaultTenantId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { isInActiveTenant, unexpectedFailure } from "@/lib/action-context";
 import { domainDeleteBlocker } from "@/lib/domain-deletion";
 import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
@@ -78,8 +79,7 @@ export async function createDomainAction(formData: FormData) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { error: `A domain named "${name}" already exists` };
     }
-    const message = e instanceof Error ? e.message : "Failed to create domain";
-    return { error: message };
+    return { ...unexpectedFailure("createDomainAction", e) };
   }
 }
 
@@ -123,7 +123,8 @@ export async function deleteDomainAction(domainId: string) {
       },
     });
 
-    if (!domain) {
+    // Ownership: the domain must belong to the active tenant; anything else reads as missing (same answer, nothing deleted).
+    if (!domain || !(await isInActiveTenant(domain.tenantId))) {
       return { error: "Domain not found" };
     }
 
@@ -166,7 +167,6 @@ export async function deleteDomainAction(domainId: string) {
           "Your session is stale. Sign out and sign in again, then delete the domain.",
       };
     }
-    const message = e instanceof Error ? e.message : "Failed to delete domain";
-    return { error: message };
+    return { ...unexpectedFailure("deleteDomainAction", e) };
   }
 }

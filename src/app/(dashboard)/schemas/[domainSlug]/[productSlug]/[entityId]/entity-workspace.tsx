@@ -705,13 +705,15 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 onAddField={async (name, type, opts) => {
                   const result = await addFieldAction(entity.id, name, type, opts);
                   setTypeSpecTrigger((n) => n + 1);
-                  if (!result?.error) markDraftDirty();
+                  if (result?.error) toast.error(result.error);
+                  else markDraftDirty();
                   return result;
                 }}
                 onUpdateField={async (id, data) => {
                   const result = await updateFieldAction(id, data);
                   setTypeSpecTrigger((n) => n + 1);
-                  if (!result?.error) markDraftDirty();
+                  if (result?.error) toast.error(result.error);
+                  else markDraftDirty();
                 }}
                 onDeleteField={async (id) => {
                   const result = await deleteFieldAction(id);
@@ -720,7 +722,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                     setRightPanelTab("typespec-preview");
                   }
                   setTypeSpecTrigger((n) => n + 1);
-                  if (!result?.error) markDraftDirty();
+                  if (result?.error) toast.error(result.error);
+                  else markDraftDirty();
                 }}
               />
             </>

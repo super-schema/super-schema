@@ -22,6 +22,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn().mockResolvedValue({ user: { id: "user-1" } }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 
 import {
   compileAndApplyTypeSpecSourceAction,
@@ -56,7 +57,7 @@ describe("TypeSpec Source tab save accepts the canonical source of a tagged + cl
         [fld("id", null, 0), fld("email", "PII", 1), fld("note", "SENSITIVE", 2), fld("code", "TOP_SECRET", 3)]
       )
     );
-    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null });
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
 
     const res = await compileAndApplyTypeSpecSourceAction("ent-1", source);
 
@@ -78,7 +79,7 @@ describe("TypeSpec Source tab save accepts the canonical source of a tagged + cl
 
 describe("TypeSpec Source tab save applies the model's x-tags to metadata.tags (R53)", () => {
   const entityRow = (tags: string[] | undefined) => ({
-    id: "ent-1", typespecSource: null, metadata: tags === undefined ? null : { tags },
+    id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: tags === undefined ? null : { tags },
   });
   const sourceWithTags = (tags: string[]) =>
     generateTypeSpec(
@@ -124,7 +125,7 @@ describe("TypeSpec Source tab save applies the model's x-tags to metadata.tags (
 describe("getTypeSpecSourceAction upgrades a stored legacy @tag source", () => {
   it("returns the stored source rewritten into the valid governance decorators", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({
-      id: "ent-1", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null, domain: null,
+      id: "ent-1", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null, domain: null, tenantId: "tenant-1",
       metadata: null,
       typespecSource: ['@tag("sales")', "model Order {", '  @tag("classification:PII")', "  email?: string;", "}", ""].join("\n"),
     });

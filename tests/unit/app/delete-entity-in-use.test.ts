@@ -24,6 +24,7 @@ vi.mock("@/lib/auth", () => ({
   auth: vi.fn().mockResolvedValue({ user: { id: "user-1", email: "test@example.com", name: "Test User" } }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 vi.mock("@/services/rbac.service", () => ({
   getEffectiveRole: vi.fn().mockResolvedValue({ success: true, data: "AUTHOR" }),
 }));

@@ -6,6 +6,8 @@ import type { ServiceContext } from "@/types/service-context";
 const { access } = vi.hoisted(() => ({ access: { userId: "" } }));
 vi.mock("@/lib/auth", () => ({ auth: vi.fn(async () => ({ user: { id: access.userId } })) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// The actions scope every by-id row to the active tenant, which comes from a request cookie: pin it to the default tenant the fixtures use.
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => "tenant_default" }));
 
 import { deleteEntityAction } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { deleteEntity } from "@/services/entity.service";

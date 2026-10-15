@@ -10,7 +10,12 @@ export const isStringOrNull: ValueCheck = (v) => v === null || typeof v === "str
 export const isInt: ValueCheck = (v) => typeof v === "number" && Number.isInteger(v);
 export const isIntOrNull: ValueCheck = (v) => v === null || isInt(v);
 export const isStringArray: ValueCheck = (v) => Array.isArray(v) && v.every((x) => typeof x === "string");
-export const isPlainObject: ValueCheck = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+/**
+ * A plain data object: not null, not an array and not one of the exotic objects the server-action wire can carry (`Date`,
+ * `Map`, `Set`, `RegExp`, typed arrays, `Error`, `Promise`, ...). A `Date` has no own enumerable keys, so as `data` it would
+ * pass the whitelist as `{}` and become a no-op update that still marks the draft changed.
+ */
+export const isPlainObject: ValueCheck = (v) => typeof v === "object" && v !== null && Object.prototype.toString.call(v) === "[object Object]";
 
 /** An optional column: absent (`undefined`) is fine, anything else must pass `check`. */
 export const optional =

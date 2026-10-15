@@ -30,6 +30,10 @@ const { mockPrisma } = await vi.hoisted(async () => {
         update: vi.fn(),
         delete: vi.fn(),
       },
+      // The domain the entity is created in belongs to the active tenant (the by-id ownership guard reads it).
+      domain: {
+        findUnique: vi.fn().mockResolvedValue({ id: "dom-1", tenantId: "tenant-1" }),
+      },
       product: {
         findUnique: vi.fn().mockResolvedValue({
           id: "prod-default",
@@ -233,6 +237,7 @@ describe("E2E Critical Flows", () => {
       // emitter. Provide real fields and assert on the genuine DDL output.
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-e2e-1",
+        tenantId: "tenant-1",
         name: "Order",
         slug: "order",
         description: null,
@@ -279,6 +284,7 @@ describe("E2E Critical Flows", () => {
 
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-e2e-1",
+        tenantId: "tenant-1",
         metadata: {
           schemaVersions: {
             bigquery: [draftVersion],
@@ -401,7 +407,7 @@ describe("E2E Critical Flows", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
       mockPrisma.entity.update.mockResolvedValue({
         ...existingEntity,
         status: "ACTIVE",
@@ -428,7 +434,7 @@ describe("E2E Critical Flows", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
 
       const result = await updateEntityStatusAction("ent-e2e-1", "DEPRECATED");
 
@@ -451,7 +457,7 @@ describe("E2E Critical Flows", () => {
         updatedAt: new Date(),
       };
 
-      mockPrisma.entity.findUnique.mockResolvedValue(existingEntity);
+      mockPrisma.entity.findUnique.mockResolvedValue({ ...existingEntity, tenantId: "tenant-1" });
 
       const result = await updateEntityStatusAction("ent-e2e-1", "RETIRED");
 

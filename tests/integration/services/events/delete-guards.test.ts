@@ -7,6 +7,8 @@ const { access } = vi.hoisted(() => ({ access: { userId: "", isAdmin: true } }))
 vi.mock("@/lib/auth", () => ({ auth: vi.fn(async () => ({ user: { id: "session-user", email: "admin@example.test" } })) }));
 vi.mock("@/lib/access-control", () => ({ resolveGlobalAdminAccess: vi.fn(async () => ({ ...access })) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// The actions scope every by-id row to the active tenant, which comes from a request cookie: pin it to the default tenant the fixtures use.
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => "tenant_default" }));
 
 import { deleteDomainAction } from "@/app/(dashboard)/schemas/actions";
 import { deleteProduct } from "@/services/product.service";

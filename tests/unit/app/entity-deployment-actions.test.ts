@@ -78,6 +78,7 @@ vi.mock("@/lib/auth", () => ({
   }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 
 import {
   getEntityDeploymentStatusAction,
@@ -88,7 +89,7 @@ import {
 const ENTITY_ID = "entity-1";
 
 function metadataWith(schemaVersions: Record<string, unknown>) {
-  return { metadata: { schemaVersions } };
+  return { metadata: { schemaVersions }, tenantId: "tenant-1" };
 }
 function version(v: number, status: string, output: string) {
   return { version: v, status, output, generatedAt: "2026-01-01T00:00:00.000Z", entityVersion: 1 };
