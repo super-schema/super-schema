@@ -102,6 +102,77 @@ describe("canonical source with tags + classified fields (Story 16.6)", () => {
   });
 });
 
+describe("a document that declares or references the name `Enterprise` (R53)", () => {
+  // The governance library declares `namespace Enterprise`. A same-named model at global scope is a
+  // duplicate-symbol; inside a namespace `Enterprise.dataClassification` resolves to the model. So every
+  // classified field falls back to the lossless x-classification and the library is not imported.
+  const enterpriseEntity = (namespace?: string, extra: PrismaFieldInput[] = []) => {
+    const model = compileEntity(
+      {
+        id: "e2", name: "Enterprise", description: "", status: "DRAFT", version: 1, domainId: null,
+        metadata: null, domain: null,
+      },
+      [fld("id", null, 0, { isKey: true, nullable: false }), fld("email", "PII", 1), ...extra]
+    );
+    if (namespace) model.namespace = namespace;
+    return generateTypeSpec(model);
+  };
+
+  it("emits x-classification for every classified field and no enterprise import", () => {
+    const source = enterpriseEntity();
+    expect(source).not.toContain("typespec-enterprise");
+    expect(source).not.toContain("@Enterprise.");
+    expect(source).toContain('@TypeSpec.OpenAPI.extension("x-classification", "PII")\n  email?: string;');
+  });
+
+  it.each([undefined, "Sales.Crm"])(
+    "compiles with zero errors (namespace %s) and imports back with the right classification",
+    async (namespace) => {
+      const source = enterpriseEntity(namespace);
+      const result = await compiler.compileTypeSpecWithGovernance(source);
+      expect(result.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+      expect(result.success).toBe(true);
+
+      const imported = mapDocumentToImportResult(await compiler.compileTypeSpecDocument(source), source);
+      const model = imported.models.find((m) => m.name === "Enterprise")!;
+      expect(model.fields.find((f) => f.name === "email")?.classification).toBe("PII");
+    },
+    60_000
+  );
+
+  it("falls back for a referenced name too: the publish gate's stub `model Enterprise {}` compiles", async () => {
+    const model = compileEntity(
+      {
+        id: "e3", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null,
+        metadata: null, domain: null,
+      },
+      [
+        fld("email", "PII", 0),
+        fld("owner", null, 1, { type: "reference", decorators: { referencedEntityName: "Enterprise" } }),
+      ]
+    );
+    model.namespace = "Sales";
+    const source = generateTypeSpec(model);
+    expect(source).not.toContain("@Enterprise.");
+    const { stubUnresolvedReferences, referencedModelNames } = await import("@/lib/entity-versioning/resolve-source");
+    const gated = stubUnresolvedReferences(source, referencedModelNames(model));
+    expect(gated).toContain("model Enterprise {}");
+    const result = await compiler.compileTypeSpecWithGovernance(gated);
+    expect(result.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+  }, 60_000);
+
+  it("falls back for a shared enum named Enterprise and for an `Enterprise` namespace segment", () => {
+    const base = compileEntity(
+      { id: "e4", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null, metadata: null, domain: null },
+      [fld("email", "PII", 0)]
+    );
+    expect(generateTypeSpec({ ...base, sharedEnums: [{ name: "Enterprise", values: ["A"] }] })).not.toContain("@Enterprise.");
+    expect(generateTypeSpec({ ...base, namespace: "Acme.Enterprise" })).not.toContain("@Enterprise.");
+    // Unaffected: a name that merely contains it.
+    expect(generateTypeSpec({ ...base, sharedEnums: [{ name: "EnterpriseTier", values: ["A"] }] })).toContain("@Enterprise.");
+  });
+});
+
 describe("legacy @tag sources stay readable (stored before Story 16.6)", () => {
   const LEGACY = [
     '@doc("Orders")',

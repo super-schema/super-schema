@@ -93,4 +93,34 @@ describe("upgradeLegacyTagDecorators", () => {
       ['import "@typespec/openapi";', "", '@TypeSpec.OpenAPI.extension("x-tags", #["sales"])', "model A {}", ""].join("\n")
     );
   });
+  describe("a source that uses the name `Enterprise` itself (R53)", () => {
+    const legacyWith = (head: string[]) =>
+      [...head, '@tag("sales")', "model Order {", '  @tag("classification:PII")', "  email?: string;", "}", ""].join("\n");
+
+    it.each([
+      ["a model named Enterprise", ["model Enterprise {}", ""]],
+      ["a namespace segment named Enterprise", ["namespace Acme.Enterprise;", ""]],
+      ["a bare reference stubbed by the publish gate", ["model Holder {", "  owner: Enterprise;", "}", ""]],
+    ])("rewrites classification to x-classification and skips the enterprise import: %s", (_label, head) => {
+      const out = upgradeLegacyTagDecorators(legacyWith(head));
+      expect(out).toContain('@TypeSpec.OpenAPI.extension("x-classification", "PII")');
+      expect(out).not.toContain("typespec-enterprise");
+      expect(out).not.toContain("@Enterprise.");
+      expect(out).toContain('import "@typespec/openapi";');
+    });
+
+    it("does not treat a string, a comment or a qualified library use as the name", () => {
+      const out = upgradeLegacyTagDecorators(
+        legacyWith(['@doc("Our Enterprise tier")', "// Enterprise customers", "model Plan {}", ""])
+      );
+      expect(out).toContain("@Enterprise.dataClassification(Enterprise.DataClassification.PII)");
+      expect(out).toContain('import "@superschema/typespec-enterprise";');
+    });
+
+    it("the rewritten source compiles for real with an Enterprise model", async () => {
+      const out = upgradeLegacyTagDecorators(legacyWith(["model Enterprise {}", ""]));
+      const result = await compiler.compileTypeSpecWithGovernance(out);
+      expect(result.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    }, 60_000);
+  });
 });

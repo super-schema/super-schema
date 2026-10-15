@@ -20,6 +20,10 @@
  * model property with a `classification:` tag. `@tag` on an operation, interface or namespace is valid and
  * left alone, as is anything else.
  *
+ * A document that itself declares or uses the name `Enterprise` (a model, a namespace segment, a bare
+ * reference) cannot resolve `Enterprise.dataClassification` to the governance library, so its classifications
+ * are rewritten to the lossless `x-classification` extension and the library is not imported (R53).
+ *
  * Pure — no I/O.
  */
 
@@ -27,6 +31,7 @@ import {
   LIBRARY_IMPORTS,
   classificationDecorator,
   classificationFromLegacyTag,
+  sourceShadowsEnterprise,
   tagsDecorator,
   unescapeTypeSpecString,
   type GovernanceLibrary,
@@ -51,6 +56,8 @@ export function upgradeLegacyTagDecorators(source: string): string {
   const replaced = new Map<number, string | null>(); // line index → new text (null = remove)
   const modelTags = new Map<number, { first: number; indent: string; tags: string[] }>();
   const used = new Set<GovernanceLibrary>();
+  // A document that uses the name `Enterprise` itself cannot call `@Enterprise.dataClassification` (R53).
+  const enterpriseShadowed = sourceShadowsEnterprise(source);
 
   lines.forEach((line, i) => {
     const m = line.match(TAG_LINE);
@@ -74,7 +81,7 @@ export function upgradeLegacyTagDecorators(source: string): string {
 
     const level = classificationFromLegacyTag(value);
     if (level && PROPERTY_LINE.test(decl)) {
-      const { line: decorator, library } = classificationDecorator(level);
+      const { line: decorator, library } = classificationDecorator(level, enterpriseShadowed);
       replaced.set(i, `${indent}${decorator}`);
       used.add(library);
     }

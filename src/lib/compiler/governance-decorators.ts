@@ -31,6 +31,14 @@ export const LIBRARY_IMPORTS: Record<GovernanceLibrary, string> = {
   openapi: OPENAPI_LIBRARY_IMPORT,
 };
 
+/**
+ * The library's top-level namespace. A document that declares, references or namespaces a name `Enterprise`
+ * shadows it: at global scope the declaration is a duplicate-symbol with the imported `namespace Enterprise`;
+ * inside a namespace, `Enterprise.dataClassification` resolves to the document's own symbol. Such a document
+ * carries every classification as `x-classification` instead (lossless) and does not import the library.
+ */
+export const ENTERPRISE_NAMESPACE = "Enterprise";
+
 export const CLASSIFICATION_EXTENSION_KEY = "x-classification";
 export const TAGS_EXTENSION_KEY = "x-tags";
 
@@ -67,11 +75,18 @@ export function unescapeTypeSpecString(str: string): string {
   return str.replace(/\\(.)/g, (_, ch: string) => (ch === "n" ? "\n" : ch === "r" ? "\r" : ch));
 }
 
-/** The decorator line for a field's classification, and the library it needs. */
-export function classificationDecorator(level: string): { line: string; library: GovernanceLibrary } {
-  const member = Object.prototype.hasOwnProperty.call(APP_TO_ENTERPRISE, level)
-    ? APP_TO_ENTERPRISE[level]
-    : undefined;
+/**
+ * The decorator line for a field's classification, and the library it needs. `enterpriseShadowed`: the
+ * document uses the name `Enterprise` itself ({@link ENTERPRISE_NAMESPACE}), so the extension carries it.
+ */
+export function classificationDecorator(
+  level: string,
+  enterpriseShadowed = false
+): { line: string; library: GovernanceLibrary } {
+  const member =
+    !enterpriseShadowed && Object.prototype.hasOwnProperty.call(APP_TO_ENTERPRISE, level)
+      ? APP_TO_ENTERPRISE[level]
+      : undefined;
   if (member) {
     return { line: `@Enterprise.dataClassification(Enterprise.DataClassification.${member})`, library: "enterprise" };
   }
@@ -79,6 +94,27 @@ export function classificationDecorator(level: string): { line: string; library:
     line: `@TypeSpec.OpenAPI.extension("${CLASSIFICATION_EXTENSION_KEY}", "${escapeTypeSpecString(level)}")`,
     library: "openapi",
   };
+}
+
+const DECLARATION = /\b(?:model|enum|scalar|union|interface|alias|namespace)\s+([\w.]+)/g;
+const BARE_ENTERPRISE = /(?<![\w.@])Enterprise(?![\w.])/;
+
+/**
+ * Text counterpart of the generator's rule (see {@link ENTERPRISE_NAMESPACE}), for a stored source: it
+ * declares a type or namespace segment named `Enterprise`, or uses the bare name `Enterprise` (a reference
+ * the publish gate would stub). Qualified uses of the library (`Enterprise.DataClassification.PII`) do not
+ * count. String literals and comments are ignored.
+ */
+export function sourceShadowsEnterprise(source: string): boolean {
+  const code = source
+    .replace(/"""[\s\S]*?"""/g, '""')
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/.*$/gm, "");
+  for (const [, name] of code.matchAll(DECLARATION)) {
+    if (name.split(".").includes(ENTERPRISE_NAMESPACE)) return true;
+  }
+  return BARE_ENTERPRISE.test(code);
 }
 
 /** The model decorator line carrying the entity's tags. */

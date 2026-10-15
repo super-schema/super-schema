@@ -22,6 +22,7 @@ import type {
 } from "@/types/super-schema-model";
 import { getTypeInfo } from "@/lib/data-types";
 import {
+  ENTERPRISE_NAMESPACE,
   LIBRARY_IMPORTS,
   classificationDecorator,
   tagsDecorator,
@@ -47,7 +48,7 @@ export interface GenerateTypeSpecOptions {
  * Returns a valid TypeSpec .tsp string that compiles standalone.
  */
 export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeSpecOptions = {}): string {
-  const governance = options.governance !== false;
+  const governance = resolveGovernance(model, options);
   const lines: string[] = [...governanceImportLines(model, governance)];
 
   // Emit namespace if present
@@ -165,7 +166,7 @@ export function generateTypeSpecWithSourceMap(
   model: SuperSchemaModel,
   options: GenerateTypeSpecOptions = {}
 ): { source: string; sourceMap: SourceMapEntry[] } {
-  const governance = options.governance !== false;
+  const governance = resolveGovernance(model, options);
   const lines: string[] = [...governanceImportLines(model, governance)];
   const sourceMap: SourceMapEntry[] = [];
 
@@ -269,22 +270,59 @@ export function generateTypeSpecWithSourceMap(
 // Model-level decorators
 // ---------------------------------------------------------------------------
 
+/** What the governance overlay does for one generated document. */
+interface Governance {
+  enabled: boolean;
+  /**
+   * A top-level name in the document is `Enterprise`, so `@Enterprise.dataClassification` would not resolve
+   * to the governance library (see {@link ENTERPRISE_NAMESPACE}): every classification is then emitted as
+   * the lossless `x-classification` extension and the enterprise library is not imported.
+   */
+  enterpriseShadowed: boolean;
+}
+
+function resolveGovernance(model: SuperSchemaModel, options: GenerateTypeSpecOptions): Governance {
+  const enabled = options.governance !== false;
+  return { enabled, enterpriseShadowed: enabled && declaresOrReferencesEnterprise(model) };
+}
+
+/**
+ * True when the document declares, references or namespaces a top-level name `Enterprise`: the entity
+ * itself, its parent / spread / reference targets (which the publish gate stubs as `model X {}`), shared
+ * enums, scalars, unions, aliases, interfaces, or a segment of the namespace. Each one either collides with
+ * `namespace Enterprise` of the governance library (duplicate-symbol, global scope) or captures the name
+ * `Enterprise` before the library does (inside a namespace).
+ */
+function declaresOrReferencesEnterprise(model: SuperSchemaModel): boolean {
+  const names: string[] = [model.entity.name, ...(model.entity.spreadFrom ?? [])];
+  if (model.entity.parentEntityName) names.push(model.entity.parentEntityName);
+  for (const field of model.fields) {
+    if (field.complexType?.referencedEntityName) names.push(field.complexType.referencedEntityName);
+  }
+  for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases, model.interfaces]) {
+    for (const declared of group ?? []) names.push(declared.name);
+  }
+  const ns = model.namespace || model.entity.domain;
+  if (model.namespace !== undefined && ns) names.push(...ns.split("."));
+  return names.some((name) => sanitizeIdentifier(name) === ENTERPRISE_NAMESPACE);
+}
+
 /**
  * `import` lines for the libraries the governance overlay uses (none when it is off or empty), followed by
  * a blank line. Imports must precede every other statement, so they open the file.
  */
-function governanceImportLines(model: SuperSchemaModel, governance: boolean): string[] {
-  if (!governance) return [];
+function governanceImportLines(model: SuperSchemaModel, governance: Governance): string[] {
+  if (!governance.enabled) return [];
   const used = new Set<GovernanceLibrary>();
   if (model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) used.add("openapi");
   for (const field of model.fields) {
-    if (field.classification) used.add(classificationDecorator(field.classification).library);
+    if (field.classification) used.add(classificationDecorator(field.classification, governance.enterpriseShadowed).library);
   }
   const ordered = (["enterprise", "openapi"] as const).filter((lib) => used.has(lib));
   return ordered.length > 0 ? [...ordered.map((lib) => LIBRARY_IMPORTS[lib]), ""] : [];
 }
 
-function generateModelDecorators(model: SuperSchemaModel, governance: boolean): string[] {
+function generateModelDecorators(model: SuperSchemaModel, governance: Governance): string[] {
   const lines: string[] = [];
 
   if (model.entity.description) {
@@ -300,7 +338,7 @@ function generateModelDecorators(model: SuperSchemaModel, governance: boolean): 
   }
 
   // Entity tags (Story 16.6): one valid `x-tags` extension — `@tag` is not allowed on a model.
-  if (governance && model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) {
+  if (governance.enabled && model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) {
     lines.push(tagsDecorator(model.entity.metadata.tags));
   }
 
@@ -511,7 +549,7 @@ function generateOperationDefinition(op: SuperSchemaOperation): string[] {
 function generateFieldDefinition(
   field: SuperSchemaField,
   entityName: string,
-  governance: boolean
+  governance: Governance
 ): string[] {
   const lines: string[] = [];
 
@@ -538,7 +576,7 @@ function generateFieldDefinition(
 // Field decorators
 // ---------------------------------------------------------------------------
 
-function generateFieldDecorators(field: SuperSchemaField, governance: boolean): string[] {
+function generateFieldDecorators(field: SuperSchemaField, governance: Governance): string[] {
   const decorators: string[] = [];
 
   // @key
@@ -654,8 +692,8 @@ function generateFieldDecorators(field: SuperSchemaField, governance: boolean): 
   // Classification (Story 16.6): the governance package's `@Enterprise.dataClassification`, or
   // `x-classification` for a level with no enum member — see governance-decorators.ts. Never `@tag`, which
   // real TypeSpec rejects on a model property (decorator-wrong-target).
-  if (governance && field.classification) {
-    decorators.push(classificationDecorator(field.classification).line);
+  if (governance.enabled && field.classification) {
+    decorators.push(classificationDecorator(field.classification, governance.enterpriseShadowed).line);
   }
 
   return decorators;
