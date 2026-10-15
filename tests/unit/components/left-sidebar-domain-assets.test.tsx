@@ -93,6 +93,14 @@ const tree = {
         },
       ],
     },
+    {
+      id: "d3",
+      name: "Fresh",
+      slug: "fresh",
+      isSystem: false,
+      counts: { dataTypes: 0, apis: 0, traits: 0 },
+      products: [],
+    },
   ],
 };
 vi.mock("@/hooks/useDomainsTree", () => ({
@@ -135,6 +143,21 @@ describe("LeftSidebar", () => {
     expect(push).toHaveBeenCalledWith("/schemas/payments/checkout?tab=data-types");
     fireEvent.click(screen.getByText("Order"));
     expect(push).toHaveBeenCalledWith("/schemas/payments/checkout/order");
+  });
+
+  it("domain '+' creates an entity in the domain's first product", () => {
+    render(<LeftSidebar {...props} />);
+    fireEvent.click(within(screen.getByTestId("domain-d1")).getByTitle("New Entity"));
+    expect(push).toHaveBeenCalledWith("/schemas/payments/checkout/new");
+  });
+
+  it("domain '+' for a domain with no products links to its Products tab instead of a 404", () => {
+    render(<LeftSidebar {...props} />);
+    const row = screen.getByTestId("domain-d3");
+    expect(within(row).queryByTitle("New Entity")).toBeNull();
+    fireEvent.click(within(row).getByTitle("Create a product first"));
+    expect(push).toHaveBeenCalledWith("/schemas/fresh");
+    expect(push).not.toHaveBeenCalledWith(expect.stringContaining("/default"));
   });
 
   it("uses the label Data Types, never Types", () => {
