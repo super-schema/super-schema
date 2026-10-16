@@ -68,12 +68,12 @@ describe("loadTraitPage (tenant + level scoped by-id read)", () => {
       const enterprise = await loadTraitPage({ domainSlug: null, productSlug: null, traitId: f.traitTenant.id });
       expect(enterprise?.owner).toEqual({ level: "TENANT", tenantId: TENANT });
       expect(enterprise?.listHref).toBe("/schemas/enterprise?tab=traits");
-      expect(enterprise?.crumbs.map((c) => c.label)).toEqual(["Enterprise", "Traits", f.traitTenant.name]);
+      expect(enterprise?.crumbs.map((c) => c.label)).toEqual(["Enterprise", "Message properties", f.traitTenant.name]);
 
       const domain = await loadTraitPage({ domainSlug: f.own.domain.slug, productSlug: null, traitId: f.traitDomain.id });
       expect(domain?.owner).toEqual({ level: "DOMAIN", domainId: f.own.domain.id });
       expect(domain?.listHref).toBe(`/schemas/${f.own.domain.slug}?tab=traits`);
-      expect(domain?.crumbs.map((c) => c.label)).toEqual(["Domains", f.own.domain.name, "Traits", f.traitDomain.name]);
+      expect(domain?.crumbs.map((c) => c.label)).toEqual(["Domains", f.own.domain.name, "Message properties", f.traitDomain.name]);
       expect(domain?.trait).toMatchObject({ id: f.traitDomain.id, kind: "MESSAGE", headers: null });
       expect(Array.isArray(domain?.entityOptions)).toBe(true);
 

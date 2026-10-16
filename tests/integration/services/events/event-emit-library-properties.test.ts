@@ -116,7 +116,8 @@ describe("emitting a document that uses library traits with inline message prope
     const traits = traitsOf(out.document);
     expect(traits[cloudEvents.name].headers).toEqual(def("CloudEvents").spec.headers);
     expect(traits[traceContext.name].headers).toEqual(def("TraceContext").spec.headers);
-    expect(traits[cloudEvents.name]).toMatchObject({ summary: def("CloudEvents").spec.summary, "x-bundled": "cloudevents@1.0" });
+    expect(traits[cloudEvents.name]).toMatchObject({ summary: def("CloudEvents").spec.summary });
+    expect(traits[cloudEvents.name]).not.toHaveProperty("x-bundled"); // bookkeeping stays in storage, never in the emitted document
     const message = ((out.document?.components as JsonObject).messages as Record<string, JsonObject>)["order-created"];
     expect(message.traits).toEqual([
       { $ref: `#/components/messageTraits/${cloudEvents.name}` },
