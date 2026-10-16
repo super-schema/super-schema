@@ -56,12 +56,11 @@ function NewTraitForm({ target, onCancel, onCreated }: { target: ScopeTarget; on
 }
 
 export function TraitsTab({
-  target, domainSlug, productSlug, data, createIntent, onCreateIntentConsumed,
+  target, domainSlug, data, createIntent, onCreateIntentConsumed,
 }: {
-  /** Level the new trait is created at (the level the tab is shown on). */
+  /** Level the new trait is created at (the level the tab is shown on: the Enterprise or a domain). */
   target: ScopeTarget;
   domainSlug: string | null;
-  productSlug: string | null;
   data: TraitsTabData;
   createIntent?: "trait" | null;
   onCreateIntentConsumed?: () => void;
@@ -83,7 +82,7 @@ export function TraitsTab({
 
   function created(id: string) {
     void invalidateDomainsTree();
-    router.push(assetHref({ kind: "trait", id, domainSlug, productSlug }));
+    router.push(assetHref({ kind: "trait", id, domainSlug }));
   }
 
   return (

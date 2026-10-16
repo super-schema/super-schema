@@ -213,7 +213,6 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: E
           <TraitsTab
             target={{ level: "TENANT", tenantId }}
             domainSlug={null}
-            productSlug={null}
             data={traits ?? EMPTY_TRAITS_TAB}
             createIntent={traitCreateIntent}
             onCreateIntentConsumed={consumeTraitIntent}

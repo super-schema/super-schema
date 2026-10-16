@@ -12,14 +12,16 @@ const asLevelCounts = (rows: GroupedLevel[]) =>
 export async function GET() {
   const tenantId = await getActiveTenantId();
   const levelSelect = { domainId: true, productId: true } as const;
-  // Events kinds are only counted per level (never listed), so they are aggregated in the
+  // Traits and events are only counted per level (never listed), so they are aggregated in the
   // database instead of loading every row.
   const levelGroup = {
     by: ["domainId", "productId"] as Array<"domainId" | "productId">,
     where: { tenantId },
     _count: { _all: true },
   } as const;
-  const [domains, products, entities, enums, scalars, unions, services, traits, messages, channels, eventSpecs] = await Promise.all([
+  // Only self-contained events (document v2) are Events now; a stored legacy v1 row is not listed by the Events page, so it is not counted.
+  const eventGroup = { ...levelGroup, where: { tenantId, document: { path: ["documentVersion"], equals: 2 } } };
+  const [domains, products, entities, enums, scalars, unions, services, traits, events] = await Promise.all([
     prisma.domain.findMany({
       where: { tenantId },
       orderBy: [{ isSystem: "desc" }, { name: "asc" }],
@@ -39,9 +41,7 @@ export async function GET() {
     prisma.unionType.findMany({ where: { tenantId }, select: levelSelect }),
     prisma.serviceDefinition.findMany({ where: { tenantId }, select: levelSelect }),
     prisma.trait.groupBy(levelGroup),
-    prisma.message.groupBy(levelGroup),
-    prisma.channel.groupBy(levelGroup),
-    prisma.eventSpec.groupBy(levelGroup),
+    prisma.eventSpec.groupBy(eventGroup),
   ]);
   return NextResponse.json(
     buildExplorerTree({
@@ -51,9 +51,7 @@ export async function GET() {
       dataTypes: [...enums, ...scalars, ...unions],
       services,
       traits: asLevelCounts(traits),
-      messages: asLevelCounts(messages),
-      channels: asLevelCounts(channels),
-      eventSpecs: asLevelCounts(eventSpecs),
+      events: asLevelCounts(events),
     })
   );
 }

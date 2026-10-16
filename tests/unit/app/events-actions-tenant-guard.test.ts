@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The 20 Events create / update / delete / publish / preview / list actions (channels, messages, event specs, traits) take a
-// CLIENT-supplied product (or owner target) and their services only compare the row against that owner, so a foreign product
-// id was self-consistent (`createChannelAction("pB", ...)` created in tenant B). Each now requires the PARENT to lie in the
-// ACTIVE tenant (`withOwnedTarget`, the REAL one here) and answers a foreign parent with exactly the NOT_FOUND `resolveScope`
-// gives an unknown one, without starting the service. The services stay untouched behind it.
+// The Events create / update / delete / preview / emit actions (the self-contained Event, and library traits) take a CLIENT-supplied
+// product (or owner target) and their services only compare the row against that owner, so a foreign product id would be
+// self-consistent (`createEventAction("pB", ...)` creating in tenant B). Each requires the PARENT to lie in the ACTIVE tenant
+// (`withOwnedTarget`, the REAL one here) and answers a foreign parent with exactly the NOT_FOUND `resolveScope` gives an unknown
+// one, without starting the service. The services stay untouched behind it.
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
@@ -15,11 +15,8 @@ const h = vi.hoisted(() => ({
   findDomain: vi.fn(),
   findProduct: vi.fn(),
   findTenant: vi.fn(),
-  createChannel: vi.fn(), updateChannel: vi.fn(), setChannelMessages: vi.fn(), deleteChannel: vi.fn(),
-  createMessage: vi.fn(), updateMessage: vi.fn(), deleteMessage: vi.fn(),
-  createEventSpec: vi.fn(), updateEventSpecDocument: vi.fn(), renameEventSpec: vi.fn(), deleteEventSpec: vi.fn(),
-  previewEventSpecPublish: vi.fn(), publishEventSpec: vi.fn(), listEventSpecVersions: vi.fn(),
-  previewMessagePublish: vi.fn(), publishMessage: vi.fn(), listMessageVersions: vi.fn(),
+  createEvent: vi.fn(), updateEventDocument: vi.fn(), renameEvent: vi.fn(), deleteEvent: vi.fn(),
+  emitEventDocumentPreview: vi.fn(), emitEventDraft: vi.fn(),
   createTrait: vi.fn(), updateTrait: vi.fn(), deleteTrait: vi.fn(),
 }));
 
@@ -31,34 +28,15 @@ vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUserId }));
 vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
-vi.mock("@/services/events/channel.service", () => ({
-  createChannel: h.createChannel, updateChannel: h.updateChannel, setChannelMessages: h.setChannelMessages, deleteChannel: h.deleteChannel,
+vi.mock("@/services/events/event.service", () => ({
+  createEvent: h.createEvent, updateEventDocument: h.updateEventDocument, renameEvent: h.renameEvent, deleteEvent: h.deleteEvent,
 }));
-vi.mock("@/services/events/message.service", () => ({ createMessage: h.createMessage, updateMessage: h.updateMessage, deleteMessage: h.deleteMessage }));
-vi.mock("@/services/events/event-spec.service", () => ({
-  createEventSpec: h.createEventSpec, updateEventSpecDocument: h.updateEventSpecDocument, renameEventSpec: h.renameEventSpec, deleteEventSpec: h.deleteEventSpec,
-}));
-vi.mock("@/services/events/event-spec-publish.service", () => ({
-  previewEventSpecPublish: h.previewEventSpecPublish, publishEventSpec: h.publishEventSpec, listEventSpecVersions: h.listEventSpecVersions,
-}));
-vi.mock("@/services/events/message-publish.service", () => ({
-  previewMessagePublish: h.previewMessagePublish, publishMessage: h.publishMessage, listMessageVersions: h.listMessageVersions,
-}));
+vi.mock("@/services/events/event-emit.service", () => ({ emitEventDocumentPreview: h.emitEventDocumentPreview, emitEventDraft: h.emitEventDraft }));
 vi.mock("@/services/events/trait.service", () => ({ createTrait: h.createTrait, updateTrait: h.updateTrait, deleteTrait: h.deleteTrait }));
 
 import {
-  createChannelAction, deleteChannelAction, setChannelMessagesAction, updateChannelAction,
-} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/channel-actions";
-import { createMessageAction, deleteMessageAction, updateMessageAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-actions";
-import {
-  createEventSpecAction, deleteEventSpecAction, renameEventSpecAction, updateEventSpecDocumentAction,
-} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions";
-import {
-  getEventSpecPublishPreviewAction, listEventSpecVersionsAction, publishEventSpecAction,
-} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-version-actions";
-import {
-  getMessagePublishPreviewAction, listMessageVersionsAction, publishMessageAction,
-} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-version-actions";
+  createEventAction, deleteEventAction, emitEventDraftAction, previewEventDocumentAction, renameEventAction, updateEventDocumentAction,
+} from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { createTraitAction, deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
@@ -86,35 +64,22 @@ beforeEach(() => {
   );
   h.findTenant.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
   for (const key of [
-    "createChannel", "updateChannel", "setChannelMessages", "deleteChannel", "createMessage", "updateMessage", "deleteMessage", "createEventSpec",
-    "updateEventSpecDocument", "renameEventSpec", "deleteEventSpec", "previewEventSpecPublish", "publishEventSpec", "listEventSpecVersions",
-    "previewMessagePublish", "publishMessage", "listMessageVersions", "createTrait", "updateTrait", "deleteTrait",
+    "createEvent", "updateEventDocument", "renameEvent", "deleteEvent", "emitEventDocumentPreview", "emitEventDraft",
+    "createTrait", "updateTrait", "deleteTrait",
   ] as const) h[key].mockResolvedValue(OK);
 });
 
 // ---------------------------------------------------------------------------
-// The 17 product-addressed actions
+// The product-addressed Event actions
 // ---------------------------------------------------------------------------
 
-const CHANNEL = { name: "orders", address: "a", protocol: "kafka", format: "avro" };
 const PRODUCT_CASES: Array<{ label: string; call: (productId: string) => Promise<unknown>; service: Mock; mutates: boolean }> = [
-  { label: "createChannelAction", call: (p) => createChannelAction(p, asAny(CHANNEL)), service: h.createChannel, mutates: true },
-  { label: "updateChannelAction", call: (p) => updateChannelAction("c1", p, asAny(CHANNEL)), service: h.updateChannel, mutates: true },
-  { label: "setChannelMessagesAction", call: (p) => setChannelMessagesAction("c1", p, ["m1"]), service: h.setChannelMessages, mutates: true },
-  { label: "deleteChannelAction", call: (p) => deleteChannelAction("c1", p), service: h.deleteChannel, mutates: true },
-  { label: "createMessageAction", call: (p) => createMessageAction(p, asAny({ name: "m" })), service: h.createMessage, mutates: true },
-  { label: "updateMessageAction", call: (p) => updateMessageAction("m1", p, asAny({ name: "m" })), service: h.updateMessage, mutates: true },
-  { label: "deleteMessageAction", call: (p) => deleteMessageAction("m1", p), service: h.deleteMessage, mutates: true },
-  { label: "createEventSpecAction", call: (p) => createEventSpecAction(p, asAny({ name: "s" })), service: h.createEventSpec, mutates: true },
-  { label: "updateEventSpecDocumentAction", call: (p) => updateEventSpecDocumentAction("s1", p, {}), service: h.updateEventSpecDocument, mutates: true },
-  { label: "renameEventSpecAction", call: (p) => renameEventSpecAction("s1", p, "new"), service: h.renameEventSpec, mutates: true },
-  { label: "deleteEventSpecAction", call: (p) => deleteEventSpecAction("s1", p), service: h.deleteEventSpec, mutates: true },
-  { label: "getEventSpecPublishPreviewAction", call: (p) => getEventSpecPublishPreviewAction("s1", p), service: h.previewEventSpecPublish, mutates: false },
-  { label: "publishEventSpecAction", call: (p) => publishEventSpecAction("s1", p, {}), service: h.publishEventSpec, mutates: true },
-  { label: "listEventSpecVersionsAction", call: (p) => listEventSpecVersionsAction("s1", p), service: h.listEventSpecVersions, mutates: false },
-  { label: "getMessagePublishPreviewAction", call: (p) => getMessagePublishPreviewAction("m1", p), service: h.previewMessagePublish, mutates: false },
-  { label: "publishMessageAction", call: (p) => publishMessageAction("m1", p, {}), service: h.publishMessage, mutates: true },
-  { label: "listMessageVersionsAction", call: (p) => listMessageVersionsAction("m1", p), service: h.listMessageVersions, mutates: false },
+  { label: "createEventAction", call: (p) => createEventAction(p, { name: "e" }), service: h.createEvent, mutates: true },
+  { label: "updateEventDocumentAction", call: (p) => updateEventDocumentAction("e1", p, {}), service: h.updateEventDocument, mutates: true },
+  { label: "renameEventAction", call: (p) => renameEventAction("e1", p, "new"), service: h.renameEvent, mutates: true },
+  { label: "deleteEventAction", call: (p) => deleteEventAction("e1", p), service: h.deleteEvent, mutates: true },
+  { label: "previewEventDocumentAction", call: (p) => previewEventDocumentAction("e1", p, {}), service: h.emitEventDocumentPreview, mutates: false },
+  { label: "emitEventDraftAction", call: (p) => emitEventDraftAction("e1", p), service: h.emitEventDraft, mutates: false },
 ];
 
 const NOT_FOUND = (id: string) => ({ success: false, error: `Product "${id}" not found`, code: "NOT_FOUND" });
@@ -124,6 +89,7 @@ describe.each(PRODUCT_CASES)("$label", ({ call, service, mutates }) => {
     expect(await call("p-own")).toMatchObject({ success: true });
     expect(service).toHaveBeenCalledTimes(1);
     if (mutates) expect(h.revalidatePath).toHaveBeenCalledWith("/schemas", "layout");
+    else expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("answers a product of ANOTHER tenant with the NOT_FOUND of an unknown product, and the service never runs", async () => {
@@ -172,7 +138,7 @@ describe.each(PRODUCT_CASES)("$label", ({ call, service, mutates }) => {
 });
 
 // ---------------------------------------------------------------------------
-// The 3 trait actions (owner target: TENANT / DOMAIN / PRODUCT)
+// The 3 library trait actions (owner target: TENANT / DOMAIN; a PRODUCT target is still checked the same way)
 // ---------------------------------------------------------------------------
 
 type Target = { level: "TENANT"; tenantId: string } | { level: "DOMAIN"; domainId: string } | { level: "PRODUCT"; productId: string };

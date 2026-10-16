@@ -199,7 +199,7 @@ export function DomainTabs({
         )}
 
         {activeTab === "traits" && (
-          <TraitsTab target={target} domainSlug={domain.slug} productSlug={null} data={traits ?? EMPTY_TRAITS_TAB} />
+          <TraitsTab target={target} domainSlug={domain.slug} data={traits ?? EMPTY_TRAITS_TAB} />
         )}
       </div>
     </div>

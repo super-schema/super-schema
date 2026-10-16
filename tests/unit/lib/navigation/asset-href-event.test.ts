@@ -43,7 +43,7 @@ describe("assetHref — event kind", () => {
   it("ignores tab, section and item for every other kind", () => {
     const opts = { tab: "docs", section: "channels", item: "orders" } as const;
     expect(assetHref({ kind: "product", ...at }, opts)).toBe("/schemas/d/p");
-    expect(assetHref({ kind: "eventSpec", id: "s1", ...at }, opts)).toBe("/schemas/d/p/specs/s1");
+    expect(assetHref({ kind: "trait", id: "t1", domainSlug: "d" }, opts)).toBe("/schemas/d/traits/t1");
     expect(assetHref({ kind: "events", ...at }, opts)).toBe(assetHref({ kind: "events", ...at }));
   });
 
@@ -69,16 +69,10 @@ describe("assetHref — event kind", () => {
 describe("assetHref — existing kinds are untouched by the event kind", () => {
   it("keeps the events list ref on the product Events tab", () => {
     expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout?tab=events");
-    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout", section: "channels" })).toBe(
-      "/schemas/payments/checkout?tab=events&section=channels"
-    );
   });
 
-  it("keeps the detail pages of the older kinds", () => {
-    expect(assetHref({ kind: "eventSpec", id: "s1", ...at }, { version: "2.0" })).toBe("/schemas/d/p/specs/s1?version=2.0");
-    expect(assetHref({ kind: "message", id: "m1", ...at })).toBe("/schemas/d/p/messages/m1");
-    expect(assetHref({ kind: "channel", id: "c1", ...at })).toBe("/schemas/d/p/channels/c1");
-    expect(assetHref({ kind: "trait", id: "t1", domainSlug: null, productSlug: null })).toBe("/schemas/enterprise/traits/t1");
+  it("keeps the other detail pages", () => {
+    expect(assetHref({ kind: "trait", id: "t1", domainSlug: null })).toBe("/schemas/enterprise/traits/t1");
     expect(assetHref({ kind: "product", ...at })).toBe("/schemas/d/p");
     expect(assetHref({ kind: "newEntity", ...at })).toBe("/schemas/d/p/new");
   });

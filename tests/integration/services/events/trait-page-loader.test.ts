@@ -6,7 +6,6 @@ import type { ServiceContext } from "@/types/service-context";
 const h = vi.hoisted(() => ({ getActiveTenantId: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 
-import { loadChannelPage } from "@/features/events/channels/load-channel-page";
 import { loadTraitPage } from "@/features/events/traits/load-trait-page";
 import { cleanupDomains, cleanupTenantTraits, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
@@ -28,13 +27,10 @@ interface Fixture {
   /** A second product line in the same tenant (its own domain). */
   other: Own;
   foreign: Foreign;
-  channelOwn: { id: string; name: string };
-  channelOther: { id: string; name: string };
   traitTenant: { id: string; name: string };
   traitDomain: { id: string; name: string };
   traitProduct: { id: string; name: string };
   traitOtherProduct: { id: string; name: string };
-  messageId: string;
 }
 
 /** Builds two product lines in the active tenant plus a whole foreign tenant, runs one body, and removes everything. */
@@ -47,20 +43,13 @@ async function withFixture(run: (f: Fixture) => Promise<void>): Promise<void> {
     const other = await createProductScope(prisma, ctx, "pq");
     domainIds.push(own.domain.id, other.domain.id);
     foreign = await createForeignTenantFixture(prisma, ctx);
-    const level = (s: Own) => ({ tenantId: TENANT, domainId: s.domain.id, productId: s.product.id });
-    const channel = (s: Own, name: string) =>
-      prisma.channel.create({ data: { name, address: `${name}.v1`, protocol: "kafka", format: "avro", ...level(s) }, select: { id: true, name: true } });
     const trait = (name: string, where: { domainId: string | null; productId: string | null }) =>
       prisma.trait.create({ data: { name, kind: "MESSAGE", tenantId: TENANT, ...where }, select: { id: true, name: true } });
 
     const traitTenant = await trait(`te-${own.s}`, { domainId: null, productId: null });
     tenantTraits.push(traitTenant.id);
-    const entity = await own.entity("Payload");
-    const message = await prisma.message.create({ data: { name: `Msg-${own.s}`, payloadEntityId: entity.id, ...level(own) } });
     await run({
-      own, other, foreign, messageId: message.id,
-      channelOwn: await channel(own, `orders-${own.s}`),
-      channelOther: await channel(other, `refunds-${other.s}`),
+      own, other, foreign,
       traitTenant,
       traitDomain: await trait(`td-${own.s}`, { domainId: own.domain.id, productId: null }),
       traitProduct: await trait(`tp-${own.s}`, { domainId: own.domain.id, productId: own.product.id }),
@@ -75,43 +64,6 @@ async function withFixture(run: (f: Fixture) => Promise<void>): Promise<void> {
 
 const route = (s: Own) => ({ domainSlug: s.domain.slug, productSlug: s.product.slug });
 
-describe("loadChannelPage (tenant + product scoped by-id read)", () => {
-  it("loads a channel of the addressed product with its links, crumbs and tenant-wide message options", async () => {
-    await withFixture(async (f) => {
-      const data = await loadChannelPage({ ...route(f.own), channelId: f.channelOwn.id });
-      expect(data).not.toBeNull();
-      expect(data!.channel).toMatchObject({ id: f.channelOwn.id, name: f.channelOwn.name, productId: f.own.product.id, tenantId: TENANT });
-      expect(data!.productId).toBe(f.own.product.id);
-      expect(data!.listHref).toBe(`/schemas/${f.own.domain.slug}/${f.own.product.slug}?tab=events&section=channels`);
-      expect(data!.crumbs.map((c) => c.label)).toEqual(["Domains", f.own.domain.name, f.own.product.name, "Channels", f.channelOwn.name]);
-      expect(data!.crumbs[3].href).toBe(data!.listHref);
-      expect(data!.messageOptions.map((m) => m.id)).toContain(f.messageId);
-      expect(data!.messageOptions.map((m) => m.id)).not.toContain(f.foreign.message.id);
-    });
-  });
-
-  it("404s (null) for another product's channel in the same tenant and for another tenant's channel — same as an unknown id", async () => {
-    await withFixture(async (f) => {
-      expect(await loadChannelPage({ ...route(f.own), channelId: f.channelOther.id })).toBeNull();
-      expect(await loadChannelPage({ ...route(f.own), channelId: f.foreign.channel.id })).toBeNull();
-      expect(await loadChannelPage({ ...route(f.own), channelId: "c-does-not-exist" })).toBeNull();
-      expect(await loadChannelPage({ ...route(f.other), channelId: f.channelOwn.id })).toBeNull();
-    });
-  });
-
-  it("404s when the product slugs belong to another tenant (and the foreign channel loads only under its own tenant)", async () => {
-    await withFixture(async (f) => {
-      const foreignRoute = { domainSlug: f.foreign.domain.slug, productSlug: f.foreign.product.slug };
-      expect(await loadChannelPage({ ...foreignRoute, channelId: f.foreign.channel.id })).toBeNull();
-      expect(await loadChannelPage({ domainSlug: f.own.domain.slug, productSlug: "no-such-product", channelId: f.channelOwn.id })).toBeNull();
-      h.getActiveTenantId.mockResolvedValue(f.foreign.tenant.id);
-      expect(await loadChannelPage({ ...route(f.own), channelId: f.channelOwn.id })).toBeNull();
-      const data = await loadChannelPage({ ...foreignRoute, channelId: f.foreign.channel.id });
-      expect(data?.channel.id).toBe(f.foreign.channel.id);
-    });
-  });
-});
-
 describe("loadTraitPage (tenant + level scoped by-id read)", () => {
   it("loads a trait only under its own level's route, with that level's owner target, list link and crumbs", async () => {
     await withFixture(async (f) => {
@@ -124,13 +76,14 @@ describe("loadTraitPage (tenant + level scoped by-id read)", () => {
       expect(domain?.owner).toEqual({ level: "DOMAIN", domainId: f.own.domain.id });
       expect(domain?.listHref).toBe(`/schemas/${f.own.domain.slug}?tab=traits`);
       expect(domain?.crumbs.map((c) => c.label)).toEqual(["Domains", f.own.domain.name, "Traits", f.traitDomain.name]);
+      expect(domain?.trait).toMatchObject({ id: f.traitDomain.id, kind: "MESSAGE", headers: null });
+      expect(Array.isArray(domain?.entityOptions)).toBe(true);
 
+      // A product-level row (none is created any more; the loader still reads one by its own level's route).
       const product = await loadTraitPage({ ...route(f.own), traitId: f.traitProduct.id });
       expect(product?.owner).toEqual({ level: "PRODUCT", productId: f.own.product.id });
       expect(product?.listHref).toBe(`/schemas/${f.own.domain.slug}/${f.own.product.slug}?tab=traits`);
       expect(product?.crumbs.map((c) => c.label)).toEqual(["Domains", f.own.domain.name, f.own.product.name, "Traits", f.traitProduct.name]);
-      expect(product?.trait).toMatchObject({ id: f.traitProduct.id, kind: "MESSAGE", headers: null });
-      expect(Array.isArray(product?.entityOptions)).toBe(true);
     });
   });
 
