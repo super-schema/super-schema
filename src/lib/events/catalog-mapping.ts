@@ -40,7 +40,8 @@ export function traitHeadersSubject(t: FrozenTrait): ArtifactSubject | null {
 export function toResolvedTrait(t: FrozenTrait, headers?: SchemaArtifact): ResolvedTrait {
   // `x-bundled` marks a built-in trait inside Super Schema (read-only in the UI and services). It is bookkeeping, not part of the
   // AsyncAPI the user hands to other teams, so it never reaches the emitted document.
-  const { [BUNDLED_MARKER_KEY]: _marker, ...spec } = t.spec;
+  const spec = { ...t.spec };
+  delete spec[BUNDLED_MARKER_KEY];
   const resolved: ResolvedTrait = { id: t.id, name: t.name, kind: t.kind, ownerSlug: t.ownerSlug, spec };
   if (headers) resolved.headers = headers;
   return resolved;
