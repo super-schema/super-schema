@@ -31,7 +31,6 @@ import {
 } from "@/features/events/builder/labels";
 import { bindingCount, cardTemplate, pickValue, setFieldCount } from "@/features/events/builder/sections/form-cards";
 import { LockedNote, PropertiesTable } from "@/features/events/builder/sections/PropertiesTable";
-import { displayRowsFromHeaders } from "@/features/events/builder/properties-schema";
 import { pinnedHeaders } from "@/features/events/builder/traits";
 import { BindingsForm, TemplateForm } from "@/features/events/builder/template";
 import { isEmptyValue, setField } from "@/features/events/builder/template/value";
@@ -165,9 +164,6 @@ export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: T
                 idPrefix="trait-editor-props" headers={spec.headers} pinned={pinned}
                 onChange={(headers) => setSpec((s) => (headers === undefined ? omit(s, "headers") : { ...s, headers }))}
               />
-              {pinned && displayRowsFromHeaders(spec.headers).length > 0 && (
-                <p data-testid="trait-editor-headers-note" className="text-caption text-muted-foreground">Headers come from the entity {pinned.name}.</p>
-              )}
             </section>
           )}
 

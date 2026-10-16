@@ -71,8 +71,7 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
   const busy = !draft.dirty || draft.saving;
 
   return (
-    // `--builder-bar-h` is the height of the sticky Save bar and the bottom padding of the form above it: the last control always scrolls clear of the bar.
-    <div data-testid="event-builder" className="grid gap-space-6 [--builder-bar-h:3.5rem] md:grid-cols-[13rem_minmax(0,1fr)]">
+    <div data-testid="event-builder" className="grid gap-space-6 md:grid-cols-[13rem_minmax(0,1fr)]">
       <nav aria-label="Event outline" data-testid="builder-outline" className="md:sticky md:top-space-4 md:self-start">
         <ul className="flex gap-space-1 overflow-x-auto md:flex-col">
           {outline.map((node) => {
@@ -130,18 +129,16 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
           </div>
         )}
 
-        <div data-testid="builder-form" className="pb-[var(--builder-bar-h)]">
-          {ActiveSection ? (
-            <ActiveSection draft={draft} options={options} selectedItem={item} onSelectItem={onItemChange} onSectionChange={onSectionChange} />
-          ) : (
-            <section data-testid="section-placeholder" className="space-y-space-1 rounded-lg border border-dashed border-border p-space-6 text-center">
-              <h2 className="text-heading-3 text-foreground">{SECTION_LABELS[section]}</h2>
-              <p className="text-body-small text-muted-foreground">Coming in the next slice.</p>
-            </section>
-          )}
-        </div>
+        {ActiveSection ? (
+          <ActiveSection draft={draft} options={options} selectedItem={item} onSelectItem={onItemChange} onSectionChange={onSectionChange} />
+        ) : (
+          <section data-testid="section-placeholder" className="space-y-space-1 rounded-lg border border-dashed border-border p-space-6 text-center">
+            <h2 className="text-heading-3 text-foreground">{SECTION_LABELS[section]}</h2>
+            <p className="text-body-small text-muted-foreground">Coming in the next slice.</p>
+          </section>
+        )}
 
-        <div data-testid="builder-bar" className="sticky bottom-0 z-10 flex h-[var(--builder-bar-h)] items-center justify-between gap-space-3 border-t border-border bg-background/95 backdrop-blur">
+        <div data-testid="builder-bar" className="sticky bottom-0 z-10 flex items-center justify-between gap-space-3 border-t border-border bg-background/95 py-space-3 backdrop-blur">
           <p role="status" data-testid="builder-status" className="flex items-center gap-space-2 text-body-small text-muted-foreground">
             {draft.dirty && !draft.saving && <span aria-hidden="true" className="size-2 rounded-full bg-warning" />}
             {draft.saving ? "Saving…" : draft.dirty ? "Unsaved changes" : "No unsaved changes"}

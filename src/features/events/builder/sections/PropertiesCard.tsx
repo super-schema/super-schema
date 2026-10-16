@@ -23,7 +23,6 @@ import {
   addPropertiesLabel, BUILT_IN_BADGE, BUILT_IN_NOTE, LIBRARY_BADGE, LIBRARY_NOTE, propertiesNameLower, propertyCountText, TRAIT_BADGE,
 } from "../labels";
 import { problemMessage, problemsByField } from "../problems";
-import { displayRowsFromHeaders } from "../properties-schema";
 import { TemplateForm } from "../template";
 import { setField } from "../template/value";
 import {
@@ -126,10 +125,6 @@ function LocalPanel({ draft, options, kind, trait, idPrefix, focusName, onFocuse
           idPrefix={idPrefix} headers={trait.spec.headers} pinned={pinned}
           onChange={(headers) => patchSpec((spec) => (headers === undefined ? omit(spec, "headers") : { ...spec, headers }))}
         />
-      )}
-      {/* With no rows of its own the table itself says where the properties come from. */}
-      {pinned && displayRowsFromHeaders(trait.spec.headers).length > 0 && (
-        <p data-testid={`${idPrefix}-pin-note`} className="text-caption text-muted-foreground">Headers come from the entity {pinned.name}.</p>
       )}
       {onSectionChange && onSelectItem && (
         <Button

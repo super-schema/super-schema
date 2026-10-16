@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // tests/unit/features/events/builder/properties-pinned-note.test.tsx
-// A trait whose headers come from an entity pin (legacy) has no inline rows: the table says where its properties come from instead
-// of "No properties", so such a trait never reads as empty. Everything else about the empty states is unchanged.
-import { cleanup, render, screen } from "@testing-library/react";
+// A trait whose headers come from an entity pin (legacy): the table itself says where the properties come from, in both states. With no
+// rows it replaces "No properties"; with rows (including a row just added and not named yet) it is a line under the table. One place
+// decides which, so the note never disappears mid-edit. Everything else about the empty states is unchanged.
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PropertiesTable } from "@/features/events/builder/sections/PropertiesTable";
 import { pinnedHeaders } from "@/features/events/builder/traits";
@@ -36,10 +37,31 @@ describe("PropertiesTable: pinned headers as the empty state", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 
-  it("is only the empty state: with inline rows the table shows them and the note is not repeated by the table", () => {
+  it("with inline rows the table shows them and keeps the pin as a line under it", () => {
     render(<PropertiesTable idPrefix="t" headers={ONE_ROW} pinned={PINNED} onChange={() => undefined} />);
-    expect(missing("t-pin-note")).toBe(true);
     expect((screen.getByTestId("t-name-0") as HTMLInputElement).value).toBe("source");
+    expect(text("t-pin-note")).toBe("Headers also come from the entity OrderCancelled v1.0.");
+    expect(screen.getAllByTestId("t-pin-note")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "OrderCancelled" }).getAttribute("href")).toBe("/schemas/payments/checkout/order-cancelled");
+  });
+
+  it("read-only with rows keeps the pin line too", () => {
+    render(<PropertiesTable idPrefix="t" headers={ONE_ROW} pinned={PINNED} readOnly />);
+    expect(screen.getByTestId("t-row-source")).toBeTruthy();
+    expect(text("t-pin-note")).toBe("Headers also come from the entity OrderCancelled v1.0.");
+  });
+
+  it("a freshly added, still unnamed row (not in the headers yet) does not make the note go away", () => {
+    // The caller's headers stay empty until the row has a name: only the table knows it has a row.
+    render(<PropertiesTable idPrefix="t" headers={undefined} pinned={PINNED} onChange={() => undefined} />);
+    expect(text("t-pin-note")).toBe("Properties come from the entity OrderCancelled v1.0.");
+    fireEvent.click(screen.getByTestId("t-add"));
+    expect((screen.getByTestId("t-name-0") as HTMLInputElement).value).toBe("");
+    expect(screen.getAllByTestId("t-pin-note")).toHaveLength(1);
+    expect(text("t-pin-note")).toBe("Headers also come from the entity OrderCancelled v1.0.");
+    // and back: remove the row and the empty-state wording returns
+    fireEvent.click(screen.getByTestId("t-remove-0"));
+    expect(text("t-pin-note")).toBe("Properties come from the entity OrderCancelled v1.0.");
   });
 
   it("keeps the editable Add button under the note", () => {

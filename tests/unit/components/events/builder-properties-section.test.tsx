@@ -460,13 +460,12 @@ describe("PropertiesSection: the Properties table of a local set", () => {
     const doc = traitsDoc();
     doc.traits[0] = { key: "idempotent", kind: "MESSAGE", spec: { name: "Idempotent" }, headers: { entityId: "ent-1", entityVersionId: "ver-1" } };
     const { probe } = renderSection(PropertiesSection, { doc, options: OPTIONS, item: "idempotent" });
-    // no rows of its own: the table says where the properties come from, once
+    // no rows of its own: the table says where the properties come from; with a row (even before it has a name) it is a line under the table
     expect(text("trait-props-pin-note")).toBe("Properties come from the entity OrderCreated v1.0.");
-    expect(missing("trait-headers-note")).toBe(true);
     click("trait-props-add");
+    expect(text("trait-props-pin-note")).toBe("Headers also come from the entity OrderCreated v1.0.");
     type(box("trait-props-name-0"), "x");
-    expect(text("trait-headers-note")).toBe("Headers also come from the entity OrderCreated.");
-    expect(missing("trait-props-pin-note")).toBe(true);
+    expect(text("trait-props-pin-note")).toBe("Headers also come from the entity OrderCreated v1.0.");
     type(box("trait-name"), "Renamed");
     expect(traitOf(probe.draft.doc, "idempotent")).toMatchObject({ headers: { entityId: "ent-1", entityVersionId: "ver-1" } });
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
@@ -474,7 +473,7 @@ describe("PropertiesSection: the Properties table of a local set", () => {
 
   it("shows no pin note for a set without one", () => {
     renderSection(PropertiesSection, { doc: traitsDoc(), options: OPTIONS, item: "idempotent" });
-    expect(missing("trait-headers-note")).toBe(true);
+    expect(missing("trait-props-pin-note")).toBe(true);
   });
 });
 

@@ -114,27 +114,6 @@ describe("EventBuilder: outline", () => {
 });
 
 describe("EventBuilder: save bar", () => {
-  // jsdom has no layout, so this only pins the rule; tests/e2e/events-builder-layout.spec.ts measures it in a real browser.
-  it("pads the section container by the bar's own height, one variable for both, so the last control scrolls clear of the sticky bar", () => {
-    renderBuilder({ section: "messages" });
-    const root = screen.getByTestId("event-builder");
-    const form = screen.getByTestId("builder-form");
-    const bar = screen.getByTestId("builder-bar");
-    expect(root.className).toMatch(/(^| )\[--builder-bar-h:[^\]\s]+\]/);
-    expect(form.className.split(" ")).toContain("pb-[var(--builder-bar-h)]");
-    expect(bar.className.split(" ")).toEqual(expect.arrayContaining(["sticky", "bottom-0", "h-[var(--builder-bar-h)]"]));
-    expect(form.contains(screen.getByTestId("section-messages"))).toBe(true);
-    expect(form.contains(bar)).toBe(false); // the padding is above the bar, not inside it
-  });
-
-  it("pads every section alike (the wrapper does not depend on the section)", () => {
-    for (const section of ["metadata", "servers", "channels", "operations", "traits", "advanced"] as const) {
-      renderBuilder({ section });
-      expect(screen.getByTestId("builder-form").className.split(" ")).toContain("pb-[var(--builder-bar-h)]");
-      cleanup();
-    }
-  });
-
   it("starts clean with Save and Discard disabled", () => {
     renderBuilder();
     expect(button("builder-save").disabled).toBe(true);

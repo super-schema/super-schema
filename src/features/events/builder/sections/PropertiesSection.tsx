@@ -30,7 +30,6 @@ import {
   propertyCountText, TRAIT_BADGE, TRAIT_SUFFIX,
 } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
-import { displayRowsFromHeaders } from "../properties-schema";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import { isEmptyValue, setField } from "../template/value";
@@ -303,9 +302,6 @@ function LocalForm({ draft, index, trait, problems, context, entityOptions, focu
               onChange={(headers) => patch((t) => ({ ...t, spec: headers === undefined ? omit(t.spec, "headers") : { ...t.spec, headers } }))}
             />
             {headersError && <p data-testid="trait-props-error" className="text-body-small text-destructive">{headersError}</p>}
-            {pinned && displayRowsFromHeaders(trait.spec.headers).length > 0 && (
-              <p data-testid="trait-headers-note" className="text-caption text-muted-foreground">Headers also come from the entity {pinned.name}.</p>
-            )}
           </section>
         )}
 

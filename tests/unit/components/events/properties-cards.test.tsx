@@ -250,7 +250,7 @@ describe("MessagePropertiesCard: a new local set", () => {
     await renderMessages(doc);
     click("message-prop-toggle-idem");
     expect(box("message-prop-idem-name-0").value).toBe("source");
-    expect(text("message-prop-idem-pin-note")).toBe("Headers come from the entity OrderCancelled.");
+    expect(text("message-prop-idem-pin-note")).toBe("Headers also come from the entity OrderCancelled v1.0.");
   });
 });
 
