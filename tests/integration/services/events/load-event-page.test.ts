@@ -2,6 +2,8 @@ import "dotenv/config"; // first: @/lib/db (pulled in by the loader) reads DB_PR
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
+import type { Prisma } from "@/generated/prisma/client";
+import { BUNDLED_TRAITS, propertySummary } from "@/lib/events/bundled-traits";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
 import { cleanupDomains, cleanupTenantTraits, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
@@ -37,7 +39,14 @@ let libraryTraits: {
   domainMessage: { id: string; name: string }; domainOperation: { id: string; name: string };
   productLevel: { id: string; name: string }; otherDomain: { id: string; name: string };
   foreignTenant: { id: string; name: string }; foreignTenantLevel: { id: string; name: string };
+  /** A tenant-level trait stored exactly like a built-in one (marker + inline CloudEvents headers), and a custom domain trait with inline headers. */
+  tenantBuiltIn: { id: string; name: string }; domainInline: { id: string; name: string };
 };
+const CLOUDEVENTS = BUNDLED_TRAITS.find((t) => t.id === "cloudevents@1.0")!;
+// Stored like the real built-in (marker + inline headers) but with a marker of its own: the shared tenant must never hold a second row
+// that claims to be `cloudevents@1.0`, or `ensureBundledTraits` would take it for the real one.
+const BUILT_IN_SPEC = { ...structuredClone(CLOUDEVENTS.spec), "x-bundled": "test-built-in@1" };
+const INLINE_SPEC = { summary: "Tenant routing", headers: { type: "object", required: ["tenant"], properties: { tenant: { type: "string", description: "Owning tenant" }, retries: { type: "integer" } } } };
 
 const SECRET_TITLE = "Secret title of another product's event";
 
@@ -102,12 +111,15 @@ beforeAll(async () => {
       { tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id }, `event-foreign-${foreign.s}`, richDocument(SECRET_TITLE, foreign.entity.id)
     );
 
-    const trait = (name: string, kind: "MESSAGE" | "OPERATION", place: { tenantId: string; domainId?: string; productId?: string }) =>
-      prisma.trait.create({ data: { name: `${name}-${own.s}`, kind, ...place }, select: { id: true, name: true } });
+    const trait = (name: string, kind: "MESSAGE" | "OPERATION", place: { tenantId: string; domainId?: string; productId?: string }, spec?: object) =>
+      prisma.trait.create({ data: { name: `${name}-${own.s}`, kind, ...place, ...(spec && { spec: spec as Prisma.InputJsonValue }) }, select: { id: true, name: true } });
     const tenantMessage = await trait("TenantMsg", "MESSAGE", { tenantId: TENANT });
     const tenantOperation = await trait("TenantOp", "OPERATION", { tenantId: TENANT });
-    tenantTraitIds.push(tenantMessage.id, tenantOperation.id);
+    const tenantBuiltIn = await trait("BuiltIn", "MESSAGE", { tenantId: TENANT }, BUILT_IN_SPEC);
+    tenantTraitIds.push(tenantMessage.id, tenantOperation.id, tenantBuiltIn.id);
     libraryTraits = {
+      tenantBuiltIn,
+      domainInline: await trait("Inline", "MESSAGE", { tenantId: TENANT, domainId: own.domain.id }, INLINE_SPEC),
       tenantMessage, tenantOperation,
       domainMessage: await trait("DomainMsg", "MESSAGE", { tenantId: TENANT, domainId: own.domain.id }),
       domainOperation: await trait("DomainOp", "OPERATION", { tenantId: TENANT, domainId: own.domain.id }),
@@ -211,14 +223,36 @@ describe("loadEventPage — library traits", () => {
 
   it("offers the tenant-level and the event's own domain's traits, message and operation alike, with kind and level", async () => {
     const data = (await route(mine.id))!;
-    expect(data.libraryTraits).toContainEqual({ id: libraryTraits.tenantMessage.id, name: libraryTraits.tenantMessage.name, kind: "MESSAGE", level: "Enterprise" });
-    expect(data.libraryTraits).toContainEqual({ id: libraryTraits.tenantOperation.id, name: libraryTraits.tenantOperation.name, kind: "OPERATION", level: "Enterprise" });
+    // a trait with no stored spec carries an empty definition: no properties, not built in
+    const plain = { spec: {}, bundled: false, properties: [] };
+    expect(data.libraryTraits).toContainEqual({ id: libraryTraits.tenantMessage.id, name: libraryTraits.tenantMessage.name, kind: "MESSAGE", level: "Enterprise", ...plain });
+    expect(data.libraryTraits).toContainEqual({ id: libraryTraits.tenantOperation.id, name: libraryTraits.tenantOperation.name, kind: "OPERATION", level: "Enterprise", ...plain });
     expect(data.libraryTraits).toContainEqual({
-      id: libraryTraits.domainMessage.id, name: libraryTraits.domainMessage.name, kind: "MESSAGE", level: `Domain · ${own.domain.name}`,
+      id: libraryTraits.domainMessage.id, name: libraryTraits.domainMessage.name, kind: "MESSAGE", level: `Domain · ${own.domain.name}`, ...plain,
     });
     expect(data.libraryTraits).toContainEqual({
-      id: libraryTraits.domainOperation.id, name: libraryTraits.domainOperation.name, kind: "OPERATION", level: `Domain · ${own.domain.name}`,
+      id: libraryTraits.domainOperation.id, name: libraryTraits.domainOperation.name, kind: "OPERATION", level: `Domain · ${own.domain.name}`, ...plain,
     });
+  });
+
+  it("carries each trait's stored definition: the spec, the built-in flag and the property rows (so the builder can show them locked)", async () => {
+    const data = (await route(mine.id))!;
+    const builtIn = data.libraryTraits.find((t) => t.id === libraryTraits.tenantBuiltIn.id)!;
+    expect(builtIn).toMatchObject({ kind: "MESSAGE", level: "Enterprise", bundled: true });
+    expect(builtIn.spec).toEqual(BUILT_IN_SPEC); // the marker and the inline headers survive the database round trip
+    expect([...(builtIn.properties ?? [])].map((p) => p.name).sort()).toEqual(propertySummary(BUILT_IN_SPEC).map((p) => p.name).sort());
+    expect(builtIn.properties).toHaveLength(8);
+    // required properties lead, in the order of `required`; the database does not keep the order of the others
+    expect(builtIn.properties?.slice(0, 4).map((p) => [p.name, p.required])).toEqual([["specversion", true], ["id", true], ["source", true], ["type", true]]);
+    expect(builtIn.properties?.slice(4).every((p) => !p.required)).toBe(true);
+    expect(builtIn.properties?.[0]).toMatchObject({ name: "specversion", type: "string", description: expect.stringContaining("1.0") });
+
+    const inline = data.libraryTraits.find((t) => t.id === libraryTraits.domainInline.id)!;
+    expect(inline).toMatchObject({ kind: "MESSAGE", level: `Domain · ${own.domain.name}`, bundled: false, spec: INLINE_SPEC });
+    expect(inline.properties).toEqual([
+      { name: "tenant", type: "string", required: true, description: "Owning tenant" },
+      { name: "retries", type: "integer", required: false },
+    ]);
   });
 
   it("never offers a product-level trait, another domain's trait, or any trait of another tenant", async () => {
@@ -242,7 +276,7 @@ describe("loadEventPage — library traits", () => {
   it("lists message traits first, then operation traits, each kind by name", async () => {
     const data = (await route(mine.id))!;
     const mineOnly = data.libraryTraits.filter((t) => t.name.endsWith(`-${own.s}`) && !t.name.startsWith("Product") && !t.name.startsWith("Elsewhere"));
-    expect(mineOnly.map((t) => t.kind)).toEqual(["MESSAGE", "MESSAGE", "OPERATION", "OPERATION"]);
+    expect(mineOnly.map((t) => t.kind)).toEqual(["MESSAGE", "MESSAGE", "MESSAGE", "MESSAGE", "OPERATION", "OPERATION"]);
     const messageNames = mineOnly.filter((t) => t.kind === "MESSAGE").map((t) => t.name);
     expect(messageNames).toEqual([...messageNames].sort());
   });

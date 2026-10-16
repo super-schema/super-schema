@@ -3,13 +3,14 @@
 //
 // It runs the server's own pipeline (parse → plan → resolve → assemble → serialize) with one difference: nothing is rendered.
 // Every payload / headers / Kafka-key schema is a clearly marked PLACEHOLDER that names the entity and version it stands for
-// (`x-super-schema-entity: Order@1.0`), library traits are stubs that carry their key, and external references (which need the
-// referenced event's stored version) are left out with an info diagnostic. The server render (`previewEventDocumentAction`)
-// replaces the placeholders with the real schemas a moment later.
+// (`x-super-schema-entity: Order@1.0`), external references (which need the referenced event's stored version) are left out with an
+// info diagnostic, and a library trait is a stub that carries its key UNLESS its definition is handed in (`libraryTraits`): a built-in
+// or library trait whose properties are inline (`spec.headers`) is then emitted exactly as the server will. The server render
+// (`previewEventDocumentAction`) replaces the placeholders with the real schemas a moment later.
 import { assembleAsyncApi3 } from "@/lib/event-specs/assemble";
 import { diagnostic, normalizeDiagnostics } from "@/lib/event-specs/diagnostics";
 import { toJson, toYaml } from "@/lib/event-specs/serialize";
-import type { Diagnostic, JsonObject, PayloadFormat, SchemaArtifact } from "@/lib/event-specs/types";
+import type { Diagnostic, JsonObject, PayloadFormat, SchemaArtifact, TraitKind } from "@/lib/event-specs/types";
 import { validateAsyncApi3Structure } from "@/lib/event-specs/validator";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
 import { parseEventDocument } from "./parse";
@@ -33,6 +34,15 @@ export interface InstantAsyncApi {
   diagnostics: Diagnostic[];
 }
 
+/** The stored definition of a library trait (what the server's snapshot loads for a `libraryTraitId`). */
+export interface InstantLibraryTrait {
+  /** The trait's name in the library: the server emits it as the component key (`components.messageTraits.<name>`). */
+  name: string;
+  kind: TraitKind;
+  /** The AsyncAPI Message / Operation Trait object, including inline `headers` for a trait that defines message properties. */
+  spec: JsonObject;
+}
+
 export interface InstantAsyncApiOptions {
   productSlug: string;
   /** entityId → entity name ("Order"). An entity that is not in the map is named by its id. */
@@ -44,6 +54,21 @@ export interface InstantAsyncApiOptions {
    * Default: none, so Auto falls back to the protocol default (Kafka → Avro, everything else → JSON Schema).
    */
   entityFormats?: EntityFormats;
+  /**
+   * libraryTraitId → the trait's real definition. A library trait the document uses is emitted from it (a copy, so a frozen built-in
+   * definition is never shared); one that is not in the map stays a stub that carries its key. Default: none, all stubs.
+   * A trait whose headers are a pinned ENTITY has no inline properties here: its headers come with the server render.
+   */
+  libraryTraits?: ReadonlyMap<string, InstantLibraryTrait>;
+}
+
+/** The builder's library options as the map `buildInstantAsyncApi` takes; an option that carries no `spec` is left out (it stays a stub). */
+export function instantLibraryTraits(
+  options: ReadonlyArray<{ id: string; name: string; kind: TraitKind; spec?: JsonObject }>
+): Map<string, InstantLibraryTrait> {
+  const out = new Map<string, InstantLibraryTrait>();
+  for (const o of options) if (o.spec) out.set(o.id, { name: o.name, kind: o.kind, spec: o.spec });
+  return out;
 }
 
 const NO_ENTITY_FORMATS: EntityFormats = new Map();
@@ -171,9 +196,10 @@ function build(raw: EventDocument, opts: InstantAsyncApiOptions): InstantAsyncAp
   for (const t of doc.traits) {
     if (isLibraryTrait(t)) {
       if (!libraryTraits.has(t.libraryTraitId)) {
+        const known = opts.libraryTraits?.get(t.libraryTraitId);
         libraryTraits.set(t.libraryTraitId, {
-          id: t.libraryTraitId, name: t.key, kind: t.kind, ownerSlug: opts.productSlug,
-          spec: { [PLACEHOLDER_LIBRARY_TRAIT_KEY]: t.key }, headersEntityId: null, headersEntityVersionId: null,
+          id: t.libraryTraitId, name: known?.name ?? t.key, kind: known?.kind ?? t.kind, ownerSlug: opts.productSlug,
+          spec: known ? structuredClone(known.spec) : { [PLACEHOLDER_LIBRARY_TRAIT_KEY]: t.key }, headersEntityId: null, headersEntityVersionId: null,
         });
       }
     } else if (t.headers && !localTraitHeaders.has(t.key)) {

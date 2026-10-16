@@ -1,8 +1,10 @@
 import { prisma } from "@/lib/db";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { LevelScope } from "@/lib/levels";
+import { isBundledTrait, propertySummary, type PropertySummaryRow } from "@/lib/events/bundled-traits";
 import { entitySourceFormat } from "@/lib/events/document/representation";
-import type { TraitKind } from "@/lib/events/types";
+import { isJsonObject } from "@/lib/events/inputs";
+import type { JsonObject, TraitKind } from "@/lib/events/types";
 import type { EntityOption, VersionOption } from "./shared/EntityPinPicker";
 
 /**
@@ -57,8 +59,18 @@ export interface TraitOption {
   ownerLabel: string;
 }
 
+/** A trait option as `loadTraitOptions` returns it: the picker fields plus what the builder needs to SHOW the trait's message properties. */
+export interface LibraryTraitSource extends TraitOption {
+  /** The stored AsyncAPI trait object (inline `headers` included), so the instant code can emit the real definition. */
+  spec: JsonObject;
+  /** Built in (`x-bundled`): read-only everywhere, shown locked. */
+  bundled: boolean;
+  /** The trait's inline headers as table rows (`propertySummary`); empty for a trait without inline properties. */
+  properties: PropertySummaryRow[];
+}
+
 /** Traits visible from a level: Enterprise + that domain + that product (spec §4.3 line). */
-export async function loadTraitOptions(scope: LevelScope, kind: TraitKind): Promise<TraitOption[]> {
+export async function loadTraitOptions(scope: LevelScope, kind: TraitKind): Promise<LibraryTraitSource[]> {
   const rows = await prisma.trait.findMany({
     where: {
       tenantId: scope.tenantId,
@@ -70,9 +82,12 @@ export async function loadTraitOptions(scope: LevelScope, kind: TraitKind): Prom
       ],
     },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, ...OWNER_SELECT },
+    select: { id: true, name: true, spec: true, ...OWNER_SELECT },
   });
-  return rows.map((r) => ({ id: r.id, name: r.name, ownerLabel: ownerLabel(r) }));
+  return rows.map((r) => {
+    const spec = isJsonObject(r.spec) ? r.spec : {};
+    return { id: r.id, name: r.name, ownerLabel: ownerLabel(r), spec, bundled: isBundledTrait(spec), properties: propertySummary(spec) };
+  });
 }
 
 export interface ChannelOption {
