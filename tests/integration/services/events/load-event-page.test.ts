@@ -35,7 +35,7 @@ const tenantTraitIds: string[] = [];
 let libraryTraits: {
   tenantMessage: { id: string; name: string }; tenantOperation: { id: string; name: string };
   domainMessage: { id: string; name: string }; domainOperation: { id: string; name: string };
-  productLevel: { id: string; name: string }; otherDomain: { id: string; name: string };
+  otherDomain: { id: string; name: string };
   foreignTenant: { id: string; name: string }; foreignTenantLevel: { id: string; name: string };
 };
 
@@ -109,7 +109,6 @@ beforeAll(async () => {
       tenantMessage, tenantOperation,
       domainMessage: await trait("DomainMsg", "MESSAGE", { tenantId: TENANT, domainId: own.domain.id }),
       domainOperation: await trait("DomainOp", "OPERATION", { tenantId: TENANT, domainId: own.domain.id }),
-      productLevel: await trait("ProductMsg", "MESSAGE", { tenantId: TENANT, domainId: own.domain.id, productId: own.product.id }),
       otherDomain: await trait("ElsewhereMsg", "MESSAGE", { tenantId: TENANT, domainId: elsewhere.domain.id }),
       // `foreign.trait` is the fixture's tenant-level trait; this one sits in the foreign tenant's own domain.
       foreignTenant: { id: foreign.trait.id, name: foreign.trait.name },
@@ -219,10 +218,10 @@ describe("loadEventPage — library traits", () => {
     });
   });
 
-  it("never offers a product-level trait, another domain's trait, or any trait of another tenant", async () => {
+  it("never offers another domain's trait, or any trait of another tenant", async () => {
     const data = (await route(mine.id))!;
     const offered = idsOf(data);
-    for (const hidden of [libraryTraits.productLevel, libraryTraits.otherDomain, libraryTraits.foreignTenant, libraryTraits.foreignTenantLevel]) {
+    for (const hidden of [libraryTraits.otherDomain, libraryTraits.foreignTenant, libraryTraits.foreignTenantLevel]) {
       expect(offered).not.toContain(hidden.id);
     }
     expect(data.libraryTraits.map((t) => t.name).join("|")).not.toContain("Foreign");
@@ -231,7 +230,6 @@ describe("loadEventPage — library traits", () => {
   it("offers the same library to every product of the domain, and another domain's event sees that domain's own traits instead", async () => {
     const siblingData = (await loadEventPage({ domainSlug: own.domain.slug, productSlug: siblingProduct.slug, eventId: sibling.id }))!;
     expect(idsOf(siblingData)).toEqual(expect.arrayContaining([libraryTraits.tenantMessage.id, libraryTraits.domainMessage.id]));
-    expect(idsOf(siblingData)).not.toContain(libraryTraits.productLevel.id);
     const elsewhereData = (await loadEventPage({ domainSlug: elsewhere.domain.slug, productSlug: elsewhere.product.slug, eventId: otherDomain.id }))!;
     expect(idsOf(elsewhereData)).toEqual(expect.arrayContaining([libraryTraits.tenantMessage.id, libraryTraits.otherDomain.id]));
     expect(idsOf(elsewhereData)).not.toContain(libraryTraits.domainMessage.id);

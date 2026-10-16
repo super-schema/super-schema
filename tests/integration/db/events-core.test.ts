@@ -101,17 +101,21 @@ describe("events core triggers and constraints (PostgreSQL)", () => {
     });
   });
 
-  it("refuses a product-level trait once the legacy catalog migration has run, and a headers entity on an OPERATION trait always", async () => {
+  it("refuses a product-level trait once the legacy catalog migration has run (a failed statement aborts the transaction, so one each)", async () => {
     await inRolledBackTx(async (tx) => {
-      const { domain, entity } = await seedEvents(tx);
-      const product = await tx.product.findFirstOrThrow({ where: { domainId: domain.id } });
       const migrated = (await tx.$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM pg_constraint WHERE conname = 'traits_no_product_check'`)[0].n > 0;
-      if (migrated) {
-        await expect(
-          tx.trait.create({ data: { kind: "MESSAGE", name: `ProductLevel${Date.now()}`, tenantId: TENANT, domainId: domain.id, productId: product.id } })
-        ).rejects.toThrow(/traits_no_product_check|check constraint/i);
-      }
-      // a headers entity on an OPERATION trait is never allowed
+      if (!migrated) return; // the shared dev database before the migration is deployed: nothing to refuse yet
+      const { domain } = await seedEvents(tx);
+      const product = await tx.product.findFirstOrThrow({ where: { domainId: domain.id } });
+      await expect(
+        tx.trait.create({ data: { kind: "MESSAGE", name: `ProductLevel${Date.now()}`, tenantId: TENANT, domainId: domain.id, productId: product.id } })
+      ).rejects.toThrow(/traits_no_product_check|check constraint/i);
+    });
+  });
+
+  it("refuses a headers entity on an OPERATION trait", async () => {
+    await inRolledBackTx(async (tx) => {
+      const { entity } = await seedEvents(tx);
       await expect(
         tx.trait.create({ data: { kind: "OPERATION", name: `OpHeaders${Date.now()}`, tenantId: TENANT, headersEntityId: entity.id } })
       ).rejects.toThrow(/traits_headers_check|check constraint/i);

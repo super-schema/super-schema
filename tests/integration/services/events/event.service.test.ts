@@ -250,7 +250,7 @@ describe("event.service", () => {
     }
   });
 
-  it("rejects a library trait from another domain, a product-level trait, another tenant's trait and a kind mismatch", async () => {
+  it("rejects a library trait from another domain, another tenant's trait and a kind mismatch", async () => {
     const { ctx, scope, owner } = await setup();
     const sibling = await otherProduct(ctx, "sib");
     let foreign: Awaited<ReturnType<typeof createForeignTenantFixture>> | undefined;
@@ -260,22 +260,19 @@ describe("event.service", () => {
       const trait = (name: string, kind: "MESSAGE" | "OPERATION", placement: { domainId?: string; productId?: string }) =>
         prisma.trait.create({ data: { name: `${name}-${scope.s}`, kind, tenantId: TENANT, ...placement } });
       const otherDomain = await trait("SibTrait", "MESSAGE", { domainId: sibling.scope.domain.id });
-      const productLevel = await trait("ProdTrait", "MESSAGE", { domainId: scope.domain.id, productId: scope.product.id });
       const operationTrait = await trait("OpTrait", "OPERATION", { domainId: scope.domain.id });
 
       const r = await updateEventDocument(ev.id, withTraits([
         { key: "A", kind: "MESSAGE", libraryTraitId: otherDomain.id },
-        { key: "B", kind: "MESSAGE", libraryTraitId: productLevel.id },
-        { key: "C", kind: "MESSAGE", libraryTraitId: foreign.trait.id },
-        { key: "D", kind: "MESSAGE", libraryTraitId: operationTrait.id },
+        { key: "B", kind: "MESSAGE", libraryTraitId: foreign.trait.id },
+        { key: "C", kind: "MESSAGE", libraryTraitId: operationTrait.id },
       ]), owner, ctx);
       expect(failureCode(r)).toBe("VALIDATION_ERROR");
       const reasons = "only tenant-level traits and traits of the event's own domain can be used";
       expect(problemsOf(r)).toEqual([
         { pointer: "/traits/0/libraryTraitId", message: `Library trait "${otherDomain.name}" is not available to this event: ${reasons}` },
-        { pointer: "/traits/1/libraryTraitId", message: `Library trait "${productLevel.name}" is not available to this event: ${reasons}` },
-        { pointer: "/traits/2/libraryTraitId", message: `Library trait "${foreign.trait.id}" not found` },
-        { pointer: "/traits/3/libraryTraitId", message: `Library trait "${operationTrait.name}" is of kind OPERATION, but "D" is of kind MESSAGE` },
+        { pointer: "/traits/1/libraryTraitId", message: `Library trait "${foreign.trait.id}" not found` },
+        { pointer: "/traits/2/libraryTraitId", message: `Library trait "${operationTrait.name}" is of kind OPERATION, but "C" is of kind MESSAGE` },
       ]);
       expect(JSON.stringify(r)).not.toContain(foreign.trait.name);
       expect((await storedDocument(ev.id) as { traits: unknown[] }).traits).toEqual([]);
