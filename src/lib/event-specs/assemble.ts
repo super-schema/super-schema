@@ -67,6 +67,28 @@ function ref(...segments: string[]): JsonObject {
   return { $ref: localRef(...segments) };
 }
 
+/** A copy of a list, or `undefined` when it is absent or empty (new fields never emit an empty container). */
+function nonEmptyList<T extends JsonValue>(value: T[] | undefined): T[] | undefined {
+  return value && value.length > 0 ? structuredClone(value) : undefined;
+}
+
+/** `security: ["basic"]` (keys of `components.securitySchemes`) → `[{ $ref: "#/components/securitySchemes/basic" }]`. */
+function securityRefs(keys: string[] | undefined): JsonObject[] | undefined {
+  return keys && keys.length > 0 ? keys.map((key) => ref("components", "securitySchemes", key)) : undefined;
+}
+
+/**
+ * An operation trait's spec as emitted: verbatim, except that `security` entries given as scheme keys (how the document model
+ * writes them) become `$ref`s; entries that are already objects (a library trait's native form) are left alone.
+ */
+function operationTraitSpec(spec: JsonObject): JsonObject {
+  const out = structuredClone(spec);
+  if (Array.isArray(out.security)) {
+    out.security = out.security.map((entry) => (typeof entry === "string" ? ref("components", "securitySchemes", entry) : entry));
+  }
+  return out;
+}
+
 function indexById<T extends { id: string }>(items: T[], kind: string, diagnostics: Diagnostic[]): Map<string, T> {
   const map = new Map<string, T>();
   for (const item of items) {
@@ -80,6 +102,18 @@ function indexById<T extends { id: string }>(items: T[], kind: string, diagnosti
   }
   return map;
 }
+
+/**
+ * The format profile `message` is emitted in on `channel`: the channel's per-message entry, else the message's own profile (it
+ * chose a representation, or follows Auto), else the channel's profile — which is all an explicit-format channel ever needed.
+ */
+function profileOn(channel: ResolvedChannel, message: ResolvedMessage): FormatProfile {
+  const own = channel.messageProfiles && Object.prototype.hasOwnProperty.call(channel.messageProfiles, message.id) ? channel.messageProfiles[message.id] : undefined;
+  return own ?? message.profile ?? channel.profile;
+}
+
+/** What a message nothing carries is emitted as: the default profile of JSON Schema (draft-07). */
+const UNCARRIED_PROFILE: FormatProfile = { format: "json-schema" };
 
 export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
   const diagnostics: Diagnostic[] = [];
@@ -120,7 +154,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
       );
       return;
     }
-    const profile = normalizeProfile(channel.profile);
+    const profile = normalizeProfile(profileOn(channel, message));
     const suffix = formatSuffix(profile);
     const key = `${message.id}|${suffix}`;
     const variant = variants.get(key) ?? { key, message, profile, suffix, kafka: false };
@@ -199,7 +233,26 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     emitted.push(op);
   }
 
+  // emitAll: also everything the spec carries that no operation reaches — channels, the messages they allow, messages no channel
+  // carries (emitted as components only, in their own profile) and unused traits.
+  if (spec.emitAll) {
+    for (const channel of channelsById.values()) {
+      usedChannels.set(channel.id, channel);
+      (channel.messageRefs ?? []).forEach((id, i) => takeMessage(channel, id, jsonPointer("channels", channel.id, "messages", i)));
+    }
+    const carried = new Set([...variants.values()].map((v) => v.message.id));
+    for (const message of messagesById.values()) {
+      if (carried.has(message.id)) continue;
+      const profile = normalizeProfile(message.profile ?? UNCARRIED_PROFILE);
+      const suffix = formatSuffix(profile);
+      const key = `${message.id}|${suffix}`;
+      variants.set(key, { key, message, profile, suffix, kafka: false });
+    }
+    for (const trait of traitsById.values()) if (trait.kind === "OPERATION") usedOperationTraits.set(trait.id, trait);
+  }
+
   const usedMessageTraits = new Map<string, ResolvedTrait>();
+  if (spec.emitAll) for (const trait of traitsById.values()) if (trait.kind === "MESSAGE") usedMessageTraits.set(trait.id, trait);
   for (const variant of variants.values()) {
     for (const id of variant.message.traitRefs) {
       const trait = traitOfKind(id, "MESSAGE");
@@ -254,7 +307,8 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
 
   const channelKey = (id: string) => channelNames.names.get(id) as string;
   const messageKey = (variantKey: string) => messageNames.names.get(variantKey) as string;
-  const variantOn = (channel: ResolvedChannel, messageId: string) => `${messageId}|${formatSuffix(channel.profile)}`;
+  const variantOn = (channel: ResolvedChannel, messageId: string) =>
+    `${messageId}|${formatSuffix(profileOn(channel, messagesById.get(messageId) as ResolvedMessage))}`;
   const byName = <T>(entries: Array<[string, T]>) => entries.sort((a, b) => compareStrings(a[0], b[0]));
 
   // ── 3. components.messages ──
@@ -350,7 +404,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
       componentMessages,
       name,
       ordered([
-        ["name", name !== msg.name ? msg.name : undefined],
+        ["name", msg.messageName ?? (name !== msg.name ? msg.name : undefined)],
         ["title", msg.title],
         ["summary", msg.summary],
         ["description", msg.description],
@@ -361,6 +415,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["payload", payload],
         ["tags", clone(msg.tags)],
         ["externalDocs", clone(msg.externalDocs)],
+        ["deprecated", msg.deprecated],
         ["bindings", bindings],
         ["examples", clone(msg.examples)],
       ]),
@@ -400,10 +455,11 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     ]),
   )) {
     rejectReservedKey("Operation trait name", name, jsonPointer("components", "operationTraits", name));
-    setOwn(componentOperationTraits, name, structuredClone(trait.spec));
+    setOwn(componentOperationTraits, name, operationTraitSpec(trait.spec));
   }
 
   // ── 5. channels ──
+  const serverKeys = new Set(spec.servers.map((s) => s.key));
   const channels: JsonObject = {};
   for (const [name, channel] of byName(
     [...usedChannels.values()].map((c): [string, ResolvedChannel] => [channelKey(c.id), c]),
@@ -412,6 +468,14 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
     const keys = [...(channelVariants.get(channel.id) ?? [])].map(messageKey).sort(compareStrings);
     for (const key of keys) setOwn(messages, key, ref("components", "messages", key));
     rejectReservedKey("Channel name", name, jsonPointer("channels", name));
+    const channelServers: JsonObject[] = [];
+    (channel.serverRefs ?? []).forEach((key, i) => {
+      if (serverKeys.has(key)) channelServers.push(ref("servers", key));
+      else
+        diagnostics.push(
+          diagnostic("error", "UNKNOWN_SERVER_REF", `Server "${key}" is not in the resolved spec`, jsonPointer("channels", name, "servers", i)),
+        );
+    });
     setOwn(
       channels,
       name,
@@ -421,6 +485,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["title", channel.title],
         ["summary", channel.summary],
         ["description", channel.description],
+        ["servers", channelServers.length > 0 ? channelServers : undefined],
         ["parameters", sortedRecord(channel.parameters)],
         ["tags", clone(channel.tags)],
         ["externalDocs", clone(channel.externalDocs)],
@@ -453,6 +518,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
           : [];
       reply = nonEmpty(
         ordered([
+          ["address", clone(op.reply.address)],
           ["channel", rKey ? ref("channels", rKey) : undefined],
           ["messages", replyMessages.length > 0 ? replyMessages : undefined],
         ]),
@@ -465,8 +531,12 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
       ordered([
         ["action", op.action],
         ["channel", ref("channels", cKey)],
+        ["title", op.title],
         ["summary", op.summary],
         ["description", op.description],
+        ["security", securityRefs(op.security)],
+        ["tags", nonEmptyList(op.tags)],
+        ["externalDocs", clone(op.externalDocs)],
         ["bindings", clone(op.bindings)],
         ["traits", traitRefs.length > 0 ? traitRefs : undefined],
         ["messages", messageRefs.length > 0 ? messageRefs : undefined],
@@ -498,8 +568,14 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["protocol", server.protocol],
         ["protocolVersion", server.protocolVersion],
         ["pathname", server.pathname],
+        ["title", server.title],
+        ["summary", server.summary],
         ["description", server.description],
-        ["externalDocs", server.externalRef ? { url: server.externalRef } : undefined],
+        ["variables", sortedRecord(server.variables)],
+        ["security", securityRefs(server.security)],
+        ["tags", nonEmptyList(server.tags)],
+        ["externalDocs", server.externalDocs ? clone(server.externalDocs) : server.externalRef ? { url: server.externalRef } : undefined],
+        ["bindings", clone(server.bindings)],
       ]),
     );
   }
@@ -523,6 +599,7 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
         ["title", spec.info.title],
         ["version", spec.info.version],
         ["description", spec.info.description],
+        ["termsOfService", spec.info.termsOfService],
         ["contact", clone(spec.info.contact)],
         ["license", clone(spec.info.license)],
         ["tags", clone(spec.info.tags)],

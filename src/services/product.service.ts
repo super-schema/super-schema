@@ -8,6 +8,10 @@ import { generateSlug, isReservedProductRouteSlug } from "@/lib/slug";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT, productDeleteBlocker } from "@/lib/product-deletion";
 import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
 import { findCrossProductPins } from "@/services/events/delete-guards";
+import { eventsInUseError, findCrossProductEventRefs, type EventReferrer } from "@/services/events/event-guards";
+import { guardRead } from "@/services/events/service-guards";
+import { normalizeProductContacts } from "@/lib/product-contacts";
+import type { ProductContactsInput } from "@/lib/product-contacts";
 
 export interface ProductListItem {
   id: string;
@@ -27,7 +31,11 @@ export interface ProductListItem {
   updatedAt: Date;
 }
 
-export interface CreateProductInput {
+/**
+ * `engineeringLead` / `manager` / `teamEmails` are mailbox text (`jane@acme.com` or `Jane Doe <jane@acme.com>`); the service
+ * validates them (VALIDATION_ERROR with `details.fieldErrors`) and saves the canonical form. See `@/lib/product-contacts`.
+ */
+export interface CreateProductInput extends ProductContactsInput {
   domainId: string;
   name: string;
   description?: string;
@@ -35,7 +43,7 @@ export interface CreateProductInput {
   ownerTeam?: string | null;
 }
 
-export interface UpdateProductInput {
+export interface UpdateProductInput extends ProductContactsInput {
   name?: string;
   description?: string;
   tierId?: string | null;
@@ -127,6 +135,9 @@ export async function createProduct(
     });
   }
 
+  const contacts = normalizeProductContacts(input);
+  if (!contacts.success) return contacts;
+
   try {
     const product = await withAudit({
       action: "CREATE",
@@ -142,6 +153,9 @@ export async function createProduct(
             description: input.description ?? "",
             tierId: input.tierId ?? null,
             ownerTeam: input.ownerTeam ?? null,
+            engineeringLead: contacts.data.engineeringLead ?? null,
+            manager: contacts.data.manager ?? null,
+            teamEmails: contacts.data.teamEmails ?? [],
           },
         }),
     });
@@ -188,6 +202,10 @@ export async function updateProduct(
   if (input.description !== undefined) data.description = input.description;
   if (input.tierId !== undefined) data.tierId = input.tierId;
   if (input.ownerTeam !== undefined) data.ownerTeam = input.ownerTeam;
+
+  const contacts = normalizeProductContacts(input);
+  if (!contacts.success) return contacts;
+  Object.assign(data, contacts.data);
 
   try {
     const product = await withAudit({
@@ -247,12 +265,25 @@ export async function deleteProduct(
     productId: id,
     tenantId: existing.domain.tenantId,
   });
-  const blocker = combineBlockers([productDeleteBlocker(existing._count), crossProductPinBlocker(pins)]);
+  // Events of OTHER products that reference a published version of one of this product's events (self-contained events:
+  // edges, no FK) are reported in the same message. A product that owns no event spec has no version to reference, so the
+  // lookup is skipped; a failing read is a DB_ERROR Result.
+  const eventRefs =
+    existing._count.eventSpecs === 0
+      ? ok<EventReferrer[]>([])
+      : await guardRead(async () => ok(await findCrossProductEventRefs(ctx.prisma, { kind: "product", productId: id, tenantId: existing.domain.tenantId })));
+  if (!eventRefs.success) return eventRefs;
+  const eventsBlocked = eventsInUseError("Product", existing.name, eventRefs.data);
+  const contentBlocker = combineBlockers([productDeleteBlocker(existing._count), crossProductPinBlocker(pins)]);
+  const blocker = combineBlockers([contentBlocker, eventsBlocked?.message]);
   if (blocker) {
     return err({
-      code: "VALIDATION_ERROR",
+      // The long-standing blockers keep their code; event references alone are an IN_USE.
+      code: contentBlocker ? "VALIDATION_ERROR" : "IN_USE",
       message: blocker,
-      ...(pins.length > 0 && { details: { eventSpecs: pins } }),
+      ...((pins.length > 0 || eventsBlocked) && {
+        details: { ...(pins.length > 0 && { eventSpecs: pins }), ...(eventsBlocked && { events: eventsBlocked.details }) },
+      }),
       suggestedFix:
         "Remove or move the product's entities, Data Types, APIs and Events assets (channels, messages, traits, event specs), then delete the product.",
     });

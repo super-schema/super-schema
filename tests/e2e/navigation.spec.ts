@@ -258,7 +258,7 @@ test.describe("navigation", () => {
     // `?tab=types` is the legacy alias of the `data-types` tab.
     const res = await page.goto("/schemas/enterprise?tab=types");
     expect(res?.status()).toBeLessThan(400);
-    await expect(page.locator("#enterprise-tab-data-types")).toHaveAttribute(
+    await expect(page.getByTestId("center-panel").locator("#enterprise-tab-data-types")).toHaveAttribute(
       "aria-selected",
       "true"
     );
@@ -267,7 +267,7 @@ test.describe("navigation", () => {
     // Likewise for the explicit tabs.
     const entities = await page.goto("/schemas/enterprise?tab=entities");
     expect(entities?.status()).toBeLessThan(400);
-    await expect(page.locator("#enterprise-tab-entities")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("center-panel").locator("#enterprise-tab-entities")).toHaveAttribute("aria-selected", "true");
 
     // Legacy 2-segment entity URL: /schemas/<domain>/<entity> must land on the canonical
     // 3-segment URL. The redirect() fires after loading.tsx streamed, so it completes client-side.

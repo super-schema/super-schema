@@ -1,16 +1,8 @@
-import { notFound } from "next/navigation";
-import { MessagePage } from "@/features/events/messages/MessagePage";
-import { loadMessagePage } from "@/features/events/messages/load-message-page";
+import { redirect } from "next/navigation";
+import { assetHref } from "@/lib/navigation/asset-href";
 
-export default async function MessageRoute({
-  params, searchParams,
-}: {
-  params: Promise<{ domainSlug: string; productSlug: string; messageId: string }>;
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  const { domainSlug, productSlug, messageId } = await params;
-  const version = (await searchParams)?.version;
-  const data = await loadMessagePage({ domainSlug, productSlug, messageId, version: typeof version === "string" ? version : undefined });
-  if (!data) notFound();
-  return <MessagePage {...data} />;
+/** The old Message URL: messages live inside events now and no id mapping is kept, so it lands on the product's Events list. */
+export default async function MessageRedirect({ params }: { params: Promise<{ domainSlug: string; productSlug: string; messageId: string }> }) {
+  const { domainSlug, productSlug } = await params;
+  redirect(assetHref({ kind: "events", domainSlug, productSlug }));
 }

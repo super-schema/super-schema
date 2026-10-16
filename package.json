@@ -19,7 +19,9 @@
     "db:migrate-typespec-source": "esbuild scripts/migrate-typespec-source.ts --bundle --platform=node --format=esm --packages=external --alias:server-only=./scripts/stubs/server-only.cjs --outfile=node_modules/.cache/migrate-typespec-source.mjs --log-level=warning && node node_modules/.cache/migrate-typespec-source.mjs",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:seed-events-demo": "esbuild scripts/seed-events-demo.ts --bundle --platform=node --format=esm --packages=external --alias:server-only=./scripts/stubs/server-only.cjs --outfile=node_modules/.cache/seed-events-demo.mjs --log-level=warning && node node_modules/.cache/seed-events-demo.mjs",
+    "db:studio": "prisma studio",
+    "gen:asyncapi-templates": "tsx scripts/generate-asyncapi-templates.ts"
   },
   "dependencies": {
     "@asyncapi/avro-schema-parser": "^3.1.0",

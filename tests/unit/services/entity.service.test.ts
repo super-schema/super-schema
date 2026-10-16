@@ -37,8 +37,10 @@ vi.mock("@/lib/db", () => ({
     },
     message: { findMany: vi.fn().mockResolvedValue([]) },
     trait: { findMany: vi.fn().mockResolvedValue([]) },
-    entityVersion: { findMany: vi.fn().mockResolvedValue([]) },
+    entityVersion: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null) },
     schemaReference: { findMany: vi.fn().mockResolvedValue([]) },
+    // Event documents pin entities without foreign keys: the event guard reads them (A9).
+    eventSpec: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -392,6 +394,73 @@ describe("Entity Service", () => {
       const call = vi.mocked(prisma.entity.update).mock.calls[0][0] as { data: { metadata: Record<string, unknown> } };
       expect(call.data.metadata).toEqual({ tags: [], deprecation: { deprecated: true }, sourceStale: true });
     });
+
+    describe("retiring: blocked while an event holds the entity's LATEST version", () => {
+      const deprecated = { ...existing, status: "DEPRECATED", latestVersionId: "ev-2" };
+      const spec = { id: "ev-1", name: "checkout", domainId: "dom-1", productId: "prd-1", domain: { name: "payments" }, product: { name: "checkout" } };
+      const retire = () => updateEntity("ent-1", { status: "RETIRED" }, mockCtx);
+
+      beforeEach(() => {
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue(deprecated as never);
+        vi.mocked(prisma.entity.update).mockResolvedValue({ ...deprecated, status: "RETIRED" } as never);
+        vi.mocked(prisma.schemaReference.findMany).mockResolvedValue([]);
+      });
+
+      it("returns IN_USE naming the event when a draft or published edge points at the latest version; nothing is written", async () => {
+        vi.mocked(prisma.schemaReference.findMany).mockResolvedValueOnce([{ fromKind: "EVENT_SPEC", fromId: "ev-1", toId: "ev-2" }] as never);
+        vi.mocked(prisma.entityVersion.findUnique).mockResolvedValueOnce({ major: 2, minor: 0 } as never);
+        vi.mocked(prisma.eventSpec.findMany).mockResolvedValueOnce([spec] as never);
+
+        const result = await retire();
+
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            code: "IN_USE",
+            message: 'Entity "Customer" cannot be retired: its latest version is pinned by event checkout (payments/checkout).',
+            details: { referrers: [{ eventId: "ev-1", name: "checkout", referencedVersions: ["2.0"], draft: true, published: false }], truncated: false },
+          },
+        });
+        expect(prisma.schemaReference.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ toKind: "ENTITY_VERSION", toId: { in: ["ev-2"] } }) })
+        );
+        expect(prisma.eventSpec.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ["ev-1"] }, tenantId: "tenant-1" } }));
+        expect(prisma.entity.update).not.toHaveBeenCalled();
+      });
+
+      it("retires when nothing holds the latest version", async () => {
+        const result = await retire();
+
+        expect(result.success).toBe(true);
+        expect(prisma.entity.update).toHaveBeenCalled();
+      });
+
+      it("does not look at events for any other transition", async () => {
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, status: "ACTIVE", latestVersionId: "ev-2" } as never);
+        vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, status: "DEPRECATED" } as never);
+
+        const result = await updateEntity("ent-1", { status: "DEPRECATED" }, mockCtx);
+
+        expect(result.success).toBe(true);
+        expect(prisma.schemaReference.findMany).not.toHaveBeenCalled();
+      });
+
+      it("keeps the transition rules first: a retire that is not allowed reports the transition, not events", async () => {
+        vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, status: "ACTIVE", latestVersionId: "ev-2" } as never);
+
+        const result = await retire();
+
+        expect(result).toMatchObject({ success: false, error: { code: "INVALID_TRANSITION" } });
+        expect(prisma.schemaReference.findMany).not.toHaveBeenCalled();
+      });
+
+      it("a failing lookup is a DB_ERROR with the generic message, not a throw", async () => {
+        vi.mocked(prisma.schemaReference.findMany).mockRejectedValueOnce(new Error("connection lost to 10.0.0.5:5432"));
+
+        expect(await retire()).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+        expect(prisma.entity.update).not.toHaveBeenCalled();
+      });
+    });
   });
 
 
@@ -412,6 +481,7 @@ describe("Entity Service", () => {
       vi.mocked(prisma.trait.findMany).mockResolvedValue([]);
       vi.mocked(prisma.entityVersion.findMany).mockResolvedValue([]);
       vi.mocked(prisma.schemaReference.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.eventSpec.findMany).mockResolvedValue([]);
     });
 
     it("returns success on delete, after checking pins (tenant-scoped) and referencing entities", async () => {
@@ -485,6 +555,67 @@ describe("Entity Service", () => {
           success: false,
           error: { code: "IN_USE", message: "This entity is referenced by another record and cannot be deleted.", suggestedFix: "Remove the references first." },
         });
+      });
+    });
+
+    describe("an event document that names the entity (no FK: only the event guard stops the delete)", () => {
+      const spec = { id: "ev-1", name: "checkout", domainId: "dom-1", productId: "prd-1", domain: { name: "payments" }, product: { name: "checkout" } };
+
+      it("keeps the legacy message-pin answer byte for byte when no event names the entity (regression)", async () => {
+        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
+
+        const result = await deleteEntity("ent-1", mockCtx);
+
+        expect(result).toEqual({
+          success: false,
+          error: {
+            code: "IN_USE",
+            message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated".',
+            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [], entities: [] },
+            suggestedFix: "Re-pin or delete those messages and traits first, then delete the entity.",
+          },
+        });
+        // the event guard still looked, inside the entity's tenant
+        expect(prisma.eventSpec.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: "tenant-1" }) }));
+        expect(prisma.entity.delete).not.toHaveBeenCalled();
+        expect(deleteAudits()).toHaveLength(0);
+      });
+
+      it("blocks BEFORE deleting when a draft names the entity (an unpinned pin has no edge), naming the event", async () => {
+        vi.mocked(prisma.eventSpec.findMany).mockResolvedValueOnce([spec] as never);
+
+        const result = await deleteEntity("ent-1", mockCtx);
+
+        expect(result).toMatchObject({
+          success: false,
+          error: { code: "IN_USE", message: 'Entity "Order" cannot be deleted: it is pinned by event checkout (payments/checkout).' },
+        });
+        expect(prisma.entity.delete).not.toHaveBeenCalled();
+        expect(deleteAudits()).toHaveLength(0);
+      });
+
+      it("merges with a legacy message pin into one IN_USE that keeps the legacy details and gains `events`", async () => {
+        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
+        vi.mocked(prisma.eventSpec.findMany).mockResolvedValueOnce([spec] as never);
+
+        const result = await deleteEntity("ent-1", mockCtx);
+
+        expect(result).toMatchObject({
+          success: false,
+          error: {
+            code: "IN_USE",
+            message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated", and it is pinned by event checkout (payments/checkout).',
+            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [], entities: [], events: { truncated: false } },
+          },
+        });
+        expect(prisma.entity.delete).not.toHaveBeenCalled();
+      });
+
+      it("a failing event lookup is a DB_ERROR with the generic message, not a throw", async () => {
+        vi.mocked(prisma.eventSpec.findMany).mockRejectedValueOnce(new Error("relation event_specs does not exist"));
+
+        expect(await deleteEntity("ent-1", mockCtx)).toEqual({ success: false, error: { code: "DB_ERROR", message: GENERIC_ACTION_ERROR } });
+        expect(prisma.entity.delete).not.toHaveBeenCalled();
       });
     });
 

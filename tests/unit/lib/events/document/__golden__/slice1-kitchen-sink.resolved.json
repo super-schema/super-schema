@@ -1,0 +1,297 @@
+{
+  "productSlug": "checkout",
+  "info": {
+    "title": "kitchen-sink",
+    "description": "Uses every slice-1 field.",
+    "contact": {
+      "name": "Platform team",
+      "url": "https://example.com/support",
+      "email": "platform@example.com"
+    },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "tags": [
+      {
+        "name": "payments",
+        "description": "Payments domain"
+      },
+      {
+        "name": "core"
+      }
+    ],
+    "externalDocs": {
+      "url": "https://docs.example.com/events"
+    },
+    "version": "2.0"
+  },
+  "servers": [
+    {
+      "key": "kafka-prod",
+      "protocol": "kafka",
+      "host": "kafka-prod.internal:9092",
+      "pathname": "/prod",
+      "protocolVersion": "3.7",
+      "description": "Prod",
+      "externalRef": "https://wiki.example.com/kafka"
+    },
+    {
+      "key": "kafka-stage",
+      "protocol": "kafka",
+      "host": "kafka-stage.internal:9092"
+    }
+  ],
+  "operations": [
+    {
+      "key": "createOrder",
+      "action": "send",
+      "channelRef": "orders",
+      "messageRefs": [
+        "OrderCreated"
+      ],
+      "traitRefs": [
+        "Audited"
+      ],
+      "summary": "Create",
+      "description": "Creates an order",
+      "bindings": {
+        "kafka": {
+          "clientId": "checkout"
+        }
+      },
+      "reply": {
+        "channelRef": "replies",
+        "messageRefs": [
+          "OrderSummary"
+        ]
+      }
+    },
+    {
+      "key": "receiveOrderCreated",
+      "action": "receive",
+      "channelRef": "orders",
+      "messageRefs": [
+        "OrderCreated",
+        "OrderSummary"
+      ],
+      "traitRefs": []
+    }
+  ],
+  "channels": [
+    {
+      "id": "orders",
+      "name": "orders",
+      "productSlug": "checkout",
+      "address": "orders.{region}.v1",
+      "protocol": "kafka",
+      "profile": {
+        "format": "avro"
+      },
+      "title": "Orders",
+      "summary": "Order events",
+      "description": "All order events.",
+      "parameters": {
+        "region": {
+          "description": "Region",
+          "enum": [
+            "eu",
+            "us"
+          ],
+          "default": "eu"
+        }
+      },
+      "bindings": {
+        "kafka": {
+          "partitions": 3
+        }
+      },
+      "tags": [
+        {
+          "name": "orders",
+          "description": "Orders"
+        }
+      ],
+      "externalDocs": {
+        "url": "https://docs.example.com/orders"
+      }
+    },
+    {
+      "id": "replies",
+      "name": "replies",
+      "productSlug": "checkout",
+      "address": "orders.replies.v1",
+      "protocol": "kafka",
+      "profile": {
+        "format": "json-schema",
+        "dialect": "draft-07"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "id": "OrderCreated",
+      "name": "OrderCreated",
+      "productSlug": "checkout",
+      "title": "Order created",
+      "summary": "s",
+      "description": "d",
+      "contentType": "avro/binary",
+      "correlationId": {
+        "location": "$message.header#/correlationId",
+        "description": "Correlates a reply"
+      },
+      "tags": [
+        {
+          "name": "created"
+        }
+      ],
+      "externalDocs": {
+        "url": "https://docs.example.com/created"
+      },
+      "bindings": {
+        "kafka": {
+          "schemaIdLocation": "payload"
+        }
+      },
+      "examples": [
+        {
+          "name": "small",
+          "summary": "A small order",
+          "headers": {
+            "traceparent": "00-abc"
+          },
+          "payload": {
+            "id": "o-1"
+          }
+        }
+      ],
+      "traitRefs": [
+        "Envelope"
+      ],
+      "payloads": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ],
+      "keys": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedKey",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "OrderSummary",
+      "name": "OrderSummary",
+      "productSlug": "checkout",
+      "title": "Order summary",
+      "traitRefs": [],
+      "payloads": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderSummaryPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        {
+          "format": "json-schema",
+          "dialect": "draft-07",
+          "schema": {
+            "title": "OrderSummaryPayload",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "traits": [
+    {
+      "id": "Envelope",
+      "name": "Envelope",
+      "kind": "MESSAGE",
+      "ownerSlug": "checkout",
+      "spec": {
+        "summary": "Envelope",
+        "tags": [
+          {
+            "name": "envelope"
+          }
+        ]
+      }
+    },
+    {
+      "id": "Audited",
+      "name": "Audited",
+      "kind": "OPERATION",
+      "ownerSlug": "checkout",
+      "spec": {
+        "summary": "Audited",
+        "description": "Operation is audited",
+        "tags": [
+          {
+            "name": "audited"
+          }
+        ],
+        "bindings": {
+          "kafka": {
+            "groupId": "audit"
+          }
+        }
+      }
+    }
+  ],
+  "components": {
+    "correlationIds": {
+      "requestId": {
+        "location": "$message.header#/requestId"
+      }
+    },
+    "parameters": {
+      "region": {
+        "description": "Region"
+      }
+    },
+    "securitySchemes": {
+      "basic": {
+        "type": "userPassword",
+        "description": "Username and password"
+      }
+    }
+  },
+  "defaultContentType": "application/json"
+}

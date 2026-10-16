@@ -72,6 +72,32 @@ describe("event option loaders (tenant scoping)", () => {
       expect(ids(await loadEntityOptions(foreign.tenant.id))).toEqual([foreign.entity.id]);
     }), 60_000);
 
+  it("loadEntityOptions: carries the format an entity was imported in (Avro / JSON Schema / Protobuf only)", () =>
+    withFixture(async ({ own, foreign }) => {
+      const avro = await own.entity(`Avro${own.s}`);
+      const proto = await own.entity(`Proto${own.s}`);
+      const json = await own.entity(`Json${own.s}`);
+      const typespec = await own.entity(`Spec${own.s}`);
+      const plain = await own.entity(`Plain${own.s}`);
+      for (const [entity, sourceFormat] of [[avro, "avro"], [proto, "protobuf"], [json, "json-schema"], [typespec, "typespec"]] as const) {
+        await prisma.entity.update({ where: { id: entity.id }, data: { metadata: { sourceFormat, tags: ["core"] } } });
+      }
+      await prisma.entity.update({ where: { id: foreign.entity.id }, data: { metadata: { sourceFormat: "avro" } } });
+
+      const entities = await loadEntityOptions(TENANT);
+      const mine = (id: string) => entities.find((e) => e.id === id);
+
+      expect(mine(avro.id)?.sourceFormat).toBe("avro");
+      expect(mine(proto.id)?.sourceFormat).toBe("protobuf");
+      expect(mine(json.id)?.sourceFormat).toBe("json-schema");
+      // an import format that is not a schema representation, or no record at all: the key is absent, not undefined
+      expect(mine(typespec.id)).not.toHaveProperty("sourceFormat");
+      expect(mine(plain.id)).not.toHaveProperty("sourceFormat");
+      // the foreign tenant's entity is not in this tenant's list, whatever it records
+      expect(ids(entities)).not.toContain(foreign.entity.id);
+      expect((await loadEntityOptions(foreign.tenant.id)).find((e) => e.id === foreign.entity.id)?.sourceFormat).toBe("avro");
+    }), 60_000);
+
   it("loadTraitOptions: Enterprise + domain + product line, filtered by kind, never another product's or tenant's", () =>
     withFixture(async ({ own, other, foreign, tenantTraits }) => {
       const tenantTrait = await prisma.trait.create({ data: { name: `TT-${own.s}`, kind: "MESSAGE", tenantId: TENANT } });

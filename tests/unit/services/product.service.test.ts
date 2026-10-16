@@ -108,6 +108,151 @@ describe("Product Service", () => {
     });
   });
 
+  describe("product contacts", () => {
+    function fieldErrorsOf(result: Awaited<ReturnType<typeof createProduct>>): Record<string, string> {
+      expect(result.success).toBe(false);
+      if (result.success) return {};
+      expect(result.error.code).toBe("VALIDATION_ERROR");
+      return (result.error.details as { fieldErrors: Record<string, string> }).fieldErrors;
+    }
+
+    describe("createProduct", () => {
+      it("saves no contacts (null mailboxes, empty team list) when none are given", async () => {
+        vi.mocked(prisma.product.create).mockResolvedValue({ id: "prd-1" } as never);
+
+        const result = await createProduct({ domainId: "dom-1", name: "Checkout" }, mockCtx);
+
+        expect(result.success).toBe(true);
+        expect(prisma.product.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ engineeringLead: null, manager: null, teamEmails: [] }),
+        });
+      });
+
+      it("saves the contacts as canonical mailbox text", async () => {
+        vi.mocked(prisma.product.create).mockResolvedValue({ id: "prd-1" } as never);
+
+        const result = await createProduct(
+          {
+            domainId: "dom-1",
+            name: "Checkout",
+            engineeringLead: '  "Doe, Jane"   <jane@acme.com>  ',
+            manager: "<mo@acme.com>",
+            teamEmails: ["Platform Team <platform@acme.com>", "oncall@acme.com"],
+          },
+          mockCtx
+        );
+
+        expect(result.success).toBe(true);
+        expect(prisma.product.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            name: "Checkout",
+            engineeringLead: '"Doe, Jane" <jane@acme.com>',
+            manager: "mo@acme.com",
+            teamEmails: ["Platform Team <platform@acme.com>", "oncall@acme.com"],
+          }),
+        });
+      });
+
+      it("treats blank mailboxes as none and collapses duplicate team emails case-insensitively", async () => {
+        vi.mocked(prisma.product.create).mockResolvedValue({ id: "prd-1" } as never);
+
+        await createProduct(
+          { domainId: "dom-1", name: "Checkout", engineeringLead: "  ", manager: null, teamEmails: ["Ops <ops@acme.com>", "OPS@ACME.COM"] },
+          mockCtx
+        );
+
+        expect(prisma.product.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ engineeringLead: null, manager: null, teamEmails: ["Ops <ops@acme.com>"] }),
+        });
+      });
+
+      it("rejects malformed contacts with a message per field, and creates nothing", async () => {
+        const result = await createProduct(
+          { domainId: "dom-1", name: "Checkout", engineeringLead: "jane", manager: "mo@", teamEmails: ["ok@acme.com", "broken"] },
+          mockCtx
+        );
+
+        const errors = fieldErrorsOf(result);
+        expect(Object.keys(errors).sort()).toEqual(["engineeringLead", "manager", "teamEmails"]);
+        expect(errors.teamEmails).toContain("broken");
+        expect(prisma.product.create).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      });
+
+      it("reports only the field that is wrong", async () => {
+        const result = await createProduct({ domainId: "dom-1", name: "Checkout", engineeringLead: "ok@acme.com", teamEmails: ["x"] }, mockCtx);
+        expect(Object.keys(fieldErrorsOf(result))).toEqual(["teamEmails"]);
+      });
+
+      it("still reports the missing name first when the name and a contact are both wrong", async () => {
+        const result = await createProduct({ domainId: "dom-1", name: "", manager: "nope" }, mockCtx);
+        expect(result.success).toBe(false);
+        if (!result.success) expect(result.error.message).toBe("Product name is required");
+      });
+    });
+
+    describe("updateProduct", () => {
+      beforeEach(() => {
+        vi.mocked(prisma.product.findUnique).mockResolvedValue({ id: "prd-1", name: "Checkout" } as never);
+        vi.mocked(prisma.product.update).mockResolvedValue({ id: "prd-1" } as never);
+      });
+
+      it("updates only the contact fields that are given", async () => {
+        const result = await updateProduct("prd-1", { manager: "Mo <mo@acme.com>" }, mockCtx);
+
+        expect(result.success).toBe(true);
+        expect(prisma.product.update).toHaveBeenCalledWith({ where: { id: "prd-1" }, data: { manager: "Mo <mo@acme.com>" } });
+      });
+
+      it("saves canonical text for every contact field", async () => {
+        await updateProduct(
+          "prd-1",
+          { engineeringLead: '"Doe, Jane" <j@x.com>', manager: "  mo@acme.com ", teamEmails: ["A <a@acme.com>", "a@ACME.com", "b@acme.com"] },
+          mockCtx
+        );
+
+        expect(prisma.product.update).toHaveBeenCalledWith({
+          where: { id: "prd-1" },
+          data: { engineeringLead: '"Doe, Jane" <j@x.com>', manager: "mo@acme.com", teamEmails: ["A <a@acme.com>", "b@acme.com"] },
+        });
+      });
+
+      it("clears a mailbox with null or blank text and the team list with an empty array", async () => {
+        await updateProduct("prd-1", { engineeringLead: null, manager: "   ", teamEmails: [] }, mockCtx);
+
+        expect(prisma.product.update).toHaveBeenCalledWith({
+          where: { id: "prd-1" },
+          data: { engineeringLead: null, manager: null, teamEmails: [] },
+        });
+      });
+
+      it("does not touch the contacts when an update names none", async () => {
+        await updateProduct("prd-1", { description: "New" }, mockCtx);
+
+        expect(prisma.product.update).toHaveBeenCalledWith({ where: { id: "prd-1" }, data: { description: "New" } });
+      });
+
+      it("rejects malformed contacts with field-level messages, and updates nothing", async () => {
+        const result = await updateProduct("prd-1", { engineeringLead: "Doe, Jane <j@x.com>", teamEmails: ["bad"] }, mockCtx);
+
+        const errors = fieldErrorsOf(result);
+        expect(errors.engineeringLead).toMatch(/quotes/i);
+        expect(errors.teamEmails).toContain("bad");
+        expect(prisma.product.update).not.toHaveBeenCalled();
+      });
+
+      it("answers NOT_FOUND for a missing product before it validates the contacts", async () => {
+        vi.mocked(prisma.product.findUnique).mockResolvedValue(null);
+
+        const result = await updateProduct("prd-9", { manager: "nope" }, mockCtx);
+
+        expect(result.success).toBe(false);
+        if (!result.success) expect(result.error.code).toBe("NOT_FOUND");
+        expect(prisma.product.update).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   describe("deleteProduct", () => {
     const counts = {
       entities: 0,

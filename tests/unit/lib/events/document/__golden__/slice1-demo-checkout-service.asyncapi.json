@@ -1,0 +1,256 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "checkout-service",
+    "version": "2.0",
+    "description": "Events published by the Checkout service."
+  },
+  "servers": {
+    "kafka-prod": {
+      "host": "kafka-prod.internal:9092",
+      "protocol": "kafka",
+      "description": "Production Kafka cluster"
+    },
+    "pubsub-prod": {
+      "host": "pubsub.googleapis.com",
+      "protocol": "googlepubsub",
+      "description": "Google Pub/Sub"
+    }
+  },
+  "defaultContentType": "application/json",
+  "channels": {
+    "customer-orders": {
+      "address": "payments.customers.{customerId}.orders.v1",
+      "messages": {
+        "OrderCreated": {
+          "$ref": "#/components/messages/OrderCreated"
+        }
+      },
+      "title": "Per-customer orders",
+      "parameters": {
+        "customerId": {
+          "description": "Customer the orders belong to"
+        }
+      }
+    },
+    "order-notifications": {
+      "address": "order-notifications",
+      "messages": {
+        "OrderNotification": {
+          "$ref": "#/components/messages/OrderNotification"
+        }
+      },
+      "title": "Customer notifications",
+      "bindings": {
+        "googlepubsub": {
+          "messageRetentionDuration": "86400s",
+          "schemaSettings": {
+            "encoding": "json",
+            "name": "projects/acme-prod/schemas/order-notification"
+          }
+        }
+      }
+    },
+    "orders": {
+      "address": "payments.orders.v1",
+      "messages": {
+        "OrderCancelled": {
+          "$ref": "#/components/messages/OrderCancelled"
+        },
+        "OrderCreated": {
+          "$ref": "#/components/messages/OrderCreated"
+        }
+      },
+      "title": "Orders topic",
+      "description": "Every order lifecycle event, keyed by order id.",
+      "bindings": {
+        "kafka": {
+          "partitions": 12,
+          "replicas": 3
+        }
+      }
+    }
+  },
+  "operations": {
+    "publishCustomerOrder": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/customer-orders"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/customer-orders/messages/OrderCreated"
+        }
+      ]
+    },
+    "publishOrderCancelled": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/orders"
+      },
+      "summary": "Publish when an order is cancelled",
+      "messages": [
+        {
+          "$ref": "#/channels/orders/messages/OrderCancelled"
+        }
+      ]
+    },
+    "publishOrderCreated": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/orders"
+      },
+      "summary": "Publish when an order is placed",
+      "traits": [
+        {
+          "$ref": "#/components/operationTraits/Audited"
+        }
+      ],
+      "messages": [
+        {
+          "$ref": "#/channels/orders/messages/OrderCreated"
+        }
+      ]
+    },
+    "publishOrderNotification": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/order-notifications"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/order-notifications/messages/OrderNotification"
+        }
+      ]
+    }
+  },
+  "components": {
+    "messages": {
+      "OrderCancelled": {
+        "title": "Order cancelled",
+        "summary": "An order was cancelled before shipping.",
+        "contentType": "avro/binary",
+        "traits": [
+          {
+            "$ref": "#/components/messageTraits/CloudEvents"
+          }
+        ],
+        "payload": {
+          "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+          "schema": {
+            "type": "record",
+            "name": "OrderCancelledPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "bindings": {
+          "kafka": {
+            "key": {
+              "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+              "schema": {
+                "type": "record",
+                "name": "OrderCancelledKey",
+                "namespace": "acme.test",
+                "fields": [
+                  {
+                    "name": "id",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "OrderCreated": {
+        "title": "Order created",
+        "summary": "A customer placed an order.",
+        "contentType": "avro/binary",
+        "traits": [
+          {
+            "$ref": "#/components/messageTraits/CloudEvents"
+          }
+        ],
+        "payload": {
+          "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "bindings": {
+          "kafka": {
+            "key": {
+              "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+              "schema": {
+                "type": "record",
+                "name": "OrderCreatedKey",
+                "namespace": "acme.test",
+                "fields": [
+                  {
+                    "name": "id",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "OrderNotification": {
+        "title": "Order notification",
+        "summary": "A notification to send to the customer.",
+        "contentType": "application/json",
+        "payload": {
+          "schemaFormat": "application/schema+json;version=draft-07",
+          "schema": {
+            "title": "OrderNotificationPayload",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "messageTraits": {
+      "CloudEvents": {
+        "headers": {
+          "title": "CloudEventsHeaders",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          }
+        },
+        "summary": "CloudEvents envelope headers"
+      }
+    },
+    "operationTraits": {
+      "Audited": {
+        "summary": "Operation is audited",
+        "tags": [
+          {
+            "name": "audited"
+          }
+        ]
+      }
+    }
+  }
+}

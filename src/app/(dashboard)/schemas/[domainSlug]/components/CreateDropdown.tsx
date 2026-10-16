@@ -1,35 +1,32 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Database, FileCode2, Globe, Hash, Mail, Plus, Puzzle, Radio } from "lucide-react";
+import { ChevronDown, Database, Globe, Hash, Plus, Puzzle, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useModKey } from "@/lib/platform";
 
 // ---------------------------------------------------------------------------
 // Create dropdown — New Entity, New Custom Data Type and (where the level allows
-// them) New API and the events items (Event Spec / Message / Channel / Trait). The
-// kind of custom data type (Enum / Scalar / Union) is chosen on the Data Types
-// tab, not listed here.
+// them) New API, New Event (product level) and New Trait (Tenant / Domain library
+// levels). The kind of custom data type (Enum / Scalar / Union) is chosen on the
+// Data Types tab, not listed here. Messages, channels and event specs are parts of
+// an event, not menu entries.
 // ---------------------------------------------------------------------------
 
 export function CreateDropdown({
   onNewEntity,
   onNewCustomDataType,
   onNewApi,
-  onNewEventSpec,
-  onNewMessage,
-  onNewChannel,
+  onNewEvent,
   onNewTrait,
 }: {
   onNewEntity: () => void;
   onNewCustomDataType: () => void;
   /** Omit where APIs cannot be created (Enterprise level) to hide the item. */
   onNewApi?: () => void;
-  /** Events kinds are product-only (spec §4.1); pass them only on the product workspace. */
-  onNewEventSpec?: () => void;
-  onNewMessage?: () => void;
-  onNewChannel?: () => void;
-  /** Traits exist at every level. */
+  /** Events are product-only; pass it only on the product workspace. */
+  onNewEvent?: () => void;
+  /** Library traits live at the Tenant and Domain levels only; the product workspace does not pass it. */
   onNewTrait?: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -79,9 +76,7 @@ export function CreateDropdown({
     description: string
   ): DropdownItem | null => (action ? { label, icon, action, description } : null);
   const eventItems = [
-    optional("New Event Spec", FileCode2, onNewEventSpec, "AsyncAPI event specification"),
-    optional("New Message", Mail, onNewMessage, "Event message with a pinned payload"),
-    optional("New Channel", Radio, onNewChannel, "Topic / queue with a format profile"),
+    optional("New Event", Radio, onNewEvent, "AsyncAPI event specification"),
     optional("New Trait", Puzzle, onNewTrait, "Reusable message or operation trait"),
   ].filter((item): item is DropdownItem => item !== null);
 

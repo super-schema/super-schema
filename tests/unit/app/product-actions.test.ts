@@ -89,6 +89,75 @@ describe("product actions use the real action context", () => {
   });
 });
 
+describe("product contacts through the actions", () => {
+  const CONTACTS = {
+    engineeringLead: "Jane Doe <jane@acme.com>",
+    manager: "mo@acme.com",
+    teamEmails: ['"Doe, Jane" <j@x.com>', "oncall@acme.com"],
+  };
+  const FIELD_FAILURE = {
+    success: false,
+    error: {
+      code: "VALIDATION_ERROR",
+      message: '"jane" is not a valid email address. Use jane@acme.com or Jane Doe <jane@acme.com>.',
+      details: {
+        fieldErrors: {
+          engineeringLead: '"jane" is not a valid email address. Use jane@acme.com or Jane Doe <jane@acme.com>.',
+          teamEmails: '"broken" is not a valid email address. Use jane@acme.com or Jane Doe <jane@acme.com>.',
+        },
+      },
+    },
+  };
+
+  it("createProductAction hands the contacts to the service untouched (the service validates and canonicalises)", async () => {
+    const input = { ...CREATE_INPUT, ...CONTACTS };
+    expect(await createProductAction(input)).toEqual({ success: true, productId: "prd-1", slug: "billing" });
+    expect(h.createProduct).toHaveBeenCalledWith(input, expect.anything());
+  });
+
+  it("updateProductAction hands the contacts to the service untouched", async () => {
+    expect(await updateProductAction("prd-1", CONTACTS)).toEqual({ success: true, slug: "billing-2" });
+    expect(h.updateProduct).toHaveBeenCalledWith("prd-1", CONTACTS, expect.anything());
+  });
+
+  it("a contact validation failure comes back with its field-level messages, and nothing is revalidated", async () => {
+    h.createProduct.mockResolvedValue(FIELD_FAILURE);
+    h.updateProduct.mockResolvedValue(FIELD_FAILURE);
+
+    const expected = { error: FIELD_FAILURE.error.message, fieldErrors: FIELD_FAILURE.error.details.fieldErrors };
+    expect(await createProductAction({ ...CREATE_INPUT, engineeringLead: "jane", teamEmails: ["broken"] })).toEqual(expected);
+    expect(await updateProductAction("prd-1", { engineeringLead: "jane", teamEmails: ["broken"] })).toEqual(expected);
+    expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("keeps only known string field errors from the failure details", async () => {
+    h.createProduct.mockResolvedValue({
+      success: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "bad",
+        details: { fieldErrors: { manager: "Bad manager", name: "not a contact field", teamEmails: 42, engineeringLead: { nested: true } } },
+      },
+    });
+    expect(await createProductAction(CREATE_INPUT)).toEqual({ error: "bad", fieldErrors: { manager: "Bad manager" } });
+  });
+
+  it("a failure without field errors carries no fieldErrors key at all", async () => {
+    h.createProduct.mockResolvedValue({ success: false, error: { code: "VALIDATION_ERROR", message: "Product name is required", details: {} } });
+    const result = await createProductAction(CREATE_INPUT);
+    expect(result).toEqual({ error: "Product name is required" });
+    expect("fieldErrors" in result).toBe(false);
+  });
+
+  it("an opaque DB failure never carries field errors or raw text", async () => {
+    h.updateProduct.mockResolvedValue({
+      success: false,
+      error: { code: "DB_ERROR", message: "relation \"products\" does not exist", details: { fieldErrors: { manager: "leak" } } },
+    });
+    expect(await updateProductAction("prd-1", { manager: "mo@acme.com" })).toEqual({ error: GENERIC_ACTION_ERROR });
+  });
+});
+
 describe("product action failures", () => {
   it("a service failure keeps its message and revalidates nothing", async () => {
     h.createProduct.mockResolvedValue({ success: false, error: { code: "DUPLICATE", message: 'A product named "Billing" already exists in this domain' } });

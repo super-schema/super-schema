@@ -13,6 +13,7 @@ import { domainDeleteBlocker } from "@/lib/domain-deletion";
 import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
 import { findCrossProductPins } from "@/services/events/delete-guards";
+import { eventsInUseError, findCrossProductEventRefs } from "@/services/events/event-guards";
 
 export async function getDomainsAction() {
   const session = await auth();
@@ -142,7 +143,15 @@ export async function deleteDomainAction(domainId: string) {
       domainId,
       tenantId: domain.tenantId,
     });
-    const blocker = combineBlockers([domainDeleteBlocker(domain._count), crossProductPinBlocker(pins)]);
+    // Events of OTHER domains that reference a published version of an event of this domain (edges, no FK) are named too.
+    // A domain that owns no event spec has no version to reference, so the lookup is skipped.
+    const eventRefs =
+      domain._count.eventSpecs === 0 ? [] : await findCrossProductEventRefs(prisma, { kind: "domain", domainId, tenantId: domain.tenantId });
+    const blocker = combineBlockers([
+      domainDeleteBlocker(domain._count),
+      crossProductPinBlocker(pins),
+      eventsInUseError("Domain", domain.name, eventRefs)?.message,
+    ]);
     if (blocker) {
       return { error: blocker };
     }

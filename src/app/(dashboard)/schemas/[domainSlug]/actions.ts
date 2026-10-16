@@ -15,6 +15,7 @@ import {
 import { parseScopeTarget, requireId } from "@/services/events/service-guards";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { entityDeleteFailure, explainEntityDeleteFailure } from "@/services/events/entity-pin-usage";
+import { findEntityEventReferrers, withEventsInUse } from "@/services/events/event-guards";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
@@ -413,8 +414,14 @@ export async function deleteEntityAction(entityId: string) {
     if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
 
     // Messages / traits that pin it, and other entities whose published versions reference one of its versions (no FK:
-    // only this guard stops that delete and leaves a dangling edge that breaks rendering of the referencing version).
-    const inUse = await explainEntityDeleteFailure(prisma, entity);
+    // only this guard stops that delete and leaves a dangling edge that breaks rendering of the referencing version);
+    // merged with the events (drafts and published versions, pinned or unpinned) that name it, which have no FK either.
+    const inUse = withEventsInUse(
+      await explainEntityDeleteFailure(prisma, entity),
+      "Entity",
+      entity.name,
+      await findEntityEventReferrers(prisma, entity)
+    );
     if (inUse) return { error: inUseText(inUse) };
 
     await withAudit({
@@ -1398,6 +1405,9 @@ export async function createDomainAssetsFromImportAction(
       // Entities created in this batch, or resolved by name below, with the product
       // each one lives in (an entity-scoped API takes its entity's product scope).
       const entityRefs = new Map<string, { id: string; productId: string }>();
+      // The payload arrives untyped from the browser: only a non-blank string is an import format.
+      const importedFormat =
+        typeof payload.sourceFormat === "string" && payload.sourceFormat.trim() !== "" ? payload.sourceFormat.trim() : undefined;
 
       for (const entity of sortByInheritance(payload.entities)) {
         const name = entity.name.trim();
@@ -1420,6 +1430,12 @@ export async function createDomainAssetsFromImportAction(
         }
 
         const parentEntityId = entity.extends ? entityRefs.get(entity.extends)?.id : undefined;
+        // metadata.sourceFormat records the format the entity was imported in: a message's "Auto" representation follows it
+        // (Avro-imported stays Avro). Model tags travel next to it. Nothing is written when neither is known.
+        const entityMetadata = {
+          ...(entity.tags && entity.tags.length > 0 ? { tags: entity.tags } : {}),
+          ...(importedFormat ? { sourceFormat: importedFormat } : {}),
+        };
         const created = await tx.entity.create({
           data: {
             name,
@@ -1428,7 +1444,7 @@ export async function createDomainAssetsFromImportAction(
             description: entity.description ?? "",
             ownerId: currentUserId,
             ...(parentEntityId ? { parentEntityId } : {}),
-            ...(entity.tags && entity.tags.length > 0 ? { metadata: { tags: entity.tags } } : {}),
+            ...(Object.keys(entityMetadata).length > 0 ? { metadata: entityMetadata } : {}),
             fields: {
               create: entity.fields.map((field, index) => mapFieldCreateInput(field, index)),
             },

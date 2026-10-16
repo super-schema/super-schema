@@ -1,6 +1,11 @@
-import { TraitRoutePage } from "@/features/events/traits/TraitRoutePage";
+import { redirect } from "next/navigation";
+import { assetHref } from "@/lib/navigation/asset-href";
 
-export default async function ProductTraitPage({ params }: { params: Promise<{ domainSlug: string; productSlug: string; traitId: string }> }) {
-  const { domainSlug, productSlug, traitId } = await params;
-  return <TraitRoutePage domainSlug={domainSlug} productSlug={productSlug} traitId={traitId} />;
+/**
+ * The old product-level Trait URL: traits live inside events now (the Domain and Enterprise trait pages are unchanged), so it
+ * lands on the product's Events list.
+ */
+export default async function ProductTraitRedirect({ params }: { params: Promise<{ domainSlug: string; productSlug: string; traitId: string }> }) {
+  const { domainSlug, productSlug } = await params;
+  redirect(assetHref({ kind: "events", domainSlug, productSlug }));
 }

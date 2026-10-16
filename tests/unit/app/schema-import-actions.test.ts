@@ -321,6 +321,48 @@ describe("schema import actions", () => {
       expect(created.find((d) => d.name === "Plain")).not.toHaveProperty("metadata");
     });
 
+    describe("the import format is recorded on the entity (R4: what a message's Auto follows)", () => {
+      const createdMetadata = () => Object.fromEntries(mockTx.entity.create.mock.calls.map(([arg]) => [arg.data.name, arg.data.metadata]));
+
+      it.each(["avro", "protobuf", "json-schema", "typespec", "openapi", "bigquery-ddl"])("stores %s as metadata.sourceFormat", async (sourceFormat) => {
+        await createDomainAssetsFromImportAction({ ...emptyPayload, sourceFormat, entities: [{ name: "Customer", fields: [] }] });
+        expect(createdMetadata()).toEqual({ Customer: { sourceFormat } });
+      });
+
+      it("keeps the model tags next to it", async () => {
+        await createDomainAssetsFromImportAction({
+          ...emptyPayload, sourceFormat: "avro",
+          entities: [{ name: "Customer", tags: ["sales", "core"], fields: [] }, { name: "Plain", fields: [] }],
+        });
+        expect(createdMetadata()).toEqual({
+          Customer: { tags: ["sales", "core"], sourceFormat: "avro" },
+          Plain: { sourceFormat: "avro" },
+        });
+      });
+
+      it("applies to every entity of the import, and only to entities", async () => {
+        await createDomainAssetsFromImportAction({
+          ...emptyPayload, sourceFormat: "protobuf",
+          models: [{ name: "Shape", fields: [] }],
+          entities: [{ name: "A", fields: [] }, { name: "B", fields: [] }],
+        });
+        expect(createdMetadata()).toEqual({ A: { sourceFormat: "protobuf" }, B: { sourceFormat: "protobuf" } });
+        expect(mockTx.modelDefinition.create.mock.calls[0][0].data).not.toHaveProperty("metadata");
+      });
+
+      it("trims the format and records nothing for a blank or non-string one", async () => {
+        await createDomainAssetsFromImportAction({ ...emptyPayload, sourceFormat: "  avro  ", entities: [{ name: "Trimmed", fields: [] }] });
+        expect(createdMetadata()).toEqual({ Trimmed: { sourceFormat: "avro" } });
+        mockTx.entity.create.mockClear();
+        const bads: unknown[] = ["", "   ", 7, null, {}, ["avro"]];
+        for (const [i, bad] of bads.entries()) {
+          await createDomainAssetsFromImportAction({ ...emptyPayload, sourceFormat: bad as string, entities: [{ name: `Bad${i}`, fields: [] }] });
+        }
+        expect(mockTx.entity.create).toHaveBeenCalledTimes(bads.length);
+        for (const data of mockTx.entity.create.mock.calls.map(([arg]) => arg.data)) expect(data).not.toHaveProperty("metadata");
+      });
+    });
+
     it("checks data types and domain APIs at domain level and entities at product level", async () => {
       await createDomainAssetsFromImportAction({
         ...emptyPayload,

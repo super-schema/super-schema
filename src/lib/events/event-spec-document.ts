@@ -2,6 +2,7 @@
 import { ok, err, type Result } from "@/types/result";
 import type {
   EventSpecDocument,
+  EventSpecInfo,
   EventSpecLocalComponents,
   EventSpecOperation,
   EventSpecServer,
@@ -178,13 +179,14 @@ export function parseEventSpecDocument(value: unknown): Result<EventSpecDocument
   if (tags !== undefined && !(Array.isArray(tags) && tags.every(isJsonObject))) problems.push({ pointer: "/info/tags", message: "tags must be an array of objects" });
 
   const doc: EventSpecDocument = {
-    info: compact({
+    // v1 drafts keep these four as free-form objects (the v2 document parser validates them); `EventSpecInfo` types their AsyncAPI shape.
+    info: compact<EventSpecInfo>({
       title,
       description: optString(infoBag, "description", "/info", problems),
-      contact: optObject(infoBag, "contact", "/info", problems),
-      license: optObject(infoBag, "license", "/info", problems),
-      tags: Array.isArray(tags) && tags.every(isJsonObject) ? (tags as JsonObject[]) : undefined,
-      externalDocs: optObject(infoBag, "externalDocs", "/info", problems),
+      contact: optObject(infoBag, "contact", "/info", problems) as EventSpecInfo["contact"],
+      license: optObject(infoBag, "license", "/info", problems) as EventSpecInfo["license"],
+      tags: Array.isArray(tags) && tags.every(isJsonObject) ? (tags as unknown as EventSpecInfo["tags"]) : undefined,
+      externalDocs: optObject(infoBag, "externalDocs", "/info", problems) as EventSpecInfo["externalDocs"],
     }),
     servers: [],
     operations: [],

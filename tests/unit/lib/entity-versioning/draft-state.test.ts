@@ -38,6 +38,14 @@ describe("metadataChangesDraft", () => {
     ).toBe(false);
   });
 
+  it("treats the import format (server-recorded provenance, never rendered into the source) as bookkeeping", () => {
+    expect(metadataChangesDraft({ tags: ["a"] }, { tags: ["a"], sourceFormat: "avro" })).toBe(false);
+    expect(metadataChangesDraft({ sourceFormat: "avro" }, { sourceFormat: "protobuf" })).toBe(false);
+    expect(metadataChangesDraft({ sourceFormat: "avro", tags: ["a"] }, { tags: ["a"] })).toBe(false);
+    // ... without hiding a real edit next to it
+    expect(metadataChangesDraft({ sourceFormat: "avro" }, { sourceFormat: "avro", tags: ["b"] })).toBe(true);
+  });
+
   it("treats null, undefined and {} as the same empty metadata", () => {
     expect(metadataChangesDraft(null, {})).toBe(false);
     expect(metadataChangesDraft(undefined, null)).toBe(false);

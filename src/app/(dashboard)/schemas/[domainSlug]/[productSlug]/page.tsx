@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { DomainWorkspace } from "../domain-workspace";
 import { assetHref } from "@/lib/navigation/asset-href";
-import { loadProductEventsData } from "@/features/events/workspace/load-events-tab-data";
+import { loadEventsList } from "@/features/events/event-page/load-events-list";
 import {
   classificationCountsFromGroups,
   emptyClassificationCounts,
@@ -102,7 +102,7 @@ export default async function ProductWorkspacePage({
     tenantEnumsRaw,
     tenantScalarsRaw,
     tenantUnionsRaw,
-    eventsData,
+    eventItems,
   ] = await Promise.all([
     prisma.entity.findMany({
       where: { productId: product.id },
@@ -165,10 +165,9 @@ export default async function ProductWorkspacePage({
       where: { tenantId: domain.tenantId, domainId: null },
       orderBy: { name: "asc" },
     }),
-    // Events + Traits tabs, scoped by the route's tenant, domain and product.
-    loadProductEventsData({
+    // Events tab: the product's events, scoped by the route's tenant and product. Legacy v1 event specs are skipped by the loader.
+    loadEventsList({
       tenantId: domain.tenantId,
-      domainId: domain.id,
       productId: product.id,
       domainSlug,
       productSlug,
@@ -238,8 +237,12 @@ export default async function ProductWorkspacePage({
       services={services}
       inheritedDataTypes={inheritedDataTypes}
       inheritedServices={inheritedServices}
-      events={eventsData.events}
-      traits={eventsData.traits}
+      events={eventItems}
+      productContacts={{
+        engineeringLead: product.engineeringLead ?? null,
+        manager: product.manager ?? null,
+        teamEmails: product.teamEmails ?? [],
+      }}
     />
   );
 }

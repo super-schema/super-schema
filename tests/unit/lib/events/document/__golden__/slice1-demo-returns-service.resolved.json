@@ -1,0 +1,14 @@
+{
+  "productSlug": "checkout",
+  "info": {
+    "title": "returns-service",
+    "description": "Work in progress: shows that incomplete drafts save, and what the builder flags.",
+    "version": "2.0"
+  },
+  "servers": [],
+  "operations": [],
+  "channels": [],
+  "messages": [],
+  "traits": [],
+  "components": {}
+}

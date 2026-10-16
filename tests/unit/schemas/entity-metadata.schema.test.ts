@@ -68,6 +68,16 @@ describe("EntityMetadataSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("keeps the import format the importer recorded (it must survive a parse that strips unknown keys)", () => {
+    const result = EntityMetadataSchema.safeParse({ tags: ["core"], sourceFormat: "avro" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).toEqual({ tags: ["core"], sourceFormat: "avro" });
+  });
+
+  it("rejects a sourceFormat that is not a string", () => {
+    expect(EntityMetadataSchema.safeParse({ sourceFormat: 3 }).success).toBe(false);
+  });
+
   it("rejects tags with non-string values", () => {
     const result = EntityMetadataSchema.safeParse({
       tags: [123, true],

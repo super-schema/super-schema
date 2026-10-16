@@ -2,14 +2,14 @@ import { describe, it, expect } from "vitest";
 import { assetHref, EVENT_SEGMENT, normalizeEventsSection, TRAITS_SEGMENT, type EventsSection } from "@/lib/navigation/asset-href";
 
 describe("assetHref — events kinds", () => {
-  it("links the product Events tab with a section (default specs)", () => {
-    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout?tab=events&section=specs");
-    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout", section: "channels" })).toBe(
-      "/schemas/payments/checkout?tab=events&section=channels"
-    );
+  it("links the product Events tab without a section (the flat Events list has no sections)", () => {
+    const href = assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" });
+    expect(href).toBe("/schemas/payments/checkout?tab=events");
+    expect(href).not.toContain("section=");
+    expect(href).not.toContain("section=specs");
   });
 
-  it("links every Events section", () => {
+  it("still links an explicitly requested section (old detail pages keep their list crumbs until the old code is removed)", () => {
     const sections: EventsSection[] = ["specs", "messages", "channels"];
     for (const section of sections) {
       expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout", section })).toBe(
@@ -19,14 +19,21 @@ describe("assetHref — events kinds", () => {
   });
 
   it("encodes slugs and carries version and extra query on the Events tab link", () => {
+    expect(assetHref({ kind: "events", domainSlug: "pay ments", productSlug: "check out" })).toBe("/schemas/pay%20ments/check%20out?tab=events");
     expect(assetHref({ kind: "events", domainSlug: "pay ments", productSlug: "check out", section: "messages" })).toBe(
       "/schemas/pay%20ments/check%20out?tab=events&section=messages"
     );
-    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout", section: "specs" }, { version: "2.0" })).toBe(
-      "/schemas/payments/checkout?tab=events&section=specs&version=2.0"
+    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" }, { version: "2.0" })).toBe(
+      "/schemas/payments/checkout?tab=events&version=2.0"
     );
-    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" }, { query: { section: "channels" } })).toBe(
-      "/schemas/payments/checkout?tab=events&section=channels"
+    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" }, { query: { created: "1" } })).toBe(
+      "/schemas/payments/checkout?tab=events&created=1"
+    );
+  });
+
+  it("does not change the list href when event-page options are passed", () => {
+    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" }, { tab: "docs", section: "channels", item: "orders" })).toBe(
+      "/schemas/payments/checkout?tab=events"
     );
   });
 

@@ -43,6 +43,12 @@ export const EntityMetadataSchema = z
       .optional(),
     custom: z.record(z.string(), z.unknown()).optional(),
     importedFrom: ImportedFromSchema.optional(),
+    /**
+     * The format the entity was imported in ("avro", "protobuf", "json-schema", "typespec", ...). Server-recorded by the import;
+     * an event message's "Auto" representation follows it (see `entitySourceFormat`). Declared here so a parse that strips unknown
+     * keys does not drop it.
+     */
+    sourceFormat: z.string().optional(),
     retentionPolicy: RetentionPolicySchema.optional(),
   })
   .partial();

@@ -19,6 +19,41 @@ export function normalizeEventsSection(raw: string | null | undefined): EventsSe
   return EVENTS_SECTIONS.includes(raw ?? "") ? (raw as EventsSection) : EVENT_SEGMENT.eventSpec;
 }
 
+/** URL segment of the self-contained Event page (`<product>/events/<id>`). */
+export const EVENT_PAGE_SEGMENT = "events";
+
+/** Tabs of the Event page. Slice 2 appends "source" | "versions" | "used-by". */
+export const EVENT_TABS = ["design", "docs"] as const;
+export type EventTab = (typeof EVENT_TABS)[number];
+const DEFAULT_EVENT_TAB: EventTab = "design";
+/**
+ * Tab names still found in bookmarks and old links: the old Event Spec page's tabs, and the slice-1 "preview" tab, which is
+ * the rendered documentation and is called "docs" now (the live code lives in the right-hand Detail Panel).
+ */
+const EVENT_TAB_ALIASES: ReadonlyMap<string, EventTab> = new Map<string, EventTab>([
+  ["editor", "design"],
+  ["preview", "docs"],
+  ["document", "docs"],
+  ["diagnostics", "docs"],
+]);
+
+/** The Event page tab named by `?tab=`: a known tab or an old alias; a missing or unknown value falls back to "design". */
+export function normalizeEventTab(value: string | null | undefined): EventTab {
+  if (typeof value !== "string") return DEFAULT_EVENT_TAB;
+  if ((EVENT_TABS as readonly string[]).includes(value)) return value as EventTab;
+  return EVENT_TAB_ALIASES.get(value) ?? DEFAULT_EVENT_TAB;
+}
+
+/** Sections of the Design tab's builder, in outline order. A value that is none of these (an old link) falls back to "metadata". */
+export const BUILDER_SECTIONS = ["metadata", "servers", "channels", "messages", "operations", "traits", "advanced"] as const;
+export type BuilderSection = (typeof BUILDER_SECTIONS)[number];
+const DEFAULT_BUILDER_SECTION: BuilderSection = "metadata";
+
+/** The builder section named by `?section=`; a missing or unknown value falls back to "metadata". */
+export function normalizeBuilderSection(value: string | null | undefined): BuilderSection {
+  return typeof value === "string" && (BUILDER_SECTIONS as readonly string[]).includes(value) ? (value as BuilderSection) : DEFAULT_BUILDER_SECTION;
+}
+
 export type AssetRef =
   | { kind: "enterprise" }
   | { kind: "domain"; domainSlug: string }
@@ -29,6 +64,7 @@ export type AssetRef =
   | { kind: "traits"; domainSlug: string | null; productSlug: string | null }
   | { kind: "trait"; id: string; domainSlug: string | null; productSlug: string | null }
   | { kind: "message" | "channel" | "eventSpec"; id: string; domainSlug: string; productSlug: string }
+  | { kind: "event"; id: string; domainSlug: string; productSlug: string }
   | { kind: "field"; entitySlug: string; fieldId: string; domainSlug: string | null; productSlug: string | null }
   | { kind: "events"; domainSlug: string; productSlug: string; section?: EventsSection }
   | { kind: "newEntity"; domainSlug: string | null; productSlug: string | null };
@@ -81,16 +117,41 @@ function path(ref: AssetRef): { path: string; query: Record<string, string> } {
     case "channel":
     case "eventSpec":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${EVENT_SEGMENT[ref.kind]}/${enc(ref.id)}`, query: {} };
+    case "event":
+      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${EVENT_PAGE_SEGMENT}/${enc(ref.id)}`, query: {} };
     case "events":
-      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "events", section: normalizeEventsSection(ref.section) } };
+      // The Events tab is one flat list, so the default link carries no `section`. An explicit one (the old message / channel /
+      // event spec pages still name theirs until that code is removed) is still honoured.
+      return {
+        path: levelBase(ref.domainSlug, ref.productSlug),
+        query: ref.section === undefined ? { tab: "events" } : { tab: "events", section: normalizeEventsSection(ref.section) },
+      };
     case "newEntity":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/new`, query: {} };
   }
 }
 
-export function assetHref(ref: AssetRef, opts: { version?: string; query?: Record<string, string> } = {}): string {
+export interface AssetHrefOptions {
+  version?: string;
+  query?: Record<string, string>;
+  /** `event` refs only (ignored for every other kind): the page tab, the builder section and the selected item key. A default or empty value is omitted. */
+  tab?: EventTab;
+  section?: BuilderSection;
+  item?: string;
+}
+
+/** The Event page's own params, in URL order; the default tab / section and an empty item add nothing. */
+function eventQuery(opts: AssetHrefOptions): Record<string, string> {
+  const query: Record<string, string> = {};
+  if (opts.tab && opts.tab !== DEFAULT_EVENT_TAB) query.tab = opts.tab;
+  if (opts.section && opts.section !== DEFAULT_BUILDER_SECTION) query.section = opts.section;
+  if (opts.item) query.item = opts.item;
+  return query;
+}
+
+export function assetHref(ref: AssetRef, opts: AssetHrefOptions = {}): string {
   const { path: p, query } = path(ref);
-  const qs = new URLSearchParams({ ...query, ...(opts.query ?? {}) });
+  const qs = new URLSearchParams({ ...query, ...(ref.kind === "event" ? eventQuery(opts) : {}), ...(opts.query ?? {}) });
   if (opts.version) qs.set("version", opts.version);
   const s = qs.toString();
   return s ? `${p}?${s}` : p;

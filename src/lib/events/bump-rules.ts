@@ -23,10 +23,10 @@ export function stableStringify(value: unknown): string {
 }
 
 const same = (a: unknown, b: unknown) => stableStringify(a) === stableStringify(b);
-const decide = (major: string[], minor: string[]): BumpDecision =>
+export const decide = (major: string[], minor: string[]): BumpDecision =>
   major.length > 0 ? { bump: "MAJOR", reasons: [...major, ...minor] } : { bump: "MINOR", reasons: minor };
 
-function comparePin(role: string, prev: ResolvedPin | null, next: ResolvedPin | null, major: string[], minor: string[]): void {
+export function comparePin(role: string, prev: ResolvedPin | null, next: ResolvedPin | null, major: string[], minor: string[]): void {
   if (!prev && !next) return;
   if (prev && !next) {
     major.push(`${role} removed (was ${prev.entityName} v${prev.label})`);
@@ -317,7 +317,7 @@ const pinText = (pin: BumpTraitHeadersPin) => `${pin.entityName ?? pin.entityId}
 const versionText = (label: string | null) => (label ? `v${label}` : "(unpinned)");
 
 /** R78: a trait's headers pin is part of every message that carries the trait, so moving it to another major is breaking. */
-function compareTraitHeaders(trait: string, prev: BumpTraitHeadersPin | null, next: BumpTraitHeadersPin | null, major: string[], minor: string[]): void {
+export function compareTraitHeaders(trait: string, prev: BumpTraitHeadersPin | null, next: BumpTraitHeadersPin | null, major: string[], minor: string[]): void {
   if (!prev && !next) return;
   if (!prev && next) {
     major.push(`Trait ${trait}: headers entity added (${pinText(next)})`);

@@ -1,0 +1,104 @@
+{
+  "productSlug": "checkout",
+  "info": {
+    "title": "checkout-service",
+    "version": "2.0"
+  },
+  "servers": [
+    {
+      "key": "kafka-prod",
+      "protocol": "kafka",
+      "host": "kafka-prod.internal:9092"
+    }
+  ],
+  "operations": [
+    {
+      "key": "publishOrderCreated",
+      "action": "send",
+      "channelRef": "orders",
+      "messageRefs": [
+        "OrderCreated"
+      ],
+      "traitRefs": []
+    }
+  ],
+  "channels": [
+    {
+      "id": "orders",
+      "name": "orders",
+      "productSlug": "checkout",
+      "address": "payments.orders.v1",
+      "protocol": "kafka",
+      "profile": {
+        "format": "avro"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "id": "OrderCreated",
+      "name": "OrderCreated",
+      "productSlug": "checkout",
+      "traitRefs": [
+        "CloudEvents"
+      ],
+      "payloads": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ],
+      "keys": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedKey",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "traits": [
+    {
+      "id": "CloudEvents",
+      "name": "CloudEvents",
+      "kind": "MESSAGE",
+      "ownerSlug": "acme",
+      "spec": {
+        "summary": "CloudEvents envelope headers"
+      },
+      "headers": {
+        "format": "json-schema",
+        "dialect": "draft-07",
+        "schema": {
+          "title": "CloudEventsHeaders",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "components": {}
+}

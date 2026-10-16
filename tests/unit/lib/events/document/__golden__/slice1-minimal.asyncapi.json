@@ -1,0 +1,94 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "checkout-service",
+    "version": "2.0"
+  },
+  "servers": {
+    "kafka-prod": {
+      "host": "kafka-prod.internal:9092",
+      "protocol": "kafka"
+    }
+  },
+  "channels": {
+    "orders": {
+      "address": "payments.orders.v1",
+      "messages": {
+        "OrderCreated": {
+          "$ref": "#/components/messages/OrderCreated"
+        }
+      }
+    }
+  },
+  "operations": {
+    "publishOrderCreated": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/orders"
+      },
+      "messages": [
+        {
+          "$ref": "#/channels/orders/messages/OrderCreated"
+        }
+      ]
+    }
+  },
+  "components": {
+    "messages": {
+      "OrderCreated": {
+        "contentType": "avro/binary",
+        "traits": [
+          {
+            "$ref": "#/components/messageTraits/CloudEvents"
+          }
+        ],
+        "payload": {
+          "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "bindings": {
+          "kafka": {
+            "key": {
+              "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+              "schema": {
+                "type": "record",
+                "name": "OrderCreatedKey",
+                "namespace": "acme.test",
+                "fields": [
+                  {
+                    "name": "id",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "messageTraits": {
+      "CloudEvents": {
+        "headers": {
+          "title": "CloudEventsHeaders",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          }
+        },
+        "summary": "CloudEvents envelope headers"
+      }
+    }
+  }
+}

@@ -30,6 +30,12 @@ describe("assetHref", () => {
     expect(assetHref({ kind: "apis", domainSlug: "payments", productSlug: null })).toBe("/schemas/payments?tab=apis");
     expect(assetHref({ kind: "apis", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout?tab=apis");
   });
+  it("events list tab at product has no section param", () => {
+    expect(assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout?tab=events");
+  });
+  it("event page", () => {
+    expect(assetHref({ kind: "event", id: "ev1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/events/ev1");
+  });
   it("event kinds", () => {
     expect(assetHref({ kind: "eventSpec", id: "s1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/specs/s1");
     expect(assetHref({ kind: "message", id: "m1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/messages/m1");

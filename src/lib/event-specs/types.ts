@@ -27,13 +27,27 @@ export type SchemaArtifact = {
 
 // ── Spec §6.1 `EventSpecDocument` — the stored draft shape (IDs, not objects) ──
 
+/** AsyncAPI External Documentation Object. */
+export type AsyncApiExternalDocs = { url: string; description?: string };
+/** AsyncAPI Tag Object. */
+export type AsyncApiTag = { name: string; description?: string; externalDocs?: AsyncApiExternalDocs };
+/** AsyncAPI Contact Object. */
+export type AsyncApiContact = { name?: string; url?: string; email?: string };
+/** AsyncAPI License Object. */
+export type AsyncApiLicense = { name: string; url?: string };
+/** AsyncAPI Server Variable Object. */
+export type AsyncApiServerVariable = { enum?: string[]; default?: string; description?: string; examples?: string[] };
+/** AsyncAPI Operation Reply Address Object (`location` is a runtime expression such as `$message.header#/replyTo`). */
+export type AsyncApiReplyAddress = { location: string; description?: string };
+
 export type EventSpecInfo = {
   title: string;
   description?: string;
-  contact?: JsonObject;
-  license?: JsonObject;
-  tags?: JsonObject[];
-  externalDocs?: JsonObject;
+  termsOfService?: string;
+  contact?: AsyncApiContact;
+  license?: AsyncApiLicense;
+  tags?: AsyncApiTag[];
+  externalDocs?: AsyncApiExternalDocs;
 };
 
 export type EventSpecServer = {
@@ -43,7 +57,16 @@ export type EventSpecServer = {
   pathname?: string;
   protocolVersion?: string;
   description?: string;
+  /** Shorthand kept from v1: emitted as `externalDocs: { url }` unless `externalDocs` is set. */
   externalRef?: string;
+  title?: string;
+  summary?: string;
+  variables?: Record<string, AsyncApiServerVariable>;
+  /** Keys of `components.securitySchemes`; emitted as `$ref`s. */
+  security?: string[];
+  tags?: AsyncApiTag[];
+  externalDocs?: AsyncApiExternalDocs;
+  bindings?: JsonObject;
 };
 
 export type OperationAction = "send" | "receive";
@@ -94,6 +117,18 @@ export type ResolvedChannel = {
   bindings?: JsonObject;
   tags?: JsonObject[];
   externalDocs?: JsonObject;
+  /** Keys of `servers` this channel is available on; emitted as `servers: [$ref…]` (see `ResolveDocumentInput.emitChannelServers`). */
+  serverRefs?: string[];
+  /**
+   * The messages this channel allows (ResolvedMessage ids), emitted under `channels.<c>.messages` in addition to the messages
+   * operations put on it. Set only when the spec is resolved with `emitAll` (see `ResolvedEventSpec.emitAll`).
+   */
+  messageRefs?: string[];
+  /**
+   * Per message id: the profile that message renders as on THIS channel, where it differs from what the assembler would pick
+   * (`message.profile ?? channel.profile`). Only for the rare mix of an explicit channel format and an Auto message.
+   */
+  messageProfiles?: Record<string, FormatProfile>;
 };
 
 export type ResolvedMessage = {
@@ -101,6 +136,8 @@ export type ResolvedMessage = {
   id: string;
   name: string;
   productSlug: string;
+  /** The AsyncAPI `name` property (a machine-friendly name); wins over the one the assembler derives when it disambiguates. */
+  messageName?: string;
   title?: string;
   summary?: string;
   description?: string;
@@ -108,6 +145,7 @@ export type ResolvedMessage = {
   correlationId?: JsonObject;
   tags?: JsonObject[];
   externalDocs?: JsonObject;
+  deprecated?: boolean;
   bindings?: JsonObject;
   examples?: JsonObject[];
   /** ResolvedTrait ids (kind MESSAGE), authored order. */
@@ -120,6 +158,12 @@ export type ResolvedMessage = {
   keys?: SchemaArtifact[];
   /** Draft preview of an unpublished Message (spec §7.2 step 2). */
   unpublished?: boolean;
+  /**
+   * The profile this message is emitted in, on every channel that has no more specific one (`ResolvedChannel.messageProfiles`):
+   * it picks the payload and Kafka-key artifacts instead of the channel's profile. Set when the message chose a representation or
+   * follows Auto (its entity's format, the protocol default); absent = the channel's profile decides, as before.
+   */
+  profile?: FormatProfile;
 };
 
 export type TraitKind = "MESSAGE" | "OPERATION";
@@ -145,10 +189,15 @@ export type ResolvedOperation = {
   messageRefs: string[];
   /** ResolvedTrait ids (kind OPERATION), authored order. */
   traitRefs: string[];
+  title?: string;
   summary?: string;
   description?: string;
+  /** Keys of `components.securitySchemes`; emitted as `$ref`s. */
+  security?: string[];
+  tags?: AsyncApiTag[];
+  externalDocs?: AsyncApiExternalDocs;
   bindings?: JsonObject;
-  reply?: { channelRef?: string; messageRefs?: string[] };
+  reply?: { address?: AsyncApiReplyAddress; channelRef?: string; messageRefs?: string[] };
 };
 
 export type ResolvedEventSpec = {
@@ -163,6 +212,12 @@ export type ResolvedEventSpec = {
   messages: ResolvedMessage[];
   traits: ResolvedTrait[];
   components: EventSpecLocalComponents;
+  /**
+   * Emit every channel, message and trait this spec carries, not only those operations reach: channels without an operation,
+   * the messages a channel allows (`ResolvedChannel.messageRefs`), messages no channel carries, and unused traits.
+   * Absent = emit what operations use (what published versions have always done).
+   */
+  emitAll?: boolean;
 };
 
 // ── Diagnostics and adapter results ─────────────────────────────────────────

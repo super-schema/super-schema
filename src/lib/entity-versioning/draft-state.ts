@@ -5,7 +5,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
 /**
  * Entity metadata keys that never dirty the draft: system bookkeeping
  * (per-target emitted schemas, type overrides, legacy 2-22 version data,
- * Story 12.7 migration flags, the `sourceStale` marker) and lifecycle state
+ * Story 12.7 migration flags, the `sourceStale` marker, the `sourceFormat` import provenance) and lifecycle state
  * (deprecation travels with a status transition). Every other key — tags,
  * owner, relationships, retentionPolicy, custom, and any key added later — is
  * a draft change.
@@ -18,6 +18,7 @@ export const DRAFT_NEUTRAL_METADATA_KEYS: ReadonlySet<string> = new Set([
   "typespecMigration",
   "deprecation",
   "sourceStale",
+  "sourceFormat",
 ]);
 
 function asRecord(value: unknown): Record<string, unknown> {

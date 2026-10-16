@@ -27,11 +27,8 @@ vi.mock("@/app/(dashboard)/schemas/actions", () => ({
   deleteDomainAction: deleteDomainMock,
 }));
 
-// The Events / Traits tabs import server-action modules that pull in NextAuth.
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/channel-actions", () => ({ createChannelAction: vi.fn() }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-actions", () => ({ createMessageAction: vi.fn() }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions", () => ({ createEventSpecAction: vi.fn() }));
-vi.mock("@/app/(dashboard)/schemas/trait-actions", () => ({ createTraitAction: vi.fn() }));
+// The New Event dialog imports a server-action module that pulls in NextAuth.
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ createEventAction: vi.fn() }));
 
 vi.mock("@/components/custom/EntityCard", () => ({
   EntityCard: ({ name, onDelete }: { name: string; onDelete?: (id: string, name: string) => void }) => (

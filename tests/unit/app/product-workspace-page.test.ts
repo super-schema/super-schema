@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  loadProductEventsData: vi.fn(),
+  loadEventsList: vi.fn(),
   getActiveTenantId: vi.fn(),
   domainFindFirst: vi.fn(),
   entityFindFirst: vi.fn(),
@@ -28,10 +28,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId }));
-vi.mock("@/features/events/workspace/load-events-tab-data", () => ({
-  loadProductEventsData: mocks.loadProductEventsData,
-  loadLevelTraits: vi.fn(async () => ({ own: [], inherited: [] })),
-}));
+vi.mock("@/features/events/event-page/load-events-list", () => ({ loadEventsList: mocks.loadEventsList }));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
     throw new Error("not found");
@@ -68,14 +65,9 @@ function entityRow(id: string, fields: number) {
   };
 }
 
-const EVENTS_DATA = {
-  events: { eventSpecs: [], messages: [], channels: [], payloadEntities: [] },
-  traits: { own: [], inherited: [] },
-};
-
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.loadProductEventsData.mockResolvedValue(EVENTS_DATA);
+  mocks.loadEventsList.mockResolvedValue([]);
   mocks.getActiveTenantId.mockResolvedValue("tenant-1");
   mocks.domainFindFirst.mockResolvedValue(DOMAIN);
   mocks.empty.mockResolvedValue([]);
@@ -134,33 +126,75 @@ describe("ProductWorkspacePage", () => {
     });
   });
 
-  it("loads the events and traits tab data for the resolved domain and product, and passes it on", async () => {
-    const events = {
-      eventSpecs: [], messages: [], payloadEntities: [],
-      channels: [{ id: "c1", name: "orders", summary: "", updatedAt: "", address: null, protocol: "kafka", format: "avro", href: "/schemas/payments/checkout/channels/c1" }],
-    };
-    const traits = { own: [], inherited: [{ label: "From Enterprise", href: "/schemas/enterprise?tab=traits", traits: [] }] };
-    mocks.loadProductEventsData.mockResolvedValue({ events, traits });
+  it("loads the events list for the resolved tenant, product, domain slug and product slug, and passes it on", async () => {
+    const events = [
+      {
+        id: "ev1", name: "orders", specType: "asyncapi@3.0", versionLabel: null, hasUnpublishedChanges: true,
+        channels: 1, messages: 2, operations: 1, href: "/schemas/payments/checkout/events/ev1",
+      },
+    ];
+    mocks.loadEventsList.mockResolvedValue(events);
 
     const element = await ProductWorkspacePage({ params });
 
-    expect(mocks.loadProductEventsData).toHaveBeenCalledTimes(1);
-    expect(mocks.loadProductEventsData).toHaveBeenCalledWith({
+    expect(mocks.loadEventsList).toHaveBeenCalledTimes(1);
+    expect(mocks.loadEventsList).toHaveBeenCalledWith({
       tenantId: "tenant-1",
-      domainId: "dom-1",
       productId: "prod-1",
       domainSlug: "payments",
       productSlug: "checkout",
     });
     expect(element.props.events).toBe(events);
-    expect(element.props.traits).toBe(traits);
+  });
+
+  it("passes the product's contacts to the workspace header", async () => {
+    mocks.domainFindFirst.mockResolvedValue({
+      ...DOMAIN,
+      products: [
+        {
+          id: "prod-1",
+          name: "Checkout",
+          slug: "checkout",
+          engineeringLead: '"Doe, Jane" <j@x.com>',
+          manager: "mo@acme.com",
+          teamEmails: ["Platform <platform@acme.com>"],
+        },
+      ],
+    });
+
+    const element = await ProductWorkspacePage({ params });
+
+    expect(element.props.productContacts).toEqual({
+      engineeringLead: '"Doe, Jane" <j@x.com>',
+      manager: "mo@acme.com",
+      teamEmails: ["Platform <platform@acme.com>"],
+    });
+  });
+
+  it("passes empty contacts for a product that has none (the header shows nothing)", async () => {
+    // The default fixture product has no contact columns at all (a row read before the migration, or a bare mock).
+    const element = await ProductWorkspacePage({ params });
+
+    expect(element.props.productContacts).toEqual({ engineeringLead: null, manager: null, teamEmails: [] });
+  });
+
+  it("passes an empty list for a product without events (the list shows its empty state)", async () => {
+    const element = await ProductWorkspacePage({ params });
+    expect(element.props.events).toEqual([]);
+  });
+
+  it("no longer loads or passes the old messages / channels / specs / traits tab data", async () => {
+    const element = await ProductWorkspacePage({ params });
+    expect(element.props.traits).toBeUndefined();
+    expect(element.props.events).not.toHaveProperty("eventSpecs");
+    expect(element.props.events).not.toHaveProperty("payloadEntities");
   });
 
   it("does not load events data for a legacy entity redirect or a 404", async () => {
     mocks.domainFindFirst.mockResolvedValue({ ...DOMAIN, products: [] });
     mocks.entityFindFirst.mockResolvedValue(null);
     await expect(ProductWorkspacePage({ params })).rejects.toThrow("not found");
-    expect(mocks.loadProductEventsData).not.toHaveBeenCalled();
+    expect(mocks.loadEventsList).not.toHaveBeenCalled();
   });
 
   it("falls back to an unscoped domain lookup when the slug is outside the active tenant", async () => {

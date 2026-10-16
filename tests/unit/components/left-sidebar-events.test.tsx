@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
+import { assetHref } from "@/lib/navigation/asset-href";
 
 const push = vi.fn();
 const location = vi.hoisted(() => ({ pathname: "/schemas/payments", search: "" }));
@@ -21,12 +22,15 @@ const tree = {
       counts: { dataTypes: 0, apis: 0, traits: 1 },
       products: [
         {
+          // Events: 2. The product-level traits / messages / channels counts are the old model's and must not surface any leaf.
           id: "p1", name: "Checkout", slug: "checkout", isSystem: false,
-          counts: { ...zeroCounts, entities: 1, traits: 1, messages: 1, eventSpecs: 2 },
+          counts: { ...zeroCounts, entities: 1, traits: 1, messages: 1, channels: 1, eventSpecs: 2 },
           entities: [order],
         },
         { id: "p2", name: "Ledger", slug: "ledger", isSystem: false, counts: { ...zeroCounts }, entities: [] },
-        { id: "p3", name: "Billing", slug: "billing", isSystem: false, counts: { ...zeroCounts, channels: 2 }, entities: [] },
+        // Only old-model counts, no events: no Events leaf.
+        { id: "p3", name: "Billing", slug: "billing", isSystem: false, counts: { ...zeroCounts, channels: 2, messages: 1, traits: 2 }, entities: [] },
+        { id: "p4", name: "Shipping", slug: "shipping", isSystem: false, counts: { ...zeroCounts, eventSpecs: 1 }, entities: [] },
       ],
     },
   ],
@@ -44,8 +48,11 @@ function visit(pathname: string, search = "") {
   render(<LeftSidebar {...props} />);
 }
 const active = (testId: string) => screen.getByTestId(testId).getAttribute("data-active");
+const eventsList = (productSlug: string) => assetHref({ kind: "events", domainSlug: "payments", productSlug });
+const eventPage = (productSlug: string, id: string) => assetHref({ kind: "event", id, domainSlug: "payments", productSlug });
+const OLD_PRODUCT_LEAVES = ["event-specs", "messages", "channels", "traits"];
 
-describe("LeftSidebar — events leaves (spec §4.6)", () => {
+describe("LeftSidebar: one Events leaf per product", () => {
   beforeEach(() => {
     push.mockReset();
     location.pathname = "/schemas/payments";
@@ -53,97 +60,111 @@ describe("LeftSidebar — events leaves (spec §4.6)", () => {
   });
   afterEach(() => cleanup());
 
-  it("shows non-empty Event Specs / Messages / Traits leaves and hides empty ones", () => {
+  it("shows an Events leaf, with the event count, for products that have events and hides it for those that do not", () => {
     render(<LeftSidebar {...props} />);
-    expect(screen.queryByTestId("product-p1-channels")).toBeNull();
-    expect(screen.queryByTestId("product-p2-event-specs")).toBeNull();
-    expect(screen.queryByTestId("product-p2-traits")).toBeNull();
-    fireEvent.click(screen.getByTestId("product-p1-event-specs"));
-    expect(push).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=events&section=specs");
-    fireEvent.click(screen.getByTestId("product-p1-messages"));
-    expect(push).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=events&section=messages");
-    fireEvent.click(screen.getByTestId("product-p1-traits"));
-    expect(push).toHaveBeenLastCalledWith("/schemas/payments/checkout?tab=traits");
+    const leaf = screen.getByTestId("product-p1-events");
+    expect(leaf.textContent).toContain("Events");
+    expect(within(leaf).getByText("2")).toBeDefined();
+    expect(screen.getByTestId("product-p4-events").textContent).toContain("Events");
+    expect(screen.queryByTestId("product-p2-events")).toBeNull();
+    expect(screen.queryByTestId("product-p3-events")).toBeNull();
   });
 
-  it("shows the Channels leaf when the product has channels and opens the channels section", () => {
+  it("opens the product's Events tab through assetHref", () => {
     render(<LeftSidebar {...props} />);
-    expect(screen.queryByTestId("product-p3-event-specs")).toBeNull();
-    expect(screen.queryByTestId("product-p3-messages")).toBeNull();
-    fireEvent.click(screen.getByTestId("product-p3-channels"));
-    expect(push).toHaveBeenLastCalledWith("/schemas/payments/billing?tab=events&section=channels");
+    fireEvent.click(screen.getByTestId("product-p1-events"));
+    expect(push).toHaveBeenLastCalledWith(eventsList("checkout"));
+    expect(push).toHaveBeenLastCalledWith(expect.stringContaining("/schemas/payments/checkout?tab=events"));
+    fireEvent.click(screen.getByTestId("product-p4-events"));
+    expect(push).toHaveBeenLastCalledWith(eventsList("shipping"));
   });
 
-  it("shows Traits under the domain and the Enterprise", () => {
+  it("no longer has Event Specs, Messages, Channels or Traits leaves under any product", () => {
+    render(<LeftSidebar {...props} />);
+    for (const id of ["p1", "p2", "p3", "p4"]) {
+      for (const old of OLD_PRODUCT_LEAVES) expect(screen.queryByTestId(`product-${id}-${old}`)).toBeNull();
+    }
+    expect(screen.queryByText("Event Specs")).toBeNull();
+    expect(screen.queryByText("Messages")).toBeNull();
+    expect(screen.queryByText("Channels")).toBeNull();
+  });
+
+  it("keeps the Traits leaves of the Domain and the Enterprise, which own the trait library", () => {
     render(<LeftSidebar {...props} />);
     fireEvent.click(screen.getByTestId("domain-d1-traits"));
+    expect(push).toHaveBeenLastCalledWith(assetHref({ kind: "traits", domainSlug: "payments", productSlug: null }));
     expect(push).toHaveBeenLastCalledWith("/schemas/payments?tab=traits");
     fireEvent.click(screen.getByTestId("enterprise-traits"));
     expect(push).toHaveBeenLastCalledWith("/schemas/enterprise?tab=traits");
   });
+});
 
-  it("highlights the leaf of the open detail page and of the selected section", () => {
-    location.pathname = "/schemas/payments/checkout/messages/m1";
-    render(<LeftSidebar {...props} />);
-    expect(screen.getByTestId("product-p1-messages").getAttribute("data-active")).toBe("true");
-    expect(screen.getByTestId("product-p1-event-specs").getAttribute("data-active")).toBe("false");
-    cleanup();
-    location.pathname = "/schemas/payments/checkout";
-    location.search = "tab=events&section=specs";
-    render(<LeftSidebar {...props} />);
-    expect(screen.getByTestId("product-p1-event-specs").getAttribute("data-active")).toBe("true");
-  });
+describe("LeftSidebar: Events leaf highlighting", () => {
+  afterEach(() => cleanup());
 
-  it("highlights the Event Specs leaf on a spec detail page and the Channels leaf on a channel detail page", () => {
-    visit("/schemas/payments/checkout/specs/s1", "version=2.0");
-    expect(active("product-p1-event-specs")).toBe("true");
-    expect(active("product-p1-messages")).toBe("false");
-    expect(active("product-p1-traits")).toBe("false");
-    visit("/schemas/payments/billing/channels/c1");
-    expect(active("product-p3-channels")).toBe("true");
-  });
-
-  it("highlights the selected section of the product Events tab, defaulting an unknown or missing section to specs", () => {
-    visit("/schemas/payments/billing", "tab=events&section=channels");
-    expect(active("product-p3-channels")).toBe("true");
-    visit("/schemas/payments/checkout", "tab=events&section=messages");
-    expect(active("product-p1-messages")).toBe("true");
-    expect(active("product-p1-event-specs")).toBe("false");
+  it("is highlighted on the product's Events tab, whatever the old section param says", () => {
     visit("/schemas/payments/checkout", "tab=events");
-    expect(active("product-p1-event-specs")).toBe("true");
+    expect(active("product-p1-events")).toBe("true");
+    visit("/schemas/payments/checkout", "tab=events&section=messages");
+    expect(active("product-p1-events")).toBe("true");
     visit("/schemas/payments/checkout", "tab=events&section=bogus");
-    expect(active("product-p1-event-specs")).toBe("true");
-    expect(active("product-p1-messages")).toBe("false");
-    // The Events tab selection never lights a leaf of another tab.
-    visit("/schemas/payments/checkout", "tab=traits");
-    expect(active("product-p1-traits")).toBe("true");
-    expect(active("product-p1-event-specs")).toBe("false");
+    expect(active("product-p1-events")).toBe("true");
   });
 
-  it("highlights the Traits leaf of the level whose trait detail page is open", () => {
-    visit("/schemas/payments/checkout/traits/t1");
-    expect(active("product-p1-traits")).toBe("true");
-    expect(active("domain-d1-traits")).toBe("false");
+  it("is highlighted on an event page, with or without the page's own query", () => {
+    visit(eventPage("checkout", "ev1"));
+    expect(active("product-p1-events")).toBe("true");
+    visit(eventPage("checkout", "ev1"), "tab=preview&section=channels&item=orders");
+    expect(active("product-p1-events")).toBe("true");
+    visit(eventPage("shipping", "ev2"));
+    expect(active("product-p4-events")).toBe("true");
+    expect(active("product-p1-events")).toBe("false");
+  });
+
+  it("is not highlighted on another tab of the product or on another product's Events tab", () => {
+    visit("/schemas/payments/checkout", "tab=apis");
+    expect(active("product-p1-events")).toBe("false");
+    visit("/schemas/payments/checkout");
+    expect(active("product-p1-events")).toBe("false");
+    // A product's own retired tab does not light the Events leaf either.
+    visit("/schemas/payments/checkout", "tab=traits");
+    expect(active("product-p1-events")).toBe("false");
+    visit("/schemas/payments/shipping", "tab=events");
+    expect(active("product-p1-events")).toBe("false");
+    expect(active("product-p4-events")).toBe("true");
+  });
+
+  it("highlights the Traits leaf of the Domain and the Enterprise on their trait pages, and no product leaf", () => {
     visit("/schemas/payments/traits/t1");
     expect(active("domain-d1-traits")).toBe("true");
-    expect(active("product-p1-traits")).toBe("false");
+    expect(active("product-p1-events")).toBe("false");
     visit("/schemas/enterprise/traits/t1");
     expect(active("enterprise-traits")).toBe("true");
     visit("/schemas/payments", "tab=traits");
     expect(active("domain-d1-traits")).toBe("true");
   });
+});
 
-  it("does not highlight the Entities row on events or trait detail pages, but does on an entity page", () => {
-    visit("/schemas/payments/checkout/messages/m1");
-    expect(active("product-p1-entities")).toBe("false");
-    visit("/schemas/payments/checkout/specs/s1");
-    expect(active("product-p1-entities")).toBe("false");
-    visit("/schemas/payments/checkout/traits/t1");
+describe("LeftSidebar: the Entities row", () => {
+  afterEach(() => cleanup());
+
+  it("is not highlighted on an event page, but is on an entity page", () => {
+    visit(eventPage("checkout", "ev1"));
     expect(active("product-p1-entities")).toBe("false");
     visit("/schemas/payments/checkout/order");
     expect(active("product-p1-entities")).toBe("true");
     expect(active("entity-e1")).toBe("true");
+    expect(active("product-p1-events")).toBe("false");
+  });
 
+  it("is not highlighted on the pages the old routes redirect from (specs, messages, channels, traits)", () => {
+    for (const path of ["/schemas/payments/checkout/specs/s1", "/schemas/payments/checkout/messages/m1", "/schemas/payments/checkout/channels/c1", "/schemas/payments/checkout/traits/t1"]) {
+      visit(path);
+      expect(active("product-p1-entities")).toBe("false");
+    }
+  });
+
+  it("keeps the Enterprise rows: entities row on entity pages only, not on trait pages", () => {
     visit("/schemas/enterprise/traits/t1");
     expect(active("enterprise-entities")).toBe("false");
     visit("/schemas/enterprise/entities/party");

@@ -169,6 +169,10 @@ model Product {
   description String       @default("")
   tierId      String?
   ownerTeam   String?
+  // Contacts, stored as canonical mailbox text: "jane@acme.com" or "Jane Doe <jane@acme.com>" (see src/lib/mailbox.ts).
+  engineeringLead String?
+  manager         String?
+  teamEmails      String[] @default([])
   isSystem    Boolean      @default(false)
   domain      Domain       @relation(fields: [domainId], references: [id], onDelete: Cascade)
   tier        ProductTier? @relation(fields: [tierId], references: [id])
@@ -383,6 +387,7 @@ enum SchemaReferenceRole {
 enum SchemaReferenceToKind {
   ENTITY_VERSION
   MESSAGE_VERSION
+  EVENT_SPEC_VERSION
 }
 
 /// One edge table for every pinned link (spec §6.1). Polymorphic — no FKs.
@@ -607,6 +612,9 @@ model EventSpecVersion {
   /// FrozenTrait[] frozen at publish.
   frozenTraits        Json
   messageVersionIds   String[]
+  /// ResolvedEventSpec (artifacts included) stored at publish so external refs reuse it without re-rendering.
+  /// NULL for versions published before document v2. Immutable like the rest of the row.
+  resolvedSpec        Json?
   changeKind          EntityVersionChangeKind
   /// { reasons: string[]; diagnostics: Diagnostic[] } (warnings / info at publish).
   compatReport        Json                    @default("{}")

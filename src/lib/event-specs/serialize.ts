@@ -9,7 +9,7 @@ import type { JsonObject } from "./types";
 
 /** Top-level / `info` key order of an assembled document (assemble.ts §8) — keep in sync; a test pins it. */
 export const TOP_LEVEL_KEY_ORDER = ["asyncapi", "info", "servers", "defaultContentType", "channels", "operations", "components"] as const;
-export const INFO_KEY_ORDER = ["title", "version", "description", "contact", "license", "tags", "externalDocs"] as const;
+export const INFO_KEY_ORDER = ["title", "version", "description", "termsOfService", "contact", "license", "tags", "externalDocs"] as const;
 
 function withKeyOrder(object: JsonObject, order: readonly string[]): JsonObject {
   const out: JsonObject = {};

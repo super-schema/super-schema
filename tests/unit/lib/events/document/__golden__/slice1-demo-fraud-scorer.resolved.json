@@ -1,0 +1,158 @@
+{
+  "productSlug": "checkout",
+  "info": {
+    "title": "fraud-scorer",
+    "description": "Scores every order for fraud risk.",
+    "version": "2.0"
+  },
+  "servers": [
+    {
+      "key": "kafka-prod",
+      "protocol": "kafka",
+      "host": "kafka-prod.internal:9092"
+    },
+    {
+      "key": "pubsub-prod",
+      "protocol": "googlepubsub",
+      "host": "pubsub.googleapis.com"
+    }
+  ],
+  "operations": [
+    {
+      "key": "receiveOrderCreated",
+      "action": "receive",
+      "channelRef": "orders",
+      "messageRefs": [
+        "OrderCreated"
+      ],
+      "traitRefs": [],
+      "summary": "Consume new orders"
+    },
+    {
+      "key": "publishFraudScored",
+      "action": "send",
+      "channelRef": "fraud-scores",
+      "messageRefs": [
+        "FraudScored"
+      ],
+      "traitRefs": [],
+      "summary": "Publish the score"
+    }
+  ],
+  "channels": [
+    {
+      "id": "orders",
+      "name": "orders",
+      "productSlug": "checkout",
+      "address": "payments.orders.v1",
+      "protocol": "kafka",
+      "profile": {
+        "format": "avro"
+      },
+      "title": "Orders (from Checkout)"
+    },
+    {
+      "id": "fraud-scores",
+      "name": "fraud-scores",
+      "productSlug": "checkout",
+      "address": "fraud-scores",
+      "protocol": "googlepubsub",
+      "profile": {
+        "format": "json-schema",
+        "dialect": "draft-07"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "id": "OrderCreated",
+      "name": "OrderCreated",
+      "productSlug": "checkout",
+      "title": "Order created",
+      "contentType": "avro/binary",
+      "traitRefs": [
+        "CloudEvents"
+      ],
+      "payloads": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ],
+      "keys": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedKey",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "FraudScored",
+      "name": "FraudScored",
+      "productSlug": "checkout",
+      "title": "Fraud scored",
+      "contentType": "application/json",
+      "traitRefs": [],
+      "payloads": [
+        {
+          "format": "json-schema",
+          "dialect": "draft-07",
+          "schema": {
+            "title": "FraudScoredPayload",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "traits": [
+    {
+      "id": "CloudEvents",
+      "name": "CloudEvents",
+      "kind": "MESSAGE",
+      "ownerSlug": "acme",
+      "spec": {
+        "summary": "CloudEvents envelope headers"
+      },
+      "headers": {
+        "format": "json-schema",
+        "dialect": "draft-07",
+        "schema": {
+          "title": "CloudEventsHeaders",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "components": {}
+}

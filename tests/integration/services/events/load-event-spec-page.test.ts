@@ -118,7 +118,8 @@ describe("loadEventSpecPage — this product's spec", () => {
     expect(data!.crumbs[3].href).toBe(`/schemas/${own.domain.slug}/${own.product.slug}?tab=events&section=specs`);
     expect(data!.channelOptions.map((c) => c.id)).toContain(ownChannel.id);
     expect(data!.messageOptions).toContainEqual(expect.objectContaining({ id: ownDraft.id, draft: true, own: true }));
-    expect(data!.operationTraits.map((t) => t.id)).toEqual([operationTrait.id]);
+    // Other visible tenant-level traits (e.g. demo data in the shared dev DB) are legitimate picker entries; the next test pins exclusion.
+    expect(data!.operationTraits.map((t) => t.id)).toContain(operationTrait.id);
   });
 
   it("never offers another tenant's channels, messages or traits to the pickers", async () => {

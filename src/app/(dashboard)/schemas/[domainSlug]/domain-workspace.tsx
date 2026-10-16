@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useSyncExternalStore, type KeyboardEvent } from "react";
+import { useState, useMemo, useEffect, useSyncExternalStore, type KeyboardEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -12,7 +12,6 @@ import {
   Hash,
   Globe,
   Radio,
-  Puzzle,
   Trash2,
   Tag,
   FileText,
@@ -42,29 +41,27 @@ import { deleteDomainAction } from "../actions";
 import { CreateDropdown } from "./components/CreateDropdown";
 import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
 import { DomainApisTab, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
-import { EventsTab } from "@/features/events/workspace/EventsTab";
-import { TraitsTab } from "@/features/events/workspace/TraitsTab";
-import {
-  EMPTY_EVENTS_TAB,
-  EMPTY_TRAITS_TAB,
-  type EventsCreateIntent,
-  type EventsTabData,
-  type TraitsTabData,
-} from "@/features/events/workspace/types";
-import { assetHref, normalizeEventsSection, type EventsSection } from "@/lib/navigation/asset-href";
+import { ProductContacts, type ProductContactsValue } from "./components/ProductContacts";
+import { EventsList } from "@/features/events/workspace/EventsList";
+import { NewEventDialog } from "@/features/events/workspace/NewEventDialog";
+import type { EventListItem } from "@/features/events/event-page/load-events-list";
+import { assetHref } from "@/lib/navigation/asset-href";
 import { formatDateOnly } from "@/lib/date-format";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { DomainDeletionImpact } from "@/types/domain-deletion";
 
-export type DomainTab = "entities" | "data-types" | "apis" | "events" | "traits";
+export type DomainTab = "entities" | "data-types" | "apis" | "events";
 
 /**
  * Normalize the `?tab=` query value to a workspace tab. The legacy `types`
- * value is aliased to `data-types`; anything unknown falls back to `entities`.
+ * value is aliased to `data-types`, and the retired product `traits` tab to
+ * `events` (traits now live inside each event); anything unknown falls back
+ * to `entities`.
  */
 export function normalizeWorkspaceTab(raw: string | null): DomainTab {
   if (raw === "types") return "data-types";
-  if (raw === "data-types" || raw === "apis" || raw === "entities" || raw === "events" || raw === "traits") return raw;
+  if (raw === "traits") return "events";
+  if (raw === "data-types" || raw === "apis" || raw === "entities" || raw === "events") return raw;
   return "entities";
 }
 
@@ -76,7 +73,6 @@ const domainTabs: { icon: React.ComponentType<{ className?: string }>; label: st
   { icon: Hash, label: "Data Types", id: "data-types" },
   { icon: Globe, label: "APIs", id: "apis" },
   { icon: Radio, label: "Events", id: "events" },
-  { icon: Puzzle, label: "Traits", id: "traits" },
 ];
 
 interface EntityData {
@@ -118,10 +114,10 @@ interface DomainWorkspaceProps {
   inheritedDataTypes?: InheritedDataTypes[];
   /** Services owned by the domain, shown read-only. */
   inheritedServices?: InheritedServices[];
-  /** Product-level Event Specs / Messages / Channels (spec §4.5). */
-  events?: EventsTabData;
-  /** Product traits + read-only domain / Enterprise traits. */
-  traits?: TraitsTabData;
+  /** The product's events (valid event documents only), for the flat Events list. */
+  events?: EventListItem[];
+  /** The product's Engineering Lead, Manager and team addresses, shown under the header when present. */
+  productContacts?: ProductContactsValue;
 }
 
 interface InlineField {
@@ -193,7 +189,7 @@ export function DomainWorkspace({
   inheritedDataTypes,
   inheritedServices,
   events,
-  traits,
+  productContacts,
 }: DomainWorkspaceProps) {
   const router = useRouter();
   const invalidateDomainsTree = useInvalidateDomainsTree();
@@ -206,29 +202,13 @@ export function DomainWorkspace({
     setActiveTab(normalizeWorkspaceTab(tabParam));
   }, [tabParam]);
 
-  // The Events tab's section lives in `?section=` (a missing or unknown value means Event Specs).
-  const sectionParam = searchParams.get("section");
-  const [eventsSection, setEventsSection] = useState<EventsSection>(normalizeEventsSection(sectionParam));
-  useEffect(() => {
-    setEventsSection(normalizeEventsSection(sectionParam));
-  }, [sectionParam]);
-  const [eventsCreateIntent, setEventsCreateIntent] = useState<EventsCreateIntent | null>(null);
-  const [traitCreateIntent, setTraitCreateIntent] = useState<"trait" | null>(null);
-  const consumeEventsIntent = useCallback(() => setEventsCreateIntent(null), []);
-  const consumeTraitIntent = useCallback(() => setTraitCreateIntent(null), []);
-  const selectEventsSection = useCallback(
-    (section: EventsSection) => {
-      setEventsSection(section);
-      window.history.replaceState(null, "", assetHref({ kind: "events", domainSlug, productSlug, section }));
-    },
-    [domainSlug, productSlug]
-  );
+  // One New Event dialog, opened by the header menu and by the Events tab alike.
+  const [newEventOpen, setNewEventOpen] = useState(false);
 
   function tabHref(tab: DomainTab) {
     if (tab === "data-types") return assetHref({ kind: "dataTypes", domainSlug, productSlug });
     if (tab === "apis") return assetHref({ kind: "apis", domainSlug, productSlug });
-    if (tab === "events") return assetHref({ kind: "events", domainSlug, productSlug, section: eventsSection });
-    if (tab === "traits") return assetHref({ kind: "traits", domainSlug, productSlug });
+    if (tab === "events") return assetHref({ kind: "events", domainSlug, productSlug });
     return assetHref({ kind: "product", domainSlug, productSlug });
   }
 
@@ -490,6 +470,14 @@ export function DomainWorkspace({
         />
       )}
 
+      {/* New Event dialog: a created event opens on its own page */}
+      <NewEventDialog
+        productId={productId}
+        open={newEventOpen}
+        onOpenChange={setNewEventOpen}
+        onCreated={(id) => router.push(assetHref({ kind: "event", id, domainSlug, productSlug }))}
+      />
+
       {/* Entity delete confirmation dialog */}
       <Dialog
         open={deleteConfirm !== null}
@@ -574,10 +562,7 @@ export function DomainWorkspace({
             onNewEntity={() => router.push(newEntityHref)}
             onNewCustomDataType={() => { selectTab("data-types"); setTypeCreateIntent("choose"); }}
             onNewApi={() => selectTab("apis")}
-            onNewEventSpec={() => { selectTab("events"); setEventsCreateIntent("eventSpec"); }}
-            onNewMessage={() => { selectTab("events"); setEventsCreateIntent("message"); }}
-            onNewChannel={() => { selectTab("events"); setEventsCreateIntent("channel"); }}
-            onNewTrait={() => { selectTab("traits"); setTraitCreateIntent("trait"); }}
+            onNewEvent={() => setNewEventOpen(true)}
           />
           {deletionEnabled ? (
             <Button
@@ -596,6 +581,8 @@ export function DomainWorkspace({
           ) : null}
         </div>
       </div>
+
+      <ProductContacts contacts={productContacts} />
 
       {/* Domain tabs */}
       <div role="tablist" aria-label={`${productName} sections`} className="flex items-center gap-space-1 border-b border-border mb-space-6">
@@ -650,27 +637,12 @@ export function DomainWorkspace({
 
       {/* Events tab */}
       {activeTab === "events" && (
-        <EventsTab
+        <EventsList
           productId={productId}
           domainSlug={domainSlug}
           productSlug={productSlug}
-          data={events ?? EMPTY_EVENTS_TAB}
-          section={eventsSection}
-          onSectionChange={selectEventsSection}
-          createIntent={eventsCreateIntent}
-          onCreateIntentConsumed={consumeEventsIntent}
-        />
-      )}
-
-      {/* Traits tab */}
-      {activeTab === "traits" && (
-        <TraitsTab
-          target={productTarget}
-          domainSlug={domainSlug}
-          productSlug={productSlug}
-          data={traits ?? EMPTY_TRAITS_TAB}
-          createIntent={traitCreateIntent}
-          onCreateIntentConsumed={consumeTraitIntent}
+          items={events ?? []}
+          onCreate={() => setNewEventOpen(true)}
         />
       )}
 

@@ -1,0 +1,138 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "fraud-scorer",
+    "version": "2.0",
+    "description": "Scores every order for fraud risk."
+  },
+  "servers": {
+    "kafka-prod": {
+      "host": "kafka-prod.internal:9092",
+      "protocol": "kafka"
+    },
+    "pubsub-prod": {
+      "host": "pubsub.googleapis.com",
+      "protocol": "googlepubsub"
+    }
+  },
+  "channels": {
+    "fraud-scores": {
+      "address": "fraud-scores",
+      "messages": {
+        "FraudScored": {
+          "$ref": "#/components/messages/FraudScored"
+        }
+      }
+    },
+    "orders": {
+      "address": "payments.orders.v1",
+      "messages": {
+        "OrderCreated": {
+          "$ref": "#/components/messages/OrderCreated"
+        }
+      },
+      "title": "Orders (from Checkout)"
+    }
+  },
+  "operations": {
+    "publishFraudScored": {
+      "action": "send",
+      "channel": {
+        "$ref": "#/channels/fraud-scores"
+      },
+      "summary": "Publish the score",
+      "messages": [
+        {
+          "$ref": "#/channels/fraud-scores/messages/FraudScored"
+        }
+      ]
+    },
+    "receiveOrderCreated": {
+      "action": "receive",
+      "channel": {
+        "$ref": "#/channels/orders"
+      },
+      "summary": "Consume new orders",
+      "messages": [
+        {
+          "$ref": "#/channels/orders/messages/OrderCreated"
+        }
+      ]
+    }
+  },
+  "components": {
+    "messages": {
+      "FraudScored": {
+        "title": "Fraud scored",
+        "contentType": "application/json",
+        "payload": {
+          "schemaFormat": "application/schema+json;version=draft-07",
+          "schema": {
+            "title": "FraudScoredPayload",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "OrderCreated": {
+        "title": "Order created",
+        "contentType": "avro/binary",
+        "traits": [
+          {
+            "$ref": "#/components/messageTraits/CloudEvents"
+          }
+        ],
+        "payload": {
+          "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "bindings": {
+          "kafka": {
+            "key": {
+              "schemaFormat": "application/vnd.apache.avro+json;version=1.9.0",
+              "schema": {
+                "type": "record",
+                "name": "OrderCreatedKey",
+                "namespace": "acme.test",
+                "fields": [
+                  {
+                    "name": "id",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "messageTraits": {
+      "CloudEvents": {
+        "headers": {
+          "title": "CloudEventsHeaders",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          }
+        },
+        "summary": "CloudEvents envelope headers"
+      }
+    }
+  }
+}

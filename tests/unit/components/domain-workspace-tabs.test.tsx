@@ -13,6 +13,8 @@ import {
   buildProductInheritedServices,
 } from "@/app/(dashboard)/schemas/[domainSlug]/map-asset-rows";
 import type { ServiceData } from "@/app/(dashboard)/schemas/[domainSlug]/components/DomainApisTab";
+import type { EventListItem } from "@/features/events/event-page/load-events-list";
+import { assetHref } from "@/lib/navigation/asset-href";
 
 const nav = vi.hoisted(() => ({
   search: "tab=data-types",
@@ -38,8 +40,7 @@ const actions = vi.hoisted(() => ({
 }));
 
 const eventActions = vi.hoisted(() => ({
-  createChannelAction: vi.fn(),
-  createTraitAction: vi.fn(),
+  createEventAction: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -49,11 +50,8 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => actions);
 vi.mock("@/app/(dashboard)/schemas/actions", () => ({ deleteDomainAction: vi.fn() }));
-// The Events / Traits tabs import server-action modules that pull in NextAuth.
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/channel-actions", () => ({ createChannelAction: eventActions.createChannelAction }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/message-actions", () => ({ createMessageAction: vi.fn() }));
-vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-spec-actions", () => ({ createEventSpecAction: vi.fn() }));
-vi.mock("@/app/(dashboard)/schemas/trait-actions", () => ({ createTraitAction: eventActions.createTraitAction }));
+// The New Event dialog imports a server-action module that pulls in NextAuth.
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ createEventAction: eventActions.createEventAction }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));
 vi.mock("@/components/custom/ClassificationPicker", () => ({ ClassificationPicker: () => null }));
@@ -175,7 +173,9 @@ describe("normalizeWorkspaceTab", () => {
     expect(normalizeWorkspaceTab("data-types")).toBe("data-types");
     expect(normalizeWorkspaceTab("entities")).toBe("entities");
     expect(normalizeWorkspaceTab("events")).toBe("events");
-    expect(normalizeWorkspaceTab("traits")).toBe("traits");
+  });
+  it("maps the retired product ?tab=traits to events, where traits now live inside each event", () => {
+    expect(normalizeWorkspaceTab("traits")).toBe("events");
   });
   it("falls back to entities", () => {
     expect(normalizeWorkspaceTab(null)).toBe("entities");
@@ -267,7 +267,7 @@ describe("DomainWorkspace — inherited data types", () => {
 });
 
 describe("DomainWorkspace — New menu", () => {
-  it("lists exactly New Entity, New Custom Data Type, New API and the events kinds", () => {
+  it("lists exactly New Entity, New Custom Data Type, New API and New Event", () => {
     nav.search = "";
     renderWorkspace();
     const menu = openNewMenu();
@@ -276,11 +276,11 @@ describe("DomainWorkspace — New menu", () => {
       "New Entity",
       "New Custom Data Type",
       "New API",
-      "New Event Spec",
-      "New Message",
-      "New Channel",
-      "New Trait",
+      "New Event",
     ]);
+    expect(within(menu).getByText("AsyncAPI event specification")).toBeDefined();
+    // The product workspace has no event spec / message / channel / trait entries any more.
+    for (const retired of ["New Event Spec", "New Message", "New Channel", "New Trait"]) expect(within(menu).queryByText(retired)).toBeNull();
     expect(within(menu).getByText("Enum, scalar or union")).toBeDefined();
     // Kinds are chosen after the click, never listed individually.
     expect(within(menu).queryByText("Enum")).toBeNull();
@@ -493,132 +493,148 @@ describe("DomainWorkspace — ?tab= and the URL stay in sync", () => {
   });
 });
 
-describe("DomainWorkspace — Events and Traits tabs", () => {
-  const EVENTS = {
-    eventSpecs: [],
-    messages: [],
-    channels: [
-      { id: "c1", name: "orders", summary: "", updatedAt: "", address: "payments.orders.v1", protocol: "kafka", format: "avro" as const, href: "/schemas/payments/checkout/channels/c1" },
-    ],
-    payloadEntities: [],
-  };
-  const TRAIT = { id: "t1", name: "Retry", kind: "MESSAGE" as const, summary: "", updatedAt: "", href: "/schemas/payments/checkout/traits/t1" };
-  const TRAITS = {
-    own: [TRAIT],
-    inherited: [
-      {
-        label: "From Enterprise",
-        href: "/schemas/enterprise?tab=traits",
-        traits: [{ ...TRAIT, id: "t2", name: "CloudEvents", href: "/schemas/enterprise/traits/t2" }],
-      },
-    ],
-  };
+describe("DomainWorkspace — Events tab and New Event", () => {
+  const EVENTS: EventListItem[] = [
+    {
+      id: "ev1", name: "orders", specType: "asyncapi@3.0", versionLabel: "1.2", hasUnpublishedChanges: true,
+      channels: 2, messages: 3, operations: 1, href: assetHref({ kind: "event", id: "ev1", domainSlug: "payments", productSlug: "checkout" }),
+    },
+    {
+      id: "ev2", name: "refunds", specType: "asyncapi@3.0", versionLabel: null, hasUnpublishedChanges: true,
+      channels: 0, messages: 0, operations: 0, href: assetHref({ kind: "event", id: "ev2", domainSlug: "payments", productSlug: "checkout" }),
+    },
+  ];
+  const EVENTS_LIST_HREF = assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" });
+  const dialogs = () => screen.queryAllByRole("dialog");
+  const createEventFromMenu = () => fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Event/ }));
 
-  it("opens the Events tab on the section from the URL", () => {
+  it("renders the flat events list with a link per event", () => {
+    nav.search = "tab=events";
+    renderWorkspace({ events: EVENTS });
+    expect(screen.getByTestId("events-tab")).toBeDefined();
+    expect(screen.getByRole("link", { name: "orders" }).getAttribute("href")).toBe("/schemas/payments/checkout/events/ev1");
+    expect(screen.getByRole("link", { name: "refunds" }).getAttribute("href")).toBe("/schemas/payments/checkout/events/ev2");
+    expect(screen.getByTestId("event-row-ev1-version").textContent).toBe("v1.2");
+    expect(screen.getByTestId("event-row-ev2-version").textContent).toBe("Unpublished");
+  });
+
+  it("has no Specs / Messages / Channels sections any more", () => {
+    nav.search = "tab=events";
+    renderWorkspace({ events: EVENTS });
+    expect(screen.queryByTestId("events-section-specs")).toBeNull();
+    expect(screen.queryByTestId("events-section-messages")).toBeNull();
+    expect(screen.queryByTestId("events-section-channels")).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Events sections" })).toBeNull();
+  });
+
+  it("shows the Events tab for any old ?section= value, ignoring it", () => {
     nav.search = "tab=events&section=channels";
     renderWorkspace({ events: EVENTS });
-    expect(screen.getByTestId("events-section-channels").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("link", { name: /orders/ }).getAttribute("href")).toBe("/schemas/payments/checkout/channels/c1");
+    expect(screen.getByRole("link", { name: "orders" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Events" }).getAttribute("aria-selected")).toBe("true");
   });
 
-  it("falls back to Event Specs for a missing or unknown ?section=", () => {
-    nav.search = "tab=events&section=bogus";
-    renderWorkspace();
-    expect(screen.getByTestId("events-section-specs").getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("follows ?section= changes after mount", () => {
-    nav.search = "tab=events&section=messages";
-    const { rerender } = renderWorkspace();
-    expect(screen.getByTestId("events-section-messages").getAttribute("aria-selected")).toBe("true");
-    nav.search = "tab=events&section=channels";
-    rerender(workspaceTree());
-    expect(screen.getByTestId("events-section-channels").getAttribute("aria-selected")).toBe("true");
-  });
-
-  it("renders the Events and Traits tabs without loaded data (empty states)", () => {
+  it("renders the Events tab without loaded data as the empty state", () => {
     nav.search = "tab=events";
     renderWorkspace();
-    expect(screen.getByTestId("events-specs-empty")).toBeDefined();
-    cleanup();
-    nav.search = "tab=traits";
-    renderWorkspace();
-    expect(screen.getByTestId("traits-empty")).toBeDefined();
+    expect(screen.getByTestId("events-empty")).toBeDefined();
+    expect(screen.getByRole("heading", { name: "No events yet" })).toBeDefined();
   });
 
-  it("clicking the Events and Traits tabs writes the matching URL", () => {
+  it("clicking the Events tab writes the Events list URL, without a section", () => {
     nav.search = "";
     renderWorkspace();
     fireEvent.click(screen.getByRole("tab", { name: "Events" }));
-    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=events&section=specs");
-    fireEvent.click(screen.getByTestId("events-section-messages"));
-    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=events&section=messages");
-    expect(screen.getByTestId("events-section-messages").getAttribute("aria-selected")).toBe("true");
-    fireEvent.click(screen.getByRole("tab", { name: "Traits" }));
-    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=traits");
-    expect(screen.getByTestId("traits-tab")).toBeDefined();
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", EVENTS_LIST_HREF);
+    expect(EVENTS_LIST_HREF).toContain("/schemas/payments/checkout?tab=events");
+    expect(screen.getByTestId("events-tab")).toBeDefined();
     expect(nav.replace).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["New Event Spec", "specs", "new-event-spec-form"],
-    ["New Message", "messages", "new-message-form"],
-    ["New Channel", "channels", "new-channel-form"],
-  ])("%s opens the Events tab on %s with its create form", (label, section, formTestId) => {
-    nav.search = "";
-    renderWorkspace();
-    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: new RegExp(label) }));
-    expect(screen.getByTestId("events-tab")).toBeDefined();
-    expect(screen.getByTestId(`events-section-${section}`).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId(formTestId)).toBeDefined();
-    expect(replaceState).toHaveBeenLastCalledWith(null, "", `/schemas/payments/checkout?tab=events&section=${section}`);
-    expect(screen.queryByRole("menu")).toBeNull();
-  });
-
-  it("New Event Spec works again after the form was cancelled", () => {
-    nav.search = "";
-    renderWorkspace();
-    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Event Spec/ }));
-    fireEvent.click(within(screen.getByTestId("new-event-spec-form")).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByTestId("new-event-spec-form")).toBeNull();
-    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Event Spec/ }));
-    expect(screen.getByTestId("new-event-spec-form")).toBeDefined();
-  });
-
-  it("creates a channel at the product and opens it", async () => {
-    nav.search = "";
-    eventActions.createChannelAction.mockResolvedValue({ success: true, data: { id: "c9" } });
-    renderWorkspace();
-    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Channel/ }));
-    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "refunds" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/channels/c9"));
-    expect(eventActions.createChannelAction).toHaveBeenCalledWith(
-      "prod-1",
-      { name: "refunds", address: null, protocol: "kafka", format: "avro", formatDialect: null }
-    );
-  });
-
-  it("New Trait opens the Traits tab with its create form at the PRODUCT target", async () => {
-    nav.search = "";
-    eventActions.createTraitAction.mockResolvedValue({ success: true, data: { id: "t9" } });
-    renderWorkspace();
-    fireEvent.click(within(openNewMenu()).getByRole("menuitem", { name: /New Trait/ }));
-    expect(screen.getByTestId("traits-tab")).toBeDefined();
-    expect(screen.getByTestId("new-trait-form")).toBeDefined();
-    expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments/checkout?tab=traits");
-    fireEvent.change(screen.getByLabelText("Trait name"), { target: { value: "Retry" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/traits/t9"));
-    expect(eventActions.createTraitAction).toHaveBeenCalledWith(PRODUCT_TARGET, { name: "Retry", kind: "MESSAGE" });
-  });
-
-  it("lists the product's traits and the read-only inherited groups", () => {
+  it("has no product Traits tab: the tab is gone and ?tab=traits lands on Events", () => {
     nav.search = "tab=traits";
-    renderWorkspace({ traits: TRAITS });
-    expect(screen.getByRole("link", { name: /Retry/ }).getAttribute("href")).toBe("/schemas/payments/checkout/traits/t1");
-    expect(screen.getByRole("link", { name: "From Enterprise" }).getAttribute("href")).toBe("/schemas/enterprise?tab=traits");
-    expect(screen.getByRole("link", { name: /CloudEvents/ }).getAttribute("href")).toBe("/schemas/enterprise/traits/t2");
+    renderWorkspace({ events: EVENTS });
+    expect(screen.queryByRole("tab", { name: "Traits" })).toBeNull();
+    expect(screen.queryByTestId("traits-tab")).toBeNull();
+    expect(screen.queryByTestId("traits-empty")).toBeNull();
+    expect(screen.getByTestId("events-tab")).toBeDefined();
+  });
+
+  it("New Event opens the New Event dialog for this product and closes the menu, without leaving the current tab", () => {
+    nav.search = "";
+    renderWorkspace();
+    expect(dialogs()).toHaveLength(0);
+    createEventFromMenu();
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(screen.getByTestId("new-event-form")).toBeDefined();
+    expect(screen.queryByRole("menu")).toBeNull();
+    // The dialog is the whole flow: no tab switch, no URL rewrite, no navigation yet.
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(nav.push).not.toHaveBeenCalled();
+    // The modal dialog hides the page behind it from the accessibility tree, hence `hidden: true`.
+    expect(screen.getByRole("tab", { name: "Entities", hidden: true }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("creates the event at this product and opens its page through assetHref", async () => {
+    nav.search = "";
+    eventActions.createEventAction.mockResolvedValue({ success: true, data: { id: "ev9" } });
+    renderWorkspace();
+    createEventFromMenu();
+    fireEvent.change(screen.getByTestId("new-event-name"), { target: { value: "  order-events " } });
+    fireEvent.change(screen.getByTestId("new-event-description"), { target: { value: "What checkout emits" } });
+    fireEvent.click(screen.getByTestId("new-event-submit"));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/events/ev9"));
+    expect(nav.push).toHaveBeenCalledTimes(1);
+    expect(eventActions.createEventAction).toHaveBeenCalledWith("prod-1", { name: "order-events", description: "What checkout emits" });
+  });
+
+  it("shows a failed create inline in the dialog and never navigates", async () => {
+    nav.search = "";
+    eventActions.createEventAction.mockResolvedValue({ success: false, code: "NAME_CONFLICT", error: '"orders" is already used.', suggestedFix: "Pick another name." });
+    renderWorkspace();
+    createEventFromMenu();
+    fireEvent.change(screen.getByTestId("new-event-name"), { target: { value: "orders" } });
+    fireEvent.click(screen.getByTestId("new-event-submit"));
+    expect((await screen.findByTestId("new-event-error")).textContent).toBe('"orders" is already used. Pick another name.');
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeDefined();
+  });
+
+  it("New Event works again after the dialog was cancelled, with an empty form", async () => {
+    nav.search = "";
+    renderWorkspace();
+    createEventFromMenu();
+    fireEvent.change(screen.getByTestId("new-event-name"), { target: { value: "orders" } });
+    fireEvent.click(screen.getByTestId("new-event-cancel"));
+    await waitFor(() => expect(dialogs()).toHaveLength(0));
+    expect(eventActions.createEventAction).not.toHaveBeenCalled();
+    createEventFromMenu();
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect((screen.getByTestId("new-event-name") as HTMLInputElement).value).toBe("");
+  });
+
+  it("the empty state's New Event button and the list's New Event button open the same single dialog", () => {
+    nav.search = "tab=events";
+    renderWorkspace();
+    fireEvent.click(screen.getByTestId("events-empty-create"));
+    expect(dialogs()).toHaveLength(1);
+    cleanup();
+
+    renderWorkspace({ events: EVENTS });
+    fireEvent.click(screen.getByTestId("events-new"));
+    expect(dialogs()).toHaveLength(1);
+  });
+
+  it("creating from the Events tab button opens the new event's page too", async () => {
+    nav.search = "tab=events";
+    eventActions.createEventAction.mockResolvedValue({ success: true, data: { id: "ev7" } });
+    renderWorkspace();
+    fireEvent.click(screen.getByTestId("events-empty-create"));
+    fireEvent.change(screen.getByTestId("new-event-name"), { target: { value: "first-event" } });
+    fireEvent.click(screen.getByTestId("new-event-submit"));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/checkout/events/ev7"));
+    expect(eventActions.createEventAction).toHaveBeenCalledWith("prod-1", { name: "first-event", description: undefined });
+    expect(eventActions.createEventAction).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -671,10 +687,10 @@ describe("product tab bar accessibility", () => {
     renderWorkspace();
     const list = screen.getByRole("tablist", { name: "Checkout sections" });
     const tabs = within(list).getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Entities", "Data Types", "APIs", "Events", "Traits"]);
+    expect(tabs.map((t) => t.textContent)).toEqual(["Entities", "Data Types", "APIs", "Events"]);
     const selected = tabs.filter((t) => t.getAttribute("aria-selected") === "true");
     expect(selected.map((t) => t.textContent)).toEqual(["APIs"]);
-    expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "-1", "0", "-1", "-1"]);
+    expect(tabs.map((t) => t.getAttribute("tabindex"))).toEqual(["-1", "-1", "0", "-1"]);
 
     const panel = screen.getByRole("tabpanel");
     expect(panel.id).toBe("product-tabpanel");
@@ -696,16 +712,19 @@ describe("product tab bar accessibility", () => {
 
     fireEvent.keyDown(screen.getByRole("tab", { name: "Data Types" }), { key: "ArrowLeft" });
     fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "ArrowLeft" });
-    expect(selectedLabel()).toBe("Traits");
+    expect(selectedLabel()).toBe("Events");
+    expect(replaceState).toHaveBeenLastCalledWith(null, "", assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" }));
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Traits" }), { key: "Home" });
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Events" }), { key: "Home" });
     expect(selectedLabel()).toBe("Entities");
     fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "End" });
-    expect(selectedLabel()).toBe("Traits");
+    expect(selectedLabel()).toBe("Events");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Events" }), { key: "ArrowRight" });
+    expect(selectedLabel()).toBe("Entities");
 
     // Other keys leave the selection alone.
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Traits" }), { key: "a" });
-    expect(selectedLabel()).toBe("Traits");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Entities" }), { key: "a" });
+    expect(selectedLabel()).toBe("Entities");
   });
 
   it("keeps clicking working and the stable ids the e2e suite can target", () => {

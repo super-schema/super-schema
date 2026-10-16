@@ -1,0 +1,273 @@
+{
+  "productSlug": "checkout",
+  "info": {
+    "title": "checkout-service",
+    "description": "Events published by the Checkout service.",
+    "version": "2.0"
+  },
+  "servers": [
+    {
+      "key": "kafka-prod",
+      "protocol": "kafka",
+      "host": "kafka-prod.internal:9092",
+      "description": "Production Kafka cluster"
+    },
+    {
+      "key": "pubsub-prod",
+      "protocol": "googlepubsub",
+      "host": "pubsub.googleapis.com",
+      "description": "Google Pub/Sub"
+    }
+  ],
+  "operations": [
+    {
+      "key": "publishOrderCreated",
+      "action": "send",
+      "channelRef": "orders",
+      "messageRefs": [
+        "OrderCreated"
+      ],
+      "traitRefs": [
+        "Audited"
+      ],
+      "summary": "Publish when an order is placed"
+    },
+    {
+      "key": "publishOrderCancelled",
+      "action": "send",
+      "channelRef": "orders",
+      "messageRefs": [
+        "OrderCancelled"
+      ],
+      "traitRefs": [],
+      "summary": "Publish when an order is cancelled"
+    },
+    {
+      "key": "publishCustomerOrder",
+      "action": "send",
+      "channelRef": "customer-orders",
+      "messageRefs": [
+        "OrderCreated"
+      ],
+      "traitRefs": []
+    },
+    {
+      "key": "publishOrderNotification",
+      "action": "send",
+      "channelRef": "order-notifications",
+      "messageRefs": [
+        "OrderNotification"
+      ],
+      "traitRefs": []
+    }
+  ],
+  "channels": [
+    {
+      "id": "orders",
+      "name": "orders",
+      "productSlug": "checkout",
+      "address": "payments.orders.v1",
+      "protocol": "kafka",
+      "profile": {
+        "format": "avro"
+      },
+      "title": "Orders topic",
+      "description": "Every order lifecycle event, keyed by order id.",
+      "bindings": {
+        "kafka": {
+          "partitions": 12,
+          "replicas": 3
+        }
+      }
+    },
+    {
+      "id": "customer-orders",
+      "name": "customer-orders",
+      "productSlug": "checkout",
+      "address": "payments.customers.{customerId}.orders.v1",
+      "protocol": "kafka",
+      "profile": {
+        "format": "avro"
+      },
+      "title": "Per-customer orders",
+      "parameters": {
+        "customerId": {
+          "description": "Customer the orders belong to"
+        }
+      }
+    },
+    {
+      "id": "order-notifications",
+      "name": "order-notifications",
+      "productSlug": "checkout",
+      "address": "order-notifications",
+      "protocol": "googlepubsub",
+      "profile": {
+        "format": "json-schema",
+        "dialect": "draft-07"
+      },
+      "title": "Customer notifications",
+      "bindings": {
+        "googlepubsub": {
+          "messageRetentionDuration": "86400s",
+          "schemaSettings": {
+            "encoding": "json",
+            "name": "projects/acme-prod/schemas/order-notification"
+          }
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "id": "OrderCreated",
+      "name": "OrderCreated",
+      "productSlug": "checkout",
+      "title": "Order created",
+      "summary": "A customer placed an order.",
+      "contentType": "avro/binary",
+      "traitRefs": [
+        "CloudEvents"
+      ],
+      "payloads": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ],
+      "keys": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCreatedKey",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "OrderCancelled",
+      "name": "OrderCancelled",
+      "productSlug": "checkout",
+      "title": "Order cancelled",
+      "summary": "An order was cancelled before shipping.",
+      "contentType": "avro/binary",
+      "traitRefs": [
+        "CloudEvents"
+      ],
+      "payloads": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCancelledPayload",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ],
+      "keys": [
+        {
+          "format": "avro",
+          "schema": {
+            "type": "record",
+            "name": "OrderCancelledKey",
+            "namespace": "acme.test",
+            "fields": [
+              {
+                "name": "id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "OrderNotification",
+      "name": "OrderNotification",
+      "productSlug": "checkout",
+      "title": "Order notification",
+      "summary": "A notification to send to the customer.",
+      "contentType": "application/json",
+      "traitRefs": [],
+      "payloads": [
+        {
+          "format": "json-schema",
+          "dialect": "draft-07",
+          "schema": {
+            "title": "OrderNotificationPayload",
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "traits": [
+    {
+      "id": "CloudEvents",
+      "name": "CloudEvents",
+      "kind": "MESSAGE",
+      "ownerSlug": "acme",
+      "spec": {
+        "summary": "CloudEvents envelope headers"
+      },
+      "headers": {
+        "format": "json-schema",
+        "dialect": "draft-07",
+        "schema": {
+          "title": "CloudEventsHeaders",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "Audited",
+      "name": "Audited",
+      "kind": "OPERATION",
+      "ownerSlug": "acme",
+      "spec": {
+        "summary": "Operation is audited",
+        "tags": [
+          {
+            "name": "audited"
+          }
+        ]
+      }
+    }
+  ],
+  "components": {},
+  "defaultContentType": "application/json"
+}

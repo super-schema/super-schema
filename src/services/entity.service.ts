@@ -19,6 +19,8 @@ import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { entityDeleteFailure, explainEntityDeleteFailure } from "@/services/events/entity-pin-usage";
+import { eventsInUseError, findEntityEventReferrers, findEntityLatestVersionEventReferrers, withEventsInUse } from "@/services/events/event-guards";
+import { guardRead } from "@/services/events/service-guards";
 
 export async function createEntity(
   input: CreateEntityInput,
@@ -205,6 +207,15 @@ export async function updateEntity(
     }
   }
 
+  // Retiring freezes the entity: blocked while an event (draft or published version) is pinned to its LATEST version.
+  // Older-version and unpinned pins do not block it (they protect the delete instead); a failing read is a DB_ERROR Result.
+  if (parsed.data.status === "RETIRED" && existing.status !== "RETIRED") {
+    const pinned = await guardRead(async () => ok(await findEntityLatestVersionEventReferrers(prisma, existing)));
+    if (!pinned.success) return pinned;
+    const blocked = eventsInUseError("Entity", existing.name, pinned.data, "retired");
+    if (blocked) return err(blocked);
+  }
+
   // Check if renaming to a reserved slug
   if (parsed.data.name && parsed.data.name !== existing.name) {
     const reservedMsg = reservedEntitySlugMessage(parsed.data.name);
@@ -281,11 +292,13 @@ export async function updateEntity(
 }
 
 /**
- * Deletes an entity, but only when nothing keeps it alive: no message / trait pin (NO ACTION FKs) and no published
+ * Deletes an entity, but only when nothing keeps it alive: no message / trait pin (NO ACTION FKs), no published
  * version of another entity that references one of its versions (`schema_references`, no FK: spec §6.1 says a version
- * referenced by a published version cannot be deleted, and the check has to be ours). The guard runs before the delete
- * and again after a P2003, so a pin that lands in between is still reported by name. Never throws: a lock timeout /
- * deadlock is a retryable CONFLICT, any other database failure a DB_ERROR with the generic message.
+ * referenced by a published version cannot be deleted, and the check has to be ours), and no event that names it (a draft
+ * or published version, pinned or unpinned: event documents pin without foreign keys, so that guard is ours too and its
+ * outcome is merged into the same IN_USE). The pin guard runs before the delete and again after a P2003, so a pin that lands
+ * in between is still reported by name; the event guard runs before only (an event pin has no FK to raise a P2003).
+ * Never throws: a lock timeout / deadlock is a retryable CONFLICT, any other database failure a DB_ERROR with the generic message.
  */
 export async function deleteEntity(
   id: string,
@@ -302,7 +315,12 @@ export async function deleteEntity(
       });
     }
 
-    const inUse = await explainEntityDeleteFailure(prisma, existing);
+    const inUse = withEventsInUse(
+      await explainEntityDeleteFailure(prisma, existing),
+      "Entity",
+      existing.name,
+      await findEntityEventReferrers(prisma, existing)
+    );
     if (inUse) return err(inUse);
 
     await withAudit({

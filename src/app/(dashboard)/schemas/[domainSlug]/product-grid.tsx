@@ -14,9 +14,16 @@ import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { NO_EVENTS_ASSETS, productDeleteBlocker, type EventsAssetCounts } from "@/lib/product-deletion";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import {
+  EMPTY_PRODUCT_CONTACTS_DRAFT,
+  resolveProductContactsDraft,
+  type ProductContactErrors,
+  type ProductContactsDraft,
+} from "@/lib/product-contacts";
+import {
   createProductAction,
   deleteProductAction,
 } from "./product-actions";
+import { ProductContactFields } from "./components/ProductContactFields";
 
 export interface ProductGridItem {
   id: string;
@@ -88,6 +95,8 @@ export function ProductGrid({
   const [description, setDescription] = useState("");
   const [tierId, setTierId] = useState<string>("");
   const [ownerTeam, setOwnerTeam] = useState("");
+  const [contacts, setContacts] = useState<ProductContactsDraft>(EMPTY_PRODUCT_CONTACTS_DRAFT);
+  const [contactErrors, setContactErrors] = useState<ProductContactErrors>({});
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -108,16 +117,20 @@ export function ProductGrid({
     setDescription("");
     setTierId("");
     setOwnerTeam("");
+    setContacts(EMPTY_PRODUCT_CONTACTS_DRAFT);
+    setContactErrors({});
     setCreateError(null);
   }
 
   async function handleCreate() {
-    if (!name.trim()) {
-      setCreateError("Product name is required");
-      return;
-    }
+    // The name and the contacts are checked together, so one click shows every problem at once.
+    const resolved = resolveProductContactsDraft(contacts);
+    const nameMissing = !name.trim();
+    setCreateError(nameMissing ? "Product name is required" : null);
+    setContactErrors(resolved.success ? {} : resolved.error);
+    if (nameMissing || !resolved.success) return;
+
     setIsCreating(true);
-    setCreateError(null);
     try {
       const result = await createProductAction({
         domainId,
@@ -125,9 +138,14 @@ export function ProductGrid({
         description,
         tierId: tierId || null,
         ownerTeam: ownerTeam.trim() || null,
+        engineeringLead: resolved.data.engineeringLead,
+        manager: resolved.data.manager,
+        teamEmails: resolved.data.teamEmails,
       });
       if (result.error) {
-        setCreateError(result.error);
+        // A contact validation failure from the server lands next to its input; anything else is the form-level message.
+        if (result.fieldErrors) setContactErrors(result.fieldErrors);
+        else setCreateError(result.error);
         return;
       }
       invalidateDomainsTree();
@@ -247,6 +265,13 @@ export function ProductGrid({
                 />
               </div>
             </div>
+            <ProductContactFields
+              value={contacts}
+              errors={contactErrors}
+              onChange={setContacts}
+              onErrorsChange={setContactErrors}
+              disabled={isCreating}
+            />
             {createError && (
               <p className="text-body-small text-destructive">{createError}</p>
             )}

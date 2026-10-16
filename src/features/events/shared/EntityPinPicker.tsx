@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { listPinnableVersionsAction } from "../pin-actions";
 import type { EntityPin } from "@/lib/events/types";
+import type { PayloadFormat } from "@/lib/event-specs/types";
 
 export interface EntityOption {
   id: string;
@@ -11,6 +12,11 @@ export interface EntityOption {
   ownerLabel: string;
   latestVersionId: string | null;
   latestVersionLabel: string | null;
+  /**
+   * The representation the entity was imported in (Avro / JSON Schema / Protobuf); absent when it was not imported or came from a
+   * format an event cannot emit (TypeSpec, OpenAPI, ...). What a message's "Auto" representation follows.
+   */
+  sourceFormat?: PayloadFormat;
 }
 export interface VersionOption {
   id: string;
