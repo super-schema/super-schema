@@ -134,6 +134,21 @@ async function published(doc: EventDocument): Promise<string> {
 const versionRows = (eventId: string) => prisma.eventSpecVersion.findMany({ where: { eventSpecId: eventId }, orderBy: { sequence: "asc" } });
 const eventRow = (eventId: string) => prisma.eventSpec.findUniqueOrThrow({ where: { id: eventId } });
 
+/**
+ * Another product's event, published through the service itself: the `resolvedSpec` it stores is what other events reference. That
+ * stored channel carries the source's own `serverRefs` and `messageRefs` (asserted here, so the tests below fail if that ever stops
+ * being true and they would no longer prove anything).
+ */
+async function publishedSource() {
+  const source = unwrap(await createEvent(other.product.id, { name: `source-${stamp()}` }, ctx));
+  unwrap(await updateEventDocument(source.id, orderDocument({ title: "payments" }), { level: "PRODUCT", productId: other.product.id }, ctx));
+  const version = unwrap(await publishEvent(source.id, other.product.id, {}, ctx, { renderer }));
+  const [row] = await versionRows(source.id);
+  const channel = (obj(row.resolvedSpec).channels as JsonObject[]).find((c) => c.id === "orders")!;
+  expect(channel).toMatchObject({ serverRefs: ["kafka-prod"], messageRefs: ["order-created"] });
+  return { version, row };
+}
+
 /** A domain-level library trait of the own domain (tenant level belongs to `ensureBundledTraits`); removed with the domain. */
 async function libraryTrait(name: string, spec: object, extra: object = {}) {
   return prisma.trait.create({
@@ -368,6 +383,33 @@ describe("publishEvent", () => {
     expect(v20.frozenTraits).toEqual([expect.objectContaining({ headersEntityVersionId: ceHeaders.v["2.0"] })]);
   }, 180_000);
 
+  it("blocks publish for a library trait whose message properties entity is not pinned to a published version", async () => {
+    // reachable: `resolvePin` accepts `entityVersionId: null`, and stores null when the entity has no published version yet
+    const pinned = await libraryTrait("PinnedProps", { summary: "pinned" }, { headersEntityId: ceHeaders.entityId, headersEntityVersionId: ceHeaders.v["1.0"] });
+    const unpinned = await libraryTrait("UnpinnedProps", { summary: "unpinned" }, { headersEntityId: ceHeaders.entityId, headersEntityVersionId: null });
+    const id = await draft(orderDocument({
+      traitKeys: ["good", "loose"],
+      traits: [
+        { key: "good", kind: "MESSAGE", libraryTraitId: pinned.id },
+        { key: "loose", kind: "MESSAGE", libraryTraitId: unpinned.id },
+      ],
+    }));
+
+    const result = await publish(id);
+
+    // without the blocker the version would freeze headers rendered from the entity's mutable draft
+    expect(failureCode(result)).toBe("PUBLISH_BLOCKED");
+    expect(blockersOf(result)).toEqual([
+      { kind: "UNPUBLISHED_PIN", pointer: "/traits/1", message: `Library trait "${unpinned.name}": CloudEventsHeaders has no published version pinned` },
+    ]);
+    expect((await preview(id)).blockers.map((b) => [b.kind, b.pointer])).toEqual([["UNPUBLISHED_PIN", "/traits/1"]]);
+    expect(await versionRows(id)).toEqual([]);
+
+    // once the library trait pins a published version, the same draft publishes
+    await prisma.trait.update({ where: { id: unpinned.id }, data: { headersEntityVersionId: ceHeaders.v["1.0"] } });
+    expect(unwrap(await publish(id)).label).toBe("1.0");
+  }, 120_000);
+
   it("classifies bumps: payload pin to a new entity major -> 2.0; same-major pin move -> 1.1; docs-only edit -> 1.1", async () => {
     const toNewMajor = await published(orderDocument());
     await save(toNewMajor, orderDocument({ payload: pin(order, "2.0") }));
@@ -413,11 +455,7 @@ describe("publishEvent", () => {
   }, 120_000);
 
   it("publishes an event that receives a message through an external ref and freezes it in resolvedSpec", async () => {
-    // the source is another product's event, published through the service itself: its stored resolvedSpec is what gets reused
-    const source = unwrap(await createEvent(other.product.id, { name: `payments-${stamp()}` }, ctx));
-    unwrap(await updateEventDocument(source.id, orderDocument({ title: "payments" }), { level: "PRODUCT", productId: other.product.id }, ctx));
-    const sourceVersion = unwrap(await publishEvent(source.id, other.product.id, {}, ctx, { renderer }));
-    const [sourceRow] = await versionRows(source.id);
+    const { version: sourceVersion, row: sourceRow } = await publishedSource();
     const sourceMessage = ((obj(sourceRow.resolvedSpec).messages as JsonObject[]).find((m) => m.id === "order-created"))!;
 
     const doc: EventDocument = {
@@ -441,6 +479,67 @@ describe("publishEvent", () => {
     expect(obj(obj(obj(row.document).components).messages)["order-created"]).toBeDefined();
     const edges = await prisma.schemaReference.findMany({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: row.id } });
     expect(edgeKeys(edges)).toEqual([`MESSAGE|EVENT_SPEC_VERSION|${sourceVersion.id}`]);
+  }, 120_000);
+
+  it("publishes an event that sends its own message on an external channel, without the source's servers or messages", async () => {
+    const { version: sourceVersion } = await publishedSource();
+    const doc: EventDocument = {
+      ...emptyEventDocument("fraud-feed"),
+      externalRefs: [{ key: "orders-ch", eventVersionId: sourceVersion.id, kind: "channel", itemKey: "orders" }],
+      messages: [{ key: "fraud-alert", payload: pin(order, "1.0"), traitKeys: [] }], // a LOCAL message, not one of the source's
+      operations: [{ key: "publishFraudAlert", action: "send", channelKey: "orders-ch", messageKeys: ["fraud-alert"], traitKeys: [] }],
+    };
+    const id = await draft(doc);
+
+    expect(await preview(id)).toMatchObject({ blockers: [] }); // 0 errors from the emission, both validators included
+    const summary = unwrap(await publish(id));
+
+    expect(summary.label).toBe("1.0");
+    const [row] = await versionRows(id);
+    // the stored channel is the channel itself: no id of the source's servers or messages travels with it
+    const channel = (obj(row.resolvedSpec).channels as JsonObject[]).find((c) => c.id === "orders-ch")!;
+    expect(channel).toMatchObject({ address: "payments.orders.v1", protocol: "kafka" });
+    for (const field of ["serverRefs", "messageRefs", "messageProfiles"]) expect(channel).not.toHaveProperty(field);
+    // in the emitted document the channel carries exactly what this event's operation put on it
+    const emitted = Object.values(obj(obj(row.document).channels)).map(obj);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ address: "payments.orders.v1" });
+    expect(emitted[0]).not.toHaveProperty("servers");
+    expect(Object.keys(obj(emitted[0].messages))).toHaveLength(1);
+    expect(obj(obj(row.document).components).messages).toHaveProperty("fraud-alert");
+    expect(obj(obj(row.document).components).messages).not.toHaveProperty("order-created");
+    const edges = await prisma.schemaReference.findMany({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: row.id } });
+    expect(edgeKeys(edges)).toEqual([`MESSAGE|EVENT_SPEC_VERSION|${sourceVersion.id}`, `PAYLOAD|ENTITY_VERSION|${order.v["1.0"]}`].sort());
+  }, 120_000);
+
+  it("publishes an event that receives an external message on the external channel of the same published version", async () => {
+    const { version: sourceVersion, row: sourceRow } = await publishedSource();
+    const sourceMessage = ((obj(sourceRow.resolvedSpec).messages as JsonObject[]).find((m) => m.id === "order-created"))!;
+    const doc: EventDocument = {
+      ...emptyEventDocument("order-consumer"),
+      externalRefs: [
+        { key: "orders-ch", eventVersionId: sourceVersion.id, kind: "channel", itemKey: "orders" },
+        { key: "order-msg", eventVersionId: sourceVersion.id, kind: "message", itemKey: "order-created" },
+      ],
+      operations: [{ key: "consumeOrder", action: "receive", channelKey: "orders-ch", messageKeys: ["order-msg"], traitKeys: [] }],
+    };
+    const id = await draft(doc);
+    const counted = countingRenderer();
+
+    expect(await preview(id, { renderer: counted.renderer })).toMatchObject({ blockers: [] });
+    const summary = unwrap(await publish(id, {}, { renderer: counted.renderer }));
+
+    expect(summary.label).toBe("1.0");
+    expect(counted.state.calls).toBe(0); // nothing local to render: both items come from the stored resolvedSpec
+    const [row] = await versionRows(id);
+    const resolved = obj(row.resolvedSpec);
+    expect((resolved.messages as JsonObject[]).find((m) => m.id === "order-msg")?.payloads).toEqual(sourceMessage.payloads);
+    expect((resolved.channels as JsonObject[]).find((c) => c.id === "orders-ch")).not.toHaveProperty("messageRefs");
+    const emitted = Object.values(obj(obj(row.document).channels)).map(obj);
+    expect(emitted).toHaveLength(1);
+    expect(Object.keys(obj(emitted[0].messages))).toHaveLength(1);
+    const edges = await prisma.schemaReference.findMany({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: row.id } });
+    expect(edgeKeys(edges)).toEqual([`MESSAGE|EVENT_SPEC_VERSION|${sourceVersion.id}`]); // both refs point at one version: one edge
   }, 120_000);
 
   it("returns CONFLICT when the draft changes between prepare and the write", async () => {
@@ -495,9 +594,16 @@ describe("publishEvent", () => {
       const saved = orderDocument({ payload: pin(order, "1.1"), keyPin: pin(orderKey, "1.0") });
       const id = await draft(original);
 
-      const [saveResult, publishResult] = await Promise.all([updateEventDocument(id, saved, owner, ctx), publish(id)]);
+      const [saveResult, firstPublish] = await Promise.all([updateEventDocument(id, saved, owner, ctx), publish(id)]);
 
       expect(saveResult.success).toBe(true);
+      if (!firstPublish.success) {
+        expect(firstPublish.error.code).toBe("CONFLICT"); // the publish read the old draft, the save won the lock
+        expect(await versionRows(id)).toEqual([]);
+        // "Reload the event and publish again": the retry publishes exactly what was saved
+        expect((await publish(id)).success).toBe(true);
+      }
+
       const event = await eventRow(id);
       const draftDoc = unwrap(parseEventDocument(event.document));
       const draftEdges = await prisma.schemaReference.findMany({ where: { fromKind: "EVENT_SPEC", fromId: id } });
@@ -505,18 +611,38 @@ describe("publishEvent", () => {
       expect(draftDoc.messages[0].payload.entityVersionId).toBe(order.v["1.1"]); // the save is never lost
 
       const versions = await versionRows(id);
-      if (!publishResult.success) {
-        expect(publishResult.error.code).toBe("CONFLICT"); // the publish read the old draft, the save won the lock
-        expect(versions).toEqual([]);
-        continue;
-      }
       expect(versions).toHaveLength(1);
       const publishedDoc = unwrap(parseEventDocument(versions[0].sourceDocument));
       expect([original, saved].some((d) => isDeepStrictEqual(unwrap(parseEventDocument(JSON.parse(JSON.stringify(d)))), publishedDoc))).toBe(true);
       const versionEdges = await prisma.schemaReference.findMany({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: versions[0].id } });
       expect(edgeKeys(versionEdges)).toEqual(edgeKeys(collectDocumentEdges(publishedDoc)));
-      // a save that landed after the publish leaves the event with unpublished changes
-      if (!isDeepStrictEqual(publishedDoc, draftDoc)) expect(event.hasUnpublishedChanges).toBe(true);
+      // a publish of the saved draft leaves no unpublished changes; a save that landed after the publish leaves some
+      expect(event.hasUnpublishedChanges).toBe(!isDeepStrictEqual(publishedDoc, draftDoc));
+    }
+  }, 300_000);
+
+  it("two concurrent publishes of the same draft write exactly one version; the other gets CONFLICT or NO_CHANGES, never a second", async () => {
+    for (let round = 0; round < 3; round += 1) {
+      const doc = orderDocument({ headers: pin(ceHeaders, "1.0") });
+      const id = await draft(doc);
+
+      const results = await Promise.all([publish(id), publish(id)]);
+
+      const wins = results.filter((r) => r.success);
+      const losses = results.filter((r) => !r.success);
+      expect(wins).toHaveLength(1);
+      expect(losses).toHaveLength(1);
+      const loser = losses[0];
+      const noChanges = failureCode(loser) === "PUBLISH_BLOCKED" && blockersOf(loser).map((b) => b.kind).join() === "NO_CHANGES";
+      expect(failureCode(loser) === "CONFLICT" || noChanges).toBe(true); // the second one either lost the lock race or saw 1.0 already published
+      const versions = await versionRows(id);
+      expect(versions).toHaveLength(1);
+      expect(versions[0]).toMatchObject({ major: 1, minor: 0, sequence: 1 });
+      const event = await eventRow(id);
+      expect(event.latestVersionId).toBe(versions[0].id);
+      expect(event.hasUnpublishedChanges).toBe(false);
+      const edges = await prisma.schemaReference.findMany({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: versions[0].id } });
+      expect(edgeKeys(edges)).toEqual(edgeKeys(collectDocumentEdges(doc)));
     }
   }, 300_000);
 

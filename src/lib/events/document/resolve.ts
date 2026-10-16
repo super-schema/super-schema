@@ -149,6 +149,22 @@ const toLocalMessage = (m: DocMessage, productSlug: string, artifacts: MessageAr
 type ExternalResolved = { channel?: ResolvedChannel; message?: ResolvedMessage; traits: ResolvedTrait[] };
 
 /**
+ * A referenced event version's stored channel as this event carries it: the channel itself (address, protocol, profile, bindings,
+ * documentation) and nothing that points at the SOURCE event's own ids. A version published with `emitAll` stores its channels with
+ * `serverRefs` (its servers), `messageRefs` (the messages it lists) and `messageProfiles` (keyed by its message ids); in this event
+ * those ids name nothing — the assembler would report them as unknown server / message references — or, worse, name a LOCAL item
+ * that happens to share the id and silently give it the source's wire format. The messages on the channel here are the ones this
+ * event's own operations put on it.
+ */
+function externalChannelCopy(channel: ResolvedChannel): ResolvedChannel {
+  const copy = clone(channel);
+  delete copy.serverRefs;
+  delete copy.messageRefs;
+  delete copy.messageProfiles;
+  return copy;
+}
+
+/**
  * Document → `ResolvedEventSpec`. Like the v1 resolver, only what operations use is carried over (channels, messages,
  * and the traits of used messages and operations, in first-reference order) and every unresolved reference is reported
  * together as one `UNRESOLVED_REFERENCES` error with a pointer into the document.
@@ -197,7 +213,7 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     const items = input.external.get(ref.key);
     if (ref.kind === "channel") {
       if (!items?.channel) { problem(pointer, `External channel "${ref.itemKey}" (reference "${ref.key}") was not found in event version ${ref.eventVersionId}`); return; }
-      external.set(ref.key, { channel: { ...clone(items.channel), id: ref.key }, traits: [] });
+      external.set(ref.key, { channel: { ...externalChannelCopy(items.channel), id: ref.key }, traits: [] });
       return;
     }
     if (!items?.message) { problem(pointer, `External message "${ref.itemKey}" (reference "${ref.key}") was not found in event version ${ref.eventVersionId}`); return; }

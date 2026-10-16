@@ -108,14 +108,16 @@ describe("channel servers are opt-in (a slice-1 document must resolve to what it
     expect(channels.find((c) => c.id === "orders")?.serverRefs).toEqual(["kafka-prod"]);
     expect(channels.find((c) => c.id === "replies")).not.toHaveProperty("serverRefs");
   });
-  it("leaves external channels untouched", () => {
+  it("adds no servers to an external channel, and does not carry the source event's own serverRefs into this one", () => {
     const d = rich();
     d.channels = []; d.messages[0].traitKeys = [];
     d.externalRefs = [{ key: "ext", eventVersionId: "ev9", kind: "channel", itemKey: "orders" }];
     d.operations = [{ key: "recv", action: "receive", channelKey: "ext", messageKeys: [], traitKeys: [] }];
+    // the stored channel of a version published with emitChannelServers names ITS servers: none of them exists in this event
     const ext = { id: "orders", name: "orders", productSlug: "up", address: "o", protocol: "kafka", profile: { format: "avro" as const }, serverRefs: ["upstream-kafka"] };
     const r = resolveRich({ emitChannelServers: true, external: new Map([["ext", { channel: ext }]]) }, d);
-    expect(r.channels[0].serverRefs).toEqual(["upstream-kafka"]);
+    expect(r.channels[0]).toMatchObject({ id: "ext", address: "o", protocol: "kafka", profile: { format: "avro" } });
+    expect(r.channels[0]).not.toHaveProperty("serverRefs");
   });
 });
 
