@@ -25,7 +25,7 @@ function present(value: string | null | undefined): value is string {
 
 /**
  * The product's contacts for the page header: Engineering Lead, Manager and the team's addresses, each as a mailto link.
- * Renders nothing at all when the product has none.
+ * Renders nothing at all when the product has none. The caller owns the spacing around it.
  */
 export function ProductContacts({ contacts }: { contacts: ProductContactsValue | null | undefined }) {
   if (!contacts) return null;
@@ -38,7 +38,7 @@ export function ProductContacts({ contacts }: { contacts: ProductContactsValue |
     <dl
       data-testid="product-contacts"
       aria-label="Product contacts"
-      className="flex flex-wrap gap-x-space-6 gap-y-space-2 text-body-small mb-space-4"
+      className="flex flex-wrap gap-x-space-6 gap-y-space-2 text-body-small"
     >
       {lead && (
         <div data-testid="product-contact-engineering-lead" className="flex items-baseline gap-space-2">

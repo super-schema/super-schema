@@ -3,10 +3,11 @@
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { DomainWorkspace } from "@/app/(dashboard)/schemas/[domainSlug]/domain-workspace";
 
 const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const productActions = vi.hoisted(() => ({ updateProductAction: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: nav.push, replace: nav.replace, refresh: vi.fn() }),
@@ -17,8 +18,9 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => ({
   deleteEntityAction: vi.fn(),
 }));
 vi.mock("@/app/(dashboard)/schemas/actions", () => ({ deleteDomainAction: vi.fn() }));
-// The New Event dialog imports a server-action module that pulls in NextAuth.
+// The New Event dialog imports a server-action module that pulls in NextAuth; so does the Edit contacts dialog.
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ createEventAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/product-actions", () => ({ updateProductAction: productActions.updateProductAction }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));
 vi.mock("@/components/custom/ClassificationPicker", () => ({ ClassificationPicker: () => null }));
@@ -98,5 +100,46 @@ describe("product page header contacts", () => {
     renderWorkspace({ productContacts: { engineeringLead: "jane@acme.com", manager: null, teamEmails: [] } });
 
     expect(screen.getByRole("tablist", { name: "Checkout sections" })).toBeTruthy();
+  });
+
+  it("offers Edit contacts beside the contacts; the dialog opens prefilled with them", () => {
+    renderWorkspace({
+      productContacts: {
+        engineeringLead: "Jane Doe <jane@acme.com>",
+        manager: null,
+        teamEmails: ["oncall@acme.com"],
+      },
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit contacts" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("Checkout");
+    expect((screen.getByTestId("product-engineering-lead-input") as HTMLInputElement).value).toBe("Jane Doe <jane@acme.com>");
+    expect((screen.getByTestId("product-manager-input") as HTMLInputElement).value).toBe("");
+    expect(screen.getAllByTestId("product-team-emails-chip")).toHaveLength(1);
+  });
+
+  it("offers Edit contacts for a product without contacts, and the dialog opens empty", () => {
+    renderWorkspace({ productContacts: { engineeringLead: null, manager: null, teamEmails: [] } });
+    expect(screen.queryByTestId("product-contacts")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit contacts" }));
+
+    expect((screen.getByTestId("product-engineering-lead-input") as HTMLInputElement).value).toBe("");
+    expect(screen.queryAllByTestId("product-team-emails-chip")).toHaveLength(0);
+  });
+
+  it("saves through updateProductAction for THIS product, with only the contact fields", async () => {
+    productActions.updateProductAction.mockResolvedValue({ success: true, slug: "checkout" });
+    renderWorkspace({ productContacts: { engineeringLead: null, manager: null, teamEmails: [] } });
+    fireEvent.click(screen.getByRole("button", { name: "Edit contacts" }));
+    fireEvent.change(screen.getByTestId("product-manager-input"), { target: { value: "mo@acme.com" } });
+
+    fireEvent.click(screen.getByTestId("edit-product-contacts-save"));
+
+    await vi.waitFor(() => expect(productActions.updateProductAction).toHaveBeenCalledTimes(1));
+    expect(productActions.updateProductAction).toHaveBeenCalledWith("prod-1", { engineeringLead: null, manager: "mo@acme.com", teamEmails: [] });
   });
 });

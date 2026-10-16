@@ -27,8 +27,9 @@ vi.mock("@/app/(dashboard)/schemas/actions", () => ({
   deleteDomainAction: deleteDomainMock,
 }));
 
-// The New Event dialog imports a server-action module that pulls in NextAuth.
+// The New Event dialog imports a server-action module that pulls in NextAuth; so does the Edit contacts dialog.
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ createEventAction: vi.fn() }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/product-actions", () => ({ updateProductAction: vi.fn() }));
 
 vi.mock("@/components/custom/EntityCard", () => ({
   EntityCard: ({ name, onDelete }: { name: string; onDelete?: (id: string, name: string) => void }) => (

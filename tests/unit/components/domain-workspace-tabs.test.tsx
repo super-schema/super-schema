@@ -50,8 +50,9 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/actions", () => actions);
 vi.mock("@/app/(dashboard)/schemas/actions", () => ({ deleteDomainAction: vi.fn() }));
-// The New Event dialog imports a server-action module that pulls in NextAuth.
+// The New Event dialog imports a server-action module that pulls in NextAuth; so does the Edit contacts dialog.
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({ createEventAction: eventActions.createEventAction }));
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/product-actions", () => ({ updateProductAction: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/components/custom/TypePicker", () => ({ TypePicker: () => <select /> }));
 vi.mock("@/components/custom/ClassificationPicker", () => ({ ClassificationPicker: () => null }));
