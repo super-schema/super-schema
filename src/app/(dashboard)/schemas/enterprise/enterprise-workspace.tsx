@@ -6,6 +6,7 @@ import { Database, FilePlus2, Hash, Puzzle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EntityCard } from "@/components/custom/EntityCard";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { TraitsTab } from "@/features/events/workspace/TraitsTab";
 import { EMPTY_TRAITS_TAB, type TraitsTabData } from "@/features/events/workspace/types";
 import { levelLabel } from "@/lib/levels";
@@ -34,7 +35,7 @@ export function normalizeEnterpriseTab(raw: string | null, fallback: EnterpriseT
 const TABS: { id: EnterpriseTab; label: string; icon: typeof Database }[] = [
   { id: "entities", label: "Entities", icon: Database },
   { id: "data-types", label: "Data Types", icon: Hash },
-  { id: "traits", label: "Traits", icon: Puzzle },
+  { id: "traits", label: PROPERTIES_TAB_LABEL, icon: Puzzle },
 ];
 
 function tabDomId(id: EnterpriseTab) {
@@ -121,7 +122,7 @@ export function EnterpriseWorkspace({ tenantId, entities, dataTypes, traits }: E
         <div>
           <h1 className="text-display text-foreground">{label}</h1>
           <p className="text-body text-muted-foreground mt-space-1">
-            Entities, data types and traits shared across every domain.
+            Entities, data types and message properties shared across every domain.
           </p>
         </div>
         <CreateDropdown

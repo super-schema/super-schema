@@ -16,6 +16,7 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { useDomainsTree } from "@/hooks/useDomainsTree";
 import {
   EVENT_PAGE_SEGMENT,
@@ -416,7 +417,7 @@ function ExplorerSidebar({
                 active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/${TRAITS_SEGMENT}`)}
                 count={domain.counts.traits}
                 icon={Puzzle}
-                label="Traits"
+                label={PROPERTIES_TAB_LABEL}
                 href={traitsHref}
                 pending={pendingTarget === traitsHref}
                 onNavigate={navigate}
@@ -477,7 +478,7 @@ function ExplorerSidebar({
                 }
                 count={enterpriseTraits}
                 icon={Puzzle}
-                label="Traits"
+                label={PROPERTIES_TAB_LABEL}
                 href={enterpriseTraitsHref}
                 pending={pendingTarget === enterpriseTraitsHref}
                 onNavigate={navigate}

@@ -3,14 +3,15 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Database, Globe, Hash, Plus, Puzzle, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { NEW_PROPERTIES_DESCRIPTION, NEW_PROPERTIES_MENU } from "@/features/events/builder/labels";
 import { useModKey } from "@/lib/platform";
 
 // ---------------------------------------------------------------------------
 // Create dropdown — New Entity, New Custom Data Type and (where the level allows
-// them) New API, New Event (product level) and New Trait (Tenant / Domain library
-// levels). The kind of custom data type (Enum / Scalar / Union) is chosen on the
-// Data Types tab, not listed here. Messages, channels and event specs are parts of
-// an event, not menu entries.
+// them) New API, New Event (product level) and New Message Properties (Tenant /
+// Domain library levels; "Trait" in brackets in its description). The kind of
+// custom data type (Enum / Scalar / Union) is chosen on the Data Types tab, not
+// listed here. Messages, channels and event specs are parts of an event, not menu entries.
 // ---------------------------------------------------------------------------
 
 export function CreateDropdown({
@@ -26,7 +27,7 @@ export function CreateDropdown({
   onNewApi?: () => void;
   /** Events are product-only; pass it only on the product workspace. */
   onNewEvent?: () => void;
-  /** Library traits live at the Tenant and Domain levels only; the product workspace does not pass it. */
+  /** Library message properties live at the Tenant and Domain levels only; the product workspace does not pass it. */
   onNewTrait?: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -77,7 +78,7 @@ export function CreateDropdown({
   ): DropdownItem | null => (action ? { label, icon, action, description } : null);
   const eventItems = [
     optional("New Event", Radio, onNewEvent, "AsyncAPI event specification"),
-    optional("New Trait", Puzzle, onNewTrait, "Reusable message or operation trait"),
+    optional(NEW_PROPERTIES_MENU, Puzzle, onNewTrait, NEW_PROPERTIES_DESCRIPTION),
   ].filter((item): item is DropdownItem => item !== null);
 
   function renderItem(item: DropdownItem) {

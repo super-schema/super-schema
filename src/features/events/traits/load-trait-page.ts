@@ -3,6 +3,7 @@ import type { ScopeTarget } from "@/lib/asset-scope";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { TraitDetail } from "@/lib/events/types";
 import { TRAIT_SELECT, toTraitDetail } from "@/services/events/trait.service";
+import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { levelCrumbs } from "@/features/events/crumbs";
 import { loadEntityOptions } from "@/features/events/load-options";
 import { resolveLevelRoute } from "@/features/events/route-scope";
@@ -36,7 +37,7 @@ export async function loadTraitPage(params: { domainSlug: string | null; product
     trait: toTraitDetail(row),
     owner: route.target,
     listHref,
-    crumbs: levelCrumbs(route, { label: "Traits", href: listHref }, row.name),
+    crumbs: levelCrumbs(route, { label: PROPERTIES_TAB_LABEL, href: listHref }, row.name),
     entityOptions: await loadEntityOptions(route.scope.tenantId),
   };
 }

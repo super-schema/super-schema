@@ -89,8 +89,11 @@ describe("LeftSidebar: one Events leaf per product", () => {
     expect(screen.queryByText("Channels")).toBeNull();
   });
 
-  it("keeps the Traits leaves of the Domain and the Enterprise, which own the trait library", () => {
+  it("keeps the Message properties leaves of the Domain and the Enterprise, which own the library (the URLs still say traits)", () => {
     render(<LeftSidebar {...props} />);
+    expect(screen.getByTestId("domain-d1-traits").textContent).toContain("Message properties");
+    expect(screen.getByTestId("enterprise-traits").textContent).toContain("Message properties");
+    expect(screen.queryByText("Traits")).toBeNull();
     fireEvent.click(screen.getByTestId("domain-d1-traits"));
     expect(push).toHaveBeenLastCalledWith(assetHref({ kind: "traits", domainSlug: "payments", productSlug: null }));
     expect(push).toHaveBeenLastCalledWith("/schemas/payments?tab=traits");
