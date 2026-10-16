@@ -4,7 +4,7 @@ import { cleanupDomains, stamp } from "./helpers";
 
 /**
  * A second tenant with one product and one of everything an events service could be tricked into referencing
- * across the tenant boundary: a published entity version, a channel, a MESSAGE trait and a message version.
+ * across the tenant boundary: a published entity version and a MESSAGE trait.
  * Rows are written directly (no publish audit rows); `cleanup()` removes the whole tenant.
  *
  * If building the fixture fails part-way, the half-built tenant is removed before the error is rethrown, so
@@ -41,21 +41,9 @@ export async function createForeignTenantFixture(prisma: PrismaClient, ctx: Serv
       },
     });
     await prisma.entity.update({ where: { id: entity.id }, data: { latestVersionId: version.id } });
-    const channel = await prisma.channel.create({
-      data: { name: `fc-${s}`, address: "foreign.orders", protocol: "kafka", format: "avro", ...placed },
-    });
     const trait = await prisma.trait.create({ data: { name: `ftrait-${s}`, kind: "MESSAGE", ...level } });
-    const message = await prisma.message.create({
-      data: { name: `FM-${s}`, payloadEntityId: entity.id, payloadEntityVersionId: version.id, ...placed },
-    });
-    const messageVersion = await prisma.messageVersion.create({
-      data: {
-        messageId: message.id, major: 1, minor: 0, sequence: 1, resolvedSpec: {}, payloadEntityVersionId: version.id,
-        changeKind: "INITIAL", publishedById: ctx.userId,
-      },
-    });
 
-    return { s, tenant, domain, product, entity, version, channel, trait, message, messageVersion, cleanup };
+    return { s, tenant, domain, product, entity, version, trait, cleanup };
   } catch (e: unknown) {
     await cleanup().catch(() => undefined);
     throw e;

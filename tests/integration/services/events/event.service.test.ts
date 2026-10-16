@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
-import { cleanupDomains, cleanupTenantTraits, connectTestDb, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
+import { cleanupDomains, cleanupTenantTraits, connectTestDb, createEventSpecVersion, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 import { createEvent, deleteEvent, getEvent, renameEvent, updateEventDocument } from "@/services/events/event.service";
 import { emptyEventDocument, type DocExternalRef, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
@@ -54,11 +54,9 @@ const storedDocument = async (eventId: string) => (await prisma.eventSpec.findUn
 /** An event with one published version (1.0); `resolvedSpec: null` is a version published before document v2. */
 async function seedPublishedEvent(sc: Scope, ctx: ServiceContext, name: string, resolvedSpec: Prisma.InputJsonValue | null) {
   const event = unwrap(await createEvent(sc.product.id, { name: `${name}-${sc.s}` }, ctx));
-  const version = await prisma.eventSpecVersion.create({
-    data: {
-      eventSpecId: event.id, major: 1, minor: 0, sequence: 1, document: {}, sourceDocument: {}, frozenChannels: [], frozenTraits: [],
-      messageVersionIds: [], changeKind: "INITIAL", publishedById: ctx.userId, ...(resolvedSpec === null ? {} : { resolvedSpec }),
-    },
+  const version = await createEventSpecVersion(prisma, {
+    eventSpecId: event.id, major: 1, minor: 0, sequence: 1, document: {}, sourceDocument: {}, frozenTraits: [],
+    changeKind: "INITIAL", publishedById: ctx.userId, ...(resolvedSpec === null ? {} : { resolvedSpec }),
   });
   await prisma.eventSpec.update({ where: { id: event.id }, data: { latestVersionId: version.id, hasUnpublishedChanges: false } });
   return { event, version };
@@ -310,11 +308,9 @@ describe("event.service", () => {
       const foreignEvent = await prisma.eventSpec.create({
         data: { name: `fev-${foreign.s}`, document: {}, tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id },
       });
-      const foreignVersion = await prisma.eventSpecVersion.create({
-        data: {
-          eventSpecId: foreignEvent.id, major: 1, minor: 0, sequence: 1, document: {}, sourceDocument: {}, frozenChannels: [], frozenTraits: [],
-          messageVersionIds: [], resolvedSpec: RESOLVED, changeKind: "INITIAL", publishedById: ctx.userId,
-        },
+      const foreignVersion = await createEventSpecVersion(prisma, {
+        eventSpecId: foreignEvent.id, major: 1, minor: 0, sequence: 1, document: {}, sourceDocument: {}, frozenTraits: [],
+        resolvedSpec: RESOLVED, changeKind: "INITIAL", publishedById: ctx.userId,
       });
       const target = await seedPublishedEvent(other.scope, ctx, "target", RESOLVED);
       const preV2 = await seedPublishedEvent(other.scope, ctx, "legacy", null);

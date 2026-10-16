@@ -19,12 +19,6 @@ const ids = <T extends { id: string }>(rows: T[]) => rows.map((r) => r.id);
 type Scope = Awaited<ReturnType<typeof createProductScope>>;
 type Foreign = Awaited<ReturnType<typeof createForeignTenant>>;
 
-/** A product-level trait row: the Domain / Enterprise lists must never surface it (a product has no library traits of its own). */
-function seedProductTrait(scope: Scope, tag: string) {
-  const at = { tenantId: TENANT, domainId: scope.domain.id, productId: scope.product.id };
-  return prisma.trait.create({ data: { name: `PT-${tag}-${scope.s}`, kind: "MESSAGE", ...at } });
-}
-
 interface Fixture {
   own: Scope;
   /** A product line of another domain in the same tenant. */
@@ -52,9 +46,8 @@ async function withFixture(run: (f: Fixture) => Promise<void>): Promise<void> {
 }
 
 describe("Domain / Enterprise trait list loader (scoping)", () => {
-  it("loadLevelTraits: a domain lists its own traits and the Enterprise's, never its products' or another tenant's", () =>
+  it("loadLevelTraits: a domain lists its own traits and the Enterprise's, never another domain's or tenant's", () =>
     withFixture(async ({ own, other, foreign, tenantTraits }) => {
-      const productTrait = await seedProductTrait(own, "dom");
       const domainTrait = await prisma.trait.create({ data: { name: `DT-${own.s}`, kind: "MESSAGE", tenantId: TENANT, domainId: own.domain.id } });
       const otherDomainTrait = await prisma.trait.create({ data: { name: `OD-${own.s}`, kind: "MESSAGE", tenantId: TENANT, domainId: other.domain.id } });
       const tenantTrait = await prisma.trait.create({ data: { name: `TT-${own.s}`, kind: "OPERATION", tenantId: TENANT } });
@@ -68,7 +61,7 @@ describe("Domain / Enterprise trait list loader (scoping)", () => {
         const enterprise = ids(data.inherited[0].traits);
         expect(enterprise).toContain(tenantTrait.id);
         expect(data.inherited[0].traits.find((t) => t.id === tenantTrait.id)).toMatchObject({ kind: "OPERATION", href: `/schemas/enterprise/traits/${tenantTrait.id}` });
-        for (const leaked of [productTrait.id, otherDomainTrait.id, foreignDomainTrait.id, domainTrait.id]) expect(enterprise).not.toContain(leaked);
+        for (const leaked of [otherDomainTrait.id, foreignDomainTrait.id, domainTrait.id]) expect(enterprise).not.toContain(leaked);
 
         // Forged scope: the foreign domain under our tenant id matches nothing.
         const forged = await loadLevelTraits({ scope: { tenantId: TENANT, domainId: foreign.domain.id, productId: null }, domainSlug: "x" });
@@ -80,7 +73,6 @@ describe("Domain / Enterprise trait list loader (scoping)", () => {
 
   it("loadLevelTraits: Enterprise lists only tenant-level traits and has no inherited groups", () =>
     withFixture(async ({ own, foreign, tenantTraits }) => {
-      const productTrait = await seedProductTrait(own, "ent");
       const domainTrait = await prisma.trait.create({ data: { name: `DT-${own.s}`, kind: "MESSAGE", tenantId: TENANT, domainId: own.domain.id } });
       const tenantTrait = await prisma.trait.create({ data: { name: `TT-${own.s}`, kind: "MESSAGE", tenantId: TENANT } });
       tenantTraits.push(tenantTrait.id);
@@ -90,7 +82,7 @@ describe("Domain / Enterprise trait list loader (scoping)", () => {
         expect(data.inherited).toEqual([]);
         expect(ids(data.own)).toContain(tenantTrait.id);
         expect(data.own.find((t) => t.id === tenantTrait.id)?.href).toBe(`/schemas/enterprise/traits/${tenantTrait.id}`);
-        for (const leaked of [productTrait.id, domainTrait.id, foreignTenantTrait.id]) expect(ids(data.own)).not.toContain(leaked);
+        for (const leaked of [domainTrait.id, foreignTenantTrait.id]) expect(ids(data.own)).not.toContain(leaked);
         expect(ids((await loadLevelTraits({ scope: { tenantId: foreign.tenant.id, domainId: null, productId: null }, domainSlug: null })).own)).toEqual([foreignTenantTrait.id]);
       } finally {
         await prisma.trait.deleteMany({ where: { id: foreignTenantTrait.id } });

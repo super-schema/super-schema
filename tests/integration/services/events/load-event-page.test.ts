@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
-import { cleanupDomains, cleanupTenantTraits, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";
+import { cleanupDomains, cleanupTenantTraits, connectTestDb, createEventSpecVersion, createProductScope, TENANT, testContext } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 
 /**
@@ -82,11 +82,9 @@ beforeAll(async () => {
 
     mine = await createEvent(at, `event-mine-${own.s}`, richDocument(`Mine ${own.s}`, ownEntity.id));
     published = await createEvent(at, `event-published-${own.s}`, richDocument(`Published ${own.s}`, ownEntity.id));
-    const version = await prisma.eventSpecVersion.create({
-      data: {
-        eventSpecId: published.id, major: 1, minor: 2, sequence: 1, document: {}, sourceDocument: {}, frozenChannels: [], frozenTraits: [],
-        messageVersionIds: [], changeKind: "INITIAL", publishedById: ctx.userId,
-      },
+    const version = await createEventSpecVersion(prisma, {
+      eventSpecId: published.id, major: 1, minor: 2, sequence: 1, document: {}, sourceDocument: {}, frozenTraits: [],
+      changeKind: "INITIAL", publishedById: ctx.userId,
     });
     await prisma.eventSpec.update({ where: { id: published.id }, data: { latestVersionId: version.id, hasUnpublishedChanges: false } });
     legacy = await createEvent(at, `event-legacy-${own.s}`, legacyDocument(SECRET_TITLE));

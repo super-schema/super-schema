@@ -4,7 +4,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
 import { loadEventsList, type EventListItem } from "@/features/events/event-page/load-events-list";
-import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";
+import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, TENANT, testContext } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 
 /** `loadEventsList` against the real database; rows are written directly (no audit rows). */
@@ -61,11 +61,9 @@ beforeAll(async () => {
     busy = await createRow(at(), `b-busy-${own.s}`, busyDocument("Busy"));
     quiet = await createRow(at(), `c-quiet-${own.s}`, emptyEventDocument("Quiet"));
     published = await createRow(at(), `a-published-${own.s}`, emptyEventDocument("Published"));
-    const version = await prisma.eventSpecVersion.create({
-      data: {
-        eventSpecId: published.id, major: 3, minor: 1, sequence: 1, document: {}, sourceDocument: {}, frozenChannels: [], frozenTraits: [],
-        messageVersionIds: [], changeKind: "INITIAL", publishedById: ctx.userId,
-      },
+    const version = await createEventSpecVersion(prisma, {
+      eventSpecId: published.id, major: 3, minor: 1, sequence: 1, document: {}, sourceDocument: {}, frozenTraits: [],
+      changeKind: "INITIAL", publishedById: ctx.userId,
     });
     await prisma.eventSpec.update({ where: { id: published.id }, data: { latestVersionId: version.id, hasUnpublishedChanges: false } });
     // Not v2: a v1 spec (catalog ids, no documentVersion) and a document that is not even an event spec.
