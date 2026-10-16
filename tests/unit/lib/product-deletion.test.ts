@@ -12,8 +12,6 @@ const EMPTY = {
   customScalars: 0,
   unionTypes: 0,
   services: 0,
-  channels: 0,
-  messages: 0,
   traits: 0,
   eventSpecs: 0,
 };
@@ -49,14 +47,10 @@ describe("productDeleteBlocker", () => {
 
   describe("Events assets", () => {
     it.each([
-      [{ channels: 1 }, "Delete the product's 1 channel before removing it"],
-      [{ channels: 3 }, "Delete the product's 3 channels before removing it"],
-      [{ messages: 1 }, "Delete the product's 1 message before removing it"],
-      [{ messages: 2 }, "Delete the product's 2 messages before removing it"],
       [{ traits: 1 }, "Delete the product's 1 trait before removing it"],
       [{ traits: 4 }, "Delete the product's 4 traits before removing it"],
-      [{ eventSpecs: 1 }, "Delete the product's 1 event spec before removing it"],
-      [{ eventSpecs: 2 }, "Delete the product's 2 event specs before removing it"],
+      [{ eventSpecs: 1 }, "Delete the product's 1 event before removing it"],
+      [{ eventSpecs: 2 }, "Delete the product's 2 events before removing it"],
     ])("blocks on %j alone", (counts, message) => {
       expect(productDeleteBlocker({ ...EMPTY, ...counts })).toBe(message);
     });
@@ -69,13 +63,11 @@ describe("productDeleteBlocker", () => {
           customScalars: 0,
           unionTypes: 0,
           services: 2,
-          channels: 2,
-          messages: 3,
           traits: 1,
-          eventSpecs: 1,
+          eventSpecs: 3,
         })
       ).toBe(
-        "Delete the product's 1 entity, 2 APIs, 2 channels, 3 messages, 1 trait and 1 event spec before removing it"
+        "Delete the product's 1 entity, 2 APIs, 1 trait and 3 events before removing it"
       );
     });
   });
@@ -83,10 +75,11 @@ describe("productDeleteBlocker", () => {
 
 describe("eventsAssetParts / eventsAssetTotal", () => {
   it("omits zero kinds and totals the rest", () => {
-    const counts = { channels: 0, messages: 2, traits: 0, eventSpecs: 1 };
-    expect(eventsAssetParts(counts)).toEqual(["2 messages", "1 event spec"]);
-    expect(eventsAssetTotal(counts)).toBe(3);
-    expect(eventsAssetParts({ channels: 0, messages: 0, traits: 0, eventSpecs: 0 })).toEqual([]);
+    const counts = { traits: 0, eventSpecs: 2 };
+    expect(eventsAssetParts(counts)).toEqual(["2 events"]);
+    expect(eventsAssetTotal(counts)).toBe(2);
+    expect(eventsAssetParts({ traits: 1, eventSpecs: 1 })).toEqual(["1 trait", "1 event"]);
+    expect(eventsAssetParts({ traits: 0, eventSpecs: 0 })).toEqual([]);
   });
 });
 

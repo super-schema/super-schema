@@ -20,7 +20,7 @@ export interface EntityReferrer extends NamedRef {
 }
 
 export interface EntityPinUsage {
-  messages: NamedRef[];
+  /** Library traits whose headers pin holds the entity (a NO ACTION foreign key). Events are the event guard's business. */
   traits: NamedRef[];
   /** Other entities of the same tenant that reference one of this entity's versions. Self references are not listed. */
   entities: EntityReferrer[];
@@ -77,38 +77,16 @@ async function findEntityReferrers(db: Db, entity: { id: string; tenantId: strin
 }
 
 /**
- * What keeps an entity alive:
- * - messages and traits whose pins hold it (D3: pin FKs are NO ACTION): the entity or one of its versions is the current
- *   payload / headers / key pin, or a published message version pins one of its versions;
+ * What keeps an entity alive besides events (those are `findEntityEventReferrers` in event-guards.ts):
+ * - library traits whose headers pin holds it (D3: the pin FKs are NO ACTION): the entity or one of its versions is the
+ *   trait's headers pin;
  * - other entities whose published versions reference one of its versions (no FK: only this guard stops the delete).
  * Everything is read through `entity.tenantId`.
  */
 export async function findEntityPinUsage(db: Db, entity: { id: string; tenantId: string }): Promise<EntityPinUsage> {
   const entityId = entity.id;
   const ofEntity = { entityId };
-  const [messages, traits, entities] = await Promise.all([
-    db.message.findMany({
-      where: {
-        tenantId: entity.tenantId,
-        OR: [
-          { payloadEntityId: entityId },
-          { headersEntityId: entityId },
-          { keyEntityId: entityId },
-          { payloadEntityVersion: ofEntity },
-          { headersEntityVersion: ofEntity },
-          { keyEntityVersion: ofEntity },
-          {
-            versions: {
-              some: {
-                OR: [{ payloadEntityVersion: ofEntity }, { headersEntityVersion: ofEntity }, { keyEntityVersion: ofEntity }],
-              },
-            },
-          },
-        ],
-      },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    }),
+  const [traits, entities] = await Promise.all([
     db.trait.findMany({
       where: { tenantId: entity.tenantId, OR: [{ headersEntityId: entityId }, { headersEntityVersion: ofEntity }] },
       select: { id: true, name: true },
@@ -116,7 +94,7 @@ export async function findEntityPinUsage(db: Db, entity: { id: string; tenantId:
     }),
     findEntityReferrers(db, entity),
   ]);
-  return { messages, traits, entities };
+  return { traits, entities };
 }
 
 function nameList(label: string, refs: NamedRef[]): string {
@@ -140,21 +118,18 @@ function referrerList(refs: EntityReferrer[]): string {
 }
 
 function suggestedFixFor(usage: EntityPinUsage): string {
-  if (usage.entities.length === 0) return "Re-pin or delete those messages and traits first, then delete the entity.";
+  if (usage.entities.length === 0) return "Re-pin or delete those traits first, then delete the entity.";
   const shown = usage.entities.slice(0, 3).map((r) => `"${r.name}"`);
   const more = usage.entities.length - shown.length;
   const referrers = `${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`;
-  const holders = usage.messages.length > 0 || usage.traits.length > 0 ? ", re-pin or delete the messages and traits that use it," : "";
+  const holders = usage.traits.length > 0 ? ", re-pin or delete the traits that use it," : "";
   return `Published versions cannot be changed: delete the referencing entities first (${referrers}; deleting an entity removes its versions)${holders} then delete this entity. Or keep it.`;
 }
 
-/** IN_USE error naming what holds the entity (messages / traits by name, referencing entities by name + version), or null when nothing does. */
+/** IN_USE error naming what holds the entity (traits by name, referencing entities by name + version), or null when nothing does. */
 export function entityInUseError(entityName: string, usage: EntityPinUsage): ServiceError | null {
-  const used: string[] = [];
-  if (usage.messages.length > 0) used.push(nameList("Message", usage.messages));
-  if (usage.traits.length > 0) used.push(nameList("Trait", usage.traits));
   const clauses: string[] = [];
-  if (used.length > 0) clauses.push(`used by ${used.join(" and ")}`);
+  if (usage.traits.length > 0) clauses.push(`used by ${nameList("Trait", usage.traits)}`);
   if (usage.entities.length > 0) clauses.push(`referenced by published versions of ${referrerList(usage.entities)}`);
   if (clauses.length === 0) return null;
   return {
@@ -182,7 +157,7 @@ export const entityDeleteConflict = (): ServiceError => ({
 
 /**
  * A throw out of the entity delete, as a failure that never carries driver text:
- * - P2003 (a message / trait pin, NO ACTION FK) -> IN_USE naming what holds it, or a generic IN_USE when nothing explains it
+ * - P2003 (a trait's headers pin, NO ACTION FK) -> IN_USE naming what holds it, or a generic IN_USE when nothing explains it
  *   (or when the entity row itself is unknown, i.e. only an id is at hand);
  * - lock timeout / deadlock / serialization failure / interactive-transaction expiry (`isConcurrentWriteFailure`) -> retryable CONFLICT;
  * - anything else -> DB_ERROR with the generic message (the original is logged by `dbErrorResult`).

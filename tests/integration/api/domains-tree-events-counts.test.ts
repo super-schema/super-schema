@@ -21,7 +21,7 @@ async function fetchTree(tenantId: string): Promise<ExplorerTree> {
 }
 
 describe("GET /api/domains-tree — events counts", () => {
-  it("aggregates traits per level and self-contained (v2) events per product, scoped to the active tenant", async () => {
+  it("aggregates traits per level (tenant, domain) and events per product, scoped to the active tenant", async () => {
     const ctx = await testContext(prisma);
     // The foreign tenant is a clean slate (one domain, product and entity), so every count is exact.
     const ft = await createForeignTenant(prisma, ctx);
@@ -29,20 +29,18 @@ describe("GET /api/domains-tree — events counts", () => {
     try {
       const level = { tenantId: ft.tenant.id };
       const product = { ...level, domainId: ft.domain.id, productId: ft.product.id };
+      // Traits are tenant or domain level only (a product-level trait is refused by the table's CHECK).
       await prisma.trait.createMany({
         data: [
           { kind: "MESSAGE", name: "TenantTrait", ...level },
           { kind: "MESSAGE", name: "TenantTrait2", ...level },
           { kind: "OPERATION", name: "DomainTrait", ...level, domainId: ft.domain.id },
-          { kind: "OPERATION", name: "ProductTrait", ...product },
         ],
       });
-      // Two v2 events count; a legacy v1 (catalog-id) row is not an Event any more.
       await prisma.eventSpec.createMany({
         data: [
           { name: "checkout-events", document: { documentVersion: 2, info: { title: "x" } }, ...product },
           { name: "refund-events", document: { documentVersion: 2, info: { title: "y" } }, ...product },
-          { name: "legacy-events", document: { info: { title: "x" }, servers: [], operations: [] }, ...product },
         ],
       });
 
@@ -56,7 +54,7 @@ describe("GET /api/domains-tree — events counts", () => {
       expect(tree.domains).toHaveLength(1);
       expect(tree.domains[0].counts.traits).toBe(1);
       const counts = tree.domains[0].products[0].counts;
-      expect(counts).toMatchObject({ traits: 1, events: 2 });
+      expect(counts).toMatchObject({ traits: 0, events: 2 });
       // The old catalog kinds are gone from the tree.
       expect(Object.keys(counts).sort()).toEqual(["apis", "dataTypes", "entities", "events", "traits"]);
 

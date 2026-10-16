@@ -292,7 +292,7 @@ export async function updateEntity(
 }
 
 /**
- * Deletes an entity, but only when nothing keeps it alive: no message / trait pin (NO ACTION FKs), no published
+ * Deletes an entity, but only when nothing keeps it alive: no library-trait headers pin (NO ACTION FKs), no published
  * version of another entity that references one of its versions (`schema_references`, no FK: spec §6.1 says a version
  * referenced by a published version cannot be deleted, and the check has to be ours), and no event that names it (a draft
  * or published version, pinned or unpinned: event documents pin without foreign keys, so that guard is ours too and its

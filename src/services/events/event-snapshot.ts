@@ -1,6 +1,6 @@
 // src/services/events/event-snapshot.ts
 // DB half and render half of a self-contained event's emission (spec 2026-10-15-events-self-contained-design §7), for document v2.
-// Mirrors event-spec-resolver.ts: `loadEventSnapshot` ~ `loadDraftSnapshot`, `resolveEventSnapshot` ~ `resolveSnapshot`. Nothing is written.
+// `loadEventSnapshot` reads, `resolveEventSnapshot` renders and resolves. Nothing is written.
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { diagnostic } from "@/lib/event-specs/diagnostics";
 import type { Diagnostic, PayloadFormat, ResolvedChannel, ResolvedMessage, ResolvedEventSpec, ResolvedTrait, SchemaArtifact } from "@/lib/event-specs/types";
@@ -14,12 +14,17 @@ import { isJsonObject } from "@/lib/events/inputs";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import type { ArtifactRenderer, ArtifactSubject } from "./artifact-renderer";
-import { TRAIT_SELECT } from "./event-spec-resolver";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-/** `info.version` of a draft / preview emission (D13). Re-exported so the v2 services need not reach into the v1 resolver. */
-export { DRAFT_VERSION } from "./event-spec-resolver";
+/** `info.version` of a draft / preview emission (D13). */
+export const DRAFT_VERSION = "draft";
+
+/** A library trait row with the slugs its owner label needs (`toFrozenTrait`). */
+export const TRAIT_SELECT = {
+  id: true, name: true, kind: true, spec: true, headersEntityId: true, headersEntityVersionId: true,
+  tenant: { select: { slug: true } }, domain: { select: { slug: true } }, product: { select: { slug: true } },
+} satisfies Prisma.TraitSelect;
 
 export interface EventSnapshot {
   event: { id: string; name: string; tenantId: string; domainId: string; productId: string; productSlug: string; specType: string };
@@ -146,7 +151,7 @@ export async function loadEventSnapshot(db: Db, eventId: string, override?: Even
  * Codes whose message is written by our own loader / combiner / limiter and is safe to show to the user. Anything else — an
  * unexpected throw wrapped as `ARTIFACT_RENDER_FAILED` without a cause, `EMITTER_FAILED` (raw `tsp` stdout / stderr with temp
  * paths), `ARTIFACT_PARSE_FAILED`, or a code this list does not know — is replaced by a generic text; the original is logged
- * server-side only. Same list and rules as `renderDiagnostic` in event-spec-resolver.ts (R67), which is private to that module.
+ * server-side only (R67).
  */
 const USER_FACING_RENDER_CODES = new Set([
   "NOT_FOUND", "UNRESOLVED_REFERENCE", "UNPUBLISHED_REFERENCE", "ROOT_MODEL_NOT_FOUND", "ROOT_SCHEMA_NOT_FOUND",
@@ -161,7 +166,7 @@ const MAX_RENDER_DETAIL = 400;
 const FILE_PATH = /(?<![\w#:.@-])\/(?:[\w.@+~-]+\/){2,}[\w.@+~-]*|superschema-tsp-[\w-]+/g;
 const userFacing = (text: string): string => text.replace(FILE_PATH, "<path>").slice(0, MAX_RENDER_DETAIL);
 
-/** A render failure as an error diagnostic at `pointer` (into the draft document); the text rules are those of `renderDiagnostic`. */
+/** A render failure as an error diagnostic at `pointer` (into the draft document). */
 function renderDiagnostic(what: string, format: PayloadFormat, error: ServiceError, pointer: string): Diagnostic {
   const cause = (error.details as { cause?: unknown } | undefined)?.cause;
   const causeCode = typeof cause === "string" ? cause : undefined;

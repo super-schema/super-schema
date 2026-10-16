@@ -1,13 +1,15 @@
 /**
  * GET /api/v1/event-specs/:id?version=<MAJOR.MINOR|draft>&format=yaml|json (spec §7.4, Story 18.7).
+ * `:id` is the id of a self-contained event (document v2); the path keeps its published name.
  *
  * version omitted → latest published version (404 when never published; pass version=draft);
  * a published version is the stored document, never regenerated (spec §7.2 step 1).
  * The body is the raw AsyncAPI document; errors use the v1 JSON error envelope.
  *
- * Tenant scoping (R67): `emitEventSpec` reads by id and trusts the row's own tenant, so this route resolves the caller's
- * tenant and looks the spec up inside it BEFORE any other read. A spec of another tenant and a spec that does not exist
- * produce the same 404 — nothing downstream runs, nothing in the body depends on which case it was.
+ * Tenant scoping (R67): the emit service checks that the event belongs to the product it is given, but trusts the id, so
+ * this route resolves the caller's tenant and looks the event up inside it BEFORE any other read (the product it passes on is
+ * the event's own). An event of another tenant and an event that does not exist produce the same 404 — nothing downstream
+ * runs, nothing in the body depends on which case it was.
  *
  * Error bodies never carry service / database text: ServiceError codes are mapped to a status and a fixed message
  * (the original is logged server-side); only already-sanitised draft diagnostics are returned, field-whitelisted.
@@ -17,9 +19,10 @@ import { authenticateRequest } from "@/app/api/v1/middleware";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
 import { apiError, apiServerError, apiUnauthorized } from "@/app/api/v1/error-handler";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { Diagnostic } from "@/lib/event-specs";
-import { emitEventSpec, getLatestEventSpecVersionLabel, type EmitTarget } from "@/services/events/event-spec-emit.service";
-import type { ServiceError } from "@/types/result";
+import { emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
+import type { Result, ServiceError } from "@/types/result";
 
 const CONTENT_TYPE = { yaml: "application/yaml; charset=utf-8", json: "application/json; charset=utf-8" } as const;
 const VERSION_PARAM = /^(\d+)\.(\d+)$/;
@@ -27,6 +30,7 @@ const VERSION_PARAM = /^(\d+)\.(\d+)$/;
 const MAX_VERSION_PART = 2_147_483_647;
 const MAX_STEM_LENGTH = 100;
 const FALLBACK_STEM = "event-spec";
+const DRAFT = "draft";
 
 /** A header-safe file stem: ASCII letters, digits, `.`, `_`, `-` only; no leading / trailing separators; bounded. */
 function fileStem(name: string): string {
@@ -88,29 +92,32 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       return apiError({ code: "VALIDATION_ERROR", message: 'version must be "draft" or MAJOR.MINOR', suggestedFix: "Use e.g. ?version=2.1, ?version=draft, or omit it for the latest published version." });
     }
 
-    // R67: the caller can only reach specs of its own tenant. Missing and foreign are indistinguishable.
+    // R67: the caller can only reach events of its own tenant. Missing and foreign are indistinguishable.
     const tenantId = await getActiveTenantId();
-    const owned = await ctx.prisma.eventSpec.findFirst({ where: { id, tenantId }, select: { id: true } });
-    if (!owned) return specNotFound();
+    const owned = await ctx.prisma.eventSpec.findFirst({
+      where: { id, tenantId },
+      select: { name: true, productId: true, latestVersion: { select: { major: true, minor: true } } },
+    });
+    if (!owned || !owned.productId) return specNotFound();
+    const { name: specName, productId } = owned;
 
-    let target: EmitTarget;
-    if (versionParam === "draft") target = { draft: true };
+    let version: string;
+    if (versionParam === DRAFT) version = DRAFT;
     else if (versionParam !== null) {
       const label = toVersionLabel(versionParam);
       if (!label) return versionNotFound();
-      target = { versionLabel: label };
+      version = label;
     } else {
-      const latest = await getLatestEventSpecVersionLabel(id, ctx);
-      if (!latest.success) return serviceFailure(latest.error, "latest-version lookup", specNotFound);
-      if (!latest.data) {
+      if (!owned.latestVersion) {
         return apiError({ code: "NOT_FOUND", message: "The event spec has no published version", suggestedFix: "Pass ?version=draft to emit the current draft." });
       }
-      target = { versionLabel: latest.data };
+      version = formatVersionLabel(owned.latestVersion);
     }
 
-    const emission = await emitEventSpec(id, target, ctx);
-    if (!emission.success) return serviceFailure(emission.error, "emission", "draft" in target ? specNotFound : versionNotFound);
-    const { document, yaml, json, version, specName, diagnostics } = emission.data;
+    const emission: Result<EventEmission> =
+      version === DRAFT ? await emitEventDraft(id, productId, ctx) : await emitEventStoredVersion(id, productId, version, ctx);
+    if (!emission.success) return serviceFailure(emission.error, "emission", version === DRAFT ? specNotFound : versionNotFound);
+    const { document, yaml, json, diagnostics } = emission.data;
     if (!document || !yaml || !json) {
       return apiError({
         code: "VALIDATION_ERROR",

@@ -10,9 +10,7 @@ import { ensureDefaultTenantId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { isInActiveTenant, unexpectedFailure } from "@/lib/action-context";
 import { domainDeleteBlocker } from "@/lib/domain-deletion";
-import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
-import { findCrossProductPins } from "@/services/events/delete-guards";
 import { eventsInUseError, findCrossProductEventRefs } from "@/services/events/event-guards";
 
 export async function getDomainsAction() {
@@ -133,23 +131,15 @@ export async function deleteDomainAction(domainId: string) {
       return { error: "System domains cannot be deleted" };
     }
 
-    // Entities (domain- or product-level) and Events assets (channels, messages, event specs and traits, at either
-    // level) block the delete. Everything else — the domain's products and every domain- AND product-level Data
-    // Type / API (productId FKs cascade too) — is deleted with it; the confirmation dialog lists those counts
-    // (DomainDeletionImpact) before the admin confirms. A published event spec of ANOTHER domain's product that
-    // pins or froze one of the domain's Events assets is reported together with the counts, naming spec + product.
-    const pins = await findCrossProductPins(prisma, {
-      kind: "domain",
-      domainId,
-      tenantId: domain.tenantId,
-    });
-    // Events of OTHER domains that reference a published version of an event of this domain (edges, no FK) are named too.
-    // A domain that owns no event spec has no version to reference, so the lookup is skipped.
+    // Entities (domain- or product-level) and Events assets (events and traits, at either level) block the delete.
+    // Everything else — the domain's products and every domain- AND product-level Data Type / API (productId FKs
+    // cascade too) — is deleted with it; the confirmation dialog lists those counts (DomainDeletionImpact) before
+    // the admin confirms. Events of OTHER domains that reference a published version of an event of this domain
+    // (edges, no FK) are named too; a domain that owns no event has no version to reference, so the lookup is skipped.
     const eventRefs =
       domain._count.eventSpecs === 0 ? [] : await findCrossProductEventRefs(prisma, { kind: "domain", domainId, tenantId: domain.tenantId });
     const blocker = combineBlockers([
       domainDeleteBlocker(domain._count),
-      crossProductPinBlocker(pins),
       eventsInUseError("Domain", domain.name, eventRefs)?.message,
     ]);
     if (blocker) {

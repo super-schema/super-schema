@@ -16,14 +16,14 @@ describe("UsedByPanel", () => {
     h.listUsagesAction.mockResolvedValue({
       success: true,
       data: [
-        { id: "r1", fromKind: "MESSAGE_VERSION", role: "PAYLOAD", isDraft: false, target: "Order v2.1", label: "Message OrderCreated v1.3", href: "/m?version=1.3" },
-        { id: "r2", fromKind: "MESSAGE", role: "KEY", isDraft: true, target: "Order v2.1", label: "Message OrderCreated (draft)", href: "/m" },
+        { id: "r1", fromKind: "EVENT_SPEC_VERSION", role: "PAYLOAD", isDraft: false, target: "Order v2.1", label: "Event checkout v1.3", href: "/e?version=1.3" },
+        { id: "r2", fromKind: "EVENT_SPEC", role: "KEY", isDraft: true, target: "Order v2.1", label: "Event checkout (draft)", href: "/e" },
         { id: "r3", fromKind: "ENTITY_VERSION", role: "FIELD", isDraft: false, target: "Order v2.1", label: "Entity version gone (deleted)", href: null },
       ],
     });
     render(<UsedByPanel subject={{ kind: "entity", entityId: "e1" }} />);
-    expect((await screen.findByRole("link", { name: "Message OrderCreated v1.3" })).getAttribute("href")).toBe("/m?version=1.3");
-    expect(screen.getByRole("link", { name: "Message OrderCreated (draft)" }).getAttribute("href")).toBe("/m");
+    expect((await screen.findByRole("link", { name: "Event checkout v1.3" })).getAttribute("href")).toBe("/e?version=1.3");
+    expect(screen.getByRole("link", { name: "Event checkout (draft)" }).getAttribute("href")).toBe("/e");
     expect(screen.getByText("draft")).toBeDefined();
     expect(screen.getByText("KEY")).toBeDefined();
     // The ghost row is visible but is not a link.
@@ -35,11 +35,11 @@ describe("UsedByPanel", () => {
 
   it("shows the empty and error states", async () => {
     h.listUsagesAction.mockResolvedValueOnce({ success: true, data: [] });
-    render(<UsedByPanel subject={{ kind: "message", messageId: "m1" }} />);
+    render(<UsedByPanel subject={{ kind: "entity", entityId: "e1" }} />);
     expect(await screen.findByText("Nothing references this yet.")).toBeDefined();
     cleanup();
     h.listUsagesAction.mockResolvedValueOnce({ success: false, error: "boom" });
-    render(<UsedByPanel subject={{ kind: "message", messageId: "m1" }} />);
+    render(<UsedByPanel subject={{ kind: "entity", entityId: "e1" }} />);
     expect((await screen.findByRole("alert")).textContent).toBe("boom");
   });
 
@@ -64,9 +64,9 @@ describe("UsedByPanel", () => {
 
   it("does not re-query when the parent re-renders with an equal subject object", async () => {
     h.listUsagesAction.mockResolvedValue({ success: true, data: [] });
-    const { rerender } = render(<UsedByPanel subject={{ kind: "message", messageId: "m1" }} />);
+    const { rerender } = render(<UsedByPanel subject={{ kind: "entity", entityId: "e1" }} />);
     await screen.findByText("Nothing references this yet.");
-    rerender(<UsedByPanel subject={{ kind: "message", messageId: "m1" }} />);
+    rerender(<UsedByPanel subject={{ kind: "entity", entityId: "e1" }} />);
     expect(h.listUsagesAction).toHaveBeenCalledTimes(1);
   });
 });

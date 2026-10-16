@@ -3,15 +3,15 @@
  *
  * Deleting a product cascades (FK ON DELETE CASCADE) its entities, its
  * product-level Data Types (shared enums, custom scalars, unions) and APIs
- * (service definitions), and its Events assets (channels, messages, traits,
- * event specs). None of those may be lost silently, so a product is
- * deletable only when it owns none of them.
+ * (service definitions), and its Events assets (events, and traits). None of those
+ * may be lost silently, so a product is deletable only when it owns none of them.
  */
 
-/** Events assets (spec §4.1: channels, messages and event specs live at product level; traits at any level). */
+/**
+ * Events assets: self-contained events live at product level (messages and channels are parts of an event, not assets), and
+ * traits at tenant or domain level, so a product never owns a trait and a domain owns its own plus its products' events.
+ */
 export interface EventsAssetCounts {
-  channels: number;
-  messages: number;
   traits: number;
   eventSpecs: number;
 }
@@ -29,13 +29,11 @@ export interface ProductContentCounts extends EventsAssetCounts {
  * always carry their product's `domainId` (CHECK + resolveScope), so the same select counts them on a Domain too.
  */
 export const EVENTS_ASSET_COUNT_SELECT = {
-  channels: true,
-  messages: true,
   traits: true,
   eventSpecs: true,
 } as const;
 
-export const NO_EVENTS_ASSETS: EventsAssetCounts = { channels: 0, messages: 0, traits: 0, eventSpecs: 0 };
+export const NO_EVENTS_ASSETS: EventsAssetCounts = { traits: 0, eventSpecs: 0 };
 
 /** Product-level Data Types = shared enums + custom scalars + union types. */
 export function productDataTypeCount(c: Pick<ProductContentCounts, "sharedEnums" | "customScalars" | "unionTypes">): number {
@@ -43,7 +41,7 @@ export function productDataTypeCount(c: Pick<ProductContentCounts, "sharedEnums"
 }
 
 export function eventsAssetTotal(c: EventsAssetCounts): number {
-  return c.channels + c.messages + c.traits + c.eventSpecs;
+  return c.traits + c.eventSpecs;
 }
 
 function countLabel(n: number, singular: string, plural: string): string {
@@ -55,13 +53,11 @@ export function joinList(parts: string[]): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
-/** "2 channels", "1 message", "1 trait", "3 event specs" for every non-zero kind (fixed order). */
+/** "1 trait", "3 events" for every non-zero kind (fixed order). */
 export function eventsAssetParts(c: EventsAssetCounts): string[] {
   const parts: string[] = [];
-  if (c.channels > 0) parts.push(countLabel(c.channels, "channel", "channels"));
-  if (c.messages > 0) parts.push(countLabel(c.messages, "message", "messages"));
   if (c.traits > 0) parts.push(countLabel(c.traits, "trait", "traits"));
-  if (c.eventSpecs > 0) parts.push(countLabel(c.eventSpecs, "event spec", "event specs"));
+  if (c.eventSpecs > 0) parts.push(countLabel(c.eventSpecs, "event", "events"));
   return parts;
 }
 

@@ -35,7 +35,6 @@ vi.mock("@/lib/db", () => ({
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit-1" }),
     },
-    message: { findMany: vi.fn().mockResolvedValue([]) },
     trait: { findMany: vi.fn().mockResolvedValue([]) },
     entityVersion: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null) },
     schemaReference: { findMany: vi.fn().mockResolvedValue([]) },
@@ -467,7 +466,7 @@ describe("Entity Service", () => {
   describe("deleteEntity", () => {
     const existing = { id: "ent-1", name: "Order", tenantId: "tenant-1" };
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const fkError = () => Object.assign(new Error("Foreign key constraint violated on the constraint: `messages_payloadEntityId_fkey`"), { code: "P2003" });
+    const fkError = () => Object.assign(new Error("Foreign key constraint violated on the constraint: `traits_headersEntityId_fkey`"), { code: "P2003" });
     const rawQuery = (state: string) =>
       Object.assign(new Error('Raw query failed. relation "entities" deadlock'), { code: "P2010", meta: { driverAdapterError: { cause: { originalCode: state } } } });
     const deleteAudits = () =>
@@ -477,7 +476,6 @@ describe("Entity Service", () => {
       consoleError.mockClear();
       vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
       vi.mocked(prisma.entity.delete).mockResolvedValue({} as never);
-      vi.mocked(prisma.message.findMany).mockResolvedValue([]);
       vi.mocked(prisma.trait.findMany).mockResolvedValue([]);
       vi.mocked(prisma.entityVersion.findMany).mockResolvedValue([]);
       vi.mocked(prisma.schemaReference.findMany).mockResolvedValue([]);
@@ -487,7 +485,7 @@ describe("Entity Service", () => {
     it("returns success on delete, after checking pins (tenant-scoped) and referencing entities", async () => {
       const result = await deleteEntity("ent-1", mockCtx);
       expect(result.success).toBe(true);
-      expect(prisma.message.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: "tenant-1" }) }));
+      expect(prisma.trait.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: "tenant-1" }) }));
       expect(prisma.entityVersion.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { entityId: "ent-1" } }));
       expect(prisma.entity.delete).toHaveBeenCalledWith({ where: { id: "ent-1" } });
       expect(deleteAudits()).toHaveLength(1);
@@ -530,10 +528,9 @@ describe("Entity Service", () => {
     });
 
     describe("when a foreign key blocks the delete (P2003)", () => {
-      it("returns IN_USE naming the messages and traits that pin the entity", async () => {
+      it("returns IN_USE naming the library traits whose headers pin holds the entity", async () => {
         vi.mocked(prisma.entity.delete).mockRejectedValueOnce(fkError());
         // the pre-delete check finds nothing (the pin landed meanwhile), the post-P2003 check does
-        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
         vi.mocked(prisma.trait.findMany).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "t1", name: "CloudEvents" }] as never);
 
         const result = await deleteEntity("ent-1", mockCtx);
@@ -541,8 +538,8 @@ describe("Entity Service", () => {
           success: false,
           error: {
             code: "IN_USE",
-            message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated" and Trait "CloudEvents".',
-            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [{ id: "t1", name: "CloudEvents" }], entities: [] },
+            message: 'Entity "Order" cannot be deleted: it is used by Trait "CloudEvents".',
+            details: { traits: [{ id: "t1", name: "CloudEvents" }], entities: [] },
           },
         });
         expect(deleteAudits()).toHaveLength(0);
@@ -561,8 +558,8 @@ describe("Entity Service", () => {
     describe("an event document that names the entity (no FK: only the event guard stops the delete)", () => {
       const spec = { id: "ev-1", name: "checkout", domainId: "dom-1", productId: "prd-1", domain: { name: "payments" }, product: { name: "checkout" } };
 
-      it("keeps the legacy message-pin answer byte for byte when no event names the entity (regression)", async () => {
-        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
+      it("keeps the trait-pin answer byte for byte when no event names the entity (regression)", async () => {
+        vi.mocked(prisma.trait.findMany).mockResolvedValueOnce([{ id: "t1", name: "CloudEvents" }] as never);
 
         const result = await deleteEntity("ent-1", mockCtx);
 
@@ -570,9 +567,9 @@ describe("Entity Service", () => {
           success: false,
           error: {
             code: "IN_USE",
-            message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated".',
-            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [], entities: [] },
-            suggestedFix: "Re-pin or delete those messages and traits first, then delete the entity.",
+            message: 'Entity "Order" cannot be deleted: it is used by Trait "CloudEvents".',
+            details: { traits: [{ id: "t1", name: "CloudEvents" }], entities: [] },
+            suggestedFix: "Re-pin or delete those traits first, then delete the entity.",
           },
         });
         // the event guard still looked, inside the entity's tenant
@@ -594,8 +591,8 @@ describe("Entity Service", () => {
         expect(deleteAudits()).toHaveLength(0);
       });
 
-      it("merges with a legacy message pin into one IN_USE that keeps the legacy details and gains `events`", async () => {
-        vi.mocked(prisma.message.findMany).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }] as never);
+      it("merges with a trait pin into one IN_USE that keeps the trait details and gains `events`", async () => {
+        vi.mocked(prisma.trait.findMany).mockResolvedValueOnce([{ id: "t1", name: "CloudEvents" }] as never);
         vi.mocked(prisma.eventSpec.findMany).mockResolvedValueOnce([spec] as never);
 
         const result = await deleteEntity("ent-1", mockCtx);
@@ -604,8 +601,8 @@ describe("Entity Service", () => {
           success: false,
           error: {
             code: "IN_USE",
-            message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated", and it is pinned by event checkout (payments/checkout).',
-            details: { messages: [{ id: "m1", name: "OrderCreated" }], traits: [], entities: [], events: { truncated: false } },
+            message: 'Entity "Order" cannot be deleted: it is used by Trait "CloudEvents", and it is pinned by event checkout (payments/checkout).',
+            details: { traits: [{ id: "t1", name: "CloudEvents" }], entities: [], events: { truncated: false } },
           },
         });
         expect(prisma.entity.delete).not.toHaveBeenCalled();
@@ -622,7 +619,7 @@ describe("Entity Service", () => {
     describe("never throws and never carries driver text", () => {
       it("a lock timeout / deadlock / expired transaction is a retryable CONFLICT without a pin lookup", async () => {
         for (const error of [rawQuery("40P01"), rawQuery("55P03"), rawQuery("40001"), Object.assign(new Error("Transaction API error"), { code: "P2028" })]) {
-          vi.mocked(prisma.message.findMany).mockClear();
+          vi.mocked(prisma.trait.findMany).mockClear();
           vi.mocked(prisma.entity.delete).mockRejectedValueOnce(error);
           const result = await deleteEntity("ent-1", mockCtx);
           expect(result).toEqual({
@@ -630,7 +627,7 @@ describe("Entity Service", () => {
             error: { code: "CONFLICT", message: "Entity changed concurrently, try again", suggestedFix: "Reload and try deleting again." },
           });
           // the one pre-delete check ran; the failure path did not look for pins again
-          expect(prisma.message.findMany).toHaveBeenCalledTimes(1);
+          expect(prisma.trait.findMany).toHaveBeenCalledTimes(1);
         }
       });
 

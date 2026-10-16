@@ -1,5 +1,5 @@
 /**
- * deleteEntityAction guards the delete itself: a message / trait pin (NO ACTION FK → Prisma P2003) and a published
+ * deleteEntityAction guards the delete itself: a library trait's headers pin (NO ACTION FK → Prisma P2003) and a published
  * version of another entity that references one of its versions (schema_references, no FK) both end in an error that
  * names the referencing records instead of surfacing a raw database message; lock contention is a retryable message.
  */
@@ -33,7 +33,7 @@ import { revalidatePath } from "next/cache";
 import { deleteEntityAction } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
-const fkError = () => Object.assign(new Error("Foreign key constraint violated on the constraint: `messages_payloadEntityId_fkey`"), { code: "P2003" });
+const fkError = () => Object.assign(new Error("Foreign key constraint violated on the constraint: `traits_headersEntityId_fkey`"), { code: "P2003" });
 const rawQuery = (state: string) =>
   Object.assign(new Error('Raw query failed. deadlock detected on relation "entities"'), { code: "P2010", meta: { driverAdapterError: { cause: { originalCode: state } } } });
 const fn = (mock: unknown) => mock as ReturnType<typeof vi.fn>;
@@ -44,24 +44,22 @@ beforeEach(() => {
   mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Order", tenantId: "tenant-1" });
   mockPrisma.entity.delete.mockResolvedValue({ id: "ent-1" });
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
-  fn(mockPrisma.message.findMany).mockResolvedValue([]);
   fn(mockPrisma.trait.findMany).mockResolvedValue([]);
   mockPrisma.entityVersion.findMany.mockResolvedValue([]);
   mockPrisma.schemaReference.findMany.mockResolvedValue([]);
 });
 
 describe("deleteEntityAction — pinned entities", () => {
-  it("names the messages and traits that pin the entity instead of the raw FK error, with the remedy", async () => {
+  it("names the traits that pin the entity instead of the raw FK error, with the remedy", async () => {
     mockPrisma.entity.delete.mockRejectedValueOnce(fkError());
     // nothing at the pre-delete check; the pin landed before the delete, so the post-P2003 check finds it
-    fn(mockPrisma.message.findMany).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "m1", name: "OrderCreated" }]);
     fn(mockPrisma.trait.findMany).mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "t1", name: "CloudEvents" }]);
 
     const result = await deleteEntityAction("ent-1");
 
     expect(result).toEqual({
       error:
-        'Entity "Order" cannot be deleted: it is used by Message "OrderCreated" and Trait "CloudEvents". Re-pin or delete those messages and traits first, then delete the entity.',
+        'Entity "Order" cannot be deleted: it is used by Trait "CloudEvents". Re-pin or delete those traits first, then delete the entity.',
     });
     expect(revalidatePath).not.toHaveBeenCalled();
     expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();

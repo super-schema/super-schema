@@ -14,16 +14,15 @@ const LOAD_FAILED = "Could not load usages. Try again.";
 
 /** Spec 18.9 "Who uses X?" — published uses first, drafts flagged, deleted referrers shown as plain text. */
 export function UsedByPanel({ subject, title = "Used by" }: { subject: UsageSubject; title?: string }) {
-  const kind = subject.kind;
-  const id = subject.kind === "entity" ? subject.entityId : subject.messageId;
-  const key = `${kind}:${id}`;
+  const id = subject.entityId;
+  const key = `entity:${id}`;
   // The outcome is keyed by subject: a result for a previous subject counts as "still loading" for the new one.
   const [result, setResult] = useState<{ key: string; outcome: Outcome } | null>(null);
   const outcome = result?.key === key ? result.outcome : null;
 
   useEffect(() => {
     let cancelled = false;
-    const current: UsageSubject = kind === "entity" ? { kind, entityId: id } : { kind, messageId: id };
+    const current: UsageSubject = { kind: "entity", entityId: id };
     const settle = (next: Outcome) => {
       if (!cancelled) setResult({ key, outcome: next });
     };
@@ -39,7 +38,7 @@ export function UsedByPanel({ subject, title = "Used by" }: { subject: UsageSubj
     return () => {
       cancelled = true;
     };
-  }, [kind, id, key]);
+  }, [id, key]);
 
   return (
     <section className="space-y-space-2" data-testid="used-by-panel">

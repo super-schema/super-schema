@@ -13,7 +13,6 @@ type Row = Record<string, unknown>;
 type Where = { where: Record<string, unknown> & { OR?: Array<Record<string, unknown>> } } & Row;
 
 interface Fixture {
-  messages?: Array<{ id: string; name: string }>;
   traits?: Array<{ id: string; name: string }>;
   /** This entity's own versions. */
   versions?: Row[];
@@ -26,7 +25,6 @@ interface Fixture {
 function fakeDb(f: Fixture = {}) {
   const sourceRows = f.sources ?? [];
   return {
-    message: { findMany: vi.fn(async (_args: Where) => f.messages ?? []) },
     trait: { findMany: vi.fn(async (_args: Where) => f.traits ?? []) },
     // The first read lists the entity's own versions, the second one the edge sources.
     entityVersion: {
@@ -38,7 +36,7 @@ function fakeDb(f: Fixture = {}) {
 
 const source = (entityId: string, name: string, major: number, minor: number) => ({ major, minor, entity: { id: entityId, name } });
 const E1 = { id: "e1", tenantId: "t1" };
-const NO_USAGE: EntityPinUsage = { messages: [], traits: [], entities: [] };
+const NO_USAGE: EntityPinUsage = { traits: [], entities: [] };
 
 describe("isForeignKeyViolation", () => {
   it("recognises the Prisma foreign-key code only", () => {
@@ -51,39 +49,16 @@ describe("isForeignKeyViolation", () => {
 });
 
 describe("findEntityPinUsage", () => {
-  it("queries messages and traits through current pins, pinned versions and published message versions, inside the tenant", async () => {
-    const db = fakeDb({ messages: [{ id: "m1", name: "OrderCreated" }], traits: [{ id: "t1", name: "CloudEvents" }] });
+  it("queries library traits through their headers pin (entity or one of its versions), inside the tenant; events are not its business", async () => {
+    const db = fakeDb({ traits: [{ id: "t1", name: "CloudEvents" }] });
     expect(await findEntityPinUsage(db as never, E1)).toEqual({
-      messages: [{ id: "m1", name: "OrderCreated" }],
       traits: [{ id: "t1", name: "CloudEvents" }],
       entities: [],
     });
-    const messageWhere = db.message.findMany.mock.calls[0][0].where;
-    expect(messageWhere.tenantId).toBe("t1");
-    expect(messageWhere.OR).toEqual(
-      expect.arrayContaining([
-        { payloadEntityId: "e1" },
-        { headersEntityId: "e1" },
-        { keyEntityId: "e1" },
-        { payloadEntityVersion: { entityId: "e1" } },
-        { headersEntityVersion: { entityId: "e1" } },
-        { keyEntityVersion: { entityId: "e1" } },
-        {
-          versions: {
-            some: {
-              OR: [
-                { payloadEntityVersion: { entityId: "e1" } },
-                { headersEntityVersion: { entityId: "e1" } },
-                { keyEntityVersion: { entityId: "e1" } },
-              ],
-            },
-          },
-        },
-      ])
-    );
     const traitWhere = db.trait.findMany.mock.calls[0][0].where;
     expect(traitWhere.tenantId).toBe("t1");
     expect(traitWhere.OR).toEqual([{ headersEntityId: "e1" }, { headersEntityVersion: { entityId: "e1" } }]);
+    expect(Object.keys(db).sort()).toEqual(["entityVersion", "schemaReference", "trait"]);
   });
 
   it("finds the entities whose published versions reference one of its versions: edge kind, target ids, other entity, same tenant", async () => {
@@ -124,21 +99,21 @@ describe("entityInUseError", () => {
     expect(entityInUseError("Order", NO_USAGE)).toBeNull();
   });
 
-  it("names the referencing messages and traits and keeps the structured usage", () => {
-    const usage: EntityPinUsage = { messages: [{ id: "m1", name: "OrderCreated" }], traits: [{ id: "t1", name: "CloudEvents" }], entities: [] };
+  it("names the referencing traits and keeps the structured usage", () => {
+    const usage: EntityPinUsage = { traits: [{ id: "t1", name: "CloudEvents" }], entities: [] };
     expect(entityInUseError("Order", usage)).toEqual({
       code: "IN_USE",
-      message: 'Entity "Order" cannot be deleted: it is used by Message "OrderCreated" and Trait "CloudEvents".',
+      message: 'Entity "Order" cannot be deleted: it is used by Trait "CloudEvents".',
       details: usage,
-      suggestedFix: "Re-pin or delete those messages and traits first, then delete the entity.",
+      suggestedFix: "Re-pin or delete those traits first, then delete the entity.",
     });
   });
 
   it("pluralises and truncates long lists", () => {
-    const messages = ["A", "B", "C", "D", "E", "F", "G"].map((name) => ({ id: name, name }));
-    const error = entityInUseError("Order", { ...NO_USAGE, messages });
-    expect(error?.message).toBe('Entity "Order" cannot be deleted: it is used by Messages "A", "B", "C", "D", "E" and 2 more.');
-    expect((error?.details as { messages: unknown[] }).messages).toHaveLength(7);
+    const traits = ["A", "B", "C", "D", "E", "F", "G"].map((name) => ({ id: name, name }));
+    const error = entityInUseError("Order", { ...NO_USAGE, traits });
+    expect(error?.message).toBe('Entity "Order" cannot be deleted: it is used by Traits "A", "B", "C", "D", "E" and 2 more.');
+    expect((error?.details as { traits: unknown[] }).traits).toHaveLength(7);
   });
 
   it("names the referencing entities with their versions (capped) and tells how to get unblocked", () => {
@@ -154,14 +129,14 @@ describe("entityInUseError", () => {
     );
   });
 
-  it("pluralises, caps and combines referencing entities with message / trait pins", () => {
+  it("pluralises, caps and combines referencing entities with trait pins", () => {
     const entities = ["A", "B", "C", "D", "E", "F", "G"].map((name) => ({ id: name, name, versions: ["1.0"] }));
-    const error = entityInUseError("Money", { messages: [{ id: "m", name: "M" }], traits: [], entities });
+    const error = entityInUseError("Money", { traits: [{ id: "t", name: "T" }], entities });
     expect(error?.message).toBe(
-      'Entity "Money" cannot be deleted: it is used by Message "M" and referenced by published versions of Entities "A" (v1.0), "B" (v1.0), "C" (v1.0), "D" (v1.0), "E" (v1.0) and 2 more.'
+      'Entity "Money" cannot be deleted: it is used by Trait "T" and referenced by published versions of Entities "A" (v1.0), "B" (v1.0), "C" (v1.0), "D" (v1.0), "E" (v1.0) and 2 more.'
     );
     expect(error?.suggestedFix).toBe(
-      'Published versions cannot be changed: delete the referencing entities first ("A", "B", "C" and 4 more; deleting an entity removes its versions), re-pin or delete the messages and traits that use it, then delete this entity. Or keep it.'
+      'Published versions cannot be changed: delete the referencing entities first ("A", "B", "C" and 4 more; deleting an entity removes its versions), re-pin or delete the traits that use it, then delete this entity. Or keep it.'
     );
   });
 });
@@ -169,7 +144,7 @@ describe("entityInUseError", () => {
 describe("explainEntityDeleteFailure", () => {
   it("returns the IN_USE error when pins exist and null when the failure has another cause", async () => {
     const entity = { id: "e1", name: "Order", tenantId: "t1" };
-    const used = await explainEntityDeleteFailure(fakeDb({ messages: [{ id: "m1", name: "OrderCreated" }] }) as never, entity);
+    const used = await explainEntityDeleteFailure(fakeDb({ traits: [{ id: "t1", name: "CloudEvents" }] }) as never, entity);
     expect(used?.code).toBe("IN_USE");
     expect(await explainEntityDeleteFailure(fakeDb() as never, entity)).toBeNull();
   });
@@ -189,9 +164,9 @@ describe("entityDeleteFailure", () => {
   const rawQuery = (state: string) => prismaError("P2010", { driverAdapterError: { cause: { originalCode: state } } });
 
   it("P2003 -> IN_USE naming what holds the entity", async () => {
-    const error = await entityDeleteFailure(fakeDb({ messages: [{ id: "m1", name: "OrderCreated" }] }) as never, entity, prismaError("P2003"));
+    const error = await entityDeleteFailure(fakeDb({ traits: [{ id: "t1", name: "CloudEvents" }] }) as never, entity, prismaError("P2003"));
     expect(error.code).toBe("IN_USE");
-    expect(error.message).toContain('Message "OrderCreated"');
+    expect(error.message).toContain('Trait "CloudEvents"');
   });
 
   it("P2003 nothing explains (or with only an id at hand) -> generic IN_USE, never the driver text", async () => {
@@ -201,14 +176,14 @@ describe("entityDeleteFailure", () => {
       message: "This entity is referenced by another record and cannot be deleted.",
       suggestedFix: "Remove the references first.",
     });
-    const idOnly = fakeDb({ messages: [{ id: "m1", name: "X" }] });
+    const idOnly = fakeDb({ traits: [{ id: "t1", name: "X" }] });
     expect((await entityDeleteFailure(idOnly as never, { id: "e1" }, prismaError("P2003"))).code).toBe("IN_USE");
-    expect(idOnly.message.findMany).not.toHaveBeenCalled();
+    expect(idOnly.trait.findMany).not.toHaveBeenCalled();
   });
 
   it("a failing explanation read -> DB_ERROR (generic, logged)", async () => {
     const db = fakeDb();
-    db.message.findMany.mockRejectedValueOnce(new Error("connection reset"));
+    db.trait.findMany.mockRejectedValueOnce(new Error("connection reset"));
     expect(await entityDeleteFailure(db as never, entity, prismaError("P2003"))).toEqual({ code: "DB_ERROR", message: GENERIC_ACTION_ERROR });
     expect(consoleError).toHaveBeenCalled();
   });
@@ -223,7 +198,7 @@ describe("entityDeleteFailure", () => {
     const db = fakeDb();
     const failure = await entityDeleteFailure(db as never, entity, error);
     expect(failure).toEqual({ code: "CONFLICT", message: "Entity changed concurrently, try again", suggestedFix: "Reload and try deleting again." });
-    expect(db.message.findMany).not.toHaveBeenCalled();
+    expect(db.trait.findMany).not.toHaveBeenCalled();
   });
 
   it("anything else -> DB_ERROR with only the generic message; the original is logged", async () => {
