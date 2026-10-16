@@ -330,11 +330,11 @@ function ExplorerSidebar({
               />
             )}
 
-            {product.counts.eventSpecs > 0 && (
+            {product.counts.events > 0 && (
               <SidebarLeafCategory
                 testId={`product-${product.id}-events`}
                 active={(pathname === base && activeTab === "events") || isWithin(pathname, `${base}/${EVENT_PAGE_SEGMENT}`)}
-                count={product.counts.eventSpecs}
+                count={product.counts.events}
                 icon={Radio}
                 label="Events"
                 href={eventsHref}

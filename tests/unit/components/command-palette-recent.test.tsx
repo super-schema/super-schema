@@ -128,7 +128,7 @@ describe("CommandPalette recent entries", () => {
               name: "Checkout",
               slug: "checkout",
               isSystem: false,
-              counts: { dataTypes: 0, apis: 0, entities: 1, traits: 0, messages: 0, channels: 0, eventSpecs: 0 },
+              counts: { dataTypes: 0, apis: 0, entities: 1, traits: 0, events: 0 },
               entities: [{ id: "e1", name: "Order", slug: "order", status: "ACTIVE" }],
             },
           ],
