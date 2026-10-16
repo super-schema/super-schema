@@ -6,9 +6,14 @@ import type { EntityPin } from "@/lib/events/types";
 export interface DocumentEdge { role: "PAYLOAD" | "HEADERS" | "KEY" | "MESSAGE"; toKind: "ENTITY_VERSION" | "EVENT_SPEC_VERSION"; toId: string }
 export interface DocumentRefs { entityIds: string[]; pinnedVersionIds: string[]; unpinned: Array<{ pointer: string; entityId: string }>; libraryTraitIds: string[]; externalVersionIds: string[] }
 
-type PinSite = { pointer: string; role: "PAYLOAD" | "HEADERS" | "KEY"; pin: EntityPin };
+export type PinSite = { pointer: string; role: "PAYLOAD" | "HEADERS" | "KEY"; pin: EntityPin };
 
-function pinSites(doc: EventDocument): PinSite[] {
+/**
+ * Every entity pin of the document with its JSON pointer and edge role, in document order: each message's payload / headers / keyPin
+ * and the headers of local traits. Library traits carry no pin of their own. The single source of the sites that edges, refs,
+ * reference validation and publish facts all read.
+ */
+export function collectPinSites(doc: EventDocument): PinSite[] {
   const sites: PinSite[] = [];
   doc.messages.forEach((m, i) => {
     sites.push({ pointer: `/messages/${i}/payload`, role: "PAYLOAD", pin: m.payload });
@@ -28,13 +33,13 @@ const uniqueSorted = (xs: string[]) => [...new Set(xs)].sort(compare);
 export function collectDocumentEdges(doc: EventDocument): DocumentEdge[] {
   const edges = new Map<string, DocumentEdge>();
   const add = (e: DocumentEdge) => edges.set(`${e.role}|${e.toKind}|${e.toId}`, e);
-  for (const s of pinSites(doc)) if (s.pin.entityVersionId) add({ role: s.role, toKind: "ENTITY_VERSION", toId: s.pin.entityVersionId });
+  for (const s of collectPinSites(doc)) if (s.pin.entityVersionId) add({ role: s.role, toKind: "ENTITY_VERSION", toId: s.pin.entityVersionId });
   for (const r of doc.externalRefs) add({ role: "MESSAGE", toKind: "EVENT_SPEC_VERSION", toId: r.eventVersionId });
   return [...edges.values()].sort((a, b) => compare(a.role, b.role) || compare(a.toKind, b.toKind) || compare(a.toId, b.toId));
 }
 
 export function collectDocumentRefs(doc: EventDocument): DocumentRefs {
-  const sites = pinSites(doc);
+  const sites = collectPinSites(doc);
   return {
     entityIds: uniqueSorted(sites.map((s) => s.pin.entityId)),
     pinnedVersionIds: uniqueSorted(sites.flatMap((s) => (s.pin.entityVersionId ? [s.pin.entityVersionId] : []))),
