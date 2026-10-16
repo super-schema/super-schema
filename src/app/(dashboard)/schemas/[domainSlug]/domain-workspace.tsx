@@ -17,6 +17,7 @@ import {
   FileText,
   Sparkles,
   FilePlus2,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +43,7 @@ import { CreateDropdown } from "./components/CreateDropdown";
 import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
 import { DomainApisTab, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
 import { ProductContacts, type ProductContactsValue } from "./components/ProductContacts";
+import { EditProductContactsDialog } from "./components/EditProductContactsDialog";
 import { EventsList } from "@/features/events/workspace/EventsList";
 import { NewEventDialog } from "@/features/events/workspace/NewEventDialog";
 import type { EventListItem } from "@/features/events/event-page/load-events-list";
@@ -138,6 +140,9 @@ function needsPrecisionScale(typeId: string): boolean {
   return !!info?.requiresPrecision || !!info?.requiresScale;
 }
 
+/** What the Edit contacts dialog starts from when the page passes no contacts: a product without any. */
+const NO_CONTACTS: ProductContactsValue = { engineeringLead: null, manager: null, teamEmails: [] };
+
 let nextTempId = 0;
 function makeTempId() {
   return `temp-${++nextTempId}`;
@@ -204,6 +209,8 @@ export function DomainWorkspace({
 
   // One New Event dialog, opened by the header menu and by the Events tab alike.
   const [newEventOpen, setNewEventOpen] = useState(false);
+  // The Edit contacts dialog opens from the button beside the contacts.
+  const [contactsOpen, setContactsOpen] = useState(false);
 
   function tabHref(tab: DomainTab) {
     if (tab === "data-types") return assetHref({ kind: "dataTypes", domainSlug, productSlug });
@@ -478,6 +485,15 @@ export function DomainWorkspace({
         onCreated={(id) => router.push(assetHref({ kind: "event", id, domainSlug, productSlug }))}
       />
 
+      {/* Edit contacts dialog: starts from what is stored, saves only the three contact fields */}
+      <EditProductContactsDialog
+        productId={productId}
+        productName={productName}
+        contacts={productContacts ?? NO_CONTACTS}
+        open={contactsOpen}
+        onOpenChange={setContactsOpen}
+      />
+
       {/* Entity delete confirmation dialog */}
       <Dialog
         open={deleteConfirm !== null}
@@ -582,7 +598,19 @@ export function DomainWorkspace({
         </div>
       </div>
 
-      <ProductContacts contacts={productContacts} />
+      <div className="flex flex-wrap items-start gap-x-space-6 gap-y-space-2 mb-space-4">
+        <ProductContacts contacts={productContacts} />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setContactsOpen(true)}
+          data-testid="edit-product-contacts"
+          className="gap-1.5 text-muted-foreground hover:text-foreground"
+        >
+          <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+          Edit contacts
+        </Button>
+      </div>
 
       {/* Domain tabs */}
       <div role="tablist" aria-label={`${productName} sections`} className="flex items-center gap-space-1 border-b border-border mb-space-6">
