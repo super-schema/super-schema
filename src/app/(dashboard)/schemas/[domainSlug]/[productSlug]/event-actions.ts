@@ -63,3 +63,41 @@ export async function previewEventDocumentAction(eventId: string, productId: str
 export async function emitEventDraftAction(eventId: string, productId: string): Promise<ActionResult<EventEmission>> {
   return readAction(productId, "emitEventDraftAction", (ctx) => emitEventDraft(eventId, productId, ctx));
 }
+
+// ── External event references: read actions ────────────────────────────────────────────────────────────────────────────
+// The loaders of `external-refs.service.ts` for the reference picker and the "newer version available" badge. `productId` is
+// the product the user works in (checked by `readAction` -> `withOwnedTarget`, like every action above). The tenant is the
+// server-resolved ACTIVE tenant, and the event the candidate list leaves out is checked to be one of that product's events:
+// neither is ever taken on trust from the client.
+import { getActiveTenantId } from "@/lib/active-tenant";
+import type { ExternalEventCandidate, ExternalRefInput, ExternalRefStatus, ExternalVersionItems, ExternalVersionOption } from "@/lib/events/external-refs";
+import {
+  getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions, requireOwnedEvent,
+} from "@/services/events/external-refs.service";
+
+/** Published events of the tenant to reference, searched by event / domain / product name. `eventId` is the event being edited (never offered). */
+export async function listExternalEventCandidatesAction(productId: string, eventId: string, query?: string): Promise<ActionResult<ExternalEventCandidate[]>> {
+  return readAction(productId, "listExternalEventCandidatesAction", async (ctx) => {
+    const own = await requireOwnedEvent(ctx, eventId, productOwner(productId));
+    if (!own.success) return own;
+    return listExternalEventCandidates(ctx, { tenantId: await getActiveTenantId(), excludeEventId: own.data, query });
+  });
+}
+
+/** The referenceable versions of the event `sourceEventId` (any product of the tenant), newest first. */
+export async function listExternalEventVersionsAction(productId: string, sourceEventId: string): Promise<ActionResult<ExternalVersionOption[]>> {
+  return readAction(productId, "listExternalEventVersionsAction", async (ctx) =>
+    listExternalEventVersions(ctx, { tenantId: await getActiveTenantId(), eventId: sourceEventId }));
+}
+
+/** The channels and messages the published version `eventVersionId` offers. */
+export async function getExternalVersionItemsAction(productId: string, eventVersionId: string): Promise<ActionResult<ExternalVersionItems>> {
+  return readAction(productId, "getExternalVersionItemsAction", async (ctx) =>
+    getExternalVersionItems(ctx, { tenantId: await getActiveTenantId(), eventVersionId }));
+}
+
+/** One status per referenced version: is a newer version published, is it a new major, which referenced items did it drop. */
+export async function getExternalRefStatusesAction(productId: string, refs: ExternalRefInput[]): Promise<ActionResult<ExternalRefStatus[]>> {
+  return readAction(productId, "getExternalRefStatusesAction", async (ctx) =>
+    getExternalRefStatuses(ctx, { tenantId: await getActiveTenantId(), refs }));
+}
