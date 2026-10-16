@@ -7,7 +7,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
 
 export type RegistryKind =
   | "entity" | "sharedEnum" | "customScalar" | "unionType" | "service"
-  | "trait" | "message" | "channel" | "eventSpec";
+  | "trait" | "eventSpec";
 
 export interface NamedAsset {
   kind: RegistryKind;
@@ -33,8 +33,6 @@ export const REGISTRY_DELEGATES = {
   unionType: "unionType",
   service: "serviceDefinition",
   trait: "trait",
-  message: "message",
-  channel: "channel",
   eventSpec: "eventSpec",
 } as const satisfies Record<RegistryKind, keyof Db>;
 
@@ -47,8 +45,6 @@ const KIND_LABEL: Record<RegistryKind, string> = {
   unionType: "Union",
   service: "API",
   trait: "Trait",
-  message: "Message",
-  channel: "Channel",
   eventSpec: "Event Spec",
 };
 
@@ -77,8 +73,7 @@ type RegistryWhere = { tenantId: string; name?: { equals: string; mode: "insensi
 const NAMED_SELECT = { id: true, name: true, tenantId: true, domainId: true, productId: true } as const;
 
 /**
- * One finder per RegistryKind. The Record type makes adding a kind (e.g. Phase 4's
- * trait | message | channel | eventSpec) a compile error until its finder exists.
+ * One finder per RegistryKind. The Record type makes adding a kind a compile error until its finder exists.
  */
 const FINDERS: Record<RegistryKind, (db: Db, where: RegistryWhere) => Promise<NamedRow[]>> = {
   entity: (db, where) => db.entity.findMany({ where, select: NAMED_SELECT }),
@@ -87,8 +82,6 @@ const FINDERS: Record<RegistryKind, (db: Db, where: RegistryWhere) => Promise<Na
   unionType: (db, where) => db.unionType.findMany({ where, select: NAMED_SELECT }),
   service: (db, where) => db.serviceDefinition.findMany({ where, select: NAMED_SELECT }),
   trait: (db, where) => db.trait.findMany({ where, select: NAMED_SELECT }),
-  message: (db, where) => db.message.findMany({ where, select: NAMED_SELECT }),
-  channel: (db, where) => db.channel.findMany({ where, select: NAMED_SELECT }),
   eventSpec: (db, where) => db.eventSpec.findMany({ where, select: NAMED_SELECT }),
 };
 

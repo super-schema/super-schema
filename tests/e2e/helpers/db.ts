@@ -148,16 +148,15 @@ export async function deleteNavFixtures(fixtures: NavFixtures | undefined) {
   const db = pg();
   // Explicit: tenant-level entities are not reachable through a domain cascade.
   await db.query(`DELETE FROM entities WHERE id = $1`, [fixtures.tenantEntity.id]);
-  // Edge rows have no FKs, so a specs / messages / entity-versions run leaves them behind: remove them first.
+  // Edge rows have no FKs, so an events / entity-versions run leaves them behind: remove them first.
   await deleteSchemaReferencesForDomain(fixtures.domain.id);
-  // Cascades to the product and its entities/fields, and to any channels, messages, traits, event specs and their
-  // versions a spec created under it. The immutability triggers (20261015 / 20261016 *_no_delete) only refuse a
+  // Cascades to the product and its entities/fields, and to any traits, events and their versions a spec created under it. The immutability triggers (20261015 / 20261016 *_no_delete) only refuse a
   // DIRECT delete of a published version; a delete of the owning row, or of a domain above it, is the sanctioned path.
   await db.query(`DELETE FROM domains WHERE id = $1`, [fixtures.domain.id]);
 }
 
 /**
- * `schema_references` has no FKs (polymorphic), so deleting a domain cascades to its messages, specs, versions and
+ * `schema_references` has no FKs (polymorphic), so deleting a domain cascades to its events, event versions and
  * entity versions but leaves the edge rows that start at them. This deletes those edges; `deleteNavFixtures` calls it
  * before the domain delete, and a spec may call it directly.
  *
@@ -168,9 +167,7 @@ export async function deleteNavFixtures(fixtures: NavFixtures | undefined) {
 export async function deleteSchemaReferencesForDomain(domainId: string): Promise<number> {
   const res = await pg().query(
     `DELETE FROM schema_references WHERE "fromId" IN (
-       SELECT id FROM messages WHERE "domainId" = $1
-       UNION SELECT mv.id FROM message_versions mv JOIN messages m ON m.id = mv."messageId" WHERE m."domainId" = $1
-       UNION SELECT id FROM event_specs WHERE "domainId" = $1
+       SELECT id FROM event_specs WHERE "domainId" = $1
        UNION SELECT sv.id FROM event_spec_versions sv JOIN event_specs s ON s.id = sv."eventSpecId" WHERE s."domainId" = $1
        UNION SELECT ev.id FROM entity_versions ev JOIN entities e ON e.id = ev."entityId" WHERE e."domainId" = $1
        UNION SELECT id FROM traits WHERE "domainId" = $1) RETURNING id`,

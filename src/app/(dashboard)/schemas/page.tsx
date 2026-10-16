@@ -76,8 +76,6 @@ export default async function SchemasPage() {
           services: d._count.services,
           interfaces: d._count.interfaces,
           userRoles: d._count.userRoles,
-          channels: d._count.channels,
-          messages: d._count.messages,
           traits: d._count.traits,
           eventSpecs: d._count.eventSpecs,
         },

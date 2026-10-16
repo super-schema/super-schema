@@ -9,8 +9,6 @@ const KIND_LABELS: Record<RegistryKind, string> = {
   unionType: "Union",
   service: "API",
   trait: "Trait",
-  message: "Message",
-  channel: "Channel",
   eventSpec: "Event Spec",
 };
 

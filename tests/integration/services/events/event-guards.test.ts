@@ -29,7 +29,7 @@ import { createEvent, deleteEvent, updateEventDocument } from "@/services/events
 import { deleteTrait } from "@/services/events/trait.service";
 import { deleteProduct } from "@/services/product.service";
 import { createForeignTenant } from "./foreign-tenant";
-import { cleanupDomains, connectTestDb, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
+import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
 
 const prisma = connectTestDb();
 const domainIds: string[] = [];
@@ -96,12 +96,10 @@ async function publishDirect(
   opts: { frozenTraits?: unknown[]; resolvedSpec?: Prisma.InputJsonValue | null; sourceDocument?: unknown } = {}
 ) {
   const { frozenTraits = [], resolvedSpec = RESOLVED, sourceDocument = doc } = opts;
-  const version = await prisma.eventSpecVersion.create({
-    data: {
-      eventSpecId: eventId, major: 1, minor: 0, sequence: 1, document: {}, sourceDocument: sourceDocument as Prisma.InputJsonValue,
-      frozenChannels: [], frozenTraits: frozenTraits as Prisma.InputJsonValue, messageVersionIds: [],
-      changeKind: "INITIAL", publishedById: ctx.userId, ...(resolvedSpec === null ? {} : { resolvedSpec }),
-    },
+  const version = await createEventSpecVersion(prisma, {
+    eventSpecId: eventId, major: 1, minor: 0, sequence: 1, document: {}, sourceDocument: sourceDocument as Prisma.InputJsonValue,
+    frozenTraits: frozenTraits as Prisma.InputJsonValue,
+    changeKind: "INITIAL", publishedById: ctx.userId, ...(resolvedSpec === null ? {} : { resolvedSpec }),
   });
   const edges = collectDocumentEdges(doc);
   if (edges.length > 0) {
@@ -319,18 +317,14 @@ describe("event pin-integrity guards", () => {
     expect(found.map((r) => r.eventId).sort()).toEqual([event.id, frozenOnly.event.id].sort());
     expect(found.map((r) => r.eventId)).not.toContain(legacy.event.id);
 
-    // Merged with the legacy guard: a draft message that carries the trait is named alongside the events.
-    const legacyPayload = await scope.publishedEntity("LegacyPayload");
-    const message = await prisma.message.create({
-      data: { ...level(scope), name: `legacy-${scope.s}`, spec: { traitIds: [trait.id] }, payloadEntityId: legacyPayload.entity.id, payloadEntityVersionId: legacyPayload.version.id },
-    });
-    const merged = fail(await deleteTrait(trait.id, traitOwner, ctx));
-    expect(merged.code).toBe("IN_USE");
-    expect(merged.message).toContain(`Message "${message.name}" (draft)`);
-    expect(merged.message).toContain(`and it is used by events`);
-    expect(merged.message).toContain(`${event.name} ${where(scope)}`);
-    expect(merged.details).toMatchObject({ truncated: false, events: { truncated: false } });
-    await prisma.message.delete({ where: { id: message.id } });
+    // Both the event with the library trait in its source and the one that only froze it are named, in one IN_USE.
+    const several = fail(await deleteTrait(trait.id, traitOwner, ctx));
+    expect(several.code).toBe("IN_USE");
+    expect(several.message).toContain("it is used by events");
+    expect(several.message).toContain(`${event.name} ${where(scope)}`);
+    expect(several.message).toContain(`${frozenOnly.event.name} ${where(scope)}`);
+    expect(several.details).toMatchObject({ truncated: false });
+    expect(referrersOf(several).map((r) => r.eventId).sort()).toEqual([event.id, frozenOnly.event.id].sort());
 
     // Deleting the events (their versions go too) frees the trait.
     for (const e of [event, frozenOnly.event, legacy.event]) unwrap(await deleteEvent(e.id, owner, ctx));
@@ -404,7 +398,7 @@ describe("event pin-integrity guards", () => {
     const blocked = fail(await deleteProduct(scope.product.id, ctx));
     expect(blocked.code).toBe("VALIDATION_ERROR");
     expect(blocked.message).toBe(
-      `Delete the product's 1 event spec before removing it. Product "${scope.product.name}" cannot be deleted: other products' events reference its events: ${consumer.name} ${where(consumers.scope)}.`
+      `Delete the product's 1 event before removing it. Product "${scope.product.name}" cannot be deleted: other products' events reference its events: ${consumer.name} ${where(consumers.scope)}.`
     );
     expect(blocked.details).toEqual({
       events: {
@@ -425,7 +419,7 @@ describe("event pin-integrity guards", () => {
     unwrap(await updateEventDocument(consumer.id, emptyEventDocument("c"), consumers.owner, ctx));
     expect(await findCrossProductEventRefs(prisma, product)).toEqual([]);
     const plain = fail(await deleteProduct(scope.product.id, ctx));
-    expect(plain.message).toBe("Delete the product's 1 event spec before removing it");
+    expect(plain.message).toBe("Delete the product's 1 event before removing it");
     expect(plain.details).toBeUndefined();
     const plainDomain = (await deleteDomainAction(scope.domain.id)) as { error: string };
     expect(plainDomain.error).not.toContain("reference its events");
@@ -569,33 +563,33 @@ describe("event pin-integrity guards", () => {
     expect(unwrap(await updateEntity(epsilon.entity.id, { status: "DEPRECATED" }, ctx)).status).toBe("DEPRECATED");
   }, 90_000);
 
-  it("merges with the legacy foreign-key guard: names the message and the event together, and leaves the legacy answer untouched without events", async () => {
+  it("merges with the trait foreign-key guard: names the trait and the event together, and leaves the trait answer untouched without events", async () => {
     const { ctx, scope, owner, order } = await setup();
-    const legacy = await prisma.message.create({
-      data: { ...level(scope), name: `Legacy-${scope.s}`, payloadEntityId: order.entity.id, payloadEntityVersionId: order.version.id },
+    // A library trait whose headers pin holds the entity: a NO ACTION foreign key, found by the entity pin guard.
+    const trait = await prisma.trait.create({
+      data: { tenantId: TENANT, domainId: scope.domain.id, kind: "MESSAGE", name: `Headers-${scope.s}`, headersEntityId: order.entity.id, headersEntityVersionId: order.version.id },
     });
 
-    // Legacy pin only: the existing message, details and remedy, byte for byte.
+    // Trait pin only: the pin guard's message, details and remedy, byte for byte.
     const only = fail(await deleteEntity(order.entity.id, ctx));
     expect(only.code).toBe("IN_USE");
-    expect(only.message).toBe(`Entity "Order" cannot be deleted: it is used by Message "${legacy.name}".`);
-    expect(only.details).toEqual({ messages: [{ id: legacy.id, name: legacy.name }], traits: [], entities: [] });
-    expect(only.suggestedFix).toBe("Re-pin or delete those messages and traits first, then delete the entity.");
+    expect(only.message).toBe(`Entity "Order" cannot be deleted: it is used by Trait "${trait.name}".`);
+    expect(only.details).toEqual({ traits: [{ id: trait.id, name: trait.name }], entities: [] });
+    expect(only.suggestedFix).toBe("Re-pin or delete those traits first, then delete the entity.");
 
-    // Both: one error, the event named after the legacy holder, both remedies kept.
+    // Both: one error, the event named after the trait holder, both remedies kept.
     const event = await newEvent(ctx, scope, "both");
     unwrap(await updateEventDocument(event.id, docWith([msg("OrderCreated", pinOf(order))]), owner, ctx));
     const both = fail(await deleteEntity(order.entity.id, ctx));
     expect(both.code).toBe("IN_USE");
-    expect(both.message).toBe(`Entity "Order" cannot be deleted: it is used by Message "${legacy.name}", and it is pinned by event ${event.name} ${where(scope)}.`);
+    expect(both.message).toBe(`Entity "Order" cannot be deleted: it is used by Trait "${trait.name}", and it is pinned by event ${event.name} ${where(scope)}.`);
     expect(both.details).toMatchObject({
-      messages: [{ id: legacy.id, name: legacy.name }],
-      traits: [],
+      traits: [{ id: trait.id, name: trait.name }],
       entities: [],
       events: { truncated: false },
     });
     expect(referrersOf({ ...both, details: (both.details as { events: object }).events })).toHaveLength(1);
-    expect(both.suggestedFix).toContain("Re-pin or delete those messages and traits first");
+    expect(both.suggestedFix).toContain("Re-pin or delete those traits first");
     expect(both.suggestedFix).toContain(`Remove the pin from "${event.name}" first`);
   }, 60_000);
 });

@@ -1,7 +1,7 @@
 import { ok, err, type Result } from "@/types/result";
 
 export type AssetLevel = "TENANT" | "DOMAIN" | "PRODUCT";
-export type LevelKind = "dataType" | "entity" | "api" | "trait" | "message" | "channel" | "eventSpec";
+export type LevelKind = "dataType" | "entity" | "api" | "trait" | "eventSpec";
 
 export interface LevelScope {
   tenantId: string;
@@ -9,14 +9,15 @@ export interface LevelScope {
   productId: string | null;
 }
 
-/** Spec §4.1 placement matrix. */
+/**
+ * Spec §4.1 placement matrix, as amended: messages and channels live inside an event document (no assets of their own), and a
+ * trait is tenant or domain level only (the table's traits_no_product_check).
+ */
 export const ALLOWED_LEVELS: Record<LevelKind, readonly AssetLevel[]> = {
   dataType: ["TENANT", "DOMAIN", "PRODUCT"],
   entity: ["TENANT", "PRODUCT"],
   api: ["DOMAIN", "PRODUCT"],
-  trait: ["TENANT", "DOMAIN", "PRODUCT"],
-  message: ["PRODUCT"],
-  channel: ["PRODUCT"],
+  trait: ["TENANT", "DOMAIN"],
   eventSpec: ["PRODUCT"],
 };
 
@@ -25,8 +26,6 @@ const KIND_LABELS: Record<LevelKind, string> = {
   entity: "Entity",
   api: "API",
   trait: "Trait",
-  message: "Message",
-  channel: "Channel",
   eventSpec: "Event Spec",
 };
 

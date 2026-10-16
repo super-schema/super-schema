@@ -19,8 +19,6 @@ export async function GET() {
     where: { tenantId },
     _count: { _all: true },
   } as const;
-  // Only self-contained events (document v2) are Events now; a stored legacy v1 row is not listed by the Events page, so it is not counted.
-  const eventGroup = { ...levelGroup, where: { tenantId, document: { path: ["documentVersion"], equals: 2 } } };
   const [domains, products, entities, enums, scalars, unions, services, traits, events] = await Promise.all([
     prisma.domain.findMany({
       where: { tenantId },
@@ -41,7 +39,7 @@ export async function GET() {
     prisma.unionType.findMany({ where: { tenantId }, select: levelSelect }),
     prisma.serviceDefinition.findMany({ where: { tenantId }, select: levelSelect }),
     prisma.trait.groupBy(levelGroup),
-    prisma.eventSpec.groupBy(eventGroup),
+    prisma.eventSpec.groupBy(levelGroup),
   ]);
   return NextResponse.json(
     buildExplorerTree({

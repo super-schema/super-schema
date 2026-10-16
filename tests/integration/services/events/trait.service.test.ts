@@ -167,8 +167,10 @@ describe("trait service", () => {
       const a = unwrap(await createTrait(owner, { name: `A-${sc.s}`, kind: "MESSAGE", spec: { summary: "original" } }, ctx));
       const dupSameLevel = await createTrait(owner, { name: `a-${sc.s}`, kind: "OPERATION" }, ctx);
       expect(!dupSameLevel.success && dupSameLevel.error.code).toBe("NAME_CONFLICT");
-      const dupBelow = await createTrait(productOwner, { name: `A-${sc.s}`, kind: "MESSAGE" }, ctx);
-      expect(!dupBelow.success && dupBelow.error.code).toBe("NAME_CONFLICT");
+      // A trait is tenant or domain level only: a product owner is refused before any name check or write.
+      const atProduct = await createTrait(productOwner, { name: `P-${sc.s}`, kind: "MESSAGE" }, ctx);
+      expect(!atProduct.success && atProduct.error.code).toBe("INVALID_SCOPE");
+      expect(await prisma.trait.count({ where: { name: `P-${sc.s}` } })).toBe(0);
 
       const rename = await updateTrait(a.id, { name: `ORDER${sc.s}`, spec: { summary: "changed" } }, owner, ctx);
       expect(!rename.success && rename.error.code).toBe("NAME_CONFLICT");

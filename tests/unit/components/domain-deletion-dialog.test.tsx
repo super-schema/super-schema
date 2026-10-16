@@ -18,8 +18,6 @@ const EMPTY: DomainDeletionImpact = {
   services: 0,
   interfaces: 0,
   userRoles: 0,
-  channels: 0,
-  messages: 0,
   traits: 0,
   eventSpecs: 0,
 };
@@ -44,10 +42,9 @@ describe("DomainDeletionDialog blockers", () => {
   });
 
   it.each([
-    [{ channels: 1 }, "1 channel"],
-    [{ messages: 2 }, "2 messages"],
     [{ traits: 1 }, "1 trait"],
-    [{ eventSpecs: 3 }, "3 event specs"],
+    [{ eventSpecs: 1 }, "1 event"],
+    [{ eventSpecs: 3 }, "3 events"],
   ])("blocks on Events assets alone: %j", (counts, listed) => {
     const { confirm, onConfirm } = renderDialog({ ...EMPTY, ...counts });
     expect(screen.getByText("Delete or move all Events assets first.")).toBeDefined();
@@ -58,9 +55,9 @@ describe("DomainDeletionDialog blockers", () => {
   });
 
   it("names entities and Events assets together when both block", () => {
-    const { confirm } = renderDialog({ ...EMPTY, entities: 1, channels: 2, messages: 3, traits: 1, eventSpecs: 1 });
+    const { confirm } = renderDialog({ ...EMPTY, entities: 1, traits: 1, eventSpecs: 2 });
     expect(screen.getByText("Delete or move all entities and Events assets first.")).toBeDefined();
-    expect(screen.getByText("This domain currently contains 1 entity, 2 channels, 3 messages, 1 trait and 1 event spec.")).toBeDefined();
+    expect(screen.getByText("This domain currently contains 1 entity, 1 trait and 2 events.")).toBeDefined();
     expect(confirm().disabled).toBe(true);
   });
 

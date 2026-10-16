@@ -37,7 +37,7 @@ export interface ProductGridItem {
   dataTypeCount: number;
   /** Product-level APIs (service definitions) — cascade with the product. */
   apiCount: number;
-  /** Events assets (channels, messages, traits, event specs) — cascade with the product; absent = none known. */
+  /** Events assets (events, traits) — cascade with the product; absent = none known. */
   eventsAssets?: EventsAssetCounts;
   updatedAt: Date | string;
   tier: {

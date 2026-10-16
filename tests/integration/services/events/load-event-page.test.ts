@@ -5,7 +5,7 @@ import type { ServiceContext } from "@/types/service-context";
 import type { Prisma } from "@/generated/prisma/client";
 import { BUNDLED_TRAITS, propertySummary } from "@/lib/events/bundled-traits";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
-import { cleanupDomains, cleanupTenantTraits, connectTestDb, createProductScope, TENANT, testContext } from "./helpers";
+import { cleanupDomains, cleanupTenantTraits, connectTestDb, createEventSpecVersion, createProductScope, TENANT, testContext } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 
 /**
@@ -37,7 +37,7 @@ const tenantTraitIds: string[] = [];
 let libraryTraits: {
   tenantMessage: { id: string; name: string }; tenantOperation: { id: string; name: string };
   domainMessage: { id: string; name: string }; domainOperation: { id: string; name: string };
-  productLevel: { id: string; name: string }; otherDomain: { id: string; name: string };
+  otherDomain: { id: string; name: string };
   foreignTenant: { id: string; name: string }; foreignTenantLevel: { id: string; name: string };
   /** A tenant-level trait stored exactly like a built-in one (marker + inline CloudEvents headers), and a custom domain trait with inline headers. */
   tenantBuiltIn: { id: string; name: string }; domainInline: { id: string; name: string };
@@ -91,11 +91,9 @@ beforeAll(async () => {
 
     mine = await createEvent(at, `event-mine-${own.s}`, richDocument(`Mine ${own.s}`, ownEntity.id));
     published = await createEvent(at, `event-published-${own.s}`, richDocument(`Published ${own.s}`, ownEntity.id));
-    const version = await prisma.eventSpecVersion.create({
-      data: {
-        eventSpecId: published.id, major: 1, minor: 2, sequence: 1, document: {}, sourceDocument: {}, frozenChannels: [], frozenTraits: [],
-        messageVersionIds: [], changeKind: "INITIAL", publishedById: ctx.userId,
-      },
+    const version = await createEventSpecVersion(prisma, {
+      eventSpecId: published.id, major: 1, minor: 2, sequence: 1, document: {}, sourceDocument: {}, frozenTraits: [],
+      changeKind: "INITIAL", publishedById: ctx.userId,
     });
     await prisma.eventSpec.update({ where: { id: published.id }, data: { latestVersionId: version.id, hasUnpublishedChanges: false } });
     legacy = await createEvent(at, `event-legacy-${own.s}`, legacyDocument(SECRET_TITLE));
@@ -123,7 +121,6 @@ beforeAll(async () => {
       tenantMessage, tenantOperation,
       domainMessage: await trait("DomainMsg", "MESSAGE", { tenantId: TENANT, domainId: own.domain.id }),
       domainOperation: await trait("DomainOp", "OPERATION", { tenantId: TENANT, domainId: own.domain.id }),
-      productLevel: await trait("ProductMsg", "MESSAGE", { tenantId: TENANT, domainId: own.domain.id, productId: own.product.id }),
       otherDomain: await trait("ElsewhereMsg", "MESSAGE", { tenantId: TENANT, domainId: elsewhere.domain.id }),
       // `foreign.trait` is the fixture's tenant-level trait; this one sits in the foreign tenant's own domain.
       foreignTenant: { id: foreign.trait.id, name: foreign.trait.name },
@@ -255,10 +252,10 @@ describe("loadEventPage — library traits", () => {
     ]);
   });
 
-  it("never offers a product-level trait, another domain's trait, or any trait of another tenant", async () => {
+  it("never offers another domain's trait, or any trait of another tenant", async () => {
     const data = (await route(mine.id))!;
     const offered = idsOf(data);
-    for (const hidden of [libraryTraits.productLevel, libraryTraits.otherDomain, libraryTraits.foreignTenant, libraryTraits.foreignTenantLevel]) {
+    for (const hidden of [libraryTraits.otherDomain, libraryTraits.foreignTenant, libraryTraits.foreignTenantLevel]) {
       expect(offered).not.toContain(hidden.id);
     }
     expect(data.libraryTraits.map((t) => t.name).join("|")).not.toContain("Foreign");
@@ -267,7 +264,6 @@ describe("loadEventPage — library traits", () => {
   it("offers the same library to every product of the domain, and another domain's event sees that domain's own traits instead", async () => {
     const siblingData = (await loadEventPage({ domainSlug: own.domain.slug, productSlug: siblingProduct.slug, eventId: sibling.id }))!;
     expect(idsOf(siblingData)).toEqual(expect.arrayContaining([libraryTraits.tenantMessage.id, libraryTraits.domainMessage.id]));
-    expect(idsOf(siblingData)).not.toContain(libraryTraits.productLevel.id);
     const elsewhereData = (await loadEventPage({ domainSlug: elsewhere.domain.slug, productSlug: elsewhere.product.slug, eventId: otherDomain.id }))!;
     expect(idsOf(elsewhereData)).toEqual(expect.arrayContaining([libraryTraits.tenantMessage.id, libraryTraits.otherDomain.id]));
     expect(idsOf(elsewhereData)).not.toContain(libraryTraits.domainMessage.id);

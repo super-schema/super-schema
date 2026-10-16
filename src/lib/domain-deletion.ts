@@ -3,8 +3,8 @@
  *
  * Deleting a domain cascades its products and every domain- AND product-level Data Type / API / Events asset
  * (FK ON DELETE CASCADE). Data Types and APIs go with it after the admin confirms the listed counts, but
- * entities and Events assets (channels, messages, traits, event specs) block the delete: none of them may be
- * lost silently. Events assets are counted at every level the domain owns them — product-level rows carry the
+ * entities and Events assets (events, traits) block the delete: none of them may be
+ * lost silently. Events assets are counted at every level the domain owns them — product-level events carry the
  * product's `domainId`, domain-level traits carry only the domain's.
  */
 import { eventsAssetParts, eventsAssetTotal, joinList, type EventsAssetCounts } from "./product-deletion";

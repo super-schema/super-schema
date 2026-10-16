@@ -1,14 +1,15 @@
 import "dotenv/config"; // before any import that reaches @/lib/db, which reads DB_PROVIDER when first evaluated
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import type { PrismaClient } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
-import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext } from "../services/events/helpers";
+import { emptyEventDocument } from "@/lib/events/document/types";
+import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, TENANT, testContext } from "../services/events/helpers";
 import { createForeignTenant } from "../services/events/foreign-tenant";
 
 /**
- * GET /api/v1/event-specs/:id against the real database and the real emission service. Only the two request-scoped inputs
- * are replaced: the v1 auth result (so the context carries this suite's Prisma client) and the active tenant (reads a cookie).
- * Spec / version rows are written directly — no publish audit rows (immutable) are created.
+ * GET /api/v1/event-specs/:id against the real database and the real emission service, for self-contained events (document v2).
+ * Only the two request-scoped inputs are replaced: the v1 auth result (so the context carries this suite's Prisma client) and the
+ * active tenant (reads a cookie). Event / version rows are written directly — no publish audit rows (immutable) are created.
  */
 const h = vi.hoisted(() => ({ ctx: undefined as unknown, tenantId: "" }));
 vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: async () => ({ authenticated: true, context: h.ctx }) }));
@@ -24,7 +25,8 @@ let foreign: Awaited<ReturnType<typeof createForeignTenant>>;
 let published: { id: string; name: string };
 let unpublished: { id: string };
 let broken: { id: string };
-let foreignSpec: { id: string };
+let corrupt: { id: string; name: string };
+let foreignEvent: { id: string };
 
 const call = (id: string, query = "") => GET(new Request(`http://localhost/api/v1/event-specs/${id}${query}`), { params: Promise.resolve({ id }) });
 
@@ -32,25 +34,21 @@ function storedDocument(title: string, version: string) {
   return { asyncapi: "3.0.0", info: { title, version }, servers: {}, channels: {}, operations: {}, components: {} };
 }
 
-async function createSpecWithVersions(scope: { tenantId: string; domainId: string; productId: string }, name: string, versions: Array<{ major: number; minor: number }>) {
-  const spec = await prisma.eventSpec.create({
-    data: { name, ...scope, document: { info: { title: name }, servers: [], operations: [] } },
-  });
+async function createEventWithVersions(scope: { tenantId: string; domainId: string; productId: string }, name: string, versions: Array<{ major: number; minor: number }>) {
+  const source = emptyEventDocument(name) as unknown as Prisma.InputJsonValue;
+  const event = await prisma.eventSpec.create({ data: { name, ...scope, document: source } });
   let last: string | undefined;
   for (const [i, v] of versions.entries()) {
     const label = `${v.major}.${v.minor}`;
-    const row = await prisma.eventSpecVersion.create({
-      data: {
-        eventSpecId: spec.id, ...v, sequence: i + 1, changeKind: i === 0 ? "INITIAL" : "MAJOR", publishedById: ctx.userId,
-        document: storedDocument(`${name} ${label}`, label),
-        sourceDocument: { info: { title: name }, servers: [], operations: [] },
-        frozenChannels: [], frozenTraits: [], messageVersionIds: [], compatReport: { reasons: [], diagnostics: [] },
-      },
+    const row = await createEventSpecVersion(prisma, {
+      eventSpecId: event.id, ...v, sequence: i + 1, changeKind: i === 0 ? "INITIAL" : "MAJOR", publishedById: ctx.userId,
+      document: storedDocument(`${name} ${label}`, label), sourceDocument: source, frozenTraits: [], resolvedSpec: { documentVersion: 2 },
+      compatReport: { reasons: [], diagnostics: [] },
     });
     last = row.id;
   }
-  if (last) await prisma.eventSpec.update({ where: { id: spec.id }, data: { latestVersionId: last, hasUnpublishedChanges: false } });
-  return spec;
+  if (last) await prisma.eventSpec.update({ where: { id: event.id }, data: { latestVersionId: last, hasUnpublishedChanges: false } });
+  return event;
 }
 
 beforeAll(async () => {
@@ -62,18 +60,28 @@ beforeAll(async () => {
   const scope = { tenantId: TENANT, domainId: own.domain.id, productId: own.product.id };
 
   // A name full of characters that must not reach the Content-Disposition header verbatim.
-  published = await createSpecWithVersions(scope, `Checkout "Service" (EU) ${own.s}`, [{ major: 1, minor: 0 }, { major: 2, minor: 0 }]);
-  unpublished = await createSpecWithVersions(scope, `never-published-${own.s}`, []);
+  published = await createEventWithVersions(scope, `Checkout "Service" (EU) ${own.s}`, [{ major: 1, minor: 0 }, { major: 2, minor: 0 }]);
+  unpublished = await createEventWithVersions(scope, `never-published-${own.s}`, []);
+  // A message pinned to an entity that does not exist: the draft parses, but its payload cannot be rendered.
   broken = await prisma.eventSpec.create({
     data: {
       name: `broken-${own.s}`, ...scope,
-      document: { info: { title: "x" }, servers: [], operations: [{ key: "op", action: "send", channelId: "gone", messageVersionIds: [], traitIds: [] }] },
+      document: {
+        ...emptyEventDocument("x"), messages: [{ key: "lost", payload: { entityId: `gone-${own.s}`, entityVersionId: null }, traitKeys: [] }],
+      } as unknown as Prisma.InputJsonValue,
+    },
+  });
+  // A stored draft that is not a valid event document at all (a channel key nothing defines).
+  corrupt = await prisma.eventSpec.create({
+    data: {
+      name: `corrupt-${own.s}`, ...scope,
+      document: { ...emptyEventDocument("x"), operations: [{ key: "op", action: "send", channelKey: "gone", messageKeys: [], traitKeys: [] }] } as unknown as Prisma.InputJsonValue,
     },
   });
 
   foreign = await createForeignTenant(prisma, ctx);
-  foreignSpec = await createSpecWithVersions(
-    { tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id }, `foreign-spec-${foreign.tenant.slug}`, [{ major: 1, minor: 0 }]
+  foreignEvent = await createEventWithVersions(
+    { tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id }, `foreign-event-${foreign.tenant.slug}`, [{ major: 1, minor: 0 }]
   );
 }, 60_000);
 
@@ -89,7 +97,7 @@ afterAll(async () => {
   }
 });
 
-describe.sequential("GET /api/v1/event-specs/:id (real DB, real emission service)", () => {
+describe.sequential("GET /api/v1/event-specs/:id (real DB, real emission service, self-contained events)", () => {
   it("defaults to the latest published version, as YAML, from the stored document", async () => {
     const res = await call(published.id);
     expect(res.status).toBe(200);
@@ -119,7 +127,7 @@ describe.sequential("GET /api/v1/event-specs/:id (real DB, real emission service
     expect((await call(published.id, "?format=xml")).status).toBe(400);
   });
 
-  it("404s a spec that was never published unless version=draft, and emits its draft", async () => {
+  it("404s an event that was never published unless version=draft, and emits its draft", async () => {
     const res = await call(unpublished.id);
     expect(res.status).toBe(404);
     expect((await res.json()).error.suggestedFix).toMatch(/version=draft/);
@@ -132,34 +140,54 @@ describe.sequential("GET /api/v1/event-specs/:id (real DB, real emission service
     expect(body).toMatch(/version: draft/);
   }, 120_000);
 
+  it("emits the saved draft of a published event too (the draft is not the stored version)", async () => {
+    const draft = await call(published.id, "?version=draft&format=json");
+    expect(draft.status).toBe(200);
+    expect(JSON.parse(await draft.text()).info).toMatchObject({ version: "draft" });
+  }, 120_000);
+
   it("reports an unresolvable draft as a 400 with sanitised diagnostics and no document", async () => {
     const res = await call(broken.id, "?version=draft");
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.success).toBe(false);
-    expect(body.error.details.diagnostics).toEqual([
-      { severity: "error", code: "UNRESOLVED_REFERENCE", message: 'Draft reference: Channel "gone" not found', pointer: "/operations/0/channelId" },
-    ]);
+    expect(body.error.details.diagnostics.length).toBeGreaterThan(0);
+    for (const d of body.error.details.diagnostics) expect(Object.keys(d).sort()).toEqual(["code", "message", "pointer", "severity"]);
+    expect(body.error.details.diagnostics.some((d: { severity: string }) => d.severity === "error")).toBe(true);
+    expect(JSON.stringify(body.error.details.diagnostics)).toContain("/messages/0/payload");
   }, 120_000);
 
+  it("answers a stored draft that is no valid event document with a generic 500, never its content", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const res = await call(corrupt.id, "?version=draft");
+      expect(res.status).toBe(500);
+      const text = JSON.stringify(await res.json());
+      expect(text).not.toContain(corrupt.name);
+      expect(text).not.toContain("channelKey");
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   describe("tenant scoping", () => {
-    it("answers another tenant's spec exactly like a nonexistent id, for every version selector", async () => {
+    it("answers another tenant's event exactly like a nonexistent id, for every version selector", async () => {
       for (const query of ["", "?version=1.0", "?version=1.0&format=json", "?version=draft"]) {
-        const other = await call(foreignSpec.id, query);
-        const nothing = await call("no-such-spec-id", query);
+        const other = await call(foreignEvent.id, query);
+        const nothing = await call("no-such-event-id", query);
         expect(other.status, query).toBe(404);
         expect(nothing.status, query).toBe(404);
         expect(await other.json()).toEqual(await nothing.json());
       }
     });
 
-    it("serves that same spec once the caller's tenant is the owning one (so the 404 above is the tenant filter)", async () => {
+    it("serves that same event once the caller's tenant is the owning one (so the 404 above is the tenant filter)", async () => {
       h.tenantId = foreign.tenant.id;
       try {
-        const res = await call(foreignSpec.id, "?format=json");
+        const res = await call(foreignEvent.id, "?format=json");
         expect(res.status).toBe(200);
         expect(JSON.parse(await res.text()).info.version).toBe("1.0");
-        expect((await call(published.id)).status).toBe(404); // and the default-tenant spec is now the foreign one
+        expect((await call(published.id)).status).toBe(404); // and the default-tenant event is now the foreign one
       } finally {
         h.tenantId = TENANT;
       }

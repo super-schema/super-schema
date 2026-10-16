@@ -29,8 +29,7 @@ interface Fixture {
   foreign: Foreign;
   traitTenant: { id: string; name: string };
   traitDomain: { id: string; name: string };
-  traitProduct: { id: string; name: string };
-  traitOtherProduct: { id: string; name: string };
+  traitOtherDomain: { id: string; name: string };
 }
 
 /** Builds two product lines in the active tenant plus a whole foreign tenant, runs one body, and removes everything. */
@@ -52,8 +51,7 @@ async function withFixture(run: (f: Fixture) => Promise<void>): Promise<void> {
       own, other, foreign,
       traitTenant,
       traitDomain: await trait(`td-${own.s}`, { domainId: own.domain.id, productId: null }),
-      traitProduct: await trait(`tp-${own.s}`, { domainId: own.domain.id, productId: own.product.id }),
-      traitOtherProduct: await trait(`tq-${other.s}`, { domainId: other.domain.id, productId: other.product.id }),
+      traitOtherDomain: await trait(`tq-${other.s}`, { domainId: other.domain.id, productId: null }),
     });
   } finally {
     await cleanupTenantTraits(prisma, tenantTraits);
@@ -79,11 +77,6 @@ describe("loadTraitPage (tenant + level scoped by-id read)", () => {
       expect(domain?.trait).toMatchObject({ id: f.traitDomain.id, kind: "MESSAGE", headers: null });
       expect(Array.isArray(domain?.entityOptions)).toBe(true);
 
-      // A product-level row (none is created any more; the loader still reads one by its own level's route).
-      const product = await loadTraitPage({ ...route(f.own), traitId: f.traitProduct.id });
-      expect(product?.owner).toEqual({ level: "PRODUCT", productId: f.own.product.id });
-      expect(product?.listHref).toBe(`/schemas/${f.own.domain.slug}/${f.own.product.slug}?tab=traits`);
-      expect(product?.crumbs.map((c) => c.label)).toEqual(["Domains", f.own.domain.name, f.own.product.name, "Traits", f.traitProduct.name]);
     });
   });
 
@@ -92,12 +85,11 @@ describe("loadTraitPage (tenant + level scoped by-id read)", () => {
       const domainRoute = { domainSlug: f.own.domain.slug, productSlug: null };
       const enterpriseRoute = { domainSlug: null, productSlug: null };
       expect(await loadTraitPage({ ...enterpriseRoute, traitId: f.traitDomain.id })).toBeNull();
-      expect(await loadTraitPage({ ...enterpriseRoute, traitId: f.traitProduct.id })).toBeNull();
       expect(await loadTraitPage({ ...domainRoute, traitId: f.traitTenant.id })).toBeNull();
-      expect(await loadTraitPage({ ...domainRoute, traitId: f.traitProduct.id })).toBeNull();
       expect(await loadTraitPage({ ...route(f.own), traitId: f.traitDomain.id })).toBeNull();
       expect(await loadTraitPage({ ...route(f.own), traitId: f.traitTenant.id })).toBeNull();
-      expect(await loadTraitPage({ ...route(f.own), traitId: f.traitOtherProduct.id })).toBeNull();
+      expect(await loadTraitPage({ ...route(f.own), traitId: f.traitOtherDomain.id })).toBeNull();
+      expect(await loadTraitPage({ ...domainRoute, traitId: f.traitOtherDomain.id })).toBeNull();
       expect(await loadTraitPage({ domainSlug: f.other.domain.slug, productSlug: null, traitId: f.traitDomain.id })).toBeNull();
     });
   });

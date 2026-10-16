@@ -1,6 +1,6 @@
 // src/services/events/event.service.ts
 // Self-contained Event (spec 2026-10-15-events-self-contained-design): create / update document / rename / delete / get over the v2
-// document. The table is still `event_specs` (E5); the old catalog-id service (`event-spec.service.ts`) keeps reading v1 documents.
+// document. The table is still `event_specs` (E5); the old catalog-id (version 1) documents and their service are gone.
 import type { Prisma } from "@/generated/prisma/client";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";

@@ -28,8 +28,6 @@ export { qualifyNames } from "./qualify";
 export type { NameCandidate, QualifiedNames } from "./qualify";
 export { headersSchema, kafkaKeyProfile, placeKafkaKey, rebaseLocalRefs, selectArtifact } from "./message-schemas";
 export type { SchemaRole, SchemaSelection } from "./message-schemas";
-export { resolveEventSpecDocument } from "./resolve";
-export type { EventSpecCatalog, ResolveOptions, ResolveProblem } from "./resolve";
 export { assembleAsyncApi3, ASYNCAPI_VERSION } from "./assemble";
 export type { AssemblyResult } from "./assemble";
 export { canonicalizeDocumentOrder, toJson, toYaml } from "./serialize";

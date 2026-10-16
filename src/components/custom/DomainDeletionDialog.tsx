@@ -43,10 +43,8 @@ const impactLabels: Array<{
   { key: "services", singular: "API service", plural: "API services" },
   { key: "interfaces", singular: "interface", plural: "interfaces" },
   { key: "userRoles", singular: "role assignment", plural: "role assignments" },
-  { key: "channels", singular: "channel", plural: "channels" },
-  { key: "messages", singular: "message", plural: "messages" },
   { key: "traits", singular: "trait", plural: "traits" },
-  { key: "eventSpecs", singular: "event spec", plural: "event specs" },
+  { key: "eventSpecs", singular: "event", plural: "events" },
 ];
 
 export function DomainDeletionDialog({

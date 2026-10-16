@@ -5,10 +5,10 @@ type NamedRowFixture = { id: string; name: string; tenantId: string; domainId: s
 
 /**
  * `findMany` delegates for every kind the line-unique name registry queries (entity, enum, scalar, union,
- * API, trait, message, channel, event spec). Spread this into a hand-built Prisma mock so adding a registry
+ * API, trait, event spec). Spread this into a hand-built Prisma mock so adding a registry
  * kind in name-registry.service.ts cannot silently break it; pass rows to simulate existing assets:
  *
- *   emptyRegistryDelegates({ channel: [{ id: "c1", name: "orders", tenantId: "t", domainId: "d", productId: "p" }] })
+ *   emptyRegistryDelegates({ eventSpec: [{ id: "s1", name: "orders", tenantId: "t", domainId: "d", productId: "p" }] })
  */
 export function emptyRegistryDelegates(
   rows: Partial<Record<RegistryDelegateKey, NamedRowFixture[]>> = {}
