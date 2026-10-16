@@ -30,6 +30,16 @@ const box = (testId: string) => screen.getByTestId(testId) as HTMLInputElement;
 const text = (testId: string) => screen.getByTestId(testId).textContent;
 const missing = (testId: string) => screen.queryByTestId(testId) === null;
 const optionValues = (select: HTMLElement) => Array.from(select.querySelectorAll("option")).map((o) => o.getAttribute("value"));
+
+/** The accordion cards of the operation form. */
+const CARDS = ["basics", "reply", "properties", "details", "bindings", "docs", "security"] as const;
+type Card = (typeof CARDS)[number];
+const isOpen = (card: Card) => screen.getByTestId(`operation-card-${card}-toggle`).getAttribute("aria-expanded") === "true";
+/** Open a card, leaving it alone when it is open already. */
+const openCard = (card: Card) => {
+  if (!isOpen(card)) fireEvent.click(screen.getByTestId(`operation-card-${card}-toggle`));
+};
+const openAllCards = () => CARDS.forEach(openCard);
 /** Keys of the checkboxes of a group, in order. */
 const checklist = (groupId: string) =>
   Array.from(screen.getByTestId(groupId).querySelectorAll("input[type=checkbox]")).map((i) => (i.getAttribute("data-testid") ?? "").replace(`${groupId}-option-`, ""));
@@ -304,15 +314,24 @@ describe("OperationsSection: channel and messages (a channel with no messages bl
 });
 
 describe("OperationsSection: reply", () => {
-  it("is off for an operation without a reply", () => {
+  it("is off for an operation without a reply, and its card starts collapsed", () => {
     renderSection(OperationsSection);
+    expect(isOpen("reply")).toBe(false);
+    openCard("reply");
     expect(box("operation-reply-toggle").checked).toBe(false);
     expect(missing("operation-reply-channel")).toBe(true);
     expect(missing("operation-reply-messages")).toBe(true);
   });
 
+  it("starts open for an operation that has a reply", () => {
+    renderSection(OperationsSection, { doc: docWithReply(), item: "askRefund" });
+    expect(isOpen("reply")).toBe(true);
+    expect(box("operation-reply-toggle").checked).toBe(true);
+  });
+
   it("turning it on adds a reply on another channel when there is one, with no messages yet", () => {
     const { probe } = renderSection(OperationsSection, { doc: richDoc() });
+    openCard("reply");
     fireEvent.click(box("operation-reply-toggle"));
     expect(probe.draft.doc.operations[0].reply).toEqual({ channelKey: "refunds", messageKeys: [] });
     expect(field("Reply channel").value).toBe("refunds");
@@ -324,6 +343,7 @@ describe("OperationsSection: reply", () => {
     const doc = sampleDocument();
     doc.channels = [doc.channels[0]];
     const { probe } = renderSection(OperationsSection, { doc });
+    openCard("reply");
     fireEvent.click(box("operation-reply-toggle"));
     expect(probe.draft.doc.operations[0].reply).toEqual({ channelKey: "orders", messageKeys: [] });
     expect(probe.draft.problems).toEqual([]);
@@ -362,11 +382,12 @@ describe("OperationsSection: reply", () => {
     expect(probe.draft.doc.operations[1].messageKeys).toEqual([]);
   });
 
-  it("turning it off removes the reply entirely", () => {
+  it("turning it off removes the reply entirely, and the card stays open for the next try", () => {
     const { probe } = renderSection(OperationsSection, { doc: docWithReply(), item: "askRefund" });
     fireEvent.click(box("operation-reply-toggle"));
     expect("reply" in probe.draft.doc.operations[1]).toBe(false);
     expect(missing("operation-reply-channel")).toBe(true);
+    expect(isOpen("reply")).toBe(true);
     expect(probe.draft.problems).toEqual([]);
   });
 
@@ -660,20 +681,69 @@ describe("OperationsSection: generated keys", () => {
 });
 
 describe("OperationsSection: every AsyncAPI operation property", () => {
-  it("is reachable: each property of the operation template has an element once 'More properties' is open", () => {
+  it("is reachable: each property of the operation template has an element, including inside the collapsed cards", () => {
     renderSection(OperationsSection);
-    fireEvent.click(screen.getByTestId("operation-more-toggle"));
+    openAllCards();
     const keys = TEMPLATES.operation.fields.map((f) => f.key);
     expect(keys).toEqual(["action", "channel", "title", "summary", "description", "messages", "reply", "traits", "security", "tags", "externalDocs", "bindings"]);
-    // action, channel, messages, reply and bindings are drawn by hand (they only offer valid combinations); the rest by the template form.
-    for (const key of keys) expect(screen.queryByTestId(`operation-${key}`), `operation.${key}`).not.toBeNull();
+    // action, channel, messages, reply, traits and bindings are drawn by hand (they only offer valid combinations); the rest by the template form.
+    const testIdOf: Record<string, string> = { reply: "operation-reply-toggle", traits: "operation-props" };
+    for (const key of keys) expect(screen.queryByTestId(testIdOf[key] ?? `operation-${key}`), `operation.${key}`).not.toBeNull();
   });
 
-  it("keeps the basics up front and the rest under a collapsed 'More properties (0 set)'", () => {
+  it("keeps Basics, Operation properties (Trait) and Details open and Reply, Bindings, Docs & tags and Security collapsed", () => {
     renderSection(OperationsSection);
-    expect(text("operation-more-toggle")).toBe("More properties (0 set)");
-    for (const key of ["traits", "security", "tags", "externalDocs"]) expect(missing(`operation-${key}`)).toBe(true);
+    for (const card of ["basics", "properties", "details"] as const) expect(isOpen(card), card).toBe(true);
+    for (const card of ["reply", "bindings", "docs", "security"] as const) expect(isOpen(card), card).toBe(false);
+    for (const key of ["security", "tags", "externalDocs", "bindings"]) expect(missing(`operation-${key}`), key).toBe(true);
     for (const key of ["title", "summary", "description"]) expect(missing(`operation-${key}`)).toBe(false);
+    // The template form's own 'More properties' toggle is gone: the cards are the grouping.
+    expect(missing("operation-more-toggle")).toBe(true);
+  });
+
+  it("titles the cards Basics, Reply, Operation properties (Trait), Details, Bindings, Docs & tags, Security", () => {
+    renderSection(OperationsSection);
+    const titles = within(screen.getByTestId("operation-form")).getAllByRole("heading", { level: 3 }).map((h) => h.textContent?.replace(/\d+\s*set$/, "").trim());
+    expect(titles).toEqual(["Basics", "Reply", "Operation properties (Trait)", "Details", "Bindings", "Docs & tags", "Security"]);
+  });
+
+  it("shows how many fields are set on a card, and nothing on a card with nothing set", () => {
+    const doc = sampleDocument();
+    doc.components = { securitySchemes: { basic: { type: "userPassword" } } };
+    doc.operations[0] = {
+      ...doc.operations[0], title: "Publish", summary: "S", security: ["basic"], tags: [{ name: "a" }, { name: "b" }], externalDocs: { url: "https://example.com" },
+      bindings: { kafka: { bindingVersion: "0.5.0" } }, traitKeys: [],
+    };
+    renderSection(OperationsSection, { doc });
+    const count = (card: Card) => screen.queryByTestId(`operation-card-${card}-count`)?.textContent ?? null;
+    expect(count("details")).toBe("2");
+    expect(count("docs")).toBe("3");
+    expect(count("security")).toBe("1");
+    expect(count("bindings")).toBe("1");
+    expect(count("properties")).toBeNull();
+    expect(count("basics")).toBeNull();
+  });
+
+  it("keeps a card open or closed while switching to another operation", () => {
+    renderSection(OperationsSection, { doc: docWithReply() });
+    openCard("docs");
+    fireEvent.click(screen.getByTestId("operation-card-details-toggle"));
+    click("operation-row-askRefund");
+    expect(isOpen("docs")).toBe(true);
+    expect(isOpen("details")).toBe(false);
+    // Reply has no choice of its own: it follows the operation.
+    expect(isOpen("reply")).toBe(true);
+    click("operation-row-publishOrder");
+    expect(isOpen("docs")).toBe(true);
+    expect(isOpen("reply")).toBe(false);
+  });
+
+  it("opens the card that holds a problem when the document reports one", () => {
+    const doc = sampleDocument();
+    doc.operations[0] = { ...doc.operations[0], externalDocs: { url: "nope" } };
+    renderSection(OperationsSection, { doc });
+    expect(isOpen("docs")).toBe(true);
+    expect(text("operation-externalDocs-url-error")).toBeTruthy();
   });
 
   it("edits the title and removes it when blanked", () => {
@@ -686,7 +756,7 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
 
   it("writes external documentation and tags, and removes them when emptied", () => {
     const { probe } = renderSection(OperationsSection);
-    fireEvent.click(screen.getByTestId("operation-more-toggle"));
+    openCard("docs");
     type(box("operation-externalDocs-url"), "https://example.com/docs");
     type(box("operation-tags"), "orders");
     fireEvent.keyDown(box("operation-tags"), { key: "Enter" });
@@ -702,7 +772,7 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
     const doc = sampleDocument();
     doc.components = { securitySchemes: { basic: { type: "userPassword" }, sasl: { type: "plain" } } };
     const { probe } = renderSection(OperationsSection, { doc });
-    fireEvent.click(screen.getByTestId("operation-more-toggle"));
+    openCard("security");
     const group = screen.getByTestId("operation-security");
     expect(Array.from(group.querySelectorAll("input[type=checkbox]")).map((i) => i.getAttribute("data-testid"))).toEqual([
       "operation-security-option-basic", "operation-security-option-sasl",
@@ -714,36 +784,34 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("traits offers the operation traits of the document (library ones marked), never the message traits", () => {
+  it("the traits multi-reference is gone: the Operation properties card draws the applied sets and keeps the operation's traitKeys", () => {
     const doc = sampleDocument();
-    doc.traits = [
-      { key: "retry", kind: "OPERATION", spec: {} },
-      { key: "envelope", kind: "MESSAGE", spec: {} },
-      { key: "audited", kind: "OPERATION", libraryTraitId: "lib-1" },
-    ];
+    doc.traits = [{ key: "retry", kind: "OPERATION", spec: { title: "Retry" } }];
+    doc.operations[0] = { ...doc.operations[0], traitKeys: ["retry"] };
     const { probe } = renderSection(OperationsSection, { doc });
-    fireEvent.click(screen.getByTestId("operation-more-toggle"));
-    expect(missing("operation-traits-option-envelope")).toBe(true);
-    expect(box("operation-traits-option-audited").closest("label")?.textContent).toBe("audited (library)");
-    fireEvent.click(box("operation-traits-option-retry"));
-    fireEvent.click(box("operation-traits-option-audited"));
-    expect(probe.draft.doc.operations[0].traitKeys).toEqual(["retry", "audited"]);
-    expect(probe.draft.problems).toEqual([]);
-    fireEvent.click(box("operation-traits-option-retry"));
-    fireEvent.click(box("operation-traits-option-audited"));
-    // traitKeys is part of the document's shape: it stays an array.
-    expect(probe.draft.doc.operations[0].traitKeys).toEqual([]);
+    expect(missing("operation-traits")).toBe(true);
+    expect(screen.queryAllByTestId(/^operation-traits-option-/)).toHaveLength(0);
+    expect(screen.getByTestId("operation-prop-row-retry")).toBeDefined();
+    type(field("Title"), "Publish");
+    expect(probe.draft.doc.operations[0].traitKeys).toEqual(["retry"]);
   });
 
-  it("says no traits exist yet instead of showing an empty list", () => {
+  it("says no operation properties are applied yet instead of showing an empty list", () => {
     renderSection(OperationsSection);
-    fireEvent.click(screen.getByTestId("operation-more-toggle"));
-    expect(text("operation-traits-empty")).toContain("No operation traits are defined yet");
+    expect(text("operation-prop-empty")).toContain("No operation properties on this operation yet");
+  });
+
+  it("shows the optional-field help as an info tooltip", () => {
+    renderSection(OperationsSection);
+    const button = screen.getByTestId("operation-summary-hint-button");
+    expect(button.getAttribute("aria-label")).toBe("About Summary");
+    expect(button.getAttribute("aria-describedby")).toBe("operation-summary-hint");
   });
 
   describe("the reply address", () => {
     it("is a template form under the reply, written to reply.address and removed when emptied", () => {
       const { probe } = renderSection(OperationsSection, { doc: richDoc() });
+      openCard("reply");
       fireEvent.click(box("operation-reply-toggle"));
       type(box("operation-reply-address-location"), "$message.header#/replyTo");
       type(box("operation-reply-address-description"), "Where the reply goes");
@@ -770,11 +838,13 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
 
     it("is not shown without a reply", () => {
       renderSection(OperationsSection);
+      openCard("reply");
       expect(missing("operation-reply-address-location")).toBe(true);
     });
 
     it("shows the problem of an address location that is not a runtime expression under the field", () => {
       const { probe } = renderSection(OperationsSection, { doc: richDoc() });
+      openCard("reply");
       fireEvent.click(box("operation-reply-toggle"));
       type(box("operation-reply-address-location"), "replyTo");
       const problem = probe.draft.problems.find((p) => p.pointer === "/operations/0/reply/address/location");
@@ -787,6 +857,7 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
   describe("bindings", () => {
     it("preselects the protocol of the operation's channel, writes the template's fields with bindingVersion and drops `bindings` when cleared", () => {
       const { probe } = renderSection(OperationsSection);
+      openCard("bindings");
       expect((screen.getByTestId("operation-bindings-protocol") as unknown as HTMLSelectElement).value).toBe("kafka");
       click("operation-bindings-add");
       type(box("operation-bindings-kafka-groupId"), '{"type":"string","enum":["checkout"]}');
@@ -819,7 +890,7 @@ describe("OperationsSection: every AsyncAPI operation property", () => {
     expect(probe.draft.problems).toEqual([]);
   });
 
-  it("shows the problems of a failed save under the property they point at, opening 'More properties' for them", async () => {
+  it("shows the problems of a failed save under the property they point at, opening the card that holds them", async () => {
     const saveDocument = vi.fn<SaveDocument>().mockResolvedValue({
       success: false, error: "3 problem(s) in the event document", code: "VALIDATION_ERROR",
       details: { problems: [

@@ -3,10 +3,13 @@
 // src/features/events/builder/sections/OperationsSection.tsx
 // Operations: send/receive, the channel, the messages (limited to that channel's messages) and an optional reply, drawn by hand
 // because they can only offer valid combinations; everything else the AsyncAPI operation object defines (title, summary,
-// description, traits, security, tags, external docs, bindings) comes from the template form. The key is generated: a placeholder
-// until the user leaves the form, then named from the title or `${action}-${channel}`; the "Identifier" is the only place it shows.
-// The parser's own problems still show under the field they belong to.
-import { useMemo, useState } from "react";
+// description, traits, security, tags, external docs, bindings) comes from the template form. The form is accordion cards:
+//   open:       Basics (action, channel, messages) · Operation properties (Trait) · Details (title, summary, description)
+//   collapsed:  Reply (open when the operation has one) · Bindings · Docs & tags · Security
+// A card shows how many fields are set, keeps its open / closed state while switching operations, and opens by itself when it holds a
+// problem. The key is generated: a placeholder until the user leaves the form, then named from the title or `${action}-${channel}`;
+// the "Identifier" is the only place it shows. The parser's own problems still show under the field they belong to.
+import { useMemo, useState, type ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,11 +20,15 @@ import { autoRenameKey, leftForm, newKey } from "../auto-key";
 import { Field, selectClass } from "../controls";
 import type { SectionProps } from "../EventBuilder";
 import { IdentifierDisclosure } from "../Identifier";
+import { operationPropertiesTitle } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
 import { CheckboxGroup, ItemList, Notice, renameAndSelect } from "./ChannelsSection";
+import { FormCard, useCardState, type CardState } from "./FormCard";
+import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
+import { OperationPropertiesCard } from "./OperationPropertiesCard";
 
 const ACTIONS: Array<{ value: OperationAction; title: string; description: string }> = [
   { value: "send", title: "Send", description: "This service publishes" },
@@ -36,10 +43,31 @@ function defaultReplyChannel(channels: DocChannel[], operationChannel: string): 
 
 /**
  * The operation properties `TemplateForm` draws. `channel`, `messages`, `action`, `reply` and `bindings` are drawn by hand (they must
- * offer valid combinations, or have a form of their own); the template's `traits` is stored as `traitKeys`.
+ * offer valid combinations, or have a form of their own); the template's `traits` is stored as `traitKeys` and drawn by the Operation
+ * properties card.
  */
 const FORM_KEYS = ["title", "summary", "description", "security", "tags", "externalDocs"] as const;
-const HIDDEN_FROM_TEMPLATE = ["action", "channel", "messages", "reply", "bindings"];
+
+/** The template fields each card draws. */
+const DETAILS_KEYS = ["title", "summary", "description"] as const;
+const DOCS_KEYS = ["tags", "externalDocs"] as const;
+const SECURITY_KEYS = ["security"] as const;
+
+/** Which part of the operation each card draws, for opening the card that holds a problem. */
+const CARD_POINTERS: Record<string, readonly string[]> = {
+  basics: ["action", "channelKey", "messageKeys"],
+  reply: ["reply"],
+  properties: ["traitKeys"],
+  details: DETAILS_KEYS,
+  bindings: ["bindings"],
+  docs: DOCS_KEYS,
+  security: SECURITY_KEYS,
+};
+
+/** Open on first sight; Reply follows the operation (open when it has one). */
+const cardDefaults = (operation: DocOperation | null): Record<string, boolean> => ({
+  basics: true, reply: operation?.reply !== undefined, properties: true, details: true, bindings: false, docs: false, security: false,
+});
 
 function toFormValue(o: DocOperation): Record<string, unknown> {
   const source: Record<string, unknown> = { ...o };
@@ -80,6 +108,9 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
   const active = activeIndex >= 0 ? operations[activeIndex] : null;
   const needsChannel = channels.length === 0;
   const context = useMemo(() => buildReferenceContext(doc, { entityOptions: options.entityOptions }), [doc, options.entityOptions]);
+  // Which cards are open lives here, not in the form: the form is rebuilt for every operation, the choice must survive.
+  const errored = cardsWithProblems(problems, `/operations/${activeIndex}`, CARD_POINTERS);
+  const cards = useCardState(cardDefaults(active), errored);
 
   function addOperation() {
     if (needsChannel) return;
@@ -137,7 +168,10 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
               broken: problemsByField(problems, `/operations/${i}`).length > 0,
             }))}
           />
-          <OperationForm key={activeIndex} draft={draft} index={activeIndex} operation={active} problems={problems} context={context} onSelectItem={onSelectItem} />
+          <OperationForm
+            key={activeIndex} draft={draft} options={options} index={activeIndex} operation={active} problems={problems} context={context}
+            cards={cards} onSelectItem={onSelectItem} onSectionChange={onSectionChange}
+          />
         </div>
       )}
     </section>
@@ -159,9 +193,9 @@ function ChannelSelect({ id, label, value, channels, error, required, onChange }
   );
 }
 
-function OperationForm({ draft, index, operation, problems, context, onSelectItem }: {
-  draft: DraftState; index: number; operation: DocOperation; problems: DocumentProblem[]; context: TemplateFormContext;
-  onSelectItem: (key: string | null) => void;
+function OperationForm({ draft, options, index, operation, problems, context, cards, onSelectItem, onSectionChange }: {
+  draft: DraftState; options: SectionProps["options"]; index: number; operation: DocOperation; problems: DocumentProblem[]; context: TemplateFormContext;
+  cards: CardState; onSelectItem: (key: string | null) => void; onSectionChange?: SectionProps["onSectionChange"];
 }) {
   const { doc, update } = draft;
   const channels = doc.channels;
@@ -201,6 +235,8 @@ function OperationForm({ draft, index, operation, problems, context, onSelectIte
 
   function toggleReply(on: boolean) {
     setReplyNotice(null);
+    // The card follows the operation by default (open while it has a reply): keep it open when the reply is switched off from inside it.
+    cards.setOpen("reply", true);
     patch((o) => {
       const next = { ...o };
       if (!on) {
@@ -255,99 +291,130 @@ function OperationForm({ draft, index, operation, problems, context, onSelectIte
   const replyChannelExists = reply?.channelKey !== undefined && channels.some((c) => c.key === reply.channelKey);
   const actionError = errorAt("/action");
   const actionErrorId = "operation-action-error";
+  const formValue = toFormValue(operation);
+
+  /** A template form for the fields of one card: it sees only its own keys and its edits are merged back into the operation. */
+  const cardForm = (keys: readonly string[]) => (
+    <TemplateForm
+      template={cardTemplate(TEMPLATES.operation, keys)} value={pickValue(formValue, keys)} idPrefix="operation" errors={problems}
+      errorPrefix={`/operations/${index}`} context={context} compactHelp
+      onChange={(next) => patch((o) => applyFormValue(o, mergeValue(toFormValue(o), keys, next)))}
+    />
+  );
+  const card = (id: string, title: string, count: number | undefined, body: ReactNode) => (
+    <FormCard testId={`operation-card-${id}`} title={title} count={count} open={cards.isOpen(id)} onOpenChange={(open) => cards.setOpen(id, open)}>
+      {body}
+    </FormCard>
+  );
 
   return (
     <div className="max-w-2xl space-y-space-4" data-testid="operation-form">
-      <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }} className="space-y-space-4">
-        <fieldset id="operation-action" data-testid="operation-action" aria-describedby={actionError ? actionErrorId : undefined} className="space-y-space-2">
-          <legend className="text-caption text-muted-foreground">Action</legend>
-          <div className="grid gap-space-3 sm:grid-cols-2">
-            {ACTIONS.map((a) => {
-              const id = `operation-action-${a.value}`;
-              const checked = operation.action === a.value;
-              return (
-                <label
-                  key={a.value} htmlFor={id}
-                  className={cn(
-                    "flex cursor-pointer items-start gap-space-3 rounded-lg border p-space-3 transition-colors focus-within:ring-3 focus-within:ring-ring/50",
-                    checked ? "border-primary bg-muted" : "border-border hover:bg-muted/60",
-                  )}
-                >
-                  <input
-                    id={id} data-testid={id} type="radio" name="operation-action" value={a.value} checked={checked}
-                    onChange={() => patch((o) => ({ ...o, action: a.value }))} className="mt-1 size-4 shrink-0 accent-primary"
-                  />
-                  <span>
-                    <span className="block text-body-small font-medium text-foreground">{a.title}</span>
-                    <span className="block text-caption text-muted-foreground">{a.description}</span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-          {actionError && <p id={actionErrorId} data-testid={actionErrorId} className="text-body-small text-destructive">{actionError}</p>}
-        </fieldset>
+      <div onBlur={(e) => { if (leftForm(e)) nameKeyFromContent(); }} className="space-y-space-3">
+        {card("basics", "Basics", undefined, (
+          <>
+            <fieldset id="operation-action" data-testid="operation-action" aria-describedby={actionError ? actionErrorId : undefined} className="space-y-space-2">
+              <legend className="text-caption text-muted-foreground">Action</legend>
+              <div className="grid gap-space-3 sm:grid-cols-2">
+                {ACTIONS.map((a) => {
+                  const id = `operation-action-${a.value}`;
+                  const checked = operation.action === a.value;
+                  return (
+                    <label
+                      key={a.value} htmlFor={id}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-space-3 rounded-lg border p-space-3 transition-colors focus-within:ring-3 focus-within:ring-ring/50",
+                        checked ? "border-primary bg-muted" : "border-border hover:bg-muted/60",
+                      )}
+                    >
+                      <input
+                        id={id} data-testid={id} type="radio" name="operation-action" value={a.value} checked={checked}
+                        onChange={() => patch((o) => ({ ...o, action: a.value }))} className="mt-1 size-4 shrink-0 accent-primary"
+                      />
+                      <span>
+                        <span className="block text-body-small font-medium text-foreground">{a.title}</span>
+                        <span className="block text-caption text-muted-foreground">{a.description}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              {actionError && <p id={actionErrorId} data-testid={actionErrorId} className="text-body-small text-destructive">{actionError}</p>}
+            </fieldset>
 
-        <ChannelSelect
-          id="operation-channel" label="Channel" required value={operation.channelKey} channels={channels}
-          error={errorAt("/channelKey")} onChange={changeChannel}
-        />
-        {channelNotice && <Notice id="operation-channel-notice">{channelNotice}</Notice>}
-
-        <CheckboxGroup
-          id="operation-messages" label="Messages" checked={operation.messageKeys} onToggle={toggleMessage}
-          options={messagesOf(channels, operation.channelKey).map((k) => ({ value: k, label: k }))}
-          strayLabel="not on this channel" error={errorAt("/messageKeys")}
-          empty={channelExists
-            ? `Channel "${operation.channelKey}" has no messages yet. Allow messages on it in Channels or Messages; an operation can be saved without any.`
-            : "Choose a channel to see the messages it allows."}
-          hint="Only messages allowed on the chosen channel are listed."
-        />
-
-        <TemplateForm
-          template={TEMPLATES.operation} value={toFormValue(operation)} idPrefix="operation" errors={problems}
-          errorPrefix={`/operations/${index}`} context={context} hideKeys={HIDDEN_FROM_TEMPLATE}
-          onChange={(next) => patch((o) => applyFormValue(o, next))}
-        />
-
-        <section aria-labelledby="operation-reply-heading" data-testid="operation-reply" className="space-y-space-3 rounded-lg border border-border p-space-4">
-          <h3 id="operation-reply-heading" className="text-body font-medium text-foreground">Reply</h3>
-          <label className="flex items-center gap-space-2 text-body-small text-foreground">
-            <input
-              type="checkbox" data-testid="operation-reply-toggle" className="size-4 shrink-0 accent-primary"
-              checked={reply !== undefined} aria-describedby={replyError ? "operation-reply-error" : undefined}
-              onChange={(e) => toggleReply(e.target.checked)}
+            <ChannelSelect
+              id="operation-channel" label="Channel" required value={operation.channelKey} channels={channels}
+              error={errorAt("/channelKey")} onChange={changeChannel}
             />
-            <span>This operation expects a reply</span>
-          </label>
-          {replyError && <p id="operation-reply-error" data-testid="operation-reply-error" className="text-body-small text-destructive">{replyError}</p>}
-          {reply !== undefined && (
-            <div className="space-y-space-3">
-              <ChannelSelect
-                id="operation-reply-channel" label="Reply channel" value={reply.channelKey ?? ""} channels={channels}
-                error={errorAt("/reply/channelKey")} onChange={changeReplyChannel}
-              />
-              {replyNotice && <Notice id="operation-reply-notice">{replyNotice}</Notice>}
-              <CheckboxGroup
-                id="operation-reply-messages" label="Reply messages" checked={reply.messageKeys ?? []} onToggle={toggleReplyMessage}
-                options={messagesOf(channels, reply.channelKey).map((k) => ({ value: k, label: k }))}
-                strayLabel="not on this channel" error={errorAt("/reply/messageKeys")}
-                empty={replyChannelExists
-                  ? `Channel "${reply.channelKey}" has no messages yet. Allow messages on it in Channels or Messages.`
-                  : "Choose a reply channel to see the messages it allows."}
-              />
-              <TemplateForm
-                template={TEMPLATES.operationReplyAddress} value={{ ...reply.address }} idPrefix="operation-reply-address" errors={problems}
-                errorPrefix={`/operations/${index}/reply/address`} onChange={changeReplyAddress}
-              />
-            </div>
-          )}
-        </section>
+            {channelNotice && <Notice id="operation-channel-notice">{channelNotice}</Notice>}
 
-        <BindingsForm
-          target="operation" suggestedProtocol={channels.find((c) => c.key === operation.channelKey)?.protocol} value={operation.bindings ?? {}}
-          idPrefix="operation-bindings" errors={problems} errorPrefix={`/operations/${index}/bindings`} onChange={changeBindings}
-        />
+            <CheckboxGroup
+              id="operation-messages" label="Messages" checked={operation.messageKeys} onToggle={toggleMessage}
+              options={messagesOf(channels, operation.channelKey).map((k) => ({ value: k, label: k }))}
+              strayLabel="not on this channel" error={errorAt("/messageKeys")}
+              empty={channelExists
+                ? `Channel "${operation.channelKey}" has no messages yet. Allow messages on it in Channels or Messages; an operation can be saved without any.`
+                : "Choose a channel to see the messages it allows."}
+              hint="Only messages allowed on the chosen channel are listed."
+            />
+          </>
+        ))}
+
+        <div data-testid="operation-reply">
+          {card("reply", "Reply", undefined, (
+            <>
+              <label className="flex items-center gap-space-2 text-body-small text-foreground">
+                <input
+                  type="checkbox" data-testid="operation-reply-toggle" className="size-4 shrink-0 accent-primary"
+                  checked={reply !== undefined} aria-describedby={replyError ? "operation-reply-error" : undefined}
+                  onChange={(e) => toggleReply(e.target.checked)}
+                />
+                <span>This operation expects a reply</span>
+              </label>
+              {replyError && <p id="operation-reply-error" data-testid="operation-reply-error" className="text-body-small text-destructive">{replyError}</p>}
+              {reply !== undefined && (
+                <div className="space-y-space-3">
+                  <ChannelSelect
+                    id="operation-reply-channel" label="Reply channel" value={reply.channelKey ?? ""} channels={channels}
+                    error={errorAt("/reply/channelKey")} onChange={changeReplyChannel}
+                  />
+                  {replyNotice && <Notice id="operation-reply-notice">{replyNotice}</Notice>}
+                  <CheckboxGroup
+                    id="operation-reply-messages" label="Reply messages" checked={reply.messageKeys ?? []} onToggle={toggleReplyMessage}
+                    options={messagesOf(channels, reply.channelKey).map((k) => ({ value: k, label: k }))}
+                    strayLabel="not on this channel" error={errorAt("/reply/messageKeys")}
+                    empty={replyChannelExists
+                      ? `Channel "${reply.channelKey}" has no messages yet. Allow messages on it in Channels or Messages.`
+                      : "Choose a reply channel to see the messages it allows."}
+                  />
+                  <TemplateForm
+                    template={TEMPLATES.operationReplyAddress} value={{ ...reply.address }} idPrefix="operation-reply-address" errors={problems}
+                    errorPrefix={`/operations/${index}/reply/address`} onChange={changeReplyAddress} compactHelp
+                  />
+                </div>
+              )}
+            </>
+          ))}
+        </div>
+
+        {card("properties", operationPropertiesTitle(), operation.traitKeys.length, (
+          <OperationPropertiesCard
+            draft={draft} options={options} operation={operation} index={index} problems={problems}
+            onSectionChange={onSectionChange} onSelectItem={onSelectItem}
+          />
+        ))}
+
+        {card("details", "Details", setFieldCount(TEMPLATES.operation, DETAILS_KEYS, formValue), cardForm(DETAILS_KEYS))}
+
+        {card("bindings", "Bindings", bindingCount(operation.bindings), (
+          <BindingsForm
+            target="operation" suggestedProtocol={channels.find((c) => c.key === operation.channelKey)?.protocol} value={operation.bindings ?? {}}
+            idPrefix="operation-bindings" errors={problems} errorPrefix={`/operations/${index}/bindings`} onChange={changeBindings}
+          />
+        ))}
+
+        {card("docs", "Docs & tags", (operation.tags?.length ?? 0) + (operation.externalDocs ? 1 : 0), cardForm(DOCS_KEYS))}
+
+        {card("security", "Security", operation.security?.length ?? 0, cardForm(SECURITY_KEYS))}
       </div>
 
       <IdentifierDisclosure
