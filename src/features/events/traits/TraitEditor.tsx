@@ -31,6 +31,8 @@ import {
 } from "@/features/events/builder/labels";
 import { bindingCount, cardTemplate, pickValue, setFieldCount } from "@/features/events/builder/sections/form-cards";
 import { LockedNote, PropertiesTable } from "@/features/events/builder/sections/PropertiesTable";
+import { displayRowsFromHeaders } from "@/features/events/builder/properties-schema";
+import { pinnedHeaders } from "@/features/events/builder/traits";
 import { BindingsForm, TemplateForm } from "@/features/events/builder/template";
 import { isEmptyValue, setField } from "@/features/events/builder/template/value";
 import type { TraitPageData } from "./load-trait-page";
@@ -69,8 +71,7 @@ export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: T
   const known = useMemo(() => new Set<string>([...primary, ...more, "bindings", "headers"]), [primary, more]);
   const unknownKeys = Object.keys(spec).filter((k) => !known.has(k));
   const moreCount = setFieldCount(template, more, spec) + (bindingCount(spec.bindings) > 0 ? 1 : 0);
-  const pin = trait.headers;
-  const pinName = pin ? entityOptions.find((e) => e.id === pin.entityId)?.name ?? pin.entityId : null;
+  const pinned = pinnedHeaders(trait.headers, entityOptions);
   const count = propertySummary(spec).length;
 
   async function save() {
@@ -161,11 +162,11 @@ export function TraitEditor({ trait, owner, crumbs, listHref, entityOptions }: T
             <section aria-labelledby="trait-editor-properties-heading" className="space-y-space-2">
               <h2 id="trait-editor-properties-heading" className="text-heading-3 text-foreground">Properties</h2>
               <PropertiesTable
-                idPrefix="trait-editor-props" headers={spec.headers}
+                idPrefix="trait-editor-props" headers={spec.headers} pinned={pinned}
                 onChange={(headers) => setSpec((s) => (headers === undefined ? omit(s, "headers") : { ...s, headers }))}
               />
-              {pinName && (
-                <p data-testid="trait-editor-headers-note" className="text-caption text-muted-foreground">Headers come from the entity {pinName}.</p>
+              {pinned && displayRowsFromHeaders(spec.headers).length > 0 && (
+                <p data-testid="trait-editor-headers-note" className="text-caption text-muted-foreground">Headers come from the entity {pinned.name}.</p>
               )}
             </section>
           )}

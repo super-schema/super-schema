@@ -30,11 +30,12 @@ import {
   propertyCountText, TRAIT_BADGE, TRAIT_SUFFIX,
 } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
+import { displayRowsFromHeaders } from "../properties-schema";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import { isEmptyValue, setField } from "../template/value";
 import {
-  addChoice, autoNameTrait, isBuiltInEntry, optionOf, removeTrait, traitHeaders, traitLabel, traitPropertyCount, traitUsage, usageText, type TraitChoice,
+  addChoice, autoNameTrait, isBuiltInEntry, optionOf, pinnedHeaders, removeTrait, traitHeaders, traitLabel, traitPropertyCount, traitUsage, usageText, type TraitChoice,
 } from "../traits";
 import type { DraftState } from "../use-event-draft";
 import { bindingCount, cardTemplate, pickValue, setFieldCount } from "./form-cards";
@@ -282,8 +283,7 @@ function LocalForm({ draft, index, trait, problems, context, entityOptions, focu
     />
   );
 
-  const pin = trait.headers;
-  const pinName = pin ? entityOptions.find((e) => e.id === pin.entityId)?.name ?? pin.entityId : null;
+  const pinned = pinnedHeaders(trait.headers, entityOptions);
   const headersError = errorAt("/spec/headers");
   const label = traitLabel(trait, []);
 
@@ -299,12 +299,12 @@ function LocalForm({ draft, index, trait, problems, context, entityOptions, focu
           <section aria-labelledby="trait-properties-heading" className="space-y-space-2">
             <h3 id="trait-properties-heading" className="text-body font-medium text-foreground">Properties</h3>
             <PropertiesTable
-              idPrefix="trait-props" headers={trait.spec.headers}
+              idPrefix="trait-props" headers={trait.spec.headers} pinned={pinned}
               onChange={(headers) => patch((t) => ({ ...t, spec: headers === undefined ? omit(t.spec, "headers") : { ...t.spec, headers } }))}
             />
             {headersError && <p data-testid="trait-props-error" className="text-body-small text-destructive">{headersError}</p>}
-            {pinName && (
-              <p data-testid="trait-headers-note" className="text-caption text-muted-foreground">Headers also come from the entity {pinName}.</p>
+            {pinned && displayRowsFromHeaders(trait.spec.headers).length > 0 && (
+              <p data-testid="trait-headers-note" className="text-caption text-muted-foreground">Headers also come from the entity {pinned.name}.</p>
             )}
           </section>
         )}

@@ -934,7 +934,7 @@ describe("MessagesSection: field errors", () => {
   it("shows the problems of a failed save under the Message properties card, opening it", async () => {
     const saveDocument = vi.fn<SaveDocument>().mockResolvedValue({
       success: false, error: "1 problem(s) in the event document", code: "VALIDATION_ERROR",
-      details: { problems: [{ pointer: "/messages/0/traitKeys/0", message: 'Unknown trait "Gone"' }] },
+      details: { problems: [{ pointer: "/messages/0/traitKeys/0", message: 'Unknown message properties "Gone"' }] },
     });
     renderBuilder({ saveDocument, section: "messages" });
     await settle();

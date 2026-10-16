@@ -23,10 +23,11 @@ import {
   addPropertiesLabel, BUILT_IN_BADGE, BUILT_IN_NOTE, LIBRARY_BADGE, LIBRARY_NOTE, propertiesNameLower, propertyCountText, TRAIT_BADGE,
 } from "../labels";
 import { problemMessage, problemsByField } from "../problems";
+import { displayRowsFromHeaders } from "../properties-schema";
 import { TemplateForm } from "../template";
 import { setField } from "../template/value";
 import {
-  addChoice, applyTrait, autoNameTrait, isBuiltInEntry, optionOf, traitHeaders, traitLabel, traitPropertyCount, unapplyTrait, type TraitChoice, type TraitTarget,
+  addChoice, applyTrait, autoNameTrait, isBuiltInEntry, optionOf, pinnedHeaders, traitHeaders, traitLabel, traitPropertyCount, unapplyTrait, type TraitChoice, type TraitTarget,
 } from "../traits";
 import type { BuilderSection } from "../sections";
 import type { DraftState } from "../use-event-draft";
@@ -108,8 +109,7 @@ function LocalPanel({ draft, options, kind, trait, idPrefix, focusName, onFocuse
     onRenamed(key, result.key);
   }
 
-  const pin = trait.headers;
-  const pinName = pin ? options.entityOptions.find((e) => e.id === pin.entityId)?.name ?? pin.entityId : null;
+  const pinned = pinnedHeaders(trait.headers, options.entityOptions);
 
   return (
     <div className="space-y-space-3" onBlur={(e) => { if (leftForm(e)) nameFromContent(); }}>
@@ -123,11 +123,14 @@ function LocalPanel({ draft, options, kind, trait, idPrefix, focusName, onFocuse
       />
       {kind === "MESSAGE" && (
         <PropertiesTable
-          idPrefix={idPrefix} headers={trait.spec.headers}
+          idPrefix={idPrefix} headers={trait.spec.headers} pinned={pinned}
           onChange={(headers) => patchSpec((spec) => (headers === undefined ? omit(spec, "headers") : { ...spec, headers }))}
         />
       )}
-      {pinName && <p data-testid={`${idPrefix}-pin-note`} className="text-caption text-muted-foreground">Headers come from the entity {pinName}.</p>}
+      {/* With no rows of its own the table itself says where the properties come from. */}
+      {pinned && displayRowsFromHeaders(trait.spec.headers).length > 0 && (
+        <p data-testid={`${idPrefix}-pin-note`} className="text-caption text-muted-foreground">Headers come from the entity {pinned.name}.</p>
+      )}
       {onSectionChange && onSelectItem && (
         <Button
           type="button" size="sm" variant="ghost" data-testid={`${idPrefix}-more`}

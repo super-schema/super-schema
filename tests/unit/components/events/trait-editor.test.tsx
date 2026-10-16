@@ -106,9 +106,12 @@ describe("TraitEditor: a message set", () => {
   it("round-trips an existing headers entity pin (including an explicitly unpinned one), shows it as a read-only note and never drops it", async () => {
     const pinned = { ...messageTrait, headers: { entityId: "e1", entityVersionId: null } };
     render(<TraitEditor {...base} trait={pinned} />);
-    expect(id("trait-editor-headers-note").textContent).toBe("Headers come from the entity CloudEventsHeaders.");
+    // no rows of its own: the table says where the properties come from, once (the entity has no known address here, so no link)
+    expect(id("trait-editor-props-pin-note").textContent).toBe("Properties come from the entity CloudEventsHeaders.");
+    expect(missing("trait-editor-headers-note")).toBe(true);
     fireEvent.click(id("trait-editor-props-add"));
     change(input("trait-editor-props-name-0"), "x");
+    expect(id("trait-editor-headers-note").textContent).toBe("Headers come from the entity CloudEventsHeaders.");
     change(input("trait-editor-name"), "Renamed");
     save();
     await waitFor(() => expect(h.refresh).toHaveBeenCalledTimes(1));

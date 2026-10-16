@@ -460,9 +460,13 @@ describe("PropertiesSection: the Properties table of a local set", () => {
     const doc = traitsDoc();
     doc.traits[0] = { key: "idempotent", kind: "MESSAGE", spec: { name: "Idempotent" }, headers: { entityId: "ent-1", entityVersionId: "ver-1" } };
     const { probe } = renderSection(PropertiesSection, { doc, options: OPTIONS, item: "idempotent" });
-    expect(text("trait-headers-note")).toBe("Headers also come from the entity OrderCreated.");
+    // no rows of its own: the table says where the properties come from, once
+    expect(text("trait-props-pin-note")).toBe("Properties come from the entity OrderCreated v1.0.");
+    expect(missing("trait-headers-note")).toBe(true);
     click("trait-props-add");
     type(box("trait-props-name-0"), "x");
+    expect(text("trait-headers-note")).toBe("Headers also come from the entity OrderCreated.");
+    expect(missing("trait-props-pin-note")).toBe(true);
     type(box("trait-name"), "Renamed");
     expect(traitOf(probe.draft.doc, "idempotent")).toMatchObject({ headers: { entityId: "ent-1", entityVersionId: "ver-1" } });
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);

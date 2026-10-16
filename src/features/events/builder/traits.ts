@@ -3,9 +3,11 @@
 // clean up, how a set is added (from the library, blank) and applied to ONE message or operation in a single step, and what a set is
 // called and how many properties it brings. A "set" is a document trait (`doc.traits[]`): internal names keep saying trait.
 import type { TraitKind } from "@/lib/event-specs/types";
+import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
 import { propertySummary } from "@/lib/events/bundled-traits";
 import { isLibraryTrait, type DocTrait, type EventDocument } from "@/lib/events/document/types";
 import { suggestKey } from "@/lib/events/templates/keys";
+import type { EntityPin } from "@/lib/events/types";
 import { autoRenameKey, newKey, takenKeys } from "./auto-key";
 import type { LibraryTraitOption } from "./EventBuilder";
 import { newPropertiesLabel } from "./labels";
@@ -164,4 +166,15 @@ export function traitPropertyCount(trait: DocTrait, library: LibraryTraitOption[
 export function traitHeaders(trait: DocTrait, library: LibraryTraitOption[]): unknown {
   if (isLibraryTrait(trait)) return optionOf(trait, library)?.spec?.headers;
   return trait.spec.headers;
+}
+
+/** Where the properties of a trait pinned to an entity come from (what its table says instead of "No properties"). `href` is null when the entity has no known address. */
+export interface PinnedHeaders { name: string; versionLabel: string | null; href: string | null }
+
+/** `pin` (a legacy trait's headers entity; null when a stored trait has none) described for the table; undefined without a pin. Only the latest version's label is known, an older pin names the entity alone. */
+export function pinnedHeaders(pin: EntityPin | null | undefined, entityOptions: readonly EntityOption[]): PinnedHeaders | undefined {
+  if (!pin) return undefined;
+  const entity = entityOptions.find((e) => e.id === pin.entityId);
+  const versionLabel = entity && pin.entityVersionId !== null && pin.entityVersionId === entity.latestVersionId ? entity.latestVersionLabel : null;
+  return { name: entity?.name ?? pin.entityId, versionLabel, href: entity?.href ?? null };
 }

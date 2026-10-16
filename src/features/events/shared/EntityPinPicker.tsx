@@ -12,6 +12,8 @@ export interface EntityOption {
   ownerLabel: string;
   latestVersionId: string | null;
   latestVersionLabel: string | null;
+  /** Where the entity's own page is (`assetHref`); absent when the host does not know it. */
+  href?: string;
   /**
    * The representation the entity was imported in (Avro / JSON Schema / Protobuf); absent when it was not imported or came from a
    * format an event cannot emit (TypeSpec, OpenAPI, ...). What a message's "Auto" representation follows.

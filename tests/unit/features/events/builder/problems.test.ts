@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  locateProblem, problemMessage, problemsByField, readProblems, uniqueProblems, userProblemText,
+  locateProblem, problemMessage, problemsByField, readProblems, uniqueProblems,
 } from "@/features/events/builder/problems";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
 
@@ -181,30 +181,5 @@ describe("uniqueProblems / problemMessage / readProblems", () => {
     expect(readProblems({})).toEqual([]);
     expect(readProblems({ problems: "nope" })).toEqual([]);
     expect(readProblems(null)).toEqual([]);
-  });
-});
-
-describe("userProblemText: the parser's two 'trait' messages read as message / operation properties", () => {
-  it("rewords an unknown reference by the kind of the item that holds it", () => {
-    expect(userProblemText({ pointer: "/messages/0/traitKeys/1", message: 'Unknown trait "Gone"' })).toBe('Unknown message properties "Gone"');
-    expect(userProblemText({ pointer: "/operations/2/traitKeys/0", message: 'Unknown trait "Gone"' })).toBe('Unknown operation properties "Gone"');
-  });
-
-  it("rewords a reference to a set of the other kind", () => {
-    expect(userProblemText({ pointer: "/messages/0/traitKeys/0", message: 'Trait "retry" is not a message trait' })).toBe('"retry" is not a set of message properties');
-    expect(userProblemText({ pointer: "/operations/0/traitKeys/0", message: 'Trait "envelope" is not a operation trait' })).toBe('"envelope" is not a set of operation properties');
-  });
-
-  it("leaves every other problem as it is", () => {
-    expect(userProblemText({ pointer: "/messages/0/title", message: "title must be a string" })).toBe("title must be a string");
-    expect(userProblemText({ pointer: "/traits/0", message: "A trait needs exactly one of spec or libraryTraitId" })).toBe("A trait needs exactly one of spec or libraryTraitId");
-  });
-
-  it("is what problemMessage shows, joined and de-duplicated", () => {
-    expect(problemMessage([
-      { pointer: "/messages/0/traitKeys/0", message: 'Unknown trait "A"' },
-      { pointer: "/messages/0/traitKeys/1", message: 'Unknown trait "B"' },
-      { pointer: "/messages/0/traitKeys/2", message: 'Unknown trait "A"' },
-    ])).toBe('Unknown message properties "A"; Unknown message properties "B"');
   });
 });
