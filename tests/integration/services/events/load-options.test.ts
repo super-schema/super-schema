@@ -3,10 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import {
-  loadChannelOptions,
   loadEntityOptions,
-  loadMessageOptions,
-  loadMessageRefOptions,
   loadPinnableVersions,
   loadTraitOptions,
 } from "@/features/events/load-options";
@@ -30,7 +27,7 @@ interface Fixture {
   own: Own;
   /** A second product line in the same tenant. */
   other: Own;
-  /** A whole other tenant with its own domain / product / entity / message. */
+  /** A whole other tenant with its own domain / product / entity. */
   foreign: Foreign;
   /** Tenant-level traits created by the test; deleted in `finally`. */
   tenantTraits: string[];
@@ -98,36 +95,33 @@ describe("event option loaders (tenant scoping)", () => {
       expect((await loadEntityOptions(foreign.tenant.id)).find((e) => e.id === foreign.entity.id)?.sourceFormat).toBe("avro");
     }), 60_000);
 
-  it("loadTraitOptions: Enterprise + domain + product line, filtered by kind, never another product's or tenant's", () =>
+  it("loadTraitOptions: Enterprise + the product's own domain, filtered by kind, never another domain's or tenant's", () =>
     withFixture(async ({ own, other, foreign, tenantTraits }) => {
       const tenantTrait = await prisma.trait.create({ data: { name: `TT-${own.s}`, kind: "MESSAGE", tenantId: TENANT } });
       tenantTraits.push(tenantTrait.id);
       const domainTrait = await prisma.trait.create({ data: { name: `DT-${own.s}`, kind: "MESSAGE", tenantId: TENANT, domainId: own.domain.id } });
-      const productTrait = await prisma.trait.create({
-        data: { name: `PT-${own.s}`, kind: "MESSAGE", tenantId: TENANT, domainId: own.domain.id, productId: own.product.id },
-      });
-      const otherProductTrait = await prisma.trait.create({
-        data: { name: `OT-${own.s}`, kind: "MESSAGE", tenantId: TENANT, domainId: other.domain.id, productId: other.product.id },
+      // Traits are tenant or domain level only (a product-level trait is refused by the table's CHECK).
+      const otherDomainTrait = await prisma.trait.create({
+        data: { name: `OT-${own.s}`, kind: "MESSAGE", tenantId: TENANT, domainId: other.domain.id },
       });
       const operationTrait = await prisma.trait.create({ data: { name: `OP-${own.s}`, kind: "OPERATION", tenantId: TENANT, domainId: own.domain.id } });
       const foreignTrait = await prisma.trait.create({
-        data: { name: `FT-${foreign.tenant.id}`, kind: "MESSAGE", tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id },
+        data: { name: `FT-${foreign.tenant.id}`, kind: "MESSAGE", tenantId: foreign.tenant.id, domainId: foreign.domain.id },
       });
       try {
         const scope = { tenantId: TENANT, domainId: own.domain.id, productId: own.product.id };
         const visible = await loadTraitOptions(scope, "MESSAGE");
-        expect(ids(visible)).toEqual(expect.arrayContaining([tenantTrait.id, domainTrait.id, productTrait.id]));
-        expect(ids(visible)).not.toContain(otherProductTrait.id);
+        expect(ids(visible)).toEqual(expect.arrayContaining([tenantTrait.id, domainTrait.id]));
+        expect(ids(visible)).not.toContain(otherDomainTrait.id);
         expect(ids(visible)).not.toContain(operationTrait.id);
         expect(ids(visible)).not.toContain(foreignTrait.id);
         expect(visible.find((t) => t.id === tenantTrait.id)?.ownerLabel).toBe("Enterprise");
         expect(visible.find((t) => t.id === domainTrait.id)?.ownerLabel).toBe(own.domain.name);
-        expect(visible.find((t) => t.id === productTrait.id)?.ownerLabel).toBe(ownerOf(own));
         expect(ids(await loadTraitOptions(scope, "OPERATION"))).toContain(operationTrait.id);
-        // Domain level sees Enterprise + the domain's own traits, not its products'.
+        // Domain level sees Enterprise + the domain's own traits.
         const domainOnly = await loadTraitOptions({ tenantId: TENANT, domainId: own.domain.id, productId: null }, "MESSAGE");
         expect(ids(domainOnly)).toEqual(expect.arrayContaining([tenantTrait.id, domainTrait.id]));
-        expect(ids(domainOnly)).not.toContain(productTrait.id);
+        expect(ids(domainOnly)).not.toContain(otherDomainTrait.id);
       } finally {
         await prisma.trait.deleteMany({ where: { id: foreignTrait.id } });
       }
@@ -138,7 +132,7 @@ describe("event option loaders (tenant scoping)", () => {
       const tenantTrait = await prisma.trait.create({ data: { name: `TT-${own.s}`, kind: "MESSAGE", tenantId: TENANT } });
       tenantTraits.push(tenantTrait.id);
       const foreignTrait = await prisma.trait.create({
-        data: { name: `FT-${foreign.tenant.id}`, kind: "MESSAGE", tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id },
+        data: { name: `FT-${foreign.tenant.id}`, kind: "MESSAGE", tenantId: foreign.tenant.id, domainId: foreign.domain.id },
       });
       try {
         const forged = await loadTraitOptions({ tenantId: TENANT, domainId: foreign.domain.id, productId: foreign.product.id }, "MESSAGE");
@@ -147,108 +141,6 @@ describe("event option loaders (tenant scoping)", () => {
       } finally {
         await prisma.trait.deleteMany({ where: { id: foreignTrait.id } });
       }
-    }), 60_000);
-
-  it("loadChannelOptions: own product first, allowed message ids, owner labels", () =>
-    withFixture(async ({ own, other }) => {
-      const published = await own.publishedEntity(`Order${own.s}`);
-      const message = await prisma.message.create({
-        data: { name: `Msg-${own.s}`, payloadEntityId: published.entity.id, tenantId: TENANT, domainId: own.domain.id, productId: own.product.id },
-      });
-      const ownChannel = await prisma.channel.create({
-        data: {
-          name: `zz-own-${own.s}`, address: "orders", protocol: "kafka", format: "avro", tenantId: TENANT, domainId: own.domain.id, productId: own.product.id,
-          messages: { create: [{ messageId: message.id }] },
-        },
-      });
-      const peerChannel = await prisma.channel.create({
-        data: { name: `aa-peer-${own.s}`, protocol: "amqp", format: "json-schema", tenantId: TENANT, domainId: other.domain.id, productId: other.product.id },
-      });
-      const channels = await loadChannelOptions(TENANT, own.product.id);
-      expect(channels.find((c) => c.id === ownChannel.id)).toMatchObject({
-        own: true, address: "orders", protocol: "kafka", format: "avro", allowedMessageIds: [message.id], ownerLabel: ownerOf(own),
-      });
-      expect(channels.find((c) => c.id === peerChannel.id)).toMatchObject({ own: false, address: null, allowedMessageIds: [] });
-      // Own-product channels sort ahead of peers even though "aa-peer" sorts first by name.
-      expect(channels.findIndex((c) => c.id === ownChannel.id)).toBeLessThan(channels.findIndex((c) => c.id === peerChannel.id));
-    }), 60_000);
-
-  it("loadChannelOptions: never returns another tenant's channels, even for a forged product id", () =>
-    withFixture(async ({ own, foreign }) => {
-      const foreignChannel = await prisma.channel.create({
-        data: { name: `ff-${foreign.tenant.id}`, protocol: "kafka", format: "avro", tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id },
-      });
-      expect(ids(await loadChannelOptions(TENANT, own.product.id))).not.toContain(foreignChannel.id);
-      const forged = await loadChannelOptions(TENANT, foreign.product.id);
-      expect(ids(forged)).not.toContain(foreignChannel.id);
-      expect(forged.some((c) => c.own)).toBe(false);
-    }), 60_000);
-
-  it("loadMessageRefOptions: published versions (read-only across products) + own-product drafts only", () =>
-    withFixture(async ({ own, other }) => {
-      const published = await own.publishedEntity(`Order${own.s}`);
-      const message = await prisma.message.create({
-        data: { name: `Msg-${own.s}`, payloadEntityId: published.entity.id, tenantId: TENANT, domainId: own.domain.id, productId: own.product.id },
-      });
-      const version = await prisma.messageVersion.create({
-        data: {
-          messageId: message.id, major: 1, minor: 0, sequence: 1, resolvedSpec: {}, payloadEntityVersionId: published.version.id,
-          changeKind: "INITIAL", publishedById: ctx.userId,
-        },
-      });
-      const peerMessage = await prisma.message.create({
-        data: { name: `Peer-${own.s}`, payloadEntityId: published.entity.id, tenantId: TENANT, domainId: other.domain.id, productId: other.product.id },
-      });
-      const refs = await loadMessageRefOptions(TENANT, own.product.id);
-      expect(refs.find((r) => r.id === version.id)).toMatchObject({
-        messageId: message.id, label: `Msg-${own.s} v1.0`, own: true, draft: false, ownerLabel: ownerOf(own),
-      });
-      expect(refs.find((r) => r.id === message.id)).toMatchObject({ draft: true, own: true, label: `Msg-${own.s} (draft — preview only)` });
-      expect(ids(refs)).not.toContain(peerMessage.id); // another product's draft is not referenceable
-      // From the peer product's point of view the first product's published version is referenceable, read-only.
-      const fromPeer = await loadMessageRefOptions(TENANT, other.product.id);
-      expect(fromPeer.find((r) => r.id === version.id)).toMatchObject({ own: false, draft: false });
-      expect(ids(fromPeer)).not.toContain(message.id);
-    }), 60_000);
-
-  it("loadMessageRefOptions: nothing from another tenant, even for a forged product id", () =>
-    withFixture(async ({ own, foreign }) => {
-      const foreignEntityVersion = await prisma.entityVersion.create({
-        data: {
-          entityId: foreign.entity.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId,
-          resolvedSource: "model Foreign {}", fieldSnapshot: [],
-        },
-      });
-      const foreignVersion = await prisma.messageVersion.create({
-        data: {
-          messageId: foreign.message.id, major: 1, minor: 0, sequence: 1, resolvedSpec: {}, payloadEntityVersionId: foreignEntityVersion.id,
-          changeKind: "INITIAL", publishedById: ctx.userId,
-        },
-      });
-      const refs = await loadMessageRefOptions(TENANT, own.product.id);
-      expect(ids(refs)).not.toContain(foreignVersion.id);
-      expect(ids(refs)).not.toContain(foreign.message.id);
-      // A forged product id (a foreign product, under our tenant) surfaces neither its draft nor its versions.
-      const forged = await loadMessageRefOptions(TENANT, foreign.product.id);
-      expect(ids(forged)).not.toContain(foreign.message.id);
-      expect(ids(forged)).not.toContain(foreignVersion.id);
-      expect(forged.some((r) => r.draft)).toBe(false);
-    }), 60_000);
-
-  it("loadMessageOptions: own tenant's messages only", () =>
-    withFixture(async ({ own, other, foreign }) => {
-      const published = await own.publishedEntity(`Order${own.s}`);
-      const mine = await prisma.message.create({
-        data: { name: `Msg-${own.s}`, payloadEntityId: published.entity.id, tenantId: TENANT, domainId: own.domain.id, productId: own.product.id },
-      });
-      const peer = await prisma.message.create({
-        data: { name: `Peer-${own.s}`, payloadEntityId: published.entity.id, tenantId: TENANT, domainId: other.domain.id, productId: other.product.id },
-      });
-      const messages = await loadMessageOptions(TENANT);
-      expect(ids(messages)).toEqual(expect.arrayContaining([mine.id, peer.id]));
-      expect(messages.find((m) => m.id === mine.id)?.ownerLabel).toBe(ownerOf(own));
-      expect(ids(messages)).not.toContain(foreign.message.id);
-      expect(ids(await loadMessageOptions(foreign.tenant.id))).toEqual([foreign.message.id]);
     }), 60_000);
 
   it("loadPinnableVersions: published versions newest first; another tenant's, unknown and malformed ids give null", () =>

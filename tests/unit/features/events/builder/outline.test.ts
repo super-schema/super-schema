@@ -33,7 +33,7 @@ describe("buildOutline", () => {
   it("returns one node per builder section, in order, with the display labels", () => {
     const outline = buildOutline(emptyEventDocument("Orders"), []);
     expect(outline.map((n) => n.section)).toEqual([...BUILDER_SECTIONS]);
-    expect(outline.map((n) => n.label)).toEqual(["Metadata", "Servers", "Channels", "Messages", "Operations", "Traits", "Advanced"]);
+    expect(outline.map((n) => n.label)).toEqual(["Metadata", "Servers", "Channels", "Messages", "Operations", "Message properties", "Advanced"]);
   });
 
   it("has seven sections", () => {

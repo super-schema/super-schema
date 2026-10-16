@@ -49,8 +49,6 @@ const EMPTY_DELETION_IMPACT = {
   services: 0,
   interfaces: 0,
   userRoles: 0,
-  channels: 0,
-  messages: 0,
   traits: 0,
   eventSpecs: 0,
 };
@@ -178,7 +176,7 @@ describe("DomainGrid", () => {
             description: "",
             isSystem: false,
             entityCount: 0,
-            deletionImpact: { ...EMPTY_DELETION_IMPACT, products: 1, channels: 2, traits: 1, eventSpecs: 1 },
+            deletionImpact: { ...EMPTY_DELETION_IMPACT, products: 1, traits: 1, eventSpecs: 2 },
             createdAt: new Date("2026-01-01T00:00:00.000Z"),
           },
         ]}
@@ -188,7 +186,7 @@ describe("DomainGrid", () => {
     fireEvent.click(screen.getByRole("button", { name: /Delete domain Orders/i }));
 
     expect(screen.getByText("Delete or move all Events assets first.")).toBeDefined();
-    expect(screen.getByText("This domain currently contains 2 channels, 1 trait and 1 event spec.")).toBeDefined();
+    expect(screen.getByText("This domain currently contains 1 trait and 2 events.")).toBeDefined();
     const confirm = screen.getByRole("button", { name: "Delete Domain" }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     fireEvent.click(confirm);

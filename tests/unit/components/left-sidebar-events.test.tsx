@@ -12,7 +12,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(location.search),
 }));
 
-const zeroCounts = { dataTypes: 0, apis: 0, entities: 0, traits: 0, messages: 0, channels: 0, eventSpecs: 0 };
+const zeroCounts = { dataTypes: 0, apis: 0, entities: 0, traits: 0, events: 0 };
 const order = { id: "e1", name: "Order", slug: "order", status: "DRAFT" };
 const tree = {
   enterprise: { counts: { dataTypes: 0, entities: 1, traits: 3 }, entities: [{ id: "e2", name: "Party", slug: "party", status: "DRAFT" }] },
@@ -22,15 +22,15 @@ const tree = {
       counts: { dataTypes: 0, apis: 0, traits: 1 },
       products: [
         {
-          // Events: 2. The product-level traits / messages / channels counts are the old model's and must not surface any leaf.
+          // Events: 2. A product-level traits count must not surface any leaf.
           id: "p1", name: "Checkout", slug: "checkout", isSystem: false,
-          counts: { ...zeroCounts, entities: 1, traits: 1, messages: 1, channels: 1, eventSpecs: 2 },
+          counts: { ...zeroCounts, entities: 1, traits: 1, events: 2 },
           entities: [order],
         },
         { id: "p2", name: "Ledger", slug: "ledger", isSystem: false, counts: { ...zeroCounts }, entities: [] },
-        // Only old-model counts, no events: no Events leaf.
-        { id: "p3", name: "Billing", slug: "billing", isSystem: false, counts: { ...zeroCounts, channels: 2, messages: 1, traits: 2 }, entities: [] },
-        { id: "p4", name: "Shipping", slug: "shipping", isSystem: false, counts: { ...zeroCounts, eventSpecs: 1 }, entities: [] },
+        // No events: no Events leaf.
+        { id: "p3", name: "Billing", slug: "billing", isSystem: false, counts: { ...zeroCounts, traits: 2 }, entities: [] },
+        { id: "p4", name: "Shipping", slug: "shipping", isSystem: false, counts: { ...zeroCounts, events: 1 }, entities: [] },
       ],
     },
   ],
@@ -89,8 +89,11 @@ describe("LeftSidebar: one Events leaf per product", () => {
     expect(screen.queryByText("Channels")).toBeNull();
   });
 
-  it("keeps the Traits leaves of the Domain and the Enterprise, which own the trait library", () => {
+  it("keeps the Message properties leaves of the Domain and the Enterprise, which own the library (the URLs still say traits)", () => {
     render(<LeftSidebar {...props} />);
+    expect(screen.getByTestId("domain-d1-traits").textContent).toContain("Message properties");
+    expect(screen.getByTestId("enterprise-traits").textContent).toContain("Message properties");
+    expect(screen.queryByText("Traits")).toBeNull();
     fireEvent.click(screen.getByTestId("domain-d1-traits"));
     expect(push).toHaveBeenLastCalledWith(assetHref({ kind: "traits", domainSlug: "payments", productSlug: null }));
     expect(push).toHaveBeenLastCalledWith("/schemas/payments?tab=traits");
@@ -157,11 +160,9 @@ describe("LeftSidebar: the Entities row", () => {
     expect(active("product-p1-events")).toBe("false");
   });
 
-  it("is not highlighted on the pages the old routes redirect from (specs, messages, channels, traits)", () => {
-    for (const path of ["/schemas/payments/checkout/specs/s1", "/schemas/payments/checkout/messages/m1", "/schemas/payments/checkout/channels/c1", "/schemas/payments/checkout/traits/t1"]) {
-      visit(path);
-      expect(active("product-p1-entities")).toBe("false");
-    }
+  it("is not highlighted on a product-level trait URL (the old route redirects to the Events list)", () => {
+    visit("/schemas/payments/checkout/traits/t1");
+    expect(active("product-p1-entities")).toBe("false");
   });
 
   it("keeps the Enterprise rows: entities row on entity pages only, not on trait pages", () => {

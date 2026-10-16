@@ -100,4 +100,55 @@ describe("json control", () => {
     expect(box().placeholder).toBe('{ "traceId": "abc" }');
     expect(box().disabled).toBe(true);
   });
+
+  it("is the JSON editor: here, without CodeMirror in jsdom, its textarea, named like the field", () => {
+    const { container } = renderField(JSON_FIELD, { value: { thing: { a: 1 } } });
+    const root = container.querySelector('[data-testid="f-thing-editor"]') as HTMLElement;
+    expect(root.getAttribute("data-editor")).toBe("textarea");
+    expect(root.getAttribute("data-language")).toBe("json");
+    expect(box().getAttribute("aria-label")).toBe("Headers");
+  });
+
+  it("says where the problem is: the message names the line and the column", () => {
+    renderField(JSON_FIELD);
+    type('{\n  "a": 1,\n}');
+    const message = screen.getByTestId("f-thing-validation").textContent as string;
+    expect(message).toMatch(/^Not valid JSON: /);
+    expect(message).toMatch(/line 3/i);
+    expect(message).toMatch(/column 1/i);
+  });
+
+  it("says the text is incomplete at its end when it stops short", () => {
+    renderField(JSON_FIELD);
+    type('{ "a": ');
+    expect(screen.getByTestId("f-thing-validation").textContent).toMatch(/line 1.*column 8|column 8/i);
+  });
+
+  it("keeps the invalid text and writes nothing while it is invalid, however many edits it takes to fix", () => {
+    const { probe } = renderField(JSON_FIELD, { value: { thing: { keep: "me" } } });
+    for (const step of ["{", '{ "a"', '{ "a":', '{ "a": [', '{ "a": [1']) {
+      type(step);
+      expect(box().value).toBe(step);
+      expect(screen.getByTestId("f-thing-validation")).toBeTruthy();
+    }
+    expect(probe.onChange).not.toHaveBeenCalled();
+    expect(probe.value).toEqual({ thing: { keep: "me" } });
+    type('{ "a": [1] }');
+    expect(probe.onChange).toHaveBeenCalledTimes(1);
+    expect(probe.value).toEqual({ thing: { a: [1] } });
+  });
+
+  it("combines the form's own description with the validation message for assistive technology", () => {
+    renderField(field("json", { help: "A JSON object." }));
+    type("{ oops");
+    expect(box().getAttribute("aria-describedby")).toBe("f-thing-hint f-thing-validation");
+  });
+
+  it("starts empty for no value and keeps whitespace-only text as 'nothing'", () => {
+    const { probe } = renderField(JSON_FIELD);
+    expect(box().value).toBe("");
+    type("   \n ");
+    expect(screen.queryByTestId("f-thing-validation")).toBeNull();
+    expect(probe.value).toEqual({});
+  });
 });

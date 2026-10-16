@@ -17,8 +17,8 @@ async function seedPublishedEventSpecVersion(db: PGlite) {
   );
   await db.exec(
     `INSERT INTO "event_spec_versions"
-       ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenChannels","frozenTraits","changeKind","publishedById")
-     VALUES ('sv1','s1',1,0,1,'{}','{}','[]','[]','INITIAL','u1')`
+       ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById")
+     VALUES ('sv1','s1',1,0,1,'{}','{}','[]','INITIAL','u1')`
   );
 }
 
@@ -66,7 +66,7 @@ describe("event document v2 migrations on PGlite", () => {
     }
   }, 60_000);
 
-  it("stores a resolvedSpec on insert and leaves it NULL for rows written without one (legacy / pre-v2 versions)", async () => {
+  it("stores a resolvedSpec on insert and leaves it NULL for rows written without one (the column stays nullable)", async () => {
     const db = new PGlite();
     try {
       await applyPgliteMigrations(db);
@@ -77,8 +77,8 @@ describe("event document v2 migrations on PGlite", () => {
 
       await db.exec(
         `INSERT INTO "event_spec_versions"
-           ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenChannels","frozenTraits","changeKind","publishedById","resolvedSpec")
-         VALUES ('sv2','s1',1,1,2,'{}','{}','[]','[]','MINOR','u1','{"documentVersion":2}')`
+           ("id","eventSpecId","major","minor","sequence","document","sourceDocument","frozenTraits","changeKind","publishedById","resolvedSpec")
+         VALUES ('sv2','s1',1,1,2,'{}','{}','[]','MINOR','u1','{"documentVersion":2}')`
       );
       const stored = await db.query<{ resolvedSpec: unknown }>(`SELECT "resolvedSpec" FROM "event_spec_versions" WHERE "id" = 'sv2'`);
       expect(stored.rows[0].resolvedSpec).toEqual({ documentVersion: 2 });

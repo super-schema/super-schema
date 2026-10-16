@@ -13,33 +13,32 @@ beforeAll(async () => {
 });
 afterAll(async () => prisma.$disconnect());
 
-describe("deleting an entity that events pin (DB)", () => {
-  it("returns IN_USE naming the message, trait and message version that pin it, and deletes nothing", async () => {
+describe("deleting an entity that a library trait or an event pins (DB)", () => {
+  it("returns IN_USE naming the trait and the event that pin it, and deletes nothing", async () => {
     let domainId: string | undefined;
     try {
       const sc = await createProductScope(prisma, ctx);
       domainId = sc.domain.id;
       const level = { tenantId: TENANT, domainId: sc.domain.id, productId: sc.product.id };
       const order = await sc.publishedEntity("Order");
-      const audit = await sc.publishedEntity("Audit");
       const other = await sc.publishedEntity("Other");
 
-      // Current pin: payload of a message.
-      const direct = await prisma.message.create({
-        data: { ...level, name: `OrderCreated-${sc.s}`, payloadEntityId: order.entity.id, payloadEntityVersionId: order.version.id },
+      // A library trait whose headers pin holds Order (a NO ACTION foreign key).
+      const trait = await prisma.trait.create({
+        data: { tenantId: TENANT, domainId: sc.domain.id, kind: "MESSAGE", name: `CloudEvents-${sc.s}`, headersEntityId: order.entity.id, headersEntityVersionId: order.version.id },
       });
-      // Historic pin only: the message now points at Audit, but a published version still pins Order@1.0.
-      const historic = await prisma.message.create({
-        data: { ...level, name: `OrderArchived-${sc.s}`, payloadEntityId: audit.entity.id, payloadEntityVersionId: audit.version.id },
-      });
-      await prisma.messageVersion.create({
+      // An event whose message payload is pinned to Order@1.0 (no foreign key: the event guard is what stops the delete).
+      const event = await prisma.eventSpec.create({
         data: {
-          messageId: historic.id, major: 1, minor: 0, sequence: 1, resolvedSpec: {},
-          payloadEntityVersionId: order.version.id, changeKind: "INITIAL", publishedById: ctx.userId,
+          ...level, name: `checkout-${sc.s}`,
+          document: {
+            documentVersion: 2, info: { title: "checkout" }, servers: [], channels: [], externalRefs: [], operations: [], traits: [],
+            messages: [{ key: "order-created", payload: { entityId: order.entity.id, entityVersionId: order.version.id }, traitKeys: [] }],
+          },
         },
       });
-      const trait = await prisma.trait.create({
-        data: { ...level, kind: "MESSAGE", name: `CloudEvents-${sc.s}`, headersEntityId: order.entity.id, headersEntityVersionId: order.version.id },
+      await prisma.schemaReference.create({
+        data: { fromKind: "EVENT_SPEC", fromId: event.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: order.version.id, isDraft: true },
       });
 
       const blocked = await deleteEntity(order.entity.id, ctx);
@@ -47,20 +46,20 @@ describe("deleting an entity that events pin (DB)", () => {
       if (blocked.success) throw new Error("unreachable");
       expect(blocked.error.code).toBe("IN_USE");
       expect(blocked.error.message).toBe(
-        `Entity "Order" cannot be deleted: it is used by Messages "${historic.name}", "${direct.name}" and Trait "${trait.name}".`
+        `Entity "Order" cannot be deleted: it is used by Trait "${trait.name}", and it is pinned by event ${event.name} (${sc.domain.name}/${sc.product.name}).`
       );
-      expect(blocked.error.details).toEqual({
-        // ordered by name: OrderArchived-… before OrderCreated-…
-        messages: [historic, direct].map((m) => ({ id: m.id, name: m.name })),
+      expect(blocked.error.details).toMatchObject({
         traits: [{ id: trait.id, name: trait.name }],
         entities: [], // no other entity's published version references Order
+        events: { referrers: [{ eventId: event.id, name: event.name, draft: true, published: false, referencedVersions: ["1.0"] }], truncated: false },
       });
       expect(await prisma.entity.count({ where: { id: order.entity.id } })).toBe(1);
       expect(await prisma.entityVersion.count({ where: { entityId: order.entity.id } })).toBe(1);
 
-      // An entity nothing pins is not reported as in use (its delete is covered by entity.service unit tests).
-      const free = await prisma.message.count({ where: { OR: [{ payloadEntityId: other.entity.id }, { headersEntityId: other.entity.id }, { keyEntityId: other.entity.id }] } });
-      expect(free).toBe(0);
+      // An entity nothing pins is not reported as in use.
+      const free = await deleteEntity(other.entity.id, ctx);
+      expect(free.success).toBe(true);
+      expect(await prisma.entity.count({ where: { id: other.entity.id } })).toBe(0);
     } finally {
       await cleanupDomains(prisma, [domainId]);
     }

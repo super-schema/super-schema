@@ -1,8 +1,10 @@
 import { prisma } from "@/lib/db";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { LevelScope } from "@/lib/levels";
+import { isBundledTrait, propertySummary, type PropertySummaryRow } from "@/lib/events/bundled-traits";
 import { entitySourceFormat } from "@/lib/events/document/representation";
-import type { TraitKind } from "@/lib/events/types";
+import { isJsonObject } from "@/lib/events/inputs";
+import type { JsonObject, TraitKind } from "@/lib/events/types";
 import type { EntityOption, VersionOption } from "./shared/EntityPinPicker";
 
 /**
@@ -57,8 +59,18 @@ export interface TraitOption {
   ownerLabel: string;
 }
 
-/** Traits visible from a level: Enterprise + that domain + that product (spec §4.3 line). */
-export async function loadTraitOptions(scope: LevelScope, kind: TraitKind): Promise<TraitOption[]> {
+/** A trait option as `loadTraitOptions` returns it: the picker fields plus what the builder needs to SHOW the trait's message properties. */
+export interface LibraryTraitSource extends TraitOption {
+  /** The stored AsyncAPI trait object (inline `headers` included), so the instant code can emit the real definition. */
+  spec: JsonObject;
+  /** Built in (`x-bundled`): read-only everywhere, shown locked. */
+  bundled: boolean;
+  /** The trait's inline headers as table rows (`propertySummary`); empty for a trait without inline properties. */
+  properties: PropertySummaryRow[];
+}
+
+/** Traits visible from a level: Enterprise + that domain (product-level traits no longer exist; spec §4.3 line). */
+export async function loadTraitOptions(scope: LevelScope, kind: TraitKind): Promise<LibraryTraitSource[]> {
   const rows = await prisma.trait.findMany({
     where: {
       tenantId: scope.tenantId,
@@ -66,79 +78,13 @@ export async function loadTraitOptions(scope: LevelScope, kind: TraitKind): Prom
       OR: [
         { domainId: null },
         ...(scope.domainId ? [{ domainId: scope.domainId, productId: null }] : []),
-        ...(scope.productId ? [{ productId: scope.productId }] : []),
       ],
     },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, ...OWNER_SELECT },
+    select: { id: true, name: true, spec: true, ...OWNER_SELECT },
   });
-  return rows.map((r) => ({ id: r.id, name: r.name, ownerLabel: ownerLabel(r) }));
-}
-
-export interface ChannelOption {
-  id: string;
-  name: string;
-  address: string | null;
-  protocol: string;
-  format: string;
-  ownerLabel: string;
-  own: boolean;
-  allowedMessageIds: string[];
-}
-
-export async function loadChannelOptions(tenantId: string, productId: string): Promise<ChannelOption[]> {
-  const rows = await prisma.channel.findMany({
-    where: { tenantId },
-    orderBy: { name: "asc" },
-    select: {
-      id: true, name: true, address: true, protocol: true, format: true, productId: true, ...OWNER_SELECT,
-      messages: { select: { messageId: true } },
-    },
+  return rows.map((r) => {
+    const spec = isJsonObject(r.spec) ? r.spec : {};
+    return { id: r.id, name: r.name, ownerLabel: ownerLabel(r), spec, bundled: isBundledTrait(spec), properties: propertySummary(spec) };
   });
-  return rows
-    .map((r) => ({
-      id: r.id, name: r.name, address: r.address, protocol: r.protocol, format: r.format, ownerLabel: ownerLabel(r),
-      own: r.productId === productId, allowedMessageIds: r.messages.map((m) => m.messageId),
-    }))
-    .sort((a, b) => Number(b.own) - Number(a.own));
-}
-
-export interface MessageRefOption {
-  /** MessageVersion id, or the Message id for an own-product draft (D4). */
-  id: string;
-  messageId: string;
-  label: string;
-  ownerLabel: string;
-  own: boolean;
-  draft: boolean;
-}
-
-export async function loadMessageRefOptions(tenantId: string, productId: string): Promise<MessageRefOption[]> {
-  const [versions, drafts] = await Promise.all([
-    prisma.messageVersion.findMany({
-      where: { message: { tenantId } },
-      orderBy: [{ message: { name: "asc" } }, { sequence: "desc" }],
-      select: { id: true, major: true, minor: true, messageId: true, message: { select: { name: true, productId: true, ...OWNER_SELECT } } },
-    }),
-    // tenantId is part of the filter too: `productId` alone would trust the caller's id.
-    prisma.message.findMany({ where: { tenantId, productId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
-  ]);
-  return [
-    ...versions.map((v) => ({
-      id: v.id, messageId: v.messageId, label: `${v.message.name} v${formatVersionLabel(v)}`, ownerLabel: ownerLabel(v.message),
-      own: v.message.productId === productId, draft: false,
-    })),
-    ...drafts.map((m) => ({ id: m.id, messageId: m.id, label: `${m.name} (draft — preview only)`, ownerLabel: "This product", own: true, draft: true })),
-  ];
-}
-
-export interface MessageOption {
-  id: string;
-  name: string;
-  ownerLabel: string;
-}
-
-export async function loadMessageOptions(tenantId: string): Promise<MessageOption[]> {
-  const rows = await prisma.message.findMany({ where: { tenantId }, orderBy: { name: "asc" }, select: { id: true, name: true, ...OWNER_SELECT } });
-  return rows.map((r) => ({ id: r.id, name: r.name, ownerLabel: ownerLabel(r) }));
 }

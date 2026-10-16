@@ -6,8 +6,6 @@ import type { Product, ProductTier } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
 import { generateSlug, isReservedProductRouteSlug } from "@/lib/slug";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT, productDeleteBlocker } from "@/lib/product-deletion";
-import { crossProductPinBlocker } from "@/lib/events/cross-product-pins";
-import { findCrossProductPins } from "@/services/events/delete-guards";
 import { eventsInUseError, findCrossProductEventRefs, type EventReferrer } from "@/services/events/event-guards";
 import { guardRead } from "@/services/events/service-guards";
 import { normalizeProductContacts } from "@/lib/product-contacts";
@@ -256,36 +254,25 @@ export async function deleteProduct(
       message: "System products cannot be deleted",
     });
   }
-  // Entities, product-level Data Types / APIs and Events assets (channels, messages, traits, event specs) all
-  // cascade with the product (FK ON DELETE CASCADE), so any of them blocks the delete. Events assets also block
-  // while a published event spec of ANOTHER product still pins or froze one of them (immutable versions) — that
-  // reason is reported together with the content counts, naming the specs and their products.
-  const pins = await findCrossProductPins(ctx.prisma, {
-    kind: "product",
-    productId: id,
-    tenantId: existing.domain.tenantId,
-  });
-  // Events of OTHER products that reference a published version of one of this product's events (self-contained events:
-  // edges, no FK) are reported in the same message. A product that owns no event spec has no version to reference, so the
-  // lookup is skipped; a failing read is a DB_ERROR Result.
+  // Entities, product-level Data Types / APIs and events all cascade with the product (FK ON DELETE CASCADE), so any of
+  // them blocks the delete. Events of OTHER products that reference a published version of one of this product's events
+  // (edges, no FK; the published versions are immutable) are reported in the same message. A product that owns no event
+  // has no version to reference, so the lookup is skipped; a failing read is a DB_ERROR Result.
   const eventRefs =
     existing._count.eventSpecs === 0
       ? ok<EventReferrer[]>([])
       : await guardRead(async () => ok(await findCrossProductEventRefs(ctx.prisma, { kind: "product", productId: id, tenantId: existing.domain.tenantId })));
   if (!eventRefs.success) return eventRefs;
   const eventsBlocked = eventsInUseError("Product", existing.name, eventRefs.data);
-  const contentBlocker = combineBlockers([productDeleteBlocker(existing._count), crossProductPinBlocker(pins)]);
+  const contentBlocker = combineBlockers([productDeleteBlocker(existing._count)]);
   const blocker = combineBlockers([contentBlocker, eventsBlocked?.message]);
   if (blocker) {
     return err({
       // The long-standing blockers keep their code; event references alone are an IN_USE.
       code: contentBlocker ? "VALIDATION_ERROR" : "IN_USE",
       message: blocker,
-      ...((pins.length > 0 || eventsBlocked) && {
-        details: { ...(pins.length > 0 && { eventSpecs: pins }), ...(eventsBlocked && { events: eventsBlocked.details }) },
-      }),
-      suggestedFix:
-        "Remove or move the product's entities, Data Types, APIs and Events assets (channels, messages, traits, event specs), then delete the product.",
+      ...(eventsBlocked && { details: { events: eventsBlocked.details } }),
+      suggestedFix: "Remove or move the product's entities, Data Types, APIs and events, then delete the product.",
     });
   }
 

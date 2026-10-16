@@ -2,10 +2,9 @@ import "dotenv/config"; // first: @/lib/db (pulled in by the services) reads DB_
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
 import type { ServiceContext } from "@/types/service-context";
-import { createMessage } from "@/services/events/message.service";
 import { findUsages } from "@/services/events/usage.service";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
-import { cleanupDomains, connectTestDb, createProductScope, TENANT, testContext, unwrap } from "./helpers";
+import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, TENANT, testContext, unwrap } from "./helpers";
 
 let prisma: PrismaClient;
 let ctx: ServiceContext;
@@ -30,36 +29,42 @@ async function seedEntity(sc: Scope, name: string) {
   return { entity, version };
 }
 
-async function seedMessageVersion(messageId: string, payloadEntityVersionId: string) {
-  const mv = await prisma.messageVersion.create({
-    data: { messageId, major: 1, minor: 0, sequence: 1, resolvedSpec: {}, payloadEntityVersionId, changeKind: "INITIAL", publishedById: ctx.userId },
+/** An event of the scope whose draft pins `entityVersionId`, optionally with a published version that pins it too. */
+async function seedEvent(sc: Scope, name: string, entityVersionId: string, published = true) {
+  const event = await prisma.eventSpec.create({
+    data: { name, document: { documentVersion: 2, info: { title: name } }, tenantId: TENANT, domainId: sc.domain.id, productId: sc.product.id },
   });
-  await prisma.schemaReference.create({ data: { fromKind: "MESSAGE_VERSION", fromId: mv.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: payloadEntityVersionId } });
-  return mv;
+  await prisma.schemaReference.create({ data: { fromKind: "EVENT_SPEC", fromId: event.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: entityVersionId, isDraft: true } });
+  if (published) {
+    const version = await createEventSpecVersion(prisma, {
+      eventSpecId: event.id, major: 2, minor: 0, sequence: 1, document: {}, sourceDocument: {}, frozenTraits: [],
+      resolvedSpec: { documentVersion: 2 }, changeKind: "INITIAL", publishedById: ctx.userId,
+    });
+    await prisma.schemaReference.create({ data: { fromKind: "EVENT_SPEC_VERSION", fromId: version.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: entityVersionId, isDraft: false } });
+  }
+  return event;
 }
 
 const summary = (rows: Array<{ label: string; isDraft: boolean; target: string }>) => rows.map((u) => [u.label, u.isDraft, u.target]);
 
 describe("findUsages", () => {
-  it("lists published uses before drafts for an entity, links them, and returns [] for a message nothing uses", async () => {
+  it("lists published uses before drafts for an entity and links them to the event page", async () => {
     let domainId: string | undefined;
     try {
       const sc = await createProductScope(prisma, ctx);
       domainId = sc.domain.id;
       const order = await seedEntity(sc, "Order");
-      const message = unwrap(await createMessage(sc.product.id, { name: `OrderCreated-${sc.s}`, payload: { entityId: order.entity.id } }, ctx));
-      await seedMessageVersion(message.id, order.version.id);
+      const event = await seedEvent(sc, `checkout-${sc.s}`, order.version.id);
 
       const entityUses = unwrap(await findUsages({ kind: "entity", entityId: order.entity.id }, ctx, TENANT));
       expect(summary(entityUses)).toEqual([
-        [`Message ${message.name} v1.0`, false, "Order v1.0"],
-        [`Message ${message.name} (draft)`, true, "Order v1.0"],
+        [`Event ${event.name} v2.0`, false, "Order v1.0"],
+        [`Event ${event.name} (draft)`, true, "Order v1.0"],
       ]);
       expect(entityUses.map((u) => u.role)).toEqual(["PAYLOAD", "PAYLOAD"]);
-      // No message detail route exists before the Wave 5 pages: the link is the product's Messages list.
-      expect(entityUses[0].href).toBe(`/schemas/${sc.domain.slug}/${sc.product.slug}?tab=events&section=messages`);
+      expect(entityUses.map((u) => u.fromKind)).toEqual(["EVENT_SPEC_VERSION", "EVENT_SPEC"]);
+      expect(entityUses.every((u) => u.href === `/schemas/${sc.domain.slug}/${sc.product.slug}/events/${event.id}`)).toBe(true);
 
-      expect(unwrap(await findUsages({ kind: "message", messageId: message.id }, ctx, TENANT))).toEqual([]);
       const missing = await findUsages({ kind: "entity", entityId: "nope" }, ctx, TENANT);
       expect(!missing.success && missing.error.code).toBe("NOT_FOUND");
     } finally {
@@ -79,42 +84,33 @@ describe("findUsages", () => {
     }
   });
 
-  it("shows other products' referrers (read-only, linked to their own product) and spec uses of a message", async () => {
+  it("shows other products' referrers (read-only, linked to their own product) and library traits", async () => {
     const domainIds: Array<string | undefined> = [];
+    const traitIds: string[] = [];
     try {
       const checkout = await createProductScope(prisma, ctx);
       const fraud = await createProductScope(prisma, ctx, "fraud");
       domainIds.push(checkout.domain.id, fraud.domain.id);
       const order = await seedEntity(checkout, "Order");
-      // Fraud's message pins Checkout's Order (cross-product pins are allowed inside a tenant).
-      const fraudMessage = unwrap(await createMessage(fraud.product.id, { name: `OrderSeen-${fraud.s}`, payload: { entityId: order.entity.id } }, ctx));
-
-      const entityUses = unwrap(await findUsages({ kind: "entity", entityId: order.entity.id }, ctx, TENANT));
-      expect(summary(entityUses)).toEqual([[`Message ${fraudMessage.name} (draft)`, true, "Order v1.0"]]);
-      expect(entityUses[0].href).toBe(`/schemas/${fraud.domain.slug}/${fraud.product.slug}?tab=events&section=messages`);
-
-      // A spec (draft + published version) in Fraud pins the fraud message version: "who uses this message".
-      const mv = await seedMessageVersion(fraudMessage.id, order.version.id);
-      const spec = await prisma.eventSpec.create({ data: { name: `fraud-spec-${fraud.s}`, document: {}, tenantId: TENANT, domainId: fraud.domain.id, productId: fraud.product.id } });
-      const specVersion = await prisma.eventSpecVersion.create({
-        data: {
-          eventSpecId: spec.id, major: 2, minor: 0, sequence: 1, document: {}, sourceDocument: {}, frozenChannels: [], frozenTraits: [],
-          messageVersionIds: [mv.id], changeKind: "INITIAL", publishedById: ctx.userId,
-        },
+      // Fraud's event pins Checkout's Order (cross-product pins are allowed inside a tenant); only its draft does.
+      const fraudEvent = await seedEvent(fraud, `order-seen-${fraud.s}`, order.version.id, false);
+      // A domain-level library trait whose headers pin holds Order.
+      const trait = await prisma.trait.create({
+        data: { tenantId: TENANT, domainId: checkout.domain.id, kind: "MESSAGE", name: `Headers-${checkout.s}`, headersEntityId: order.entity.id, headersEntityVersionId: order.version.id },
       });
-      await prisma.schemaReference.createMany({
-        data: [
-          { fromKind: "EVENT_SPEC", fromId: spec.id, role: "MESSAGE", toKind: "MESSAGE_VERSION", toId: mv.id, isDraft: true },
-          { fromKind: "EVENT_SPEC_VERSION", fromId: specVersion.id, role: "MESSAGE", toKind: "MESSAGE_VERSION", toId: mv.id },
-        ],
-      });
-      const messageUses = unwrap(await findUsages({ kind: "message", messageId: fraudMessage.id }, ctx, TENANT));
-      expect(summary(messageUses)).toEqual([
-        [`Event spec ${spec.name} v2.0`, false, `${fraudMessage.name} v1.0`],
-        [`Event spec ${spec.name} (draft)`, true, `${fraudMessage.name} v1.0`],
+      traitIds.push(trait.id);
+      await prisma.schemaReference.create({ data: { fromKind: "TRAIT", fromId: trait.id, role: "HEADERS", toKind: "ENTITY_VERSION", toId: order.version.id } });
+
+      const uses = unwrap(await findUsages({ kind: "entity", entityId: order.entity.id }, ctx, TENANT));
+      expect(summary(uses)).toEqual([
+        [`Trait ${trait.name}`, false, "Order v1.0"],
+        [`Event ${fraudEvent.name} (draft)`, true, "Order v1.0"],
       ]);
-      expect(messageUses.every((u) => u.href === `/schemas/${fraud.domain.slug}/${fraud.product.slug}?tab=events&section=specs`)).toBe(true);
+      expect(uses[1].href).toBe(`/schemas/${fraud.domain.slug}/${fraud.product.slug}/events/${fraudEvent.id}`);
+      expect(uses[0].href).toBe(`/schemas/${checkout.domain.slug}?tab=traits`);
     } finally {
+      await prisma.schemaReference.deleteMany({ where: { fromKind: "TRAIT", fromId: { in: traitIds } } });
+      await prisma.trait.deleteMany({ where: { id: { in: traitIds } } });
       await cleanupDomains(prisma, domainIds);
     }
   });
@@ -127,32 +123,34 @@ describe("findUsages", () => {
       domainId = sc.domain.id;
       foreign = await createForeignTenantFixture(prisma, ctx);
       const order = await seedEntity(sc, "Order");
-      const mine = unwrap(await createMessage(sc.product.id, { name: `Mine-${sc.s}`, payload: { entityId: order.entity.id } }, ctx));
+      const mine = await seedEvent(sc, `mine-${sc.s}`, order.version.id, false);
 
       // Subjects of another tenant look exactly like missing ones, whichever tenant the caller is in.
       const foreignEntity = await findUsages({ kind: "entity", entityId: foreign.entity.id }, ctx, TENANT);
       expect(!foreignEntity.success && foreignEntity.error.code).toBe("NOT_FOUND");
-      const foreignMessage = await findUsages({ kind: "message", messageId: foreign.message.id }, ctx, TENANT);
-      expect(!foreignMessage.success && foreignMessage.error.code).toBe("NOT_FOUND");
       const fromTheOtherSide = await findUsages({ kind: "entity", entityId: order.entity.id }, ctx, foreign.tenant.id);
       expect(!fromTheOtherSide.success && fromTheOtherSide.error.code).toBe("NOT_FOUND");
       // The foreign tenant's own view of its own entity works (the scope is the tenant, not a hard-coded one).
+      const foreignEvent = await prisma.eventSpec.create({
+        data: { name: `foreign-event-${foreign.s}`, document: { documentVersion: 2, info: { title: "f" } }, tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id },
+      });
       await prisma.schemaReference.create({
-        data: { fromKind: "MESSAGE_VERSION", fromId: foreign.messageVersion.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: foreign.version.id },
+        data: { fromKind: "EVENT_SPEC", fromId: foreignEvent.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: foreign.version.id, isDraft: true },
       });
       expect(summary(unwrap(await findUsages({ kind: "entity", entityId: foreign.entity.id }, ctx, foreign.tenant.id)))).toEqual([
-        [`Message ${foreign.message.name} v1.0`, false, "Foreign v1.0"],
+        [`Event ${foreignEvent.name} (draft)`, true, "Foreign v1.0"],
       ]);
 
       // An edge written across the tenant boundary (should be impossible through the services) is dropped, not
       // shown and not rendered as a "(deleted)" ghost either — the foreign id never reaches the caller.
       await prisma.schemaReference.create({
-        data: { fromKind: "MESSAGE_VERSION", fromId: foreign.messageVersion.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: order.version.id },
+        data: { fromKind: "EVENT_SPEC", fromId: foreignEvent.id, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: order.version.id, isDraft: true },
       });
       const uses = unwrap(await findUsages({ kind: "entity", entityId: order.entity.id }, ctx, TENANT));
-      expect(summary(uses)).toEqual([[`Message ${mine.name} (draft)`, true, "Order v1.0"]]);
-      expect(JSON.stringify(uses)).not.toContain(foreign.messageVersion.id);
-      expect(JSON.stringify(uses)).not.toContain(foreign.message.name);
+      expect(summary(uses)).toEqual([[`Event ${mine.name} (draft)`, true, "Order v1.0"]]);
+      expect(JSON.stringify(uses)).not.toContain(foreignEvent.id);
+      expect(JSON.stringify(uses)).not.toContain(foreignEvent.name);
+      await prisma.schemaReference.deleteMany({ where: { fromId: foreignEvent.id } });
     } finally {
       await cleanupDomains(prisma, [domainId]);
       await foreign?.cleanup();
@@ -173,16 +171,16 @@ describe("findUsages", () => {
       });
       ghostIds.push(fieldEdge.id);
       // An event-side ghost whose source row was removed behind the triggers' back.
-      const messageGhost = await prisma.schemaReference.create({
-        data: { fromKind: "MESSAGE_VERSION", fromId: `gone-${sc.s}`, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: address.version.id },
+      const eventGhost = await prisma.schemaReference.create({
+        data: { fromKind: "EVENT_SPEC_VERSION", fromId: `gone-${sc.s}`, role: "PAYLOAD", toKind: "ENTITY_VERSION", toId: address.version.id },
       });
-      ghostIds.push(messageGhost.id);
+      ghostIds.push(eventGhost.id);
 
       const uses = unwrap(await findUsages({ kind: "entity", entityId: address.entity.id }, ctx, TENANT));
       expect(summary(uses).sort()).toEqual(
         [
           [`Entity version gone-entity-version-${sc.s} (deleted)`, false, "Address v1.0"],
-          [`Message version gone-${sc.s} (deleted)`, false, "Address v1.0"],
+          [`Event version gone-${sc.s} (deleted)`, false, "Address v1.0"],
         ].sort(),
       );
       expect(uses.every((u) => u.href === null)).toBe(true);
@@ -232,8 +230,8 @@ describe("findUsages", () => {
     }
   });
 
-  it("rejects malformed subjects without touching the database", async () => {
-    for (const bad of [null, {}, { kind: "entity" }, { kind: "message", messageId: 3 }, { kind: "entity", entityId: "" }]) {
+  it("rejects malformed subjects (the retired message subject too) without touching the database", async () => {
+    for (const bad of [null, {}, { kind: "entity" }, { kind: "message", messageId: "m1" }, { kind: "entity", entityId: "" }]) {
       const r = await findUsages(bad as never, ctx, TENANT);
       expect(!r.success && r.error.code).toBe("VALIDATION_ERROR");
     }

@@ -413,7 +413,7 @@ export async function deleteEntityAction(entityId: string) {
     // An entity of another tenant reads exactly like a missing one (same answer, nothing deleted).
     if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
 
-    // Messages / traits that pin it, and other entities whose published versions reference one of its versions (no FK:
+    // Library traits that pin it, and other entities whose published versions reference one of its versions (no FK:
     // only this guard stops that delete and leaves a dangling edge that breaks rendering of the referencing version);
     // merged with the events (drafts and published versions, pinned or unpinned) that name it, which have no FK either.
     const inUse = withEventsInUse(
@@ -1215,8 +1215,6 @@ const IMPORT_KIND_LABEL: Record<RegistryKind, string> = {
   service: "API",
   // Events kinds are never produced by this importer, but the label map must cover every RegistryKind.
   trait: "Trait",
-  message: "Message",
-  channel: "Channel",
   eventSpec: "Event Spec",
 };
 

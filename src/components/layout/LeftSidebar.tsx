@@ -16,10 +16,10 @@ import {
   Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { useDomainsTree } from "@/hooks/useDomainsTree";
 import {
   EVENT_PAGE_SEGMENT,
-  EVENT_SEGMENT,
   TRAITS_SEGMENT,
   assetHref,
 } from "@/lib/navigation/asset-href";
@@ -53,10 +53,10 @@ function isWithin(pathname: string, base: string) {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
 
-// Detail pages of the non-entity kinds (events, traits, and the old message / channel / spec
-// routes that now redirect) live under the same level base as entity URLs; the Entities row
-// must not light up for them.
-const NON_ENTITY_SEGMENTS: readonly string[] = [EVENT_PAGE_SEGMENT, ...Object.values(EVENT_SEGMENT), TRAITS_SEGMENT];
+// Detail pages of the non-entity kinds (events, library traits) live under the same level base
+// as entity URLs; the Entities row must not light up for them. (The old message / channel /
+// spec routes redirect on the server, so they never render under the sidebar.)
+const NON_ENTITY_SEGMENTS: readonly string[] = [EVENT_PAGE_SEGMENT, TRAITS_SEGMENT];
 function isNonEntityDetail(pathname: string, base: string) {
   return NON_ENTITY_SEGMENTS.some((segment) => isWithin(pathname, `${base}/${segment}`));
 }
@@ -331,11 +331,11 @@ function ExplorerSidebar({
               />
             )}
 
-            {product.counts.eventSpecs > 0 && (
+            {product.counts.events > 0 && (
               <SidebarLeafCategory
                 testId={`product-${product.id}-events`}
                 active={(pathname === base && activeTab === "events") || isWithin(pathname, `${base}/${EVENT_PAGE_SEGMENT}`)}
-                count={product.counts.eventSpecs}
+                count={product.counts.events}
                 icon={Radio}
                 label="Events"
                 href={eventsHref}
@@ -417,7 +417,7 @@ function ExplorerSidebar({
                 active={(pathname === base && activeTab === "traits") || isWithin(pathname, `${base}/${TRAITS_SEGMENT}`)}
                 count={domain.counts.traits}
                 icon={Puzzle}
-                label="Traits"
+                label={PROPERTIES_TAB_LABEL}
                 href={traitsHref}
                 pending={pendingTarget === traitsHref}
                 onNavigate={navigate}
@@ -478,7 +478,7 @@ function ExplorerSidebar({
                 }
                 count={enterpriseTraits}
                 icon={Puzzle}
-                label="Traits"
+                label={PROPERTIES_TAB_LABEL}
                 href={enterpriseTraitsHref}
                 pending={pendingTarget === enterpriseTraitsHref}
                 onNavigate={navigate}

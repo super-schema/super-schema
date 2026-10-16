@@ -4,7 +4,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
 
-/** Inline create-form pieces shared by the Events and Traits tabs. */
+/** Inline create-form pieces shared by the Traits tab and the New Event dialog. */
 
 export const selectClass = "w-full rounded-md border border-border bg-background px-space-2 py-1.5 text-body-small";
 

@@ -16,12 +16,10 @@ const { mockAuth, mockPrisma, mockRevalidatePath } = vi.hoisted(() => ({
       findUnique: vi.fn(),
       delete: vi.fn(),
     },
-    // Cross-product pin lookup (findCrossProductPins): empty unless a test says otherwise.
-    messageVersion: { findMany: vi.fn() },
-    channel: { findMany: vi.fn() },
-    trait: { findMany: vi.fn() },
+    // Cross-domain event reference lookup (findCrossProductEventRefs): empty unless a test says otherwise.
     schemaReference: { findMany: vi.fn() },
     eventSpecVersion: { findMany: vi.fn() },
+    eventSpec: { findMany: vi.fn() },
     auditLog: {
       create: vi.fn(),
     },
@@ -55,8 +53,6 @@ const EMPTY_COUNTS = {
   services: 0,
   interfaces: 0,
   userRoles: 0,
-  channels: 0,
-  messages: 0,
   traits: 0,
   eventSpecs: 0,
 };
@@ -91,11 +87,9 @@ describe("deleteDomainAction", () => {
     });
     mockPrisma.domain.delete.mockResolvedValue({ id: "domain-1" });
     mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
-    mockPrisma.messageVersion.findMany.mockResolvedValue([]);
-    mockPrisma.channel.findMany.mockResolvedValue([]);
-    mockPrisma.trait.findMany.mockResolvedValue([]);
     mockPrisma.schemaReference.findMany.mockResolvedValue([]);
     mockPrisma.eventSpecVersion.findMany.mockResolvedValue([]);
+    mockPrisma.eventSpec.findMany.mockResolvedValue([]);
   });
 
   it("rejects authenticated users without a global Admin role", async () => {
@@ -153,8 +147,6 @@ describe("deleteDomainAction", () => {
             services: true,
             interfaces: true,
             userRoles: true,
-            channels: true,
-            messages: true,
             traits: true,
             eventSpecs: true,
           },
@@ -204,10 +196,9 @@ describe("deleteDomainAction", () => {
       });
 
     it.each([
-      ["channels", { channels: 2 }, "Cannot delete - 2 channels exist in this domain or its products. Move or delete them first."],
-      ["messages", { messages: 1 }, "Cannot delete - 1 message exists in this domain or its products. Move or delete it first."],
       ["traits", { traits: 3 }, "Cannot delete - 3 traits exist in this domain or its products. Move or delete them first."],
-      ["event specs", { eventSpecs: 1 }, "Cannot delete - 1 event spec exists in this domain or its products. Move or delete it first."],
+      ["an event", { eventSpecs: 1 }, "Cannot delete - 1 event exists in this domain or its products. Move or delete it first."],
+      ["events", { eventSpecs: 4 }, "Cannot delete - 4 events exist in this domain or its products. Move or delete them first."],
     ])("blocks deletion while the domain or its products own %s", async (_kind, counts, error) => {
       domainWith(counts);
 
@@ -224,79 +215,59 @@ describe("deleteDomainAction", () => {
 
       expect(await deleteDomainAction("domain-1")).toEqual({ success: true });
       expect(mockPrisma.domain.delete).toHaveBeenCalledTimes(1);
+      // a domain without events has no event version for anyone to reference: the lookup is skipped
+      expect(mockPrisma.eventSpecVersion.findMany).not.toHaveBeenCalled();
     });
 
-    it("reports entities, Events assets and the referencing specs of other products together", async () => {
-      domainWith({ entities: 1, channels: 1, messages: 2 });
-      mockPrisma.messageVersion.findMany.mockResolvedValue([{ id: "mv-1", message: { id: "m-1", name: "OrderCreated" } }]);
-      mockPrisma.channel.findMany.mockResolvedValue([{ id: "c-1", name: "orders" }]);
-      mockPrisma.eventSpecVersion.findMany.mockResolvedValue([
-        {
-          id: "sv-1",
-          major: 2,
-          minor: 1,
-          messageVersionIds: ["mv-1"],
-          frozenChannels: [{ id: "c-1" }],
-          frozenTraits: [],
-          eventSpec: { id: "s-1", name: "fraud-consumer", productId: "prd-9", product: { id: "prd-9", name: "Fraud" } },
-        },
-      ]);
+    const spec = { id: "s-out", name: "fraud-consumer", domainId: "dom-9", productId: "prd-9", domain: { name: "Risk" }, product: { name: "Fraud" } };
+    /** An event of ANOTHER domain holds a draft reference to a published version of an event of this domain. */
+    function referencedByAnotherDomainsEvent() {
+      mockPrisma.eventSpecVersion.findMany.mockResolvedValue([{ id: "sv-in", major: 2, minor: 1 }]);
+      mockPrisma.schemaReference.findMany.mockResolvedValue([{ fromKind: "EVENT_SPEC", fromId: "s-out", toId: "sv-in" }]);
+      mockPrisma.eventSpec.findMany.mockResolvedValue([spec]);
+    }
+
+    it("reports entities, events and the referencing events of other domains together", async () => {
+      domainWith({ entities: 1, eventSpecs: 2 });
+      referencedByAnotherDomainsEvent();
 
       const result = await deleteDomainAction("domain-1");
 
       expect(result).toEqual({
         error:
-          "Cannot delete - 1 entity, 1 channel and 2 messages exist in this domain or its products. Move or delete them first. " +
-          'A published event spec in another product references assets owned here: "fraud-consumer" (product "Fraud", v2.1) ' +
-          'references Message "OrderCreated" and Channel "orders". Delete that event spec first (published versions cannot be changed), then retry.',
+          "Cannot delete - 1 entity and 2 events exist in this domain or its products. Move or delete them first. " +
+          "Domain \"Orders\" cannot be deleted: other domains' events reference its events: fraud-consumer (Risk/Fraud).",
       });
       expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
     });
 
-    it("blocks on a cross-product pin even when the counts alone would allow the delete", async () => {
-      domainWith({});
-      mockPrisma.messageVersion.findMany.mockResolvedValue([{ id: "mv-1", message: { id: "m-1", name: "OrderCreated" } }]);
-      mockPrisma.eventSpecVersion.findMany.mockResolvedValue([
-        {
-          id: "sv-1",
-          major: 1,
-          minor: 0,
-          messageVersionIds: ["mv-1"],
-          frozenChannels: [],
-          frozenTraits: [],
-          eventSpec: { id: "s-1", name: "fraud-consumer", productId: "prd-9", product: { id: "prd-9", name: "Fraud" } },
-        },
-      ]);
+    it("names the referencing event even though the count message is the only other blocker", async () => {
+      domainWith({ eventSpecs: 1 });
+      referencedByAnotherDomainsEvent();
 
-      const result = await deleteDomainAction("domain-1");
+      const result = (await deleteDomainAction("domain-1")) as { error: string };
 
-      expect(result).toEqual({
-        error:
-          'A published event spec in another product references assets owned here: "fraud-consumer" (product "Fraud", v1.0) ' +
-          'references Message "OrderCreated". Delete that event spec first (published versions cannot be changed), then retry.',
-      });
+      expect(result.error).toContain("other domains' events reference its events: fraud-consumer (Risk/Fraud).");
       expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
     });
 
-    it("scopes the pin lookup to the domain's tenant and to specs outside the domain", async () => {
-      domainWith({});
-      mockPrisma.channel.findMany.mockResolvedValue([{ id: "c-1", name: "orders" }]);
+    it("scopes the reference lookup to the domain's tenant and to the published versions of the domain's own events", async () => {
+      domainWith({ eventSpecs: 1 });
+      referencedByAnotherDomainsEvent();
 
       await deleteDomainAction("domain-1");
 
-      expect(mockPrisma.messageVersion.findMany.mock.calls[0][0]).toMatchObject({ where: { message: { domainId: "domain-1" } } });
-      expect(mockPrisma.channel.findMany.mock.calls[0][0]).toMatchObject({ where: { domainId: "domain-1" } });
-      expect(mockPrisma.trait.findMany.mock.calls[0][0]).toMatchObject({ where: { domainId: "domain-1" } });
       expect(mockPrisma.eventSpecVersion.findMany.mock.calls[0][0]).toMatchObject({
-        where: { eventSpec: { tenantId: "tenant-1", domainId: { not: "domain-1" } } },
+        where: { eventSpec: { tenantId: "tenant-1", domainId: "domain-1" } },
       });
+      expect(mockPrisma.eventSpec.findMany.mock.calls[0][0]).toMatchObject({ where: { id: { in: ["s-out"] }, tenantId: "tenant-1" } });
     });
 
-    it("does not look at Events assets for non-admins", async () => {
+    it("does not look at events for non-admins", async () => {
       mockPrisma.user.findUnique.mockResolvedValue({ id: "viewer-1", roles: [] });
       mockAuth.mockResolvedValue({ user: { id: "viewer-1", email: "viewer@example.com" } });
       await deleteDomainAction("domain-1");
-      expect(mockPrisma.channel.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.eventSpecVersion.findMany).not.toHaveBeenCalled();
     });
   });
 });

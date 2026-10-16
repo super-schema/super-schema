@@ -1,5 +1,6 @@
 import "dotenv/config";
-import { PrismaClient } from "@/generated/prisma/client";
+import { randomUUID } from "node:crypto";
+import { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { publishEntity } from "@/services/entity-version.service";
 import type { Result } from "@/types/result";
@@ -71,15 +72,53 @@ export async function createProductScope(prisma: PrismaClient, ctx: ServiceConte
   return { s, domain, product, entity, publishedEntity };
 }
 
-/** Remove edge rows (no FKs) for every record under the domains, then cascade-delete the domains (D3). */
+type Db = PrismaClient | Prisma.TransactionClient;
+
+let legacyVersionColumns: Promise<boolean> | undefined;
+
+/**
+ * True while the connected database still has the columns migration 20261020_drop_legacy_event_catalog drops from
+ * `event_spec_versions` (`frozenChannels` is NOT NULL there, `messageVersionIds` nullable). The generated client no longer
+ * knows them, so on such a database a plain `eventSpecVersion.create` would violate the NOT NULL: the tests must run before
+ * the migration is applied (shared dev database) and after it (fresh database, PGlite).
+ */
+function hasLegacyVersionColumns(db: Db): Promise<boolean> {
+  legacyVersionColumns ??= db
+    .$queryRaw<Array<{ n: number }>>`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'event_spec_versions' AND column_name = 'frozenChannels'`
+    .then((rows) => rows[0].n > 0);
+  return legacyVersionColumns;
+}
+
+const asJson = (value: unknown, fallback: unknown): string => JSON.stringify(value === undefined || value === Prisma.DbNull || value === Prisma.JsonNull ? fallback : value);
+
+/**
+ * Create a published event version row, whatever the database's migration state (see `hasLegacyVersionColumns`). Takes the
+ * generated client's create input, so the same call works unchanged once the legacy columns are gone.
+ */
+export async function createEventSpecVersion(db: Db, data: Prisma.EventSpecVersionUncheckedCreateInput) {
+  if (!(await hasLegacyVersionColumns(db))) return db.eventSpecVersion.create({ data });
+  const id = data.id ?? randomUUID();
+  const changeSummary = data.changeSummary ?? null;
+  const governanceRequestId = data.governanceRequestId ?? null;
+  const resolvedSpec = data.resolvedSpec === undefined || data.resolvedSpec === Prisma.DbNull || data.resolvedSpec === Prisma.JsonNull ? null : asJson(data.resolvedSpec, null);
+  await db.$executeRaw`
+    INSERT INTO "event_spec_versions"
+      ("id", "eventSpecId", "major", "minor", "sequence", "document", "sourceDocument", "frozenChannels", "frozenTraits", "resolvedSpec",
+       "changeKind", "compatReport", "changeSummary", "publishedById", "governanceRequestId")
+    VALUES
+      (${id}, ${data.eventSpecId}, ${data.major}, ${data.minor}, ${data.sequence}, ${asJson(data.document, {})}::jsonb,
+       ${asJson(data.sourceDocument, {})}::jsonb, '[]'::jsonb, ${asJson(data.frozenTraits, [])}::jsonb, ${resolvedSpec}::jsonb,
+       ${data.changeKind}::"EntityVersionChangeKind", ${asJson(data.compatReport, {})}::jsonb, ${changeSummary}, ${data.publishedById}, ${governanceRequestId})`;
+  return db.eventSpecVersion.findUniqueOrThrow({ where: { id } });
+}
+
+/** Remove edge rows (no FKs) for every record under the domains, then cascade-delete the domains (D3). Works before and after the legacy catalog tables are dropped. */
 export async function cleanupDomains(prisma: PrismaClient, domainIds: Array<string | undefined>): Promise<void> {
   const ids = domainIds.filter((d): d is string => !!d);
   if (ids.length === 0) return;
   const inDomains = { domainId: { in: ids } };
-  const [ev, m, mv, s, sv, t] = await Promise.all([
+  const [ev, s, sv, t] = await Promise.all([
     prisma.entityVersion.findMany({ where: { entity: inDomains }, select: { id: true } }),
-    prisma.message.findMany({ where: inDomains, select: { id: true } }),
-    prisma.messageVersion.findMany({ where: { message: inDomains }, select: { id: true } }),
     prisma.eventSpec.findMany({ where: inDomains, select: { id: true } }),
     prisma.eventSpecVersion.findMany({ where: { eventSpec: inDomains }, select: { id: true } }),
     prisma.trait.findMany({ where: inDomains, select: { id: true } }),
@@ -89,8 +128,6 @@ export async function cleanupDomains(prisma: PrismaClient, domainIds: Array<stri
     where: {
       OR: [
         { fromKind: "ENTITY_VERSION", fromId: { in: idsOf(ev) } },
-        { fromKind: "MESSAGE", fromId: { in: idsOf(m) } },
-        { fromKind: "MESSAGE_VERSION", fromId: { in: idsOf(mv) } },
         { fromKind: "EVENT_SPEC", fromId: { in: idsOf(s) } },
         { fromKind: "EVENT_SPEC_VERSION", fromId: { in: idsOf(sv) } },
         { fromKind: "TRAIT", fromId: { in: idsOf(t) } },

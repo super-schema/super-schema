@@ -8,16 +8,10 @@ const h = vi.hoisted(() => ({
   notFound: vi.fn((): never => {
     throw new Error("NEXT_NOT_FOUND");
   }),
-  loadEventSpecPage: vi.fn(),
-  loadMessagePage: vi.fn(),
-  loadChannelPage: vi.fn(),
   loadTraitPage: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect, notFound: h.notFound }));
-// The old loaders must not run any more: a redirect never reads the old data.
-vi.mock("@/features/events/event-specs/load-event-spec-page", () => ({ loadEventSpecPage: h.loadEventSpecPage }));
-vi.mock("@/features/events/messages/load-message-page", () => ({ loadMessagePage: h.loadMessagePage }));
-vi.mock("@/features/events/channels/load-channel-page", () => ({ loadChannelPage: h.loadChannelPage }));
+// The old pages are gone and the trait loader must not run for a product-level trait URL: a redirect never reads the old data.
 vi.mock("@/features/events/traits/load-trait-page", () => ({ loadTraitPage: h.loadTraitPage }));
 
 import EventSpecRedirect from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/specs/[specId]/page";
@@ -66,9 +60,8 @@ describe("old event spec route /specs/[specId]", () => {
     expect(url).toBe("/schemas/payments/checkout/events/s1");
   });
 
-  it("never reads the old event spec", async () => {
+  it("never touches the not-found path (the old event spec is not read)", async () => {
     await redirectedTo(() => EventSpecRedirect({ params: Promise.resolve({ ...at, specId: "s1" }) }));
-    expect(h.loadEventSpecPage).not.toHaveBeenCalled();
     expect(h.notFound).not.toHaveBeenCalled();
   });
 });
@@ -82,11 +75,11 @@ describe("old message route /messages/[messageId]", () => {
     expect(h.redirect).toHaveBeenCalledWith(EVENTS_LIST);
   });
 
-  it("neither keeps the message id nor a section, and never reads the old message", async () => {
+  it("neither keeps the message id nor a section", async () => {
     const url = await redirectedTo(() => MessageRedirect({ params: Promise.resolve({ ...at, messageId: "m1" }) }));
     expect(url).not.toContain("m1");
     expect(url).not.toContain("section=");
-    expect(h.loadMessagePage).not.toHaveBeenCalled();
+    expect(h.notFound).not.toHaveBeenCalled();
   });
 
   it("encodes the slugs", async () => {
@@ -104,11 +97,11 @@ describe("old channel route /channels/[channelId]", () => {
     expect(h.redirect).toHaveBeenCalledWith(EVENTS_LIST);
   });
 
-  it("neither keeps the channel id nor a section, and never reads the old channel", async () => {
+  it("neither keeps the channel id nor a section", async () => {
     const url = await redirectedTo(() => ChannelRedirect({ params: Promise.resolve({ ...at, channelId: "c1" }) }));
     expect(url).not.toContain("c1");
     expect(url).not.toContain("section=");
-    expect(h.loadChannelPage).not.toHaveBeenCalled();
+    expect(h.notFound).not.toHaveBeenCalled();
   });
 
   it("encodes the slugs", async () => {

@@ -1,8 +1,8 @@
 # Events — self-contained Event + visual AsyncAPI builder
 
-Status: **draft for review** (design approved in chat 2026-10-15; implementation started on branch `feat/events-self-contained` at the user's request, before this document was reviewed — review it in parallel).
+Status: **as built, 2026-10-17** (merged to `main`). See `docs/events/REVIEW.md` for the review map and the known gaps. Changes since the original design: the payload format follows the **message** (Auto / explicit representation) instead of the channel (Q7 superseded); the legacy Message/Channel catalog tables, services and pages were removed (guarded migration `20261020_drop_legacy_event_catalog`); traits are presented as **Message properties (Trait)** with built-in CloudEvents 1.0 and W3C Trace Context (read-only, properties shown in the UI) and a single + Add flow; CodeMirror 6 is installed and powers the JSON fields and the live code panel; products have Engineering Lead, Manager and Team emails.
 Supersedes, in `2026-10-13-events-asyncapi-design.md`: decision **Q2** (catalog + composed specs), **Q10** (Messages versioned), the Message/Channel/product-Trait rows of **§4.1**, the `/messages`, `/channels`, product `/traits` routes of **§4.5**, and the Message/Channel/Trait tables and `EventSpecDocument` shape of **§6.1**.
-Unchanged from that spec: levels and name uniqueness (§4.2–4.4), Draft + Publish `MAJOR.MINOR`, entity-version pinning, format chosen on the channel (Q7), TypeSpec-canonical payloads (Q4), emission pipeline (§7).
+Unchanged from that spec: levels and name uniqueness (§4.2–4.4), Draft + Publish `MAJOR.MINOR`, entity-version pinning, TypeSpec-canonical payloads (Q4), emission pipeline (§7).
 
 ## 1. Intent
 

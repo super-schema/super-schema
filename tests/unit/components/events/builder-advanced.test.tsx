@@ -424,9 +424,9 @@ describe("AdvancedSection: the form follows the AsyncAPI security scheme templat
 });
 
 describe("AdvancedSection: used by", () => {
-  it("names how many servers, operations and traits use the scheme", () => {
+  it("names how many servers, operations and sets of operation properties use the scheme", () => {
     renderSection(AdvancedSection, { doc: schemesDoc(), options: OPTIONS });
-    expect(text("scheme-usage")).toBe("Used by 1 server, 1 operation and 1 trait");
+    expect(text("scheme-usage")).toBe("Used by 1 server, 1 operation and 1 set of operation properties");
     click("scheme-row-basic");
     expect(text("scheme-usage")).toBe("Used by 1 server");
   });
@@ -435,7 +435,7 @@ describe("AdvancedSection: used by", () => {
     const doc = schemesDoc();
     doc.components!.securitySchemes!.spare = { type: "plain" };
     renderSection(AdvancedSection, { doc, options: OPTIONS, item: "spare" });
-    expect(text("scheme-usage")).toBe("Not used by any server, operation or trait yet.");
+    expect(text("scheme-usage")).toBe("Not used by any server, operation or set of operation properties yet.");
   });
 
   it("follows an edit made elsewhere in the document", () => {
@@ -467,7 +467,7 @@ describe("AdvancedSection: removing", () => {
     expect(message).toContain('"api-key"');
     expect(message).toContain("1 server (kafka-prod)");
     expect(message).toContain("1 operation (publishOrder)");
-    expect(message).toContain("1 trait (secured)");
+    expect(message).toContain("1 set of operation properties (secured)");
     expect(names(probe.draft.doc)).toEqual(["basic"]);
     expect(probe.draft.doc.servers.map((s) => s.security)).toEqual([undefined, ["basic"]]);
     expect("security" in probe.draft.doc.operations[0]).toBe(false);

@@ -26,7 +26,6 @@ model User {
   notifications Notification[]
   webhooks      WebhookEndpoint[] @relation("WebhookCreator")
   publishedEntityVersions EntityVersion[] @relation("EntityVersionPublisher")
-  publishedMessageVersions   MessageVersion[]   @relation("MessageVersionPublisher")
   publishedEventSpecVersions EventSpecVersion[] @relation("EventSpecVersionPublisher")
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
@@ -104,9 +103,7 @@ model Tenant {
   customScalars  CustomScalar[]
   unionTypes     UnionType[]
   services       ServiceDefinition[]
-  channels       Channel[]
   traits         Trait[]
-  messages       Message[]
   eventSpecs     EventSpec[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -133,9 +130,7 @@ model Domain {
   unionTypes           UnionType[]
   services             ServiceDefinition[]
   interfaces           InterfaceDefinition[]
-  channels             Channel[]
   traits               Trait[]
-  messages             Message[]
   eventSpecs           EventSpec[]
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
@@ -182,9 +177,7 @@ model Product {
   customScalars  CustomScalar[]
   unionTypes     UnionType[]
   services       ServiceDefinition[]
-  channels       Channel[]
   traits         Trait[]
-  messages       Message[]
   eventSpecs     EventSpec[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -226,9 +219,6 @@ model Entity {
   versions      EntityVersion[] @relation("EntityVersions")
   latestVersion EntityVersion?  @relation("EntityLatestVersion", fields: [latestVersionId], references: [id], onDelete: SetNull)
   traitHeaderPins    Trait[]   @relation("TraitHeadersEntity")
-  messagePayloadPins Message[] @relation("MessagePayloadEntity")
-  messageHeadersPins Message[] @relation("MessageHeadersEntity")
-  messageKeyPins     Message[] @relation("MessageKeyEntity")
 
   @@unique([slug, productId])
   @@unique([name, productId])
@@ -355,18 +345,14 @@ model EntityVersion {
   publishedBy User    @relation("EntityVersionPublisher", fields: [publishedById], references: [id])
   latestOf    Entity? @relation("EntityLatestVersion")
   traitHeaderPins           Trait[]          @relation("TraitHeadersVersion")
-  messagePayloadPins        Message[]        @relation("MessagePayloadVersion")
-  messageHeadersPins        Message[]        @relation("MessageHeadersVersion")
-  messageKeyPins            Message[]        @relation("MessageKeyVersion")
-  messageVersionPayloadPins MessageVersion[] @relation("MessageVersionPayload")
-  messageVersionHeadersPins MessageVersion[] @relation("MessageVersionHeaders")
-  messageVersionKeyPins     MessageVersion[] @relation("MessageVersionKey")
 
   @@unique([entityId, major, minor])
   @@unique([entityId, sequence])
   @@map("entity_versions")
 }
 
+/// MESSAGE and MESSAGE_VERSION are legacy values no row uses any more (the Message tables were dropped by migration
+/// 20261020_drop_legacy_event_catalog); Postgres cannot drop enum values, so they stay.
 enum SchemaReferenceFromKind {
   ENTITY_VERSION
   MESSAGE
@@ -416,50 +402,8 @@ enum TraitKind {
   OPERATION
 }
 
-/// Spec §6.1 Channel — product level, live (not versioned); frozen into each EventSpecVersion.
-model Channel {
-  id            String           @id @default(cuid())
-  name          String
-  /// AsyncAPI channel address; may contain {param}; null = unknown / dynamic.
-  address       String?
-  /// kafka | googlepubsub | pulsar | any AsyncAPI protocol string.
-  protocol      String
-  /// Format profile (spec §1): avro | json-schema | protobuf.
-  format        String
-  /// draft-07 | 2020-12 — JSON Schema only.
-  formatDialect String?
-  /// ChannelSpec (src/lib/events/types.ts): AsyncAPI Channel Object minus address + messages.
-  spec          Json             @default("{}")
-  tenantId      String
-  domainId      String?
-  productId     String?
-  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  domain        Domain?          @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  product       Product?         @relation(fields: [productId], references: [id], onDelete: Cascade)
-  messages      ChannelMessage[]
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-
-  @@index([tenantId])
-  @@index([domainId])
-  @@index([productId])
-  @@map("channels")
-}
-
-/// Messages allowed on a channel (unpinned; may reference other products' Messages).
-model ChannelMessage {
-  channelId String
-  messageId String
-  createdAt DateTime @default(now())
-  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  @@id([channelId, messageId])
-  @@index([messageId])
-  @@map("channel_messages")
-}
-
-/// Spec §6.1 Trait — tenant / domain / product, live; frozen into each EventSpecVersion.
+/// Spec §6.1 Trait — tenant or domain level, live; frozen into each EventSpecVersion. `productId` stays only because
+/// the column does: a CHECK (traits_no_product_check, migration 20261020) keeps it NULL — product-level traits are gone.
 model Trait {
   id                     String         @id @default(cuid())
   kind                   TraitKind
@@ -488,91 +432,12 @@ model Trait {
   @@map("traits")
 }
 
-/// Spec §6.1 Message — product level draft; published as immutable MessageVersions.
-model Message {
-  id                     String           @id @default(cuid())
-  name                   String
-  /// MessageSpec (src/lib/events/types.ts): AsyncAPI Message Object fields + traitIds.
-  spec                   Json             @default("{}")
-  payloadEntityId        String
-  payloadEntityVersionId String?
-  headersEntityId        String?
-  headersEntityVersionId String?
-  keyEntityId            String?
-  keyEntityVersionId     String?
-  latestVersionId        String?          @unique
-  hasUnpublishedChanges  Boolean          @default(true)
-  tenantId               String
-  domainId               String?
-  productId              String?
-  tenant                 Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  domain                 Domain?          @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  product                Product?         @relation(fields: [productId], references: [id], onDelete: Cascade)
-  payloadEntity          Entity           @relation("MessagePayloadEntity", fields: [payloadEntityId], references: [id], onDelete: NoAction)
-  payloadEntityVersion   EntityVersion?   @relation("MessagePayloadVersion", fields: [payloadEntityVersionId], references: [id], onDelete: NoAction)
-  headersEntity          Entity?          @relation("MessageHeadersEntity", fields: [headersEntityId], references: [id], onDelete: NoAction)
-  headersEntityVersion   EntityVersion?   @relation("MessageHeadersVersion", fields: [headersEntityVersionId], references: [id], onDelete: NoAction)
-  keyEntity              Entity?          @relation("MessageKeyEntity", fields: [keyEntityId], references: [id], onDelete: NoAction)
-  keyEntityVersion       EntityVersion?   @relation("MessageKeyVersion", fields: [keyEntityVersionId], references: [id], onDelete: NoAction)
-  versions               MessageVersion[] @relation("MessageVersions")
-  latestVersion          MessageVersion?  @relation("MessageLatestVersion", fields: [latestVersionId], references: [id], onDelete: SetNull)
-  channels               ChannelMessage[]
-  createdAt              DateTime         @default(now())
-  updatedAt              DateTime         @updatedAt
-
-  @@index([tenantId])
-  @@index([domainId])
-  @@index([productId])
-  @@index([payloadEntityId])
-  @@index([payloadEntityVersionId])
-  @@index([headersEntityId])
-  @@index([headersEntityVersionId])
-  @@index([keyEntityId])
-  @@index([keyEntityVersionId])
-  @@map("messages")
-}
-
-/// Immutable published Message (DB trigger forbids UPDATE).
-model MessageVersion {
-  id                     String                  @id @default(cuid())
-  messageId              String
-  major                  Int
-  minor                  Int
-  sequence               Int
-  /// MessageResolvedSpec (src/lib/events/types.ts): name + spec + pinned EntityVersion ids / labels.
-  resolvedSpec           Json
-  payloadEntityVersionId String
-  headersEntityVersionId String?
-  keyEntityVersionId     String?
-  changeKind             EntityVersionChangeKind
-  /// { reasons: string[] } — bump classifier output.
-  compatReport           Json                    @default("{}")
-  changeSummary          String?
-  publishedById          String
-  publishedAt            DateTime                @default(now())
-  /// Unused until MAJOR governance.
-  governanceRequestId    String?
-  message                Message                 @relation("MessageVersions", fields: [messageId], references: [id], onDelete: Cascade)
-  latestOf               Message?                @relation("MessageLatestVersion")
-  publishedBy            User                    @relation("MessageVersionPublisher", fields: [publishedById], references: [id])
-  payloadEntityVersion   EntityVersion           @relation("MessageVersionPayload", fields: [payloadEntityVersionId], references: [id], onDelete: NoAction)
-  headersEntityVersion   EntityVersion?          @relation("MessageVersionHeaders", fields: [headersEntityVersionId], references: [id], onDelete: NoAction)
-  keyEntityVersion       EntityVersion?          @relation("MessageVersionKey", fields: [keyEntityVersionId], references: [id], onDelete: NoAction)
-
-  @@unique([messageId, major, minor])
-  @@unique([messageId, sequence])
-  @@index([payloadEntityVersionId])
-  @@index([headersEntityVersionId])
-  @@index([keyEntityVersionId])
-  @@map("message_versions")
-}
-
-/// Spec §6.1 Event Spec — product level draft (EventSpecDocument); published as immutable EventSpecVersions.
+/// Spec §6.1 Event Spec — product level draft (the self-contained event document, documentVersion 2); published as immutable EventSpecVersions.
 model EventSpec {
   id                    String             @id @default(cuid())
   name                  String
   specType              String             @default("asyncapi@3.0")
-  /// EventSpecDocument (src/lib/event-specs/types.ts).
+  /// EventDocument (src/lib/events/document/types.ts), documentVersion 2.
   document              Json
   latestVersionId       String?            @unique
   hasUnpublishedChanges Boolean            @default(true)
@@ -607,11 +472,8 @@ model EventSpecVersion {
   document            Json
   /// The EventSpecDocument draft as published (input to the next bump classification).
   sourceDocument      Json
-  /// ResolvedChannel[] frozen at publish.
-  frozenChannels      Json
   /// FrozenTrait[] frozen at publish.
   frozenTraits        Json
-  messageVersionIds   String[]
   /// ResolvedEventSpec (artifacts included) stored at publish so external refs reuse it without re-rendering.
   /// NULL for versions published before document v2. Immutable like the rest of the row.
   resolvedSpec        Json?

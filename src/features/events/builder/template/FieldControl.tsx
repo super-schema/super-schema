@@ -20,6 +20,7 @@ import { ObjectControl } from "./controls/ObjectControl";
 import { ReferenceControl } from "./controls/ReferenceControl";
 import { TextControl } from "./controls/TextControl";
 import type { ControlProps, FormEnv, NestedFormArgs } from "./controls/types";
+import { InfoTip } from "./InfoTip";
 import { errorsFor, isFieldSet, omitKey, setField, whenMatches } from "./value";
 
 type Frame = "label" | "group" | "pin";
@@ -100,7 +101,11 @@ export function FieldControl({ field, value, onChange, idPrefix, errorPrefix, en
     ),
   };
 
-  const help = field.help && <p id={hintId} data-testid={hintId} className="text-caption text-muted-foreground">{field.help}</p>;
+  // Compact help: an optional field's help sits behind an info button next to its label; a required field's help stays under it. The
+  // tip keeps the `${id}-hint` id, so the control's aria-describedby and the button's both point at the same text.
+  const compact = Boolean(env.compactHelp) && !required && Boolean(field.help) && frame !== "pin";
+  const tip = compact ? <InfoTip id={`${id}-hint`} label={`About ${field.label}`}>{field.help}</InfoTip> : null;
+  const help = field.help && !compact && <p id={hintId} data-testid={hintId} className="text-caption text-muted-foreground">{field.help}</p>;
   const error = errorId && <p id={errorId} data-testid={errorId} className="text-body-small text-destructive">{messages.join(" ")}</p>;
 
   if (frame === "group") {
@@ -109,6 +114,7 @@ export function FieldControl({ field, value, onChange, idPrefix, errorPrefix, en
         <legend className="px-space-1 text-caption text-muted-foreground">
           {field.label}
           {required && <span aria-hidden="true" data-testid={`${id}-required`} className="ml-space-1 text-destructive">*</span>}
+          {tip && <span className="ml-space-1 inline-flex align-middle">{tip}</span>}
         </legend>
         {required && <span id={noteId} data-testid={noteId} className="sr-only">Required</span>}
         {help}
@@ -134,6 +140,7 @@ export function FieldControl({ field, value, onChange, idPrefix, errorPrefix, en
       <div className="flex items-baseline gap-space-1">
         <label htmlFor={id} className="block text-caption text-muted-foreground">{field.label}</label>
         {required && <span aria-hidden="true" data-testid={`${id}-required`} className="text-caption text-destructive">*</span>}
+        {tip}
       </div>
       {control(field, props)}
       {help}

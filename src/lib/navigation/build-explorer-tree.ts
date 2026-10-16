@@ -10,9 +10,8 @@ export interface ExplorerCounts {
   apis: number;
   entities: number;
   traits: number;
-  messages: number;
-  channels: number;
-  eventSpecs: number;
+  /** Self-contained events (document v2) of the product. */
+  events: number;
 }
 
 export interface ExplorerProduct {
@@ -51,9 +50,7 @@ export interface ExplorerRows {
   dataTypes: LevelRow[];
   services: LevelRow[];
   traits?: LevelRow[];
-  messages?: LevelRow[];
-  channels?: LevelRow[];
-  eventSpecs?: LevelRow[];
+  events?: LevelRow[];
 }
 
 const TENANT = "__tenant__";
@@ -69,15 +66,13 @@ function countBy(rows: LevelRow[]): Map<string, number> {
  * Pure shaping of flat level-tagged rows into the Enterprise → Domain →
  * Product explorer tree (spec §4.4). A row's level is derived from its
  * columns: productId → product, else domainId → domain, else tenant.
- * Counts every level-tagged kind; traits at every level, events kinds per product.
+ * Counts every level-tagged kind; traits at every level, events per product.
  */
 export function buildExplorerTree(input: ExplorerRows): ExplorerTree {
   const dataTypes = countBy(input.dataTypes);
   const services = countBy(input.services);
   const traits = countBy(input.traits ?? []);
-  const messages = countBy(input.messages ?? []);
-  const channels = countBy(input.channels ?? []);
-  const eventSpecs = countBy(input.eventSpecs ?? []);
+  const events = countBy(input.events ?? []);
   const entitiesByKey = new Map<string, ExplorerEntity[]>();
   for (const e of [...input.entities].sort((a, b) => a.name.localeCompare(b.name))) {
     const k = keyOf(e);
@@ -114,9 +109,7 @@ export function buildExplorerTree(input: ExplorerRows): ExplorerTree {
               apis: services.get(p.id) ?? 0,
               entities: entities.length,
               traits: traits.get(p.id) ?? 0,
-              messages: messages.get(p.id) ?? 0,
-              channels: channels.get(p.id) ?? 0,
-              eventSpecs: eventSpecs.get(p.id) ?? 0,
+              events: events.get(p.id) ?? 0,
             },
             entities,
           };

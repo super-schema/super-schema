@@ -114,7 +114,7 @@ describe("DomainTabs", () => {
     expect(screen.getByRole("tab", { name: "Products" })).toBeDefined();
     expect(screen.getByRole("tab", { name: "Data Types", selected: true })).toBeDefined();
     expect(screen.getByRole("tab", { name: "APIs" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "Traits" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Message properties" })).toBeDefined();
     // Events live on the product, not the domain.
     expect(screen.queryByRole("tab", { name: "Events" })).toBeNull();
     expect(screen.getByText("From Enterprise")).toBeDefined();
@@ -172,7 +172,7 @@ describe("DomainTabs", () => {
     expect(screen.queryByText("From Enterprise")).toBeNull();
   });
 
-  it("selects the Traits tab from ?tab=traits and lists own and inherited traits read-only", () => {
+  it("selects the Message properties tab from ?tab=traits and lists own and inherited sets read-only", () => {
     nav.search = "tab=traits";
     renderTabs({
       traits: {
@@ -186,16 +186,16 @@ describe("DomainTabs", () => {
         ],
       },
     });
-    expect(screen.getByRole("tab", { name: "Traits", selected: true })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Message properties", selected: true })).toBeDefined();
     expect(screen.getByRole("link", { name: /Retry/ }).getAttribute("href")).toBe("/schemas/payments/traits/t1");
     expect(screen.getByRole("link", { name: "From Enterprise" }).getAttribute("href")).toBe("/schemas/enterprise?tab=traits");
     expect(screen.getByRole("link", { name: /CloudEvents/ }).getAttribute("href")).toBe("/schemas/enterprise/traits/t2");
   });
 
-  it("writes ?tab=traits to the URL when the Traits tab is picked", () => {
+  it("writes ?tab=traits to the URL when the Message properties tab is picked", () => {
     nav.search = "";
     renderTabs();
-    fireEvent.click(screen.getByRole("tab", { name: "Traits" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Message properties" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/payments?tab=traits");
     expect(screen.getByTestId("traits-tab")).toBeDefined();
   });
@@ -207,12 +207,12 @@ describe("DomainTabs", () => {
     expect(screen.getByTestId("traits-new")).toBeDefined();
   });
 
-  it("creates traits at the DOMAIN level target from the Traits tab's own button", async () => {
+  it("creates message properties at the DOMAIN level target from the tab's own button", async () => {
     nav.search = "tab=traits";
     traitActions.createTraitAction.mockResolvedValue({ success: true, data: { id: "t9" } });
     renderTabs();
     fireEvent.click(screen.getByTestId("traits-new"));
-    fireEvent.change(screen.getByLabelText("Trait name"), { target: { value: "Retry" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Retry" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/payments/traits/t9"));
     expect(traitActions.createTraitAction).toHaveBeenCalledWith(

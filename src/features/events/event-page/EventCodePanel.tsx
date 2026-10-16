@@ -3,22 +3,20 @@
 // src/features/events/event-page/EventCodePanel.tsx
 // The live Code view in the shell's right Detail Panel: the AsyncAPI document of the draft being built, as YAML or JSON.
 // The code follows every edit at once (placeholder payload schemas, built in the browser) and is swapped for the server's full
-// render (real schemas) when that arrives for the same document. Diagnostics sit above the code.
-import { memo, useEffect, useMemo, useRef, useState, Fragment } from "react";
+// render (real schemas) when that arrives for the same document. Diagnostics sit above the code. The code itself is shown in a
+// read-only JsonEditor (CodeMirror: line numbers, highlighting, selection, find-by-keyboard; a plain textarea until it has loaded).
+import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
 import { DiagnosticsList } from "@/features/events/event-specs/DiagnosticsList";
-import { highlightLine } from "@/lib/syntax-highlight";
 import { useEventCodeSource, type EventCodeSource } from "./event-code-source";
 import { useEventCode, type CodeStatus } from "./use-event-code";
 
 type Format = "yaml" | "json";
 const FORMAT_LABEL: Record<Format, string> = { yaml: "YAML", json: "JSON" };
-
-/** Above this many lines the code is shown uncoloured: one element per token on every keystroke is not worth it. */
-export const MAX_HIGHLIGHTED_LINES = 3000;
 
 const CHIP: Record<CodeStatus, { label: string; title: string; variant: "secondary" | "success" | "outline" }> = {
   draft: { label: "Draft preview", title: "Payload schemas are placeholders (Entity@version).", variant: "secondary" },
@@ -27,37 +25,12 @@ const CHIP: Record<CodeStatus, { label: string; title: string; variant: "seconda
   error: { label: "Draft preview", title: "The full schemas could not be loaded, so the payload schemas are placeholders.", variant: "outline" },
 };
 
-/** Read-only code with a line-number gutter (not part of the selection) and light syntax colouring. */
-const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; language: Format }) {
-  const { lines, gutter } = useMemo(() => {
-    const all = code.split("\n");
-    const endsWithNewline = all[all.length - 1] === "";
-    if (endsWithNewline) all.pop();
-    const colour = all.length <= MAX_HIGHLIGHTED_LINES;
-    return {
-      gutter: all.map((_, i) => `${i + 1}\n`).join(""),
-      lines: all.map((line, i) => (
-        <Fragment key={i}>
-          {colour ? highlightLine(line, language) : line}
-          {i < all.length - 1 || endsWithNewline ? "\n" : ""}
-        </Fragment>
-      )),
-    };
-  }, [code, language]);
-  return (
-    <div className="flex min-w-max font-mono text-[12px] leading-5">
-      <div data-testid="code-gutter" aria-hidden="true" className="sticky left-0 select-none whitespace-pre bg-muted px-space-2 text-right text-muted-foreground/60">{gutter}</div>
-      <pre data-language={language} className="flex-1 whitespace-pre px-space-3"><code data-testid="code-text">{lines}</code></pre>
-    </div>
-  );
-});
-
 /**
  * Props are the page's unsaved draft (see `event-code-source.tsx`). Everything this does (the instant build, the debounced server
  * call) lives here, so it runs only while the shell actually renders the panel: a collapsed right panel does not mount its content.
  */
-export function EventCodePanel({ eventId, productId, productSlug, doc, problems, entityLabels, versionLabels }: EventCodeSource) {
-  const code = useEventCode({ eventId, productId, productSlug, doc, blocked: problems.length > 0, entityLabels, versionLabels });
+export function EventCodePanel({ eventId, productId, productSlug, doc, problems, entityLabels, versionLabels, libraryTraits }: EventCodeSource) {
+  const code = useEventCode({ eventId, productId, productSlug, doc, blocked: problems.length > 0, entityLabels, versionLabels, libraryTraits });
   const [format, setFormat] = useState<Format>("yaml");
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,8 +116,14 @@ export function EventCodePanel({ eventId, productId, productSlug, doc, problems,
       </section>
 
       {hasCode ? (
-        <div role="region" aria-label="AsyncAPI code" tabIndex={0} className="min-h-0 flex-1 overflow-auto bg-muted/30 py-space-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
-          <CodeBlock code={text} language={format} />
+        <div role="region" aria-label="AsyncAPI code" className="relative min-h-0 flex-1">
+          {/* absolutely placed so the editor has a definite height to fill; it scrolls inside itself */}
+          <div className="absolute inset-0 p-space-2">
+            <JsonEditor
+              id="event-code-text" value={text} language={format} readOnly height="100%"
+              ariaLabel={`AsyncAPI document as ${FORMAT_LABEL[format]}`}
+            />
+          </div>
         </div>
       ) : (
         <div data-testid="code-empty" className="flex flex-1 items-start p-space-4">

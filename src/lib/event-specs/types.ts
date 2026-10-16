@@ -25,7 +25,7 @@ export type SchemaArtifact = {
   schema: JsonObject | string;
 };
 
-// ── Spec §6.1 `EventSpecDocument` — the stored draft shape (IDs, not objects) ──
+// ── AsyncAPI building blocks shared by the event document and the assembler's input ──
 
 /** AsyncAPI External Documentation Object. */
 export type AsyncApiExternalDocs = { url: string; description?: string };
@@ -71,31 +71,11 @@ export type EventSpecServer = {
 
 export type OperationAction = "send" | "receive";
 
-export type EventSpecOperation = {
-  key: string;
-  action: OperationAction;
-  channelId: string;
-  messageVersionIds: string[];
-  traitIds: string[];
-  summary?: string;
-  description?: string;
-  bindings?: JsonObject;
-  reply?: { channelId?: string; messageVersionIds?: string[] };
-};
-
 export type EventSpecLocalComponents = {
   correlationIds?: Record<string, JsonObject>;
   parameters?: Record<string, JsonObject>;
   securitySchemes?: Record<string, JsonObject>;
   operationBindings?: Record<string, JsonObject>;
-};
-
-export type EventSpecDocument = {
-  info: EventSpecInfo;
-  defaultContentType?: string;
-  servers: EventSpecServer[];
-  operations: EventSpecOperation[];
-  components?: EventSpecLocalComponents;
 };
 
 // ── Resolved input model consumed by the assembler ──────────────────────────
@@ -242,7 +222,7 @@ export type EmitOutput = {
 
 /** Placeholder result of `EventSpecAdapter.import()`; Epic 19 (splitter) extends it. */
 export type ImportedEventSpec = {
-  document: EventSpecDocument;
+  document: JsonObject;
   sourceVersion?: string;
   diagnostics: Diagnostic[];
 };

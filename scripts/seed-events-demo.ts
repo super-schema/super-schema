@@ -1,26 +1,41 @@
 // Demo data for the Events builder (spec 2026-10-15-events-self-contained-design): Payments/Checkout and Risk/Fraud
-// products, published entities, a tenant-level CloudEvents trait library and three events.
+// products, published entities, the built-in message properties (CloudEvents, W3C Trace Context), an Audited operation
+// trait and four events. CloudEvents is a built-in library trait (`ensureBundledTraits`), not an entity: events use it
+// through `traitKeys: ["CloudEvents"]`.
 // Idempotent: re-running reuses what exists and re-applies the event documents.   npm run db:seed-events-demo
+//
+// A database seeded by an earlier version of this script holds a custom `CloudEvents` library trait that pins a
+// `CloudEventsHeaders` entity. This run installs the built-in one next to it (the legacy trait gives up the name, see
+// `retireLegacyCloudEvents`), points the events it owns at the built-in trait, and removes the legacy trait and entity
+// when nothing else uses them; whatever is still used (by an event this script does not own) is kept and reported.
 //
 // Bundled with esbuild and run with node (like migrate-typespec-source.ts): the services pull in @typespec/compiler,
 // which tsx cannot load.
 import "dotenv/config";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import { bundledMarker, isBundledTrait } from "@/lib/events/bundled-traits";
 import type { EventDocument } from "@/lib/events/document/types";
+import type { JsonObject } from "@/lib/events/types";
+import { deleteEntity } from "@/services/entity.service";
 import { publishEntity } from "@/services/entity-version.service";
+import { ensureBundledTraits } from "@/services/events/bundled-traits.service";
 import { emitEventDraft } from "@/services/events/event-emit.service";
+import { findEntityEventReferrers } from "@/services/events/event-guards";
 import { createEvent, updateEventDocument } from "@/services/events/event.service";
-import { createTrait } from "@/services/events/trait.service";
+import { createTrait, deleteTrait, updateTrait } from "@/services/events/trait.service";
 import type { ServiceContext } from "@/types/service-context";
 
 const TENANT = "tenant_default";
+const TENANT_OWNER = { level: "TENANT", tenantId: TENANT } as const;
 const unwrap = <T>(r: { success: true; data: T } | { success: false; error: { code: string; message: string; details?: unknown } }, what: string): T => {
   if (!r.success) throw new Error(`${what}: ${r.error.code} ${r.error.message} ${JSON.stringify(r.error.details ?? {})}`);
   return r.data;
 };
 
 interface Field { name: string; type: string }
+/** What the clean-up of the legacy CloudEvents trait / entity did, printed at the end. */
+const cleanupNotes: string[] = [];
 
 async function main() {
   const user =
@@ -64,6 +79,70 @@ async function main() {
     return prisma.trait.findFirstOrThrow({ where: { id: created.id } });
   }
 
+  /** The tenant-level MESSAGE traits that are not built in and are called "CloudEvents" (or were renamed out of the way by an earlier run). */
+  const legacyCloudEventsTraits = async () =>
+    (await prisma.trait.findMany({
+      where: { tenantId: TENANT, domainId: null, productId: null, kind: "MESSAGE" },
+      select: { id: true, name: true, spec: true, headersEntityId: true, headersEntityVersionId: true },
+    })).filter((t) => !isBundledTrait(t.spec) && /^cloudevents(-legacy(-\d+)?)?$/i.test(t.name));
+
+  /**
+   * Makes room for the built-in CloudEvents trait. An earlier seed created a custom tenant-level `CloudEvents` library trait (headers pinned
+   * to the `CloudEventsHeaders` entity) and the name is line-unique, so the built-in one cannot be installed while it holds it. It is renamed
+   * `CloudEvents-legacy` (events point at a trait by id, so every document that uses it keeps working; only the component name of its headers
+   * changes) and retired later by `retireLegacyCloudEvents`, once the events this script owns point at the built-in trait.
+   */
+  async function makeRoomForBuiltInCloudEvents() {
+    const holder = (await legacyCloudEventsTraits()).find((t) => t.name.toLowerCase() === "cloudevents");
+    if (!holder) return;
+    const taken = new Set((await prisma.trait.findMany({ where: { tenantId: TENANT, domainId: null, productId: null }, select: { name: true } })).map((t) => t.name.toLowerCase()));
+    let name = "CloudEvents-legacy";
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `CloudEvents-legacy-${n}`;
+    unwrap(
+      await updateTrait(
+        holder.id,
+        {
+          name, spec: holder.spec as JsonObject,
+          headers: holder.headersEntityId ? { entityId: holder.headersEntityId, entityVersionId: holder.headersEntityVersionId } : null,
+        },
+        TENANT_OWNER, ctx
+      ),
+      "rename the legacy CloudEvents trait"
+    );
+    cleanupNotes.push(`legacy library trait "${holder.name}" (${holder.id}) renamed to "${name}" so the built-in CloudEvents trait can take the name`);
+  }
+
+  /** The built-in trait with this marker (`cloudevents@1.0`), found by what it says it is, never by its name. */
+  async function builtInTrait(marker: string) {
+    const rows = await prisma.trait.findMany({ where: { tenantId: TENANT, domainId: null, productId: null } });
+    const found = rows.find((t) => bundledMarker(t.spec) === marker);
+    if (!found) throw new Error(`the built-in trait ${marker} is not installed in ${TENANT}: its name is held by something that is not it`);
+    return found;
+  }
+
+  /**
+   * Retires the legacy custom CloudEvents trait and the `CloudEventsHeaders` entity it pinned, once nothing uses them: the trait through
+   * `deleteTrait` (refuses while any event document references it), then the entity through `deleteEntity` after the event-edge guard
+   * (`findEntityEventReferrers`) shows no event pins it. Whatever is still used stays, and is reported.
+   */
+  async function retireLegacyCloudEvents() {
+    for (const legacy of await legacyCloudEventsTraits()) {
+      const deleted = await deleteTrait(legacy.id, TENANT_OWNER, ctx);
+      cleanupNotes.push(deleted.success
+        ? `legacy library trait "${legacy.name}" deleted`
+        : `legacy library trait "${legacy.name}" kept: ${deleted.error.code} ${deleted.error.message}`);
+    }
+    const entityRow = await prisma.entity.findFirst({ where: { tenantId: TENANT, name: "CloudEventsHeaders", domainId: null, productId: null } });
+    if (!entityRow) return;
+    const referrers = await findEntityEventReferrers(prisma, entityRow);
+    if (referrers.length > 0) {
+      cleanupNotes.push(`entity CloudEventsHeaders kept: pinned by event(s) ${referrers.map((r) => r.eventName).join(", ")}`);
+      return;
+    }
+    const deleted = await deleteEntity(entityRow.id, ctx);
+    cleanupNotes.push(deleted.success ? "entity CloudEventsHeaders deleted" : `entity CloudEventsHeaders kept: ${deleted.error.code} ${deleted.error.message}`);
+  }
+
   // ── Org structure ──
   const payments = await domain("payments", "Payments");
   const risk = await domain("risk", "Risk");
@@ -73,9 +152,6 @@ async function main() {
   const fraudScope = { domainId: risk.id, productId: fraud.id };
 
   // ── Entities (published, so they can be pinned) ──
-  const ceHeaders = await entity("CloudEventsHeaders", [
-    { name: "ce_id", type: "string" }, { name: "ce_type", type: "string" }, { name: "ce_source", type: "string" }, { name: "ce_time", type: "utcDateTime" },
-  ], null);
   const order = await entity("Order", [
     { name: "id", type: "string" }, { name: "customerId", type: "string" }, { name: "status", type: "string" },
     { name: "total", type: "float64" }, { name: "currency", type: "string" }, { name: "createdAt", type: "utcDateTime" },
@@ -104,8 +180,11 @@ async function main() {
     { name: "trackingNumber", type: "string" }, { name: "dispatchedAt", type: "utcDateTime" },
   ], checkoutScope);
 
-  // ── Tenant-level trait library ──
-  const cloudEvents = await libraryTrait("CloudEvents", "MESSAGE", { spec: { summary: "CloudEvents envelope headers" }, headersEntityId: ceHeaders.id });
+  // ── Tenant-level trait library: the built-in message properties and a custom operation trait ──
+  await makeRoomForBuiltInCloudEvents();
+  const installed = unwrap(await ensureBundledTraits(prisma, TENANT), "built-in message properties");
+  if (installed.skipped.length > 0) throw new Error(`built-in message properties not installed, the name is taken by something else: ${installed.skipped.join(", ")}`);
+  const cloudEvents = await builtInTrait("cloudevents@1.0");
   const audited = await libraryTrait("Audited", "OPERATION", { spec: { summary: "Operation is audited", tags: [{ name: "audited" }] } });
 
   const pin = (e: { id: string; latestVersionId: string | null }) => ({ entityId: e.id, entityVersionId: e.latestVersionId });
@@ -184,7 +263,7 @@ async function main() {
 
   // ── Event 4: order-platform — the showcase: every part of an AsyncAPI document in one event ──
   const orderExample = { id: "o-1001", customerId: "c-42", status: "PLACED", total: 129.9, currency: "EUR", createdAt: "2026-10-15T10:15:30Z" };
-  const ceExample = { ce_id: "3f1c9d1e-7b52-4a45-9b8a-0d8f3c2a1e10", ce_type: "com.acme.order.created", ce_source: "/checkout", ce_time: "2026-10-15T10:15:30Z" };
+  const ceExample = { specversion: "1.0", id: "3f1c9d1e-7b52-4a45-9b8a-0d8f3c2a1e10", source: "/checkout", type: "com.acme.order.created", time: "2026-10-15T10:15:30Z" };
   const showcase: EventDocument = {
     documentVersion: 2,
     info: {
@@ -236,15 +315,15 @@ async function main() {
       { key: "OrderCreated", name: "OrderCreated", title: "Order created", summary: "A customer placed an order.",
         description: "Published once, after payment authorisation succeeds. Consumers must treat it as at-least-once.",
         contentType: "avro/binary", payload: pin(order), keyPin: pin(orderKey), traitKeys: ["CloudEvents", "Traced"],
-        correlationId: { location: "$message.header#/ce_id", description: "The CloudEvents id" },
+        correlationId: { location: "$message.header#/id", description: "The CloudEvents id" },
         tags: [{ name: "orders" }], externalDocs: { description: "Event catalogue entry", url: "https://example.com/docs/events/order-created" },
         bindings: { kafka: { schemaIdLocation: "header" } },
         examples: [{ name: "standardOrder", summary: "A typical order", payload: orderExample, headers: ceExample }] },
       { key: "OrderCancelled", title: "Order cancelled", summary: "An order was cancelled before shipping.",
         contentType: "avro/binary", payload: pin(order), keyPin: pin(orderKey), traitKeys: ["CloudEvents"],
-        examples: [{ name: "cancelled", payload: { ...orderExample, status: "CANCELLED" }, headers: { ...ceExample, ce_type: "com.acme.order.cancelled" } }] },
+        examples: [{ name: "cancelled", payload: { ...orderExample, status: "CANCELLED" }, headers: { ...ceExample, type: "com.acme.order.cancelled" } }] },
       { key: "PaymentCaptured", title: "Payment captured", summary: "Funds were captured for an order.",
-        contentType: "avro/binary", payload: pin(payment), headers: pin(ceHeaders), keyPin: pin(orderKey), traitKeys: [] },
+        contentType: "avro/binary", payload: pin(payment), keyPin: pin(orderKey), traitKeys: ["CloudEvents"] },
       { key: "OrderNotification", title: "Order notification", summary: "A notification to send to the customer.",
         contentType: "application/json", payload: pin(notification), traitKeys: ["Traced"] },
       { key: "QuoteRequested", title: "Quote requested", summary: "Ask pricing for a quote.", contentType: "application/json",
@@ -312,9 +391,13 @@ async function main() {
     results.push({ name, url: `/schemas/${slugs.d}/${slugs.p}/events/${id}`, diagnostics });
   }
 
+  // The events now point at the built-in CloudEvents trait: the legacy custom trait / entity can go once nothing else uses them.
+  await retireLegacyCloudEvents();
+
   console.log("\nEvents demo data ready:");
   for (const r of results) console.log(`  ${r.name}\n    ${r.url}\n    ${r.diagnostics}`);
-  console.log(`\nDomains: Payments (checkout), Risk (fraud). Library traits: CloudEvents, Audited. Entities: ${[ceHeaders, order, orderKey, notification, fraudScore, draftOnly, payment, quoteRequest, quoteResponse, shipment].map((e) => e.name).join(", ")}`);
+  console.log(`\nDomains: Payments (checkout), Risk (fraud). Library traits: CloudEvents (built in), TraceContext (built in), Audited. Entities: ${[order, orderKey, notification, fraudScore, draftOnly, payment, quoteRequest, quoteResponse, shipment].map((e) => e.name).join(", ")}`);
+  console.log(cleanupNotes.length > 0 ? `\nLegacy CloudEvents clean-up:\n${cleanupNotes.map((n) => `  - ${n}`).join("\n")}` : "\nLegacy CloudEvents clean-up: nothing to do.");
 }
 
 main()

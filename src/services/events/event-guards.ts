@@ -190,8 +190,8 @@ export async function findEntityLatestVersionEventReferrers(
  * Events of the trait's tenant that use the library trait:
  *  - drafts with `traits[].libraryTraitId` (JSONB containment on `event_specs.document`);
  *  - published versions that carry it in their source document (`traits[].libraryTraitId`) or froze it (`frozenTraits[].id`).
- *    Versions published before document v2 (no `resolvedSpec`) are not matched through `frozenTraits`: the legacy trait guard
- *    (`findTraitReferrers`) already names those, and naming them twice would only repeat them.
+ *    Versions without a `resolvedSpec` (published before document v2) are not matched through `frozenTraits`: they carried
+ *    catalog ids, not library traits. None can exist since migration 20261020 refuses to run while one does.
  */
 export async function findLibraryTraitEventReferrers(db: Db, trait: { id: string; tenantId: string }): Promise<EventReferrerList> {
   const { id, tenantId } = trait;

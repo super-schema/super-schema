@@ -150,8 +150,6 @@ export default async function DomainProductsPage({ params }: Props) {
           dataTypeCount: productDataTypeCount(p._count),
           apiCount: p._count.services,
           eventsAssets: {
-            channels: p._count.channels,
-            messages: p._count.messages,
             traits: p._count.traits,
             eventSpecs: p._count.eventSpecs,
           },

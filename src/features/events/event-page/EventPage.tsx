@@ -17,6 +17,7 @@ import {
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
 import { assetHref, EVENT_TABS, type BuilderSection, type EventTab } from "@/lib/navigation/asset-href";
+import { instantLibraryTraits } from "@/lib/events/document/instant-asyncapi";
 import { EventBuilder } from "@/features/events/builder/EventBuilder";
 import { useEventDraft } from "@/features/events/builder/use-event-draft";
 import { EventBreadcrumb } from "@/features/events/shared/EventBreadcrumb";
@@ -72,9 +73,11 @@ function EventPageBody({ data }: { data: EventPageData }) {
     () => new Map(entityOptions.flatMap((e) => (e.latestVersionId && e.latestVersionLabel ? [[e.latestVersionId, e.latestVersionLabel] as const] : []))),
     [entityOptions]
   );
+  // The instant code emits each library / built-in trait from its stored definition (the real CloudEvents properties), not a stub.
+  const instantLibrary = useMemo(() => instantLibraryTraits(libraryTraits), [libraryTraits]);
   const codeSource = useMemo<EventCodeSource>(
-    () => ({ eventId: event.id, productId, productSlug, doc: draft.doc, problems: draft.problems, entityLabels, versionLabels }),
-    [event.id, productId, productSlug, draft.doc, draft.problems, entityLabels, versionLabels]
+    () => ({ eventId: event.id, productId, productSlug, doc: draft.doc, problems: draft.problems, entityLabels, versionLabels, libraryTraits: instantLibrary }),
+    [event.id, productId, productSlug, draft.doc, draft.problems, entityLabels, versionLabels, instantLibrary]
   );
   const [codeStore] = useState(() => createEventCodeSourceStore(codeSource));
   useEffect(() => { codeStore.set(codeSource); }, [codeStore, codeSource]);

@@ -1,11 +1,11 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import type { LevelScope } from "@/lib/levels";
+import { BUNDLED_MARKER_KEY, bundledMarker, inlineHeadersProblem } from "@/lib/events/bundled-traits";
 import { isJsonObject, normalizeCatalogName } from "@/lib/events/inputs";
 import type { EntityPin, JsonObject, TraitDetail, TraitKind } from "@/lib/events/types";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
-import { assetInUseError, findTraitReferrers } from "@/services/events/delete-guards";
 import { findLibraryTraitEventReferrers, withEventsInUse } from "@/services/events/event-guards";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
@@ -16,6 +16,10 @@ import type { ServiceContext } from "@/types/service-context";
 export interface TraitInput {
   name: string;
   kind: TraitKind;
+  /**
+   * The AsyncAPI Message / Operation Trait object. A MESSAGE trait may describe its message properties inline as `spec.headers` (a JSON
+   * Schema object); a pinned `headers` entity wins over it. The `x-bundled` key is reserved for the built-in traits and refused.
+   */
   spec?: JsonObject;
   headers?: PinInput | null;
 }
@@ -63,12 +67,45 @@ function parseHeadersPin(value: unknown): Result<PinInput | null> {
   return versionId.success ? ok({ entityId: entityId.data, entityVersionId: versionId.data }) : versionId;
 }
 
+/**
+ * The refusal for a built-in trait (`x-bundled` in its stored spec): read-only means read-only, whatever the UI does. FORBIDDEN, like every
+ * write to a record the caller may not change; the message names the trait so a form can show it as it is.
+ */
+const builtInRefusal = (name: string, marker: string, verb: "modified" | "deleted") =>
+  err({
+    code: "FORBIDDEN",
+    message: `${name} is built in and can't be ${verb}`,
+    details: { bundled: marker },
+    suggestedFix: "Apply it to a message as it is, or create your own message properties.",
+  });
+
+/**
+ * What a caller-supplied `spec` may not contain: the built-in marker (only `ensureBundledTraits` writes it, so a user cannot forge a
+ * read-only trait or make an editable one look built in), and an inline `headers` schema that is not a well-formed object schema
+ * (MESSAGE traits only: an operation trait has no headers, so the assembler would silently drop them).
+ */
+function checkSpec(kind: TraitKind, spec: JsonObject): Result<void> {
+  if (Object.hasOwn(spec, BUNDLED_MARKER_KEY)) {
+    return invalid(`The "${BUNDLED_MARKER_KEY}" key is reserved for built-in message properties`, `Remove "${BUNDLED_MARKER_KEY}" from the spec.`);
+  }
+  if (spec.headers === undefined) return ok(undefined);
+  if (kind !== "MESSAGE") return invalid("Only MESSAGE traits can carry headers", "Remove the headers or create a MESSAGE trait.");
+  const problem = inlineHeadersProblem(spec.headers);
+  return problem
+    ? invalid(problem, 'Describe the headers as an object schema: { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }.')
+    : ok(undefined);
+}
+
 async function normalizeTrait(ctx: ServiceContext, tenantId: string, kind: TraitKind, input: Record<string, unknown>): Promise<Result<NormalizedTrait>> {
   const rawName = requireString(input.name, "Trait name");
   if (!rawName.success) return rawName;
   const name = normalizeCatalogName(rawName.data, "Trait");
   if (!name.success) return name;
   if (input.spec !== undefined && !isJsonObject(input.spec)) return invalid("Trait spec must be a JSON object");
+  if (input.spec !== undefined) {
+    const spec = checkSpec(kind, input.spec);
+    if (!spec.success) return spec;
+  }
   const headersInput = parseHeadersPin(input.headers);
   if (!headersInput.success) return headersInput;
   const pinInput = headersInput.data;
@@ -141,12 +178,16 @@ export async function createTrait(target: ScopeTarget, input: TraitInput, ctx: S
  * `schema_references` edge; an explicit `headers.entityVersionId` re-pins to that version, an omitted one pins the
  * entity's latest published version (D5).
  * Preserved: the id, the `kind` (immutable — a `kind` in the input is ignored) and the level columns.
+ * A built-in trait (`x-bundled` in its stored spec) is refused with FORBIDDEN before anything is validated or written, and a spec that
+ * carries `x-bundled` is refused for every other trait: nobody can edit a built-in or turn a custom trait into one.
  */
 export async function updateTrait(id: string, input: Omit<TraitInput, "kind">, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<TraitDetail>> {
   const raw = asRecord(input);
   if (!raw.success) return raw;
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
+  const builtIn = bundledMarker(owned.data.row.spec);
+  if (builtIn) return builtInRefusal(owned.data.row.name, builtIn, "modified");
   const n = await normalizeTrait(ctx, owned.data.row.tenantId, owned.data.row.kind, raw.data);
   if (!n.success) return n;
   return auditedWrite({
@@ -172,21 +213,19 @@ export async function updateTrait(id: string, input: Omit<TraitInput, "kind">, o
  * A published version is immutable, so deleting a trait it carries would leave every spec using it permanently
  * `UNRESOLVED_REFERENCE`. The check and the delete share one transaction and take no lock of their own (the lock order is
  * `event_specs` -> `messages`, see `deleteMessage`).
+ * A built-in trait (`x-bundled` in its stored spec) is never deleted here: FORBIDDEN.
  */
 export async function deleteTrait(id: string, owner: ScopeTarget, ctx: ServiceContext): Promise<Result<{ id: string }>> {
   const owned = await loadOwned(ctx, id, owner);
   if (!owned.success) return owned;
   const { name, tenantId } = owned.data.row;
+  const builtIn = bundledMarker(owned.data.row.spec);
+  if (builtIn) return builtInRefusal(name, builtIn, "deleted");
   return auditedWrite({
     action: "DELETE", entityType: "Trait", entityId: id, userId: ctx.userId, beforeState: toDetail(owned.data.row),
     run: () =>
       ctx.prisma.$transaction(async (tx): Promise<Result<{ id: string }>> => {
-        const blocked = withEventsInUse(
-          assetInUseError("Trait", name, await findTraitReferrers(tx, { id, tenantId })),
-          "Trait",
-          name,
-          await findLibraryTraitEventReferrers(tx, { id, tenantId })
-        );
+        const blocked = withEventsInUse(null, "Trait", name, await findLibraryTraitEventReferrers(tx, { id, tenantId }));
         if (blocked) return err(blocked);
         await deleteReferencesFrom(tx, "TRAIT", [id]);
         await tx.trait.delete({ where: { id } });

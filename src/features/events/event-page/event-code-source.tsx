@@ -9,6 +9,7 @@
 // re-renders the panel alone, not the whole shell, and the shell's `setContent` (which re-expands a collapsed panel) is not
 // called again for it.
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+import type { InstantLibraryTrait } from "@/lib/events/document/instant-asyncapi";
 import type { DocumentProblem, EventDocument } from "@/lib/events/document/types";
 
 export interface EventCodeSource {
@@ -23,6 +24,8 @@ export interface EventCodeSource {
   entityLabels: ReadonlyMap<string, string>;
   /** entityVersionId → version label, for the versions the client knows by label (the entities' latest). */
   versionLabels: ReadonlyMap<string, string>;
+  /** libraryTraitId → the trait's stored definition, so the instant code shows the real message properties of a built-in / library trait (absent = stubs). */
+  libraryTraits?: ReadonlyMap<string, InstantLibraryTrait>;
 }
 
 export interface EventCodeSourceStore {

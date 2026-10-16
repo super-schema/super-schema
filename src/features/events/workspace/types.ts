@@ -1,30 +1,21 @@
 // src/features/events/workspace/types.ts
-import type { ChannelListItem, EventSpecListItem, Linked, MessageListItem, TraitListItem } from "@/lib/events/types";
-import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
+import type { Linked, TraitListItem } from "@/lib/events/types";
 
-/** Client-safe: shared by the server loaders and the workspace tab components. */
+/** Client-safe: shared by the server loader and the Domain / Enterprise Message properties tab component. */
 
-export type EventsCreateIntent = "eventSpec" | "message" | "channel";
-
-export interface EventsTabData {
-  eventSpecs: Linked<EventSpecListItem>[];
-  messages: Linked<MessageListItem>[];
-  channels: Linked<ChannelListItem>[];
-  /** Entities a new Message may take as payload (every entity of the tenant). */
-  payloadEntities: EntityOption[];
-}
+/** A library trait as the tab lists it: the list item with its URL, plus what the cards show (absent when the loader does not know it). */
+export type TraitTabItem = Linked<TraitListItem> & { bundled?: boolean; propertyCount?: number };
 
 export interface TraitGroup {
   label: string;
   href: string;
-  traits: Linked<TraitListItem>[];
+  traits: TraitTabItem[];
 }
 
 export interface TraitsTabData {
-  own: Linked<TraitListItem>[];
-  /** Traits of broader levels (domain, Enterprise), read-only here. */
+  own: TraitTabItem[];
+  /** Traits of broader levels (Enterprise), read-only here. */
   inherited: TraitGroup[];
 }
 
-export const EMPTY_EVENTS_TAB: EventsTabData = { eventSpecs: [], messages: [], channels: [], payloadEntities: [] };
 export const EMPTY_TRAITS_TAB: TraitsTabData = { own: [], inherited: [] };

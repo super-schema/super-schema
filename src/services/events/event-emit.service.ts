@@ -1,19 +1,41 @@
 // src/services/events/event-emit.service.ts
 // Emission of a self-contained event (spec 2026-10-15-events-self-contained-design §7): the saved draft, an unsaved document
-// (preview) or a published version. Mirrors event-spec-emit.service.ts; nothing here writes.
+// (preview) or a published version. Nothing here writes.
 import type { PrismaClient } from "@/generated/prisma/client";
 import {
-  canonicalizeDocumentOrder, normalizeDiagnostics, toJson, toYaml, type Diagnostic, type EmitOutput, type JsonObject,
+  canonicalizeDocumentOrder, getEventSpecAdapter, normalizeDiagnostics, StructuralAsyncApi3Validator, toJson, toYaml,
+  type Diagnostic, type EmitOutput, type EventSpecValidator, type JsonObject, type ResolvedEventSpec,
 } from "@/lib/event-specs";
+import { AsyncApiParserValidator } from "@/lib/event-specs/validation/asyncapi-parser-validator";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isJsonObject } from "@/lib/events/inputs";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
-import { getSharedArtifactRenderer } from "./artifact-renderer";
-import { emitResolved, type EmitDeps } from "./event-spec-emit.service";
+import { getSharedArtifactRenderer, type ArtifactRenderer } from "./artifact-renderer";
 import { DRAFT_VERSION, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { guardRead, loadOwnedRow, requireId } from "./service-guards";
+
+/** Collaborators of an emission, replaceable in tests: the artifact renderer and the validators run on the assembled document. */
+export interface EmitDeps {
+  renderer?: ArtifactRenderer;
+  validators?: EventSpecValidator[];
+}
+
+let sharedValidators: EventSpecValidator[] | undefined;
+
+/** D10: structural + @asyncapi/parser (one parser instance per process — it is expensive to build). */
+export function defaultEventSpecValidators(): EventSpecValidator[] {
+  sharedValidators ??= [new StructuralAsyncApi3Validator(), new AsyncApiParserValidator()];
+  return sharedValidators;
+}
+
+/** Assemble, serialize and validate a resolved spec (the adapter for its `specType`); shared by emission and publish. */
+export async function emitResolved(resolved: ResolvedEventSpec, specType: string, deps: EmitDeps = {}): Promise<Result<EmitOutput>> {
+  const adapter = getEventSpecAdapter(specType, { validators: deps.validators ?? defaultEventSpecValidators() });
+  if (!adapter.success) return adapter;
+  return adapter.data.emit(resolved);
+}
 
 /**
  * `EmitOutput` whose three artifacts are null when the draft could not be resolved (a pin that does not render, an unresolved

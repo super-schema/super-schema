@@ -29,6 +29,10 @@ import { assetHref, normalizeEventTab } from "@/lib/navigation/asset-href";
 import { emptyEventDocument } from "@/lib/events/document/types";
 import { ENTITY_OPTIONS, makeEvent } from "./builder-harness";
 
+// The "+ Add" chooser is a cmdk list inside a popover: it measures and scrolls, jsdom does neither.
+globalThis.ResizeObserver ??= class { observe() { /* no layout */ } unobserve() { /* no layout */ } disconnect() { /* no layout */ } } as unknown as typeof ResizeObserver;
+Element.prototype.scrollIntoView ??= () => undefined;
+
 const LIST_HREF = assetHref({ kind: "events", domainSlug: "payments", productSlug: "checkout" });
 const EVENT_URL = assetHref({ kind: "event", id: "ev1", domainSlug: "payments", productSlug: "checkout" });
 const EMISSION = {
@@ -307,31 +311,35 @@ describe("EventPage: URL sync", () => {
   });
 });
 
-describe("EventPage: library traits", () => {
-  it("hands the library traits of the page data to the builder: the Traits section offers them, grouped by kind", () => {
+describe("EventPage: library message properties", () => {
+  const openChooser = async () => {
+    fireEvent.click(button("trait-add"));
+    return screen.findByTestId("trait-chooser");
+  };
+
+  it("hands the library traits of the page data to the builder: the + Add chooser offers them by kind", async () => {
     renderPage({ initialSection: "traits" });
-    const groups = Array.from(screen.getByTestId("trait-library-select").querySelectorAll("optgroup")).map((g) => [
-      g.getAttribute("label"), Array.from(g.querySelectorAll("option")).map((o) => o.textContent),
-    ]);
-    expect(groups).toEqual([
-      ["Message traits", ["Audit headers · Enterprise"]],
-      ["Operation traits", ["Retry policy · Domain · Payments"]],
-    ]);
+    await openChooser();
+    expect(within(screen.getByTestId("trait-chooser-group-library")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Audit headersEnterprise"]);
+    fireEvent.click(screen.getByTestId("trait-chooser-kind-operation"));
+    expect(within(screen.getByTestId("trait-chooser-group-library")).getAllByRole("option").map((o) => o.textContent)).toEqual(["Retry policyDomain · Payments"]);
   });
 
-  it("adds a library trait from the page and saves a document that names it by its library id", async () => {
+  it("adds a library set from the page and saves a document that names it by its library id", async () => {
     renderPage({ initialSection: "traits" });
-    fireEvent.change(screen.getByTestId("trait-library-select"), { target: { value: "lib-msg" } });
-    fireEvent.click(screen.getByTestId("trait-add-library"));
+    await openChooser();
+    fireEvent.click(screen.getByTestId("trait-chooser-item-lib-msg"));
     fireEvent.click(button("builder-save"));
     await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
     expect(h.update.mock.calls[0][2]).toMatchObject({ traits: [{ key: "Audit-headers", kind: "MESSAGE", libraryTraitId: "lib-msg" }] });
   });
 
-  it("offers nothing (and says why) for a page loaded without library traits", () => {
+  it("offers only the blank set for a page loaded without library traits", async () => {
     renderPage({ initialSection: "traits", libraryTraits: [] });
-    expect((screen.getByTestId("trait-library-select") as HTMLSelectElement).disabled).toBe(true);
-    expect(screen.getByTestId("trait-library-empty").textContent).toContain("no library traits");
+    await openChooser();
+    expect(screen.queryByTestId("trait-chooser-group-library")).toBeNull();
+    expect(screen.queryByTestId("trait-chooser-group-builtin")).toBeNull();
+    expect(screen.getByTestId("trait-chooser-item-new")).toBeDefined();
   });
 });
 
@@ -599,7 +607,8 @@ describe("EventPage: live code in the shell's right Detail Panel", () => {
   );
   const renderInShell = (over: Partial<EventPageData> = {}, contents?: unknown[]) => render(shell(<EventPage data={pageData(over)} />, contents));
   const panel = () => within(screen.getByTestId("right-panel"));
-  const code = () => panel().getByTestId("code-text").textContent as string;
+  // The code is shown in a read-only JsonEditor; in jsdom (no CodeMirror stand-ins here) that is its textarea.
+  const code = () => (panel().getByTestId("event-code-text") as HTMLTextAreaElement).value;
 
   it("puts the Code panel in the right Detail Panel (not in the page) instead of hiding the panel", () => {
     renderInShell();

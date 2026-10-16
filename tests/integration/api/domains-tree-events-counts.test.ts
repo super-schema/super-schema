@@ -21,29 +21,28 @@ async function fetchTree(tenantId: string): Promise<ExplorerTree> {
 }
 
 describe("GET /api/domains-tree — events counts", () => {
-  it("aggregates traits per level and messages / channels / event specs per product, scoped to the active tenant", async () => {
+  it("aggregates traits per level (tenant, domain) and events per product, scoped to the active tenant", async () => {
     const ctx = await testContext(prisma);
-    // The foreign tenant is a clean slate (one domain, product, entity and message), so every count is exact.
+    // The foreign tenant is a clean slate (one domain, product and entity), so every count is exact.
     const ft = await createForeignTenant(prisma, ctx);
     const defaultTenantTraitIds: string[] = [];
     try {
       const level = { tenantId: ft.tenant.id };
       const product = { ...level, domainId: ft.domain.id, productId: ft.product.id };
+      // Traits are tenant or domain level only (a product-level trait is refused by the table's CHECK).
       await prisma.trait.createMany({
         data: [
           { kind: "MESSAGE", name: "TenantTrait", ...level },
           { kind: "MESSAGE", name: "TenantTrait2", ...level },
           { kind: "OPERATION", name: "DomainTrait", ...level, domainId: ft.domain.id },
-          { kind: "OPERATION", name: "ProductTrait", ...product },
         ],
       });
-      await prisma.channel.createMany({
+      await prisma.eventSpec.createMany({
         data: [
-          { name: "orders", protocol: "kafka", format: "avro", ...product },
-          { name: "refunds", protocol: "kafka", format: "avro", ...product },
+          { name: "checkout-events", document: { documentVersion: 2, info: { title: "x" } }, ...product },
+          { name: "refund-events", document: { documentVersion: 2, info: { title: "y" } }, ...product },
         ],
       });
-      await prisma.eventSpec.create({ data: { name: "checkout-events", document: { info: { title: "x" }, servers: [], operations: [] }, ...product } });
 
       // Tenant-level rows all share one key ("no domain, no product"), so only they can leak across tenants.
       // The default tenant gets its own tenant-level trait; the foreign tenant's Enterprise count must not include it.
@@ -54,7 +53,10 @@ describe("GET /api/domains-tree — events counts", () => {
       expect(tree.enterprise.counts.traits).toBe(2);
       expect(tree.domains).toHaveLength(1);
       expect(tree.domains[0].counts.traits).toBe(1);
-      expect(tree.domains[0].products[0].counts).toMatchObject({ traits: 1, messages: 1, channels: 2, eventSpecs: 1 });
+      const counts = tree.domains[0].products[0].counts;
+      expect(counts).toMatchObject({ traits: 0, events: 2 });
+      // The old catalog kinds are gone from the tree.
+      expect(Object.keys(counts).sort()).toEqual(["apis", "dataTypes", "entities", "events", "traits"]);
 
       // The other direction: the default tenant sees its own tenant-level trait, never the foreign tenant's rows.
       const defaultTree = await fetchTree(TENANT);

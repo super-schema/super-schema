@@ -26,10 +26,12 @@ export interface TemplateFormProps {
   /** Fields the caller draws itself (an entity pin, an identifier). Their values are kept as they are. */
   hideKeys?: string[];
   defaultOpenMore?: boolean;
+  /** Optional-field help as a compact info tooltip (accessible); required-field help stays inline. */
+  compactHelp?: boolean;
 }
 
-export function TemplateForm({ template, value, onChange, idPrefix, errors, errorPrefix = "", context, disabled, hideKeys, defaultOpenMore }: TemplateFormProps) {
-  const env = useMemo<FormEnv>(() => ({ context, errors, disabled, defaultOpenMore }), [context, errors, disabled, defaultOpenMore]);
+export function TemplateForm({ template, value, onChange, idPrefix, errors, errorPrefix = "", context, disabled, hideKeys, defaultOpenMore, compactHelp }: TemplateFormProps) {
+  const env = useMemo<FormEnv>(() => ({ context, errors, disabled, defaultOpenMore, compactHelp }), [context, errors, disabled, defaultOpenMore, compactHelp]);
   const safe = typeof value === "object" && value !== null && !Array.isArray(value) ? value : {};
   return (
     <FieldGroups fields={template.fields} value={safe} onChange={onChange} idPrefix={idPrefix} errorPrefix={errorPrefix} env={env} hideKeys={hideKeys} />

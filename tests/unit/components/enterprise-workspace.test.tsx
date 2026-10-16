@@ -98,12 +98,12 @@ describe("normalizeEnterpriseTab", () => {
 });
 
 describe("EnterpriseWorkspace tabs", () => {
-  it("offers Entities, Data Types and Traits only (no APIs or Events tab)", () => {
+  it("offers Entities, Data Types and Message properties only (no APIs or Events tab)", () => {
     renderWorkspace();
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Entities", "Data Types", "Traits"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Entities", "Data Types", "Message properties"]);
     expect(screen.queryByRole("tab", { name: "APIs" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Events" })).toBeNull();
-    expect(screen.getByText("Entities, data types and traits shared across every domain.")).toBeDefined();
+    expect(screen.getByText("Entities, data types and message properties shared across every domain.")).toBeDefined();
   });
 
   it("defaults to Entities when Enterprise entities exist", () => {
@@ -149,13 +149,13 @@ describe("EnterpriseWorkspace tabs", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Data Types" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/enterprise?tab=data-types");
 
-    fireEvent.click(screen.getByRole("tab", { name: "Traits" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Message properties" }));
     expect(replaceState).toHaveBeenLastCalledWith(null, "", "/schemas/enterprise?tab=traits");
-    expect(screen.getByRole("tab", { name: "Traits", selected: true })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Message properties", selected: true })).toBeDefined();
     expect(nav.replace).not.toHaveBeenCalled();
   });
 
-  it("opens the Traits tab from ?tab=traits and lists the Enterprise traits", () => {
+  it("opens the Message properties tab from ?tab=traits and lists the Enterprise sets", () => {
     nav.search = "tab=traits";
     renderWorkspace({
       traits: {
@@ -163,11 +163,11 @@ describe("EnterpriseWorkspace tabs", () => {
         inherited: [],
       },
     });
-    expect(screen.getByRole("tab", { name: "Traits", selected: true })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Message properties", selected: true })).toBeDefined();
     expect(screen.getByRole("link", { name: /CloudEvents/ }).getAttribute("href")).toBe("/schemas/enterprise/traits/t1");
   });
 
-  it("shows an empty Traits tab when no trait data was loaded", () => {
+  it("shows an empty Message properties tab when no data was loaded", () => {
     nav.search = "tab=traits";
     renderWorkspace();
     expect(screen.getByTestId("traits-empty")).toBeDefined();
@@ -194,13 +194,13 @@ describe("EnterpriseWorkspace New menu", () => {
     return screen.getByRole("menu");
   }
 
-  it("offers exactly New Entity, New Custom Data Type and New Trait", () => {
+  it("offers exactly New Entity, New Custom Data Type and New Message Properties", () => {
     renderWorkspace();
     const items = within(openMenu()).getAllByRole("menuitem");
     expect(items.map((i) => i.querySelector(".text-body-small")?.textContent)).toEqual([
       "New Entity",
       "New Custom Data Type",
-      "New Trait",
+      "New Message Properties",
     ]);
     // Events kinds and APIs are not Enterprise-level assets.
     for (const label of ["New API", "New Event Spec", "New Message", "New Channel"]) {
@@ -222,16 +222,16 @@ describe("EnterpriseWorkspace New menu", () => {
     expect(screen.getByTestId("type-kind-chooser")).toBeDefined();
   });
 
-  it("New Trait switches to Traits, opens the form and creates at the TENANT level target", async () => {
+  it("New Message Properties switches to the Message properties tab, opens the form and creates at the TENANT level target", async () => {
     traitActions.createTraitAction.mockResolvedValue({ success: true, data: { id: "t9" } });
     renderWorkspace();
-    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: /New Trait/ }));
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: /New Message Properties/ }));
     expect(replaceState).toHaveBeenCalledWith(null, "", "/schemas/enterprise?tab=traits");
-    expect(screen.getByRole("tab", { name: "Traits", selected: true })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Message properties", selected: true })).toBeDefined();
     expect(screen.getByTestId("new-trait-form")).toBeDefined();
     expect(screen.queryByRole("menu")).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("Trait name"), { target: { value: "CloudEvents" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "CloudEvents" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/schemas/enterprise/traits/t9"));
     expect(traitActions.createTraitAction).toHaveBeenCalledWith(
@@ -240,12 +240,12 @@ describe("EnterpriseWorkspace New menu", () => {
     );
   });
 
-  it("New Trait works again after the form was cancelled", () => {
+  it("New Message Properties works again after the form was cancelled", () => {
     renderWorkspace();
-    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: /New Trait/ }));
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: /New Message Properties/ }));
     fireEvent.click(within(screen.getByTestId("new-trait-form")).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByTestId("new-trait-form")).toBeNull();
-    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: /New Trait/ }));
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: /New Message Properties/ }));
     expect(screen.getByTestId("new-trait-form")).toBeDefined();
   });
 });

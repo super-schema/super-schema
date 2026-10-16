@@ -3,7 +3,7 @@ import type { ServiceContext } from "@/types/service-context";
 import { cleanupDomains, stamp } from "./helpers";
 
 /**
- * A second tenant with one domain / product / entity / message, for cross-tenant isolation tests.
+ * A second tenant with one domain / product / entity, for cross-tenant isolation tests.
  * `cleanup()` removes everything (edges, domain cascade, then the tenant); call it in `finally`.
  */
 export async function createForeignTenant(prisma: PrismaClient, ctx: ServiceContext) {
@@ -24,10 +24,7 @@ export async function createForeignTenant(prisma: PrismaClient, ctx: ServiceCont
         ownerId: ctx.userId, typespecSource: "model Foreign {\n  id: string;\n}\n",
       },
     });
-    const message = await prisma.message.create({
-      data: { name: `ForeignMsg-${s}`, payloadEntityId: entity.id, tenantId: tenant.id, domainId: domain.id, productId: product.id },
-    });
-    return { tenant, domain, product, entity, message, cleanup };
+    return { tenant, domain, product, entity, cleanup };
   } catch (e) {
     await cleanup();
     throw e;

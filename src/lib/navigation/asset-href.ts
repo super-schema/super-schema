@@ -3,21 +3,8 @@
  * sidebar, command palette, cards, breadcrumbs, cross-product references,
  * version deep links — goes through here.
  */
-/**
- * URL segment of each events kind's detail pages (`<level>/<segment>/<id>`). The Events tab's
- * `section` values are the same strings, so `EventsSection` is derived from it.
- */
-export const EVENT_SEGMENT = { message: "messages", channel: "channels", eventSpec: "specs" } as const;
-/** URL segment of trait detail pages at every level (`<level>/traits/<id>`). */
+/** URL segment of library trait detail pages (`<domain>/traits/<id>`, `enterprise/traits/<id>`). */
 export const TRAITS_SEGMENT = "traits";
-
-export type EventsSection = (typeof EVENT_SEGMENT)[keyof typeof EVENT_SEGMENT];
-const EVENTS_SECTIONS: readonly string[] = Object.values(EVENT_SEGMENT);
-
-/** The Events tab section named by `?section=`; a missing or unknown value falls back to "specs". */
-export function normalizeEventsSection(raw: string | null | undefined): EventsSection {
-  return EVENTS_SECTIONS.includes(raw ?? "") ? (raw as EventsSection) : EVENT_SEGMENT.eventSpec;
-}
 
 /** URL segment of the self-contained Event page (`<product>/events/<id>`). */
 export const EVENT_PAGE_SEGMENT = "events";
@@ -62,11 +49,10 @@ export type AssetRef =
   | { kind: "dataTypes"; domainSlug: string | null; productSlug: string | null }
   | { kind: "apis"; domainSlug: string; productSlug: string | null }
   | { kind: "traits"; domainSlug: string | null; productSlug: string | null }
-  | { kind: "trait"; id: string; domainSlug: string | null; productSlug: string | null }
-  | { kind: "message" | "channel" | "eventSpec"; id: string; domainSlug: string; productSlug: string }
+  | { kind: "trait"; id: string; domainSlug: string | null }
   | { kind: "event"; id: string; domainSlug: string; productSlug: string }
   | { kind: "field"; entitySlug: string; fieldId: string; domainSlug: string | null; productSlug: string | null }
-  | { kind: "events"; domainSlug: string; productSlug: string; section?: EventsSection }
+  | { kind: "events"; domainSlug: string; productSlug: string }
   | { kind: "newEntity"; domainSlug: string | null; productSlug: string | null };
 
 /**
@@ -112,20 +98,12 @@ function path(ref: AssetRef): { path: string; query: Record<string, string> } {
     case "traits":
       return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "traits" } };
     case "trait":
-      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${TRAITS_SEGMENT}/${enc(ref.id)}`, query: {} };
-    case "message":
-    case "channel":
-    case "eventSpec":
-      return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${EVENT_SEGMENT[ref.kind]}/${enc(ref.id)}`, query: {} };
+      return { path: `${levelBase(ref.domainSlug, null)}/${TRAITS_SEGMENT}/${enc(ref.id)}`, query: {} };
     case "event":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/${EVENT_PAGE_SEGMENT}/${enc(ref.id)}`, query: {} };
     case "events":
-      // The Events tab is one flat list, so the default link carries no `section`. An explicit one (the old message / channel /
-      // event spec pages still name theirs until that code is removed) is still honoured.
-      return {
-        path: levelBase(ref.domainSlug, ref.productSlug),
-        query: ref.section === undefined ? { tab: "events" } : { tab: "events", section: normalizeEventsSection(ref.section) },
-      };
+      // The Events tab is one flat list of the product's events.
+      return { path: levelBase(ref.domainSlug, ref.productSlug), query: { tab: "events" } };
     case "newEntity":
       return { path: `${levelBase(ref.domainSlug, ref.productSlug)}/new`, query: {} };
   }

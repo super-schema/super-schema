@@ -19,7 +19,7 @@ function inTenant<T>(rows: T[], idOf: (r: T) => string, tenantOf: (r: T) => stri
 }
 
 /**
- * Spec §6.1 / 18.9: every SchemaReference pointing at any version of the subject, published uses first.
+ * Spec §6.1 / 18.9: every SchemaReference pointing at any version of the subject entity, published uses first.
  *
  * `tenantId` is the server-resolved active tenant (the action never takes it from the client): a subject outside
  * it looks exactly like a missing one, and referrers outside it are dropped before anything is returned. Foreign
@@ -37,29 +37,17 @@ export async function findUsages(subject: UsageSubject, ctx: ServiceContext, ten
 
 async function lookupUsages(subject: UsageSubject, ctx: ServiceContext, tenantId: string): Promise<Result<UsageRow[]>> {
   const db = ctx.prisma;
-  let toKind: "ENTITY_VERSION" | "MESSAGE_VERSION";
-  let targets: Array<{ id: string; label: string }>;
-  if (subject.kind === "entity") {
-    const entity = await db.entity.findFirst({ where: { id: subject.entityId, tenantId }, select: { name: true, versions: { select: { id: true, major: true, minor: true } } } });
-    if (!entity) return err({ code: "NOT_FOUND", message: `Entity "${subject.entityId}" not found` });
-    toKind = "ENTITY_VERSION";
-    targets = entity.versions.map((v) => ({ id: v.id, label: `${entity.name} v${formatVersionLabel(v)}` }));
-  } else {
-    const message = await db.message.findFirst({ where: { id: subject.messageId, tenantId }, select: { name: true, versions: { select: { id: true, major: true, minor: true } } } });
-    if (!message) return err({ code: "NOT_FOUND", message: `Message "${subject.messageId}" not found` });
-    toKind = "MESSAGE_VERSION";
-    targets = message.versions.map((v) => ({ id: v.id, label: `${message.name} v${formatVersionLabel(v)}` }));
-  }
+  const entity = await db.entity.findFirst({ where: { id: subject.entityId, tenantId }, select: { name: true, versions: { select: { id: true, major: true, minor: true } } } });
+  if (!entity) return err({ code: "NOT_FOUND", message: `Entity "${subject.entityId}" not found` });
+  const targets = entity.versions.map((v) => ({ id: v.id, label: `${entity.name} v${formatVersionLabel(v)}` }));
   if (targets.length === 0) return ok([]);
 
   const refs = await db.schemaReference.findMany({
-    where: { toKind, toId: { in: targets.map((t) => t.id) } },
+    where: { toKind: "ENTITY_VERSION", toId: { in: targets.map((t) => t.id) } },
     orderBy: [{ isDraft: "asc" }, { createdAt: "asc" }, { id: "asc" }],
   });
-  const [entityVersions, messages, messageVersions, eventSpecs, eventSpecVersions, traits] = await Promise.all([
+  const [entityVersions, eventSpecs, eventSpecVersions, traits] = await Promise.all([
     db.entityVersion.findMany({ where: { id: { in: idsOf(refs, "ENTITY_VERSION") } }, select: { id: true, major: true, minor: true, entity: { select: { name: true, slug: true, tenantId: true, ...AT } } } }),
-    db.message.findMany({ where: { id: { in: idsOf(refs, "MESSAGE") } }, select: { id: true, name: true, tenantId: true, ...AT } }),
-    db.messageVersion.findMany({ where: { id: { in: idsOf(refs, "MESSAGE_VERSION") } }, select: { id: true, major: true, minor: true, message: { select: { id: true, name: true, tenantId: true, ...AT } } } }),
     db.eventSpec.findMany({ where: { id: { in: idsOf(refs, "EVENT_SPEC") } }, select: { id: true, name: true, tenantId: true, ...AT } }),
     db.eventSpecVersion.findMany({ where: { id: { in: idsOf(refs, "EVENT_SPEC_VERSION") } }, select: { id: true, major: true, minor: true, eventSpec: { select: { id: true, name: true, tenantId: true, ...AT } } } }),
     db.trait.findMany({ where: { id: { in: idsOf(refs, "TRAIT") } }, select: { id: true, name: true, tenantId: true, ...AT } }),
@@ -67,16 +55,12 @@ async function lookupUsages(subject: UsageSubject, ctx: ServiceContext, tenantId
 
   const foreign = new Set<string>();
   const ev = inTenant(entityVersions, (v) => v.id, (v) => v.entity.tenantId, tenantId, "ENTITY_VERSION", foreign);
-  const m = inTenant(messages, (x) => x.id, (x) => x.tenantId, tenantId, "MESSAGE", foreign);
-  const mv = inTenant(messageVersions, (v) => v.id, (v) => v.message.tenantId, tenantId, "MESSAGE_VERSION", foreign);
   const s = inTenant(eventSpecs, (x) => x.id, (x) => x.tenantId, tenantId, "EVENT_SPEC", foreign);
   const sv = inTenant(eventSpecVersions, (v) => v.id, (v) => v.eventSpec.tenantId, tenantId, "EVENT_SPEC_VERSION", foreign);
   const t = inTenant(traits, (x) => x.id, (x) => x.tenantId, tenantId, "TRAIT", foreign);
 
   const lookups: UsageLookups = {
     entityVersions: Object.fromEntries(ev.map((v) => [v.id, { label: formatVersionLabel(v), entity: { name: v.entity.name, slug: v.entity.slug, ...at(v.entity) } }])),
-    messages: Object.fromEntries(m.map((x) => [x.id, { id: x.id, name: x.name, ...at(x) }])),
-    messageVersions: Object.fromEntries(mv.map((v) => [v.id, { label: formatVersionLabel(v), message: { id: v.message.id, name: v.message.name, ...at(v.message) } }])),
     eventSpecs: Object.fromEntries(s.map((x) => [x.id, { id: x.id, name: x.name, ...at(x) }])),
     eventSpecVersions: Object.fromEntries(sv.map((v) => [v.id, { label: formatVersionLabel(v), eventSpec: { id: v.eventSpec.id, name: v.eventSpec.name, ...at(v.eventSpec) } }])),
     traits: Object.fromEntries(t.map((x) => [x.id, { id: x.id, name: x.name, ...at(x) }])),

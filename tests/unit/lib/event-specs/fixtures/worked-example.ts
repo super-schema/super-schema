@@ -4,14 +4,12 @@
  * Pre-rendered artifacts stand in for EntityVersionArtifact outputs.
  */
 import type {
-  EventSpecDocument,
   EventSpecServer,
   ResolvedChannel,
   ResolvedEventSpec,
   ResolvedMessage,
   ResolvedTrait,
 } from "@/lib/event-specs/types";
-import type { EventSpecCatalog } from "@/lib/event-specs/resolve";
 
 export const ordersChannel: ResolvedChannel = {
   id: "ch-checkout-orders",
@@ -100,28 +98,6 @@ export const fraudScorerSpec: ResolvedEventSpec = {
   messages: [orderCreatedV13],
   traits: [cloudEventsTrait],
   components: {},
-};
-
-/** The stored §6.1 draft document for `checkout-service` (IDs only). */
-export const checkoutServiceDocument: EventSpecDocument = {
-  info: { title: "checkout-service" },
-  servers: [kafkaProd],
-  operations: [
-    {
-      key: "publishOrderCreated",
-      action: "send",
-      channelId: ordersChannel.id,
-      messageVersionIds: [orderCreatedV13.id],
-      traitIds: [],
-    },
-  ],
-};
-
-/** Catalog snapshot the DB-backed resolver will load (Story 18.4); includes unrelated rows. */
-export const workedExampleCatalog: EventSpecCatalog = {
-  channels: [ordersChannel, { ...ordersChannel, id: "ch-unused", name: "refunds", address: "payments.refunds.v1" }],
-  messages: [orderCreatedV13],
-  traits: [cloudEventsTrait],
 };
 
 /** Spec §6.2 `checkout-service@2.0` YAML, verbatim. */

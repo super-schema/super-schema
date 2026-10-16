@@ -9,7 +9,7 @@ import type { ServiceContext } from "@/types/service-context";
 import type { ArtifactRenderer, ArtifactSubject } from "@/services/events/artifact-renderer";
 import { emitEventDocumentPreview, emitEventDraft, emitEventStoredVersion } from "@/services/events/event-emit.service";
 import { loadEventSnapshot, resolveEventSnapshot } from "@/services/events/event-snapshot";
-import { cleanupDomains, connectTestDb, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
+import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 
 let prisma: PrismaClient;
@@ -138,12 +138,10 @@ function externalDocument(versionId: string): EventDocument {
 }
 
 async function seedVersion(eventSpecId: string, data: Partial<Prisma.EventSpecVersionUncheckedCreateInput> & { major: number; minor: number; sequence: number }) {
-  return prisma.eventSpecVersion.create({
-    data: {
-      eventSpecId, changeKind: "INITIAL", publishedById: ctx.userId,
-      document: { asyncapi: "3.0.0" }, sourceDocument: {}, frozenChannels: [], frozenTraits: [], messageVersionIds: [],
-      ...data,
-    },
+  return createEventSpecVersion(prisma, {
+    eventSpecId, changeKind: "INITIAL", publishedById: ctx.userId,
+    document: { asyncapi: "3.0.0" }, sourceDocument: {}, frozenTraits: [],
+    ...data,
   });
 }
 
