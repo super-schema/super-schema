@@ -28,6 +28,8 @@ export interface FormEnv {
   errors?: ReadonlyArray<FormProblem>;
   disabled?: boolean;
   defaultOpenMore?: boolean;
+  /** Show the help text of an optional field as a small info tooltip instead of a line under it (required fields keep theirs inline). */
+  compactHelp?: boolean;
 }
 
 /** What a control that contains fields (an object, a list item, a tag's details) asks its form to render. */

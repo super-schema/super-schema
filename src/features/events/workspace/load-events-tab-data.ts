@@ -3,8 +3,8 @@ import { prisma } from "@/lib/db";
 import type { LevelScope } from "@/lib/levels";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { traitListItem } from "@/lib/events/list-items";
-import type { Linked, TraitListItem } from "@/lib/events/types";
-import type { TraitGroup, TraitsTabData } from "./types";
+import { traitListMeta } from "./trait-list-meta";
+import type { TraitGroup, TraitTabItem, TraitsTabData } from "./types";
 
 /**
  * Server loader for the Domain / Enterprise "Traits" workspace tab (library traits). The by-id service reads are unscoped by
@@ -17,8 +17,8 @@ const TRAIT_SELECT = { id: true, name: true, kind: true, spec: true, updatedAt: 
 
 type TraitRow = { id: string; name: string; kind: string; spec: unknown; updatedAt: Date };
 
-function linkTraits(rows: TraitRow[], domainSlug: string | null): Linked<TraitListItem>[] {
-  return rows.map((t) => ({ ...traitListItem(t), href: assetHref({ kind: "trait", id: t.id, domainSlug }) }));
+function linkTraits(rows: TraitRow[], domainSlug: string | null): TraitTabItem[] {
+  return rows.map((t) => ({ ...traitListItem(t), ...traitListMeta(t.spec), href: assetHref({ kind: "trait", id: t.id, domainSlug }) }));
 }
 
 const nonEmpty = (groups: TraitGroup[]) => groups.filter((g) => g.traits.length > 0);

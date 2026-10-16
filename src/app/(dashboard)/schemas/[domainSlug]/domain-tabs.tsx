@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronRight, Globe, Layers, Package, Puzzle } from "lucide-react";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { PROPERTIES_TAB_LABEL } from "@/features/events/builder/labels";
 import { TraitsTab } from "@/features/events/workspace/TraitsTab";
 import { EMPTY_TRAITS_TAB, type TraitsTabData } from "@/features/events/workspace/types";
 import { ProductGrid, type ProductGridItem, type TierOption } from "./product-grid";
@@ -33,7 +34,7 @@ const TABS: { id: DomainPageTab; label: string; icon: typeof Package }[] = [
   { id: "products", label: "Products", icon: Package },
   { id: "data-types", label: "Data Types", icon: Layers },
   { id: "apis", label: "APIs", icon: Globe },
-  { id: "traits", label: "Traits", icon: Puzzle },
+  { id: "traits", label: PROPERTIES_TAB_LABEL, icon: Puzzle },
 ];
 
 function tabDomId(id: DomainPageTab) {

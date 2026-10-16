@@ -9,7 +9,7 @@ const ENTITY = "New EntitySchema entity with fields";
 const DATA_TYPE = "New Custom Data TypeEnum, scalar or union";
 const API = "New APIAPI service definition";
 const EVENT = "New EventAsyncAPI event specification";
-const TRAIT = "New TraitReusable message or operation trait";
+const TRAIT = "New Message PropertiesReusable message properties (Trait)";
 
 const openMenu = () => fireEvent.click(screen.getByTitle("More options"));
 const items = () => screen.getAllByRole("menuitem").map((i) => i.textContent);
@@ -40,8 +40,9 @@ describe("CreateDropdown: product menu (events)", () => {
   it("never offers the retired New Event Spec, New Message or New Channel entries", () => {
     render(<CreateDropdown onNewEntity={vi.fn()} onNewCustomDataType={vi.fn()} onNewApi={vi.fn()} onNewEvent={vi.fn()} onNewTrait={vi.fn()} />);
     openMenu();
-    for (const retired of [/New Event Spec/, /New Message/, /New Channel/]) expect(screen.queryByRole("menuitem", { name: retired })).toBeNull();
-    expect(screen.getByRole("menu").textContent).not.toMatch(/Event Spec|Message|Channel/);
+    for (const retired of [/New Event Spec/, /New Message(?! Properties)/, /New Channel/]) expect(screen.queryByRole("menuitem", { name: retired })).toBeNull();
+    // The only entry that may say Message is New Message Properties.
+    expect(screen.getByRole("menu").textContent?.replace(TRAIT, "")).not.toMatch(/Event Spec|Message|Channel/);
   });
 
   it("does not call any other callback when New Event is chosen", () => {
@@ -58,7 +59,7 @@ describe("CreateDropdown: product menu (events)", () => {
 });
 
 describe("CreateDropdown: optional items", () => {
-  it("keeps the single New Custom Data Type entry and hides New API, New Event and New Trait by default", () => {
+  it("keeps the single New Custom Data Type entry and hides New API, New Event and New Message Properties by default", () => {
     render(<CreateDropdown onNewEntity={vi.fn()} onNewCustomDataType={vi.fn()} />);
     openMenu();
     expect(items()).toEqual([ENTITY, DATA_TYPE]);
@@ -71,7 +72,7 @@ describe("CreateDropdown: optional items", () => {
     expect(items()).toEqual([ENTITY, DATA_TYPE, API]);
   });
 
-  it("separates the events group (New Event, New Trait) from the assets, only when the group is not empty", () => {
+  it("separates the events group (New Event, New Message Properties) from the assets, only when the group is not empty", () => {
     render(<CreateDropdown onNewEntity={vi.fn()} onNewCustomDataType={vi.fn()} onNewApi={vi.fn()} onNewEvent={vi.fn()} />);
     openMenu();
     const menu = screen.getByRole("menu");
@@ -80,24 +81,24 @@ describe("CreateDropdown: optional items", () => {
   });
 });
 
-describe("CreateDropdown: New Trait (Domain / Enterprise library levels)", () => {
-  it("offers only Trait at a level that allows traits but not events (Domain / Enterprise)", () => {
+describe("CreateDropdown: New Message Properties (Domain / Enterprise library levels)", () => {
+  it("offers only New Message Properties at a level that allows library sets but not events (Domain / Enterprise)", () => {
     render(<CreateDropdown onNewEntity={vi.fn()} onNewCustomDataType={vi.fn()} onNewTrait={vi.fn()} />);
     openMenu();
     expect(items()).toEqual([ENTITY, DATA_TYPE, TRAIT]);
   });
 
-  it("renders New Trait only when onNewTrait is passed, and calls it once", () => {
+  it("renders New Message Properties only when onNewTrait is passed, and calls it once", () => {
     const onNewTrait = vi.fn();
     const { unmount } = render(<CreateDropdown onNewEntity={vi.fn()} onNewCustomDataType={vi.fn()} onNewApi={vi.fn()} onNewEvent={vi.fn()} />);
     openMenu();
-    expect(screen.queryByRole("menuitem", { name: /New Trait/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /New Message Properties/ })).toBeNull();
     unmount();
 
     render(<CreateDropdown onNewEntity={vi.fn()} onNewCustomDataType={vi.fn()} onNewApi={vi.fn()} onNewEvent={vi.fn()} onNewTrait={onNewTrait} />);
     openMenu();
     expect(items()).toEqual([ENTITY, DATA_TYPE, API, EVENT, TRAIT]);
-    fireEvent.click(screen.getByRole("menuitem", { name: /New Trait/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /New Message Properties/ }));
     expect(onNewTrait).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("menu")).toBeNull();
   });

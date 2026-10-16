@@ -9,7 +9,7 @@ import type { ControlProps } from "./types";
 
 const NOUNS: Record<string, string> = {
   server: "servers", channel: "channels", message: "messages", securityScheme: "security schemes",
-  messageTrait: "message traits", operationTrait: "operation traits",
+  messageTrait: "message properties", operationTrait: "operation properties",
 };
 
 export function ReferenceControl({ field, id, value, onChange, disabled, required, invalid, describedBy, context }: ControlProps) {

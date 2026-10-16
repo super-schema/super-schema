@@ -1,22 +1,24 @@
 // src/features/events/builder/outline.ts
 // The builder's left outline as data: one node per section with its item count and problem counts. Pure — no React.
 import type { DocumentProblem, EventDocument } from "@/lib/events/document/types";
+import { MESSAGE_PROPERTIES } from "./labels";
 import { isIndexedSection, pointerTarget, securitySchemeAt, uniqueProblems } from "./problems";
 import { BUILDER_SECTIONS, type BuilderSection } from "./sections";
 
 export interface OutlineNode {
   section: BuilderSection;
   label: string;
-  /** Number of items: the list sections' entries, traits (local and library), security schemes (Advanced); null for Metadata. */
+  /** Number of items: the list sections' entries, message properties (local and library), security schemes (Advanced); null for Metadata. */
   count: number | null;
   /** Problems located in this section. */
   problems: number;
   items: Array<{ key: string; label: string; problems: number }>;
 }
 
+/** The section id `traits` is internal (URLs, test ids); users see "Message properties". */
 export const SECTION_LABELS: Record<BuilderSection, string> = {
   metadata: "Metadata", servers: "Servers", channels: "Channels", messages: "Messages", operations: "Operations",
-  traits: "Traits", advanced: "Advanced",
+  traits: MESSAGE_PROPERTIES, advanced: "Advanced",
 };
 
 export function buildOutline(doc: EventDocument, problems: DocumentProblem[]): OutlineNode[] {

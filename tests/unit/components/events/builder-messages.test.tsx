@@ -33,6 +33,16 @@ const text = (testId: string) => screen.getByTestId(testId).textContent;
 const missing = (testId: string) => screen.queryByTestId(testId) === null;
 const optionValues = (el: HTMLElement) => Array.from(el.querySelectorAll("option")).map((o) => o.getAttribute("value"));
 
+/** The accordion cards of the message form. */
+const CARDS = ["payload", "properties", "details", "channels", "examples", "bindings", "docs", "correlation", "more"] as const;
+type Card = (typeof CARDS)[number];
+const isOpen = (card: Card) => screen.getByTestId(`message-card-${card}-toggle`).getAttribute("aria-expanded") === "true";
+/** Open a card (a collapsed one starts closed), leaving it alone when it is open already. */
+const openCard = (card: Card) => {
+  if (!isOpen(card)) fireEvent.click(screen.getByTestId(`message-card-${card}-toggle`));
+};
+const openAllCards = () => CARDS.forEach(openCard);
+
 /** The pickers are loaded lazily and fetch versions on mount: wait for both to settle before the test acts. */
 async function settle() {
   await screen.findByLabelText("Payload entity");
@@ -430,6 +440,7 @@ describe("MessagesSection: AsyncAPI message properties", () => {
 
   it("writes a correlation id (where to find it, and a description) and removes it when emptied", async () => {
     const { probe } = await renderMessages();
+    openCard("correlation");
     type(box("message-correlationId-location"), "$message.header#/correlationId");
     expect(probe.draft.doc.messages[0].correlationId).toEqual({ location: "$message.header#/correlationId" });
     type(box("message-correlationId-description"), "Ties a reply to its request");
@@ -442,6 +453,7 @@ describe("MessagesSection: AsyncAPI message properties", () => {
 
   it("an invalid correlation id location is reported under its field", async () => {
     await renderMessages();
+    openCard("correlation");
     type(box("message-correlationId-location"), "correlationId");
     expect(text("message-correlationId-location-error")).toBeTruthy();
     expect(box("message-correlationId-location").getAttribute("aria-invalid")).toBe("true");
@@ -449,6 +461,7 @@ describe("MessagesSection: AsyncAPI message properties", () => {
 
   it("adds, edits and removes examples", async () => {
     const { probe } = await renderMessages();
+    openCard("examples");
     click("message-examples-add");
     type(box("message-examples-0-name"), "small");
     type(box("message-examples-0-payload"), '{"id":"o-1"}');
@@ -461,15 +474,19 @@ describe("MessagesSection: AsyncAPI message properties", () => {
     expect("examples" in probe.draft.doc.messages[0]).toBe(false);
   });
 
-  it("keeps tags, external documentation, deprecated and traits behind a collapsed 'More properties (0 set)'", async () => {
+  it("keeps examples, bindings, docs & tags, the correlation id and 'More' in cards that start collapsed, and the rest open", async () => {
     await renderMessages({ doc: docWithTraits() });
-    expect(text("message-more-toggle")).toBe("More properties (0 set)");
-    for (const key of ["tags", "externalDocs", "deprecated", "traits"]) expect(missing(`message-${key}`), key).toBe(true);
+    for (const card of ["payload", "properties", "details", "channels"] as const) expect(isOpen(card), card).toBe(true);
+    for (const card of ["examples", "bindings", "docs", "correlation", "more"] as const) expect(isOpen(card), card).toBe(false);
+    for (const key of ["examples", "tags", "externalDocs", "deprecated", "correlationId"]) expect(missing(`message-${key}`) && missing(`message-${key}-location`), key).toBe(true);
+    expect(missing("message-bindings")).toBe(true);
+    // The old 'More properties' toggle of the template form is gone: the cards are the grouping.
+    expect(missing("message-more-toggle")).toBe(true);
   });
 
   it("writes tags and external documentation, and removes them when emptied", async () => {
     const { probe } = await renderMessages();
-    click("message-more-toggle");
+    openCard("docs");
     type(box("message-externalDocs-url"), "https://example.com/order-created");
     type(box("message-tags"), "orders");
     fireEvent.keyDown(box("message-tags"), { key: "Enter" });
@@ -483,7 +500,7 @@ describe("MessagesSection: AsyncAPI message properties", () => {
 
   it("deprecated is Not set / Yes / No: Yes and No are values, Not set removes the property", async () => {
     const { probe } = await renderMessages();
-    click("message-more-toggle");
+    openCard("more");
     type(select("message-deprecated"), "true");
     expect(probe.draft.doc.messages[0].deprecated).toBe(true);
     type(select("message-deprecated"), "false");
@@ -492,56 +509,152 @@ describe("MessagesSection: AsyncAPI message properties", () => {
     expect("deprecated" in probe.draft.doc.messages[0]).toBe(false);
   });
 
-  it("traits are a multi reference to the message traits of the document (not operation traits), library ones marked", async () => {
-    const { probe } = await renderMessages({ doc: docWithTraits() });
-    click("message-more-toggle");
-    expect(box("message-traits-option-Envelope").closest("label")?.textContent).toContain("Envelope");
-    expect(box("message-traits-option-Standard").closest("label")?.textContent).toContain("library");
-    expect(missing("message-traits-option-Retry")).toBe(true);
-    fireEvent.click(box("message-traits-option-Envelope"));
-    fireEvent.click(box("message-traits-option-Standard"));
-    expect(probe.draft.doc.messages[0].traitKeys).toEqual(["Envelope", "Standard"]);
-    fireEvent.click(box("message-traits-option-Envelope"));
-    expect(probe.draft.doc.messages[0].traitKeys).toEqual(["Standard"]);
-    expect(probe.draft.problems).toEqual([]);
-    fireEvent.click(box("message-traits-option-Standard"));
-    expect(probe.draft.doc.messages[0].traitKeys).toEqual([]);
-  });
-
-  it("traits the message already has open 'More properties' and show a dangling one so it can be removed", async () => {
+  it("the traits multi-reference is gone: the Message properties card draws them instead, and keeps the message's traitKeys", async () => {
     const doc = docWithTraits();
-    doc.messages[0] = { ...doc.messages[0], traitKeys: ["Envelope", "Gone"] };
+    doc.messages[0] = { ...doc.messages[0], traitKeys: ["Envelope"] };
     const { probe } = await renderMessages({ doc });
-    expect(text("message-more-toggle")).toBe("More properties (1 set)");
-    expect(box("message-traits-option-Gone").checked).toBe(true);
-    expect(text("message-traits-unavailable")).toContain("Gone");
-    fireEvent.click(box("message-traits-option-Gone"));
+    expect(missing("message-traits")).toBe(true);
+    expect(screen.queryAllByTestId(/^message-traits-option-/)).toHaveLength(0);
+    expect(screen.getByTestId("message-prop-row-Envelope")).toBeDefined();
+    // Editing another field never loses or reorders the applied sets.
+    type(field("Title"), "Order created");
     expect(probe.draft.doc.messages[0].traitKeys).toEqual(["Envelope"]);
   });
 
-  it("tells the user when there are no message traits yet", async () => {
-    await renderMessages();
-    click("message-more-toggle");
-    expect(text("message-traits-empty")).toContain("No message traits");
-  });
-
-  it("every property of the message template is reachable once 'More properties' is open", async () => {
+  it("every property of the message template is reachable, including inside the collapsed cards", async () => {
     await renderMessages({ doc: docWithTraits() });
-    click("message-more-toggle");
+    openAllCards();
     const keys = TEMPLATES.message.fields.map((f) => f.key);
     expect(keys).toEqual([
       "name", "title", "summary", "description", "contentType", "payload", "headers", "keyPin", "correlationId", "examples", "tags", "externalDocs",
       "deprecated", "bindings", "traits",
     ]);
-    // The entity pins and the bindings are drawn by hand; everything else comes from the template form.
-    const testIdOf: Record<string, string> = { payload: "payload-group", headers: "headers-group", keyPin: "key-pin-group", bindings: "message-bindings" };
+    // The entity pins, the bindings and the traits are drawn by hand; everything else comes from the template form.
+    const testIdOf: Record<string, string> = {
+      payload: "payload-group", headers: "headers-group", keyPin: "key-pin-group", bindings: "message-bindings", traits: "message-props",
+      correlationId: "message-correlationId",
+    };
     for (const key of keys) expect(missing(testIdOf[key] ?? `message-${key}`), `message.${key}`).toBe(false);
+  });
+});
+
+describe("MessagesSection: accordion cards", () => {
+  it("shows the cards in the order Payload, Message properties (Trait), Details, Sent on channels, Examples, Bindings, Docs & tags, Correlation id, More", async () => {
+    await renderMessages();
+    const titles = within(screen.getByTestId("message-form")).getAllByRole("heading", { level: 3 }).map((h) => h.textContent?.replace(/\d+\s*set$/, "").trim());
+    expect(titles).toEqual([
+      "Payload", "Message properties (Trait)", "Details", "Sent on channels", "Examples", "Bindings", "Docs & tags", "Correlation id", "More",
+    ]);
+  });
+
+  it("opens and closes a card from its heading button, with aria-expanded and aria-controls", async () => {
+    await renderMessages();
+    const toggle = screen.getByTestId("message-card-examples-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(missing("message-card-examples-body")).toBe(true);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-controls")).toBe(screen.getByTestId("message-card-examples-body").id);
+    fireEvent.click(toggle);
+    expect(missing("message-card-examples-body")).toBe(true);
+  });
+
+  it("counts the fields set in each card: examples, bindings (protocols), docs & tags, correlation id, deprecated, details and channels", async () => {
+    await renderMessages({ doc: maximalDocument() });
+    const count = (card: Card) => screen.queryByTestId(`message-card-${card}-count`)?.textContent ?? null;
+    const m = maximalDocument().messages[0];
+    expect(count("examples")).toBe(String(m.examples?.length));
+    expect(count("bindings")).toBe(String(Object.keys(m.bindings ?? {}).length));
+    expect(count("docs")).toBe(String((m.tags?.length ?? 0) + (m.externalDocs ? 1 : 0)));
+    expect(count("correlation")).toBe("1");
+    expect(count("more")).toBe(m.deprecated === undefined ? null : "1");
+    expect(Number(count("details"))).toBeGreaterThan(0);
+    expect(count("properties")).toBe(m.traitKeys.length > 0 ? String(m.traitKeys.length) : null);
+  });
+
+  it("shows no count on a card with nothing set", async () => {
+    await renderMessages();
+    for (const card of ["examples", "bindings", "docs", "correlation", "more"] as const) expect(missing(`message-card-${card}-count`), card).toBe(true);
+    expect(text("message-card-channels-count")).toBe("1");
+  });
+
+  it("gives the count an accessible name through the heading button", async () => {
+    const doc = sampleDocument();
+    doc.messages[0] = { ...doc.messages[0], tags: [{ name: "a" }, { name: "b" }] };
+    await renderMessages({ doc });
+    expect(screen.getByTestId("message-card-docs-toggle").textContent).toContain("2 set");
+    expect(screen.getByTestId("message-card-docs-count").textContent).toBe("2");
+  });
+
+  it("keeps a card open or closed while switching to another message, and while switching back", async () => {
+    await renderMessages({ doc: docWithReply() });
+    openCard("examples");
+    fireEvent.click(screen.getByTestId("message-card-details-toggle"));
+    click("message-row-RefundIssued");
+    expect(isOpen("examples")).toBe(true);
+    expect(isOpen("details")).toBe(false);
+    click("message-row-OrderCreated");
+    expect(isOpen("examples")).toBe(true);
+    expect(isOpen("details")).toBe(false);
+  });
+
+  it("opens the card that holds a problem, once, and lets the user close it again", async () => {
+    await renderMessages();
+    expect(isOpen("docs")).toBe(false);
+    openCard("docs");
+    type(box("message-externalDocs-url"), "not a url");
+    fireEvent.click(screen.getByTestId("message-card-docs-toggle"));
+    expect(isOpen("docs")).toBe(false);
+    openCard("correlation");
+    type(box("message-correlationId-location"), "bad");
+    expect(isOpen("correlation")).toBe(true);
+  });
+
+  it("opens a collapsed card by itself when a failed save reports a problem inside it", async () => {
+    const saveDocument = vi.fn<SaveDocument>().mockResolvedValue({
+      success: false, error: "1 problem(s) in the event document", code: "VALIDATION_ERROR",
+      details: { problems: [{ pointer: "/messages/0/examples/0/payload", message: "payload is not valid" }] },
+    });
+    renderBuilder({ saveDocument, section: "messages" });
+    await settle();
+    expect(isOpen("examples")).toBe(false);
+    type(field("Title"), "Changed");
+    await act(async () => { click("builder-save"); });
+    expect(isOpen("examples")).toBe(true);
+  });
+
+  it("opens the Payload card on a problem even after the user collapsed it", async () => {
+    const doc = sampleDocument();
+    doc.messages[0] = { ...doc.messages[0], payload: { entityId: "", entityVersionId: null } };
+    await renderMessages({ doc });
+    expect(isOpen("payload")).toBe(true);
+    expect(text("payload-error")).toBe("entityId is required");
+  });
+
+  it("shows the optional-field help as an info tooltip (a button with an aria-label and aria-describedby) and keeps required-field help inline", async () => {
+    await renderMessages();
+    const button = screen.getByTestId("message-description-hint-button");
+    expect(button.getAttribute("aria-label")).toBe("About Description");
+    expect(button.getAttribute("aria-describedby")).toBe("message-description-hint");
+    expect(document.getElementById("message-description-hint")?.getAttribute("role")).toBe("tooltip");
+    expect(text("message-description-hint")).toContain("What the message means");
+    // the required Payload help is a plain line under the picker
+    expect(screen.getByText("Required. The entity this message carries.")).toBeDefined();
+  });
+});
+
+describe("MessagesSection: Sent on channels card", () => {
+  it("is open by default and counts the channels", async () => {
+    await renderMessages();
+    expect(isOpen("channels")).toBe(true);
+    expect(screen.getByTestId("message-channels-option-orders")).toBeDefined();
   });
 });
 
 describe("MessagesSection: protocol bindings", () => {
   it("preselects the protocol of the first channel that carries the message, writes the template's fields with bindingVersion and drops `bindings` when cleared", async () => {
     const { probe } = await renderMessages();
+    openCard("bindings");
     expect(select("message-bindings-protocol").value).toBe("kafka");
     click("message-bindings-add");
     type(select("message-bindings-kafka-schemaIdLocation"), "payload");
@@ -555,6 +668,7 @@ describe("MessagesSection: protocol bindings", () => {
     const doc = sampleDocument();
     doc.channels[0] = { ...doc.channels[0], protocol: "amqp" };
     await renderMessages({ doc });
+    openCard("bindings");
     expect(select("message-bindings-protocol").value).toBe("amqp");
   });
 
@@ -563,6 +677,7 @@ describe("MessagesSection: protocol bindings", () => {
     doc.channels[0] = { ...doc.channels[0], messageKeys: [] };
     doc.operations = [];
     await renderMessages({ doc });
+    openCard("bindings");
     expect(select("message-bindings-protocol").value).toBe("");
   });
 
@@ -572,6 +687,7 @@ describe("MessagesSection: protocol bindings", () => {
     const { probe } = await renderMessages({ doc });
     type(field("Title"), "Order created");
     expect(probe.draft.doc.messages[0].bindings).toEqual({ kafka: { schemaIdLocation: "header", bindingVersion: "0.5.0" } });
+    openCard("bindings");
     expect(select("message-bindings-kafka-schemaIdLocation").value).toBe("header");
   });
 });
@@ -800,7 +916,7 @@ describe("MessagesSection: remove message", () => {
 describe("MessagesSection: field errors", () => {
   it("shows the parser's problems under the property they belong to", async () => {
     await renderMessages();
-    click("message-more-toggle");
+    openCard("docs");
     type(box("message-externalDocs-url"), "not a url");
     expect(text("message-externalDocs-url-error")).toBeTruthy();
     expect(box("message-externalDocs-url").getAttribute("aria-invalid")).toBe("true");
@@ -815,16 +931,19 @@ describe("MessagesSection: field errors", () => {
     expect(text("payload-error")).toBe("entityId is required");
   });
 
-  it("shows the problems of a failed save under a property in 'More properties', opening the group", async () => {
+  it("shows the problems of a failed save under the Message properties card, opening it", async () => {
     const saveDocument = vi.fn<SaveDocument>().mockResolvedValue({
       success: false, error: "1 problem(s) in the event document", code: "VALIDATION_ERROR",
       details: { problems: [{ pointer: "/messages/0/traitKeys/0", message: 'Unknown trait "Gone"' }] },
     });
     renderBuilder({ saveDocument, section: "messages" });
     await settle();
+    fireEvent.click(screen.getByTestId("message-card-properties-toggle"));
+    expect(isOpen("properties")).toBe(false);
     type(field("Title"), "Changed");
     await act(async () => { click("builder-save"); });
-    expect(text("message-traits-error")).toBe('Unknown trait "Gone"');
+    expect(isOpen("properties")).toBe(true);
+    expect(text("message-prop-error")).toBe('Unknown message properties "Gone"');
   });
 });
 

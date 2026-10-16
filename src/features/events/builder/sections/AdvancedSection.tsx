@@ -32,14 +32,16 @@ const typeLabel = (scheme: DocSecurityScheme): string => (typeof scheme.type ===
 const pointerSegment = (name: string) => name.replace(/~/g, "~0").replace(/\//g, "~1");
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+/** "1 set of operation properties" / "2 sets of operation properties": what a scheme's trait references are called for the user. */
+const setsOfProperties = (n: number) => `${n} ${n === 1 ? "set" : "sets"} of operation properties`;
 const list = (parts: string[]) => (parts.length <= 1 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`);
 
-/** The `{ server, operation, trait }` counts of a scheme's references as words: "1 server, 2 operations and 1 trait". */
+/** The `{ server, operation, trait }` counts of a scheme's references as words: "1 server, 2 operations and 1 set of operation properties". */
 function referenceWords(refs: SchemeReferences): string[] {
   return [
     refs.servers.length > 0 ? plural(refs.servers.length, "server") : null,
     refs.operations.length > 0 ? plural(refs.operations.length, "operation") : null,
-    refs.traits.length > 0 ? plural(refs.traits.length, "trait") : null,
+    refs.traits.length > 0 ? setsOfProperties(refs.traits.length) : null,
   ].filter((p): p is string => p !== null);
 }
 
@@ -67,7 +69,7 @@ export function AdvancedSection({ draft, options, selectedItem, onSelectItem }: 
         <div className="space-y-space-1">
           <h2 id="advanced-heading" className="text-heading-3 text-foreground">Advanced</h2>
           <p className="text-body-small text-muted-foreground">
-            Security schemes describe how clients authenticate. Servers, operations and operation traits pick the ones they accept by name.
+            Security schemes describe how clients authenticate. Servers, operations and operation properties (Trait) pick the ones they accept by name.
           </p>
         </div>
         {names.length > 0 && (
@@ -170,7 +172,7 @@ function SchemeNameInput({ name, error, problemFor, onCommit }: {
         onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={onKeyDown}
       />
       <p id="scheme-key-hint" data-testid="scheme-key-hint" className="text-caption text-muted-foreground">
-        The name servers, operations and traits use to refer to this scheme. Renaming it updates them.
+        The name servers, operations and operation properties use to refer to this scheme. Renaming it updates them.
       </p>
       {message && <p id="scheme-key-error" data-testid="scheme-key-error" className="text-body-small text-destructive">{message}</p>}
     </div>
@@ -203,7 +205,7 @@ function SchemeForm({ draft, name, problems, context, onSelectItem }: {
       const where = list([
         refs.servers.length > 0 ? `${plural(refs.servers.length, "server")} (${refs.servers.join(", ")})` : null,
         refs.operations.length > 0 ? `${plural(refs.operations.length, "operation")} (${refs.operations.join(", ")})` : null,
-        refs.traits.length > 0 ? `${plural(refs.traits.length, "trait")} (${refs.traits.join(", ")})` : null,
+        refs.traits.length > 0 ? `${setsOfProperties(refs.traits.length)} (${refs.traits.join(", ")})` : null,
       ].filter((p): p is string => p !== null));
       const count = refs.servers.length + refs.operations.length + refs.traits.length;
       if (!window.confirm(`Security scheme "${name}" is used by ${where}. Remove it and take it off ${count === 1 ? "that item" : "those items"}?`)) return;
@@ -216,7 +218,7 @@ function SchemeForm({ draft, name, problems, context, onSelectItem }: {
     <div className="max-w-2xl space-y-space-4" data-testid="scheme-form">
       <SchemeNameInput name={name} error={nameError} problemFor={(text) => schemeNameProblem(doc, text, name)} onCommit={rename} />
       <p data-testid="scheme-usage" className="text-body-small text-muted-foreground">
-        {words.length > 0 ? `Used by ${list(words)}` : "Not used by any server, operation or trait yet."}
+        {words.length > 0 ? `Used by ${list(words)}` : "Not used by any server, operation or set of operation properties yet."}
       </p>
       <TemplateForm
         template={TEMPLATES.securityScheme} value={{ ...scheme }} idPrefix="scheme" errors={problems} errorPrefix={prefix} context={context}
