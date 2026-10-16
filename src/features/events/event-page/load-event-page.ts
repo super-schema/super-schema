@@ -3,7 +3,7 @@ import { assetHref, normalizeBuilderSection, normalizeEventTab, type BuilderSect
 import { EVENT_SELECT, toEventDetail, type EventDetail } from "@/services/events/event.service";
 import { productCrumbs } from "@/features/events/crumbs";
 import type { LibraryTraitOption } from "@/features/events/builder/EventBuilder";
-import { loadEntityOptions, loadTraitOptions, type TraitOption } from "@/features/events/load-options";
+import { loadEntityOptions, loadTraitOptions, type LibraryTraitSource } from "@/features/events/load-options";
 import { resolveProductRoute } from "@/features/events/route-scope";
 import type { Crumb } from "@/features/events/shared/EventBreadcrumb";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
@@ -27,9 +27,16 @@ export interface EventPageData {
   initialItem: string | null;
 }
 
-/** "Enterprise" for a tenant-level trait, "Domain · Payments" for one of the event's domain (`loadTraitOptions` labels the owner). */
-function libraryOption(option: TraitOption, kind: LibraryTraitOption["kind"]): LibraryTraitOption {
-  return { id: option.id, name: option.name, kind, level: option.ownerLabel === "Enterprise" ? "Enterprise" : `Domain · ${option.ownerLabel}` };
+/**
+ * "Enterprise" for a tenant-level trait, "Domain · Payments" for one of the event's domain (`loadTraitOptions` labels the owner).
+ * The stored definition travels with the option: `spec` (what the instant code emits), `bundled` (built in, read-only) and
+ * `properties` (the table of its inline message properties).
+ */
+function libraryOption(option: LibraryTraitSource, kind: LibraryTraitOption["kind"]): LibraryTraitOption {
+  return {
+    id: option.id, name: option.name, kind, level: option.ownerLabel === "Enterprise" ? "Enterprise" : `Domain · ${option.ownerLabel}`,
+    spec: option.spec, bundled: option.bundled, properties: option.properties,
+  };
 }
 
 /**

@@ -8,6 +8,7 @@ vi.mock("@/lib/db", () => ({
       findUnique: vi.fn(),
     },
     tenant: {
+      findUnique: vi.fn().mockResolvedValue({ id: "tenant_default" }),
       upsert: vi.fn().mockResolvedValue({ id: "tenant_default" }),
     },
     auditLog: {

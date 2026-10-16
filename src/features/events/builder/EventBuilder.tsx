@@ -8,6 +8,8 @@ import { Loader2, Save } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { JsonObject } from "@/lib/event-specs/types";
+import type { PropertySummaryRow } from "@/lib/events/bundled-traits";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
 import { buildOutline, SECTION_LABELS } from "./outline";
 import { locateProblem, uniqueProblems } from "./problems";
@@ -21,8 +23,15 @@ import { TraitsSection } from "./sections/TraitsSection";
 import type { BuilderSection } from "./sections";
 import type { DraftState } from "./use-event-draft";
 
-/** A trait of the Tenant / Domain library that an event can use (`traits[].libraryTraitId`). `level` is where it is defined ("Enterprise", "Domain · Payments"). */
-export interface LibraryTraitOption { id: string; name: string; kind: "MESSAGE" | "OPERATION"; level?: string }
+/**
+ * A trait of the Tenant / Domain library that an event can use (`traits[].libraryTraitId`). `level` is where it is defined ("Enterprise", "Domain · Payments").
+ * `spec`, `bundled` and `properties` come from the stored trait (`loadTraitOptions`): the instant code emits `spec` as it is, `bundled` marks a built-in
+ * (read-only, shown locked) and `properties` is the table of its inline message properties (`propertySummary`). All three are absent when the host does not know them.
+ */
+export interface LibraryTraitOption {
+  id: string; name: string; kind: "MESSAGE" | "OPERATION"; level?: string;
+  spec?: JsonObject; bundled?: boolean; properties?: PropertySummaryRow[];
+}
 
 export interface BuilderOptions { entityOptions: EntityOption[]; libraryTraits: LibraryTraitOption[] }
 
