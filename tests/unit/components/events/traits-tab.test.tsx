@@ -18,7 +18,7 @@ describe("TraitsTab", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <TraitsTab
-          target={{ level: "DOMAIN", domainId: "d1" }} domainSlug="payments" productSlug={null}
+          target={{ level: "DOMAIN", domainId: "d1" }} domainSlug="payments"
           data={{ own: [trait("t1", "Retry", "/schemas/payments/traits/t1")], inherited: [{ label: "From Enterprise", href: "/schemas/enterprise?tab=traits", traits: [trait("t2", "CloudEvents", "/schemas/enterprise/traits/t2")] }] }}
         />
       </QueryClientProvider>
@@ -31,7 +31,7 @@ describe("TraitsTab", () => {
   it("shows an empty state, and kind badges per trait", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <TraitsTab target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null} productSlug={null} data={{ own: [], inherited: [] }} />
+        <TraitsTab target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null} data={{ own: [], inherited: [] }} />
       </QueryClientProvider>
     );
     expect(screen.getByTestId("traits-empty")).toBeDefined();
@@ -40,7 +40,7 @@ describe("TraitsTab", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <TraitsTab
-          target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null} productSlug={null}
+          target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null}
           data={{ own: [trait("t1", "Retry", "/schemas/enterprise/traits/t1"), { ...trait("t3", "Idempotent", "/schemas/enterprise/traits/t3"), kind: "OPERATION" as const }], inherited: [] }}
         />
       </QueryClientProvider>
@@ -55,7 +55,7 @@ describe("TraitsTab", () => {
     const onCreateIntentConsumed = vi.fn();
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <TraitsTab target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null} productSlug={null} data={{ own: [], inherited: [] }} createIntent="trait" onCreateIntentConsumed={onCreateIntentConsumed} />
+        <TraitsTab target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null} data={{ own: [], inherited: [] }} createIntent="trait" onCreateIntentConsumed={onCreateIntentConsumed} />
       </QueryClientProvider>
     );
     expect(onCreateIntentConsumed).toHaveBeenCalled();
@@ -70,7 +70,7 @@ describe("TraitsTab", () => {
     h.createTraitAction.mockResolvedValue({ success: false, error: 'Trait "Retry" already exists at Domain level.', suggestedFix: "Pick another name." });
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <TraitsTab target={{ level: "DOMAIN", domainId: "d1" }} domainSlug="payments" productSlug={null} data={{ own: [], inherited: [] }} />
+        <TraitsTab target={{ level: "DOMAIN", domainId: "d1" }} domainSlug="payments" data={{ own: [], inherited: [] }} />
       </QueryClientProvider>
     );
     expect(screen.queryByTestId("new-trait-form")).toBeNull();
@@ -84,23 +84,23 @@ describe("TraitsTab", () => {
     expect(h.push).not.toHaveBeenCalled();
   });
 
-  it("opens the created product trait under its product URL", async () => {
+  it("opens the created domain trait under its domain URL", async () => {
     h.createTraitAction.mockResolvedValue({ success: true, data: { id: "t7" } });
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <TraitsTab target={{ level: "PRODUCT", productId: "p1" }} domainSlug="payments" productSlug="checkout" data={{ own: [], inherited: [] }} createIntent="trait" />
+        <TraitsTab target={{ level: "DOMAIN", domainId: "d1" }} domainSlug="payments" data={{ own: [], inherited: [] }} createIntent="trait" />
       </QueryClientProvider>
     );
     fireEvent.change(screen.getByLabelText("Trait name"), { target: { value: "Retry" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(h.push).toHaveBeenCalledWith("/schemas/payments/checkout/traits/t7"));
+    await waitFor(() => expect(h.push).toHaveBeenCalledWith("/schemas/payments/traits/t7"));
   });
 
   describe("create form error display and submit guard", () => {
     function openForm() {
       render(
         <QueryClientProvider client={new QueryClient()}>
-          <TraitsTab target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null} productSlug={null} data={{ own: [], inherited: [] }} createIntent="trait" />
+          <TraitsTab target={{ level: "TENANT", tenantId: "tenant-1" }} domainSlug={null} data={{ own: [], inherited: [] }} createIntent="trait" />
         </QueryClientProvider>
       );
       fireEvent.change(screen.getByLabelText("Trait name"), { target: { value: "CloudEvents" } });

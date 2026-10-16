@@ -19,10 +19,6 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId }));
 vi.mock("@/features/events/workspace/load-events-tab-data", () => ({
-  loadProductEventsData: vi.fn(async () => ({
-    events: { eventSpecs: [], messages: [], channels: [], payloadEntities: [] },
-    traits: { own: [], inherited: [] },
-  })),
   loadLevelTraits: mocks.loadLevelTraits,
 }));
 vi.mock("@/app/(dashboard)/schemas/enterprise/enterprise-workspace", () => ({

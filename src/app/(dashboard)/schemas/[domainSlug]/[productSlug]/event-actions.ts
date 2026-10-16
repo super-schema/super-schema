@@ -11,8 +11,8 @@ import type { ServiceContext } from "@/types/service-context";
 const productOwner = (productId: string) => ({ level: "PRODUCT" as const, productId });
 
 /**
- * Server actions of the self-contained Event (the services are `event.service.ts`; the old catalog-id ones stay in
- * `event-spec-actions.ts`). The `productId` is CLIENT-supplied and the service only compares the row against it:
+ * Server actions of the self-contained Event (the services are `event.service.ts`). The `productId` is CLIENT-supplied and the
+ * service only compares the row against it:
  * `withOwnedTarget` first requires that product to lie in the ACTIVE tenant (a foreign one is the NOT_FOUND of an unknown
  * product and the service never runs). `runMutation` revalidates `/schemas` on success only.
  */

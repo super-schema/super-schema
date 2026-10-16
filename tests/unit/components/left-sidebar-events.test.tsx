@@ -157,11 +157,9 @@ describe("LeftSidebar: the Entities row", () => {
     expect(active("product-p1-events")).toBe("false");
   });
 
-  it("is not highlighted on the pages the old routes redirect from (specs, messages, channels, traits)", () => {
-    for (const path of ["/schemas/payments/checkout/specs/s1", "/schemas/payments/checkout/messages/m1", "/schemas/payments/checkout/channels/c1", "/schemas/payments/checkout/traits/t1"]) {
-      visit(path);
-      expect(active("product-p1-entities")).toBe("false");
-    }
+  it("is not highlighted on a product-level trait URL (the old route redirects to the Events list)", () => {
+    visit("/schemas/payments/checkout/traits/t1");
+    expect(active("product-p1-entities")).toBe("false");
   });
 
   it("keeps the Enterprise rows: entities row on entity pages only, not on trait pages", () => {

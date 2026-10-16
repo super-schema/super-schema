@@ -36,15 +36,9 @@ describe("assetHref", () => {
   it("event page", () => {
     expect(assetHref({ kind: "event", id: "ev1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/events/ev1");
   });
-  it("event kinds", () => {
-    expect(assetHref({ kind: "eventSpec", id: "s1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/specs/s1");
-    expect(assetHref({ kind: "message", id: "m1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/messages/m1");
-    expect(assetHref({ kind: "channel", id: "c1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/channels/c1");
-  });
-  it("traits at each level", () => {
-    expect(assetHref({ kind: "trait", id: "t1", domainSlug: null, productSlug: null })).toBe("/schemas/enterprise/traits/t1");
-    expect(assetHref({ kind: "trait", id: "t1", domainSlug: "payments", productSlug: null })).toBe("/schemas/payments/traits/t1");
-    expect(assetHref({ kind: "trait", id: "t1", domainSlug: "payments", productSlug: "checkout" })).toBe("/schemas/payments/checkout/traits/t1");
+  it("traits at each library level", () => {
+    expect(assetHref({ kind: "trait", id: "t1", domainSlug: null })).toBe("/schemas/enterprise/traits/t1");
+    expect(assetHref({ kind: "trait", id: "t1", domainSlug: "payments" })).toBe("/schemas/payments/traits/t1");
   });
   it("new entity", () => {
     expect(assetHref({ kind: "newEntity", domainSlug: null, productSlug: null })).toBe("/schemas/enterprise/new");
