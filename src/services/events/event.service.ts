@@ -4,11 +4,10 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
-import { collectDocumentEdges, collectDocumentRefs } from "@/lib/events/document/edges";
+import { collectDocumentEdges, collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, isLibraryTrait, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
 import { normalizeCatalogName } from "@/lib/events/inputs";
-import type { EntityPin } from "@/lib/events/types";
 import type { LevelScope } from "@/lib/levels";
 import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
@@ -76,22 +75,6 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
 
 // ── reference validation ────────────────────────────────────────────────────────────────────────────────────────────────
 
-type PinSite = { pointer: string; pin: EntityPin };
-
-/** Every entity pin of the document with its pointer — the same sites `collectDocumentEdges` / `collectDocumentRefs` read. */
-function pinSites(doc: EventDocument): PinSite[] {
-  const sites: PinSite[] = [];
-  doc.messages.forEach((m, i) => {
-    sites.push({ pointer: `/messages/${i}/payload`, pin: m.payload });
-    if (m.headers) sites.push({ pointer: `/messages/${i}/headers`, pin: m.headers });
-    if (m.keyPin) sites.push({ pointer: `/messages/${i}/keyPin`, pin: m.keyPin });
-  });
-  doc.traits.forEach((t, i) => {
-    if (!isLibraryTrait(t) && t.headers) sites.push({ pointer: `/traits/${i}/headers`, pin: t.headers });
-  });
-  return sites;
-}
-
 /** The ids of a stored `ResolvedEventSpec`'s channels or messages; `null` when there is no usable resolved spec (NULL column, malformed JSON). */
 function resolvedItemIds(resolvedSpec: Prisma.JsonValue | null, kind: "channel" | "message"): Set<string> | null {
   if (resolvedSpec === null || typeof resolvedSpec !== "object" || Array.isArray(resolvedSpec)) return null;
@@ -135,7 +118,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
   const externalById = new Map(externals.map((v) => [v.id, v]));
 
   const problems: DocumentProblem[] = [];
-  for (const { pointer, pin } of pinSites(doc)) {
+  for (const { pointer, pin } of collectPinSites(doc)) {
     const entity = entityById.get(pin.entityId);
     if (!entity) {
       problems.push({ pointer: `${pointer}/entityId`, message: `Entity "${pin.entityId}" not found in this tenant` });
