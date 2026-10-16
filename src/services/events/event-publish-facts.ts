@@ -10,7 +10,7 @@ import type { EventBumpPinFact, EventBumpSide } from "@/lib/events/document/bump
 import { collectDocumentRefs, collectPinSites, type PinSite } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { effectiveRepresentationFormats } from "@/lib/events/document/representation";
-import type { EventDocument } from "@/lib/events/document/types";
+import { isLibraryTrait, type EventDocument } from "@/lib/events/document/types";
 import { isJsonObject } from "@/lib/events/inputs";
 import type { EventPublishBlocker, LatestVersion } from "@/lib/events/publish-plan";
 import type { FrozenTrait } from "@/lib/events/types";
@@ -135,6 +135,15 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
       blockers.push({ kind: "MISSING_ENTITY", pointer, message: `"${pin.entityVersionId}" is not a published version of ${name}` });
     }
   }
+  // A library trait has no pin site of its own, but its message properties entity is a pin all the same (spec §5): unpinned, the
+  // headers would be rendered from the entity's mutable draft and frozen into an immutable version nobody can reproduce.
+  document.traits.forEach((t, i) => {
+    if (!isLibraryTrait(t)) return;
+    const trait = snapshot.libraryTraits.get(t.libraryTraitId);
+    if (!trait?.headersEntityId || trait.headersEntityVersionId !== null) return;
+    const name = entityName.get(trait.headersEntityId) ?? `Entity "${trait.headersEntityId}"`;
+    blockers.push({ kind: "UNPUBLISHED_PIN", pointer: `/traits/${i}`, message: `Library trait "${trait.name}": ${name} has no published version pinned` });
+  });
 
   const sideOf = (doc: EventDocument, sites: PinSite[], library: Array<[string, FrozenTrait]>, externalMajors: Record<string, number>): EventBumpSide => ({
     doc,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planDocumentArtifacts, resolveDocument, type ResolveDocumentInput } from "@/lib/events/document/resolve";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
 import { assembleAsyncApi3 } from "@/lib/event-specs/assemble";
+import type { ResolvedChannel } from "@/lib/event-specs/types";
 
 const avro = (name: string) => ({ format: "avro" as const, schema: { type: "record", name, fields: [] } });
 const doc = (): EventDocument => ({
@@ -320,5 +321,107 @@ describe("resolveDocument", () => {
       i.external = new Map([...i.external, ["ext-created", { message: external().message, traits: [] }]]);
       expect(problemsOf(resolveDocument(i)).map((p) => p.pointer)).toEqual(["/externalRefs/1"]);
     });
+  });
+});
+
+// A version published with `emitAll` + `emitChannelServers` stores its channels WITH the ids of its own servers and messages
+// (`serverRefs`, `messageRefs`) and a per-message profile table keyed by its own message ids (`messageProfiles`). Another event that
+// references the channel must get the channel itself, never those ids: they name things that do not exist in the referencing event.
+describe("an external channel brings no references of the source event", () => {
+  const stored = (): ResolvedChannel => ({
+    id: "orders", name: "orders", productSlug: "upstream", address: "payments.orders.v1", protocol: "kafka", profile: { format: "avro" },
+    title: "Orders", bindings: { kafka: { partitions: 12 } },
+    serverRefs: ["kafka-prod"], messageRefs: ["OrderCreated"], messageProfiles: { OrderCreated: { format: "protobuf" } },
+  });
+  const jsonSchema = (name: string) => ({ format: "json-schema" as const, dialect: "draft-07" as const, schema: { type: "object", title: name, properties: { id: { type: "string" } } } });
+  const errorsOf = (r: ReturnType<typeof assembleAsyncApi3>) => r.diagnostics.filter((x) => x.severity === "error");
+  const emitAllInput = (d: EventDocument): ResolveDocumentInput => ({ ...input(d), emitAll: true, emitChannelServers: true });
+
+  /** An event with NO local channel and NO server: it only references the source's channel and sends / receives on it. */
+  const referencing = (messageKey: string): EventDocument => ({
+    ...emptyEventDocument("consumer"),
+    externalRefs: [{ key: "ext-orders", eventVersionId: "ev9", kind: "channel", itemKey: "orders" }],
+    operations: [{ key: "recv", action: "receive", channelKey: "ext-orders", messageKeys: [messageKey], traitKeys: [] }],
+  });
+
+  it("keeps what describes the channel and drops serverRefs, messageRefs and messageProfiles, without touching the stored copy", () => {
+    const d = referencing("Mine");
+    d.messages = [{ key: "Mine", payload: { entityId: "e1", entityVersionId: "v1" }, traitKeys: [] }];
+    const i = emitAllInput(d);
+    i.artifacts = new Map([["Mine", { payloads: [jsonSchema("Mine")], keys: [] }]]);
+    const channel = stored();
+    i.external = new Map([["ext-orders", { channel }]]);
+
+    const r = resolveDocument(i);
+
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    const resolved = r.data.channels.find((c) => c.id === "ext-orders");
+    expect(resolved).toMatchObject({ id: "ext-orders", name: "orders", productSlug: "upstream", address: "payments.orders.v1", protocol: "kafka", profile: { format: "avro" }, title: "Orders", bindings: { kafka: { partitions: 12 } } });
+    expect(resolved).not.toHaveProperty("serverRefs");
+    expect(resolved).not.toHaveProperty("messageRefs");
+    expect(resolved).not.toHaveProperty("messageProfiles");
+    expect(channel).toEqual(stored()); // the supplied (stored) channel is a copy source, never mutated
+  });
+
+  it("sends a LOCAL message on an external channel and emits with 0 errors", () => {
+    const d = referencing("Mine");
+    d.messages = [{ key: "Mine", payload: { entityId: "e1", entityVersionId: "v1" }, traitKeys: [] }];
+    const i = emitAllInput(d);
+    i.artifacts = new Map([["Mine", { payloads: [jsonSchema("Mine")], keys: [] }]]);
+    i.external = new Map([["ext-orders", { channel: stored() }]]);
+
+    const r = resolveDocument(i);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    const assembled = assembleAsyncApi3(r.data);
+
+    expect(errorsOf(assembled)).toEqual([]);
+    const channels = Object.values(assembled.document.channels as Record<string, { address?: string; messages?: Record<string, unknown>; servers?: unknown }>);
+    expect(channels).toHaveLength(1); // the external channel, emitted under its own name
+    expect(channels[0].address).toBe("payments.orders.v1");
+    expect(Object.keys(channels[0].messages ?? {})).toHaveLength(1); // exactly what this event's operation put on it
+    expect(channels[0]).not.toHaveProperty("servers"); // the source's servers are not this event's
+  });
+
+  it("never lets the source's per-message profile reach a local message that happens to share a message id", () => {
+    // the source's table says "OrderCreated is protobuf on this channel"; the LOCAL message with the same id has no protobuf payload
+    const d = referencing("OrderCreated");
+    d.messages = [{ key: "OrderCreated", payload: { entityId: "e1", entityVersionId: "v1" }, traitKeys: [] }];
+    const i = emitAllInput(d);
+    i.artifacts = new Map([["OrderCreated", { payloads: [jsonSchema("Mine")], keys: [] }]]);
+    i.external = new Map([["ext-orders", { channel: stored() }]]);
+
+    const r = resolveDocument(i);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    const assembled = assembleAsyncApi3(r.data);
+
+    expect(errorsOf(assembled)).toEqual([]);
+    const messages = (assembled.document.components as { messages: Record<string, { payload?: { schemaFormat?: string } }> }).messages;
+    const formats = Object.values(messages).map((m) => m.payload?.schemaFormat ?? "");
+    expect(formats.some((f) => f.includes("schema+json"))).toBe(true);
+    expect(formats.some((f) => f.includes("protobuf"))).toBe(false);
+  });
+
+  it("receives an external MESSAGE of the same version on the external channel and emits with 0 errors", () => {
+    const d = referencing("ext-created");
+    d.externalRefs.push({ key: "ext-created", eventVersionId: "ev9", kind: "message", itemKey: "OrderCreated" });
+    const i = emitAllInput(d);
+    i.artifacts = new Map();
+    i.external = new Map([
+      ["ext-orders", { channel: stored() }],
+      ["ext-created", { message: { id: "OrderCreated", name: "OrderCreated", productSlug: "upstream", traitRefs: [], payloads: [avro("Up")], profile: { format: "avro" } }, traits: [] }],
+    ]);
+
+    const r = resolveDocument(i);
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    const assembled = assembleAsyncApi3(r.data);
+
+    expect(errorsOf(assembled)).toEqual([]);
+    const channels = Object.values(assembled.document.channels as Record<string, { messages?: Record<string, unknown> }>);
+    expect(channels).toHaveLength(1);
+    expect(Object.keys(channels[0].messages ?? {})).toHaveLength(1);
   });
 });
