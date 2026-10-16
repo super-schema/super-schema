@@ -29,8 +29,8 @@ const CHIP: Record<CodeStatus, { label: string; title: string; variant: "seconda
  * Props are the page's unsaved draft (see `event-code-source.tsx`). Everything this does (the instant build, the debounced server
  * call) lives here, so it runs only while the shell actually renders the panel: a collapsed right panel does not mount its content.
  */
-export function EventCodePanel({ eventId, productId, productSlug, doc, problems, entityLabels, versionLabels }: EventCodeSource) {
-  const code = useEventCode({ eventId, productId, productSlug, doc, blocked: problems.length > 0, entityLabels, versionLabels });
+export function EventCodePanel({ eventId, productId, productSlug, doc, problems, entityLabels, versionLabels, libraryTraits }: EventCodeSource) {
+  const code = useEventCode({ eventId, productId, productSlug, doc, blocked: problems.length > 0, entityLabels, versionLabels, libraryTraits });
   const [format, setFormat] = useState<Format>("yaml");
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
