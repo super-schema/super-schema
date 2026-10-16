@@ -41,7 +41,7 @@ describe("EventBuilder: outline", () => {
     expect(outline.getAllByRole("button").map((b) => b.getAttribute("data-testid"))).toEqual(nodes.map((n) => `outline-${n}`));
     expect(nodes.map((n) => button(`outline-${n}`).textContent)).toEqual([
       expect.stringContaining("Metadata"), expect.stringContaining("Servers"), expect.stringContaining("Channels"),
-      expect.stringContaining("Messages"), expect.stringContaining("Operations"), expect.stringContaining("Traits"), expect.stringContaining("Advanced"),
+      expect.stringContaining("Messages"), expect.stringContaining("Operations"), expect.stringContaining("Message properties"), expect.stringContaining("Advanced"),
     ]);
     expect(screen.getByTestId("outline-count-servers").textContent).toBe("2");
     expect(screen.getByTestId("outline-count-channels").textContent).toBe("2");
