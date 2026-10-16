@@ -13,7 +13,7 @@ type Outcome = { status: "error"; message: string } | { status: "ready"; rows: U
 const LOAD_FAILED = "Could not load usages. Try again.";
 
 /** Spec 18.9 "Who uses X?" — published uses first, drafts flagged, deleted referrers shown as plain text. */
-export function UsedByPanel({ subject, title = "Used by" }: { subject: UsageSubject; title?: string }) {
+export function UsedByPanel({ subject, title = "Used by" }: { subject: Extract<UsageSubject, { kind: "entity" }>; title?: string }) {
   const id = subject.entityId;
   const key = `entity:${id}`;
   // The outcome is keyed by subject: a result for a previous subject counts as "still loading" for the new one.
