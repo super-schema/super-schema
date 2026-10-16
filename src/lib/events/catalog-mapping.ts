@@ -1,5 +1,6 @@
 import type { ResolvedTrait, SchemaArtifact, TraitKind } from "@/lib/event-specs/types";
 import type { ArtifactSubject } from "@/services/events/artifact-renderer";
+import { BUNDLED_MARKER_KEY } from "./bundled-traits";
 import { isJsonObject } from "./inputs";
 import type { FrozenTrait } from "./types";
 
@@ -37,7 +38,10 @@ export function traitHeadersSubject(t: FrozenTrait): ArtifactSubject | null {
 }
 
 export function toResolvedTrait(t: FrozenTrait, headers?: SchemaArtifact): ResolvedTrait {
-  const resolved: ResolvedTrait = { id: t.id, name: t.name, kind: t.kind, ownerSlug: t.ownerSlug, spec: t.spec };
+  // `x-bundled` marks a built-in trait inside Super Schema (read-only in the UI and services). It is bookkeeping, not part of the
+  // AsyncAPI the user hands to other teams, so it never reaches the emitted document.
+  const { [BUNDLED_MARKER_KEY]: _marker, ...spec } = t.spec;
+  const resolved: ResolvedTrait = { id: t.id, name: t.name, kind: t.kind, ownerSlug: t.ownerSlug, spec };
   if (headers) resolved.headers = headers;
   return resolved;
 }

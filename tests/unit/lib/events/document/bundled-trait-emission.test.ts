@@ -71,10 +71,10 @@ describe("a library trait with inline headers, through resolve -> assemble", () 
     ]);
   });
 
-  it("carries the built-in marker through as an x- specification extension (valid AsyncAPI) and nothing else extra", () => {
+  it("keeps the built-in marker out of the emitted document (it is bookkeeping inside Super Schema) and nothing else extra", () => {
     const ce = messageTraits(out.document).CloudEvents;
-    expect(ce["x-bundled"]).toBe("cloudevents@1.0");
-    expect(Object.keys(ce).sort()).toEqual(["description", "headers", "summary", "x-bundled"]);
+    expect(ce).not.toHaveProperty("x-bundled");
+    expect(Object.keys(ce).sort()).toEqual(["description", "headers", "summary"]);
   });
 
   it("assembles without a diagnostic of any severity", () => {
@@ -110,12 +110,14 @@ describe("a library trait with inline headers, through resolve -> assemble", () 
     expect(again.diagnostics).toEqual([]);
   });
 
-  it("does not leak the definition into the document it was resolved for: the resolved spec is a copy", () => {
+  it("does not leak the definition into the document it was resolved for: the resolved spec is a copy without the marker", () => {
     const spec = def("CloudEvents").spec;
+    const { "x-bundled": _marker, ...withoutMarker } = spec;
     const resolvedTrait = out.resolved.traits.find((t) => t.name === "CloudEvents");
-    expect(resolvedTrait?.spec).toEqual(spec);
+    expect(resolvedTrait?.spec).toEqual(withoutMarker);
     expect(resolvedTrait?.spec).not.toBe(spec);
     expect(Object.isFrozen(resolvedTrait?.spec)).toBe(false);
+    expect(spec["x-bundled"]).toBe("cloudevents@1.0"); // the stored definition keeps it
   });
 });
 
