@@ -12,7 +12,7 @@ import type { JsonObject } from "@/lib/event-specs/types";
 import type { PropertySummaryRow } from "@/lib/events/bundled-traits";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
 import { buildOutline, SECTION_LABELS } from "./outline";
-import { locateProblem, uniqueProblems, userProblemText } from "./problems";
+import { locateProblem, uniqueProblems } from "./problems";
 import { AdvancedSection } from "./sections/AdvancedSection";
 import { ChannelsSection } from "./sections/ChannelsSection";
 import { MessagesSection } from "./sections/MessagesSection";
@@ -113,8 +113,8 @@ export function EventBuilder({ draft, options, section, onSectionChange, item, o
               <ul className="max-h-48 list-disc space-y-space-1 overflow-y-auto pl-space-4">
                 {failed.map((p) => {
                   const { section: target, item: targetItem } = locateProblem(doc, p.pointer);
-                  if (target === null) return <li key={`${p.pointer}|${p.message}`}>{`${p.pointer === "" ? "document" : p.pointer}: ${userProblemText(p)}`}</li>;
-                  const label = `${SECTION_LABELS[target]}${targetItem ? ` · ${targetItem}` : ""}: ${userProblemText(p)}`;
+                  if (target === null) return <li key={`${p.pointer}|${p.message}`}>{`${p.pointer === "" ? "document" : p.pointer}: ${p.message}`}</li>;
+                  const label = `${SECTION_LABELS[target]}${targetItem ? ` · ${targetItem}` : ""}: ${p.message}`;
                   return (
                     <li key={`${p.pointer}|${p.message}`}>
                       <button

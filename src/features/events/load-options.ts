@@ -5,6 +5,7 @@ import { isBundledTrait, propertySummary, type PropertySummaryRow } from "@/lib/
 import { entitySourceFormat } from "@/lib/events/document/representation";
 import { isJsonObject } from "@/lib/events/inputs";
 import type { JsonObject, TraitKind } from "@/lib/events/types";
+import { assetHref } from "@/lib/navigation/asset-href";
 import type { EntityOption, VersionOption } from "./shared/EntityPinPicker";
 
 /**
@@ -25,13 +26,17 @@ export async function loadEntityOptions(tenantId: string): Promise<EntityOption[
   const rows = await prisma.entity.findMany({
     where: { tenantId },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true } }, ...OWNER_SELECT },
+    select: {
+      id: true, name: true, slug: true, latestVersionId: true, metadata: true, latestVersion: { select: { major: true, minor: true } },
+      domain: { select: { name: true, slug: true } }, product: { select: { name: true, slug: true } },
+    },
   });
   return rows.map((r) => {
     const sourceFormat = entitySourceFormat(r.metadata);
     return {
       id: r.id, name: r.name, ownerLabel: ownerLabel(r), latestVersionId: r.latestVersionId,
       latestVersionLabel: r.latestVersion ? formatVersionLabel(r.latestVersion) : null,
+      href: assetHref({ kind: "entity", slug: r.slug, domainSlug: r.domain?.slug ?? null, productSlug: r.product?.slug ?? null }),
       ...(sourceFormat && { sourceFormat }),
     };
   });

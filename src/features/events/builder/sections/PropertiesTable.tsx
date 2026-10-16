@@ -9,9 +9,13 @@
 //    description and allowed values. It writes `spec.headers` (`{ type: "object", properties, required }`) through `onChange`, and
 //    `undefined` when there are no rows (the caller removes `headers`). A row keeps its property's raw schema and every edit is merged
 //    into it, so `const`, `format`, `pattern` and nested keys the table has no column for survive untouched.
-// Test ids are `${idPrefix}-…`: `-table`, `-note`, `-empty`, `-add`, and per row (read-only: by name; editable: by position)
+//  - PINNED (`pinned`, a legacy trait whose headers come from an entity): the table says where the properties come from (`-pin-note`, the
+//    entity linked): in place of "No properties" while it has no rows, as a line under the table once it has some (a row just added
+//    and not named yet counts). The table owns the line because only it knows its rows.
+// Test ids are `${idPrefix}-…`: `-table`, `-note`, `-empty`, `-pin-note`, `-add`, and per row (read-only: by name; editable: by position)
 // `-row-<name>` / `-name-<i>`, `-type-<i>`, `-required-<i>`, `-description-<i>`, `-allowed-<i>` (+ `-chip-<j>`), `-remove-<i>`.
 import { useState, type KeyboardEvent, type ReactNode } from "react";
+import Link from "next/link";
 import { Lock, Plus, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +27,7 @@ import {
   allowedValues, descriptionOf, displayRowsFromHeaders, displayRowsFromSummary, duplicateNames, friendlyType, jsonEqual, PROPERTY_TYPES, readRows, setAllowedValues,
   setDescription, setType, typeLabel, writeHeaders, type DisplayRow, type PropertyRow, type PropertyType,
 } from "../properties-schema";
+import type { PinnedHeaders } from "../traits";
 
 export interface PropertiesTableProps {
   /** Prefix of every id and test id. */
@@ -37,6 +42,8 @@ export interface PropertiesTableProps {
   readOnly?: boolean;
   /** A line shown above the table with a lock (the reason it cannot be edited). */
   note?: ReactNode;
+  /** The entity the headers come from (a legacy pin): the table says so instead of its empty-state line, and under its rows. */
+  pinned?: PinnedHeaders;
   /** Disable every input of the editable table. */
   disabled?: boolean;
 }
@@ -53,6 +60,22 @@ export function LockedNote({ id, children }: { id: string; children: ReactNode }
   );
 }
 
+/** Where the properties of a pinned trait come from. `lead` is the sentence up to the entity: the table is empty, or it has rows of its own too. */
+function PinnedNote({ id, pinned, lead, className }: { id: string; pinned: PinnedHeaders; lead: string; className: string }) {
+  const name = pinned.href
+    ? <Link href={pinned.href} className="font-medium text-primary hover:underline">{pinned.name}</Link>
+    : <span className="font-medium text-foreground">{pinned.name}</span>;
+  return (
+    <p data-testid={id} className={className}>
+      {lead} {name}{pinned.versionLabel ? ` v${pinned.versionLabel}` : ""}.
+    </p>
+  );
+}
+const EMPTY_LEAD = "Properties come from the entity";
+const ROWS_LEAD = "Headers also come from the entity";
+const EMPTY_NOTE = "text-body-small text-muted-foreground";
+const ROWS_NOTE = "text-caption text-muted-foreground";
+
 /** The allowed values of a property as chips; a `const` is "Always …". */
 function AllowedChips({ id, allowed }: { id: string; allowed: DisplayRow["allowed"] }) {
   if (!allowed) return null;
@@ -66,37 +89,41 @@ function AllowedChips({ id, allowed }: { id: string; allowed: DisplayRow["allowe
   );
 }
 
-function ReadOnlyTable({ idPrefix, rows }: { idPrefix: string; rows: DisplayRow[] }) {
+function ReadOnlyTable({ idPrefix, rows, pinned }: { idPrefix: string; rows: DisplayRow[]; pinned?: PinnedHeaders }) {
+  if (rows.length === 0 && pinned) return <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={EMPTY_LEAD} className={EMPTY_NOTE} />;
   if (rows.length === 0) return <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties.</p>;
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
-      <table data-testid={`${idPrefix}-table`} className="w-full min-w-[32rem] border-collapse">
-        <caption className="sr-only">Properties</caption>
-        <thead className="border-b border-border bg-muted/30">
-          <tr>
-            <th scope="col" className={HEAD}>Name</th>
-            <th scope="col" className={HEAD}>Type</th>
-            <th scope="col" className={HEAD}>Required</th>
-            <th scope="col" className={HEAD}>Description</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {rows.map((row) => (
-            <tr key={row.name} data-testid={`${idPrefix}-row-${row.name}`}>
-              <th scope="row" className={`${CELL} font-mono font-medium`}>{row.name}</th>
-              <td className={CELL} data-testid={`${idPrefix}-row-${row.name}-type`}>{row.type}</td>
-              <td className={CELL} data-testid={`${idPrefix}-row-${row.name}-required`}>
-                {row.required ? <Badge variant="secondary">Required</Badge> : <span className="text-muted-foreground">Optional</span>}
-              </td>
-              <td className={CELL}>
-                {row.description && <span data-testid={`${idPrefix}-row-${row.name}-description`}>{row.description}</span>}
-                <AllowedChips id={`${idPrefix}-row-${row.name}-allowed`} allowed={row.allowed} />
-              </td>
+    <>
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table data-testid={`${idPrefix}-table`} className="w-full min-w-[32rem] border-collapse">
+          <caption className="sr-only">Properties</caption>
+          <thead className="border-b border-border bg-muted/30">
+            <tr>
+              <th scope="col" className={HEAD}>Name</th>
+              <th scope="col" className={HEAD}>Type</th>
+              <th scope="col" className={HEAD}>Required</th>
+              <th scope="col" className={HEAD}>Description</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((row) => (
+              <tr key={row.name} data-testid={`${idPrefix}-row-${row.name}`}>
+                <th scope="row" className={`${CELL} font-mono font-medium`}>{row.name}</th>
+                <td className={CELL} data-testid={`${idPrefix}-row-${row.name}-type`}>{row.type}</td>
+                <td className={CELL} data-testid={`${idPrefix}-row-${row.name}-required`}>
+                  {row.required ? <Badge variant="secondary">Required</Badge> : <span className="text-muted-foreground">Optional</span>}
+                </td>
+                <td className={CELL}>
+                  {row.description && <span data-testid={`${idPrefix}-row-${row.name}-description`}>{row.description}</span>}
+                  <AllowedChips id={`${idPrefix}-row-${row.name}-allowed`} allowed={row.allowed} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {pinned && <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={ROWS_LEAD} className={ROWS_NOTE} />}
+    </>
   );
 }
 
@@ -145,7 +172,7 @@ function AllowedValuesInput({ id, label, values, disabled, onChange }: { id: str
 let rowSequence = 0;
 const nextRowId = () => `row-${++rowSequence}`;
 
-function EditableTable({ idPrefix, headers, onChange, disabled }: { idPrefix: string; headers: unknown; onChange: (next: JsonObject | undefined) => void; disabled?: boolean }) {
+function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPrefix: string; headers: unknown; onChange: (next: JsonObject | undefined) => void; disabled?: boolean; pinned?: PinnedHeaders }) {
   const [rows, setRows] = useState<PropertyRow[]>(() => readRows(headers, nextRowId));
   const [seen, setSeen] = useState<unknown>(headers);
   const [justAdded, setJustAdded] = useState<string | null>(null);
@@ -173,7 +200,9 @@ function EditableTable({ idPrefix, headers, onChange, disabled }: { idPrefix: st
   return (
     <div className="space-y-space-2">
       {rows.length === 0 ? (
-        <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties yet. Add the ones every message carries.</p>
+        pinned
+          ? <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={EMPTY_LEAD} className={EMPTY_NOTE} />
+          : <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties yet. Add the ones every message carries.</p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border">
           <table data-testid={`${idPrefix}-table`} className="w-full min-w-[40rem] border-collapse">
@@ -251,19 +280,20 @@ function EditableTable({ idPrefix, headers, onChange, disabled }: { idPrefix: st
       <Button type="button" size="sm" variant="outline" onClick={addRow} disabled={disabled} data-testid={`${idPrefix}-add`} className="gap-1.5">
         <Plus className="size-4" /> Add property
       </Button>
+      {pinned && rows.length > 0 && <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={ROWS_LEAD} className={ROWS_NOTE} />}
     </div>
   );
 }
 
-export function PropertiesTable({ idPrefix, headers, summary, onChange, readOnly, note, disabled }: PropertiesTableProps) {
+export function PropertiesTable({ idPrefix, headers, summary, onChange, readOnly, note, pinned, disabled }: PropertiesTableProps) {
   const editable = onChange !== undefined && !readOnly;
   return (
     <div data-testid={`${idPrefix}-properties`} className="space-y-space-2">
       {note && <LockedNote id={`${idPrefix}-note`}>{note}</LockedNote>}
       {editable ? (
-        <EditableTable idPrefix={idPrefix} headers={headers} onChange={onChange} disabled={disabled} />
+        <EditableTable idPrefix={idPrefix} headers={headers} onChange={onChange} disabled={disabled} pinned={pinned} />
       ) : (
-        <ReadOnlyTable idPrefix={idPrefix} rows={headers !== undefined || !summary ? displayRowsFromHeaders(headers) : displayRowsFromSummary(summary)} />
+        <ReadOnlyTable idPrefix={idPrefix} rows={headers !== undefined || !summary ? displayRowsFromHeaders(headers) : displayRowsFromSummary(summary)} pinned={pinned} />
       )}
     </div>
   );

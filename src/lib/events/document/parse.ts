@@ -18,6 +18,10 @@ const FORMATS: readonly PayloadFormat[] = ["avro", "json-schema", "protobuf"];
 const DIALECTS: readonly JsonSchemaDialect[] = ["draft-07", "2020-12"];
 const ACTIONS: readonly OperationAction[] = ["send", "receive"];
 const TRAIT_KINDS: readonly TraitKind[] = ["MESSAGE", "OPERATION"];
+// What the user calls a trait. The UI's words live in `features/events/builder/labels.ts`, which `src/lib` does not import, so they are
+// repeated here; tests/unit/lib/events/document/parse-wording.test.ts fails if they drift. Problem text never says "trait".
+const propertiesNoun = (kind: TraitKind): string => `${kind.toLowerCase()} properties`;
+const ANY_PROPERTIES = "message or operation properties";
 const REF_KINDS: readonly DocExternalRef["kind"][] = ["channel", "message"];
 const oneOf = <T extends string>(list: readonly T[], v: unknown): T | undefined => list.find((x) => x === v);
 const compact = <T extends object>(v: T): T => Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined)) as T;
@@ -288,7 +292,7 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
     if (!kind) bad(`${p}/kind`, `kind must be one of ${TRAIT_KINDS.join(", ")}`);
     const hasSpec = t.spec !== undefined && t.spec !== null;
     const hasLibrary = t.libraryTraitId !== undefined && t.libraryTraitId !== null;
-    if (hasSpec === hasLibrary) bad(p, "A trait needs exactly one of spec or libraryTraitId");
+    if (hasSpec === hasLibrary) bad(p, "Message properties need exactly one of spec or libraryTraitId");
     if (hasLibrary && !hasSpec) {
       const libraryTraitId = r.req(t, "libraryTraitId", p) ?? "";
       return { keyOk, kind, value: { key, kind: kind ?? "MESSAGE", libraryTraitId } };
@@ -393,7 +397,7 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
   checkUnique("server", servers.map(at("/servers")));
   checkUnique("channel", [...channels.map(at("/channels")), ...refsOf("channel").map(refEntry)]);
   checkUnique("message", [...messages.map(at("/messages")), ...refsOf("message").map(refEntry)]);
-  checkUnique("trait", traits.map(at("/traits")));
+  checkUnique(ANY_PROPERTIES, traits.map(at("/traits"))); // one key space for both kinds
   checkUnique("operation", operations.map(at("/operations")));
   checkUnique("external reference", externalRefs.map(at("/externalRefs")).filter((e) => !flagged.has(e.pointer)));
 
@@ -407,8 +411,8 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
   const isChannel = (k: string) => localChannels.has(k) || externalChannelKeys.has(k);
 
   const checkTraitRefs = (keys: string[], pointer: string, kind: TraitKind) => keys.forEach((k, j) => {
-    if (!traitKinds.has(k)) bad(`${pointer}/${j}`, `Unknown trait "${k}"`);
-    else if (traitKinds.get(k) !== undefined && traitKinds.get(k) !== kind) bad(`${pointer}/${j}`, `Trait "${k}" is not a ${kind.toLowerCase()} trait`);
+    if (!traitKinds.has(k)) bad(`${pointer}/${j}`, `Unknown ${propertiesNoun(kind)} "${k}"`);
+    else if (traitKinds.get(k) !== undefined && traitKinds.get(k) !== kind) bad(`${pointer}/${j}`, `"${k}" is not a set of ${propertiesNoun(kind)}`);
   });
   /** `messageKeys` must resolve and, on a local channel, be allowed by that channel. External channels get no subset check here. */
   const checkMessageRefs = (keys: string[], pointer: string, channelKey: string | undefined) => keys.forEach((k, j) => {
