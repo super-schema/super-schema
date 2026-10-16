@@ -45,7 +45,7 @@ export type EventReferrerList = EventReferrerUsage[] & { readonly truncated: boo
 export const MAX_EVENT_REFERRERS = 50;
 const MAX_NAMED_REFERRERS = 5;
 /** Rows read per source before the list is flagged truncated. Any hit blocks; only the first few are ever named. */
-const MAX_REFERRER_SCAN = 200;
+export const MAX_REFERRER_SCAN = 200;
 /** Ids per `IN (...)` list (a domain can own many event versions). */
 const ID_CHUNK = 1000;
 
