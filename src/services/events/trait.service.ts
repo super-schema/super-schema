@@ -6,7 +6,6 @@ import { isJsonObject, normalizeCatalogName } from "@/lib/events/inputs";
 import type { EntityPin, JsonObject, TraitDetail, TraitKind } from "@/lib/events/types";
 import { createInScope, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
-import { assetInUseError, findTraitReferrers } from "@/services/events/delete-guards";
 import { findLibraryTraitEventReferrers, withEventsInUse } from "@/services/events/event-guards";
 import { resolvePin, type PinInput } from "@/services/events/pins";
 import { deleteReferencesFrom, pinEdges, replaceReferences } from "@/services/events/schema-references";
@@ -226,12 +225,7 @@ export async function deleteTrait(id: string, owner: ScopeTarget, ctx: ServiceCo
     action: "DELETE", entityType: "Trait", entityId: id, userId: ctx.userId, beforeState: toDetail(owned.data.row),
     run: () =>
       ctx.prisma.$transaction(async (tx): Promise<Result<{ id: string }>> => {
-        const blocked = withEventsInUse(
-          assetInUseError("Trait", name, await findTraitReferrers(tx, { id, tenantId })),
-          "Trait",
-          name,
-          await findLibraryTraitEventReferrers(tx, { id, tenantId })
-        );
+        const blocked = withEventsInUse(null, "Trait", name, await findLibraryTraitEventReferrers(tx, { id, tenantId }));
         if (blocked) return err(blocked);
         await deleteReferencesFrom(tx, "TRAIT", [id]);
         await tx.trait.delete({ where: { id } });
