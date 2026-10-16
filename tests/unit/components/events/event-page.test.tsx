@@ -599,7 +599,8 @@ describe("EventPage: live code in the shell's right Detail Panel", () => {
   );
   const renderInShell = (over: Partial<EventPageData> = {}, contents?: unknown[]) => render(shell(<EventPage data={pageData(over)} />, contents));
   const panel = () => within(screen.getByTestId("right-panel"));
-  const code = () => panel().getByTestId("code-text").textContent as string;
+  // The code is shown in a read-only JsonEditor; in jsdom (no CodeMirror stand-ins here) that is its textarea.
+  const code = () => (panel().getByTestId("event-code-text") as HTMLTextAreaElement).value;
 
   it("puts the Code panel in the right Detail Panel (not in the page) instead of hiding the panel", () => {
     renderInShell();

@@ -41,6 +41,9 @@ const emission = (over: Record<string, unknown> = {}) => ({
 
 const flush = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const text = (testId: string) => screen.getByTestId(testId).textContent;
+/** The code on screen: this test file has no CodeMirror stand-ins for jsdom, so the editor is its textarea (same API). */
+const editor = () => screen.getByTestId("event-code-text") as HTMLTextAreaElement;
+const code = () => editor().value;
 const chip = () => screen.getByTestId("code-status");
 const click = (testId: string) => fireEvent.click(screen.getByTestId(testId));
 
@@ -57,57 +60,50 @@ afterEach(() => {
 });
 
 describe("EventCodePanel: the code", () => {
-  it("shows the instant YAML of the draft immediately, read-only, with a line-number gutter", () => {
+  it("shows the instant YAML of the draft immediately, in a read-only editor named after its format", () => {
     const p = props();
     render(<EventCodePanel {...p} />);
-    const instant = instantOf(p.doc);
-    expect(text("code-text")).toBe(instant.yaml);
-    const lines = instant.yaml.replace(/\n$/, "").split("\n");
-    expect(text("code-gutter")).toBe(lines.map((_, i) => String(i + 1)).join("\n") + "\n");
-    expect(screen.getByTestId("code-gutter").getAttribute("aria-hidden")).toBe("true");
-    expect(screen.getByTestId("code-text").closest("pre")).not.toBeNull();
-    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(code()).toBe(instantOf(p.doc).yaml);
+    expect(editor().readOnly).toBe(true);
+    expect(editor().getAttribute("aria-label")).toBe("AsyncAPI document as YAML");
+    expect(screen.getByTestId("event-code-text-editor").getAttribute("data-language")).toBe("yaml");
     expect(h.preview).not.toHaveBeenCalled();
   });
 
-  it("exposes the code as a labelled, scrollable, keyboard-focusable region", () => {
+  it("fills the panel: the editor has the whole height of the labelled code region", () => {
     render(<EventCodePanel {...props()} />);
     const region = screen.getByRole("region", { name: "AsyncAPI code" });
-    expect(region.getAttribute("tabindex")).toBe("0");
-    expect(region.contains(screen.getByTestId("code-text"))).toBe(true);
+    expect(region.contains(editor())).toBe(true);
+    expect((screen.getByTestId("event-code-text-editor") as HTMLElement).style.height).toBe("100%");
+  });
+
+  it("has one stop for the keyboard, in the editor, not in the region around it", () => {
+    render(<EventCodePanel {...props()} />);
+    expect(screen.getByRole("region", { name: "AsyncAPI code" }).hasAttribute("tabindex")).toBe(false);
   });
 
   it("names the entity behind every placeholder schema", () => {
     render(<EventCodePanel {...props()} />);
-    expect(text("code-text")).toContain("x-super-schema-entity: Order@1.0");
+    expect(code()).toContain("x-super-schema-entity: Order@1.0");
   });
 
   it("follows an edit at once, without waiting for the server", () => {
     const { rerender } = render(<EventCodePanel {...props()} />);
-    expect(text("code-text")).toContain("title: Orders");
+    expect(code()).toContain("title: Orders");
     rerender(<EventCodePanel {...props({ doc: makeDoc("Orders v2") })} />);
-    expect(text("code-text")).toContain("title: Orders v2");
+    expect(code()).toContain("title: Orders v2");
     expect(h.preview).not.toHaveBeenCalled();
   });
 
-  it("colours YAML keys and quoted strings lightly, without changing the text", () => {
-    render(<EventCodePanel {...props()} />);
-    const code = screen.getByTestId("code-text");
-    expect(code.querySelector(".text-blue-400")?.textContent).toBe("asyncapi");
-    expect(code.querySelector(".text-green-400")).not.toBeNull();
-  });
-
-  it("stops colouring a very long document but still shows every line", () => {
+  it("shows a very long document in full, as the editor draws only what is in view", () => {
     const doc = makeDoc();
     doc.channels = Array.from({ length: 300 }, (_, i) => ({
       key: `ch${i}`, address: `topic.${i}`, protocol: "kafka", serverKeys: ["kafka"], format: "avro" as const, messageKeys: ["OrderCreated"],
     }));
     doc.operations = doc.channels.map((c, i) => ({ key: `op${i}`, action: "send" as const, channelKey: c.key, messageKeys: ["OrderCreated"], traitKeys: [] }));
     render(<EventCodePanel {...props({ doc })} />);
-    const lines = instantOf(doc).yaml.split("\n").length - 1;
-    expect(lines).toBeGreaterThan(3000);
-    expect(text("code-text")).toBe(instantOf(doc).yaml);
-    expect(screen.getByTestId("code-text").querySelector(".text-blue-400")).toBeNull();
+    expect(instantOf(doc).yaml.split("\n").length - 1).toBeGreaterThan(3000);
+    expect(code()).toBe(instantOf(doc).yaml);
   });
 });
 
@@ -120,31 +116,32 @@ describe("EventCodePanel: YAML | JSON", () => {
     expect(screen.getByTestId("code-format-json").getAttribute("aria-pressed")).toBe("false");
 
     click("code-format-json");
-    expect(text("code-text")).toBe(instant.json);
+    expect(code()).toBe(instant.json);
     expect(screen.getByTestId("code-format-json").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByTestId("code-format-yaml").getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByTestId("code-text").closest("pre")?.getAttribute("data-language")).toBe("json");
-    expect(JSON.parse(text("code-text") as string)).toEqual(instant.document);
+    expect(screen.getByTestId("event-code-text-editor").getAttribute("data-language")).toBe("json");
+    expect(editor().getAttribute("aria-label")).toBe("AsyncAPI document as JSON");
+    expect(JSON.parse(code())).toEqual(instant.document);
 
     click("code-format-yaml");
-    expect(text("code-text")).toBe(instant.yaml);
-    expect(screen.getByTestId("code-text").closest("pre")?.getAttribute("data-language")).toBe("yaml");
+    expect(code()).toBe(instant.yaml);
+    expect(screen.getByTestId("event-code-text-editor").getAttribute("data-language")).toBe("yaml");
   });
 
   it("keeps the chosen format when the document changes", () => {
     const { rerender } = render(<EventCodePanel {...props()} />);
     click("code-format-json");
     rerender(<EventCodePanel {...props({ doc: makeDoc("Orders v2") })} />);
-    expect(text("code-text")).toContain('"title": "Orders v2"');
+    expect(code()).toContain('"title": "Orders v2"');
   });
 
   it("shows the server's JSON, not only its YAML, once the full render arrived", async () => {
     render(<EventCodePanel {...props()} />);
     click("code-format-json");
     await flush(CODE_DEBOUNCE_MS);
-    expect(text("code-text")).toBe(SERVER_JSON);
+    expect(code()).toBe(SERVER_JSON);
     click("code-format-yaml");
-    expect(text("code-text")).toBe(SERVER_YAML);
+    expect(code()).toBe(SERVER_YAML);
   });
 });
 
@@ -221,7 +218,7 @@ describe("EventCodePanel: status chip", () => {
     expect(h.preview).toHaveBeenCalledTimes(1);
     expect(chip().textContent).toContain("Full schemas");
     expect(chip().getAttribute("data-state")).toBe("full");
-    expect(text("code-text")).toBe(SERVER_YAML);
+    expect(code()).toBe(SERVER_YAML);
   });
 
   it("goes back to Draft preview with the instant code the moment the draft is edited, then to Full schemas again", async () => {
@@ -232,13 +229,13 @@ describe("EventCodePanel: status chip", () => {
     rerender(<EventCodePanel {...props({ doc: makeDoc("Orders v2") })} />);
     expect(chip().textContent).toContain("Draft preview");
     expect(chip().getAttribute("data-state")).toBe("rendering");
-    expect(text("code-text")).toContain("title: Orders v2");
-    expect(text("code-text")).not.toContain("real payload schemas");
+    expect(code()).toContain("title: Orders v2");
+    expect(code()).not.toContain("real payload schemas");
 
     h.preview.mockResolvedValue(emission({ yaml: "asyncapi: 3.0.0\n# second\n" }));
     await flush(CODE_DEBOUNCE_MS);
     expect(chip().getAttribute("data-state")).toBe("full");
-    expect(text("code-text")).toBe("asyncapi: 3.0.0\n# second\n");
+    expect(code()).toBe("asyncapi: 3.0.0\n# second\n");
   });
 
   it("never shows a stale server answer for a document that was edited while it was in flight", async () => {
@@ -249,8 +246,8 @@ describe("EventCodePanel: status chip", () => {
     rerender(<EventCodePanel {...props({ doc: makeDoc("Orders v2") })} />);
     await act(async () => { answer(emission()); });
     expect(chip().getAttribute("data-state")).toBe("rendering");
-    expect(text("code-text")).toContain("title: Orders v2");
-    expect(text("code-text")).not.toContain("real payload schemas");
+    expect(code()).toContain("title: Orders v2");
+    expect(code()).not.toContain("real payload schemas");
   });
 
   it("keeps Draft preview, with the server's diagnostics, when the server could not build the document", async () => {
@@ -263,7 +260,7 @@ describe("EventCodePanel: status chip", () => {
     await flush(CODE_DEBOUNCE_MS);
     expect(chip().textContent).toContain("Draft preview");
     expect(chip().getAttribute("data-state")).toBe("draft");
-    expect(text("code-text")).toBe(instantOf(p.doc).yaml);
+    expect(code()).toBe(instantOf(p.doc).yaml);
     expect(text("code-diagnostics")).toContain("The payload of OrderCreated does not render.");
   });
 });
@@ -274,7 +271,7 @@ describe("EventCodePanel: when the full render fails", () => {
     const p = props();
     render(<EventCodePanel {...p} />);
     await flush(CODE_DEBOUNCE_MS);
-    expect(text("code-text")).toBe(instantOf(p.doc).yaml);
+    expect(code()).toBe(instantOf(p.doc).yaml);
     expect(chip().textContent).toContain("Draft preview");
     expect(chip().getAttribute("data-state")).toBe("error");
     const note = screen.getByTestId("code-error-note");
@@ -287,7 +284,7 @@ describe("EventCodePanel: when the full render fails", () => {
     await flush(0);
     expect(screen.queryByTestId("code-error-note")).toBeNull();
     expect(chip().getAttribute("data-state")).toBe("full");
-    expect(text("code-text")).toBe(SERVER_YAML);
+    expect(code()).toBe(SERVER_YAML);
   });
 
   it("never prints the cause of a rejected action", async () => {
@@ -357,7 +354,7 @@ describe("EventCodePanel: a draft with problems", () => {
 
   it("shows no code, says to fix the draft, lists the problems open, and sends nothing to the server", async () => {
     render(<EventCodePanel {...broken()} />);
-    expect(screen.queryByTestId("code-text")).toBeNull();
+    expect(screen.queryByTestId("event-code-text")).toBeNull();
     expect(text("code-empty")).toContain("Fix the problems in Design");
     expect(screen.getByTestId("diagnostics-list").textContent).toContain("title is required");
     expect(screen.getByTestId("diagnostics-list").textContent).toContain("/info/title");
@@ -378,7 +375,7 @@ describe("EventCodePanel: a draft with problems", () => {
     const { rerender } = render(<EventCodePanel {...broken()} />);
     rerender(<EventCodePanel {...props({ doc: makeDoc("Fixed"), problems: [] })} />);
     expect(screen.queryByTestId("code-empty")).toBeNull();
-    expect(text("code-text")).toContain("title: Fixed");
+    expect(code()).toContain("title: Fixed");
     expect(chip().getAttribute("data-state")).toBe("rendering");
     await flush(CODE_DEBOUNCE_MS);
     expect(chip().getAttribute("data-state")).toBe("full");
