@@ -6,9 +6,19 @@ import "./codemirror-jsdom";
 import { forceLinting, forEachDiagnostic } from "@codemirror/lint";
 import { EditorView } from "@codemirror/view";
 import { cleanup, configure, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createEditor, type EditorHandle, type EditorOptions } from "@/features/events/builder/template/controls/codemirror-setup";
 import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
+
+// The first test pays the cold dynamic import of the editor setup (about 1 s idle, over 5 s under a loaded full run), the second the real
+// library. The library is warmed with `vi.importActual`, NOT `import()`: an import() would run the mock below once, successfully, and the
+// first test (a library that fails to load) could never see its failure. The mock's `importOriginal()` then finds the real module cached.
+vi.setConfig({ testTimeout: 30_000 });
+beforeAll(async () => {
+  await import("@/features/events/builder/template/controls/codemirror-setup");
+  await vi.importActual("codemirror-json-schema");
+  await import("@codemirror/autocomplete");
+}, 60_000);
 
 const h = vi.hoisted(() => ({ loads: 0, failLoads: 0 }));
 vi.mock("codemirror-json-schema", async (importOriginal) => {

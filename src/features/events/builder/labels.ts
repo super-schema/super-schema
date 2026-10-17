@@ -177,6 +177,8 @@ type ExampleOf = "payload" | "headers";
 export const generateExampleLabel = (of: ExampleOf): string => `Generate from ${of}`;
 /** Shown beside the button while it cannot be used: no entity chosen, or its schema is not available (yet). */
 export const generateUnavailableText = (of: ExampleOf): string => `Needs a ${of} entity with a schema.`;
+/** Shown instead of the above while the schema is still being rendered (it takes seconds): the button will work once it is there. */
+export const GENERATE_LOADING = "Loading the schema…";
 export const GENERATE_REPLACE_QUESTION = "Replace the current example?";
 export const GENERATE_REPLACE = "Replace";
 export const GENERATE_KEEP = "Keep";

@@ -100,6 +100,9 @@ const baseTheme: Record<string, Record<string, string>> = {
   // Schema violations are warnings; the schema's hover text and completion list use the same tokens.
   ".cm-diagnostic-warning": { borderLeft: "3px solid var(--warning)" },
   ".cm6-json-schema-hover": { padding: "4px 8px", maxWidth: "24rem", fontFamily: "var(--font-sans), system-ui, sans-serif", fontSize: "12px" },
+  // The description is plain text (see `plainHover`): its line breaks are shown, and a long unbroken word wraps instead of widening the tooltip.
+  ".cm6-json-schema-hover--description": { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
+  ".cm6-json-schema-hover--code": { fontFamily: "var(--font-mono), ui-monospace, monospace", color: "var(--muted-foreground)", overflowWrap: "anywhere" },
   ".cm-tooltip-autocomplete > ul > li[aria-selected]": { backgroundColor: "var(--accent)", color: "var(--accent-foreground)" },
 };
 
@@ -134,6 +137,8 @@ export function lintJson(text: string): Diagnostic[] {
 //    and no error: that part of the schema is simply not checked. So callers must hand over a schema whose `$ref`s resolve inside it;
 //    this file does not and cannot check that.
 //  - Importing it starts a ~600 KB highlighter (shiki) for its markdown hovers. That is why nothing here imports it statically.
+//  - Its hover renders a schema's description as markdown into innerHTML (an image link would be fetched on hover): `plainHover` is
+//    handed over as its `formatHover` and shows text only.
 //  - `jsonSchema()` would add a parse-error linter of its own next to ours; only the single pieces are used.
 //  - With the `@lezer/json` of this repo (its tree has a node for each ":") the library's table of JSON pointers puts the value of
 //    every property on the colon, and so every marker. `jsonDocument` gives it a correct table instead.
@@ -237,12 +242,39 @@ function schemaWarnings(library: SchemaLibrary): (view: EditorView) => Diagnosti
   };
 }
 
+/**
+ * The hover text of a schema property, built from TEXT only. The library's own tooltip renders the description as markdown into
+ * `innerHTML` (markdown-it, raw HTML off), and a description is whatever the schema's author wrote: an imported AsyncAPI document brings
+ * third-party descriptions into entities, and `![x](https://third.party/p.png)` would make the browser fetch that URL as soon as someone
+ * hovers. `textContent` shows the description and the type literally and parses nothing, so no element, image or link can come out of
+ * it. (`jsonSchemaHover({ formatHover })` is the library's own option for this, 0.8.1; the class names are the library's, which the
+ * theme styles.) Values that are not text (a schema may hold any JSON as a `description`) are left out.
+ */
+export function plainHover({ message, typeInfo }: { message?: unknown; typeInfo?: unknown }): HTMLElement {
+  const block = (tag: "div" | "code", className: string, text: string): HTMLElement => {
+    const element = document.createElement(tag);
+    element.className = className;
+    element.textContent = text;
+    return element;
+  };
+  const root = document.createElement("div");
+  root.className = "cm6-json-schema-hover";
+  if (typeof message === "string" && message !== "") root.append(block("div", "cm6-json-schema-hover--description", message));
+  if (typeof typeInfo === "string" && typeInfo !== "") {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm6-json-schema-hover--code-wrapper";
+    wrapper.append(block("code", "cm6-json-schema-hover--code", typeInfo));
+    root.append(wrapper);
+  }
+  return root;
+}
+
 /** What a schema adds to an editor: the schema itself, its warnings, the hover text and the completion of its properties and values. */
 function schemaExtensions({ library, autocompletion }: SchemaSupport, schema: SchemaArg): Extension[] {
   return [
     library.stateExtensions(schema),
     linter(schemaWarnings(library), { needsRefresh: library.handleRefresh, delay: 250 }),
-    hoverTooltip(library.jsonSchemaHover()),
+    hoverTooltip(library.jsonSchemaHover({ formatHover: plainHover })),
     autocompletion(),
     jsonLanguage.data.of({ autocomplete: library.jsonCompletion() }),
   ];
