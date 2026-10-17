@@ -3,7 +3,7 @@
 // warnings. Unit tests for the helpers, then the probes that found the problem (a recursion warning that echoed a 100 KB key once per message).
 import { describe, expect, it } from "vitest";
 import {
-  boundChain, boundPointer, boundText, createWarningSink, MAX_MESSAGE_LENGTH, MAX_POINTER_LENGTH, MAX_WARNINGS,
+  boundChain, boundPointer, boundText, createWarningSink, MAX_MESSAGE_LENGTH, MAX_POINTER_LENGTH, MAX_WARNINGS, omittedWarningsMessage, OMITTED_WARNINGS_PATTERN,
 } from "@/lib/events/import/bound";
 import { MAX_REF_LENGTH } from "@/lib/events/import/limits";
 import { extractPayloads } from "@/lib/events/import/payloads";
@@ -132,6 +132,20 @@ describe("createWarningSink", () => {
     sink.add(warning(0));
     sink.add(warning(1));
     expect(sink.finish().at(-1)?.message).toBe("1 more warning was omitted");
+  });
+
+  it("its summary line is exactly what OMITTED_WARNINGS_PATTERN recognises, with the right count (producer and recogniser cannot drift apart)", () => {
+    for (const [cap, total] of [[1, 2], [3, 10], [5, 6], [2, 1000]] as const) {
+      const sink = createWarningSink(cap);
+      for (let i = 0; i < total; i += 1) sink.add(warning(i));
+      const summary = sink.finish().at(-1)!;
+      expect(summary.code).toBe("DROPPED_CONSTRUCT");
+      expect(summary.message).toBe(omittedWarningsMessage(total - cap));
+      expect(OMITTED_WARNINGS_PATTERN.exec(summary.message)?.[1]).toBe(String(total - cap));
+    }
+    // a warning of the document itself is never taken for it
+    expect(OMITTED_WARNINGS_PATTERN.test("The channel was omitted")).toBe(false);
+    expect(OMITTED_WARNINGS_PATTERN.test("a 3 more warnings were omitted")).toBe(false);
   });
 
   it("bounds every pointer (500) and every message (600) it keeps", () => {

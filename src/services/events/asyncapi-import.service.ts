@@ -26,6 +26,7 @@ import {
   builtInKindOfMarker, extractPayloads, mapAsyncApiToEventDocument, parseAsyncApiSource,
   type BuiltInTraitKind, type ImportWarning, type MapContext, type RawAsyncApi3,
 } from "@/lib/events/import";
+import { omittedWarningsMessage } from "@/lib/events/import/bound";
 import { normalizeCatalogName } from "@/lib/events/inputs";
 import type { EntityPin } from "@/lib/events/types";
 import { ensureBundledTraits } from "@/services/events/bundled-traits.service";
@@ -112,7 +113,7 @@ async function validateWithParser(raw: RawAsyncApi3): Promise<Result<ImportWarni
   }
   const warnings = diagnostics.filter((d) => d.severity === "warning");
   const report = warnings.slice(0, MAX_PARSER_WARNINGS).map((d): ImportWarning => ({ pointer: boundText(d.pointer), code: "VALIDATION_WARNING", message: boundText(d.message) }));
-  if (warnings.length > MAX_PARSER_WARNINGS) report.push({ pointer: "", code: "DROPPED_CONSTRUCT", message: `${warnings.length - MAX_PARSER_WARNINGS} more ${warnings.length - MAX_PARSER_WARNINGS === 1 ? "warning was" : "warnings were"} omitted` });
+  if (warnings.length > MAX_PARSER_WARNINGS) report.push({ pointer: "", code: "DROPPED_CONSTRUCT", message: omittedWarningsMessage(warnings.length - MAX_PARSER_WARNINGS) });
   return ok(report);
 }
 

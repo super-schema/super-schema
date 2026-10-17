@@ -7,6 +7,7 @@
 //    messages pin them without a version, so before the event can publish, each entity must be published and its version picked;
 //  - how the importer's own summary line ("N more warnings were omitted") is recognised, so it is shown as a note and not as a warning.
 // Pure, client-safe: types only, nothing from the server.
+import { OMITTED_WARNINGS_PATTERN } from "@/lib/events/import/bound";
 import type { ImportErrorCode, ImportWarning, ImportWarningCode } from "@/lib/events/import/types";
 import type { AsyncApiImportPreview } from "@/services/events/asyncapi-import.service";
 
@@ -116,11 +117,11 @@ export const WARNINGS_SHOWN_PER_GROUP = 20;
 export const showAllWarnings = (n: number): string => `Show all ${n}`;
 
 /**
- * The importer caps the warnings it reports and adds ONE last warning (code `DROPPED_CONSTRUCT`, pointer "") worded
- * "N more warning(s) was/were omitted" (`createWarningSink` in `src/lib/events/import/bound.ts`). It is a note about the list, not a
- * dropped part of the document, so the review recognises it by this pattern and shows it under the list.
+ * The importer caps the warnings it reports and adds ONE last warning (code `DROPPED_CONSTRUCT`, pointer "") worded by
+ * `omittedWarningsMessage` ("N more warning(s) was/were omitted", `src/lib/events/import/bound.ts`, which also owns the pattern). It is a
+ * note about the list, not a dropped part of the document, so the review recognises it by that pattern and shows it under the list.
  */
-export const OMITTED_WARNINGS_PATTERN = /^(\d+) more warnings? (?:was|were) omitted/;
+export { OMITTED_WARNINGS_PATTERN };
 /** N when `warning` is the importer's "N more warnings were omitted" summary line, otherwise null. */
 export function omittedWarningsCount(warning: ImportWarning): number | null {
   if (warning.pointer !== "" || warning.code !== "DROPPED_CONSTRUCT") return null;

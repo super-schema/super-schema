@@ -68,6 +68,14 @@ export interface WarningSink {
   finish(): ImportWarning[];
 }
 
+/**
+ * The ONE last warning (code `DROPPED_CONSTRUCT`, pointer "") that says how many warnings were cut from a list. Every producer words it
+ * with `omittedWarningsMessage`, and the review recognises it with `OMITTED_WARNINGS_PATTERN`, so a reworded producer cannot turn the
+ * note about the list back into a fake "part of your document was dropped" warning (pinned by the producer tests).
+ */
+export const omittedWarningsMessage = (count: number): string => `${count} more warning${count === 1 ? " was" : "s were"} omitted`;
+export const OMITTED_WARNINGS_PATTERN = /^(\d+) more warnings? (?:was|were) omitted/;
+
 export function createWarningSink(max: number = MAX_WARNINGS): WarningSink {
   const kept: ImportWarning[] = [];
   let omitted = 0;
@@ -81,7 +89,7 @@ export function createWarningSink(max: number = MAX_WARNINGS): WarningSink {
     },
     finish() {
       if (omitted === 0) return [...kept];
-      return [...kept, { pointer: "", code: "DROPPED_CONSTRUCT", message: `${omitted} more warning${omitted === 1 ? " was" : "s were"} omitted` }];
+      return [...kept, { pointer: "", code: "DROPPED_CONSTRUCT", message: omittedWarningsMessage(omitted) }];
     },
   };
 }
