@@ -412,11 +412,18 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
     if (!traitKinds.has(k)) bad(`${pointer}/${j}`, `Unknown ${propertiesNoun(kind)} "${k}"`);
     else if (traitKinds.get(k) !== undefined && traitKinds.get(k) !== kind) bad(`${pointer}/${j}`, `"${k}" is not a set of ${propertiesNoun(kind)}`);
   });
+  // the messages each local channel allows, as a Set made once per channel: `includes` on the list for every reference is quadratic
+  const allowedOn = new Map<string, Set<string>>();
+  const allowedMessages = (channel: DocChannel): Set<string> => {
+    let allowed = allowedOn.get(channel.key);
+    if (!allowed) { allowed = new Set(channel.messageKeys); allowedOn.set(channel.key, allowed); }
+    return allowed;
+  };
   /** `messageKeys` must resolve and, on a local channel, be allowed by that channel. External channels get no subset check here. */
   const checkMessageRefs = (keys: string[], pointer: string, channelKey: string | undefined) => keys.forEach((k, j) => {
     if (!messageish.has(k)) { bad(`${pointer}/${j}`, `Unknown message "${k}"`); return; }
     const channel = channelKey === undefined ? undefined : localChannels.get(channelKey);
-    if (channel && !channel.messageKeys.includes(k)) bad(`${pointer}/${j}`, `Message "${k}" is not allowed on channel "${channel.key}"`);
+    if (channel && !allowedMessages(channel).has(k)) bad(`${pointer}/${j}`, `Message "${k}" is not allowed on channel "${channel.key}"`);
   });
 
   channels.forEach((e, i) => {

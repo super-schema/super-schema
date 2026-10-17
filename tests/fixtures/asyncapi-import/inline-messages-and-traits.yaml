@@ -1,0 +1,118 @@
+asyncapi: 3.0.0
+info:
+  title: User lifecycle
+  version: 2.1.0
+  description: Messages and traits written inline, next to a few components.
+  tags:
+    - name: users
+servers:
+  broker:
+    host: broker.example.com:5672
+    protocol: amqp
+channels:
+  userSignedUp:
+    address: users.signed-up
+    servers:
+      - $ref: '#/servers/broker'
+    messages:
+      signedUp:
+        name: UserSignedUp
+        title: User signed up
+        summary: A new user created an account.
+        contentType: application/json
+        payload:
+          type: object
+          required:
+            - userId
+          properties:
+            userId:
+              type: string
+            email:
+              type: string
+              format: email
+        headers:
+          type: object
+          properties:
+            correlation-id:
+              type: string
+        traits:
+          - $ref: '#/components/messageTraits/audited'
+          - summary: An inline trait that nothing else shares.
+            tags:
+              - name: lifecycle
+        examples:
+          - name: first
+            summary: The first user
+            headers:
+              correlation-id: abc-1
+            payload:
+              userId: u-1
+              email: first@example.com
+  user-left/channel:
+    address: users.left
+    messages:
+      left:
+        $ref: '#/components/messages/userLeft'
+      leftAgain:
+        $ref: '#/components/messages/userLeft'
+  userDeleted:
+    address: users.deleted
+    messages:
+      signedUp:
+        name: UserDeleted
+        title: User deleted
+        payload:
+          type: object
+          properties:
+            userId:
+              type: string
+operations:
+  onUserSignedUp:
+    action: receive
+    channel:
+      $ref: '#/channels/userSignedUp'
+    messages:
+      - $ref: '#/channels/userSignedUp/messages/signedUp'
+    traits:
+      - $ref: '#/components/operationTraits/retryable'
+      - title: Inline operation trait
+        description: An operation trait written in place.
+  onUserLeft:
+    action: receive
+    channel:
+      $ref: '#/channels/user-left~1channel'
+    messages:
+      - $ref: '#/channels/user-left~1channel/messages/left'
+  publishUserDeleted:
+    action: send
+    channel:
+      $ref: '#/channels/userDeleted'
+    messages:
+      - $ref: '#/channels/userDeleted/messages/signedUp'
+components:
+  messages:
+    userLeft:
+      title: User left
+      payload:
+        type: object
+        properties:
+          userId:
+            type: string
+          reason:
+            type: string
+  messageTraits:
+    audited:
+      summary: Audited message
+      description: Every audited message is kept for seven years.
+      tags:
+        - name: audit
+      headers:
+        type: object
+        properties:
+          audit-id:
+            type: string
+  operationTraits:
+    retryable:
+      summary: Safe to retry
+      tags:
+        - name: reliability

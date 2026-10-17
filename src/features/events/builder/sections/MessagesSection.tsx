@@ -25,6 +25,7 @@ import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
+import { usePinJsonSchemaState } from "../use-pin-json-schema";
 import {
   allMessageKeys, blockedText, channelLabel, CheckboxGroup, ItemList, messageLabel, Notice, plural, renameAndSelect, setMessageAllowed,
   withoutMessage,
@@ -188,6 +189,19 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
   const errorAt = (suffix: string) => problemMessage(problemsByField(problems, `${prefix}${suffix}`));
   const template = useMemo(() => templateFor(doc.defaultContentType), [doc.defaultContentType]);
   const note = useMemo(() => representationNote(doc, message.key, options.entityOptions), [doc, message.key, options.entityOptions]);
+  // The examples are checked against the schema of the message's own payload / headers entity. The schemas are rendered by the server
+  // (the TypeSpec compiler), so they are asked for only while an example is on screen. A pin without a schema is `null`.
+  const examplesShown = cards.isOpen("examples") && (message.examples?.length ?? 0) > 0;
+  const payloadSchema = usePinJsonSchemaState(draft.productId, message.payload, examplesShown);
+  const headersSchema = usePinJsonSchemaState(draft.productId, message.headers, examplesShown);
+  const exampleContext = useMemo<TemplateFormContext>(
+    () => ({
+      ...context,
+      pinSchemas: { payload: payloadSchema.schema, headers: headersSchema.schema },
+      pinSchemasLoading: { payload: payloadSchema.loading, headers: headersSchema.loading },
+    }),
+    [context, payloadSchema.schema, payloadSchema.loading, headersSchema.schema, headersSchema.loading],
+  );
 
   function patch(change: (m: DocMessage) => DocMessage) {
     update((d) => ({ ...d, messages: d.messages.map((m, i) => (i === index ? change(m) : m)) }));
@@ -272,10 +286,10 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
   const formValue = toFormValue(message);
 
   /** A template form for the fields of one card: it sees only its own keys and its edits are merged back into the message. */
-  const cardForm = (keys: readonly string[]) => (
+  const cardForm = (keys: readonly string[], formContext: TemplateFormContext = context) => (
     <TemplateForm
       template={cardTemplate(template, keys)} value={pickValue(formValue, keys)} idPrefix="message" errors={problems} errorPrefix={prefix}
-      context={context} compactHelp
+      context={formContext} compactHelp
       onChange={(next) => patch((m) => applyFormValue(m, mergeValue(toFormValue(m), keys, next)))}
     />
   );
@@ -333,7 +347,7 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
           </>
         ))}
 
-        {card("examples", "Examples", message.examples?.length ?? 0, cardForm(EXAMPLES_KEYS))}
+        {card("examples", "Examples", message.examples?.length ?? 0, cardForm(EXAMPLES_KEYS, exampleContext))}
 
         {card("bindings", "Bindings", bindingCount(message.bindings), (
           <BindingsForm

@@ -166,3 +166,21 @@ export const PICKER_BACK = "Back";
 export const PICKER_NEXT = "Next";
 export const PICKER_ADD = "Add";
 export const PICKER_CANCEL = "Cancel";
+
+// ── Message examples: checked against the payload / headers schema, and generated from it ────────────────────────────────
+// A schema violation is only ever a warning in the editor (a draft saves whatever it holds); these are the words of the button that
+// builds an example from the schema.
+
+/** What an example is an example of: the message's payload entity or its headers entity (the same words as `ExampleSource`). */
+type ExampleOf = "payload" | "headers";
+/** "Generate from payload" / "Generate from headers". */
+export const generateExampleLabel = (of: ExampleOf): string => `Generate from ${of}`;
+/** Shown beside the button while it cannot be used: no entity chosen, or its schema is not available (yet). */
+export const generateUnavailableText = (of: ExampleOf): string => `Needs a ${of} entity with a schema.`;
+/** Shown instead of the above while the schema is still being rendered (it takes seconds): the button will work once it is there. */
+export const GENERATE_LOADING = "Loading the schema…";
+export const GENERATE_REPLACE_QUESTION = "Replace the current example?";
+export const GENERATE_REPLACE = "Replace";
+export const GENERATE_KEEP = "Keep";
+export const GENERATE_FAILED = "Could not generate an example from this schema.";
+export const GENERATE_EMPTY = "This schema has nothing to generate an example from.";

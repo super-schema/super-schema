@@ -6,13 +6,15 @@ import { getActiveTenantId } from "@/lib/active-tenant";
 import type { PublishInput } from "@/lib/entity-versioning/types";
 import type { ExternalEventCandidate, ExternalRefInput, ExternalRefStatus, ExternalVersionItems, ExternalVersionOption } from "@/lib/events/external-refs";
 import type { EventPublishAnalysis } from "@/lib/events/publish-plan";
-import type { EventVersionSummary } from "@/lib/events/types";
+import type { EntityPin, EventVersionSummary } from "@/lib/events/types";
+import { importAsyncApi, previewAsyncApiImport, type AsyncApiImportInput, type AsyncApiImportPreview } from "@/services/events/asyncapi-import.service";
 import { emitEventDocumentPreview, emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
 import { listEventVersions, previewEventPublish, publishEvent } from "@/services/events/event-publish.service";
 import { createEvent, deleteEvent, renameEvent, updateEventDocument, type EventDetail } from "@/services/events/event.service";
 import {
   getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions,
 } from "@/services/events/external-refs.service";
+import { renderPinJsonSchema } from "@/services/events/pin-json-schema.service";
 import { requireOwnedEvent } from "@/services/events/service-guards";
 import { GENERIC_ACTION_ERROR, type ActionResult } from "@/types/action-result";
 import { ok, type Result } from "@/types/result";
@@ -107,6 +109,19 @@ export async function getExternalRefStatusesAction(productId: string, refs: Exte
     getExternalRefStatuses(ctx, { tenantId: await getActiveTenantId(), refs }));
 }
 
+// ── Message examples ───────────────────────────────────────────────────────────────────────────────────────────────────
+// The schema a message's example payload / headers is checked against, and generated from (`pin-json-schema.service.ts`).
+
+/**
+ * The JSON Schema (draft-07, one self-contained document) of the entity a message pins: a pinned version renders that version, an
+ * unpinned pin the entity's current draft. `pin` is CLIENT-supplied: the service validates its shape, and the tenant is the
+ * server-resolved ACTIVE one, so an entity of another tenant reads exactly like a missing one (NOT_FOUND). Failures that carry raw
+ * renderer text are already replaced by the service; a schema over 512 KB is TOO_LARGE.
+ */
+export async function pinJsonSchemaAction(productId: string, pin: EntityPin): Promise<ActionResult<{ schema: Record<string, unknown> }>> {
+  return readAction(productId, "pinJsonSchemaAction", async (ctx) => renderPinJsonSchema(ctx, { tenantId: await getActiveTenantId(), pin }));
+}
+
 // ── Publish, versions ──────────────────────────────────────────────────────────────────────────────────────────────────
 // The services are `event-publish.service.ts` (publish, preview, list) and `event-emit.service.ts` (a stored version's code). All four
 // take the CLIENT-supplied `productId` and the service compares the event against it, behind the same parent check as above.
@@ -136,4 +151,24 @@ export async function readEventVersionAction(eventId: string, productId: string,
     const stored = await emitEventStoredVersion(eventId, productId, label, ctx);
     return stored.success ? ok({ yaml: stored.data.yaml, json: stored.data.json }) : stored;
   });
+}
+
+// ── Import an AsyncAPI 3.0 document ────────────────────────────────────────────────────────────────────────────────────
+// The services are `asyncapi-import.service.ts`. `input` is the file text and two optional names, all untrusted: the service validates
+// them and bounds what the parser is GIVEN (1 MiB, entries per object and list, expanded size, entity counts); the parser itself cannot be
+// interrupted, so the request's time is NOT bounded (see `src/services/events/import-limits.ts`, KNOWN LIMITATION). The product is checked
+// first, like every action above.
+
+/** What importing the document into this product would do (resolved event name, counts, entities with their final names, warnings). Writes nothing. */
+export async function previewAsyncApiImportAction(productId: string, input: AsyncApiImportInput): Promise<ActionResult<AsyncApiImportPreview>> {
+  return readAction(productId, "previewAsyncApiImportAction", (ctx) => previewAsyncApiImport(productId, input, ctx));
+}
+
+/**
+ * Imports the document: draft entities for the payloads, then the event that pins them. A failure after the entities were created
+ * deletes them again (`details.leftovers` names anything that could not be deleted), so a failed import leaves no event and no entity behind
+ * (the tenant's built-in library traits, installed idempotently before the first entity is written, stay).
+ */
+export async function importAsyncApiAction(productId: string, input: AsyncApiImportInput): Promise<ActionResult<{ eventId: string; preview: AsyncApiImportPreview }>> {
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => importAsyncApi(productId, input, ctx)), "importAsyncApiAction");
 }

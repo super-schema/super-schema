@@ -1,0 +1,50 @@
+asyncapi: 3.0.0
+info:
+  title: Payloads the importer cannot turn into entities
+  version: 1.0.0
+servers:
+  broker:
+    host: broker.example.com:9092
+    protocol: kafka
+channels:
+  events:
+    address: events.v1
+    messages:
+      openApiPayload:
+        $ref: '#/components/messages/openApiPayload'
+      noPayload:
+        $ref: '#/components/messages/noPayload'
+      ramlPayload:
+        $ref: '#/components/messages/ramlPayload'
+operations:
+  receiveEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/events'
+    messages:
+      - $ref: '#/channels/events/messages/openApiPayload'
+      - $ref: '#/channels/events/messages/noPayload'
+      - $ref: '#/channels/events/messages/ramlPayload'
+components:
+  messages:
+    openApiPayload:
+      title: Payload written as an OpenAPI schema
+      payload:
+        schemaFormat: application/vnd.oai.openapi;version=3.0.0
+        schema:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+    noPayload:
+      title: A message with no payload at all
+      summary: Only announces that something happened.
+    ramlPayload:
+      title: Payload written as RAML
+      payload:
+        schemaFormat: application/raml+yaml;version=1.0
+        schema:
+          type: object
+          properties:
+            id: string

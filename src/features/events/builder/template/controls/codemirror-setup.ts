@@ -1,18 +1,22 @@
 // src/features/events/builder/template/controls/codemirror-setup.ts
 // The CodeMirror 6 side of `JsonEditor`: extensions, theme, highlight style, JSON lint source and the small handle the React wrapper
-// drives. Together with `JsonEditor.tsx` this is the ONLY file that imports `@codemirror/*` or `@lezer/*` (a test enforces it).
-// It is loaded on demand with `import()` from `JsonEditor.tsx`, so none of it is in the first bundle of a page.
+// drives. Together with `JsonEditor.tsx` this is the ONLY file that imports `@codemirror/*`, `@lezer/*` or `codemirror-json-schema`
+// (a test enforces it). It is loaded on demand with `import()` from `JsonEditor.tsx`, so none of it is in the first bundle of a page.
+// The schema support (`codemirror-json-schema` and `@codemirror/autocomplete`) is a second step: it is loaded with its own `import()`,
+// the first time an editor is given a schema, and never otherwise.
+import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { json } from "@codemirror/lang-json";
+import { json, jsonLanguage } from "@codemirror/lang-json";
 import { yaml } from "@codemirror/lang-yaml";
-import { bracketMatching, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
-import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
+import { bracketMatching, ensureSyntaxTree, HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
+import { forceLinting, linter, lintGutter, type Diagnostic } from "@codemirror/lint";
+import { Annotation, Compartment, EditorState, type Extension, type Text } from "@codemirror/state";
 import {
-  drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, placeholder,
+  drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, hoverTooltip, keymap, lineNumbers, placeholder,
 } from "@codemirror/view";
+import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
-import { jsonProblem, minimalChange, normalizeLineBreaks } from "./editor-text";
+import { jsonProblem, minimalChange, normalizeLineBreaks, schemaKey } from "./editor-text";
 
 export type EditorLanguage = "json" | "yaml";
 
@@ -94,6 +98,13 @@ const baseTheme: Record<string, Record<string, string>> = {
   },
   ".cm-diagnostic": { fontFamily: "var(--font-sans), system-ui, sans-serif", fontSize: "12px" },
   ".cm-diagnostic-error": { borderLeft: "3px solid var(--destructive)" },
+  // Schema violations are warnings; the schema's hover text and completion list use the same tokens.
+  ".cm-diagnostic-warning": { borderLeft: "3px solid var(--warning)" },
+  ".cm6-json-schema-hover": { padding: "4px 8px", maxWidth: "24rem", fontFamily: "var(--font-sans), system-ui, sans-serif", fontSize: "12px" },
+  // The description is plain text (see `plainHover`): its line breaks are shown, and a long unbroken word wraps instead of widening the tooltip.
+  ".cm6-json-schema-hover--description": { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
+  ".cm6-json-schema-hover--code": { fontFamily: "var(--font-mono), ui-monospace, monospace", color: "var(--muted-foreground)", overflowWrap: "anywhere" },
+  ".cm-tooltip-autocomplete > ul > li[aria-selected]": { backgroundColor: "var(--accent)", color: "var(--accent-foreground)" },
 };
 
 /** The theme without any height rule; two small ones add it. */
@@ -114,6 +125,199 @@ export function lintJson(text: string): Diagnostic[] {
   const from = problem.position >= end ? Math.max(0, end - 1) : problem.position;
   const to = Math.min(from + 1, Math.max(end, 1));
   return [{ from, to, severity: "error", message: problem.message, source: "JSON" }];
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Schema support: `codemirror-json-schema`, loaded the first time an editor is given a schema (see `loadSchemaSupport`).
+//
+// What the library does, as verified against 0.8.1, and so what a caller has to hand it:
+//  - It validates with JSON Schema DRAFT-04 rules (json-schema-library's `Draft04`). `if`/`then`/`else`, `contains`, `propertyNames`
+//    and a numeric `exclusiveMinimum` are ignored: they never produce a warning, a document that breaks them looks fine.
+//  - A LOCAL `$ref` that resolves inside the schema (`#`, `#/definitions/X`, `#/$defs/X`, recursive ones included) is followed and
+//    checked like inline schema. A `$ref` it cannot resolve (a missing target, an absolute URL) is accepted silently, with no warning
+//    and no error: that part of the schema is simply not checked. So callers must hand over a schema whose `$ref`s resolve inside it;
+//    this file does not and cannot check that.
+//  - Importing it starts a ~600 KB highlighter (shiki) for its markdown hovers. That is why nothing here imports it statically.
+//  - Its hover, its completion info and its lint messages render markdown into innerHTML (a description with an image link would be
+//    fetched; a backtick in a value breaks out of the code span in a message). Covered here: `plainHover` is its `formatHover`
+//    (text only), `textOnlyCompletion` takes the non-text `info` off the completion options, and `schemaWarnings` drops its
+//    `renderMessage`. Anything new from the library that takes a description or a message needs the same look.
+//  - `jsonSchema()` would add a parse-error linter of its own next to ours; only the single pieces are used.
+//  - With the `@lezer/json` of this repo (its tree has a node for each ":") the library's table of JSON pointers puts the value of
+//    every property on the colon, and so every marker. `jsonDocument` gives it a correct table instead.
+//  - It validates a best-effort repair of text that does not parse. `schemaWarnings` never asks for text that does not parse: the
+//    one parse error is ours (`lintJson`).
+// ---------------------------------------------------------------------------------------------------------------------------
+
+type SchemaLibrary = typeof import("codemirror-json-schema");
+/** The library's JSON Schema type (`JSONSchema7`), taken from its own signature so no other package is named for it. */
+type SchemaArg = NonNullable<Parameters<SchemaLibrary["stateExtensions"]>[0]>;
+type DocumentParser = NonNullable<NonNullable<Parameters<SchemaLibrary["jsonSchemaLinter"]>[0]>["jsonParser"]>;
+
+interface SchemaSupport {
+  library: SchemaLibrary;
+  autocompletion: typeof import("@codemirror/autocomplete").autocompletion;
+}
+
+let supportLoading: Promise<SchemaSupport> | null = null;
+
+/** The schema library and the completion UI it needs, loaded once; a failed load is forgotten so a later call can try again. */
+function loadSchemaSupport(): Promise<SchemaSupport> {
+  supportLoading ??= Promise.all([import("codemirror-json-schema"), import("@codemirror/autocomplete")])
+    .then(([library, autocomplete]) => ({ library, autocompletion: autocomplete.autocompletion }))
+    .catch((error: unknown) => {
+      supportLoading = null;
+      throw error;
+    });
+  return supportLoading;
+}
+
+interface PointerRange { keyFrom: number; keyTo: number; valueFrom: number; valueTo: number }
+
+const JSON_VALUES = new Set(["String", "Number", "True", "False", "Null", "Object", "Array"]);
+
+/** The name of a property as the validator writes it into a pointer: the string the quoted name stands for, not escaped further. */
+function propertyKey(doc: Text, name: SyntaxNode): string {
+  const quoted = doc.sliceString(name.from, name.to);
+  try {
+    return String(JSON.parse(quoted));
+  } catch {
+    return quoted;
+  }
+}
+
+/** Records `node` under `pointer` (the name of its property, or itself in an array, is what a "key" marker points at), then its children. */
+function collectPointers(doc: Text, node: SyntaxNode, pointer: string, key: { from: number; to: number }, into: Map<string, PointerRange>): void {
+  into.set(pointer, { keyFrom: key.from, keyTo: key.to, valueFrom: node.from, valueTo: node.to });
+  if (node.name === "Object") {
+    for (let property = node.firstChild; property !== null; property = property.nextSibling) {
+      const name = property.name === "Property" ? property.getChild("PropertyName") : null;
+      const value = property.lastChild;
+      if (name === null || value === null || !JSON_VALUES.has(value.name)) continue;
+      collectPointers(doc, value, `${pointer}/${propertyKey(doc, name)}`, name, into);
+    }
+  } else if (node.name === "Array") {
+    let index = 0;
+    for (let item = node.firstChild; item !== null; item = item.nextSibling) {
+      if (JSON_VALUES.has(item.name)) collectPointers(doc, item, `${pointer}/${index++}`, item, into);
+    }
+  }
+}
+
+/** Where every value of the JSON document is, by the JSON pointer the validator reports it under ("/lines/0/sku"; the root is not in it). */
+function jsonPointers(state: EditorState): Map<string, PointerRange> {
+  const pointers = new Map<string, PointerRange>();
+  const tree = ensureSyntaxTree(state, state.doc.length, 200) ?? syntaxTree(state);
+  const root = tree.topNode.firstChild;
+  if (root !== null && JSON_VALUES.has(root.name)) {
+    collectPointers(state.doc, root, "", root, pointers);
+    pointers.delete(""); // the root is not a property: a problem of the whole document is the library's to place
+  }
+  return pointers;
+}
+
+/** The library's document parser, with a table of pointers that is right (see above). */
+const jsonDocument: DocumentParser = (state) => {
+  let data: unknown = null;
+  try {
+    data = JSON.parse(state.doc.toString());
+  } catch {
+    // not JSON: `schemaWarnings` does not ask in that case, and the library skips a document without data
+  }
+  return { data, pointers: jsonPointers(state) };
+};
+
+/**
+ * The lint source for a schema: the library's findings as WARNINGS (the text is valid JSON, a draft saves whatever the schema says)
+ * and never an empty range (a problem of the whole document is marked on its first character). Nothing for text that does not parse.
+ * Whatever goes wrong inside the library is no marker at all, never an exception into the editor.
+ */
+function schemaWarnings(library: SchemaLibrary): (view: EditorView) => Diagnostic[] {
+  const lint = library.jsonSchemaLinter({ jsonParser: jsonDocument });
+  return (view) => {
+    try {
+      if (jsonProblem(view.state.doc.toString()) !== null) return [];
+      const length = view.state.doc.length;
+      // Built field by field, NOT `...d`: the library puts a `renderMessage` on every diagnostic that sets innerHTML from markdown of the
+      // message, and the message holds values and property names of the document (a backtick in one breaks out of the code span into
+      // markup, an image link is fetched). Without a `renderMessage` @codemirror/lint shows the message as text.
+      return lint(view).map((d): Diagnostic => ({
+        from: d.from, to: d.to > d.from ? d.to : Math.min(d.from + 1, length), severity: "warning", message: d.message, source: typeof d.source === "string" ? d.source : undefined,
+      }));
+    } catch {
+      return [];
+    }
+  };
+}
+
+/**
+ * The hover text of a schema property, built from TEXT only. The library's own tooltip renders the description as markdown into
+ * `innerHTML` (markdown-it, raw HTML off), and a description is whatever the schema's author wrote: an imported AsyncAPI document brings
+ * third-party descriptions into entities, and `![x](https://third.party/p.png)` would make the browser fetch that URL as soon as someone
+ * hovers. `textContent` shows the description and the type literally and parses nothing, so no element, image or link can come out of
+ * it. (`jsonSchemaHover({ formatHover })` is the library's own option for this, 0.8.1; the class names are the library's, which the
+ * theme styles.) Values that are not text (a schema may hold any JSON as a `description`) are left out. The description is shown as
+ * written; the type line is the library's own markdown (`` `enum`: `a` or `b` ``), so its backticks are dropped.
+ */
+export function plainHover({ message, typeInfo }: { message?: unknown; typeInfo?: unknown }): HTMLElement {
+  const block = (tag: "div" | "code", className: string, text: string): HTMLElement => {
+    const element = document.createElement(tag);
+    element.className = className;
+    element.textContent = text;
+    return element;
+  };
+  const root = document.createElement("div");
+  root.className = "cm6-json-schema-hover";
+  if (typeof message === "string" && message !== "") root.append(block("div", "cm6-json-schema-hover--description", message));
+  // The library writes its type line as markdown (`enum`: `a` or `b``format`: date-time): drop the code spans' backticks, and keep a gap
+  // where one span follows another (or follows a bare word) so "b" and "format" do not run together.
+  const typeLine = typeof typeInfo === "string"
+    ? typeInfo.replace(/`([^`]*)`/g, (_match, inner: string, offset: number, whole: string) => (offset > 0 && !/\s/.test(whole[offset - 1]) ? " " : "") + inner)
+    : "";
+  if (typeLine !== "") {
+    const wrapper = document.createElement("div");
+    wrapper.className = "cm6-json-schema-hover--code-wrapper";
+    wrapper.append(block("code", "cm6-json-schema-hover--code", typeLine));
+    root.append(wrapper);
+  }
+  return root;
+}
+
+/** One completion option as the editor may show it: `info` only if it is a string (shown as a text node), see `textOnlyCompletion`. */
+function withTextInfo(option: Completion): Completion {
+  if (option.info === undefined || typeof option.info === "string") return option;
+  const copy = { ...option };
+  delete copy.info;
+  return copy;
+}
+
+type CompletionSource = (context: CompletionContext) => CompletionResult | never[];
+
+/**
+ * The library's completion source with every `info` that is not text taken away. For a property the library makes
+ * `info: () => el("div", { inner: renderMarkdown(description) })`: running that function parses the description as markdown into
+ * innerHTML, so an image link in it is fetched (a description is the schema author's; imported documents bring third-party ones in),
+ * and the description cannot be had any other way (it is only in that function's closure). So those are dropped: labels, types, details,
+ * `apply` and the rest of each option are untouched, the type stays in `detail`, and the hover shows the description as text
+ * (`plainHover`). A string `info` (an enum or const value's description) stays: @codemirror/autocomplete shows a string as a text node.
+ * Anything else (a schema's `description` may be any JSON, and a non-string would be called as a function) goes too.
+ */
+export function textOnlyCompletion(source: CompletionSource): CompletionSource {
+  return (context) => {
+    const result = source(context);
+    return Array.isArray(result) ? result : { ...result, options: result.options.map(withTextInfo) }; // the library answers [] when it has nothing
+  };
+}
+
+/** What a schema adds to an editor: the schema itself, its warnings, the hover text and the completion of its properties and values. */
+function schemaExtensions({ library, autocompletion }: SchemaSupport, schema: SchemaArg): Extension[] {
+  return [
+    library.stateExtensions(schema),
+    linter(schemaWarnings(library), { needsRefresh: library.handleRefresh, delay: 250 }),
+    hoverTooltip(library.jsonSchemaHover({ formatHover: plainHover })),
+    autocompletion(),
+    jsonLanguage.data.of({ autocomplete: textOnlyCompletion(library.jsonCompletion()) }),
+  ];
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -181,6 +385,13 @@ export interface EditorHandle {
   setValue: (text: string) => void;
   /** Apply new options; nothing when they are the same as the current ones. */
   reconfigure: (options: EditorOptions) => void;
+  /**
+   * Check the JSON text against `schema` (its `$ref`s must resolve inside it, see above), or stop checking with `null`. Resolves once it is applied, or once
+   * it will never be: a newer call overtook it, the editor was destroyed, or the schema library could not be loaded (the editor then
+   * simply has no schema support; a later call tries to load it again). It never rejects. Schemas are compared by content, so the same
+   * schema as an equal new object does nothing. Only JSON editors that can be edited are meant to be given one.
+   */
+  setSchema: (schema: Record<string, unknown> | null) => Promise<void>;
   /** Move focus into the editor, optionally selecting a range of the text. */
   focus: (selection?: { from: number; to: number }) => void;
   /** Ask for a re-measure, after the editor was shown or resized from outside. */
@@ -202,13 +413,19 @@ const sameOptions = (a: EditorOptions, b: EditorOptions) =>
 
 export function createEditor({ parent, doc, options, onChange, onFocusChange }: CreateEditorArgs): EditorHandle {
   const configuration = new Compartment();
+  // Everything a schema adds lives in its own compartment, so it can be installed, swapped for another and removed on its own.
+  const schemaSupport = new Compartment();
   let current = options;
+  let destroyed = false;
+  let heldSchema: string | null = null; // the `schemaKey` of the schema the editor holds now, null for none
+  let schemaCalls = 0; // setSchema is asynchronous: only the newest call may apply its schema
   const view = new EditorView({
     parent,
     state: EditorState.create({
       doc,
       extensions: [
         configuration.of(buildExtensions(options)),
+        schemaSupport.of([]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !update.transactions.some((t) => t.annotation(External) === true)) onChange(update.state.doc.toString());
           if (update.focusChanged) onFocusChange(update.view.hasFocus);
@@ -216,6 +433,14 @@ export function createEditor({ parent, doc, options, onChange, onFocusChange }: 
       ],
     }),
   });
+
+  function removeSchema() {
+    if (heldSchema === null || destroyed) return;
+    view.dispatch({ effects: schemaSupport.reconfigure([]) });
+    heldSchema = null;
+    forceLinting(view); // the linters that remain re-run now, so the markers of the schema go at once
+  }
+
   return {
     view,
     setValue(text) {
@@ -228,6 +453,30 @@ export function createEditor({ parent, doc, options, onChange, onFocusChange }: 
       current = next;
       view.dispatch({ effects: configuration.reconfigure(buildExtensions(next)) });
     },
+    async setSchema(schema) {
+      const call = ++schemaCalls;
+      const key = schemaKey(schema);
+      if (key === null || schema === null) {
+        removeSchema();
+        return;
+      }
+      if (key === heldSchema) return;
+      let support: SchemaSupport;
+      try {
+        support = await loadSchemaSupport();
+      } catch {
+        return; // no schema support, and no complaint: the editor is as it was
+      }
+      if (call !== schemaCalls || destroyed) return;
+      try {
+        if (heldSchema === null) view.dispatch({ effects: schemaSupport.reconfigure(schemaExtensions(support, schema as SchemaArg)) });
+        else support.library.updateSchema(view, schema as SchemaArg);
+        heldSchema = key;
+      } catch {
+        return; // the library would not take this schema: an editor without it is better than a broken one
+      }
+      forceLinting(view); // lint with the new schema now, not after the delay
+    },
     focus(selection) {
       if (selection) {
         const length = view.state.doc.length;
@@ -236,6 +485,9 @@ export function createEditor({ parent, doc, options, onChange, onFocusChange }: 
       view.focus();
     },
     measure: () => view.requestMeasure(),
-    destroy: () => view.destroy(),
+    destroy: () => {
+      destroyed = true;
+      view.destroy();
+    },
   };
 }

@@ -1,6 +1,6 @@
 // src/features/events/builder/template/controls/editor-text.ts
-// Pure text helpers of the JSON/YAML editor. No CodeMirror and no React in here: the textarea fallback, `JsonControl` and the lazy
-// CodeMirror setup all use them, and they are tested without a DOM.
+// Pure helpers of the JSON/YAML editor (text, and the value comparison of its schema). No CodeMirror and no React in here: the textarea
+// fallback, `JsonControl`, `JsonEditor` and the lazy CodeMirror setup all use them, and they are tested without a DOM.
 
 export interface JsonProblem {
   /** What the engine said, always ending in where ("line 3, column 1" or the engine's own wording of it). */
@@ -75,6 +75,27 @@ export function jsonProblem(text: string): JsonProblem | null {
 /** An editor document stores every line break as LF, so text coming from outside is compared in that form. */
 export function normalizeLineBreaks(text: string): string {
   return text.includes("\r") ? text.replace(/\r\n?/g, "\n") : text;
+}
+
+/** The same object with its keys in sorted order (own data properties only, so a `__proto__` key stays the data it is). */
+const sortedKeys = (_key: string, value: unknown): unknown => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const object = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(object).sort().map((key) => [key, object[key]]));
+};
+
+/**
+ * A text that stands for the content of a JSON Schema: equal for schemas with the same content however and whenever they were built
+ * (keys in any order), so the editor compares schemas by value and a schema object rebuilt on every render reconfigures nothing.
+ * Null for no schema, and for something that cannot be written as JSON (a cycle).
+ */
+export function schemaKey(schema: Record<string, unknown> | null | undefined): string | null {
+  if (schema === null || schema === undefined) return null;
+  try {
+    return JSON.stringify(schema, sortedKeys);
+  } catch {
+    return null;
+  }
 }
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;

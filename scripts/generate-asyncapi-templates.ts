@@ -1,16 +1,19 @@
 // scripts/generate-asyncapi-templates.ts
-// Generates src/lib/events/templates/bindings.generated.ts: one form template per AsyncAPI protocol binding and target,
-// read from the JSON Schemas shipped in `@asyncapi/specs` (a transitive dependency of @asyncapi/parser).
+// Generates, from the JSON Schemas shipped in `@asyncapi/specs` (a transitive dependency of @asyncapi/parser):
+//   - src/lib/events/templates/bindings.generated.ts: one form template per AsyncAPI protocol binding and target;
+//   - src/lib/events/templates/binding-json-schemas.generated.ts: the fully inlined JSON Schema of every raw-JSON field
+//     (`kind: "json"`) of those templates, which the editor checks the field's value against.
 //
 //   npm run gen:asyncapi-templates
 //
-// The generated file is committed and plain TypeScript (no runtime dependency on the package); a unit test regenerates it
+// The generated files are committed and plain TypeScript (no runtime dependency on the package); a unit test regenerates each
 // in memory and fails while the committed file is stale. This module is also imported by the tests, so everything except
 // the final `main()` is side-effect free.
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolveLocalRef } from "../src/lib/event-specs/json-pointer";
 import type { BindingTarget, FieldKind, FieldTemplate } from "../src/lib/events/templates/types";
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -461,15 +464,231 @@ export function generateBindingsModule(specsRoot: string = defaultSpecsRoot()): 
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Inlined JSON Schemas of the raw-JSON binding fields (binding-json-schemas.generated.ts)
+// ---------------------------------------------------------------------------------------------------------------
+// A `kind: "json"` field holds free-form JSON (a Kafka group id is a JSON Schema, an SQS policy principal is a string or an
+// object, ...). The binding file says what that JSON must look like, so the editor can warn about a value that does not fit.
+// The editor's validator ignores a `$ref` it cannot find instead of reporting it, so every reference is inlined here, at
+// generation time: the app imports one small map and never reads (or imports) `@asyncapi/specs`.
+
+/** One raw-JSON binding field: where it sits in a template, and the key its schema is stored under. */
+export interface JsonLeaf { protocol: string; target: BindingTarget; segments: string[]; key: string }
+
+/** An array item is the segment `[]`, so `policy.statements.[].principal` stands for every statement of every policy. */
+export const ARRAY_ITEM = "[]";
+
+/** The key of a leaf's schema: `kafka.operation.groupId`, `sns.channel.policy.statements.[].principal`. */
+export const bindingSchemaKey = (protocol: string, target: BindingTarget, segments: readonly string[]): string => [protocol, target, ...segments].join(".");
+
+function collectJsonLeaves(fields: FieldTemplate[], prefix: string[], into: string[][]): void {
+  for (const field of fields) {
+    const segments = [...prefix, field.key];
+    if (field.kind === "json") into.push(segments);
+    // only a list adds a level of its own to the path; an object's children sit directly under its key
+    if (field.fields) collectJsonLeaves(field.fields, field.kind === "list" ? [...segments, ARRAY_ITEM] : segments, into);
+  }
+}
+
+/** Every `kind: "json"` field of every generated binding template, in catalog order. */
+export function jsonLeaves(bindings: GeneratedBindings): JsonLeaf[] {
+  const leaves: JsonLeaf[] = [];
+  for (const protocol of Object.keys(bindings)) {
+    for (const target of BINDING_TARGETS) {
+      const binding = bindings[protocol][target];
+      if (!binding) continue;
+      const found: string[][] = [];
+      collectJsonLeaves(binding.fields, [], found);
+      for (const segments of found) leaves.push({ protocol, target, segments, key: bindingSchemaKey(protocol, target, segments) });
+    }
+  }
+  return leaves;
+}
+
+const SPECS_BINDINGS_URL = "http://asyncapi.com/bindings/";
+const SPECS_DEFINITIONS_URL = "http://asyncapi.com/definitions/3.0.0/";
+/** Not shipped as a file: the AsyncAPI Schema Object extends it, and the 3.0.0 bundle carries a copy. */
+const DRAFT_07_URL = "http://json-schema.org/draft-07/schema";
+const BINDING_FILE = /^[a-z0-9]+\/\d+\.\d+\.\d+\/[a-z]+\.json$/;
+const DEFINITION_FILE = /^[A-Za-z0-9._-]+\.json$/;
+
+/** Reads the schema documents a `$ref` can name, from the `@asyncapi/specs` files on disk. Every document is read once. */
+function documentLoader(specsRoot: string): (url: string) => JsonSchema {
+  const cache = new Map<string, JsonSchema>();
+  const read = (...parts: string[]) => JSON.parse(fs.readFileSync(path.join(specsRoot, ...parts), "utf8")) as JsonSchema;
+  return (url) => {
+    const cached = cache.get(url);
+    if (cached) return cached;
+    let document: JsonSchema | undefined;
+    if (url.startsWith(SPECS_DEFINITIONS_URL) && DEFINITION_FILE.test(url.slice(SPECS_DEFINITIONS_URL.length))) {
+      document = read("definitions", "3.0.0", url.slice(SPECS_DEFINITIONS_URL.length));
+    } else if (url.startsWith(SPECS_BINDINGS_URL) && BINDING_FILE.test(url.slice(SPECS_BINDINGS_URL.length))) {
+      document = read("bindings", ...url.slice(SPECS_BINDINGS_URL.length).split("/"));
+    } else if (url === DRAFT_07_URL) {
+      document = (read("schemas", "3.0.0.json") as { definitions?: Record<string, JsonSchema> }).definitions?.[DRAFT_07_URL];
+    }
+    // A reference to anywhere else cannot be inlined, and leaving it would silently turn the validation off: stop instead.
+    if (!document) throw new Error(`Cannot inline a $ref to "${url}": it is not an AsyncAPI definition, a binding schema or the draft-07 meta-schema`);
+    cache.set(url, document);
+    return document;
+  };
+}
+
+/** Keywords whose value is one schema (`items` may also be a list of them). Everything not named here is data and is copied as it is. */
+const SCHEMA_VALUED = new Set(["items", "additionalItems", "additionalProperties", "contains", "propertyNames", "not", "if", "then", "else"]);
+const SCHEMA_LISTS = new Set(["allOf", "anyOf", "oneOf"]);
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "dependencies"]);
+/** Not part of what a value is checked against: identifiers, notes, examples, and the definitions the inlining has used up. */
+const DROPPED = new Set(["$id", "$schema", "$comment", "$defs", "definitions", "examples", "example"]);
+
+interface InlineContext {
+  load: (url: string) => JsonSchema;
+  /** The document the node being read sits in: a `#/...` reference is relative to it. */
+  document: { url: string; root: JsonSchema };
+  /** The references being expanded on the way down: meeting one again is a cycle. */
+  stack: readonly string[];
+  /** Cut cycles, as `url#pointer`, for the generator's log. */
+  cycles: Set<string>;
+}
+
+function inlineRef(node: JsonSchema & { $ref: string }, context: InlineContext): unknown {
+  const hash = node.$ref.indexOf("#");
+  const url = hash === -1 ? node.$ref : node.$ref.slice(0, hash);
+  const fragment = hash === -1 ? "#" : node.$ref.slice(hash);
+  const documentUrl = url === "" ? context.document.url : url;
+  const id = `${documentUrl}${fragment}`;
+  if (context.stack.includes(id)) {
+    context.cycles.add(id);
+    return {};
+  }
+  const document = documentUrl === context.document.url ? context.document : { url: documentUrl, root: context.load(documentUrl) };
+  const target = resolveLocalRef(document.root, fragment);
+  if (!target.found) throw new Error(`The $ref "${node.$ref}" (in ${context.document.url}) does not point at anything`);
+  const inlined = inlineSchema(target.value, { ...context, document, stack: [...context.stack, id] });
+  // Draft-07 ignores whatever else sits next to a `$ref`, except that its description reads best at the place it is used.
+  const own = { ...(typeof node.title === "string" ? { title: node.title } : {}), ...(typeof node.description === "string" ? { description: node.description } : {}) };
+  return isRecord(inlined) ? { ...inlined, ...own } : inlined;
+}
+
+/**
+ * The spec says "a schema or a reference to one" as `oneOf: [schema, Reference]`, but a reference object is itself a valid schema
+ * (the draft-07 meta-schema allows a `$ref` string), so exactly-one can never hold for `{ "$ref": "#/components/schemas/X" }`
+ * and the editor would warn about a correct value. Such a list is read as the `anyOf` it means.
+ */
+const isReferenceObjectRef = (item: unknown): boolean => isRecord(item) && typeof item.$ref === "string" && item.$ref.endsWith("/Reference.json");
+
+function inlineSchema(node: unknown, context: InlineContext): unknown {
+  if (!isRecord(node)) return node; // `true` and `false` are schemas too
+  if (typeof node.$ref === "string") return inlineRef(node as JsonSchema & { $ref: string }, context);
+  const out: Record<string, unknown> = {};
+  for (const [keyword, value] of Object.entries(node)) {
+    if (DROPPED.has(keyword)) continue;
+    if (SCHEMA_VALUED.has(keyword)) out[keyword] = Array.isArray(value) ? value.map((item) => inlineSchema(item, context)) : inlineSchema(value, context);
+    else if (SCHEMA_LISTS.has(keyword) && Array.isArray(value)) {
+      const reference = keyword === "oneOf" && node.anyOf === undefined && value.some(isReferenceObjectRef);
+      out[reference ? "anyOf" : keyword] = value.map((item) => inlineSchema(item, context));
+    } else if (SCHEMA_MAPS.has(keyword) && isRecord(value)) out[keyword] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, inlineSchema(sub, context)]));
+    else out[keyword] = value;
+  }
+  return out;
+}
+
+/** The raw sub-schema of the property at `segments`, found the way the form template was built (`allOf`/`oneOf`, local references). */
+function schemaAt(root: JsonSchema, segments: readonly string[]): JsonSchema | null {
+  let ctx: Ctx = { root, trail: new Set() };
+  let current: JsonSchema = root;
+  for (const segment of segments) {
+    const resolved = deref(current, ctx);
+    if (!resolved.schema) return null;
+    if (segment === ARRAY_ITEM) {
+      const items = resolved.schema.items ? deref(resolved.schema.items, resolved.ctx) : null;
+      if (!items?.schema) return null;
+      current = items.schema;
+      ctx = items.ctx;
+    } else {
+      const property = collectProperties(resolved.schema, resolved.ctx).props.get(segment);
+      if (!property) return null;
+      current = property.schema;
+      ctx = property.ctx;
+    }
+  }
+  return current;
+}
+
+export interface GeneratedBindingSchemas {
+  /** Key (see `bindingSchemaKey`) -> the inlined schema of that field. */
+  schemas: Record<string, Record<string, unknown>>;
+  /** The references that were cut because they lead back to themselves, for the log. */
+  cycles: string[];
+}
+
+/**
+ * For every raw-JSON field of `bindings` (see `jsonLeaves`): the schema its binding file gives that property, with every `$ref`
+ * inlined. A field whose schema cannot be found is an error, so a catalog change can never silently drop a validation.
+ */
+export function generateBindingJsonSchemas(specsRoot: string, bindings: GeneratedBindings): GeneratedBindingSchemas {
+  const load = documentLoader(specsRoot);
+  const cycles = new Set<string>();
+  const schemas: Record<string, Record<string, unknown>> = {};
+  for (const leaf of jsonLeaves(bindings)) {
+    const version = bindings[leaf.protocol][leaf.target]!.version;
+    const directory = Object.entries(DIRECTORY_TO_PROTOCOL).find(([, protocol]) => protocol === leaf.protocol)?.[0] ?? leaf.protocol;
+    const url = `${SPECS_BINDINGS_URL}${directory}/${version}/${leaf.target}.json`;
+    const root = load(url);
+    const raw = schemaAt(root, leaf.segments);
+    if (!raw) throw new Error(`The ${leaf.protocol} ${leaf.target} binding schema has no property at "${leaf.segments.join(".")}"`);
+    const inlined = inlineSchema(raw, { load, document: { url, root }, stack: [], cycles });
+    if (!isRecord(inlined)) throw new Error(`The schema of ${leaf.key} is not an object`);
+    schemas[leaf.key] = inlined;
+  }
+  return { schemas, cycles: [...cycles].sort() };
+}
+
+export function renderBindingJsonSchemasModule(schemas: Record<string, Record<string, unknown>>, specsVersion: string): string {
+  return [
+    "// AUTO-GENERATED by scripts/generate-asyncapi-templates.ts from @asyncapi/specs. Do not edit by hand.",
+    "// Regenerate with `npm run gen:asyncapi-templates`; a unit test fails while this file is stale.",
+    "//",
+    "// KNOWN GAP (sound: it can miss an error, never invent one): the Schema Object and the draft-07 meta-schema refer to themselves, so the",
+    "// generator cuts each reference cycle and writes `{}` (accepts anything) there. The nested levels of a user's JSON Schema inside a",
+    "// binding are therefore not checked, and bindings written inside a trait get no schema at all.",
+    "",
+    `export const BINDING_JSON_SCHEMAS_FROM = "@asyncapi/specs@${specsVersion}";`,
+    "",
+    "/**",
+    " * The JSON Schema (draft-07 style, every `$ref` inlined) that the value of each raw-JSON binding field must match, keyed",
+    " * `<protocol>.<target>.<field path>` with `[]` for a list item. Read it through `bindingFieldSchema` (binding-schemas.ts).",
+    " */",
+    `export const BINDING_JSON_SCHEMAS: Record<string, Record<string, unknown>> = ${JSON.stringify(schemas, null, 2)};`,
+    "",
+  ].join("\n");
+}
+
+/** The full text of `binding-json-schemas.generated.ts` for the given `@asyncapi/specs` installation. */
+export function generateBindingJsonSchemasModule(specsRoot: string = defaultSpecsRoot()): string {
+  const { schemas } = generateBindingJsonSchemas(specsRoot, generateBindingTemplates(specsRoot));
+  return renderBindingJsonSchemasModule(schemas, readSpecsVersion(specsRoot));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 
 function main(): void {
-  const output = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/lib/events/templates/bindings.generated.ts");
+  const here = path.dirname(fileURLToPath(import.meta.url));
   const specsRoot = defaultSpecsRoot();
+  const specsVersion = readSpecsVersion(specsRoot);
   const data = generateBindingTemplates(specsRoot);
-  const text = renderBindingsModule(data, readSpecsVersion(specsRoot));
+
+  const output = path.resolve(here, "../src/lib/events/templates/bindings.generated.ts");
+  const text = renderBindingsModule(data, specsVersion);
   fs.writeFileSync(output, text);
   const templates = Object.values(data).reduce((n, targets) => n + Object.keys(targets).length, 0);
   console.log(`Wrote ${path.relative(process.cwd(), output)}: ${templates} binding templates for ${Object.keys(data).length} protocols (${(text.length / 1024).toFixed(0)} KB)`);
+
+  const schemasOutput = path.resolve(here, "../src/lib/events/templates/binding-json-schemas.generated.ts");
+  const { schemas, cycles } = generateBindingJsonSchemas(specsRoot, data);
+  const schemasText = renderBindingJsonSchemasModule(schemas, specsVersion);
+  fs.writeFileSync(schemasOutput, schemasText);
+  console.log(`Wrote ${path.relative(process.cwd(), schemasOutput)}: ${Object.keys(schemas).length} raw-JSON binding field schemas (${(schemasText.length / 1024).toFixed(0)} KB)`);
+  for (const cycle of cycles) console.log(`  cut a cyclic $ref to ${cycle} (the nested level is not checked)`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main();
