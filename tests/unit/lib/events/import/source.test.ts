@@ -158,3 +158,65 @@ describe("parseAsyncApiSource: rejects", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("parseAsyncApiSource: the cost of keys is linear (a repeated-key check that compares every key with every other one took 42 s for 90,000 keys)", () => {
+  const flatJson = (keys: number) => `{"asyncapi":"3.0.0",${Array.from({ length: keys }, (_, i) => `"k${i}":1`).join(",")}}`;
+  const flatYaml = (keys: number) => `asyncapi: 3.0.0\n${Array.from({ length: keys }, (_, i) => `k${i}: 1`).join("\n")}\n`;
+  const timed = <T,>(body: () => T): { value: T; ms: number } => {
+    const started = performance.now();
+    const value = body();
+    return { value, ms: performance.now() - started };
+  };
+
+  it("a flat JSON object of 90,000 keys (about 1 MB) is read in a couple of seconds at most", () => {
+    const text = flatJson(90_000);
+    expect(text.length).toBeGreaterThan(900_000);
+    expect(text.length).toBeLessThan(1024 * 1024);
+    const { value, ms } = timed(() => parseAsyncApiSource(text));
+    expect(value.success).toBe(true);
+    expect(ms).toBeLessThan(3000);
+  }, 30_000);
+
+  it("a flat YAML map of 100,000 keys likewise", () => {
+    const text = flatYaml(100_000);
+    expect(text.length).toBeLessThan(1024 * 1024);
+    const { value, ms } = timed(() => parseAsyncApiSource(text));
+    expect(value.success).toBe(true);
+    expect(ms).toBeLessThan(3000);
+  }, 30_000);
+
+  it("150,000 copies of one key are REJECTED fast, in JSON and in YAML, naming the key", () => {
+    const json = `{"asyncapi":"3.0.0"${',"a":1'.repeat(150_000)}}`;
+    const yaml = `asyncapi: 3.0.0\n${"a: 1\n".repeat(150_000)}`;
+    for (const text of [json, yaml]) {
+      const { value, ms } = timed(() => parseAsyncApiSource(text));
+      expect(value.success).toBe(false);
+      if (!value.success) {
+        expect(value.error.code).toBe("PARSE_ERROR");
+        expect(value.error.message).toMatch(/unique/);
+        expect(value.error.message).toContain('"a"');
+        expect(value.error.message.length).toBeLessThan(300);
+      }
+      expect(ms).toBeLessThan(3000);
+    }
+  }, 30_000);
+
+  it("a repeat is found wherever it is, and says where in YAML", () => {
+    expect(failure('{"asyncapi":"3.0.0","info":{"title":"A","version":"1","title":"B"}}').message).toMatch(/unique.*"title"/);
+    expect(failure('{"asyncapi":"3.0.0","x":[{"a":1},{"b":1,"b":2}]}').message).toMatch(/"b"/);
+    expect(failure("asyncapi: 3.0.0\nx:\n  - a: 1\n  - b: 1\n    b: 2\n").message).toMatch(/"b".*line 5, column 5/);
+    expect(failure("asyncapi: 3.0.0\ninfo:\n  title: A\n  title: B\n").message).toMatch(/"title".*line 4, column 3/);
+  });
+
+  it("the same key in DIFFERENT maps, and keys that look alike, are not repeats", () => {
+    expect(parseAsyncApiSource('{"asyncapi":"3.0.0","a":{"x":1},"b":{"x":2},"c":[{"x":1},{"x":2}]}').success).toBe(true);
+    expect(parseAsyncApiSource("asyncapi: 3.0.0\na: {x: 1}\nb: {x: 2}\nc:\n  - x: 1\n  - x: 2\n").success).toBe(true);
+    expect(parseAsyncApiSource('{"asyncapi":"3.0.0","a":1,"A":2,"a ":3}').success).toBe(true);
+  });
+
+  it("a repeat inside a YAML anchor that is used again is reported once, and aliases are not walked", () => {
+    expect(failure("asyncapi: 3.0.0\nx-a: &a\n  k: 1\n  k: 2\nx-b: *a\n").message).toMatch(/unique/);
+    expect(parseAsyncApiSource("asyncapi: 3.0.0\nx-a: &a\n  k: 1\nx-b: *a\nx-c: *a\n").success).toBe(true);
+  });
+});
+

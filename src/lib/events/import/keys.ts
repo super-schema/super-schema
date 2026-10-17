@@ -9,17 +9,41 @@ import type { ImportWarning } from "./types";
 /** True when `key` can be a document key as it is: `KEY_PATTERN`, at most `KEY_MAX_LENGTH`, never an `Object.prototype` name. */
 export const isUsableKey = (key: string): boolean => key.length > 0 && key.length <= KEY_MAX_LENGTH && KEY_PATTERN.test(key) && !isReservedKey(key);
 
+/** Per `taken` set: the next suffix to try for each base. `taken` only grows, so a suffix that was found taken is never free again. */
+const nextSuffix = new WeakMap<ReadonlySet<string>, Map<string, number>>();
+
 /**
- * `base`, or `base-2`, `base-3`, … — the same result as `uniqueKey`, but it reads `taken` instead of copying it: an import may hold
- * thousands of keys, and a copy per key would make the whole mapping quadratic.
+ * `base`, or `base-2`, `base-3`, … — the same result as `uniqueKey`, but it reads `taken` instead of copying it, and it remembers where the search
+ * for each base stopped, so N keys that all slug to the same base cost N steps in all, not N²/2 (20,000 such keys took 40 s). The CALLER adds the
+ * result to `taken` (`assignKeys` and the mapper do): the next call for the same base starts after it.
  */
 export function uniqueIn(base: string, taken: ReadonlySet<string>): string {
   if (!taken.has(base)) return base;
-  for (let n = 2; ; n += 1) {
+  let hints = nextSuffix.get(taken);
+  if (!hints) {
+    hints = new Map();
+    nextSuffix.set(taken, hints);
+  }
+  for (let n = hints.get(base) ?? 2; ; n += 1) {
     const suffix = `-${n}`;
     const candidate = `${base.slice(0, KEY_MAX_LENGTH - suffix.length)}${suffix}`;
-    if (!taken.has(candidate)) return candidate;
+    if (!taken.has(candidate)) {
+      hints.set(base, n + 1);
+      return candidate;
+    }
   }
+}
+
+/** A text worth slugging: a string with at least one ASCII letter or digit. */
+const usable = (value: unknown): string | null => (typeof value === "string" && /[a-zA-Z0-9]/.test(value) ? value.trim() : null);
+
+/**
+ * A key for properties written in place: from their `name`, else their `title`, else "trait". The rule of `suggestKey("trait", …)`, without the
+ * copy of `taken` it makes for every key (a copy per key made thousands of such properties quadratic).
+ */
+export function suggestTraitKey(node: Record<string, unknown>, taken: ReadonlySet<string>): string {
+  const text = usable(node.name) ?? usable(node.title);
+  return uniqueIn(text ? slugKey(text) : "trait", taken);
 }
 
 export interface KeyRequest {

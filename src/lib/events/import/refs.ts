@@ -91,6 +91,9 @@ export interface RefResolver {
 }
 
 /** `cycle`: the expansion ran into a reference loop (only recorded when cycles are tolerated); its `value` has holes where the loop closes. */
+/** A ref that resolved: where it points (`pointer`, `segments`), what is there, and the component entry it lies in (`entry`). */
+interface Located { pointer: string; segments: string[]; value: unknown; entry: string }
+
 type Expanded = { value: unknown; size: number; cycle?: string[] };
 
 class RefFailure extends Error {
@@ -113,20 +116,30 @@ export function createRefResolver(root: unknown): RefResolver {
   let cursor: Array<string | number> = [];
   const here = (): string => (cursor.length === 0 ? "the document root" : `"${boundText(jsonPointer(...cursor), 120)}"`);
 
-  /** Records that the ref being read (written at the cursor) points at `targetSegments`; both ends at component-entry level. */
-  const noteEdge = (targetSegments: readonly string[]): void => {
-    const entry = (segments: ReadonlyArray<string | number>): string => (segments[0] === "components" && segments.length >= 3 ? jsonPointer(...segments.slice(0, 3)) : jsonPointer(...segments));
-    const owner = cursor[0] === "components" && cursor.length >= 3 ? entry(cursor) : "";
+  const entryOf = (segments: ReadonlyArray<string | number>): string => (segments[0] === "components" && segments.length >= 3 ? jsonPointer(...segments.slice(0, 3)) : jsonPointer(...segments));
+  /** Records that the ref being read (written at the cursor) points at the component entry `targetEntry`. */
+  const noteEdge = (targetEntry: string): void => {
+    const owner = cursor[0] === "components" && cursor.length >= 3 ? entryOf(cursor) : "";
     const targets = edges.get(owner) ?? new Set<string>();
-    targets.add(entry(targetSegments));
+    targets.add(targetEntry);
     edges.set(owner, targets);
   };
+  /**
+   * What a ref string points at, by the ref as written. A file uses a handful of distinct refs thousands of times (every message points at the same
+   * schema), and each one used to be split, decoded and resolved again at every use; a ref is at most MAX_REF_LENGTH long, so the cache is as small as the file.
+   */
+  const located = new Map<string, Located>();
 
   const fail = (code: string, message: string, extra: { ref?: string; suggestedFix?: string } = {}): never => {
     throw new RefFailure({ code, message, details: { pointer: boundPointer(jsonPointer(...cursor)), ...(extra.ref !== undefined && { ref: boundPointer(extra.ref) }) }, ...(extra.suggestedFix !== undefined && { suggestedFix: extra.suggestedFix }) });
   };
 
-  function locate(ref: string): { pointer: string; segments: string[]; value: unknown } {
+  function locate(ref: string): Located {
+    const known = located.get(ref);
+    if (known) {
+      noteEdge(known.entry);
+      return known;
+    }
     // Every use of a reference is split, decoded and resolved again, so the work grows with its length: refuse a long one before touching it.
     if (ref.length > MAX_REF_LENGTH) {
       return fail("REF_TOO_LARGE", `A reference is longer than ${MAX_REF_LENGTH.toLocaleString("en-US")} characters (${ref.length.toLocaleString("en-US")}, starting "${boundText(ref, 60)}") at ${here()}; references that long are not paths into the document, so it was rejected.`, {
@@ -148,8 +161,10 @@ export function createRefResolver(root: unknown): RefResolver {
         ref, suggestedFix: "References are followed from the document root: write the full path (for example #/components/schemas/Name).",
       });
     }
-    noteEdge(classified.segments);
-    return { pointer: jsonPointer(...classified.segments), segments: classified.segments, value: found.value };
+    const result: Located = { pointer: jsonPointer(...classified.segments), segments: classified.segments, value: found.value, entry: entryOf(classified.segments) };
+    located.set(ref, result);
+    noteEdge(result.entry);
+    return result;
   }
 
   const charge = (size: number): void => {
@@ -293,17 +308,21 @@ export function createRefResolver(root: unknown): RefResolver {
         let current = value;
         let pointer = at;
         const seen: string[] = [];
+        const start = pointerSegments(at); // where the chain began: the hop cap names this place, not the hop it stopped at
         while (isRef(current)) {
           const target = locate(current.$ref);
           if (seen.includes(target.pointer)) {
             fail("REF_CYCLE", `Recursive reference: ${boundChain([...seen.slice(seen.indexOf(target.pointer)), target.pointer].map((p) => `#${p}`), MAX_CHAIN_ENTRIES, CHAIN_ENTRY_LENGTH)} (found at ${here()}).`, { ref: current.$ref });
           }
-          if (seen.length >= MAX_DEREF_HOPS) fail("REF_TOO_LARGE", `A chain of more than ${MAX_DEREF_HOPS} references starting at ${here()} cannot be imported.`);
+          if (seen.length >= MAX_DEREF_HOPS) {
+            cursor = start;
+            fail("REF_TOO_LARGE", `A chain of more than ${MAX_DEREF_HOPS} references starting at ${here()} cannot be imported.`);
+          }
           seen.push(target.pointer);
           followed.add(target.pointer);
           current = target.value;
           pointer = target.pointer;
-          cursor = [...target.segments];
+          cursor = target.segments; // deref only reads the cursor, so the cached segments are shared, not copied
         }
         return { value: current, pointer };
       });

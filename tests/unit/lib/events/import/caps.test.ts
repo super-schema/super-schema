@@ -8,7 +8,7 @@ import { MAX_KEY_LENGTH, MAX_REF_LENGTH } from "@/lib/events/import/limits";
 import { extractPayloads } from "@/lib/events/import/payloads";
 import { mapAsyncApiToEventDocument } from "@/lib/events/import/map-document";
 import { createRefResolver, resolveLocalRefs } from "@/lib/events/import/refs";
-import { parseAsyncApiSource } from "@/lib/events/import/source";
+import { assertDocumentBounds, parseAsyncApiSource } from "@/lib/events/import/source";
 import type { RawAsyncApi3 } from "@/lib/events/import/types";
 
 const SCHEMAS = "#/components/schemas/";
@@ -36,7 +36,7 @@ const failureOfExtract = (raw: RawAsyncApi3) => {
 };
 
 describe("object keys are capped at 1,024 characters (source)", () => {
-  it("the original probe: a 331 KiB document with one 150 KB channel key and 5,000 inline messages is rejected fast, with a short message", () => {
+  it("the original probe: a 331 KiB document with one 150 KB channel key and 5,000 inline messages is rejected fast, with a short message", { timeout: 30_000 }, () => {
     const messages = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`m${i}`, { payload: { type: "object" } }]));
     const text = JSON.stringify({ asyncapi: "3.0.0", info: { title: "T" }, channels: { [`k${"k".repeat(149_999)}`]: { address: "a", messages } } });
     expect(text.length).toBeGreaterThan(300 * 1024);
@@ -71,6 +71,14 @@ describe("object keys are capped at 1,024 characters (source)", () => {
     expect(error.code).toBe("PARSE_ERROR");
     expect(error.message).toContain("1,025");
     expect((error.details as { length: number }).length).toBe(1025);
+  });
+
+  it("the cap counts UTF-16 characters, not bytes: 1,024 CJK characters pass, 1,025 do not", () => {
+    const build = (length: number) => `{"asyncapi":"3.0.0","x-${"漢".repeat(length - 2)}":1}`;
+    expect(parseAsyncApiSource(build(1024)).success).toBe(true);
+    const error = sourceFailure(build(1025));
+    expect(error.code).toBe("PARSE_ERROR");
+    expect(error.message).toContain("1,025");
   });
 
   it("the length is the key's, not the value's: a huge value under a short key is fine", () => {
@@ -144,7 +152,7 @@ describe("a $ref is capped at 1,024 characters (refs)", () => {
     expect(failureOfExtract(raw).code).toBe("REF_TOO_LARGE");
     expect(mapAsyncApiToEventDocument(raw, { payloadPins: new Map(), builtInTraitIds: {} })).toMatchObject({ success: false, error: { code: "REF_TOO_LARGE" } });
     expect(Date.now() - started).toBeLessThan(2000);
-  });
+  }, 30_000);
 
   it("a deep path of SHORT keys is still a normal ref: 200 one-character segments work", () => {
     const keys = Array.from({ length: 200 }, (_, i) => String.fromCharCode(97 + (i % 26)));
@@ -171,6 +179,9 @@ describe("a chain of $ref wrappers is capped at 16 hops (deref)", () => {
     const seventeen = createRefResolver(chain(17)).deref({ $ref: "#/w1" }, "/start");
     expect(seventeen.success ? "ok" : seventeen.error.code).toBe("REF_TOO_LARGE");
     expect(seventeen.success ? "" : seventeen.error.message).toContain("more than 16 references");
+    // it names where the chain began, not the hop it stopped at (/w16)
+    expect(seventeen.success ? "" : seventeen.error.message).toContain('starting at "/start"');
+    expect(seventeen.success ? {} : seventeen.error.details).toMatchObject({ pointer: "/start" });
   });
 
   it("a payload that is a chain of 16 wrappers imports, one of 17 does not (the error names the limit)", () => {
@@ -180,6 +191,8 @@ describe("a chain of $ref wrappers is capped at 16 hops (deref)", () => {
     const error = failureOfExtract(doc(17));
     expect(error.code).toBe("REF_TOO_LARGE");
     expect(error.message).toContain("more than 16 references");
+    expect(error.message).toContain('starting at "/components/messages/m/payload"');
+    expect(error.details).toMatchObject({ pointer: "/components/messages/m/payload" });
   });
 
   it("the review's shape (a 60-hop chain, short names, 10,000 messages) is refused at the first message, fast", () => {
@@ -192,5 +205,50 @@ describe("a chain of $ref wrappers is capped at 16 hops (deref)", () => {
     const started = Date.now();
     expect(failureOfExtract(raw).code).toBe("REF_TOO_LARGE");
     expect(Date.now() - started).toBeLessThan(2000);
+  }, 30_000);
+});
+
+describe("the same bounds hold for an object handed straight to extractPayloads or the mapper (they do not rely on the caller having parsed text)", () => {
+  const noPins = { payloadPins: new Map(), builtInTraitIds: {} };
+  const channelWithKey = (key: string, messages: number): RawAsyncApi3 => ({
+    asyncapi: "3.0.0", info: { title: "T" },
+    channels: { [key]: { address: "a", messages: Object.fromEntries(Array.from({ length: messages }, (_, i) => [`m${i}`, { payload: { type: "object" } }])) } },
+  });
+
+  it("the original probe as an object (a 150 KB key, 5,000 inline messages; 158 s and 956 MB before) is PARSE_ERROR from both, in milliseconds", () => {
+    const raw = channelWithKey("k".repeat(150_000), 5000);
+    const started = Date.now();
+    const extracted = extractPayloads(raw);
+    const mapped = mapAsyncApiToEventDocument(raw, noPins);
+    expect(Date.now() - started).toBeLessThan(2000);
+    for (const result of [extracted, mapped]) {
+      expect(result.success).toBe(false);
+      if (result.success) continue;
+      expect(result.error.code).toBe("PARSE_ERROR");
+      expect(result.error.message).toContain("1,024");
+      expect(result.error.message.length).toBeLessThan(400);
+    }
+  }, 30_000);
+
+  it("nesting deeper than 256 levels and more than 2 million values are refused too", () => {
+    let nested: unknown = 1;
+    for (let i = 0; i < 300; i += 1) nested = [nested];
+    const deep = { asyncapi: "3.0.0", info: { title: "T" }, "x-deep": nested } as RawAsyncApi3;
+    const huge = { asyncapi: "3.0.0", info: { title: "T" }, "x-list": new Array(2_100_000).fill(0) } as RawAsyncApi3;
+    for (const raw of [deep, huge]) {
+      const extracted = extractPayloads(raw);
+      const mapped = mapAsyncApiToEventDocument(raw, noPins);
+      expect(extracted.success ? "ok" : extracted.error.code).toBe("PARSE_ERROR");
+      expect(mapped.success ? "ok" : mapped.error.code).toBe("PARSE_ERROR");
+    }
+  }, 30_000);
+
+  it("assertDocumentBounds accepts an ordinary document and a key like __proto__ (those are stored safely later, and refused only when text is parsed)", () => {
+    expect(assertDocumentBounds({ asyncapi: "3.0.0", info: { title: "T" }, channels: { c: { address: "a" } } }).success).toBe(true);
+    expect(assertDocumentBounds(JSON.parse('{"asyncapi":"3.0.0","__proto__":{"x":1}}')).success).toBe(true);
+    expect(assertDocumentBounds({ k: "k".repeat(1025) }).success).toBe(true); // a long VALUE is not a long key
+    const refused = assertDocumentBounds({ ["k".repeat(1025)]: 1 });
+    expect(refused.success ? "ok" : refused.error.code).toBe("PARSE_ERROR");
   });
 });
+

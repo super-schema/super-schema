@@ -203,15 +203,16 @@ describe("the recursion warning of many messages that share one recursive schema
     expect(warnings.at(-1)).toEqual({ pointer: "", code: "DROPPED_CONSTRUCT", message: `${300 - MAX_WARNINGS} more warnings were omitted` });
   });
 
-  it("the original probe (a 100 KB key) can no longer be built: the key cap refuses the text, the ref cap refuses the document handed over", () => {
+  it("the original probe (a 100 KB key) can no longer be built: the key cap refuses it, as text and as an object handed straight to either step", () => {
     const raw = sharedRecursiveSchema(300, 100_000);
     const text = parseAsyncApiSource(JSON.stringify(raw));
     expect(text.success).toBe(false);
     if (!text.success) expect(text.error.message).toContain("1,024");
     const extracted = extractPayloads(raw);
-    expect(extracted.success ? "ok" : extracted.error.code).toBe("REF_TOO_LARGE");
+    expect(extracted.success ? "ok" : extracted.error.code).toBe("PARSE_ERROR");
     const mapped = mapAsyncApiToEventDocument(raw, { payloadPins: new Map(), builtInTraitIds: {} });
-    expect(mapped.success ? "ok" : mapped.error.code).toBe("REF_TOO_LARGE");
+    expect(mapped.success ? "ok" : mapped.error.code).toBe("PARSE_ERROR");
+    expect(mapped.success ? "" : mapped.error.message).toContain("1,024");
   });
 
   it("thousands of messages (5,000, the longest reachable key): bounded the same way, every message still pinned", () => {
@@ -275,7 +276,8 @@ describe("the number of warnings is bounded", () => {
 describe("every other echo of document text is bounded", () => {
   const big = "k".repeat(100_000);
 
-  it("keys, formats, protocols, property names and unused components with 100 KB names stay short", () => {
+  it("keys, formats, protocols, property names and unused components with 1,000-character names stay short", () => {
+    const big = "k".repeat(1000); // legal (the key cap is 1,024), and 12 times longer than anything a message may echo
     const raw = doc({
       servers: { a: { host: "h:1", protocol: `kafka${big}` }, b: { host: "h:2", protocol: `mqtt${big}` } },
       channels: {
@@ -347,8 +349,8 @@ describe("every other echo of document text is bounded", () => {
     }
   });
 
-  it("a server with a 100 KB key and an invalid host handed straight to the mapper (defence in depth) gives short, bounded problems", () => {
-    const invalid = mapAsyncApiToEventDocument(doc({ servers: { [big]: { host: "kafka://h:1", protocol: "kafka" } } }), { payloadPins: new Map(), builtInTraitIds: {} });
+  it("a server with a 1,000-character key and an invalid host handed straight to the mapper gives short, bounded problems", () => {
+    const invalid = mapAsyncApiToEventDocument(doc({ servers: { ["k".repeat(1000)]: { host: "kafka://h:1", protocol: "kafka" } } }), { payloadPins: new Map(), builtInTraitIds: {} });
     expect(invalid.success).toBe(false);
     if (!invalid.success) {
       expect(invalid.error.message.length).toBeLessThan(900);

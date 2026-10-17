@@ -18,15 +18,15 @@ import {
   type EventDocument,
 } from "@/lib/events/document/types";
 import { ANY_PROPERTIES, propertiesSet } from "@/lib/events/document/wording";
-import { suggestKey } from "@/lib/events/templates/keys";
 import type { EntityPin } from "@/lib/events/types";
 import { boundChain, boundPointer, boundText, CHAIN_ENTRY_LENGTH, createWarningSink, MAX_CHAIN_ENTRIES } from "./bound";
 import { detectBuiltInTrait } from "./builtin-traits";
-import { assignKeys, uniqueIn, type KeyRequest } from "./keys";
+import { assignKeys, suggestTraitKey, uniqueIn, type KeyRequest } from "./keys";
 import { entriesOf, indexMessages, isBag, type IndexedMessage, type MessageIndex } from "./message-index";
 import { describeMessageSchemas, type PayloadDescription } from "./payloads";
 import { createRefResolver, isRef, refTargetPointer, refTargetSegments } from "./refs";
 import { createSanitizer } from "./sanitize";
+import { assertDocumentBounds } from "./source";
 import type { ImportWarning, ImportWarningCode, MapContext, RawAsyncApi3 } from "./types";
 
 const ROOT_KEYS = new Set(["asyncapi", "info", "servers", "defaultContentType", "channels", "operations", "components"]);
@@ -88,6 +88,8 @@ export function mapAsyncApiToEventDocument(raw: RawAsyncApi3, ctx: MapContext): 
 }
 
 function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: EventDocument; warnings: ImportWarning[] }> {
+  const bounds = assertDocumentBounds(raw); // the caller normally parsed the text with `parseAsyncApiSource`; an object handed over directly is checked here
+  if (!bounds.success) return bounds;
   // Everything document-controlled that goes into a message is bounded (`bound.ts`), and so is the number of warnings kept.
   const sink = createWarningSink();
   const warn = (pointer: string, code: ImportWarningCode, message: string): void => { sink.add({ pointer, code, message }); };
@@ -193,7 +195,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       return undefined;
     }
     const out: string[] = [];
-    const add = (key: string): void => { if (!out.includes(key)) out.push(key); };
+    const listed = new Set<string>(); // a list can name thousands of schemes: a Set, never `includes` on the growing list
+    const add = (key: string): void => { if (!listed.has(key)) { listed.add(key); out.push(key); } };
     value.forEach((entry, i) => {
       const entryAt = `${base}/${i}`;
       const segments = refTargetSegments(entry);
@@ -254,7 +257,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     const content = `${kind}:${JSON.stringify(node)}`;
     const known = inlineTraitByContent.get(content);
     if (known) return known;
-    const key = suggestKey("trait", { name: node.name, title: node.title }, takenTraitKeys);
+    const key = suggestTraitKey(node, takenTraitKeys);
     takenTraitKeys.add(key);
     const def: TraitDef = { key, kind, pointer, node };
     traitDefs.push(def);
@@ -269,6 +272,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       return [];
     }
     const out: string[] = [];
+    const listed = new Set<string>();
     value.forEach((entry, i) => {
       const entryAt = `${base}/${i}`;
       let def: TraitDef | undefined;
@@ -286,7 +290,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         warn(entryAt, "DROPPED_CONSTRUCT", `"${def.key}" is a ${propertiesSet(def.kind)}, not a ${propertiesSet(kind)}, so it was left out here`);
         return;
       }
-      if (!out.includes(def.key)) out.push(def.key);
+      if (!listed.has(def.key)) { listed.add(def.key); out.push(def.key); }
     });
     return out;
   };
@@ -313,6 +317,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const serverDefs = definitions(raw.servers, "/servers", "The server");
   const assignedServerKeys = assignKeys(serverDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("servers", d.sourceKey) })), new Set(), "server", sink.add);
   const serverKeyOf = new Map<string, string>();
+  const protocolOfServer = new Map<string, string>(); // by document key
   const servers: DocServer[] = [];
   const sources = { servers: [] as string[], channels: [] as string[], messages: [] as string[], traits: [] as string[], operations: [] as string[] };
   for (const def of serverDefs) {
@@ -343,12 +348,16 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       security: securityKeys(node.security, at(pointer, "security")), tags: listField(node, "tags", pointer, ax.tag),
       externalDocs: field(node, "externalDocs", pointer, ax.externalDocs), bindings: field(node, "bindings", pointer, ax.jsonObject),
     });
+    protocolOfServer.set(key, servers[servers.length - 1].protocol);
     sources.servers.push(pointer);
   }
 
   // ── channels ──
   const messageIndex: MessageIndex = must(indexMessages(raw, refs));
   for (const warning of messageIndex.warnings) sink.add(warning);
+  // the protocols the document's servers use, worked out once (every channel that names no server needs them)
+  let protocolsOfDocument: string[] | undefined;
+  const documentProtocols = (): string[] => (protocolsOfDocument ??= [...new Set(servers.map((server) => channelProtocolName(server.protocol)))]);
   const channelDefs = definitions(raw.channels, "/channels", "The channel");
   const assignedChannelKeys = assignKeys(channelDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("channels", d.sourceKey) })), new Set(), "channel", sink.add);
   const channelKeyOf = new Map<string, string>();
@@ -366,6 +375,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       else warn(at(pointer, "address"), "SANITIZED_VALUE", "address must be a string or null, so it was left out of the import");
     }
     const serverKeys: string[] = [];
+    const listedServers = new Set<string>();
     const serverProtocols: string[] = [];
     if (Array.isArray(node.servers)) {
       node.servers.forEach((entry, i) => {
@@ -375,8 +385,11 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
           warn(`${at(pointer, "servers")}/${i}`, "DROPPED_CONSTRUCT", "A channel's servers must be references to #/servers/…; this one was left out of the import");
           return;
         }
-        if (!serverKeys.includes(serverKey)) serverKeys.push(serverKey);
-        serverProtocols.push(servers.find((s) => s.key === serverKey)?.protocol ?? "");
+        if (!listedServers.has(serverKey)) {
+          listedServers.add(serverKey);
+          serverKeys.push(serverKey);
+        }
+        serverProtocols.push(protocolOfServer.get(serverKey) ?? "");
       });
     } else if (node.servers !== undefined && node.servers !== null) {
       warn(at(pointer, "servers"), "SANITIZED_VALUE", "servers must be a list, so it was left out of the import");
@@ -397,7 +410,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       protocolSource = bindingProtocol;
     } else if (servers.length > 0) {
       protocolSource = servers[0].protocol;
-      const different = distinct(servers.map((server) => server.protocol));
+      const different = documentProtocols();
       if (different.length > 1) warn(pointer, "SANITIZED_VALUE", `This channel names no server and the document's servers use different protocols (${boundChain(different, MAX_CHAIN_ENTRIES, 40, ", ")}); the first server's, "${boundText(different[0], 40)}", was assumed. Check the channel's protocol.`);
     } else {
       protocolSource = DEFAULT_CHANNEL_PROTOCOL;
@@ -406,17 +419,24 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
 
     let parameters = field(node, "parameters", pointer, ax.parameters);
     if (address !== null) {
-      const missing = [...address.matchAll(/\{([^{}]*)\}/g)].map((m) => m[1].trim()).filter((name) => name !== "" && !(parameters && Object.hasOwn(parameters, name)));
-      for (const name of new Set(missing)) {
-        parameters = { ...(parameters ?? {}) };
-        setOwn(parameters, name, {} as DocChannelParameter);
-        warn(at(pointer, "parameters"), "SANITIZED_VALUE", `The address uses {${boundText(name)}} but defines no parameter for it, so an empty one was added`);
+      const missing = new Set<string>();
+      for (const match of address.matchAll(/\{([^{}]*)\}/g)) {
+        const name = match[1].trim();
+        if (name !== "" && !(parameters && Object.hasOwn(parameters, name))) missing.add(name);
+      }
+      if (missing.size > 0) {
+        parameters = { ...(parameters ?? {}) }; // one copy, not one per missing name
+        for (const name of missing) {
+          setOwn(parameters, name, {} as DocChannelParameter);
+          warn(at(pointer, "parameters"), "SANITIZED_VALUE", `The address uses {${boundText(name)}} but defines no parameter for it, so an empty one was added`);
+        }
       }
     }
 
-    const messageKeys: string[] = [];
-    for (const message of messageIndex.channels.get(def.sourceKey)?.values() ?? []) if (!messageKeys.includes(message.key)) messageKeys.push(message.key);
-    channelMessageKeys.set(key, new Set(messageKeys));
+    const channelMessages = new Set<string>(); // insertion-ordered and unique: a channel can hold tens of thousands of messages
+    for (const message of messageIndex.channels.get(def.sourceKey)?.values() ?? []) channelMessages.add(message.key);
+    const messageKeys = [...channelMessages];
+    channelMessageKeys.set(key, channelMessages);
 
     channels.push({
       key, address, protocol: channelProtocolName(protocolSource), serverKeys, bindings,
@@ -483,6 +503,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     }
     const allowed = channel ? channelMessageKeys.get(channel.key) : undefined;
     const out: string[] = [];
+    const listed = new Set<string>();
     value.forEach((entry, i) => {
       const entryAt = `${base}/${i}`;
       const segments = refTargetSegments(entry);
@@ -500,7 +521,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         warn(entryAt, "DROPPED_CONSTRUCT", "This does not point at a message of the operation's channel, so it was left out of the import");
         return;
       }
-      if (!out.includes(message.key)) out.push(message.key);
+      if (!listed.has(message.key)) { listed.add(message.key); out.push(message.key); }
     });
     return out;
   };

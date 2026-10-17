@@ -3,6 +3,7 @@
 import { err, ok, type Result } from "@/types/result";
 import { boundText } from "./bound";
 import { createRefResolver, type RefResolver } from "./refs";
+import { assertDocumentBounds } from "./source";
 import { indexMessages, isBag, type IndexedMessage } from "./message-index";
 import type { ExtractedPayload, RawAsyncApi3 } from "./types";
 
@@ -110,6 +111,8 @@ export function describeMessageSchemas(refs: RefResolver, message: IndexedMessag
  */
 export function extractPayloads(raw: RawAsyncApi3): Result<ExtractedPayload[]> {
   try {
+    const bounds = assertDocumentBounds(raw); // the caller normally parsed the text with `parseAsyncApiSource`; an object handed over directly is checked here
+    if (!bounds.success) return bounds;
     const refs = createRefResolver(raw);
     const checked = refs.check({ tolerateCycles: true }); // a recursive SCHEMA is reported per payload below; other loops fail when they are read
     if (!checked.success) return checked;
