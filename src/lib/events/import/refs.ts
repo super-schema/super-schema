@@ -13,6 +13,7 @@ import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { jsonPointer, localRef, resolveLocalRef, unescapePointerSegment } from "@/lib/event-specs/json-pointer";
 import { setOwn } from "@/lib/event-specs/own-property";
 import { MAX_EXPANDED_NODES, MAX_NESTING_DEPTH } from "./limits";
+import { boundChain, boundPointer, boundText, CHAIN_ENTRY_LENGTH, MAX_CHAIN_ENTRIES } from "./bound";
 
 /** The longest chain of `$ref` wrappers `deref` follows. */
 const MAX_DEREF_HOPS = 64;
@@ -110,7 +111,7 @@ export function createRefResolver(root: unknown): RefResolver {
   let lastLoop: string[] = [];
   /** Where the walk is, as pointer segments: only turned into text when an error needs it. */
   let cursor: Array<string | number> = [];
-  const here = (): string => (cursor.length === 0 ? "the document root" : `"${jsonPointer(...cursor)}"`);
+  const here = (): string => (cursor.length === 0 ? "the document root" : `"${boundText(jsonPointer(...cursor), 120)}"`);
 
   /** Records that the ref being read (written at the cursor) points at `targetSegments`; both ends at component-entry level. */
   const noteEdge = (targetSegments: readonly string[]): void => {
@@ -122,22 +123,22 @@ export function createRefResolver(root: unknown): RefResolver {
   };
 
   const fail = (code: string, message: string, extra: { ref?: string; suggestedFix?: string } = {}): never => {
-    throw new RefFailure({ code, message, details: { pointer: jsonPointer(...cursor), ...(extra.ref !== undefined && { ref: extra.ref }) }, ...(extra.suggestedFix !== undefined && { suggestedFix: extra.suggestedFix }) });
+    throw new RefFailure({ code, message, details: { pointer: boundPointer(jsonPointer(...cursor)), ...(extra.ref !== undefined && { ref: boundPointer(extra.ref) }) }, ...(extra.suggestedFix !== undefined && { suggestedFix: extra.suggestedFix }) });
   };
 
   function locate(ref: string): { pointer: string; segments: string[]; value: unknown } {
     const classified = classify(ref);
     if (classified.kind === "external") {
-      return fail("EXTERNAL_REF", `The reference "${ref}" at ${here()} points outside the document. Only references inside the document (#/components/…) can be imported; external files and URLs are never fetched.`, {
+      return fail("EXTERNAL_REF", `The reference "${boundText(ref, 120)}" at ${here()} points outside the document. Only references inside the document (#/components/…) can be imported; external files and URLs are never fetched.`, {
         ref, suggestedFix: "Bundle the document first (for example with the AsyncAPI CLI: asyncapi bundle), or paste the referenced content into the file.",
       });
     }
     if (classified.kind === "anchor") {
-      return fail("REF_NOT_FOUND", `The reference "${ref}" at ${here()} is not a JSON pointer; write references as #/components/…`, { ref });
+      return fail("REF_NOT_FOUND", `The reference "${boundText(ref, 120)}" at ${here()} is not a JSON pointer; write references as #/components/…`, { ref });
     }
     const found = resolveLocalRef(root, localRef(...classified.segments));
     if (!found.found) {
-      return fail("REF_NOT_FOUND", `The reference "${ref}" at ${here()} points to something that does not exist in the document.`, {
+      return fail("REF_NOT_FOUND", `The reference "${boundText(ref, 120)}" at ${here()} points to something that does not exist in the document.`, {
         ref, suggestedFix: "References are followed from the document root: write the full path (for example #/components/schemas/Name).",
       });
     }
@@ -157,7 +158,7 @@ export function createRefResolver(root: unknown): RefResolver {
   /** A reference loop: an error, or (tolerated) noted and cut with a hole where the loop closes. */
   function loopFound(loop: string[], ref: string): Expanded {
     if (!tolerate) {
-      return fail("REF_CYCLE", `Recursive reference: ${loop.join(" → ")} (found at ${here()}). A reference that leads back to itself cannot be imported.`, {
+      return fail("REF_CYCLE", `Recursive reference: ${boundChain(loop, MAX_CHAIN_ENTRIES, CHAIN_ENTRY_LENGTH)} (found at ${here()}). A reference that leads back to itself cannot be imported.`, {
         ref, suggestedFix: "Remove the recursion, or replace the recursive part with a plain object schema.",
       });
     }
@@ -289,7 +290,7 @@ export function createRefResolver(root: unknown): RefResolver {
         while (isRef(current)) {
           const target = locate(current.$ref);
           if (seen.includes(target.pointer)) {
-            fail("REF_CYCLE", `Recursive reference: ${[...seen.slice(seen.indexOf(target.pointer)), target.pointer].map((p) => `#${p}`).join(" → ")} (found at ${here()}).`, { ref: current.$ref });
+            fail("REF_CYCLE", `Recursive reference: ${boundChain([...seen.slice(seen.indexOf(target.pointer)), target.pointer].map((p) => `#${p}`), MAX_CHAIN_ENTRIES, CHAIN_ENTRY_LENGTH)} (found at ${here()}).`, { ref: current.$ref });
           }
           if (seen.length >= MAX_DEREF_HOPS) fail("REF_TOO_LARGE", `A chain of more than ${MAX_DEREF_HOPS} references starting at ${here()} cannot be imported.`);
           seen.push(target.pointer);

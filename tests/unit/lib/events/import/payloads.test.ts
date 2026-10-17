@@ -225,8 +225,8 @@ describe("extractPayloads: rejects", () => {
 });
 
 describe("extractPayloads: a schema that refers to itself (recursive type)", () => {
-  it("negative-ref-cycle.yaml (Node -> Tree -> Node): the payload is unsupported, with no raw schema, and the import is not refused", () => {
-    const list = extract(fixture("negative-ref-cycle.yaml"));
+  it("recursive-payload-placeholder.yaml (Node -> Tree -> Node): the payload is unsupported, with no raw schema, and the import is not refused", () => {
+    const list = extract(fixture("recursive-payload-placeholder.yaml"));
     expect(list).toEqual([
       { messageKey: "nodeCreated", role: "payload", sourcePointer: "/components/messages/nodeCreated/payload", format: "unsupported", raw: undefined, suggestedName: "NodeCreated" },
     ]);

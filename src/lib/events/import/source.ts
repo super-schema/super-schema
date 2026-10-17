@@ -9,9 +9,13 @@ import { MAX_IMPORT_CONTENT_BYTES } from "@/lib/compiler/import-limits";
 import { isReservedKey } from "@/lib/event-specs/own-property";
 import { jsonPointer } from "@/lib/event-specs/json-pointer";
 import { MAX_ALIAS_COUNT, MAX_DOCUMENT_NODES, MAX_NESTING_DEPTH } from "./limits";
+import { boundPointer, boundText } from "./bound";
 import type { RawAsyncApi3 } from "./types";
 
 export { MAX_ALIAS_COUNT, MAX_NESTING_DEPTH };
+
+/** Longest piece of a parser's own error text echoed in a message. */
+const MAX_ERROR_TEXT_LENGTH = 200;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const fail = (code: string, message: string, extra?: { details?: object; suggestedFix?: string }) => err({ code, message, ...extra });
@@ -25,7 +29,7 @@ function describeKind(value: unknown): string {
 
 /** The first line of a `yaml` error ("Map keys must be unique at line 2, column 1:"), without the trailing colon. */
 function yamlMessage(e: { message: string }): string {
-  return e.message.split("\n")[0].replace(/:\s*$/, "");
+  return boundText(e.message.split("\n")[0].replace(/:\s*$/, ""), MAX_ERROR_TEXT_LENGTH);
 }
 
 /** Every key must be safe, nothing may nest too deep, and the expanded document must stay small. Iterative: a hostile file cannot overflow the stack here. */
@@ -47,7 +51,7 @@ function scan(root: unknown): { message: string; details: object } | null {
     }
     if (typeof value !== "object" || value === null) continue;
     if (depth >= MAX_NESTING_DEPTH) {
-      return { message: `The document is nested more than ${MAX_NESTING_DEPTH} levels deep at "${pointerOf(frame)}"`, details: { pointer: pointerOf(frame), limit: MAX_NESTING_DEPTH } };
+      return { message: `The document is nested more than ${MAX_NESTING_DEPTH} levels deep at "${boundText(pointerOf(frame), 120)}"`, details: { pointer: boundPointer(pointerOf(frame)), limit: MAX_NESTING_DEPTH } };
     }
     if (Array.isArray(value)) {
       for (let i = 0; i < value.length; i += 1) stack.push({ value: value[i], depth: depth + 1, parent: frame, key: i });
@@ -56,7 +60,7 @@ function scan(root: unknown): { message: string; details: object } | null {
     for (const key of Object.keys(value)) {
       if (isReservedKey(key)) {
         const pointer = pointerOf(frame, key);
-        return { message: `The key "${key}" at "${pointer}" is not allowed in an imported document (it collides with built-in JavaScript properties); rename it and import again`, details: { pointer, key } };
+        return { message: `The key "${boundText(key)}" at "${boundText(pointer, 120)}" is not allowed in an imported document (it collides with built-in JavaScript properties); rename it and import again`, details: { pointer: boundPointer(pointer), key: boundText(key) } };
       }
       stack.push({ value: (value as Record<string, unknown>)[key], depth: depth + 1, parent: frame, key });
     }
@@ -76,7 +80,7 @@ function parseJsonText(text: string): Result<unknown> {
   try {
     value = JSON.parse(text);
   } catch (e) {
-    return fail("PARSE_ERROR", `The file is not valid JSON: ${e instanceof Error ? e.message : "it could not be read"}`, { suggestedFix: "Fix the syntax error and import again." });
+    return fail("PARSE_ERROR", `The file is not valid JSON: ${e instanceof Error ? boundText(e.message, MAX_ERROR_TEXT_LENGTH) : "it could not be read"}`, { suggestedFix: "Fix the syntax error and import again." });
   }
   return ok(value);
 }
@@ -141,14 +145,14 @@ export function parseAsyncApiSource(text: string): Result<RawAsyncApi3> {
       return fail("PARSE_ERROR", `This is not an AsyncAPI document: the top-level "asyncapi" field is missing.${other}`, { suggestedFix: "Import an AsyncAPI 3.0 document." });
     }
     if (typeof version !== "string" || !/^3\.\d+(\.\d+)?(-.+)?$/.test(version.trim())) {
-      return fail("UNSUPPORTED_VERSION", `AsyncAPI ${String(version)} is not supported: only AsyncAPI 3.0 documents can be imported`, {
-        details: { version },
+      return fail("UNSUPPORTED_VERSION", `AsyncAPI ${boundText(version, 40)} is not supported: only AsyncAPI 3.0 documents can be imported`, {
+        details: { version: boundText(version, 80) },
         suggestedFix: "Upgrade the document to AsyncAPI 3.0 (the AsyncAPI CLI can do it: asyncapi convert --target-version 3.0.0) and import it again.",
       });
     }
     return ok(value as RawAsyncApi3);
   } catch (e) {
     // A pathological file can exhaust the stack inside a parser; it is still just a file the user must change.
-    return fail("PARSE_ERROR", `The file could not be read${e instanceof RangeError ? " (it is nested too deeply)" : ""}: ${e instanceof Error ? e.message : "unknown error"}`);
+    return fail("PARSE_ERROR", `The file could not be read${e instanceof RangeError ? " (it is nested too deeply)" : ""}: ${e instanceof Error ? boundText(e.message, MAX_ERROR_TEXT_LENGTH) : "unknown error"}`);
   }
 }

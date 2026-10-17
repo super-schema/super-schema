@@ -21,6 +21,7 @@ describe("fixtures", () => {
       "http-websocket-minimal.json",
       "inline-messages-and-traits.yaml",
       "multi-format-payloads.yaml",
+      "recursive-payload-placeholder.yaml",
       "recursive-schemas.yaml",
       "request-reply.yaml",
       "streetlights-kafka.yaml",
@@ -34,7 +35,6 @@ describe("fixtures", () => {
       "negative-missing-ref.yaml",
       "negative-proto-key.yaml",
       "negative-ref-cycle-trait-message.yaml",
-      "negative-ref-cycle.yaml",
     ]);
   });
 
@@ -52,7 +52,7 @@ describe("fixtures", () => {
   it.each(negatives)("%s is never imported as is", (name) => {
     const parsed = parseAsyncApiSource(read(name));
     // The ref negatives parse fine. External and missing refs and a message <-> trait cycle are rejected when read (refs.test.ts /
-    // map-document.test.ts); `negative-ref-cycle.yaml` (a recursive PAYLOAD schema) is no longer refused: that payload becomes a placeholder.
+    // map-document.test.ts); a recursive PAYLOAD schema (`recursive-payload-placeholder.yaml`, `recursive-schemas.yaml`) is not refused: that payload becomes a placeholder.
     if (/ref/.test(name)) expect(parsed.success).toBe(true);
     else expect(parsed.success).toBe(false);
   });

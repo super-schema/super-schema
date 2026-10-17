@@ -1,6 +1,7 @@
 // src/lib/events/import/payloads.ts
 // Every payload and headers schema of every message of an AsyncAPI 3.0 document, ready to become an entity. Pure — client-safe.
 import { err, ok, type Result } from "@/types/result";
+import { boundText } from "./bound";
 import { createRefResolver, type RefResolver } from "./refs";
 import { indexMessages, isBag, type IndexedMessage } from "./message-index";
 import type { ExtractedPayload, RawAsyncApi3 } from "./types";
@@ -103,7 +104,9 @@ export function describeMessageSchemas(refs: RefResolver, message: IndexedMessag
  * Every payload and headers schema of every message (component or inline), local `$ref`s inlined so each schema is self-contained.
  * A message without a payload still gets an entry (format `none`) so the event can pin a placeholder; headers are listed only when
  * the message has them. `messageKey` is the key the message gets in the event document (see `mapAsyncApiToEventDocument`).
- * A schema that refers to itself is listed as `unsupported` (no `raw`); other external, missing or recursive references fail like they do in the mapper.
+ * A schema that refers to itself is listed as `unsupported` (no `raw`). An external or missing reference anywhere in the document, and a loop through a
+ * chain of `$ref` wrappers in a payload or headers field, are errors. This reads schemas only: a loop through a trait, a binding, a message or an
+ * example is found by the mapper (`mapAsyncApiToEventDocument`), not here.
  */
 export function extractPayloads(raw: RawAsyncApi3): Result<ExtractedPayload[]> {
   try {
@@ -124,6 +127,6 @@ export function extractPayloads(raw: RawAsyncApi3): Result<ExtractedPayload[]> {
     }
     return ok(out);
   } catch (e) {
-    return err({ code: "IMPORT_FAILED", message: "The AsyncAPI document could not be processed; it is probably too large or too deeply nested.", details: { reason: e instanceof Error ? e.message : String(e) } });
+    return err({ code: "IMPORT_FAILED", message: "The AsyncAPI document could not be processed; it is probably too large or too deeply nested.", details: { reason: boundText(e instanceof Error ? e.message : e, 200) } });
   }
 }

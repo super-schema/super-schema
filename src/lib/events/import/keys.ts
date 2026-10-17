@@ -3,6 +3,7 @@
 import { isReservedKey } from "@/lib/event-specs/own-property";
 import { KEY_MAX_LENGTH, KEY_PATTERN } from "@/lib/events/document/types";
 import { slugKey } from "@/lib/events/document/keys";
+import { boundText } from "./bound";
 import type { ImportWarning } from "./types";
 
 /** True when `key` can be a document key as it is: `KEY_PATTERN`, at most `KEY_MAX_LENGTH`, never an `Object.prototype` name. */
@@ -34,7 +35,7 @@ export interface KeyRequest {
  * Document keys for `requests`, never one that is in `taken` (every assigned key is added to it). Keys that are usable and free keep
  * their name, whatever order the requests come in; the rest get `slugKey` + `-2`, `-3`, … and a `KEY_ADJUSTED` warning.
  */
-export function assignKeys(requests: readonly KeyRequest[], taken: Set<string>, noun: string, warnings: ImportWarning[]): Map<string, string> {
+export function assignKeys(requests: readonly KeyRequest[], taken: Set<string>, noun: string, warn: (warning: ImportWarning) => void): Map<string, string> {
   const assigned = new Map<string, string>();
   const deferred: KeyRequest[] = [];
   for (const request of requests) {
@@ -48,7 +49,7 @@ export function assignKeys(requests: readonly KeyRequest[], taken: Set<string>, 
     assigned.set(request.id, key);
     taken.add(key);
     const reason = isUsableKey(request.key) ? "is already used by another one" : 'is not a valid key (keys may only contain letters, digits, ".", "_" and "-")';
-    warnings.push({ pointer: request.pointer, code: "KEY_ADJUSTED", message: `The ${noun} key "${request.key}" ${reason}; it is imported as "${key}"` });
+    warn({ pointer: request.pointer, code: "KEY_ADJUSTED", message: `The ${noun} key "${boundText(request.key)}" ${reason}; it is imported as "${key}"` });
   }
   return assigned;
 }

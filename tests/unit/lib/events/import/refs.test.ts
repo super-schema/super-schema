@@ -129,7 +129,7 @@ describe("resolveLocalRefs: rejects", () => {
   });
 
   it("a longer cycle (Node → Tree → Node) as REF_CYCLE, naming the whole chain", () => {
-    const error = failureOf(fixture("negative-ref-cycle.yaml"));
+    const error = failureOf(fixture("recursive-payload-placeholder.yaml"));
     expect(error.code).toBe("REF_CYCLE");
     expect(error.message).toContain("#/components/schemas/Node");
     expect(error.message).toContain("#/components/schemas/Tree");

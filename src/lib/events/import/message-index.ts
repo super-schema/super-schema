@@ -5,6 +5,7 @@
 // a component message keeps its component key (`components.messages.X` is key `X`); an inline message of a channel is keyed by its
 // channel-local key; a key that is not valid, or is taken, is adjusted the same way for both.
 import { ok, type Result } from "@/types/result";
+import { boundText } from "./bound";
 import { jsonPointer } from "@/lib/event-specs/json-pointer";
 import { assignKeys, type KeyRequest } from "./keys";
 import { isRef, type RefResolver } from "./refs";
@@ -51,7 +52,7 @@ export function indexMessages(raw: RawAsyncApi3, refs: RefResolver): Result<Mess
     const known = byPointer.get(target.data.pointer);
     if (known) return ok(known);
     if (!isBag(target.data.value)) {
-      warnings.push({ pointer: at, code: "SANITIZED_VALUE", message: `A message must be an object; "${sourceKey}" is not, so it was left out` });
+      warnings.push({ pointer: at, code: "SANITIZED_VALUE", message: `A message must be an object; "${boundText(sourceKey)}" is not, so it was left out` });
       return ok(null);
     }
     const message: IndexedMessage = { key: "", pointer: target.data.pointer, node: target.data.value, sourceKey };
@@ -84,8 +85,8 @@ export function indexMessages(raw: RawAsyncApi3, refs: RefResolver): Result<Mess
   }
 
   const taken = new Set<string>();
-  const componentKeys = assignKeys(requests.component, taken, "message", warnings);
-  const inlineKeys = assignKeys(requests.inline, taken, "message", warnings);
+  const componentKeys = assignKeys(requests.component, taken, "message", (w) => warnings.push(w));
+  const inlineKeys = assignKeys(requests.inline, taken, "message", (w) => warnings.push(w));
   for (const message of ordered) message.key = (componentKeys.get(message.pointer) ?? inlineKeys.get(message.pointer)) as string;
   return ok({ messages: ordered, byComponentKey, channels, warnings });
 }

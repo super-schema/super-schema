@@ -14,7 +14,8 @@ import type { ImportWarning, MapContext, RawAsyncApi3 } from "@/lib/events/impor
 const DIR = path.join(process.cwd(), "tests/fixtures/asyncapi-import");
 const FIXTURES = [
   "builtin-traits.yaml", "http-websocket-minimal.json", "inline-messages-and-traits.yaml", "multi-format-payloads.yaml",
-  "request-reply.yaml", "streetlights-kafka.yaml", "streetlights-mqtt.yaml", "unsupported-payloads.yaml",
+  "recursive-payload-placeholder.yaml", "recursive-schemas.yaml", "request-reply.yaml", "streetlights-kafka.yaml", "streetlights-mqtt.yaml",
+  "unsupported-payloads.yaml",
 ];
 
 function load(name: string): RawAsyncApi3 {
@@ -638,7 +639,7 @@ describe("channel protocol", () => {
   });
 
   describe("a guessed protocol is reported, a protocol with evidence is not", () => {
-    const guesses = (warnings: ImportWarning[]) => warnings.filter((w) => /protocol/i.test(w.message));
+    const guesses = (warnings: ImportWarning[]) => warnings.filter((w) => /^(This channel is on servers with different protocols|This channel names no server and the document's servers use different protocols|Nothing in the document tells the protocol of this channel)/.test(w.message));
     const twoProtocols = (raw: RawAsyncApi3) => { (raw.servers as Record<string, unknown>).other = { host: "h:2", protocol: "mqtt" }; };
 
     it("nothing tells the protocol (no server, no bindings): kafka is assumed, and the warning says so", () => {
@@ -698,8 +699,8 @@ describe("channel protocol", () => {
 });
 
 describe("a schema that refers to itself degrades that payload only", () => {
-  it("negative-ref-cycle.yaml (Node -> Tree -> Node): the event imports, the payload is pinned to its placeholder, the warning names the loop", () => {
-    const raw = load("negative-ref-cycle.yaml");
+  it("recursive-payload-placeholder.yaml (Node -> Tree -> Node): the event imports, the payload is pinned to its placeholder, the warning names the loop", () => {
+    const raw = load("recursive-payload-placeholder.yaml");
     const { document, warnings } = mapRaw(raw);
     expect(document.messages.map((m) => [m.key, m.payload.entityId])).toEqual([["nodeCreated", "ent-nodeCreated-payload"]]);
     expect(warnings.filter((w) => w.pointer.startsWith("/components/messages"))).toEqual([{

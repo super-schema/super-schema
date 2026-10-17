@@ -3,6 +3,7 @@
 // construction what `parseEventDocument` accepts: an unknown property, a value of the wrong type or a blank required field is removed and
 // reported (`SANITIZED_VALUE`), never copied through. Pure — client-safe.
 import { createObjectReaders, type Reader } from "@/lib/events/document/parse-objects";
+import { boundText } from "./bound";
 import type { ImportWarning } from "./types";
 
 type Problem = { pointer: string; message: string };
@@ -48,7 +49,7 @@ export function createSanitizer(warn: (warning: ImportWarning) => void): Sanitiz
     }
     const dropped = out === undefined || remaining > 0;
     for (const problem of found) {
-      warn({ pointer: problem.pointer, code: "SANITIZED_VALUE", message: `${problem.message}; ${dropped ? "the whole value was left out of the import" : "it was left out of the import"}` });
+      warn({ pointer: problem.pointer, code: "SANITIZED_VALUE", message: `${boundText(problem.message, 300)}; ${dropped ? "the whole value was left out of the import" : "it was left out of the import"}` });
     }
     return dropped ? undefined : out;
   }
@@ -56,7 +57,7 @@ export function createSanitizer(warn: (warning: ImportWarning) => void): Sanitiz
   function readEach<T>(reader: Reader<T>, value: unknown, at: string): T[] | undefined {
     if (value === undefined || value === null) return undefined;
     if (!Array.isArray(value)) {
-      warn({ pointer: at, code: "SANITIZED_VALUE", message: `${at.slice(at.lastIndexOf("/") + 1)} must be a list; it was left out of the import` });
+      warn({ pointer: at, code: "SANITIZED_VALUE", message: `${boundText(at.slice(at.lastIndexOf("/") + 1))} must be a list; it was left out of the import` });
       return undefined;
     }
     const out: T[] = [];
