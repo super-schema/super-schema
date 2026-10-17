@@ -4,14 +4,19 @@
 // (unpinned: the user publishes the entities, then the event). The pure parts are `src/lib/events/import/*`; the entities are
 // `import-payload-entities.ts`.
 //
-// Order, so that a document that cannot be imported creates NOTHING: read and check the file, plan the entities, validate with the AsyncAPI
-// parser, map the document ONCE with stand-in pins (extracting the payloads succeeding does not mean mapping will: a missing title, an
-// operation without a channel and an oversized expansion are only found by mapping), and only then write: entities (one transaction),
-// the event, the document. If either of the last two fails, what was created is deleted again and the error says so.
+// Order, so that a document that cannot be imported creates NOTHING and the inputs of the slow steps are bounded: check the size of the
+// file, check the entries of every object and list and the size of the document once its references are resolved (on a loose linear
+// parse of the text, before the pure layer's own parse, which is quadratic in the keys of one map, and before ANYTHING else walks the
+// document), parse the source, extract the payloads, CHECK THEIR LIMITS (`import-limits.ts`) before any importer runs, plan the entities (and check
+// the entity and field limits), validate with the AsyncAPI parser, map the document ONCE with stand-in pins (extracting the payloads
+// succeeding does not mean mapping will: a missing title, an operation without a channel and an oversized expansion are only found by
+// mapping), and only then write: entities (one transaction), the event, the document. If either of the last two fails, what was created is
+// deleted again and the error says so. The importers and the parser are synchronous stretches of CPU that nothing can interrupt, so there
+// is no time limit; the limits bound what they are given (see `import-limits.ts`).
 import type { Parser } from "@asyncapi/parser";
 import type { LevelScope } from "@/lib/levels";
 import { resolveScope } from "@/lib/asset-scope";
-import { checkImportSize, withCompileTimeout } from "@/lib/compiler/import-limits";
+import { checkImportSize } from "@/lib/compiler/import-limits";
 import { mapParserDiagnostic, createAsyncApiParser } from "@/lib/event-specs/validation/asyncapi-parser-validator";
 import { normalizeDiagnostics } from "@/lib/event-specs/diagnostics";
 import { BUNDLED_TRAITS, bundledMarker } from "@/lib/events/bundled-traits";
@@ -26,9 +31,10 @@ import type { EntityPin } from "@/lib/events/types";
 import { ensureBundledTraits } from "@/services/events/bundled-traits.service";
 import { createEvent, deleteEvent, updateEventDocument } from "@/services/events/event.service";
 import {
-  createNameAllocator, createPayloadEntities, deleteCreatedEntities, planPayloadEntities, resolveEntityNames, MAX_IMPORT_ENTITIES,
+  createNameAllocator, createPayloadEntities, deleteCreatedEntities, planPayloadEntities, resolveEntityNames,
   type CreatedPayloadEntities, type PlannedFormat, type ResolvedPayload, type UndeletedEntity,
 } from "@/services/events/import-payload-entities";
+import { boundText, checkEntryCounts, checkExpandedSize, checkPayloadLimits, checkPlanLimits, checkSourceLimits, MAX_PARSER_PROBLEMS, MAX_PARSER_WARNINGS } from "@/services/events/import-limits";
 import { guardRead, requireId } from "@/services/events/service-guards";
 import { GENERIC_ACTION_ERROR, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
@@ -49,9 +55,6 @@ export interface AsyncApiImportPreview {
 
 /** The parser is expensive to build and holds no document state: one per process, like the emit validators. */
 let sharedParser: Parser | undefined;
-const PARSER_TIMEOUT_MS = 30_000;
-/** Most validator problems listed in an error: a broken 1 MiB file can have thousands. */
-const MAX_PROBLEMS = 100;
 
 const invalid = (message: string, suggestedFix?: string) => err({ code: "VALIDATION_ERROR", message, ...(suggestedFix && { suggestedFix }) });
 const internalFailure = (label: string, cause: unknown): Result<never> => {
@@ -77,30 +80,44 @@ function readInput(input: unknown): Result<{ content: string; fileName?: string;
   return ok({ content, fileName: file === "" ? undefined : file, eventName: name });
 }
 
-/** The AsyncAPI parser's verdict on the document: any error blocks the import (nothing is created); warnings are reported. Info and hints are style advice and are dropped. */
+/**
+ * The AsyncAPI parser's verdict on the document: any error blocks the import (nothing is created); warnings are reported (the first
+ * `MAX_PARSER_WARNINGS`, then one summary line); info and hints are style advice and are dropped.
+ *
+ * NOT time-bounded, and not interruptible: the parser is asynchronous in name only. It runs long synchronous stretches (Spectral), so a
+ * timer cannot fire in the middle of them and racing it against one would only guard a promise that never settles. What is bounded is
+ * its INPUT, by the caller before this runs: the file (1 MiB), the entries of any one object (`checkEntryCounts`: its cost also grows with
+ * the square of that) and the size of the document once its `$ref`s are replaced by their targets (`checkExpandedSize`: roughly 1 - 2.5 s
+ * per MiB depending on the shape, about 5 s at 4 MiB for the densest, so the limit is 2 MiB). Nothing else is claimed.
+ */
 async function validateWithParser(raw: RawAsyncApi3): Promise<Result<ImportWarning[]>> {
   sharedParser ??= createAsyncApiParser();
-  const parser = sharedParser;
-  const timed = await withCompileTimeout(() => parser.validate(raw), PARSER_TIMEOUT_MS);
-  if (!timed.success) {
-    return err({ code: "COMPILE_TIMEOUT", message: `Validating the AsyncAPI document took longer than ${PARSER_TIMEOUT_MS / 1000} seconds and was abandoned`, suggestedFix: "Import a smaller or simpler document." });
-  }
+  const found = await sharedParser.validate(raw);
   // A crash inside the validator comes back as a diagnostic carrying the exception text and its stack: log it, never show it.
-  if (timed.data.some((d) => String(d.code) === "uncaught-error")) {
-    return internalFailure("asyncapi-import validate", timed.data.find((d) => String(d.code) === "uncaught-error")?.message);
-  }
-  const diagnostics = normalizeDiagnostics(timed.data.map(mapParserDiagnostic));
+  const crash = found.find((d) => String(d.code) === "uncaught-error");
+  if (crash) return internalFailure("asyncapi-import validate", crash.message);
+  const diagnostics = normalizeDiagnostics(found.map(mapParserDiagnostic));
   const errors = diagnostics.filter((d) => d.severity === "error");
   if (errors.length > 0) {
     const first = errors[0];
     return err({
       code: "VALIDATION_ERROR",
-      message: `The AsyncAPI document is not valid: ${first.message} (at ${first.pointer === "" ? "the document" : first.pointer})${errors.length > 1 ? `, and ${errors.length - 1} more problem${errors.length > 2 ? "s" : ""}` : ""}`,
-      details: { problems: errors.slice(0, MAX_PROBLEMS).map((d) => ({ pointer: d.pointer, message: d.message, code: d.code })) },
+      message: `The AsyncAPI document is not valid: ${boundText(first.message)} (at ${first.pointer === "" ? "the document" : boundText(first.pointer)})${errors.length > 1 ? `, and ${errors.length - 1} more problem${errors.length > 2 ? "s" : ""}` : ""}.`,
+      details: { problems: errors.slice(0, MAX_PARSER_PROBLEMS).map((d) => ({ pointer: boundText(d.pointer), message: boundText(d.message), code: d.code })) },
       suggestedFix: "Fix the document and import it again.",
     });
   }
-  return ok(diagnostics.filter((d) => d.severity === "warning").map((d): ImportWarning => ({ pointer: d.pointer, code: "VALIDATION_WARNING", message: d.message })));
+  const warnings = diagnostics.filter((d) => d.severity === "warning");
+  const report = warnings.slice(0, MAX_PARSER_WARNINGS).map((d): ImportWarning => ({ pointer: boundText(d.pointer), code: "VALIDATION_WARNING", message: boundText(d.message) }));
+  if (warnings.length > MAX_PARSER_WARNINGS) report.push({ pointer: "", code: "DROPPED_CONSTRUCT", message: `${warnings.length - MAX_PARSER_WARNINGS} more ${warnings.length - MAX_PARSER_WARNINGS === 1 ? "warning was" : "warnings were"} omitted` });
+  return ok(report);
+}
+
+/** The pure layer's `IMPORT_FAILED` carries the exception text in `details.reason`: it is logged here and never forwarded. Every other failure of it is meant for the user. */
+function safeImportError(error: ServiceError): ServiceError {
+  if (error.code !== "IMPORT_FAILED") return error;
+  console.error("[asyncapi-import] the document could not be processed", error.details);
+  return { code: "IMPORT_FAILED", message: "The AsyncAPI document could not be processed; it is probably too large or too deeply nested.", suggestedFix: "Import a smaller or simpler document." };
 }
 
 /** The library trait of each built-in family a message trait can be mapped to, and the name of each (for the report). */
@@ -169,23 +186,33 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const scope = resolved.data;
   const sized = checkImportSize(content, "AsyncAPI document");
   if (!sized.success) return sized;
+  // Bound what everything after this is given, BEFORE any of it reads or walks the document: the entries of one object (the AsyncAPI
+  // parser's cost, and the pure layer's own duplicate-key check, grow with their square) and of one list (the mapper de-duplicates
+  // quadratically), and the size of the document once every reference is replaced by its target (a few bytes of references to a shared
+  // definition can be megabytes). First on a loose linear parse of the TEXT, because `parseAsyncApiSource` itself is quadratic in the keys
+  // of one map; then on what it returns (the text it could not loosely read, if any, is covered there).
+  const sourceLimits = checkSourceLimits(content);
+  if (!sourceLimits.success) return sourceLimits;
   const parsed = parseAsyncApiSource(content);
   if (!parsed.success) return parsed;
   const raw = parsed.data;
+  const entryCounts = checkEntryCounts(raw);
+  if (!entryCounts.success) return entryCounts;
+  const expandedLimit = checkExpandedSize(raw);
+  if (!expandedLimit.success) return expandedLimit;
 
-  // 2. The entities the payloads become (cheap and bounded: before the parser spends time on the document).
+  // 2. The payloads, BOUNDED before any importer runs (an importer is synchronous and cannot be interrupted): how many, how big, how
+  // big together (a schema several messages share counts per message). Then the entities they become and, before the first write, how
+  // many entities and fields that is.
   const extracted = extractPayloads(raw);
-  if (!extracted.success) return extracted;
+  if (!extracted.success) return err(safeImportError(extracted.error));
+  const payloadLimits = checkPayloadLimits(extracted.data);
+  if (!payloadLimits.success) return payloadLimits;
   const planned = planPayloadEntities(extracted.data, fileName);
-  const entityCount = planned.plans.reduce((sum, plan) => sum + plan.entities.length, 0);
-  if (entityCount > MAX_IMPORT_ENTITIES) {
-    return err({
-      code: "VALIDATION_ERROR", message: `This document would create ${entityCount} entities; one import creates at most ${MAX_IMPORT_ENTITIES}`,
-      details: { entities: entityCount, limit: MAX_IMPORT_ENTITIES }, suggestedFix: "Split the document into several files and import them one by one.",
-    });
-  }
+  const planLimits = checkPlanLimits(planned.plans);
+  if (!planLimits.success) return planLimits;
 
-  // 3. The AsyncAPI parser: an error means nothing is created.
+  // 3. The AsyncAPI parser: an error means nothing is created. It cannot be interrupted; what it is given was bounded above.
   const validated = await validateWithParser(raw);
   if (!validated.success) return validated;
 
@@ -194,7 +221,7 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   if (!builtIns.success) return builtIns;
   const standIn = new Map<string, EntityPin>(planned.plans.map((plan) => [plan.pinKey, { entityId: "placeholder", entityVersionId: null }]));
   const mapped = mapAsyncApiToEventDocument(raw, { payloadPins: standIn, builtInTraitIds: builtIns.data.ids });
-  if (!mapped.success) return mapped;
+  if (!mapped.success) return err(safeImportError(mapped.error));
   const { document } = mapped.data;
 
   // 5. Names, the entities' first (they and the event share one line), the event's last.
@@ -202,7 +229,8 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   if (!allocator.success) return allocator;
   const named = await resolveEntityNames(planned.plans, allocator.data);
   if (!named.success) return named;
-  const requestedEventName = eventName ?? slugKey(document.info.title);
+  // a title with no letter or digit in it (only symbols, or another script) has no slug to speak of
+  const requestedEventName = eventName ?? (/[A-Za-z0-9]/.test(document.info.title) ? slugKey(document.info.title) : "imported-event");
   const finalEventName = await allocator.data.allocate(requestedEventName, "event");
   if (!finalEventName.success) return finalEventName;
   const eventWarnings: ImportWarning[] = finalEventName.data === requestedEventName ? [] : [{
@@ -290,7 +318,8 @@ export async function importAsyncApi(productId: string, input: AsyncApiImportInp
     try {
       if (eventId !== null) {
         const removed = await deleteEvent(eventId, owner, ctx);
-        if (!removed.success) eventLeft = { id: eventId, message: removed.error.message };
+        // an event that is already gone (NOT_FOUND: something else removed it) is what the rollback wants, not a leftover
+        if (!removed.success && removed.error.code !== "NOT_FOUND") eventLeft = { id: eventId, message: removed.error.message };
       }
     } catch (e: unknown) {
       console.error(`[importAsyncApi] deleting event ${eventId} failed`, e);
@@ -303,7 +332,7 @@ export async function importAsyncApi(productId: string, input: AsyncApiImportInp
   try {
     const pins = new Map<string, EntityPin>([...written.roots].map(([key, entityId]) => [key, { entityId, entityVersionId: null }]));
     const mapped = mapAsyncApiToEventDocument(raw, { payloadPins: pins, builtInTraitIds });
-    if (!mapped.success) return await undo(mapped.error);
+    if (!mapped.success) return await undo(safeImportError(mapped.error));
     const { document } = mapped.data;
     const event = await createEvent(productId, { name: preview.eventName, title: document.info.title, description: document.info.description }, ctx);
     if (!event.success) return await undo(event.error);

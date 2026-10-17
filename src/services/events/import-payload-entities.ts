@@ -4,6 +4,7 @@
 // `createImportedEntities` (src/services/imported-entities.ts), the entity loop of the bulk schema import: no TypeSpec source is
 // generated here, the entities are created with their field rows exactly like every other import.
 import type { PrismaClient } from "@/generated/prisma/client";
+import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { resolveScope } from "@/lib/asset-scope";
 import { dbErrorResult } from "@/lib/db-error";
 import { pascalName, type ExtractedPayload, type ImportWarning } from "@/lib/events/import";
@@ -16,21 +17,12 @@ import type { MultiEntityImportResult, ParsedField } from "@/lib/importers/types
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { deleteEntity } from "@/services/entity.service";
+import { MAX_FIELD_RENAME_WARNINGS, MAX_NAME_ATTEMPTS, MAX_NOTES_PER_PAYLOAD, MAX_REQUESTED_NAME, boundText } from "@/services/events/import-limits";
 import { createImportedEntities, IMPORT_TRANSACTION_OPTIONS, type ImportedEntityInput } from "@/services/imported-entities";
 import { assertNameAvailable } from "@/services/name-registry.service";
 import { ServiceErrorRejection } from "@/services/scoped-create.service";
 import { err, ok, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
-
-/** Most entities one import may create: each costs name-registry queries, and a document with thousands of messages is not an event. */
-export const MAX_IMPORT_ENTITIES = 500;
-
-/** Longest entity name the importer proposes; the numeric suffix of a taken name has room below the 128-character limit. */
-const MAX_REQUESTED_NAME = 100;
-/** How many names are tried (`Name`, `Name2` … `Name100`) before the import gives up on one. */
-const MAX_NAME_ATTEMPTS = 100;
-/** Most importer notes reported per payload: a 1,000-property schema must not produce a 1,000-line report. */
-const MAX_NOTES_PER_PAYLOAD = 25;
 
 type SchemaFormat = "json-schema" | "avro" | "protobuf";
 export type PlannedFormat = SchemaFormat | "placeholder";
@@ -78,11 +70,15 @@ const contentOf = (raw: unknown): string => (typeof raw === "string" ? raw : JSO
  * - anything else (an unsupported format, no payload, an importer that fails on it): ONE entity with no fields, so the message still
  *   has something to pin. Headers have no placeholder: a headers schema that cannot be imported is left out.
  * The mapper already reports unsupported and missing schemas; an importer that fails is reported here, with its own reason.
+ *
+ * An importer runs once per DISTINCT schema (format + text): messages that share a schema share one parse (its notes are reported once,
+ * for the first message). The caller has already bounded what is handed over (`checkPayloadLimits`): an importer cannot be interrupted.
  */
 export function planPayloadEntities(payloads: readonly ExtractedPayload[], fileName?: string): { plans: PlannedPayload[]; warnings: ImportWarning[] } {
   const plans: PlannedPayload[] = [];
   const warnings: ImportWarning[] = [];
   const origin = fileName ? ` (imported from ${fileName})` : "";
+  const parsedBefore = new Map<string, Result<MultiEntityImportResult>>();
   for (const payload of payloads) {
     const pinKey = `${payload.messageKey}:${payload.role}`;
     const placeholder = (): PlannedPayload => {
@@ -95,9 +91,13 @@ export function planPayloadEntities(payloads: readonly ExtractedPayload[], fileN
       if (payload.role === "payload") plans.push(placeholder());
       continue;
     }
-    const parsed = IMPORTERS[payload.format](contentOf(payload.raw));
+    const content = contentOf(payload.raw);
+    const memoKey = `${payload.format}\u0000${content}`;
+    const known = parsedBefore.get(memoKey);
+    const parsed = known ?? IMPORTERS[payload.format](content);
+    if (known === undefined) parsedBefore.set(memoKey, parsed);
     if (!parsed.success || parsed.data.entities.length === 0) {
-      const reason = parsed.success ? "it defines no entity" : parsed.error.message;
+      const reason = parsed.success ? "it defines no entity" : boundText(parsed.error.message);
       const outcome = payload.role === "payload" ? "an entity with no fields stands in for it, describe it there" : "they were left out of the import";
       warnings.push({ pointer: payload.sourcePointer, code: "UNSUPPORTED_PAYLOAD_FORMAT", message: `The ${payload.role} of "${payload.messageKey}" could not be imported (${reason}); ${outcome}` });
       if (payload.role === "payload") plans.push(placeholder());
@@ -112,11 +112,13 @@ export function planPayloadEntities(payloads: readonly ExtractedPayload[], fileN
     });
     plans.push({ pinKey, sourcePointer: payload.sourcePointer, format: payload.format, entities });
 
-    for (const note of doc.warnings.slice(0, MAX_NOTES_PER_PAYLOAD)) {
-      warnings.push({ pointer: payload.sourcePointer, code: "DROPPED_CONSTRUCT", message: `The ${payload.role} of "${payload.messageKey}": ${note}` });
-    }
-    if (doc.warnings.length > MAX_NOTES_PER_PAYLOAD) {
-      warnings.push({ pointer: payload.sourcePointer, code: "DROPPED_CONSTRUCT", message: `The ${payload.role} of "${payload.messageKey}": ${doc.warnings.length - MAX_NOTES_PER_PAYLOAD} more notes were left out of this report` });
+    if (known === undefined) {
+      for (const note of doc.warnings.slice(0, MAX_NOTES_PER_PAYLOAD)) {
+        warnings.push({ pointer: payload.sourcePointer, code: "DROPPED_CONSTRUCT", message: `The ${payload.role} of "${payload.messageKey}": ${boundText(note)}` });
+      }
+      if (doc.warnings.length > MAX_NOTES_PER_PAYLOAD) {
+        warnings.push({ pointer: payload.sourcePointer, code: "DROPPED_CONSTRUCT", message: `The ${payload.role} of "${payload.messageKey}": ${doc.warnings.length - MAX_NOTES_PER_PAYLOAD} more ${doc.warnings.length - MAX_NOTES_PER_PAYLOAD === 1 ? "note was" : "notes were"} left out of this report` });
+      }
     }
   }
   return { plans, warnings };
@@ -161,7 +163,7 @@ export async function createNameAllocator(db: PrismaClient, scope: LevelScope): 
         return ok(candidate);
       }
       return err({
-        code: "CONFLICT", message: `No free name was found for "${requested}" (${requested}2 to ${requested}${MAX_NAME_ATTEMPTS} are all taken)`,
+        code: "CONFLICT", message: `No free name was found for "${requested}" (${requested}2 to ${requested}${MAX_NAME_ATTEMPTS} are all taken).`,
         suggestedFix: "Rename the message in the document, or remove the entities you no longer use, and import again.",
       });
     },
@@ -185,9 +187,37 @@ export interface ResolvedPayload {
 }
 
 /**
+ * Field names whose URL slugs (`generateSlug`) are all different: `fields` has a unique (entity, slug) and a unique (entity, name), and
+ * importers can return `a b` / `a-b`, or names with no Latin letters at all (their slug is empty). The first field of a slug keeps its
+ * name; a later one with the same slug gets a number (`a-b2`). `onRename` hears about each one.
+ */
+function uniqueFieldNames(fields: CreateFieldInput[], onRename: (from: string, to: string) => void): CreateFieldInput[] {
+  const slugs = new Set<string>();
+  const nextNumber = new Map<string, number>(); // per colliding slug: where to go on, so 2,000 fields of empty slug stay linear
+  return fields.map((field) => {
+    let name = field.name;
+    let slug = generateSlug(name);
+    if (slugs.has(slug)) {
+      const collided = slug;
+      let n = nextNumber.get(collided) ?? 2;
+      for (; ; n += 1) {
+        name = `${field.name}${n}`;
+        slug = generateSlug(name);
+        if (!slugs.has(slug)) break;
+      }
+      nextNumber.set(collided, n + 1);
+      onRename(field.name, name);
+    }
+    slugs.add(slug);
+    return name === field.name ? field : { ...field, name };
+  });
+}
+
+/**
  * The final name of every planned entity. Roots (what messages pin) are named first, in message order, so a definition that shares a
  * message's name is the one that gets the suffix; then the definitions. References between the entities of one payload are rewritten
- * to the final names. A name that changed is reported (`ENTITY_RENAMED`).
+ * to the final names. A name that changed is reported (`ENTITY_RENAMED`), and so is a field whose slug collided with an earlier field's
+ * (`SANITIZED_VALUE`, at most `MAX_FIELD_RENAME_WARNINGS` of them and one summary).
  */
 export async function resolveEntityNames(plans: readonly PlannedPayload[], allocator: NameAllocator): Promise<Result<{ payloads: ResolvedPayload[]; warnings: ImportWarning[] }>> {
   const finalNames = new Map<PlannedEntity, string>();
@@ -207,6 +237,7 @@ export async function resolveEntityNames(plans: readonly PlannedPayload[], alloc
       });
     }
   }
+  let renamedFields = 0;
   const payloads = plans.map((plan): ResolvedPayload => {
     const renames = new Map(plan.entities.map((entity) => [entity.sourceName, finalNames.get(entity) as string]));
     return {
@@ -217,13 +248,25 @@ export async function resolveEntityNames(plans: readonly PlannedPayload[], alloc
           const target = field.referencedEntityName === undefined ? undefined : renames.get(field.referencedEntityName);
           return target === undefined ? field : { ...field, referencedEntityName: target };
         });
+        const inputs = uniqueFieldNames(fields.map(parsedFieldToCreateFieldInput), (from, to) => {
+          renamedFields += 1;
+          if (renamedFields <= MAX_FIELD_RENAME_WARNINGS) {
+            warnings.push({
+              pointer: plan.sourcePointer, code: "SANITIZED_VALUE",
+              message: `Entity "${boundText(name, 100)}": the field "${boundText(from, 100)}" has the same URL slug as an earlier field, so it is named "${boundText(to, 110)}"`,
+            });
+          }
+        });
         return {
           requestedName: entity.requestedName, name, renamed: name !== entity.requestedName, fields: entity.fields.length, format: plan.format,
-          input: { name, description: entity.description, fields: fields.map(parsedFieldToCreateFieldInput) },
+          input: { name, description: entity.description, fields: inputs },
         };
       }),
     };
   });
+  if (renamedFields > MAX_FIELD_RENAME_WARNINGS) {
+    warnings.push({ pointer: "", code: "SANITIZED_VALUE", message: renamedFields - MAX_FIELD_RENAME_WARNINGS === 1 ? "1 more field was renamed because its URL slug collided; it is not listed" : `${renamedFields - MAX_FIELD_RENAME_WARNINGS} more fields were renamed because their URL slugs collided; they are not listed` });
+  }
   return ok({ payloads, warnings });
 }
 
@@ -271,7 +314,7 @@ export async function createPayloadEntities(productId: string, payloads: readonl
         });
         if (skipped.length > 0) {
           throw new ServiceErrorRejection({
-            code: "CONFLICT", message: `A name this import needs was taken while it ran (${skipped[0]}); nothing was imported`,
+            code: "CONFLICT", message: `A name this import needs was taken while it ran (${skipped[0]}); nothing was imported.`,
             suggestedFix: "Import again.", details: { skipped },
           });
         }
@@ -290,14 +333,15 @@ export interface UndeletedEntity { id: string; name: string; code: string; messa
 
 /**
  * Takes created entities back, newest first, through the guarded delete (`deleteEntity`: nothing that is still referenced goes).
- * Never throws; returns the ones that could NOT be deleted so the caller can say so.
+ * An entity that is already gone (`NOT_FOUND`: something else removed it) is what the rollback wants, not a leftover. Never throws;
+ * returns the ones that could NOT be deleted so the caller can say so.
  */
 export async function deleteCreatedEntities(created: ReadonlyArray<{ id: string; name: string }>, ctx: ServiceContext): Promise<UndeletedEntity[]> {
   const failures: UndeletedEntity[] = [];
   for (const entity of [...created].reverse()) {
     try {
       const deleted = await deleteEntity(entity.id, ctx);
-      if (!deleted.success) failures.push({ ...entity, code: deleted.error.code, message: deleted.error.message });
+      if (!deleted.success && deleted.error.code !== "NOT_FOUND") failures.push({ ...entity, code: deleted.error.code, message: deleted.error.message });
     } catch (e: unknown) {
       console.error(`[deleteCreatedEntities] ${entity.id}`, e);
       failures.push({ ...entity, code: "INTERNAL_ERROR", message: "The entity could not be deleted" });
