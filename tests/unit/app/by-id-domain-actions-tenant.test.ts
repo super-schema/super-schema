@@ -26,6 +26,7 @@ const { mockPrisma, mockAuth, mockGetActiveTenantId, mockRevalidate } = await vi
       entityVersion: { findMany: vi.fn().mockResolvedValue([]) }, schemaReference: { findMany: vi.fn().mockResolvedValue([]) },
       auditLog: { create: vi.fn() },
       $executeRaw: vi.fn(),
+      $queryRaw: vi.fn(),
       $transaction: vi.fn(),
     },
   };
@@ -79,6 +80,8 @@ beforeEach(() => {
   mockGetActiveTenantId.mockResolvedValue(T);
   mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+  // the guarded entity delete locks its row (`SELECT ... FOR UPDATE`, answered with the id it was given)
+  mockPrisma.$queryRaw.mockImplementation(async (_strings: TemplateStringsArray, id: string) => [{ id }]);
   mockPrisma.$transaction.mockImplementation(async (arg: unknown) =>
     Array.isArray(arg) ? Promise.all(arg) : (arg as (tx: typeof mockPrisma) => unknown)(mockPrisma)
   );
