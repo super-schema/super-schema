@@ -4,7 +4,7 @@
 // the New Event dialog's "Import existing…" link. The two server actions are mocked; what is pinned here is what the user sees and what
 // the dialog sends.
 import { useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -19,10 +19,11 @@ vi.mock("sonner", () => ({ toast: { success: h.toastSuccess, error: vi.fn() } })
 import { ImportAsyncApiDialog } from "@/features/events/workspace/ImportAsyncApiDialog";
 import { NewEventDialog } from "@/features/events/workspace/NewEventDialog";
 import {
-  ERROR_HEADLINES, IMPORT_WARNING_LABELS, omittedWarningsCount, OMITTED_WARNINGS_PATTERN, warningGroupLabel,
+  ERROR_HEADLINES, IMPORT_WARNING_LABELS, omittedWarningsCount, OMITTED_WARNINGS_PATTERN, OUTCOME_UNKNOWN, PROBLEMS_SHOWN_CAP, warningGroupLabel,
 } from "@/features/events/workspace/import-labels";
-import { failureOf } from "@/features/events/workspace/use-asyncapi-import";
+import { failureOf, IMPORT_STALL_MS, useAsyncApiImport } from "@/features/events/workspace/use-asyncapi-import";
 import type { ImportErrorCode, ImportWarning, ImportWarningCode } from "@/lib/events/import/types";
+import { MAX_PARSER_PROBLEMS } from "@/services/events/import-limits";
 import type { AsyncApiImportPreview } from "@/services/events/asyncapi-import.service";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 
@@ -220,6 +221,50 @@ describe("ImportAsyncApiDialog: uploading a file", () => {
     expect(screen.queryByTestId("import-error")).toBeNull();
   });
 
+  it("says 'The file is empty.' for an empty or blank file, and does not fill the box", async () => {
+    setup();
+    type(documentBox(), "kept");
+    fireEvent.change(fileInput(), { target: { files: [new File([""], "empty.yaml")] } });
+    const alert = await screen.findByTestId("import-error");
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toBe("The file is empty.");
+    expect(documentBox().value).toBe("kept");
+    cleanup();
+
+    setup();
+    fireEvent.change(fileInput(), { target: { files: [new File(["  \n\t \n"], "blank.yaml")] } });
+    expect((await screen.findByTestId("import-error")).textContent).toBe("The file is empty.");
+    expect(documentBox().value).toBe("");
+    expect(previewButton().disabled).toBe(true);
+  });
+
+  it("says 'The file could not be read' for a binary file, and does not fill the box (not 'larger than 800 KB' for one under the limit)", async () => {
+    const binary = (length: number) => Uint8Array.from({ length }, (_, i) => [0x00, 0xff, 0xfe][i % 3]);
+    setup();
+    type(documentBox(), "kept");
+    fireEvent.change(fileInput(), { target: { files: [new File([binary(3000)], "photo.yaml")] } });
+    expect((await screen.findByTestId("import-error")).textContent).toBe("The file could not be read");
+    expect(documentBox().value).toBe("kept");
+    cleanup();
+
+    // 790,000 bytes is under the limit; as text it would re-encode to more than 800,000 and be refused with the wrong reason
+    setup();
+    fireEvent.change(fileInput(), { target: { files: [new File([binary(790_000)], "big-binary.yaml")] } });
+    expect((await screen.findByTestId("import-error")).textContent).toBe("The file could not be read");
+    expect(documentBox().value).toBe("");
+    expect(previewButton().disabled).toBe(true);
+  });
+
+  it("a normal file still loads, and the empty-file message goes when new text follows", async () => {
+    setup();
+    fireEvent.change(fileInput(), { target: { files: [new File([""], "empty.yaml")] } });
+    await screen.findByTestId("import-error");
+    fireEvent.change(fileInput(), { target: { files: [new File([DOC], "streetlights.yaml")] } });
+    await waitFor(() => expect(documentBox().value).toBe(DOC));
+    expect(screen.queryByTestId("import-error")).toBeNull();
+    expect(previewButton().disabled).toBe(false);
+  });
+
   it("says so when the file cannot be read", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const original = globalThis.FileReader;
@@ -310,8 +355,9 @@ describe("ImportAsyncApiDialog: the preview request", () => {
     ["PARSE_ERROR", "The file is not valid YAML: Nested mappings are not allowed", "The document could not be read"],
     ["TOO_LARGE", "The AsyncAPI document is too large to import (1.2 MB); the limit is 1 MB", "The document is too large"],
     ["UNSUPPORTED_VERSION", "AsyncAPI 2.6.0 is not supported: only AsyncAPI 3.0 documents can be imported", "AsyncAPI 3.0 only"],
-    ["COMPILE_TIMEOUT", "Validating the AsyncAPI document took longer than 30 seconds and was abandoned", "Checking the document took too long"],
     ["EXTERNAL_REF", 'The reference "https://example.com/x.json" points outside the document', "The document refers to another file or a URL"],
+    // a preview writes nothing: "The import failed" would be wrong for it
+    ["IMPORT_FAILED", "The document could not be turned into an import plan", "The document could not be processed"],
     ["NOT_FOUND", 'Product "p1" not found', null],
   ])("a %s refusal stays on the document step, in an alert with the server's words", async (code, message, headline) => {
     h.preview.mockResolvedValue({ success: false, code, error: message, suggestedFix: "Fix it." });
@@ -570,6 +616,19 @@ describe("ImportAsyncApiDialog: the warnings", () => {
     expect(screen.queryByTestId("import-warnings-omitted")).toBeNull();
   });
 
+  it("says under the Warnings heading that warnings do not stop the import, and shows no such sentence when there are no warnings", async () => {
+    setup();
+    await toReview();
+    const note = screen.getByTestId("import-warnings-note");
+    expect(note.textContent).toBe("Warnings do not stop the import.");
+    expect(screen.getByTestId("import-warnings").contains(note)).toBe(true);
+    cleanup();
+    h.preview.mockResolvedValue({ success: true, data: { ...PREVIEW, warnings: [] } });
+    setup();
+    await toReview();
+    expect(screen.queryByTestId("import-warnings-note")).toBeNull();
+  });
+
   it("shows no warnings section when there are none", async () => {
     h.preview.mockResolvedValue({ success: true, data: { ...PREVIEW, warnings: [] } });
     setup();
@@ -597,9 +656,9 @@ describe("import-labels: warning and error wording", () => {
     UNSUPPORTED_PAYLOAD_FORMAT: true, NO_PAYLOAD: true, UNSUPPORTED_EXTENSION: true, DROPPED_CONSTRUCT: true, ENTITY_RENAMED: true,
     BUILTIN_TRAIT_MAPPED: true, KEY_ADJUSTED: true, SANITIZED_VALUE: true, VALIDATION_WARNING: true,
   };
-  const ERROR_CODES: Record<ImportErrorCode | "COMPILE_TIMEOUT", true> = {
+  const ERROR_CODES: Record<ImportErrorCode, true> = {
     PARSE_ERROR: true, UNSUPPORTED_VERSION: true, TOO_LARGE: true, EXTERNAL_REF: true, REF_CYCLE: true, REF_NOT_FOUND: true, REF_TOO_LARGE: true,
-    MISSING_PAYLOAD_PIN: true, VALIDATION_ERROR: true, IMPORT_FAILED: true, COMPILE_TIMEOUT: true,
+    MISSING_PAYLOAD_PIN: true, VALIDATION_ERROR: true, IMPORT_FAILED: true,
   };
 
   it("has human wording for every warning code, never the code itself", () => {
@@ -630,6 +689,10 @@ describe("import-labels: warning and error wording", () => {
     expect(omittedWarningsCount(summary("more warnings were omitted"))).toBeNull();
     expect(omittedWarningsCount(summary("The channel was left out"))).toBeNull();
     expect(OMITTED_WARNINGS_PATTERN.test("2 more warnings were omitted")).toBe(true);
+  });
+
+  it("PROBLEMS_SHOWN_CAP is the number of problems the server stops at (MAX_PARSER_PROBLEMS), so 'at least N' is told at the right length", () => {
+    expect(PROBLEMS_SHOWN_CAP).toBe(MAX_PARSER_PROBLEMS);
   });
 
   it("reads a failed action result into text, problems and leftovers, ignoring anything that is not that shape", () => {
@@ -681,7 +744,7 @@ describe("ImportAsyncApiDialog: a document that cannot be imported", () => {
   });
 
   it("lists the first 50 problems and counts the rest", async () => {
-    refuse(problems(120));
+    refuse(problems(80));
     setup();
     type(documentBox(), DOC);
     fireEvent.click(previewButton());
@@ -689,8 +752,26 @@ describe("ImportAsyncApiDialog: a document that cannot be imported", () => {
     expect(screen.getAllByTestId(/^import-problem-\d+$/)).toHaveLength(50);
     expect(screen.getByTestId("import-problem-49").textContent).toContain("problem 49");
     expect(screen.queryByTestId("import-problem-50")).toBeNull();
-    expect(screen.getByTestId("import-problems-more").textContent).toBe("and 70 more not shown");
-    expect(screen.getByTestId("import-problems-count").textContent).toBe("120 problems");
+    expect(screen.getByTestId("import-problems-more").textContent).toBe("and 30 more not shown");
+    expect(screen.getByTestId("import-problems-count").textContent).toBe("80 problems");
+  });
+
+  it("says 'at least 100 problems' for a list that is as long as the server's cap (the server cut it off), and counts 99 as 99", async () => {
+    refuse(problems(99));
+    setup();
+    type(documentBox(), DOC);
+    fireEvent.click(previewButton());
+    await screen.findByTestId("import-problems-panel");
+    expect(screen.getByTestId("import-problems-count").textContent).toBe("99 problems");
+    cleanup();
+
+    refuse(problems(PROBLEMS_SHOWN_CAP));
+    setup();
+    type(documentBox(), DOC);
+    fireEvent.click(previewButton());
+    await screen.findByTestId("import-problems-panel");
+    expect(screen.getByTestId("import-problems-count").textContent).toBe("at least 100 problems");
+    expect(screen.getByTestId("import-problems-more").textContent).toBe("and 50 more not shown");
   });
 
   it("does not show a 'more' line for 50 problems or fewer", async () => {
@@ -789,6 +870,9 @@ describe("ImportAsyncApiDialog: the event name", () => {
     fireEvent.click(importButton());
     expect(screen.getByTestId("import-event-name-error").textContent).toContain('Event name "not a valid name!" is invalid');
     expect(screen.getByTestId("import-event-name-error").textContent).toMatch(/letters, digits/i);
+    // the message and its fix are two sentences, not one run-on line
+    expect(screen.getByTestId("import-event-name-error").textContent).toMatch(/is invalid\. Use 1–128 letters/);
+    expect(screen.getByTestId("import-event-name-error").textContent).not.toMatch(/\.\./);
     expect(h.importAction).not.toHaveBeenCalled();
     expect(stepText()).toBe("Step 2 of 3: Review");
   });
@@ -988,6 +1072,86 @@ describe("ImportAsyncApiDialog: step 3, the import", () => {
     consoleError.mockRestore();
   });
 
+  describe("a failure whose outcome is unknown (the action rejected)", () => {
+    let consoleError: { mockRestore: () => void };
+    beforeEach(() => {
+      consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      h.importAction.mockRejectedValueOnce(new Error(RAW_DB_TEXT));
+    });
+    afterEach(() => consoleError.mockRestore());
+
+    it("tells the user to close the window and look in the explorer, and refreshes the explorer so the event is there if it landed", async () => {
+      setup();
+      await toReview();
+      expect(h.invalidate).not.toHaveBeenCalled();
+      await importAndFail();
+      expect(h.invalidate).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("import-outcome-unknown").textContent).toBe(OUTCOME_UNKNOWN);
+      expect(OUTCOME_UNKNOWN).toMatch(/Close this window and look for the event in the explorer on the left before you import again\.$/);
+    });
+
+    it("offers no Try again (a second import could create the event twice), and no submit button at all", async () => {
+      setup();
+      await toReview();
+      await importAndFail();
+      expect(screen.queryByTestId("import-submit")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+      fireEvent.submit(form());
+      expect(h.importAction).toHaveBeenCalledTimes(1);
+    });
+
+    it("offers Close, which closes the dialog", async () => {
+      const { onOpenChange } = setup();
+      await toReview();
+      await importAndFail();
+      const close = screen.getByTestId("import-close");
+      expect(close.textContent).toBe("Close");
+      expect((close as HTMLButtonElement).disabled).toBe(false);
+      fireEvent.click(close);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("Back returns to the document (not the review), and a new Preview shows the taken name already numbered if the first import landed", async () => {
+      setup();
+      await toReview();
+      await importAndFail();
+      fireEvent.click(backButton());
+      expect(stepText()).toBe("Step 1 of 3: Document");
+      expect(documentBox().value).toBe(DOC);
+      expect(screen.queryByTestId("import-failure")).toBeNull();
+      h.preview.mockResolvedValueOnce({ success: true, data: { ...PREVIEW, eventName: "Streetlights-Kafka-API2" } });
+      fireEvent.click(previewButton());
+      await screen.findByTestId("import-step-review");
+      expect(nameInput().value).toBe("Streetlights-Kafka-API2");
+      expect(importButton().textContent).toBe("Import");
+    });
+  });
+
+  describe("a definite failure", () => {
+    it("with entities that could not be rolled back refreshes the explorer, so the user can find and delete them", async () => {
+      h.importAction.mockResolvedValue({
+        success: false, code: "IMPORT_FAILED", error: "The import failed.",
+        details: { leftovers: [{ kind: "entity", id: "e1", name: "TurnOnOff2", code: "IN_USE", message: "in use" }] },
+      });
+      setup();
+      await toReview();
+      expect(h.invalidate).not.toHaveBeenCalled();
+      await importAndFail();
+      expect(h.invalidate).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("import-leftovers")).toBeDefined();
+    });
+
+    it("with nothing left over does not touch the explorer, and still offers Try again (and no Close in the footer)", async () => {
+      h.importAction.mockResolvedValue({ success: false, code: "NAME_CONFLICT", error: "taken" });
+      setup();
+      await toReview();
+      await importAndFail();
+      expect(h.invalidate).not.toHaveBeenCalled();
+      expect(importButton().textContent).toBe("Try again");
+      expect(screen.queryByTestId("import-close")).toBeNull();
+    });
+  });
+
   it("a failed import that comes back with a problem list shows it", async () => {
     h.importAction.mockResolvedValue({
       success: false, code: "VALIDATION_ERROR", error: "The import failed.", details: { problems: [{ pointer: "/channels/a", message: "bad channel" }] },
@@ -997,6 +1161,138 @@ describe("ImportAsyncApiDialog: step 3, the import", () => {
     await importAndFail();
     expect(screen.getByTestId("import-failure-headline").textContent).toBe("The document cannot be imported");
     expect(screen.getByTestId("import-problem-0").textContent).toContain("bad channel");
+  });
+});
+
+describe("ImportAsyncApiDialog: a success whose navigation hangs", () => {
+  // `shouldAdvanceTime`: Testing Library's own timers (findBy…, waitFor) keep running; the 15 s are advanced by hand.
+  beforeEach(() => void vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => void vi.useRealTimers());
+
+  async function imported() {
+    const hosts = setup();
+    await toReview();
+    fireEvent.click(importButton());
+    await waitFor(() => expect(hosts.onImported).toHaveBeenCalledWith("ev1"));
+    // the success is on screen and its effects (the 15 s timer starts in one) have run: only then is the clock advanced
+    await waitFor(() => expect(screen.getByTestId("import-progress").getAttribute("data-state")).toBe("imported"));
+    await act(async () => {});
+    return hosts;
+  }
+  const advance = (ms: number) => act(async () => { vi.advanceTimersByTime(ms); });
+
+  it("stays locked for 15 s, then unlocks and says the event was created, with a Close button", async () => {
+    const { onOpenChange } = await imported();
+    await advance(IMPORT_STALL_MS - 1_000);
+    expect(screen.getByTestId("import-progress-status").textContent).toContain("Opening the event");
+    expect(screen.queryByTestId("import-stalled-close")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull(); // the dialog's X is still hidden: locked
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    await advance(1_500);
+    expect(screen.getByTestId("import-progress-status").textContent).toBe(
+      "This is taking longer than expected. The event was created; you can close this window and find it in the explorer on the left.",
+    );
+    const close = screen.getByTestId("import-stalled-close");
+    expect(close.textContent).toBe("Close");
+    // nothing offers the import again
+    expect(screen.queryByTestId("import-submit")).toBeNull();
+    fireEvent.submit(form());
+    expect(h.importAction).toHaveBeenCalledTimes(1);
+
+    // unlocked: Escape and Close both dismiss it
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    onOpenChange.mockClear();
+    fireEvent.click(close);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  describe("the timer, in the hook", () => {
+    const mount = () => {
+      const onLockChange = vi.fn();
+      const view = renderHook(() => useAsyncApiImport({ productId: "p1", onImported: vi.fn(), onLockChange }));
+      return { ...view, onLockChange };
+    };
+    async function toImported(view: ReturnType<typeof mount>) {
+      act(() => view.result.current.editContent(DOC));
+      act(() => view.result.current.submit());
+      await waitFor(() => expect(view.result.current.stage).toBe("preview"));
+      act(() => view.result.current.submit());
+      await waitFor(() => expect(view.result.current.stage).toBe("imported"));
+      await act(async () => {}); // the effects of that render have run: the timer is set
+    }
+
+    it("fires once, 15 s after the success: unlocked and stalled", async () => {
+      const view = mount();
+      await toImported(view);
+      expect(view.result.current.stalled).toBe(false);
+      view.onLockChange.mockClear();
+      await advance(IMPORT_STALL_MS);
+      expect(view.result.current.stalled).toBe(true);
+      expect(view.onLockChange).toHaveBeenCalledTimes(1);
+      expect(view.onLockChange).toHaveBeenCalledWith(false);
+    });
+
+    it("is cleared when the dialog goes away first: nothing runs after the unmount", async () => {
+      const view = mount();
+      await toImported(view);
+      view.unmount();
+      view.onLockChange.mockClear();
+      await advance(IMPORT_STALL_MS * 2);
+      expect(view.onLockChange).not.toHaveBeenCalled();
+    });
+
+    it("is never started by a failure or by a preview", async () => {
+      h.importAction.mockResolvedValue({ success: false, code: "NAME_CONFLICT", error: "taken" });
+      const view = mount();
+      act(() => view.result.current.editContent(DOC));
+      act(() => view.result.current.submit());
+      await waitFor(() => expect(view.result.current.stage).toBe("preview"));
+      act(() => view.result.current.submit());
+      await waitFor(() => expect(view.result.current.stage).toBe("failed"));
+      view.onLockChange.mockClear();
+      await advance(IMPORT_STALL_MS * 2);
+      expect(view.result.current.stalled).toBe(false);
+      expect(view.onLockChange).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("ImportAsyncApiDialog: text that comes from the document never widens the dialog", () => {
+  it("wraps a 300-character title and a 500-character warning pointer in the review", async () => {
+    const title = "T".repeat(300);
+    const pointer = `/components/messages/${"a".repeat(479)}`;
+    expect(pointer).toHaveLength(500);
+    h.preview.mockResolvedValue({ success: true, data: { ...PREVIEW, title, warnings: [{ pointer, code: "NO_PAYLOAD", message: "m".repeat(400) }] } });
+    setup();
+    await toReview();
+    const heading = screen.getByTestId("import-title");
+    expect(heading.textContent).toBe(`From the document “${title}”`);
+    expect(heading.className).toContain("break-words");
+    expect(heading.className).toContain("[overflow-wrap:anywhere]");
+    fireEvent.click(screen.getByTestId("import-warning-group-NO_PAYLOAD-toggle"));
+    const item = screen.getByTestId("import-warning-group-NO_PAYLOAD-item");
+    for (const text of [pointer, "m".repeat(400)]) {
+      const line = within(item).getByText(text);
+      expect(line.className).toContain("break-words");
+      expect(line.className).toContain("[overflow-wrap:anywhere]");
+    }
+  });
+
+  it("wraps a 500-character pointer in the list of problems", async () => {
+    const pointer = `/channels/${"c".repeat(490)}`;
+    h.preview.mockResolvedValue({
+      success: false, code: "VALIDATION_ERROR", error: "not valid", details: { problems: [{ pointer, message: "bad", code: "asyncapi-x" }] },
+    });
+    setup();
+    type(documentBox(), DOC);
+    fireEvent.click(previewButton());
+    await screen.findByTestId("import-problems-panel");
+    const line = within(screen.getByTestId("import-problem-0")).getByText(pointer);
+    expect(line.className).toContain("break-words");
+    expect(line.className).toContain("[overflow-wrap:anywhere]");
   });
 });
 

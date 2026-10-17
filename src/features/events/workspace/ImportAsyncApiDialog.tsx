@@ -8,7 +8,9 @@
 //                 the sentence that matters most: the entities are created as DRAFTS. A document the validator refuses shows its problems
 //                 here instead, with nothing to import.
 //   3. Import     single-flight; success opens the event (`onImported`), failure says what the server did (it undoes what it created)
-//                 and offers Back or Try again.
+//                 and offers Back or Try again. When the connection failed nobody knows whether the import landed, so there is no
+//                 Try again: Back (to the document, to preview again) and Close. If opening the event takes too long after a success,
+//                 the dialog says the event exists and can be closed.
 // Focus goes to the first control of each step, Escape closes the dialog unless the import is running, and the dialog cannot be
 // dismissed at all while it runs (a failure must never land on a closed dialog). The wizard is its own component inside the dialog
 // content, so every opening starts empty (the content is unmounted while closed).
@@ -21,8 +23,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Field } from "@/features/events/builder/controls";
 import { FailurePanel, InputFailureAlert, ProblemsPanel, ReviewPanel } from "./ImportReview";
 import {
-  BACK, CANCEL, CHECKING, DIALOG_DESCRIPTION, DIALOG_TITLE, DOCUMENT_HINT, DOCUMENT_LABEL, DOCUMENT_PLACEHOLDER, IMPORT, IMPORTED_HEADING,
-  IMPORTED_STATUS, IMPORTING, IMPORTING_HEADING, IMPORTING_STATUS, PREVIEW, stepIndicator, TRY_AGAIN, UPLOAD_ACCEPT, UPLOAD_HINT, UPLOAD_LABEL,
+  BACK, CANCEL, CHECKING, CLOSE, DIALOG_DESCRIPTION, DIALOG_TITLE, DOCUMENT_HINT, DOCUMENT_LABEL, DOCUMENT_PLACEHOLDER, IMPORT, IMPORT_STALLED,
+  IMPORTED_HEADING, IMPORTED_STATUS, IMPORTING, IMPORTING_HEADING, IMPORTING_STATUS, PREVIEW, stepIndicator, TRY_AGAIN, UPLOAD_ACCEPT, UPLOAD_HINT,
+  UPLOAD_LABEL,
 } from "./import-labels";
 import { useAsyncApiImport, type ImportFailure } from "./use-asyncapi-import";
 
@@ -80,6 +83,10 @@ function ImportWizard({ productId, onImported, onLockChange, onCancel }: {
   }, [flow.nameError]);
 
   const locked = stage === "importing" || stage === "imported";
+  // A failure of unknown outcome (the connection died): the import may have landed, so there is no "Try again", only Back and Close.
+  const unknownOutcome = stage === "failed" && flow.importFailure?.unknownOutcome === true;
+  // The event was created but opening it hangs (`IMPORT_STALL_MS`): the panel says so and carries the Close button, the footer has nothing left to offer.
+  const stalled = stage === "imported" && flow.stalled;
 
   return (
     <form
@@ -120,10 +127,15 @@ function ImportWizard({ productId, onImported, onLockChange, onCancel }: {
                 ref={progressRef} tabIndex={-1} role="status" data-testid="import-progress" data-state={stage}
                 className="flex items-center gap-space-3 rounded-lg border border-border/60 p-space-4 outline-none"
               >
-                <Loader2 className="size-5 shrink-0 animate-spin text-primary" aria-hidden="true" />
-                <div>
+                {!stalled && <Loader2 className="size-5 shrink-0 animate-spin text-primary" aria-hidden="true" />}
+                <div className="space-y-space-1">
                   <p className="font-medium text-foreground">{stage === "imported" ? IMPORTED_HEADING : IMPORTING_HEADING}</p>
-                  <p className="text-body-small text-muted-foreground">{stage === "imported" ? IMPORTED_STATUS : IMPORTING_STATUS}</p>
+                  <p data-testid="import-progress-status" className="text-body-small text-muted-foreground">
+                    {stalled ? IMPORT_STALLED : stage === "imported" ? IMPORTED_STATUS : IMPORTING_STATUS}
+                  </p>
+                  {stalled && (
+                    <Button type="button" size="sm" data-testid="import-stalled-close" onClick={onCancel}>{CLOSE}</Button>
+                  )}
                 </div>
               </div>
             )}
@@ -132,25 +144,30 @@ function ImportWizard({ productId, onImported, onLockChange, onCancel }: {
         )}
       </div>
 
-      <DialogFooter>
-        {stage === "input" ? (
-          <>
-            <Button type="button" variant="outline" size="sm" data-testid="import-cancel" onClick={onCancel}>{CANCEL}</Button>
-            <Button type="submit" size="sm" data-testid="import-preview" disabled={flow.content.trim() === "" || flow.working}>
-              {flow.previewing ? CHECKING : PREVIEW}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button ref={backRef} type="button" variant="outline" size="sm" data-testid="import-back" onClick={flow.back} disabled={locked}>{BACK}</Button>
-            {!showingProblems && (
-              <Button type="submit" size="sm" data-testid="import-submit" disabled={locked}>
-                {locked ? IMPORTING : stage === "failed" ? TRY_AGAIN : IMPORT}
+      {!stalled && (
+        <DialogFooter>
+          {stage === "input" ? (
+            <>
+              <Button type="button" variant="outline" size="sm" data-testid="import-cancel" onClick={onCancel}>{CANCEL}</Button>
+              <Button type="submit" size="sm" data-testid="import-preview" disabled={flow.content.trim() === "" || flow.working}>
+                {flow.previewing ? CHECKING : PREVIEW}
               </Button>
-            )}
-          </>
-        )}
-      </DialogFooter>
+            </>
+          ) : (
+            <>
+              <Button ref={backRef} type="button" variant="outline" size="sm" data-testid="import-back" onClick={flow.back} disabled={locked}>{BACK}</Button>
+              {unknownOutcome ? (
+                // An import that may have landed must not be offered again: the user looks in the explorer first (or goes Back and previews).
+                <Button type="button" size="sm" data-testid="import-close" onClick={onCancel}>{CLOSE}</Button>
+              ) : !showingProblems && (
+                <Button type="submit" size="sm" data-testid="import-submit" disabled={locked}>
+                  {locked ? IMPORTING : stage === "failed" ? TRY_AGAIN : IMPORT}
+                </Button>
+              )}
+            </>
+          )}
+        </DialogFooter>
+      )}
     </form>
   );
 }
