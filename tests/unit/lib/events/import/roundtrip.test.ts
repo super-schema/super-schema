@@ -71,10 +71,19 @@ describe("round trip: our own slice-1 golden files", () => {
       expect(fromJson.warnings).toEqual(fromYaml.warnings);
     });
 
-    it("reports nothing it should not: no unsupported formats, no sanitising, no dropped parts", () => {
+    it("reports nothing it should not: no unsupported formats, no sanitising, no dropped parts; a protocol it had to guess is the one thing it says", () => {
       const { warnings } = importText(readFileSync(path.join(SLICE1_GOLDEN_DIR, `${name}.asyncapi.yaml`), "utf8"));
-      expect(warnings.filter((w) => !["KEY_ADJUSTED"].includes(w.code))).toEqual([]);
+      const unexpected = warnings.filter((w) => !(w.code === "KEY_ADJUSTED" || (w.code === "SANITIZED_VALUE" && /protocol/.test(w.message))));
+      expect(unexpected).toEqual([]);
     });
+  });
+
+  it("those goldens carry no channel -> server links, so a channel with no bindings in a document with two protocols is reported as guessed", () => {
+    const guesses = (name: string) => importText(readFileSync(path.join(SLICE1_GOLDEN_DIR, `${name}.asyncapi.yaml`), "utf8")).warnings.filter((w) => /protocol/.test(w.message)).map((w) => w.pointer);
+    expect(guesses("slice1-demo-checkout-service")).toEqual(["/channels/customer-orders"]);
+    expect(guesses("slice1-demo-fraud-scorer").sort()).toEqual(["/channels/fraud-scores", "/channels/orders"]);
+    expect(guesses("slice1-minimal")).toEqual([]);
+    expect(guesses("slice1-kitchen-sink")).toEqual([]);
   });
 
   it("the comparison is not vacuous: it sees a changed summary, a lost operation and a different key", () => {

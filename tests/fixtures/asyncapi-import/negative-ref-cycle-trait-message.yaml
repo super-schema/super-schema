@@ -1,0 +1,30 @@
+asyncapi: 3.0.0
+info:
+  title: Reference cycle between a message and its trait
+  version: 1.0.0
+channels:
+  orders:
+    address: orders.v1
+    messages:
+      orderCreated:
+        $ref: '#/components/messages/orderCreated'
+operations:
+  publishOrderCreated:
+    action: send
+    channel:
+      $ref: '#/channels/orders'
+    messages:
+      - $ref: '#/channels/orders/messages/orderCreated'
+components:
+  messages:
+    orderCreated:
+      payload:
+        type: object
+      traits:
+        - $ref: '#/components/messageTraits/audited'
+  messageTraits:
+    audited:
+      summary: Audited
+      examples:
+        - payload:
+            $ref: '#/components/messages/orderCreated'

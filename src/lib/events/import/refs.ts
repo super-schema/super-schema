@@ -66,13 +66,31 @@ export interface RefResolver {
   deref(value: unknown, at: string): Result<{ value: unknown; pointer: string }>;
   /** A copy of `value` with every ref inside it replaced by its target. Targets are shared between uses, so treat the result as read-only. */
   inline(value: unknown, at: string): Result<unknown>;
-  /** Follows every ref in the whole document (unused sections included): the first external, missing, recursive or oversized one is the error. */
-  check(): Result<void>;
+  /**
+   * Like `inline` for SCHEMA content (a message payload or headers schema): a schema that refers to itself is not an error. It comes back as
+   * `{ recursive }` — the chain of references that closes the loop — so the caller can degrade that one schema instead of the whole import.
+   * External, missing and oversized references are still errors.
+   */
+  inlineSchema(value: unknown, at: string): Result<{ value: unknown } | { recursive: string[] }>;
+  /**
+   * Follows every ref in the whole document (unused sections included): the first external, missing or oversized one is the error.
+   * A recursive one is too, unless `tolerateCycles`: then the loop is only noted, and the strict readers (`inline`, `deref`) refuse it later
+   * if what they read leads into it. That is what lets a recursive SCHEMA (read with `inlineSchema`) or an unused one through, while a
+   * cycle through bindings, traits, messages or a chain of wrappers still fails the import.
+   */
+  check(options?: { tolerateCycles?: boolean }): Result<void>;
   /** Pointers of every ref target followed so far. */
   readonly followed: ReadonlySet<string>;
+  /**
+   * Who refers to what, found by `check` / `deref` / `inline`: for each OWNER (the component entry `/components/<section>/<key>` the ref is
+   * written in, or "" for anything outside `components`) the component entries it refers to. A component that only refers to itself, or
+   * that only unused components refer to, is not reachable from the document: that is what "nothing refers to it" means.
+   */
+  readonly edges: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
-type Expanded = { value: unknown; size: number };
+/** `cycle`: the expansion ran into a reference loop (only recorded when cycles are tolerated); its `value` has holes where the loop closes. */
+type Expanded = { value: unknown; size: number; cycle?: string[] };
 
 class RefFailure extends Error {
   constructor(readonly error: ServiceError) {
@@ -84,10 +102,24 @@ export function createRefResolver(root: unknown): RefResolver {
   const memo = new Map<string, Expanded>();
   const inProgress: string[] = [];
   const followed = new Set<string>();
+  const edges = new Map<string, Set<string>>();
   let used = 0;
+  /** True while a call tolerates cycles: a loop is noted (`hits`, `lastLoop`) and cut instead of thrown. */
+  let tolerate = false;
+  let hits = 0;
+  let lastLoop: string[] = [];
   /** Where the walk is, as pointer segments: only turned into text when an error needs it. */
   let cursor: Array<string | number> = [];
   const here = (): string => (cursor.length === 0 ? "the document root" : `"${jsonPointer(...cursor)}"`);
+
+  /** Records that the ref being read (written at the cursor) points at `targetSegments`; both ends at component-entry level. */
+  const noteEdge = (targetSegments: readonly string[]): void => {
+    const entry = (segments: ReadonlyArray<string | number>): string => (segments[0] === "components" && segments.length >= 3 ? jsonPointer(...segments.slice(0, 3)) : jsonPointer(...segments));
+    const owner = cursor[0] === "components" && cursor.length >= 3 ? entry(cursor) : "";
+    const targets = edges.get(owner) ?? new Set<string>();
+    targets.add(entry(targetSegments));
+    edges.set(owner, targets);
+  };
 
   const fail = (code: string, message: string, extra: { ref?: string; suggestedFix?: string } = {}): never => {
     throw new RefFailure({ code, message, details: { pointer: jsonPointer(...cursor), ...(extra.ref !== undefined && { ref: extra.ref }) }, ...(extra.suggestedFix !== undefined && { suggestedFix: extra.suggestedFix }) });
@@ -109,6 +141,7 @@ export function createRefResolver(root: unknown): RefResolver {
         ref, suggestedFix: "References are followed from the document root: write the full path (for example #/components/schemas/Name).",
       });
     }
+    noteEdge(classified.segments);
     return { pointer: jsonPointer(...classified.segments), segments: classified.segments, value: found.value };
   }
 
@@ -121,22 +154,31 @@ export function createRefResolver(root: unknown): RefResolver {
     }
   };
 
+  /** A reference loop: an error, or (tolerated) noted and cut with a hole where the loop closes. */
+  function loopFound(loop: string[], ref: string): Expanded {
+    if (!tolerate) {
+      return fail("REF_CYCLE", `Recursive reference: ${loop.join(" → ")} (found at ${here()}). A reference that leads back to itself cannot be imported.`, {
+        ref, suggestedFix: "Remove the recursion, or replace the recursive part with a plain object schema.",
+      });
+    }
+    hits += 1;
+    lastLoop = loop;
+    return { value: undefined, size: 1, cycle: loop };
+  }
+
   function follow(ref: string, depth: number): Expanded {
     const target = locate(ref);
     const hit = memo.get(target.pointer);
     if (hit) {
+      if (hit.cycle) return loopFound(hit.cycle, ref); // an expansion that ran into a loop is never reused as if it were whole
       charge(hit.size);
       return hit;
     }
     const open = inProgress.indexOf(target.pointer);
-    if (open !== -1) {
-      const loop = [...inProgress.slice(open), target.pointer].map((p) => `#${p}`).join(" → ");
-      return fail("REF_CYCLE", `Recursive reference: ${loop} (found at ${here()}). A reference that leads back to itself cannot be imported.`, {
-        ref, suggestedFix: "Remove the recursion, or replace the recursive part with a plain object schema.",
-      });
-    }
+    if (open !== -1) return loopFound([...inProgress.slice(open), target.pointer].map((p) => `#${p}`), ref);
     inProgress.push(target.pointer);
     const saved = cursor;
+    const hitsBefore = hits;
     cursor = [...target.segments]; // errors inside the target name the target's own location
     let expanded: Expanded;
     try {
@@ -145,6 +187,7 @@ export function createRefResolver(root: unknown): RefResolver {
       cursor = saved;
       inProgress.pop();
     }
+    if (hits > hitsBefore) expanded = { ...expanded, cycle: lastLoop };
     memo.set(target.pointer, expanded);
     followed.add(target.pointer);
     charge(expanded.size);
@@ -200,7 +243,8 @@ export function createRefResolver(root: unknown): RefResolver {
   }
 
   /** Runs `body`; a `RefFailure` (or a stack overflow nothing else caught) becomes the error, anything else is a bug and propagates. */
-  function run<T>(body: () => T): Result<T> {
+  function run<T>(body: () => T, tolerateCycles = false): Result<T> {
+    tolerate = tolerateCycles;
     try {
       return ok(body());
     } catch (e) {
@@ -208,22 +252,33 @@ export function createRefResolver(root: unknown): RefResolver {
       if (e instanceof RefFailure) return err(e.error);
       if (e instanceof RangeError) return err({ code: "REF_TOO_LARGE", message: "The document is nested too deeply to import." });
       throw e;
+    } finally {
+      tolerate = false;
     }
   }
 
   return {
     followed,
+    edges,
     inline(value, at) {
       return run(() => {
         cursor = pointerSegments(at);
         return expand(value, 0).value;
       });
     },
-    check() {
+    inlineSchema(value, at) {
+      return run(() => {
+        cursor = pointerSegments(at);
+        const hitsBefore = hits;
+        const expanded = expand(value, 0);
+        return hits > hitsBefore ? { recursive: lastLoop } : { value: expanded.value };
+      }, true);
+    },
+    check(options) {
       return run(() => {
         cursor = [];
         expand(root, 0);
-      });
+      }, options?.tolerateCycles === true);
     },
     deref(value, at) {
       return run(() => {

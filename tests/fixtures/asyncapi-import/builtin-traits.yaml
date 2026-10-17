@@ -98,6 +98,8 @@ components:
       summary: W3C trace headers
       headers:
         type: object
+        required:
+          - traceparent
         properties:
           traceparent:
             type: string

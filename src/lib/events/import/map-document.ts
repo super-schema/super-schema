@@ -89,7 +89,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const warn = (pointer: string, code: ImportWarningCode, message: string): void => { warnings.push({ pointer, code, message }); };
 
   const refs = createRefResolver(raw);
-  const checked = refs.check();
+  // a recursive SCHEMA is reported per payload (`describeMessageSchemas`); a loop anywhere else fails when the part that holds it is read
+  const checked = refs.check({ tolerateCycles: true });
   if (!checked.success) return err(checked.error);
   const inline = (value: unknown, at: string): unknown => must(refs.inline(value, at));
   const { ax, read, readEach } = createSanitizer((w) => warnings.push(w));
@@ -378,7 +379,26 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     }
 
     const bindings = field(node, "bindings", pointer, ax.jsonObject);
-    const protocolSource = serverProtocols.find((p) => p !== "") ?? Object.keys(bindings ?? {})[0] ?? servers[0]?.protocol ?? DEFAULT_CHANNEL_PROTOCOL;
+    // A document channel has no protocol; the event document needs one. Evidence, best first: the channel's own servers, its bindings, the
+    // document's servers. A guess (several protocols to choose from, or nothing at all) is reported so the user checks it.
+    const channelServerProtocols = serverProtocols.filter((p) => p !== "");
+    const distinct = (list: string[]): string[] => [...new Set(list.map(channelProtocolName))];
+    const bindingProtocol = Object.keys(bindings ?? {})[0];
+    let protocolSource: string;
+    if (channelServerProtocols.length > 0) {
+      protocolSource = channelServerProtocols[0];
+      const different = distinct(channelServerProtocols);
+      if (different.length > 1) warn(pointer, "SANITIZED_VALUE", `This channel is on servers with different protocols (${different.join(", ")}) but an event channel has one; "${different[0]}" was used. Check the channel's protocol.`);
+    } else if (bindingProtocol !== undefined) {
+      protocolSource = bindingProtocol;
+    } else if (servers.length > 0) {
+      protocolSource = servers[0].protocol;
+      const different = distinct(servers.map((server) => server.protocol));
+      if (different.length > 1) warn(pointer, "SANITIZED_VALUE", `This channel names no server and the document's servers use different protocols (${different.join(", ")}); the first server's, "${different[0]}", was assumed. Check the channel's protocol.`);
+    } else {
+      protocolSource = DEFAULT_CHANNEL_PROTOCOL;
+      warn(pointer, "SANITIZED_VALUE", `Nothing in the document tells the protocol of this channel (it names no server and has no bindings); "${DEFAULT_CHANNEL_PROTOCOL}" was assumed. Check the channel's protocol.`);
+    }
 
     let parameters = field(node, "parameters", pointer, ax.parameters);
     if (address !== null) {
@@ -409,7 +429,9 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     const schemas = must(describeMessageSchemas(refs, message));
     const noteSchema = (role: "payload" | "headers", description: PayloadDescription): void => {
       const place = at(pointer, role);
-      if (description.format === "unsupported") {
+      if (description.recursive) {
+        warn(place, "UNSUPPORTED_PAYLOAD_FORMAT", `The ${role} of "${key}" refers to itself (${description.recursive.join(" → ")}) and cannot be imported; an empty entity was created instead`);
+      } else if (description.format === "unsupported") {
         const written = description.schemaFormat !== undefined ? `is written as ${description.schemaFormat}` : "is not a schema object";
         warn(place, "UNSUPPORTED_PAYLOAD_FORMAT", `The ${role} of "${key}" ${written}, which events cannot import; an entity with no fields stands in for it, describe it there`);
       } else if (description.format === "none" && role === "payload") {
@@ -543,8 +565,20 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   if (parameters) documentComponents.parameters = parameters;
   if (Object.keys(schemes).length > 0) documentComponents.securitySchemes = schemes;
 
+  // A component the document has no place for is read where something refers to it. What nothing refers to (or only itself, or only other
+  // unused components) is reported once per section.
+  const inlinedEntry = (pointer: string): boolean => INLINED_COMPONENTS.some((section) => pointer.startsWith(`/components/${section}/`));
+  const reached = new Set<string>();
+  const pending: string[] = [];
+  const reach = (target: string): void => {
+    if (!inlinedEntry(target) || reached.has(target)) return;
+    reached.add(target);
+    pending.push(target);
+  };
+  for (const [owner, targets] of refs.edges) if (!inlinedEntry(owner)) for (const target of targets) reach(target);
+  for (let owner = pending.pop(); owner !== undefined; owner = pending.pop()) for (const target of refs.edges.get(owner) ?? []) reach(target);
   for (const section of INLINED_COMPONENTS) {
-    const unused = entriesOf(components[section]).map(([key]) => key).filter((key) => !refs.followed.has(jsonPointer("components", section, key)));
+    const unused = entriesOf(components[section]).map(([key]) => key).filter((key) => !reached.has(jsonPointer("components", section, key)));
     if (unused.length === 0) continue;
     const shown = unused.slice(0, 5).join(", ") + (unused.length > 5 ? ", …" : "");
     warn(jsonPointer("components", section), "DROPPED_CONSTRUCT", `components.${section} has ${unused.length} ${unused.length === 1 ? "entry" : "entries"} that nothing refers to (${shown}), so ${unused.length === 1 ? "it was" : "they were"} not imported`);
