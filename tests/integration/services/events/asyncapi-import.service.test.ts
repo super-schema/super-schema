@@ -11,7 +11,7 @@ import type { ArtifactRenderer } from "@/services/events/artifact-renderer";
 import { BUNDLED_TRAITS, bundledMarker } from "@/lib/events/bundled-traits";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isLibraryTrait, type EventDocument } from "@/lib/events/document/types";
-import { extractPayloads, mapAsyncApiToEventDocument, parseAsyncApiSource, pascalName } from "@/lib/events/import";
+import { extractPayloads, mapAsyncApiToEventDocument, pascalName } from "@/lib/events/import";
 import type { ImportWarning } from "@/lib/events/import";
 import { parseAvroDocument } from "@/lib/importers/avro.importer";
 import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
@@ -35,10 +35,7 @@ vi.mock("@/services/entity.service", async (importOriginal) => {
 });
 vi.mock("@/lib/events/import", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/events/import")>();
-  return {
-    ...original, parseAsyncApiSource: vi.fn(original.parseAsyncApiSource), extractPayloads: vi.fn(original.extractPayloads),
-    mapAsyncApiToEventDocument: vi.fn(original.mapAsyncApiToEventDocument),
-  };
+  return { ...original, extractPayloads: vi.fn(original.extractPayloads), mapAsyncApiToEventDocument: vi.fn(original.mapAsyncApiToEventDocument) };
 });
 // The importers are the real ones; the spies count whether (and how often) they run.
 vi.mock("@/lib/importers/jsonschema.importer", async (importOriginal) => {
@@ -638,22 +635,27 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     expect(codeOf(result)).toBe(code);
   }, 120_000);
 
-  it("a $ref cycle terminates: it is refused, or its payload degrades to ONE placeholder with a warning — never a crash or a loop", async () => {
+  it("a recursive payload schema (Node -> Tree -> Node) imports as ONE placeholder entity with a warning that names the loop, through the entry caps and the expansion gate", async () => {
     const { ctx, productId } = await setup();
     const started = Date.now();
 
-    const result = await importAsyncApi(productId, { content: fixture("negative-ref-cycle.yaml") }, ctx);
+    const { eventId, preview } = unwrap(await importAsyncApi(productId, { content: fixture("recursive-payload-placeholder.yaml") }, ctx));
 
-    expect(Date.now() - started).toBeLessThan(30_000);
-    const inv = await inventory(productId);
-    if (result.success) {
-      expect(inv.entities).toBe(1);
-      expect(result.data.preview.entities.map((e) => e.format)).toEqual(["placeholder"]);
-      expect(warningCodes(result.data.preview.warnings)).toContain("UNSUPPORTED_PAYLOAD_FORMAT");
-    } else {
-      expect(result.error.code).toBe("REF_CYCLE");
-      expect(inv).toEqual({ entities: 0, events: 0 });
-    }
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(preview.entities.map((e) => [e.requestedName, e.format, e.fields])).toEqual([["NodeCreated", "placeholder", 0]]);
+    expect(preview.warnings.find((w) => w.code === "UNSUPPORTED_PAYLOAD_FORMAT")?.message).toContain("refers to itself (#/components/schemas/Node");
+    expect((await inventory(productId))).toEqual({ entities: 1, events: 1 });
+    expect((await storedDocument(eventId)).messages).toHaveLength(1);
+  }, 120_000);
+
+  it("a reference cycle that is not a payload (a trait that contains its own message) is refused as REF_CYCLE, quickly, and creates nothing", async () => {
+    const { ctx, productId } = await setup();
+    const started = Date.now();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content: fixture("negative-ref-cycle-trait-message.yaml") }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(failure(result)?.code).toBe("REF_CYCLE");
   }, 120_000);
 
   it("more than 1 MiB is refused server-side, before anything is parsed", async () => {
@@ -849,7 +851,7 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     expect(Date.now() - started).toBeLessThan(1_500); // the parser alone takes 10+ s on it and starves the server meanwhile
     expect(failure(result)).toMatchObject({
       code: "VALIDATION_ERROR", message: expect.stringContaining("The document is too large once its references are resolved (limit 2 MiB): every place that refers to a shared definition counts a full copy of it."),
-      details: { limit: 2 * 1024 * 1024 }, suggestedFix: expect.stringContaining("Reduce how often"),
+      details: { limit: 2 * 1024 * 1024 }, suggestedFix: expect.stringContaining("Inline less, or share smaller schemas"),
     });
     expect(codeOf(await previewAsyncApiImport(productId, { content }, ctx))).toBe("VALIDATION_ERROR");
     expect(parserRuns()).toBe(before); // neither the import nor the preview reached the parser
@@ -887,11 +889,8 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     expect(parserRuns()).toBe(before);
   }, 120_000);
 
-  /** What the slow steps have run so far: the pure layer's reading of the text, its extraction, the AsyncAPI parser, the mapper. */
-  const slowSteps = () => ({
-    source: vi.mocked(parseAsyncApiSource).mock.calls.length, extract: vi.mocked(extractPayloads).mock.calls.length, parser: parserRuns(),
-    map: vi.mocked(mapAsyncApiToEventDocument).mock.calls.length,
-  });
+  /** What the slow steps have run so far: the pure layer's extraction, the AsyncAPI parser, the mapper (the source parse is linear and runs first). */
+  const slowSteps = () => ({ extract: vi.mocked(extractPayloads).mock.calls.length, parser: parserRuns(), map: vi.mocked(mapAsyncApiToEventDocument).mock.calls.length });
   /** A valid small document with `patch` applied to it. */
   const patched = (patch: (document: Record<string, unknown> & { components: Record<string, unknown> }) => void): string => {
     const document = JSON.parse(smallDocument("Patched", { a: { payload: objectPayload("id") } })) as Record<string, unknown> & { components: Record<string, unknown> };
@@ -900,27 +899,27 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
   };
   const base36 = (count: number): string[] => Array.from({ length: count }, (_, i) => i.toString(36));
   const flatMap = (count: number): Record<string, number> => Object.fromEntries(base36(count).map((key) => [key, 0]));
-  const refusedBeforeAnySlowStep = async (content: string, expected: RegExp, productId: string, ctx: Awaited<ReturnType<typeof setup>>["ctx"]) => {
+  const refusedBeforeAnySlowStep = async (content: string, expected: RegExp, productId: string, ctx: Awaited<ReturnType<typeof setup>>["ctx"], maxMs = 1_500) => {
     expect(Buffer.byteLength(content)).toBeLessThan(1024 * 1024);
     const before = slowSteps();
     const started = Date.now();
     const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
-    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(Date.now() - started).toBeLessThan(maxMs);
     expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringMatching(expected), suggestedFix: expect.any(String) });
     expect(codeOf(await previewAsyncApiImport(productId, { content }, ctx))).toBe("VALIDATION_ERROR");
-    expect(slowSteps()).toEqual(before); // not even the source parse, no extraction, no parser, no mapper: for the import and for the preview
+    expect(slowSteps()).toEqual(before); // no extraction, no AsyncAPI parser, no mapper: for the import and for the preview
   };
 
-  it("a flat map of 109,623 keys (about 1 MiB; the parser alone takes 95 s) is refused in well under a second, before any slow step, and creates nothing", async () => {
+  it("a flat map of 109,623 keys (about 1 MiB; the AsyncAPI parser alone takes 95 s) is read in linear time (about 0.7 s), refused by the entry cap before any slow step, and creates nothing", async () => {
     const { ctx, productId } = await setup();
     const content = patched((d) => { d["x-ext"] = flatMap(109_623); });
-    await refusedBeforeAnySlowStep(content, /An object in the document \(at "\/x-ext"\) has more than 2,000 entries \(limit 2,000\): split it or remove unused entries\./, productId, ctx);
+    await refusedBeforeAnySlowStep(content, /An object in the document \(at "\/x-ext"\) has more than 2,000 entries \(limit 2,000\): split it or remove unused entries\./, productId, ctx, 4_000);
   }, 120_000);
 
-  it("a YAML flat map of 60,000 keys (24 s in the pure layer's own parse alone) is refused in well under a second, before the source parse, and creates nothing", async () => {
+  it("a YAML flat map of 60,000 keys is read in linear time (about 0.5 s), refused by the entry cap before extraction, the parser and the mapper, and creates nothing", async () => {
     const { ctx, productId } = await setup();
-    const yaml = `asyncapi: 3.0.0\ninfo:\n  title: Wide yaml\n  version: 1.0.0\nx-ext:\n${base36(60_000).map((key) => `  ${key}: 0`).join("\n")}\n`;
-    await refusedBeforeAnySlowStep(yaml, /An object in the document \(at "\/x-ext"\) has more than 2,000 entries/, productId, ctx);
+    const yaml = `asyncapi: 3.0.0\ninfo:\n  title: Wide yaml\n  version: 1.0.0\nx-ext:\n${base36(60_000).map((key) => `  k${key}: 0`).join("\n")}\n`;
+    await refusedBeforeAnySlowStep(yaml, /An object in the document \(at "\/x-ext"\) has more than 2,000 entries/, productId, ctx, 5_000); // "not 24 s": the bound is 10x what it takes
   }, 120_000);
 
   it("40,000 channels and 15,000 operations (each about 1 MiB or less; 38 s and 10 s in the parser) are refused the same way", async () => {
@@ -974,8 +973,85 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     const started = Date.now();
     unwrap(await previewAsyncApiImport(productId, { content: many }, ctx));
 
-    expect(Date.now() - started).toBeLessThan(4_000); // about 1 s here: the worst the cap lets through is bounded, not 95 s
+    // about 1 s here. One object is bounded (a 2,000-key one is about 0.2 s; one of 109,623 keys was 95 s), the FILE is not: it can hold about
+    // sixty such objects (60 channels of 1,999 `parameters` entries took 9.4 s in the parser, 70 objects of 1,999 keys 3.7 s), the event loop
+    // blocked meanwhile. That is the known limitation (a worker thread with a hard timeout is the follow-up), so no test claims otherwise.
+    expect(Date.now() - started).toBeLessThan(6_000);
     expect(parserRuns() - before).toBe(2);
+  }, 120_000);
+
+  it("nesting is refused cleanly at the service: 300 levels, 150,000 levels, and the YAML equivalent come back as a PARSE_ERROR that names nesting, fast, never an INTERNAL_ERROR", async () => {
+    const { ctx, productId } = await setup();
+    const nestedJson = (depth: number) => `{"asyncapi":"3.0.0","info":{"title":"t","version":"1.0.0"},"x-deep":${'{"a":'.repeat(depth)}0${"}".repeat(depth)}}`;
+    const nestedYamlFlow = (depth: number) => `asyncapi: 3.0.0\ninfo:\n  title: t\n  version: 1.0.0\nx-deep: ${"[".repeat(depth)}${"]".repeat(depth)}\n`;
+    const shapes: Array<[string, string]> = [
+      ["JSON 300 levels", nestedJson(300)], ["JSON 150,000 levels", nestedJson(150_000)],
+      ["YAML flow 300 levels", nestedYamlFlow(300)], ["YAML flow 150,000 levels", nestedYamlFlow(150_000)],
+    ];
+    for (const [label, content] of shapes) {
+      expect(Buffer.byteLength(content), label).toBeLessThan(1024 * 1024);
+      const before = slowSteps();
+      const started = Date.now();
+      const imported = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+      const previewed = await previewAsyncApiImport(productId, { content }, ctx);
+      expect(Date.now() - started, label).toBeLessThan(10_000);
+      for (const result of [imported, previewed]) {
+        expect(failure(result)?.code, label).toBe("PARSE_ERROR");
+        expect(failure(result)?.message, label).toMatch(/nested/i);
+      }
+      expect(slowSteps(), label).toEqual(before);
+    }
+  }, 120_000);
+
+  it("a flood of YAML errors (156 KiB of [%,%,... has about 80,000) is refused in about a second, not the 4.3 s it took when the parser pretty-printed every error", async () => {
+    const { ctx, productId } = await setup();
+    const content = `[${"%,".repeat(79_871)}`;
+    expect(Buffer.byteLength(content)).toBeGreaterThanOrEqual(156 * 1024 - 1);
+    const before = slowSteps();
+    const started = Date.now();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(5_000); // about 0.8 s here
+    expect(failure(result)).toMatchObject({ code: "PARSE_ERROR", message: expect.stringContaining("The file is not valid YAML: Plain value cannot start with directive indicator character % at line 1, column 2") });
+    expect(failure(result)?.message.length).toBeLessThan(400);
+    expect(slowSteps()).toEqual(before);
+  }, 120_000);
+
+  it("98 YAML aliases of one 880 KB string are refused (86 MB once resolved) by the expansion gate, not by time", async () => {
+    const { ctx, productId } = await setup();
+    const yaml = `asyncapi: 3.0.0\ninfo:\n  title: Aliases\n  version: 1.0.0\nx-leaf: &leaf ${"x".repeat(880 * 1024)}\n${Array.from({ length: 98 }, (_, i) => `x-copy${i}: *leaf`).join("\n")}\n`;
+    expect(Buffer.byteLength(yaml)).toBeLessThan(1024 * 1024);
+    const before = slowSteps();
+    const started = Date.now();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content: yaml }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(8_000); // about 0.3 s here
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("too large once its references are resolved") });
+    expect(slowSteps()).toEqual(before);
+  }, 120_000);
+
+  it("keys that collide with Object.prototype are refused by the real parse, in JSON and in YAML, with a clean message", async () => {
+    const { ctx, productId } = await setup();
+    const documents: Array<[string, string, string]> = [
+      ["JSON __proto__", '{"asyncapi":"3.0.0","info":{"title":"t","version":"1.0.0"},"x-ext":{"__proto__":{"polluted":true}}}', "__proto__"],
+      ["JSON constructor", '{"asyncapi":"3.0.0","info":{"title":"t","version":"1.0.0"},"x-ext":{"constructor":1}}', "constructor"],
+      ["YAML __proto__", "asyncapi: 3.0.0\ninfo:\n  title: t\n  version: 1.0.0\nx-ext:\n  __proto__:\n    polluted: true\n", "__proto__"],
+      ["YAML constructor", "asyncapi: 3.0.0\ninfo:\n  title: t\n  version: 1.0.0\nx-ext:\n  constructor: 1\n", "constructor"],
+    ];
+    for (const [label, content, key] of documents) {
+      const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+      expect(failure(result), label).toMatchObject({ code: "PARSE_ERROR", message: expect.stringContaining(`The key "${key}" at "/x-ext`) });
+      expect(failure(result)?.message, label).toContain("is not allowed in an imported document");
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  }, 120_000);
+
+  it("names the first oversized object in document order: two objects of 2,001 entries, the earlier one is the one named", async () => {
+    const { ctx, productId } = await setup();
+    const content = patched((d) => { d["x-b"] = flatMap(2_001); d["x-a"] = flatMap(2_001); });
+    expect(failure(await importAsyncApi(productId, { content }, ctx))).toMatchObject({ details: { pointer: "/x-b", entries: 2001 } });
   }, 120_000);
 
   it("a 500 KB string shared by 10 entries (5 MB once resolved, from a 520 KB file) is refused by the gate, which counts the string bytes for every use, before any slow step", async () => {

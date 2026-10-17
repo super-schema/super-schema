@@ -1,10 +1,12 @@
 // src/services/events/import-limits.ts
-// Every bound of the AsyncAPI import in ONE place. The file is capped at 1 MiB (`checkImportSize`) and the YAML / `$ref` expansion by the
-// pure layer (`src/lib/events/import/limits.ts`); these are the bounds on what the import then DOES with the document, all checked BEFORE
-// the slow steps and the first write, so a document over any of them creates nothing and says which limit it hit.
+// Every bound of the AsyncAPI import in ONE place. The file is capped at 1 MiB (`checkImportSize`), and `parseAsyncApiSource` (the pure
+// layer, `src/lib/events/import/`) refuses nesting over 256 levels, keys over 1,024 characters, more than 2 million values and more than 100
+// YAML aliases, all in linear time. These are the bounds on what the import then DOES with the parsed document, all checked BEFORE the slow
+// steps and the first write, so a document over any of them creates nothing and says which limit it hit.
 //
 // Nothing in the importers or the AsyncAPI parser can be interrupted (they are long synchronous stretches of CPU, so a timer cannot fire in
-// the middle of them): the only protection is to bound what they are given. Measured on the real code:
+// the middle of them): the only protection is to bound what they are given, and the bounds below do NOT make the cost small, only
+// bounded per piece. Measured on the real code:
 // - the JSON Schema and Avro importers are linear (a 256 KiB schema: 8 ms);
 // - the Protobuf importer is quadratic in the fields of ONE message (densest case, enum-typed fields: 128 KiB 6.1 s, 64 KiB about 1 - 1.5 s,
 //   32 KiB 0.3 s, 16 KiB 0.1 s);
@@ -13,16 +15,17 @@
 //   to a shared definition can be tens of MB for it (`checkExpandedSize`);
 // - it ALSO grows roughly with the square of the number of keys of any one object, whatever the bytes (15,000 keys 3.6 s, 30,000 13.5 s,
 //   109,623 keys in 1 MiB 95 s), and the mapper's de-duplication of a list is quadratic too (one `enum` of 115,136 strings: 11.5 s), hence
-//   the caps on the entries of an object and of a list (`checkEntryCounts`);
-// - so is the pure layer's own reading of the text: its duplicate-key check makes `parseAsyncApiSource` quadratic in the keys of one map
-//   (15,000 keys 2.3 s, 30,000 8.9 s, 60,000 24 s, 109,623 about 58 s). The caps therefore run FIRST, on a loose linear parse of the text
-//   that does not check for duplicates (`checkSourceLimits`: `JSON.parse`, or `yaml` with `uniqueKeys: false`, 60,000 keys 0.3 s).
+//   the caps on the entries of an object and of a list (`checkEntryCounts`).
+// KNOWN LIMITATION: those caps bound ONE object, not the file, which can hold about sixty of them. Measured at the file cap: 60 channels of
+// 1,999 `parameters` entries each, about 9.4 s in the parser (119,941 diagnostics); 70 `x-ext` objects of 1,999 keys, about 3.7 s. The
+// server's event loop is blocked meanwhile. Lowering the cap barely helps (500 entries: still 5.3 s). The real bound is to run the parser in a
+// worker thread with a hard timeout, which is a follow-up, not part of this feature.
 // A `$ref` that many messages share is inlined once per message, so reuse is counted per use. Fields are rows inside one transaction that
 // holds the tenant's name lock (it blocks every name-writing operation of the tenant).
-import { parseDocument } from "yaml";
+import { boundText as boundForDisplay } from "@/lib/events/import/bound";
 import { refTargetSegments } from "@/lib/events/import/refs";
-import { MAX_ALIAS_COUNT, type ExtractedPayload } from "@/lib/events/import";
-import { jsonPointer, localRef, resolveLocalRef } from "@/lib/event-specs/json-pointer";
+import type { ExtractedPayload } from "@/lib/events/import";
+import { escapePointerSegment, jsonPointer, localRef, resolveLocalRef } from "@/lib/event-specs/json-pointer";
 import { err, ok, type Result } from "@/types/result";
 
 /** Most entities one import may create (payloads, headers and their definitions together). */
@@ -37,7 +40,14 @@ export const MAX_PROTOBUF_PAYLOAD_BYTES = 64 * 1024;
 export const MAX_TOTAL_PAYLOAD_BYTES = 2 * 1024 * 1024;
 /** Largest total of DISTINCT Protobuf sources (each is parsed once, and parsing is quadratic): a 64 KiB and a 32 KiB source are about 1.5 s of blocked server at worst (measured). */
 export const MAX_TOTAL_PROTOBUF_BYTES = 96 * 1024;
-/** Largest the document may be once every `$ref` is replaced by its target (JSON text), the size the AsyncAPI parser is given: about 2.5 s there, whatever the shape; no real document comes near it. */
+/**
+ * Largest the document may be once every `$ref` is replaced by its target (JSON text), the size the AsyncAPI parser is given: about 2.5 s
+ * there whatever the shape. Deliberately TIGHT: the gate counts every use of a `$ref` target, and a message is used about four times (in
+ * `components.messages`, in its channel entry, through `operation.channel` and in `operation.messages`). Measured: 100 messages that all
+ * `$ref` ONE 10 KB payload schema expand to about 3.9 MiB and are refused, 50 pass (1.95 MiB); 100 fully inline 2.9 KB payloads that also
+ * share a 2.9 KB type are refused at 2.24 MiB (2.4 KB each: 1.86 MiB, they pass). The refusal tells the user to inline less or to share
+ * smaller schemas.
+ */
 export const MAX_EXPANDED_DOCUMENT_BYTES = 2 * 1024 * 1024;
 /** Most entries any one object of the document may have (the parser's cost grows with the square of that): about 0.2 s per object at the cap; real maps have far fewer. */
 export const MAX_OBJECT_ENTRIES = 2_000;
@@ -64,10 +74,13 @@ export const MAX_FIELD_RENAME_WARNINGS = 50;
 /** Longest text echoed from the document or the parser into a message, warning or problem. */
 export const MAX_ECHOED_TEXT = 500;
 
-/** `value` as text of at most `max` characters, with an ellipsis when it was cut (control characters become spaces). */
+/**
+ * `value` as text of at most `max` characters, with an ellipsis when it was cut (control characters become spaces). The cut is the pure
+ * layer's (`bound.ts`, which never splits a surrogate pair either); what stays here is this layer's longer default (the pure layer's is
+ * 80) and the control-character flattening, which texts from the parser and from a file may need and the pure layer's helper does not do.
+ */
 export function boundText(value: unknown, max: number = MAX_ECHOED_TEXT): string {
-  const text = String(value).replace(/[\u0000-\u001f\u007f]/g, " ");
-  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+  return boundForDisplay(String(value).replace(/[\u0000-\u001f\u007f]/g, " "), max);
 }
 
 const KIB = 1024;
@@ -160,7 +173,7 @@ export function checkPayloadLimits(payloads: readonly ExtractedPayload[]): Resul
   return ok(undefined);
 }
 
-/** Deepest nesting (references included) the expansion measure follows before it calls the document over the limit; the pure layer refuses far less. */
+/** Deepest nesting (references included) the expansion measure follows before it calls the document over the limit. Unreachable from the service (the parse refuses more than 256 levels first); it keeps a direct caller safe. */
 const MAX_MEASURE_DEPTH = 1_000;
 class OverLimit extends Error {}
 
@@ -238,31 +251,36 @@ export function expandedSizeUpTo(root: unknown, limit: number): number {
 }
 
 /**
- * The check that runs on the parsed document before anything slow: no object may have more than `MAX_OBJECT_ENTRIES` entries and no list
- * more than `MAX_LIST_ENTRIES`. One walk over the document, iterative (no stack overflow) and allocating only for objects and lists; the
- * first one over its limit is named by its pointer (bounded text). Only the entries written in the document count: a `$ref` is not expanded
- * here (`checkExpandedSize` measures that).
+ * The check that runs on the parsed document (what `parseAsyncApiSource` returns) before anything slow: no object may have more than
+ * `MAX_OBJECT_ENTRIES` entries and no list more than `MAX_LIST_ENTRIES`. One walk over the document, iterative (no stack overflow, whatever
+ * the depth) and allocating only for objects and lists. It names the FIRST one over its limit in document order (children are pushed in
+ * reverse, so the walk is pre-order: `{ a: 2001 keys, b: 2001 keys }` names `/a`, a parent before its children) by its pointer, built
+ * without spreading the path (a path of 150,000 segments is fine) and bounded in the message. Only the entries written in the document
+ * count: a `$ref` is not expanded here (`checkExpandedSize` measures that).
  */
 export function checkEntryCounts(raw: unknown): Result<void> {
   interface Frame { value: object; key: string | number; parent: Frame | null }
   const isContainer = (value: unknown): value is object => typeof value === "object" && value !== null;
   const pointerOf = (frame: Frame): string => {
-    const path: Array<string | number> = [];
-    for (let f: Frame | null = frame; f !== null && f.parent !== null; f = f.parent) path.unshift(f.key);
-    return boundText(jsonPointer(...path), 200);
+    const segments: Array<string | number> = [];
+    for (let f: Frame | null = frame; f !== null && f.parent !== null; f = f.parent) segments.push(f.key);
+    let pointer = "";
+    for (let i = segments.length - 1; i >= 0; i -= 1) pointer += `/${escapePointerSegment(String(segments[i]))}`;
+    return boundText(pointer, 200);
   };
   const stack: Frame[] = isContainer(raw) ? [{ value: raw, key: "", parent: null }] : [];
   while (stack.length > 0) {
     const frame = stack.pop() as Frame;
     if (Array.isArray(frame.value)) {
-      if (frame.value.length > MAX_LIST_ENTRIES) {
+      const items: unknown[] = frame.value;
+      if (items.length > MAX_LIST_ENTRIES) {
         const pointer = pointerOf(frame);
         return refuse(
           `A list in the document (${pointer === "" ? "the document itself" : `at "${pointer}"`}) has more than ${formatCount(MAX_LIST_ENTRIES)} entries (limit ${formatCount(MAX_LIST_ENTRIES)}): shorten it or remove unused entries.`,
-          { kind: "list", pointer, entries: frame.value.length, limit: MAX_LIST_ENTRIES }, "Real AsyncAPI documents have far shorter lists; check for a generated or repeated section.",
+          { kind: "list", pointer, entries: items.length, limit: MAX_LIST_ENTRIES }, "Real AsyncAPI documents have far shorter lists; check for a generated or repeated section.",
         );
       }
-      frame.value.forEach((item, i) => { if (isContainer(item)) stack.push({ value: item, key: i, parent: frame }); });
+      for (let i = items.length - 1; i >= 0; i -= 1) if (isContainer(items[i])) stack.push({ value: items[i] as object, key: i, parent: frame });
       continue;
     }
     const record = frame.value as Record<string, unknown>;
@@ -274,47 +292,20 @@ export function checkEntryCounts(raw: unknown): Result<void> {
         { kind: "object", pointer, entries: keys.length, limit: MAX_OBJECT_ENTRIES }, "Real AsyncAPI documents have far fewer entries in one object; check for a generated or repeated section.",
       );
     }
-    for (const key of keys) {
-      const child = record[key];
-      if (isContainer(child)) stack.push({ value: child, key, parent: frame });
+    for (let i = keys.length - 1; i >= 0; i -= 1) {
+      const child = record[keys[i]];
+      if (isContainer(child)) stack.push({ value: child, key: keys[i], parent: frame });
     }
   }
   return ok(undefined);
 }
 
-/**
- * A best-effort, LINEAR parse of the file text for the checks that must run before the pure layer's own parse: `JSON.parse`, or `yaml`
- * without its duplicate-key check (the quadratic part) and with the same alias limit. `undefined` when the text cannot be read this way
- * (syntax error, alias bomb, nesting too deep): `parseAsyncApiSource` then reports it properly.
- */
-function looselyParsed(text: string): unknown {
-  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
-  try {
-    if (body.trimStart().startsWith("{")) return JSON.parse(body);
-    const document = parseDocument(body, { uniqueKeys: false });
-    return document.errors.length > 0 ? undefined : document.toJS({ maxAliasCount: MAX_ALIAS_COUNT });
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * The limits on what the document holds (entries of an object and of a list, size once its references are resolved), applied to the file
- * TEXT before anything parses it for real. Never reads the text twice in a way that is slow: see `looselyParsed`.
- */
-export function checkSourceLimits(text: string): Result<void> {
-  const value = looselyParsed(text);
-  if (value === undefined) return ok(undefined);
-  const entries = checkEntryCounts(value);
-  return entries.success ? checkExpandedSize(value) : entries;
-}
-
-/** The check that runs next to `checkEntryCounts`, before anything slow: a document that is too big once its references are resolved is refused (nothing is created). */
+/** The check that runs right after `checkEntryCounts`, before anything slow: a document that is too big once its references are resolved is refused (nothing is created). */
 export function checkExpandedSize(raw: unknown): Result<void> {
   if (expandedSizeUpTo(raw, MAX_EXPANDED_DOCUMENT_BYTES) <= MAX_EXPANDED_DOCUMENT_BYTES) return ok(undefined);
   return refuse(
     `The document is too large once its references are resolved (limit ${formatBytes(MAX_EXPANDED_DOCUMENT_BYTES)}): every place that refers to a shared definition counts a full copy of it`,
-    { limit: MAX_EXPANDED_DOCUMENT_BYTES }, "Reduce how often large definitions are referenced (or how deeply they refer to each other), or split the document.",
+    { limit: MAX_EXPANDED_DOCUMENT_BYTES }, "Inline less, or share smaller schemas: reduce how often large definitions are referenced (a message counts about four times, in its component, its channel entry and two operation lists), or split the document.",
   );
 }
 

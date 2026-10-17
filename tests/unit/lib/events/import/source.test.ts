@@ -220,3 +220,28 @@ describe("parseAsyncApiSource: the cost of keys is linear (a repeated-key check 
   });
 });
 
+
+describe("parseAsyncApiSource: YAML errors are not pretty-printed (that was quadratic), only the first one is shown, with its position", () => {
+  it("keeps the line and the column of the first error in its message", () => {
+    expect(failure("[%,").message).toBe("The file is not valid YAML: Plain value cannot start with directive indicator character % at line 1, column 2");
+    expect(failure("a:\n- b\nc\n").message).toBe("The file is not valid YAML: Implicit map keys need to be followed by map values at line 3, column 1");
+    expect(failure("asyncapi: 3.0.0\nx: &a 1\nx: *b\n").message).toMatch(/^The file is not valid YAML: .* at line 3, column \d+$/);
+    expect(failure("asyncapi: 3.0.0\n---\nasyncapi: 3.0.0\n").message).toBe("The file holds more than one YAML document; import one AsyncAPI document at a time");
+  });
+
+  it("156 KiB of `[%,%,...` (about 80,000 errors) is refused in seconds, not the 4.3 s it took, and the message stays short", () => {
+    const text = `[${"%,".repeat(79_871)}`;
+    const started = performance.now();
+    const error = failure(text);
+    expect(performance.now() - started).toBeLessThan(4_000); // about 0.8 s here; the point is "not 4 s, 17 s at 313 KiB, 145 s at 1 MiB"
+    expect(error.code).toBe("PARSE_ERROR");
+    expect(error.message).toBe("The file is not valid YAML: Plain value cannot start with directive indicator character % at line 1, column 2");
+  });
+
+  it("a text nested so deeply that the YAML parser itself overflows its stack is a PARSE_ERROR that names nesting", () => {
+    const error = failure(`asyncapi: 3.0.0\nx-deep: ${"[".repeat(150_000)}${"]".repeat(150_000)}\n`);
+    expect(error.code).toBe("PARSE_ERROR");
+    expect(error.message).toMatch(/nested too deeply/);
+    expect(error.message).toContain(String(MAX_NESTING_DEPTH));
+  });
+});

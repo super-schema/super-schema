@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveLocalRefs, type ExtractedPayload } from "@/lib/events/import";
+import { parseAsyncApiSource, resolveLocalRefs, type ExtractedPayload } from "@/lib/events/import";
 import {
   MAX_EXPANDED_DOCUMENT_BYTES, MAX_FIELDS_PER_ENTITY, MAX_FIELDS_PER_IMPORT, MAX_IMPORT_ENTITIES, MAX_IMPORT_PAYLOADS, MAX_JSON_PAYLOAD_BYTES,
   MAX_LIST_ENTRIES, MAX_OBJECT_ENTRIES, MAX_PROTOBUF_PAYLOAD_BYTES, MAX_TOTAL_PAYLOAD_BYTES, MAX_TOTAL_PROTOBUF_BYTES, boundText, checkEntryCounts,
-  checkExpandedSize, checkPayloadLimits, checkPlanLimits, checkSourceLimits, expandedSizeUpTo, sizeUpTo, type PlanShape,
+  checkExpandedSize, checkPayloadLimits, checkPlanLimits, expandedSizeUpTo, sizeUpTo, type PlanShape,
 } from "@/services/events/import-limits";
 
 // The bounds of the AsyncAPI import (WP-I2 fix round 1): every cap at its boundary, exactly at the cap = fine, one over = refused.
@@ -347,49 +347,90 @@ describe("checkEntryCounts", () => {
   });
 });
 
-// ── the same limits on the file TEXT, before the pure layer's own (quadratic) parse ──
+// ── the entry caps on what the REAL parse returns (the service runs them on the output of `parseAsyncApiSource`) ──
 
-describe("checkSourceLimits", () => {
-  const yamlMap = (n: number) => `asyncapi: 3.0.0\ninfo:\n  title: t\n  version: 1.0.0\nx-ext:\n${baseOf36(n).map((key) => `  ${key}: 0`).join("\n")}\n`;
-  const sourceFailure = (text: string) => {
-    const result = checkSourceLimits(text);
-    return result.success ? null : result.error;
+describe("checkEntryCounts on parsed documents", () => {
+  const parsed = (text: string) => {
+    const result = parseAsyncApiSource(text);
+    if (!result.success) throw new Error(`${result.error.code}: ${result.error.message}`);
+    return result.data;
   };
+  const yamlMap = (n: number) => `asyncapi: 3.0.0\ninfo:\n  title: t\n  version: 1.0.0\nx-ext:\n${baseOf36(n).map((key) => `  k${key}: 0`).join("\n")}\n`; // `k` keeps 1e3 and 1000 apart: bare numbers are one YAML key
 
-  it("refuses a JSON file whose flat map has 109,623 keys in milliseconds", () => {
-    const text = JSON.stringify({ asyncapi: "3.0.0", info: { title: "t", version: "1.0.0" }, "x-ext": mapOf(109_623) });
-    expect(text.length).toBeLessThan(1024 * 1024);
-    const started = performance.now();
-    expect(sourceFailure(text)?.message).toContain('(at "/x-ext") has more than 2,000 entries');
-    expect(performance.now() - started).toBeLessThan(500);
-  });
-
-  it("refuses a YAML file whose flat map has 60,000 keys well under a second (the pure layer's own parse takes 24 s on it)", () => {
+  it("a YAML flat map past the cap is refused on the parsed document, and the parse itself is linear (60,000 keys)", () => {
     const text = yamlMap(60_000);
     const started = performance.now();
-    expect(sourceFailure(text)?.details).toMatchObject({ kind: "object", pointer: "/x-ext", entries: expect.toSatisfy((n: number) => n > 59_000) }); // keys such as 1e3 and 1000 are one YAML key
-    expect(performance.now() - started).toBeLessThan(1_000);
+    const document = parsed(text);
+    const parseMs = performance.now() - started;
+    expect(countFailure(document)?.details).toMatchObject({ kind: "object", pointer: "/x-ext", entries: 60_000 });
+    expect(parseMs).toBeLessThan(5_000); // about 0.5 s; the point is "not 24 s"
   });
 
-  it("lets through what is within the limits, YAML and JSON, with a byte-order mark and leading whitespace, anchors and aliases", () => {
-    expect(checkSourceLimits(yamlMap(2_000)).success).toBe(true);
-    expect(checkSourceLimits(`﻿  \n${JSON.stringify({ a: mapOf(2_000) })}`).success).toBe(true);
-    expect(checkSourceLimits("asyncapi: 3.0.0\nbase: &b\n  a: 1\ncopy: *b\nother: *b\n").success).toBe(true);
+  it("a JSON flat map of 109,623 keys is parsed and refused by pointer", () => {
+    const text = JSON.stringify({ asyncapi: "3.0.0", info: { title: "t", version: "1.0.0" }, "x-ext": mapOf(109_623) });
+    expect(text.length).toBeLessThan(1024 * 1024);
+    expect(countFailure(parsed(text))?.message).toContain('(at "/x-ext") has more than 2,000 entries');
   });
 
-  it("applies the expansion limit to the text too (a doubling chain of 17 in YAML and in JSON)", () => {
-    const document = doublingDocument(17);
-    expect(sourceFailure(JSON.stringify(document))?.message).toContain("too large once its references are resolved");
-    const lines = Object.entries((document.components as { schemas: Record<string, unknown> }).schemas).map(([key, value]) => `    ${key}: ${JSON.stringify(value)}`);
-    expect(sourceFailure(`asyncapi: 3.0.0\ncomponents:\n  schemas:\n${lines.join("\n")}\n`)?.message).toContain("too large once its references are resolved");
+  it("an object and a list at their caps pass through the real parse; one over is refused", () => {
+    expect(checkEntryCounts(parsed(yamlMap(MAX_OBJECT_ENTRIES))).success).toBe(true);
+    expect(checkEntryCounts(parsed(JSON.stringify({ asyncapi: "3.0.0", "x-list": baseOf36(MAX_LIST_ENTRIES) }))).success).toBe(true);
+    expect(countFailure(parsed(JSON.stringify({ asyncapi: "3.0.0", "x-list": baseOf36(MAX_LIST_ENTRIES + 1) })))?.details).toMatchObject({ kind: "list", pointer: "/x-list", entries: 5001 });
   });
 
-  it("is not the one to report text it cannot read (a syntax error, an alias bomb, nothing at all): that is the pure layer's message", () => {
-    for (const text of ["", "   ", "{ not json", "a: [unclosed", "a: b: c"]) expect(sourceFailure(text), text).toBeNull();
-    const bomb = ['x-lol0: &lol0 ["lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol"]'];
-    for (let i = 1; i <= 9; i += 1) bomb.push(`x-lol${i}: &lol${i} [${Array(9).fill(`*lol${i - 1}`).join(", ")}]`);
-    const started = performance.now();
-    expect(sourceFailure(bomb.join("\n"))).toBeNull(); // the alias limit stops the expansion
-    expect(performance.now() - started).toBeLessThan(500);
+  it("names the FIRST offender in document order, and a parent before its children", () => {
+    expect(countFailure({ a: mapOf(2001), b: mapOf(2001) })?.details).toMatchObject({ pointer: "/a" });
+    expect(countFailure({ b: mapOf(2001), a: mapOf(2001) })?.details).toMatchObject({ pointer: "/b" }); // document order, not alphabetical
+    expect(countFailure({ list: [1, { deep: mapOf(2001) }, { later: mapOf(2001) }] })?.details).toMatchObject({ pointer: "/list/1/deep" });
+    expect(countFailure({ outer: { ...mapOf(2000), inner: mapOf(2001) } })?.details).toMatchObject({ pointer: "/outer" }); // 2,001 keys itself, before the child
+    expect(countFailure({ x: baseOf36(5001), y: mapOf(2001) })?.details).toMatchObject({ pointer: "/x", kind: "list" });
+    expect(countFailure({ x: { a: mapOf(2001) }, y: { a: mapOf(2001) } })?.details).toMatchObject({ pointer: "/x/a" });
+  });
+
+  it("builds the pointer without spreading the path: an offender 150,000 levels down is named (bounded), not a RangeError", () => {
+    let document: unknown = mapOf(2001);
+    for (let i = 0; i < 150_000; i += 1) document = { n: document };
+    const found: { error: ReturnType<typeof countFailure> } = { error: null };
+    expect(() => { found.error = countFailure(document); }).not.toThrow();
+    expect(found.error?.message.length).toBeLessThan(400);
+    expect(found.error?.message).toContain("\u2026"); // the 600,000-character pointer is cut
+    expect((found.error?.details as { pointer: string }).pointer.length).toBeLessThanOrEqual(200);
+  });
+});
+
+// ── what the gate does to realistic catalogues (the numbers in the constant's comment) ──
+
+describe("checkExpandedSize on catalogues of messages", () => {
+  /** The shape every AsyncAPI file has: each message is in `components.messages`, in its channel entry, in `operation.channel` and in `operation.messages`. */
+  function catalogue(count: number, payload: () => unknown, extra: Record<string, unknown> = {}) {
+    const messages = Object.fromEntries(Array.from({ length: count }, (_, i) => [`m${i}`, { payload: payload() }]));
+    const refs = Object.fromEntries(Object.keys(messages).map((key) => [key, { $ref: `#/components/messages/${key}` }]));
+    return {
+      asyncapi: "3.0.0", info: { title: "t", version: "1.0.0" },
+      servers: { broker: { host: "broker.example.com:9092", protocol: "kafka" } },
+      channels: { events: { address: "events.v1", messages: refs } },
+      operations: { receiveEvents: { action: "receive", channel: { $ref: "#/channels/events" }, messages: Object.keys(messages).map((key) => ({ $ref: `#/channels/events/messages/${key}` })) } },
+      components: { messages, ...extra },
+    };
+  }
+  const properties = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`p${i}`, { type: "string" }]));
+  const MIB = 1024 * 1024;
+  const shared = (count: number) => catalogue(count, () => ({ $ref: "#/components/schemas/shared" }), { schemas: { shared: { type: "object", properties: properties(410) } } });
+
+  it("100 messages that all $ref ONE 10 KB payload schema expand to about 3.9 MiB and are refused; 50 pass (about 1.95 MiB)", () => {
+    expect(JSON.stringify({ type: "object", properties: properties(410) }).length).toBeGreaterThan(10_000);
+    expect(expandedSizeUpTo(shared(50), 100 * MIB) / MIB).toBeCloseTo(1.95, 1);
+    expect(expandedSizeUpTo(shared(100), 100 * MIB) / MIB).toBeCloseTo(3.9, 1);
+    expect(checkExpandedSize(shared(50)).success).toBe(true);
+    const refused = checkExpandedSize(shared(100));
+    expect(refused.success ? null : refused.error).toMatchObject({ suggestedFix: expect.stringContaining("Inline less, or share smaller schemas") });
+  });
+
+  it("100 fully inline payloads of about 2.9 KB that also share a 2.9 KB type are refused (2.24 MiB); at 2.4 KB each they pass (1.86 MiB)", () => {
+    const inline = (n: number) => catalogue(100, () => ({ type: "object", properties: properties(n), shared: { $ref: "#/components/schemas/shared" } }), { schemas: { shared: { type: "object", properties: properties(n) } } });
+    expect(expandedSizeUpTo(inline(120), 100 * MIB) / MIB).toBeCloseTo(2.24, 1);
+    expect(checkExpandedSize(inline(120)).success).toBe(false);
+    expect(expandedSizeUpTo(inline(100), 100 * MIB) / MIB).toBeCloseTo(1.86, 1);
+    expect(checkExpandedSize(inline(100)).success).toBe(true);
   });
 });

@@ -27,9 +27,16 @@ function describeKind(value: unknown): string {
   return typeof value === "object" ? "an object" : `a ${typeof value}`;
 }
 
-/** The first line of a `yaml` error ("Map keys must be unique at line 2, column 1:"), without the trailing colon. */
-function yamlMessage(e: { message: string }): string {
-  return boundText(e.message.split("\n")[0].replace(/:\s*$/, ""), MAX_ERROR_TEXT_LENGTH);
+/**
+ * A `yaml` error as one line: "Map keys must be unique at line 2, column 1". The parser is told NOT to pretty-print its errors
+ * (`prettyErrors: false`): its pretty-printer copies and scans the offending source line for EVERY error, so a text with many errors on one
+ * long line (156 KiB of `[%,%,...` has about 78,000) took 4.3 s, 313 KiB 17 s and 1 MiB 145 s. Only the first error is ever shown, so its
+ * position is worked out here, once, with a binary search in the line counter the parser already filled in.
+ */
+function yamlMessage(e: { message: string; pos: readonly number[] }, lines: LineCounter): string {
+  const at = e.pos[0] === undefined || e.pos[0] < 0 ? undefined : lines.linePos(e.pos[0]);
+  const text = e.message.split("\n")[0].replace(/:\s*$/, "");
+  return boundText(at ? `${text} at line ${at.line}, column ${at.col}` : text, MAX_ERROR_TEXT_LENGTH);
 }
 
 /**
@@ -110,7 +117,7 @@ function firstDuplicateKey(doc: Document.Parsed, lines: LineCounter): string | n
 /** `JSON.parse` keeps the last of two equal keys without a word; JSON is YAML, so the YAML parser's tree can say whether one repeats. */
 function duplicateKeyIn(text: string): string | null {
   const lines = new LineCounter();
-  return firstDuplicateKey(parseDocument(text, { uniqueKeys: false, lineCounter: lines }), lines);
+  return firstDuplicateKey(parseDocument(text, { uniqueKeys: false, lineCounter: lines, prettyErrors: false }), lines);
 }
 
 function parseJsonText(text: string): Result<unknown> {
@@ -125,10 +132,15 @@ function parseJsonText(text: string): Result<unknown> {
 
 function parseYamlText(text: string): Result<unknown> {
   const lines = new LineCounter();
-  const doc = parseDocument(text, { uniqueKeys: false, lineCounter: lines }); // repeated keys are found below, in linear time
+  // repeated keys are found below, in linear time; errors are not pretty-printed (see `yamlMessage`): only the first is shown
+  const doc = parseDocument(text, { uniqueKeys: false, lineCounter: lines, prettyErrors: false });
   const first = doc.errors[0];
+  if (first && /call stack/i.test(first.message)) {
+    // the `yaml` parser is recursive: a text nested far past the limit overflows ITS stack and says so as an error, not as a throw
+    return fail("PARSE_ERROR", `The file is nested too deeply to read (the limit is ${MAX_NESTING_DEPTH} levels)`, { suggestedFix: "Flatten the nesting and import again." });
+  }
   if (first) {
-    const message = first.code === "MULTIPLE_DOCS" ? "The file holds more than one YAML document; import one AsyncAPI document at a time" : `The file is not valid YAML: ${yamlMessage(first)}`;
+    const message = first.code === "MULTIPLE_DOCS" ? "The file holds more than one YAML document; import one AsyncAPI document at a time" : `The file is not valid YAML: ${yamlMessage(first, lines)}`;
     return fail("PARSE_ERROR", message, { suggestedFix: "Fix the syntax error and import again." });
   }
   const duplicate = firstDuplicateKey(doc, lines);

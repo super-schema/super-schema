@@ -5,14 +5,14 @@
 // `import-payload-entities.ts`.
 //
 // Order, so that a document that cannot be imported creates NOTHING and the inputs of the slow steps are bounded: check the size of the
-// file, check the entries of every object and list and the size of the document once its references are resolved (on a loose linear
-// parse of the text, before the pure layer's own parse, which is quadratic in the keys of one map, and before ANYTHING else walks the
-// document), parse the source, extract the payloads, CHECK THEIR LIMITS (`import-limits.ts`) before any importer runs, plan the entities (and check
-// the entity and field limits), validate with the AsyncAPI parser, map the document ONCE with stand-in pins (extracting the payloads
-// succeeding does not mean mapping will: a missing title, an operation without a channel and an oversized expansion are only found by
-// mapping), and only then write: entities (one transaction), the event, the document. If either of the last two fails, what was created is
-// deleted again and the error says so. The importers and the parser are synchronous stretches of CPU that nothing can interrupt, so there
-// is no time limit; the limits bound what they are given (see `import-limits.ts`).
+// file; parse the source (`parseAsyncApiSource`: linear, and it refuses what is hostile or too deep); check the entries of every object and
+// list and the size of the document once its references are resolved (`import-limits.ts`, before ANYTHING slow walks the document);
+// extract the payloads; check THEIR limits before any importer runs; plan the entities (and check the entity and field limits); validate
+// with the AsyncAPI parser; map the document ONCE with stand-in pins (extracting the payloads succeeding does not mean mapping will: a
+// missing title, an operation without a channel and an oversized expansion are only found by mapping); and only then write: entities (one
+// transaction), the event, the document. If either of the last two fails, what was created is deleted again and the error says so.
+// The importers and the parser are synchronous stretches of CPU that nothing can interrupt, so there is no time limit: the limits bound
+// what each is given, not what the whole file can cost (see the known limitation in `import-limits.ts`).
 import type { Parser } from "@asyncapi/parser";
 import type { LevelScope } from "@/lib/levels";
 import { resolveScope } from "@/lib/asset-scope";
@@ -34,7 +34,7 @@ import {
   createNameAllocator, createPayloadEntities, deleteCreatedEntities, planPayloadEntities, resolveEntityNames,
   type CreatedPayloadEntities, type PlannedFormat, type ResolvedPayload, type UndeletedEntity,
 } from "@/services/events/import-payload-entities";
-import { boundText, checkEntryCounts, checkExpandedSize, checkPayloadLimits, checkPlanLimits, checkSourceLimits, MAX_PARSER_PROBLEMS, MAX_PARSER_WARNINGS } from "@/services/events/import-limits";
+import { boundText, checkEntryCounts, checkExpandedSize, checkPayloadLimits, checkPlanLimits, MAX_PARSER_PROBLEMS, MAX_PARSER_WARNINGS } from "@/services/events/import-limits";
 import { guardRead, requireId } from "@/services/events/service-guards";
 import { GENERIC_ACTION_ERROR, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
@@ -85,10 +85,13 @@ function readInput(input: unknown): Result<{ content: string; fileName?: string;
  * `MAX_PARSER_WARNINGS`, then one summary line); info and hints are style advice and are dropped.
  *
  * NOT time-bounded, and not interruptible: the parser is asynchronous in name only. It runs long synchronous stretches (Spectral), so a
- * timer cannot fire in the middle of them and racing it against one would only guard a promise that never settles. What is bounded is
- * its INPUT, by the caller before this runs: the file (1 MiB), the entries of any one object (`checkEntryCounts`: its cost also grows with
- * the square of that) and the size of the document once its `$ref`s are replaced by their targets (`checkExpandedSize`: roughly 1 - 2.5 s
- * per MiB depending on the shape, about 5 s at 4 MiB for the densest, so the limit is 2 MiB). Nothing else is claimed.
+ * timer cannot fire in the middle of them and racing it against one would only guard a promise that never settles. The caller bounds its
+ * INPUT before this runs: the file (1 MiB), the entries of any one object (`checkEntryCounts`: its cost also grows with the square of
+ * that) and the size of the document once its `$ref`s are replaced by their targets (`checkExpandedSize`: roughly 1 - 2.5 s per MiB
+ * depending on the shape, about 5 s at 4 MiB for the densest, so the limit is 2 MiB). That bounds each piece, NOT the file: a document of
+ * about 1 MiB that passes every cap can still cost about 10 s here (60 channels of 1,999 `parameters` entries: 9.4 s, 119,941
+ * diagnostics; 70 objects of 1,999 keys: 3.7 s) with the event loop blocked meanwhile. A worker thread with a hard timeout is the real
+ * bound; it is a known limitation and a follow-up (see `import-limits.ts`).
  */
 async function validateWithParser(raw: RawAsyncApi3): Promise<Result<ImportWarning[]>> {
   sharedParser ??= createAsyncApiParser();
@@ -186,13 +189,9 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const scope = resolved.data;
   const sized = checkImportSize(content, "AsyncAPI document");
   if (!sized.success) return sized;
-  // Bound what everything after this is given, BEFORE any of it reads or walks the document: the entries of one object (the AsyncAPI
-  // parser's cost, and the pure layer's own duplicate-key check, grow with their square) and of one list (the mapper de-duplicates
-  // quadratically), and the size of the document once every reference is replaced by its target (a few bytes of references to a shared
-  // definition can be megabytes). First on a loose linear parse of the TEXT, because `parseAsyncApiSource` itself is quadratic in the keys
-  // of one map; then on what it returns (the text it could not loosely read, if any, is covered there).
-  const sourceLimits = checkSourceLimits(content);
-  if (!sourceLimits.success) return sourceLimits;
+  // 1b. Read the file (linear: it refuses what is hostile, too deep or repeated), then bound what everything slow is given: the entries of
+  // one object (the AsyncAPI parser's cost grows with their square) and of one list (the mapper de-duplicates quadratically), and the size
+  // of the document once every reference is replaced by its target (a few bytes of references to a shared definition can be megabytes).
   const parsed = parseAsyncApiSource(content);
   if (!parsed.success) return parsed;
   const raw = parsed.data;
