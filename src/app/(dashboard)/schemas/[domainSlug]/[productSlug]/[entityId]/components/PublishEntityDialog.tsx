@@ -33,6 +33,8 @@ interface PublishEntityFormProps {
   preview: PublishPreview;
   isPublishing: boolean;
   publishError: string | null;
+  /** Every blocker of a publish the server refused, listed under `publishError` (the plan changed after the preview). */
+  publishBlockers?: ReadonlyArray<{ kind: string; message: string }>;
   onCancel: () => void;
   onConfirm: (input: PublishInput) => void | Promise<void>;
 }
@@ -43,6 +45,7 @@ export function PublishEntityForm({
   preview,
   isPublishing,
   publishError,
+  publishBlockers = [],
   onCancel,
   onConfirm,
 }: PublishEntityFormProps) {
@@ -144,6 +147,13 @@ export function PublishEntityForm({
           {publishError}
         </p>
       )}
+      {publishError && publishBlockers.length > 0 && (
+        <ul data-testid="publish-error-blockers" className="list-disc pl-5 text-caption text-foreground">
+          {publishBlockers.map((b, i) => (
+            <li key={`${b.kind}-${i}`}>{b.message}</li>
+          ))}
+        </ul>
+      )}
 
       <div className="flex justify-end gap-space-2">
         <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={isPublishing}>
@@ -178,6 +188,7 @@ interface PublishEntityDialogProps {
   loadError: string | null;
   isPublishing: boolean;
   publishError: string | null;
+  publishBlockers?: ReadonlyArray<{ kind: string; message: string }>;
   onOpenChange: (open: boolean) => void;
   onConfirm: (input: PublishInput) => void | Promise<void>;
 }
@@ -190,6 +201,7 @@ export function PublishEntityDialog({
   loadError,
   isPublishing,
   publishError,
+  publishBlockers,
   onOpenChange,
   onConfirm,
 }: PublishEntityDialogProps) {
@@ -224,6 +236,7 @@ export function PublishEntityDialog({
             preview={preview}
             isPublishing={isPublishing}
             publishError={publishError}
+            publishBlockers={publishBlockers}
             onCancel={() => onOpenChange(false)}
             onConfirm={onConfirm}
           />

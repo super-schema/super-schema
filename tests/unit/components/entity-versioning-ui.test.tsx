@@ -76,6 +76,33 @@ describe("PublishEntityForm", () => {
     expect(screen.getByRole("alert").textContent).toContain("Publish Customer first");
     expect(isDisabled(screen.getByTestId("confirm-publish"))).toBe(true);
   });
+
+  it("lists the blockers of a refused publish under the error line, and keeps Publish usable", () => {
+    render(
+      <PublishEntityForm
+        entityName="Order" preview={analysis()} isPublishing={false} publishError="A; B Resolve every blocker, then publish again."
+        publishBlockers={[{ kind: "UNPUBLISHED_PIN", message: "A" }, { kind: "MISSING_ENTITY", message: "B" }]} onCancel={vi.fn()} onConfirm={vi.fn()}
+      />
+    );
+    expect(screen.getByRole("alert").textContent).toBe("A; B Resolve every blocker, then publish again.");
+    const items = screen.getByTestId("publish-error-blockers").querySelectorAll("li");
+    expect(Array.from(items).map((li) => li.textContent)).toEqual(["A", "B"]);
+    expect(isDisabled(screen.getByTestId("confirm-publish"))).toBe(false);
+  });
+
+  it("shows no blocker list without blockers, and none without the error line it belongs under", () => {
+    const { rerender } = render(
+      <PublishEntityForm entityName="Order" preview={analysis()} isPublishing={false} publishError="Bump too low" publishBlockers={[]} onCancel={vi.fn()} onConfirm={vi.fn()} />
+    );
+    expect(screen.queryByTestId("publish-error-blockers")).toBeNull();
+    rerender(
+      <PublishEntityForm
+        entityName="Order" preview={analysis()} isPublishing={false} publishError={null} publishBlockers={[{ kind: "X", message: "stale" }]}
+        onCancel={vi.fn()} onConfirm={vi.fn()}
+      />
+    );
+    expect(screen.queryByTestId("publish-error-blockers")).toBeNull();
+  });
 });
 
 describe("EntityVersionList", () => {

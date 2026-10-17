@@ -160,6 +160,17 @@ describe("event publish actions: failures reach the browser safely", () => {
       }
     });
 
+    it("drops the details and the suggested fix of a DB_ERROR / INTERNAL_ERROR, even a blockers list: only the non-opaque PUBLISH_BLOCKED hands its blockers over", async () => {
+      const details = { blockers: [{ kind: "VALIDATION_ERROR", message: RAW, pointer: "/channels/x" }], host: "10.0.0.5" };
+      for (const code of ["DB_ERROR", "INTERNAL_ERROR"]) {
+        h.publishEvent.mockResolvedValue({ success: false, error: { code, message: RAW, details, suggestedFix: "Check DATABASE_URL" } });
+        const result = await publishEventAction("e1", "p1", INPUT);
+        expect(result).toEqual({ success: false, error: GENERIC_ACTION_ERROR, code });
+        expect("details" in result).toBe(false);
+        expect(JSON.stringify(result)).not.toMatch(/10\.0\.0\.5|DATABASE_URL|event_spec_versions|channels\/x/);
+      }
+    });
+
     it("answers a rejected service with a generic INTERNAL_ERROR", async () => {
       for (const fn of SERVICE_MOCKS) fn.mockRejectedValue(new Error(RAW));
       for (const [, call] of ALL_ACTIONS) {

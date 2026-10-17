@@ -10,6 +10,7 @@ import {
   type PublishPreview,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/PublishEntityDialog";
 import type { PublishInput } from "@/lib/entity-versioning/types";
+import { blockersOfFailedPublish } from "@/lib/events/publish-blockers";
 import { actionErrorText, GENERIC_ACTION_ERROR, type ActionResult } from "@/types/action-result";
 
 export interface PublishVersionButtonProps {
@@ -38,12 +39,15 @@ export function PublishVersionButton({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  // Every blocker of a refused publish (the plan changed between the preview and the confirm), listed under the error line.
+  const [publishBlockers, setPublishBlockers] = useState<Array<{ kind: string; message: string }>>([]);
 
   async function openDialog() {
     setOpen(true);
     setPreview(null);
     setLoadError(null);
     setPublishError(null);
+    setPublishBlockers([]);
     try {
       const r = await loadPreview();
       if (r.success) setPreview(r.data);
@@ -57,10 +61,12 @@ export function PublishVersionButton({
   async function confirm(input: PublishInput) {
     setPublishing(true);
     setPublishError(null);
+    setPublishBlockers([]);
     try {
       const r = await publish(input);
       if (!r.success) {
         setPublishError(actionErrorText(r)); // message + the service's suggested fix (a CONFLICT says to reload and publish again)
+        setPublishBlockers(blockersOfFailedPublish(r)); // PUBLISH_BLOCKED only: no other code's details are read
         return;
       }
       setOpen(false);
@@ -96,6 +102,7 @@ export function PublishVersionButton({
         loadError={loadError}
         isPublishing={publishing}
         publishError={publishError}
+        publishBlockers={publishBlockers}
         onOpenChange={setOpen}
         onConfirm={confirm}
       />

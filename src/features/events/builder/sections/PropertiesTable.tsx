@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import type { JsonObject } from "@/lib/event-specs/types";
 import type { PropertySummaryRow } from "@/lib/events/bundled-traits";
 import { selectClass } from "../controls";
+import { PINNED_HEADERS_LEAD, PINNED_PROPERTIES_LEAD } from "../labels";
 import {
   allowedValues, descriptionOf, displayRowsFromHeaders, displayRowsFromSummary, duplicateNames, friendlyType, jsonEqual, PROPERTY_TYPES, readRows, setAllowedValues,
   setDescription, setType, typeLabel, writeHeaders, type DisplayRow, type PropertyRow, type PropertyType,
@@ -71,8 +72,6 @@ function PinnedNote({ id, pinned, lead, className }: { id: string; pinned: Pinne
     </p>
   );
 }
-const EMPTY_LEAD = "Properties come from the entity";
-const ROWS_LEAD = "Headers also come from the entity";
 const EMPTY_NOTE = "text-body-small text-muted-foreground";
 const ROWS_NOTE = "text-caption text-muted-foreground";
 
@@ -90,7 +89,7 @@ function AllowedChips({ id, allowed }: { id: string; allowed: DisplayRow["allowe
 }
 
 function ReadOnlyTable({ idPrefix, rows, pinned }: { idPrefix: string; rows: DisplayRow[]; pinned?: PinnedHeaders }) {
-  if (rows.length === 0 && pinned) return <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={EMPTY_LEAD} className={EMPTY_NOTE} />;
+  if (rows.length === 0 && pinned) return <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={PINNED_PROPERTIES_LEAD} className={EMPTY_NOTE} />;
   if (rows.length === 0) return <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties.</p>;
   return (
     <>
@@ -122,7 +121,7 @@ function ReadOnlyTable({ idPrefix, rows, pinned }: { idPrefix: string; rows: Dis
           </tbody>
         </table>
       </div>
-      {pinned && <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={ROWS_LEAD} className={ROWS_NOTE} />}
+      {pinned && <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={PINNED_HEADERS_LEAD} className={ROWS_NOTE} />}
     </>
   );
 }
@@ -201,7 +200,7 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
     <div className="space-y-space-2">
       {rows.length === 0 ? (
         pinned
-          ? <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={EMPTY_LEAD} className={EMPTY_NOTE} />
+          ? <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={PINNED_PROPERTIES_LEAD} className={EMPTY_NOTE} />
           : <p data-testid={`${idPrefix}-empty`} className="text-body-small text-muted-foreground">No properties yet. Add the ones every message carries.</p>
       ) : (
         <div className="overflow-x-auto rounded-md border border-border">
@@ -280,7 +279,7 @@ function EditableTable({ idPrefix, headers, onChange, disabled, pinned }: { idPr
       <Button type="button" size="sm" variant="outline" onClick={addRow} disabled={disabled} data-testid={`${idPrefix}-add`} className="gap-1.5">
         <Plus className="size-4" /> Add property
       </Button>
-      {pinned && rows.length > 0 && <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={ROWS_LEAD} className={ROWS_NOTE} />}
+      {pinned && rows.length > 0 && <PinnedNote id={`${idPrefix}-pin-note`} pinned={pinned} lead={PINNED_HEADERS_LEAD} className={ROWS_NOTE} />}
     </div>
   );
 }

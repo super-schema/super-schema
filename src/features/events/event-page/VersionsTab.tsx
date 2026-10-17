@@ -26,13 +26,15 @@ export interface VersionsTabProps {
 }
 
 export function VersionsTab({ eventId, productId, latestLabel, version, onVersionChange }: VersionsTabProps) {
-  const { versions, error } = useEventVersions({ eventId, productId, latestLabel });
+  const { versions, error, reload } = useEventVersions({ eventId, productId, latestLabel });
   return (
     <div data-testid="event-versions" className="space-y-space-6">
       <section className="space-y-space-3">
         <h2 className="text-heading-2 text-foreground">Published versions</h2>
         {error ? (
-          <p role="alert" data-testid="event-versions-error" className="text-body-small text-destructive">Could not load published versions: {error}</p>
+          <p role="alert" data-testid="event-versions-error" className="text-body-small text-destructive">
+            Could not load published versions: {error} <RetryButton testId="event-versions-retry" onClick={reload} />
+          </p>
         ) : versions === null ? (
           <p data-testid="event-versions-loading" className="flex items-center gap-2 text-body-small text-muted-foreground">
             <Loader2 className="size-4 animate-spin" aria-hidden="true" /> Loading published versions…
@@ -43,6 +45,18 @@ export function VersionsTab({ eventId, productId, latestLabel, version, onVersio
       </section>
       {version !== null && <VersionCode eventId={eventId} productId={productId} label={version} />}
     </div>
+  );
+}
+
+/** The "Retry" link at the end of a load error: asks the same question again (the error clears while it runs). */
+function RetryButton({ testId, onClick }: { testId: string; onClick: () => void }) {
+  return (
+    <button
+      type="button" data-testid={testId} onClick={onClick}
+      className="underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      Retry
+    </button>
   );
 }
 
@@ -94,13 +108,7 @@ function VersionCode({ eventId, productId, label }: { eventId: string; productId
       </div>
       {code.status === "error" && (
         <p role="alert" data-testid="event-version-code-error" className="text-body-small text-destructive">
-          Could not load v{label}: {code.message}{" "}
-          <button
-            type="button" data-testid="event-version-code-retry" onClick={code.retry}
-            className="underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
-            Retry
-          </button>
+          Could not load v{label}: {code.message} <RetryButton testId="event-version-code-retry" onClick={code.retry} />
         </p>
       )}
       {code.status === "loading" && (

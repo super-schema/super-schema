@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ refresh: vi.fn(), success: vi.fn() }));
@@ -8,6 +8,7 @@ vi.mock("sonner", () => ({ toast: { success: h.success, error: vi.fn() } }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/PublishEntityDialog", () => ({
   PublishEntityDialog: (p: {
     open: boolean; description?: string; loadError: string | null; publishError: string | null; isPublishing: boolean;
+    publishBlockers?: ReadonlyArray<{ kind: string; message: string }>;
     preview: { blockers: Array<{ message: string }> } | null; onConfirm: (i: { bump?: "MAJOR" | "MINOR" }) => void;
     onOpenChange: (open: boolean) => void;
   }) =>
@@ -16,6 +17,9 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/compone
         <p>{p.description}</p>
         {p.loadError && <p role="alert">{p.loadError}</p>}
         {p.publishError && <p role="alert">{p.publishError}</p>}
+        {p.publishBlockers && p.publishBlockers.length > 0 && (
+          <ul data-testid="publish-blockers">{p.publishBlockers.map((b, i) => <li key={`${b.kind}-${i}`}>{b.message}</li>)}</ul>
+        )}
         {p.preview && <button disabled={p.isPublishing} onClick={() => p.onConfirm({ bump: "MAJOR" })}>confirm</button>}
         {/* The real dialog refuses to close while publishing; mirror that so a stuck flag is observable. */}
         <button onClick={() => !p.isPublishing && p.onOpenChange(false)}>close</button>
@@ -84,6 +88,74 @@ describe("PublishVersionButton", () => {
     );
     fireEvent.click(screen.getByTestId("publish-version-button"));
     expect((await screen.findByRole("alert")).textContent).toBe("Not found. Reload the page.");
+  });
+
+  describe("a publish refused with its blockers (the plan changed between the preview and the confirm)", () => {
+    const refused = (over: Record<string, unknown> = {}) => ({
+      success: false as const, error: "A; A; B", code: "PUBLISH_BLOCKED", suggestedFix: "Resolve every blocker, then publish again.",
+      details: {
+        blockers: [
+          { kind: "UNPUBLISHED_PIN", message: "A", pointer: "/messages/0/payload" },
+          { kind: "UNRESOLVED_REFERENCE", message: "A", pointer: "/components/messages/m/payload" },
+          { kind: "MISSING_ENTITY", message: "B", pointer: "/messages/1/payload" },
+        ],
+      },
+      ...over,
+    });
+    const confirmWith = async (publish: () => Promise<unknown>) => {
+      render(<PublishVersionButton subjectName="x" description="d" loadPreview={okPreview} publish={publish as never} />);
+      fireEvent.click(screen.getByTestId("publish-version-button"));
+      fireEvent.click(await screen.findByText("confirm"));
+    };
+    const listed = () => within(screen.getByTestId("publish-blockers")).getAllByRole("listitem").map((li) => li.textContent);
+
+    it("lists every blocker under the error, a message that came from several places once", async () => {
+      await confirmWith(async () => refused());
+      await screen.findByTestId("publish-blockers");
+      expect(listed()).toEqual(["A", "B"]);
+      // The one-line error stays (message + the service's fix); the list is added under it.
+      expect(screen.getByRole("alert").textContent).toBe("A; A; B Resolve every blocker, then publish again.");
+      expect(screen.getByTestId("dialog").getAttribute("data-publishing")).toBe("false");
+      expect(h.success).not.toHaveBeenCalled();
+    });
+
+    it("shows only the generic text for any other code, even when its details carry blockers", async () => {
+      await confirmWith(async () => refused({ error: "The event changed while publishing.", code: "CONFLICT", suggestedFix: "Reload the event and publish again." }));
+      expect((await screen.findByRole("alert")).textContent).toBe("The event changed while publishing. Reload the event and publish again.");
+      expect(screen.queryByTestId("publish-blockers")).toBeNull();
+    });
+
+    it("never lists the details of an opaque failure (the action layer drops them; the dialog would not show them either)", async () => {
+      await confirmWith(async () => refused({ error: 'relation "event_spec_versions" does not exist', code: "DB_ERROR" }));
+      expect((await screen.findByRole("alert")).textContent).toBe(GENERIC_ACTION_ERROR);
+      expect(screen.queryByTestId("publish-blockers")).toBeNull();
+    });
+
+    it("shows just the message when PUBLISH_BLOCKED carries no usable list", async () => {
+      await confirmWith(async () => refused({ details: { blockers: [] } }));
+      expect((await screen.findByRole("alert")).textContent).toContain("A; A; B");
+      expect(screen.queryByTestId("publish-blockers")).toBeNull();
+    });
+
+    it("drops the list on the next attempt and when the dialog is opened again", async () => {
+      const publish = vi.fn()
+        .mockResolvedValueOnce(refused())
+        .mockResolvedValueOnce({ success: false, error: "The event changed while publishing.", code: "CONFLICT" });
+      await confirmWith(publish);
+      await screen.findByTestId("publish-blockers");
+      fireEvent.click(screen.getByText("confirm"));
+      await waitFor(() => expect(screen.queryByTestId("publish-blockers")).toBeNull());
+      expect(screen.getByRole("alert").textContent).toBe("The event changed while publishing.");
+      // Back to a refusal with blockers, then close and open: the new dialog starts clean.
+      publish.mockResolvedValueOnce(refused());
+      fireEvent.click(screen.getByText("confirm"));
+      await screen.findByTestId("publish-blockers");
+      fireEvent.click(screen.getByText("close"));
+      fireEvent.click(screen.getByTestId("publish-version-button"));
+      await screen.findByText("confirm");
+      expect(screen.queryByTestId("publish-blockers")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
   });
 
   it("never shows a database failure's text (an opaque code becomes the generic message)", async () => {

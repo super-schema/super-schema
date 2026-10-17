@@ -307,6 +307,99 @@ describe("EditProductContactsDialog: outcome", () => {
   });
 });
 
+// The form-level server message ("Product not found", the generic one) belongs to the values that were submitted: it goes away on the
+// first edit after it appears, like a field's own message, not only at the next submit.
+describe("EditProductContactsDialog: the server's form-level message while the user edits", () => {
+  // These tests queue several answers: none may leak into the next test.
+  beforeEach(() => {
+    h.updateProductAction.mockReset();
+    h.updateProductAction.mockResolvedValue({ success: true, slug: "checkout" });
+  });
+  const failOnce = async (message = "Product \"prd-1\" not found") => {
+    h.updateProductAction.mockResolvedValueOnce({ error: message });
+    const view = setup();
+    fireEvent.click(saveButton());
+    await screen.findByTestId("edit-product-contacts-error");
+    return view;
+  };
+  const errorGone = () => expect(screen.queryByTestId("edit-product-contacts-error")).toBeNull();
+
+  it("clears when the Engineering Lead or the Manager is edited", async () => {
+    await failOnce();
+    type(lead(), "new.lead@acme.com");
+    errorGone();
+
+    h.updateProductAction.mockResolvedValueOnce({ error: "Again" });
+    fireEvent.click(saveButton());
+    expect((await screen.findByTestId("edit-product-contacts-error")).textContent).toBe("Again");
+    type(manager(), "new.manager@acme.com");
+    errorGone();
+  });
+
+  it("clears when the team address being typed is edited, and when a chip is added or removed", async () => {
+    await failOnce();
+    type(team(), "n");
+    errorGone();
+    type(team(), ""); // a half-typed address would stop the next submit before it reaches the action
+
+    h.updateProductAction.mockResolvedValueOnce({ error: "Again" });
+    fireEvent.click(saveButton());
+    await screen.findByTestId("edit-product-contacts-error");
+    fireEvent.click(screen.getAllByTestId("product-team-emails-remove")[0]);
+    errorGone();
+
+    h.updateProductAction.mockResolvedValueOnce({ error: "And again" });
+    fireEvent.click(saveButton());
+    await screen.findByTestId("edit-product-contacts-error");
+    type(team(), "added@acme.com");
+    fireEvent.keyDown(team(), { key: "Enter" });
+    errorGone();
+    expect(chips()).toContain("added@acme.com");
+  });
+
+  it("stays while nothing is edited (moving focus through the fields does not count)", async () => {
+    await failOnce();
+    fireEvent.focus(team());
+    fireEvent.blur(team());
+    fireEvent.blur(lead());
+    fireEvent.blur(manager());
+    expect(screen.getByTestId("edit-product-contacts-error").textContent).toBe('Product "prd-1" not found');
+  });
+
+  it("is replaced by the next failure's message, and cleared by the next submit as before", async () => {
+    await failOnce();
+    h.updateProductAction.mockResolvedValueOnce({ error: "Second message" });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(screen.getByTestId("edit-product-contacts-error").textContent).toBe("Second message"));
+    expect(h.updateProductAction).toHaveBeenCalledTimes(2);
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(h.updateProductAction).toHaveBeenCalledTimes(3));
+    await waitFor(() => errorGone());
+  });
+
+  it("also clears the generic message of a rejected action on the first edit", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    h.updateProductAction.mockRejectedValueOnce(new Error("Failed to fetch"));
+    setup();
+    fireEvent.click(saveButton());
+    expect((await screen.findByTestId("edit-product-contacts-error")).textContent).toBe(GENERIC_ACTION_ERROR);
+    type(lead(), "x@acme.com");
+    errorGone();
+    consoleError.mockRestore();
+  });
+
+  it("does not touch a field's own server message when another field is edited (those clear per field, as before)", async () => {
+    h.updateProductAction.mockResolvedValueOnce({ error: "Manager message", fieldErrors: { manager: "Manager message" } });
+    setup();
+    fireEvent.click(saveButton());
+    await screen.findByTestId("product-manager-error");
+    type(lead(), "other@acme.com");
+    expect(screen.getByTestId("product-manager-error").textContent).toBe("Manager message");
+    type(manager(), "fixed@acme.com");
+    expect(screen.queryByTestId("product-manager-error")).toBeNull();
+  });
+});
+
 function dialogText(): string {
   return screen.getByRole("dialog").textContent ?? "";
 }

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { listUsagesAction } from "@/app/(dashboard)/schemas/usage-actions";
-import { USAGE_ROW_LIMIT, type UsageList, type UsageSubject } from "@/lib/events/usage";
+import type { UsageList, UsageSubject } from "@/lib/events/usage";
 
 type Outcome = { status: "error"; message: string } | { status: "ready"; list: UsageList };
 
@@ -91,7 +91,10 @@ export function UsedByPanel({
         </ul>
       )}
       {outcome?.status === "ready" && outcome.list.truncated && (
-        <p data-testid="used-by-truncated" className="text-caption text-muted-foreground">Showing the first {USAGE_ROW_LIMIT} references.</p>
+        // The scan limit can cut the list short of USAGE_ROW_LIMIT, so the text counts the rows that are shown.
+        <p data-testid="used-by-truncated" className="text-caption text-muted-foreground">
+          {rows.length === 1 ? "Showing the first reference." : `Showing the first ${rows.length} references.`}
+        </p>
       )}
     </section>
   );
