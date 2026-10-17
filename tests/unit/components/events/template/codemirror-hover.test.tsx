@@ -71,7 +71,9 @@ describe("plainHover", () => {
 
   it("drops the markdown backticks of the library's own type line (`enum`: `a` or `b`), and shows the description as it was written", () => {
     const dom = plainHover({ message: "snake_case and *stars* stay", typeInfo: "`enum`: `a` or `b``format`: date-time" });
-    expect(dom.querySelector("code")?.textContent).toBe("enum: a or bformat: date-time");
+    expect(dom.querySelector("code")?.textContent).toBe("enum: a or b format: date-time");
+    // a code span right after a bare word keeps a gap too
+    expect(plainHover({ typeInfo: "string`format`: date-time" }).querySelector("code")?.textContent).toBe("string format: date-time");
     expect(dom.querySelector(".cm6-json-schema-hover--description")?.textContent).toBe("snake_case and *stars* stay");
     expect(plainHover({ typeInfo: "``" }).childElementCount).toBe(0);
   });

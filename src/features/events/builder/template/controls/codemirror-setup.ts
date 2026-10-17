@@ -242,7 +242,7 @@ function schemaWarnings(library: SchemaLibrary): (view: EditorView) => Diagnosti
       // message, and the message holds values and property names of the document (a backtick in one breaks out of the code span into
       // markup, an image link is fetched). Without a `renderMessage` @codemirror/lint shows the message as text.
       return lint(view).map((d): Diagnostic => ({
-        from: d.from, to: d.to > d.from ? d.to : Math.min(d.from + 1, length), severity: "warning", message: d.message, source: d.source,
+        from: d.from, to: d.to > d.from ? d.to : Math.min(d.from + 1, length), severity: "warning", message: d.message, source: typeof d.source === "string" ? d.source : undefined,
       }));
     } catch {
       return [];
@@ -269,7 +269,11 @@ export function plainHover({ message, typeInfo }: { message?: unknown; typeInfo?
   const root = document.createElement("div");
   root.className = "cm6-json-schema-hover";
   if (typeof message === "string" && message !== "") root.append(block("div", "cm6-json-schema-hover--description", message));
-  const typeLine = typeof typeInfo === "string" ? typeInfo.replaceAll("`", "") : "";
+  // The library writes its type line as markdown (`enum`: `a` or `b``format`: date-time): drop the code spans' backticks, and keep a gap
+  // where one span follows another (or follows a bare word) so "b" and "format" do not run together.
+  const typeLine = typeof typeInfo === "string"
+    ? typeInfo.replace(/`([^`]*)`/g, (_match, inner: string, offset: number, whole: string) => (offset > 0 && !/\s/.test(whole[offset - 1]) ? " " : "") + inner)
+    : "";
   if (typeLine !== "") {
     const wrapper = document.createElement("div");
     wrapper.className = "cm6-json-schema-hover--code-wrapper";

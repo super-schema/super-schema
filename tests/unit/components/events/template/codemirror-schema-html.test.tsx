@@ -156,4 +156,11 @@ describe("lint messages", () => {
     expect(panel.querySelector(".cm-diagnostic-warning")?.textContent).toContain("Expected `string` but received `number`");
     expect(panel.querySelector(DANGEROUS)).toBeNull();
   });
+
+  it("a schema whose title is not text still lints: the marker has no source instead of one the lint panel cannot render", async () => {
+    const handle = make('{"orderId": 5}');
+    await handle.setSchema({ type: "object", title: { a: 1 } as unknown as string, properties: { orderId: { type: "string" } } });
+    const panel = await panelOf(handle);
+    expect(panel.querySelector(".cm-diagnostic-warning")?.textContent).toContain("Expected `string` but received `number`");
+  });
 });
