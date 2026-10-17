@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sample } from "openapi-sampler";
 import { exampleFromSchema } from "@/lib/events/example-from-schema";
 import type { Result } from "@/types/result";
+
+// The real sampler, watched: a hostile schema must be refused BEFORE it is called (asserted through the spy, not through memory).
+vi.mock("openapi-sampler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openapi-sampler")>();
+  return { ...actual, sample: vi.fn(actual.sample) };
+});
 
 type Schema = Record<string, unknown>;
 
@@ -189,7 +196,7 @@ describe("exampleFromSchema", () => {
   it("still builds the array a schema asks for when it is within the budget: minItems copies, never more than maxItems", () => {
     expect(example({ type: "array", items: { type: "string" }, minItems: 3 })).toEqual(["string", "string", "string"]);
     expect(example({ type: "array", items: { type: "string" } })).toEqual(["string"]); // 1 by default
-    expect(example({ type: "array", items: { type: "string" }, minItems: 1_000_000_000, maxItems: 2 })).toEqual(["string", "string"]);
+    expect(example({ type: "array", items: { type: "string" }, minItems: 5_000, maxItems: 2 })).toEqual(["string", "string"]);
     expect(example({ type: "array", prefixItems: [{ type: "integer" }, { type: "string" }], minItems: 4 })).toEqual([0, "string", null, null]);
     expect((example({ type: "array", items: { type: "string" }, minItems: 20_000 }) as unknown[]).length).toBe(20_000);
     // 100 x 100 is 10,000 values: allowed
@@ -235,5 +242,109 @@ describe("exampleFromSchema", () => {
     const before = JSON.stringify(schema);
     example(schema);
     expect(JSON.stringify(schema)).toBe(before);
+  });
+});
+
+describe("exampleFromSchema: a hostile schema is refused before the sampler builds anything", () => {
+  beforeEach(() => {
+    vi.mocked(sample).mockClear();
+  });
+
+  /** Refused with EXAMPLE_TOO_LARGE in under a second, the sampler never called. */
+  function refused(schema: Schema, label = JSON.stringify(schema).slice(0, 120)): void {
+    const started = performance.now();
+    const result = exampleFromSchema(schema);
+    expect(performance.now() - started, label).toBeLessThan(1_000);
+    expect(failure(result), label).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+    expect(sample, label).not.toHaveBeenCalled();
+  }
+
+  it("refuses a minLength of 100 million (a 100M-character string), alone or nested", () => {
+    refused({ type: "string", minLength: 1e8 });
+    refused({ type: "object", properties: { name: { type: "string", minLength: 1e8 } } });
+    refused({ type: "string", minLength: "100000000" }); // the sampler coerces a string
+  });
+
+  it("refuses the reviewer's case: a minItems that sits under `if`, which the sampler merges into the array", () => {
+    refused({ type: "array", items: { type: "string" }, if: { minItems: 3e7 }, then: {} });
+  });
+
+  const keywords: Record<string, number> = { minLength: 100_001, minItems: 100_001, minProperties: 100_001 };
+  const positions: Record<string, (inner: Schema) => Schema> = {
+    "the root": (inner) => inner,
+    properties: (inner) => ({ type: "object", properties: { a: inner } }),
+    items: (inner) => ({ type: "array", items: inner }),
+    additionalProperties: (inner) => ({ type: "object", additionalProperties: inner }),
+    patternProperties: (inner) => ({ type: "object", patternProperties: { "^a": inner } }),
+    allOf: (inner) => ({ allOf: [{ type: "object" }, inner] }),
+    anyOf: (inner) => ({ anyOf: [inner] }),
+    oneOf: (inner) => ({ oneOf: [inner] }),
+    not: (inner) => ({ not: inner }),
+    if: (inner) => ({ type: "array", items: { type: "string" }, if: inner, then: {} }),
+    then: (inner) => ({ type: "array", items: { type: "string" }, if: {}, then: inner }),
+    else: (inner) => ({ type: "array", items: { type: "string" }, if: {}, then: {}, else: inner }),
+    $defs: (inner) => ({ $ref: "#/$defs/Big", $defs: { Big: inner } }),
+    definitions: (inner) => ({ $ref: "#/definitions/Big", definitions: { Big: inner } }),
+  };
+
+  it("refuses a size keyword over 100,000 wherever it sits in the schema tree", () => {
+    for (const [keyword, value] of Object.entries(keywords)) {
+      for (const [where, place] of Object.entries(positions)) refused(place({ [keyword]: value }), `${keyword} under ${where}`);
+    }
+  });
+
+  it("does not refuse at the limit itself: a minLength of exactly 100,000 is a 100,000-character string", () => {
+    expect((example({ type: "string", minLength: 100_000 }) as string).length).toBe(100_000);
+  });
+
+  it("counts if / then like the sampler does: sizes under the limit that multiply through `if` / `then`", () => {
+    const level = (inner: Schema): Schema => ({ type: "array", items: inner, if: { minItems: 90_000 }, then: {} });
+    refused(level(level(level({ type: "string" }))));
+    const thenLevel = (inner: Schema): Schema => ({ type: "array", if: { type: "array" }, then: { minItems: 90_000, items: inner } });
+    refused(thenLevel(thenLevel({ type: "string" })));
+  });
+
+  it("counts additionalProperties twice per level: 8 levels over minItems 20,000", () => {
+    let schema: Schema = { type: "array", items: { type: "string" }, minItems: 20_000 };
+    for (let level = 0; level < 8; level++) schema = { type: "object", additionalProperties: schema };
+    refused(schema);
+  });
+
+  it("counts long strings and long copied values by their length: they add up", () => {
+    const properties: Record<string, Schema> = {};
+    for (let i = 0; i < 40; i++) properties[`p${i}`] = { type: "string", minLength: 100_000 };
+    refused({ type: "object", properties }, "40 strings of 100,000 characters");
+    // one 50,000-character default, used through 2,000 references
+    const uses: Record<string, Schema> = {};
+    for (let i = 0; i < 2_000; i++) uses[`p${i}`] = { $ref: "#/definitions/Long" };
+    refused({ type: "object", properties: uses, definitions: { Long: { type: "string", default: "x".repeat(50_000) } } }, "a long default used 2,000 times");
+  });
+
+  it("refuses an example whose text would be over 1 MiB, after building it (it passes the gate: 15 strings of 100,000 characters)", () => {
+    const properties: Record<string, Schema> = {};
+    for (let i = 0; i < 15; i++) properties[`p${i}`] = { type: "string", minLength: 100_000 };
+    const result = exampleFromSchema({ type: "object", properties });
+    expect(failure(result)).toMatchObject({ code: "EXAMPLE_TOO_LARGE", message: expect.stringContaining("1 MiB") });
+    expect(sample).toHaveBeenCalledTimes(1);
+  });
+
+  it("still generates what a real schema asks for: minItems 1,000, minLength 255, and the usual huge maximums", () => {
+    const value = example({
+      type: "object",
+      properties: {
+        tags: { type: "array", items: { type: "string" }, minItems: 1_000 },
+        code: { type: "string", minLength: 255 },
+        note: { type: "string", maxLength: 1_048_576 },
+        log: { type: "array", items: { type: "string" }, maxItems: 1_000_000 },
+        minItems: { type: "integer" }, // a property called like a keyword
+        sample: { type: "object", default: { minLength: 1e9 } }, // data, not a keyword
+      },
+    }) as Record<string, unknown>;
+    expect(value.tags).toHaveLength(1_000);
+    expect((value.code as string).length).toBe(255);
+    expect(value.note).toBe("string");
+    expect(value.log).toEqual(["string"]);
+    expect(value.minItems).toBe(0);
+    expect(value.sample).toEqual({ minLength: 1e9 });
   });
 });
