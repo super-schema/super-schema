@@ -3,7 +3,8 @@
 // src/features/events/workspace/NewEventDialog.tsx
 // The product's "New Event" dialog (spec §3): a name, an optional description and the spec format. AsyncAPI 3.0 is the only format
 // today, so its radio card is selected and cannot be unselected. The form is its own component inside the dialog content, so every
-// opening starts empty (the dialog content is unmounted while closed).
+// opening starts empty (the dialog content is unmounted while closed). Under the form, "Import existing…" swaps this dialog for the
+// AsyncAPI importer (`ImportAsyncApiDialog`); an imported event is reported through the same `onCreated` as a created one.
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -13,6 +14,8 @@ import { createEventAction } from "@/app/(dashboard)/schemas/[domainSlug]/[produ
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { Field } from "@/features/events/builder/controls";
 import { useCreateForm } from "./create-form";
+import { ImportAsyncApiDialog } from "./ImportAsyncApiDialog";
+import { IMPORT_EXISTING_LABEL, IMPORT_EXISTING_PROMPT } from "./import-labels";
 
 /** Longest name the catalog accepts (`CATALOG_NAME_PATTERN`); the service owns the character rules and words its own error. */
 const NAME_MAX_LENGTH = 128;
@@ -21,19 +24,31 @@ export function NewEventDialog({ productId, open, onOpenChange, onCreated }: {
   productId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The new event's id. The dialog stays busy afterwards: the caller navigates to the event. */
+  /** The new event's id (created or imported). The dialog stays busy afterwards: the caller navigates to the event. */
   onCreated: (id: string) => void;
 }) {
+  const [importOpen, setImportOpen] = useState(false);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" data-testid="new-event-dialog">
-        <NewEventForm productId={productId} onCancel={() => onOpenChange(false)} onCreated={onCreated} />
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-md" data-testid="new-event-dialog">
+          <NewEventForm
+            productId={productId} onCancel={() => onOpenChange(false)} onCreated={onCreated}
+            onImport={() => {
+              onOpenChange(false);
+              setImportOpen(true);
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+      <ImportAsyncApiDialog productId={productId} open={importOpen} onOpenChange={setImportOpen} onImported={onCreated} />
+    </>
   );
 }
 
-function NewEventForm({ productId, onCancel, onCreated }: { productId: string; onCancel: () => void; onCreated: (id: string) => void }) {
+function NewEventForm({ productId, onCancel, onCreated, onImport }: {
+  productId: string; onCancel: () => void; onCreated: (id: string) => void; onImport: () => void;
+}) {
   const invalidateDomainsTree = useInvalidateDomainsTree();
   const formatId = useId();
   const [name, setName] = useState("");
@@ -107,6 +122,13 @@ function NewEventForm({ productId, onCancel, onCreated }: { productId: string; o
       </div>
 
       {form.error && <p role="alert" data-testid="new-event-error" className="text-body-small text-destructive">{form.error}</p>}
+
+      <p className="text-caption text-muted-foreground">
+        {IMPORT_EXISTING_PROMPT}{" "}
+        <Button type="button" variant="link" size="xs" className="h-auto p-0" data-testid="new-event-import-existing" onClick={onImport} disabled={form.busy}>
+          {IMPORT_EXISTING_LABEL}
+        </Button>
+      </p>
 
       <DialogFooter>
         <Button type="button" variant="outline" size="sm" data-testid="new-event-cancel" onClick={onCancel} disabled={form.busy}>Cancel</Button>
