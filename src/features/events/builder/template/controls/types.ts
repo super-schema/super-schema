@@ -17,6 +17,13 @@ export interface TemplateFormContext {
   /** For fields of kind "entityPin". */
   entityOptions?: EntityOption[];
   loadVersions?: LoadVersions;
+  /**
+   * For the examples of ONE message: the JSON Schema of its payload and of its headers (fully self-contained, draft-07 style), each
+   * `null` while it is loading, failed to load, or the message has no such pin. Absent where examples have no message to check
+   * against (a trait's examples). The example `payload` / `headers` fields are checked against, and generated from, these
+   * (see `example-schema.ts`); nothing else reads them.
+   */
+  pinSchemas?: { payload?: Record<string, unknown> | null; headers?: Record<string, unknown> | null };
 }
 
 /** A problem to show next to the field it points at: a JSON pointer into the document and the message. */
@@ -67,8 +74,9 @@ export interface ControlProps {
   /** The surrounding builder's references and entities. */
   context?: TemplateFormContext;
   /**
-   * For a "json" field: a fully inlined JSON Schema its text is checked against (violations are warnings, the value is written all
-   * the same). `null` or `undefined`: no schema, the editor behaves as it always did. See `JsonEditor`.
+   * For a "json" field: a JSON Schema its text is checked against (violations are warnings, the value is written all the same). Its
+   * `$ref`s must resolve inside the schema (`#`, `#/definitions/X`, `#/$defs/X`); an unresolvable one is silently accepted, so that part
+   * of the schema is simply not checked. `null` or `undefined`: no schema, the editor behaves as it always did. See `JsonEditor`.
    */
   schema?: Record<string, unknown> | null;
   /** Renders fields inside this control (objects, list items, a tag's details). */

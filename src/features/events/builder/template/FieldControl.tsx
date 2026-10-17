@@ -11,6 +11,7 @@ import { bindingFieldSchema } from "@/lib/events/templates/binding-schemas";
 import { BooleanControl } from "./controls/BooleanControl";
 import { ChipsControl } from "./controls/ChipsControl";
 import { EntityPinControl } from "./controls/EntityPinControl";
+import { exampleSchema } from "./controls/example-schema";
 import { EnumControl } from "./controls/EnumControl";
 import { IntegerControl } from "./controls/IntegerControl";
 import { JsonControl } from "./controls/JsonControl";
@@ -97,7 +98,9 @@ export function FieldControl({ field, value, onChange, idPrefix, errorPrefix, en
   const props: ControlProps = {
     field, id, value, onChange, disabled: env.disabled, required, invalid: messages.length > 0, describedBy, placeholder, path,
     errors: env.errors, context: env.context,
-    schema: field.kind === "json" ? bindingFieldSchema(path) : undefined, // a binding's raw-JSON field is checked against the AsyncAPI binding schema
+    // Two path-driven sources, each null for the other's fields: the example payload / headers of a message are checked against the
+    // schema of its entity; a binding's raw-JSON field against the AsyncAPI binding schema.
+    schema: exampleSchema(path, env.context) ?? (field.kind === "json" ? bindingFieldSchema(path) : undefined),
     renderFields: (args: NestedFormArgs) => (
       <FieldGroups {...args} env={args.defaultOpenMore ? { ...env, defaultOpenMore: true } : env} />
     ),
