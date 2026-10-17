@@ -1,9 +1,10 @@
 // tests/unit/lib/events/import/worst-case.test.ts
-// WP-I1 fix round 4: the cost of an import is bounded for EVERY shape a document under 1 MiB can take, not only the ones somebody thought of.
-// For each shape below the test builds the largest document of that shape that fits in the limit, runs parseAsyncApiSource + extractPayloads +
-// mapAsyncApiToEventDocument, and asserts (1) the total stays within 4 seconds (the measured times are 5 to 20 times lower; the bound is generous on
-// purpose, so a slow CI machine does not make it flaky, but a quadratic step cannot hide under it), and (2) the outcome is the one expected for the
-// shape: a success, or a clean, bounded error. Set WORST_CASE_LOG=<file> to append the measured times to a file.
+// WP-I1 fix rounds 4 and 5: the cost of an import is bounded for the shapes below: the largest document, under 1 MiB, that each construct in
+// this matrix can make. It is not a proof for every possible shape (reviews keep finding constructs that were missing: add a row when one is found).
+// For each shape the test builds the largest document of that shape that fits in the limit, runs parseAsyncApiSource + extractPayloads +
+// mapAsyncApiToEventDocument, and asserts (1) the total stays within 4 seconds (the bound is generous on purpose, so a slow CI machine does not
+// make it flaky, but a quadratic step cannot hide under it), and (2) the outcome is the one expected for the shape: a success, or a clean,
+// bounded error. Set WORST_CASE_LOG=<file> to append the measured times to a file.
 import { appendFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { MAX_IMPORT_CONTENT_BYTES } from "@/lib/compiler/import-limits";
@@ -69,9 +70,16 @@ const entries = <T>(n: number, key: (i: number) => string, value: (i: number) =>
 const collidingKey = (i: number): string => `a${[...String(i)].map((d) => "!?#$%^&*()"[Number(d)]).join("")}`;
 const longKey = (i: number, length: number): string => `${i}`.padEnd(length, "k");
 const channelWith = (messages: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ c: { address: "a", messages, ...extra } });
+/** 64 characters that are valid in a key and that `slugKey` leaves alone. */
+const ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._";
+/** 4,096 different 64-character keys that share their first 62 characters (so `-2`, `-3`, … cut them all to the same stem). */
+const SHARED_PREFIX_BASES: string[] = range(4096).map((i) => `${"k".repeat(62)}${ALPHABET[i >> 6]}${ALPHABET[i & 63]}`);
+/** Those bases, then `n` variants that slug back to them (a punctuation tail is trimmed by `slugKey`): every variant collides and walks the shared stems. */
+const sharedPrefixKeys = (n: number): string[] => [...SHARED_PREFIX_BASES, ...range(n).map((i) => `${SHARED_PREFIX_BASES[i % SHARED_PREFIX_BASES.length]}${[...String(i)].map((d) => "!?#$%^&*()"[Number(d)]).join("")}`)];
+const bigText = (chars: number): string => "a line of text\n".repeat(Math.ceil(chars / 15)).slice(0, chars);
 const messageRefs = (n: number, section = "messages") => entries(n, (i) => `m${i}`, (i) => ({ $ref: `#/components/${section}/m${i}` }));
 
-interface Shape { id: string; what: string; build: (n: number) => string; expect: string; /** A shape that does not grow with `n` (it is already the deepest there is). */ fixed?: boolean }
+interface Shape { id: string; what: string; build: (n: number) => string; expect: string; /** A shape that does not grow with `n` (it is already the deepest there is). */ fixed?: boolean; /** What a refusal must say. */ says?: RegExp }
 const ok = "ok";
 
 const SHAPES: Shape[] = [
@@ -152,6 +160,69 @@ const SHAPES: Shape[] = [
     channels: channelWith({ m: { $ref: "#/components/messages/m" } }),
     components: { messages: { m: { payload: { type: "object", properties: entries(n, (i) => `p${i}`, () => ({ type: "string" })) } } } },
   }), expect: ok },
+  // ── round 5: shapes the review found that the matrix did not have ──
+  { id: "r1a", what: "4,096 distinct 64-character keys sharing a 62-character prefix, and the most variants that collide with them (channel messages)", build: (n) => doc({
+    channels: channelWith(Object.fromEntries(sharedPrefixKeys(n).map((key) => [key, {}]))),
+  }), expect: ok },
+  { id: "r1b", what: "the same, as component messages", build: (n) => doc({ components: { messages: Object.fromEntries(sharedPrefixKeys(n).map((key) => [key, {}])) } }), expect: ok },
+  { id: "r2", what: "one server variable with the longest enum of different strings", build: (n) => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: { s: { host: "h:{v}", protocol: "kafka", variables: { v: { enum: range(n).map((i) => `e${i}`), default: "e0" } } } },
+  }), expect: ok },
+  { id: "r3a", what: "the most trait entries that all refer to one non-component target holding a 500 KB string (one message)", build: (n) => doc({
+    channels: channelWith({ m: { $ref: "#/components/messages/m" } }), "x-big": { summary: bigText(500_000) },
+    components: { messages: { m: { payload: {}, traits: range(n).map(() => ({ $ref: "#/x-big" })) } } },
+  }), expect: "REF_TOO_LARGE" },
+  { id: "r3b", what: "the same, one trait entry in each of the most messages", build: (n) => doc({
+    "x-big": { summary: bigText(500_000) }, components: { messages: entries(n, (i) => `m${i}`, () => ({ traits: [{ $ref: "#/x-big" }] })) },
+  }), expect: "REF_TOO_LARGE" },
+  { id: "r3c", what: "the most trait entries that all refer to one SMALL non-component target (imports, one local trait)", build: (n) => doc({
+    channels: channelWith({ m: { $ref: "#/components/messages/m" } }), "x-t": { summary: "s" },
+    components: { messages: { m: { payload: {}, traits: range(n).map(() => ({ $ref: "#/x-t" })) } } },
+  }), expect: ok },
+  { id: "r3d", what: "the most security entries that all refer to one non-component scheme whose description is 250,000 quotation marks", build: (n) => json({
+    asyncapi: "3.0.0", info: { title: "T" }, "x-s": { type: "userPassword", description: '"'.repeat(250_000) },
+    servers: { s: { host: "h:1", protocol: "kafka", security: range(n).map(() => ({ $ref: "#/x-s" })) } },
+  }), expect: "REF_TOO_LARGE" },
+  { id: "r3e", what: "the most security entries that all refer to one SMALL non-component scheme (imports, one scheme)", build: (n) => json({
+    asyncapi: "3.0.0", info: { title: "T" }, "x-s": { type: "userPassword" },
+    servers: { s: { host: "h:1", protocol: "kafka", security: range(n).map(() => ({ $ref: "#/x-s" })) } },
+  }), expect: ok },
+  { id: "r4a", what: "95 channels that all refer to one component channel with the most (empty) messages", build: (n) => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: SERVER, channels: entries(95, (i) => `c${i}`, () => ({ $ref: "#/components/channels/big" })),
+    components: { channels: { big: { address: "a", messages: entries(n, (i) => `m${i}`, () => ({})) } } },
+  }), expect: "REF_TOO_LARGE" },
+  { id: "r4b", what: "95 channels that all refer to one component channel with 50,000 messages (4.75 million pairs, under the expansion budget)", build: () => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: SERVER, channels: entries(95, (i) => `c${i}`, () => ({ $ref: "#/components/channels/big" })),
+    components: { channels: { big: { address: "a", messages: entries(50_000, (i) => `m${i}`, () => ({})) } } },
+  }), expect: "REF_TOO_LARGE", fixed: true, says: /more than 500,000 messages/ },
+  { id: "r4c", what: "240 channels that all refer to one component channel with 20,000 messages", build: () => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: SERVER, channels: entries(240, (i) => `c${i}`, () => ({ $ref: "#/components/channels/big" })),
+    components: { channels: { big: { address: "a", messages: entries(20_000, (i) => `m${i}`, () => ({})) } } },
+  }), expect: "REF_TOO_LARGE", fixed: true, says: /more than 500,000 messages/ },
+  { id: "r4d", what: "100 channels that refer to one component channel with 1,000 messages (100,000 pairs: imports)", build: () => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: SERVER, channels: entries(100, (i) => `c${i}`, () => ({ $ref: "#/components/channels/big" })),
+    components: { channels: { big: { address: "a", messages: entries(1_000, (i) => `m${i}`, () => ({})) } } },
+  }), expect: ok, fixed: true },
+  { id: "r4e", what: "95 channels that refer to one component channel with the most tags", build: (n) => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: SERVER, channels: entries(95, (i) => `c${i}`, () => ({ $ref: "#/components/channels/big" })),
+    components: { channels: { big: { address: "a", tags: range(n).map((i) => ({ name: `t${i}` })) } } },
+  }), expect: "REF_TOO_LARGE" },
+  { id: "r4f", what: "95 channels that refer to one component channel with 15,000 tags (just under the expansion budget)", build: () => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: SERVER, channels: entries(95, (i) => `c${i}`, () => ({ $ref: "#/components/channels/big" })),
+    components: { channels: { big: { address: "a", tags: range(15_000).map((i) => ({ name: `t${i}` })) } } },
+  }), expect: ok, fixed: true },
+  { id: "r4g", what: "95 operations that refer to one component operation listing 9,000 messages (the most that fits in 1 MiB, 2.6 million values after expansion)", build: () => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: SERVER, channels: channelWith(messageRefs(9_000)),
+    components: {
+      messages: entries(9_000, (i) => `m${i}`, () => ({})),
+      operations: { big: { action: "send", channel: { $ref: "#/channels/c" }, messages: range(9_000).map((i) => ({ $ref: `#/channels/c/messages/m${i}` })) } },
+    },
+    operations: entries(95, (i) => `op${i}`, () => ({ $ref: "#/components/operations/big" })),
+  }), expect: ok, fixed: true },
+  { id: "r4h", what: "95 servers that refer to one component server whose variable has an enum of 15,000 strings", build: () => json({
+    asyncapi: "3.0.0", info: { title: "T" }, servers: entries(95, (i) => `s${i}`, () => ({ $ref: "#/components/servers/big" })),
+    components: { servers: { big: { host: "h:{v}", protocol: "kafka", variables: { v: { enum: range(15_000).map((i) => `e${i}`), default: "e0" } } } } },
+  }), expect: ok, fixed: true },
   { id: "k1", what: "the most security schemes", build: (n) => doc({ components: { securitySchemes: entries(n, (i) => `s${i}`, () => ({ type: "userPassword" })) } }), expect: ok },
   { id: "k2", what: "the most component parameters", build: (n) => doc({ components: { parameters: entries(n, (i) => `p${i}`, () => ({ description: "d" })) } }), expect: ok },
   { id: "k3", what: "the most component correlation ids", build: (n) => doc({ components: { correlationIds: entries(n, (i) => `r${i}`, () => ({ location: "$message.header#/id" })) } }), expect: ok },
@@ -176,7 +247,7 @@ const SHAPES: Shape[] = [
 describe("worst case: the largest document of each shape that fits in 1 MiB", () => {
   // WORST_CASE_ONLY=j1,c1 runs just those shapes (for profiling); without it every shape runs
   const only = process.env.WORST_CASE_ONLY?.split(",");
-  it.each(only ? SHAPES.filter((shape) => only.includes(shape.id)) : SHAPES)("$id: $what", ({ id, what, build, expect: expected, fixed }) => {
+  it.each(only ? SHAPES.filter((shape) => only.includes(shape.id)) : SHAPES)("$id: $what", ({ id, what, build, expect: expected, fixed, says }) => {
     const { n, text } = fixed ? { n: 0, text: build(0) } : largest(build);
     expect(text.length).toBeLessThanOrEqual(MAX_IMPORT_CONTENT_BYTES);
     const result = run(text);
@@ -187,6 +258,7 @@ describe("worst case: the largest document of each shape that fits in 1 MiB", ()
     // (2) the expected outcome: a success, or a clean bounded error
     expect(result.outcome, `${line}\n${result.message.slice(0, 300)}`).toBe(expected);
     if (expected !== ok) expect(result.message.length).toBeLessThan(600);
+    if (says) expect(result.message).toMatch(says);
     // (3) a success is also bounded in what it reports
     expect(result.warnings.length).toBeLessThanOrEqual(101);
     for (const w of result.warnings) {

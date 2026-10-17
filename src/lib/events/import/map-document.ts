@@ -27,6 +27,7 @@ import { describeMessageSchemas, type PayloadDescription } from "./payloads";
 import { createRefResolver, isRef, refTargetPointer, refTargetSegments } from "./refs";
 import { createSanitizer } from "./sanitize";
 import { assertDocumentBounds } from "./source";
+import { CHARS_PER_NODE } from "./limits";
 import type { ImportWarning, ImportWarningCode, MapContext, RawAsyncApi3 } from "./types";
 
 const ROOT_KEYS = new Set(["asyncapi", "info", "servers", "defaultContentType", "channels", "operations", "components"]);
@@ -99,6 +100,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const checked = refs.check({ tolerateCycles: true });
   if (!checked.success) return err(checked.error);
   const inline = (value: unknown, at: string): unknown => must(refs.inline(value, at));
+  /** Writing a target out as text costs its length: charge it to the expansion budget (a string is one value per CHARS_PER_NODE characters). */
+  const chargeText = (text: string, at: string): void => must(refs.chargeNodes(Math.ceil(text.length / CHARS_PER_NODE), at));
   const { ax, read, readEach } = createSanitizer(sink.add);
 
   const at = (base: string, key: string): string => `${base}${jsonPointer(key)}`;
@@ -159,6 +162,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const schemeKeyOf = new Map<string, string>(); // key in the file → document key
   const takenSchemeKeys = new Set<string>();
   const schemeKeyByContent = new Map<string, string>();
+  /** A scheme reached by a `$ref` to somewhere that is not a security scheme (`#/x-s`): read once per TARGET, not once per use. `null` = it was not valid. */
+  const schemeKeyByTarget = new Map<string, string | null>();
 
   const readScheme = (node: unknown, pointer: string, label: string): DocSecurityScheme | undefined => {
     if (!isBag(node)) {
@@ -207,9 +212,19 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         return;
       }
       // a scheme written in place (or a reference to somewhere else): store it as a component so it can be referenced by key
+      const target = isRef(entry) ? must(refs.deref(entry, entryAt)).pointer : null;
+      if (target !== null && schemeKeyByTarget.has(target)) {
+        const known = schemeKeyByTarget.get(target);
+        if (known) add(known);
+        return;
+      }
       const scheme = readScheme(inline(entry, entryAt), entryAt, "written here");
-      if (!scheme) return;
+      if (!scheme) {
+        if (target !== null) schemeKeyByTarget.set(target, null);
+        return;
+      }
       const content = JSON.stringify(scheme);
+      chargeText(content, entryAt);
       let key = schemeKeyByContent.get(content);
       if (key === undefined) {
         key = uniqueIn(slugKey(String(scheme.type)), takenSchemeKeys);
@@ -218,6 +233,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         schemeKeyByContent.set(content, key);
         warn(entryAt, "KEY_ADJUSTED", `The security scheme written here was stored as securitySchemes."${key}" so it can be referenced by key`);
       }
+      if (target !== null) schemeKeyByTarget.set(target, key);
       add(key);
     });
     return compactList(out);
@@ -228,6 +244,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const traitByPointer = new Map<string, TraitDef>();
   const takenTraitKeys = new Set<string>();
   const inlineTraitByContent = new Map<string, TraitDef>();
+  /** Properties reached by a `$ref` to somewhere that is not a component (`#/x-t`): written out and compared once per TARGET, not once per use. */
+  const inlineTraitByTarget = new Map<string, TraitDef>();
   const traitRequests: KeyRequest[] = [];
   for (const [kind, section] of [["MESSAGE", "messageTraits"], ["OPERATION", "operationTraits"]] as const) {
     const entries = entriesOf(components[section]);
@@ -253,15 +271,23 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   for (const def of traitDefs) def.key = assignedTraitKeys.get(def.pointer) as string;
 
   /** Properties written in place in a `traits` list get a generated key (from their name or title); equal ones share it. */
-  const inlineTrait = (kind: TraitKind, node: Record<string, unknown>, pointer: string): TraitDef => {
+  const inlineTrait = (kind: TraitKind, node: Record<string, unknown>, pointer: string, shared: boolean): TraitDef => {
+    const targetKey = shared ? `${kind}:${pointer}` : null;
+    const reached = targetKey === null ? undefined : inlineTraitByTarget.get(targetKey);
+    if (reached) return reached;
     const content = `${kind}:${JSON.stringify(node)}`;
+    chargeText(content, pointer);
     const known = inlineTraitByContent.get(content);
-    if (known) return known;
+    if (known) {
+      if (targetKey !== null) inlineTraitByTarget.set(targetKey, known);
+      return known;
+    }
     const key = suggestTraitKey(node, takenTraitKeys);
     takenTraitKeys.add(key);
     const def: TraitDef = { key, kind, pointer, node };
     traitDefs.push(def);
     inlineTraitByContent.set(content, def);
+    if (targetKey !== null) inlineTraitByTarget.set(targetKey, def);
     return def;
   };
   /** A `traits` list → the keys of those traits (kind-checked, deduplicated). */
@@ -280,8 +306,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         const target = must(refs.deref(entry, entryAt));
         const named = refTargetPointer(entry);
         def = (named === null ? undefined : traitByPointer.get(named)) ?? traitByPointer.get(target.pointer);
-        if (!def && isBag(target.value)) def = inlineTrait(kind, target.value, target.pointer);
-      } else if (isBag(entry)) def = inlineTrait(kind, entry, entryAt);
+        if (!def && isBag(target.value)) def = inlineTrait(kind, target.value, target.pointer, true);
+      } else if (isBag(entry)) def = inlineTrait(kind, entry, entryAt, false);
       if (!def) {
         warn(entryAt, "SANITIZED_VALUE", `Each entry of a traits list must be a reference or an object, so this one was left out of the import`);
         return;

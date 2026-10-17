@@ -12,6 +12,13 @@ export const MAX_NESTING_DEPTH = 256;
 export const MAX_KEY_LENGTH = 1024;
 /** Longest `$ref` accepted: a reference to something in the document is a short path; a long one is a crafted path of long keys or of many keys. */
 export const MAX_REF_LENGTH = 1024;
+/**
+ * Most channel x message PAIRS an import may hold: a channel lists its messages, and several channels may refer to one shared channel definition,
+ * so the pairs (what the event document stores) can far exceed the number of messages in the file.
+ */
+export const MAX_CHANNEL_MESSAGE_PAIRS = 500_000;
+/** A string is charged to the expansion budget as one value plus one more for every this many characters: a long string is not free to copy. */
+export const CHARS_PER_NODE = 64;
 /** Most values (objects, arrays, scalars) the document may contain once YAML aliases are expanded: 1 MiB of text holds about half a million. */
 export const MAX_DOCUMENT_NODES = 2_000_000;
 /** Most values all `$ref` expansions of one import may add up to (shared targets count once per use): 1 MiB of text expands to far less. */

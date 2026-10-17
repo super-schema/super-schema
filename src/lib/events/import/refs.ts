@@ -12,7 +12,7 @@
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { jsonPointer, localRef, resolveLocalRef, unescapePointerSegment } from "@/lib/event-specs/json-pointer";
 import { setOwn } from "@/lib/event-specs/own-property";
-import { MAX_EXPANDED_NODES, MAX_NESTING_DEPTH, MAX_REF_LENGTH } from "./limits";
+import { CHARS_PER_NODE, MAX_EXPANDED_NODES, MAX_NESTING_DEPTH, MAX_REF_LENGTH } from "./limits";
 import { boundChain, boundPointer, boundText, CHAIN_ENTRY_LENGTH, MAX_CHAIN_ENTRIES } from "./bound";
 
 /** The longest chain of `$ref` wrappers `deref` follows (a real file has one or two; each hop is paid again for every use). */
@@ -80,6 +80,8 @@ export interface RefResolver {
    * cycle through bindings, traits, messages or a chain of wrappers still fails the import.
    */
   check(options?: { tolerateCycles?: boolean }): Result<void>;
+  /** Charges `nodes` values to the expansion budget (see `MAX_EXPANDED_NODES`): for work done on a shared target outside `inline`, such as writing it out as text. */
+  chargeNodes(nodes: number, at: string): Result<void>;
   /** Pointers of every ref target followed so far. */
   readonly followed: ReadonlySet<string>;
   /**
@@ -90,10 +92,10 @@ export interface RefResolver {
   readonly edges: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
-/** `cycle`: the expansion ran into a reference loop (only recorded when cycles are tolerated); its `value` has holes where the loop closes. */
 /** A ref that resolved: where it points (`pointer`, `segments`), what is there, and the component entry it lies in (`entry`). */
 interface Located { pointer: string; segments: string[]; value: unknown; entry: string }
 
+/** `cycle`: the expansion ran into a reference loop (only recorded when cycles are tolerated); its `value` has holes where the loop closes. */
 type Expanded = { value: unknown; size: number; cycle?: string[] };
 
 class RefFailure extends Error {
@@ -217,7 +219,8 @@ export function createRefResolver(root: unknown): RefResolver {
   }
 
   function expand(node: unknown, depth: number): Expanded {
-    if (typeof node !== "object" || node === null) return { value: node, size: 1 };
+    // a string costs one value plus one per CHARS_PER_NODE characters: a shared 500 KB string used by thousands of messages is not "1 value" each time
+    if (typeof node !== "object" || node === null) return { value: node, size: typeof node === "string" ? 1 + Math.floor(node.length / CHARS_PER_NODE) : 1 };
     if (depth > MAX_NESTING_DEPTH) {
       return fail("REF_TOO_LARGE", `The document is nested (references included) more than ${MAX_NESTING_DEPTH} levels deep at ${here()}; it was rejected as too deep.`);
     }
@@ -282,6 +285,12 @@ export function createRefResolver(root: unknown): RefResolver {
   return {
     followed,
     edges,
+    chargeNodes(nodes, at) {
+      return run(() => {
+        cursor = pointerSegments(at);
+        charge(nodes);
+      });
+    },
     inline(value, at) {
       return run(() => {
         cursor = pointerSegments(at);

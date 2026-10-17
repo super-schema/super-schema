@@ -316,3 +316,26 @@ describe("cycles in schema content: inlineSchema and check({ tolerateCycles })",
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });
+
+describe("the expansion budget counts what a string costs, and chargeNodes", () => {
+  const usesOf = (uses: number, chars: number) => doc({ big: { text: "x".repeat(chars) }, list: Array.from({ length: uses }, () => ({ $ref: "#/big" })) });
+
+  it("a string is charged one value per 64 characters on every use: 700 uses of a 500 KB string are refused, 100 are not", () => {
+    const refused = createRefResolver(usesOf(700, 500_000)).check();
+    expect(refused.success ? "ok" : refused.error.code).toBe("REF_TOO_LARGE");
+    expect(createRefResolver(usesOf(100, 500_000)).check().success).toBe(true);
+  });
+
+  it("short strings stay cheap: 100,000 uses of a 100-character string", () => {
+    expect(createRefResolver(usesOf(100_000, 100)).check().success).toBe(true);
+  });
+
+  it("chargeNodes spends the same budget: within it is fine, over it is REF_TOO_LARGE naming where", () => {
+    const resolver = createRefResolver({});
+    expect(resolver.chargeNodes(1_000_000, "/a")).toEqual({ success: true, data: undefined });
+    const over = resolver.chargeNodes(4_000_001, "/components/messages/m/traits/3");
+    expect(over.success ? "ok" : over.error.code).toBe("REF_TOO_LARGE");
+    expect(over.success ? "" : over.error.message).toContain("/components/messages/m/traits/3");
+  });
+});
+

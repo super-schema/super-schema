@@ -946,3 +946,56 @@ describe("hostile input", () => {
     expect(elapsed).toBeLessThan(1500);
   });
 });
+
+describe("a $ref to a target that is not a component is read once per target, not once per use", () => {
+  it("properties that many entries refer to (#/x-t) are ONE local trait; a target used as message and as operation properties gives one of each", () => {
+    const raw = tiny({
+      message: { traits: [{ $ref: "#/x-t" }, { $ref: "#/x-t" }] },
+      operation: { traits: [{ $ref: "#/x-o" }, { $ref: "#/x-o" }] },
+    });
+    (raw as Record<string, unknown>)["x-t"] = { summary: "s" };
+    (raw as Record<string, unknown>)["x-o"] = { summary: "s" };
+    const { document } = mapRaw(raw);
+    expect(document.traits).toEqual([
+      { key: "trait", kind: "MESSAGE", spec: { summary: "s" } },
+      { key: "trait-2", kind: "OPERATION", spec: { summary: "s" } },
+    ]);
+    expect(document.messages[0].traitKeys).toEqual(["trait"]);
+    expect(document.operations[0].traitKeys).toEqual(["trait-2"]);
+  });
+
+  it("two targets with the same content still share one trait (content is compared once per target)", () => {
+    const raw = tiny({ message: { traits: [{ $ref: "#/x-a" }, { $ref: "#/x-b" }, { summary: "s" }] } });
+    (raw as Record<string, unknown>)["x-a"] = { summary: "s" };
+    (raw as Record<string, unknown>)["x-b"] = { summary: "s" };
+    const { document } = mapRaw(raw);
+    expect(document.traits.map((t) => t.key)).toEqual(["trait"]);
+    expect(document.messages[0].traitKeys).toEqual(["trait"]);
+  });
+
+  it("a security scheme that several entries refer to (#/x-s) is stored once, with one note; an invalid one is reported once", () => {
+    const raw = tiny({
+      server: { security: [{ $ref: "#/x-s" }, { $ref: "#/x-bad" }, { $ref: "#/x-s" }, { $ref: "#/x-bad" }] },
+      operation: { security: [{ $ref: "#/x-s" }, { $ref: "#/x-bad" }] },
+    });
+    (raw as Record<string, unknown>)["x-s"] = { type: "userPassword" };
+    (raw as Record<string, unknown>)["x-bad"] = { type: "apiKey" };
+    const { document, warnings } = mapRaw(raw);
+    expect(Object.keys(document.components?.securitySchemes ?? {})).toEqual(["userPassword"]);
+    expect(document.servers[0].security).toEqual(["userPassword"]);
+    expect(document.operations[0].security).toEqual(["userPassword"]);
+    expect(byCode(warnings, "KEY_ADJUSTED")).toHaveLength(1);
+    expect(warnings.filter((w) => w.code === "DROPPED_CONSTRUCT" && /is not valid/.test(w.message))).toHaveLength(1);
+  });
+
+  it("a huge target cannot be referenced without limit: 2,000 uses of a 200 KB trait are REF_TOO_LARGE, 20 are fine", () => {
+    const withUses = (uses: number) => {
+      const raw = tiny({ message: { traits: Array.from({ length: uses }, () => ({ $ref: "#/x-big" })) } });
+      (raw as Record<string, unknown>)["x-big"] = { summary: "s".repeat(200_000) };
+      return raw;
+    };
+    expect(failure(withUses(2000), { payloadPins: new Map(), builtInTraitIds: {} }).code).toBe("REF_TOO_LARGE");
+    expect(mapRaw(withUses(20)).document.traits).toHaveLength(1);
+  });
+});
+
