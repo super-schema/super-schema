@@ -11,7 +11,7 @@ import type { ArtifactRenderer } from "@/services/events/artifact-renderer";
 import { BUNDLED_TRAITS, bundledMarker } from "@/lib/events/bundled-traits";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isLibraryTrait, type EventDocument } from "@/lib/events/document/types";
-import { extractPayloads, mapAsyncApiToEventDocument, pascalName } from "@/lib/events/import";
+import { extractPayloads, mapAsyncApiToEventDocument, parseAsyncApiSource, pascalName } from "@/lib/events/import";
 import type { ImportWarning } from "@/lib/events/import";
 import { parseAvroDocument } from "@/lib/importers/avro.importer";
 import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
@@ -35,7 +35,10 @@ vi.mock("@/services/entity.service", async (importOriginal) => {
 });
 vi.mock("@/lib/events/import", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/events/import")>();
-  return { ...original, extractPayloads: vi.fn(original.extractPayloads), mapAsyncApiToEventDocument: vi.fn(original.mapAsyncApiToEventDocument) };
+  return {
+    ...original, parseAsyncApiSource: vi.fn(original.parseAsyncApiSource), extractPayloads: vi.fn(original.extractPayloads),
+    mapAsyncApiToEventDocument: vi.fn(original.mapAsyncApiToEventDocument),
+  };
 });
 // The importers are the real ones; the spies count whether (and how often) they run.
 vi.mock("@/lib/importers/jsonschema.importer", async (importOriginal) => {
@@ -720,7 +723,7 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     return JSON.stringify(document);
   };
 
-  it("a 1 MiB Protobuf payload is refused quickly, before the Protobuf importer runs, and creates nothing", async () => {
+  it("a 1 MiB Protobuf payload is refused quickly, before the Protobuf importer runs, and creates nothing (the expansion gate sees it three times over)", async () => {
     const { ctx, s, productId } = await setup();
     const content = smallDocument("Big proto", { [`big${s}`]: { payload: { schemaFormat: "application/vnd.google.protobuf;version=3", schema: protobufSource(1_000_000) } } });
     expect(Buffer.byteLength(content)).toBeLessThan(1024 * 1024);
@@ -730,6 +733,19 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
 
     expect(Date.now() - started).toBeLessThan(3_000); // the importer alone would take minutes
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("too large once its references are resolved") });
+    expect(importerCalls()).toEqual(before);
+  }, 120_000);
+
+  it("a 300 KB Protobuf payload (under the expansion gate) is refused by the payload cap naming the message and 64 KiB, before the Protobuf importer runs", async () => {
+    const { ctx, s, productId } = await setup();
+    const content = smallDocument("Large proto", { [`big${s}`]: { payload: { schemaFormat: "application/vnd.google.protobuf;version=3", schema: protobufSource(300_000) } } });
+    const before = importerCalls();
+    const started = Date.now();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(3_000);
     expect(failure(result)).toMatchObject({
       code: "VALIDATION_ERROR", message: expect.stringContaining(`The payload of message "big${s}" is larger than 64 KiB`),
       details: { messageKey: `big${s}`, role: "payload", limit: 64 * 1024 },
@@ -737,9 +753,9 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     expect(importerCalls()).toEqual(before);
   }, 120_000);
 
-  it("a schema shared by 40 messages is refused by the size cap, because reuse counts per message: 40 x 104 KB is over 2 MiB; quickly, nothing created, no importer run", async () => {
+  it("a schema shared by 40 messages is refused because reuse counts per message: 40 x 49 KB, three places each, is over 2 MiB once resolved; quickly, nothing created, no importer run", async () => {
     const { ctx, productId } = await setup();
-    const content = sharedSchemaDocument(4000, 40);
+    const content = sharedSchemaDocument(1900, 40);
     expect(Buffer.byteLength(content)).toBeLessThan(1024 * 1024);
     const before = importerCalls();
     const started = Date.now();
@@ -747,11 +763,12 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
 
     expect(Date.now() - started).toBeLessThan(3_000);
-    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("add up to more than 2 MiB"), details: { limit: 2 * 1024 * 1024 } });
+    // the expansion gate (2 MiB once every reference is resolved) sees it before the payload total (the same 2 MiB, counted per payload) does
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("too large once its references are resolved (limit 2 MiB)"), details: { limit: 2 * 1024 * 1024 } });
     expect(importerCalls()).toEqual(before);
   }, 120_000);
 
-  it("the reviewed shape (one 8,000-property schema used by 60 messages, 480,000 planned fields) is refused quickly, whichever bound sees it first, and creates nothing", async () => {
+  it("the reviewed shape (one 8,000-property schema used by 60 messages, 480,000 planned fields) is refused quickly by the entry cap (the 8,000-property map alone is over 2,000) and creates nothing", async () => {
     const { ctx, productId } = await setup();
     const content = sharedSchemaDocument(8000, 60);
     const before = importerCalls();
@@ -760,10 +777,8 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
 
     expect(Date.now() - started).toBeLessThan(3_000);
-    // the pure layer's expansion budget (REF_TOO_LARGE) stops it today; once that budget stops over-counting shared targets, the size cap does
-    const error = failure(result);
-    expect(["REF_TOO_LARGE", "VALIDATION_ERROR"]).toContain(error?.code);
-    if (error?.code === "VALIDATION_ERROR") expect(error.message).toContain("add up to more than 2 MiB");
+    // the limits run before the pure layer's own budget (which also refuses it, as REF_TOO_LARGE, in this base) and before extraction
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining('(at "/components/schemas/big/properties") has more than 2,000 entries') });
     expect(importerCalls()).toEqual(before);
   }, 120_000);
 
@@ -782,7 +797,7 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
   };
   const protobufMessage = (source: string) => ({ payload: { schemaFormat: "application/vnd.google.protobuf;version=3", schema: source } });
 
-  it("two distinct maximal-density Protobuf sources at the 96 KiB total are parsed (the slowest allowed case) and finish in seconds: the field cap, not the clock, refuses them", async () => {
+  it("two distinct dense Protobuf sources totalling 96 KiB are both parsed, finish in seconds, and are then refused by the field cap (not by the clock)", async () => {
     const { ctx, s, productId } = await setup();
     const a = compactEnumSource(48 * 1024, "a");
     const b = compactEnumSource(48 * 1024, "b");
@@ -793,7 +808,7 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
 
     const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
 
-    expect(Date.now() - started).toBeLessThan(4_000); // about 1.2 s here: both sources really were parsed
+    expect(Date.now() - started).toBeLessThan(4_000); // about 1.2 s here (a 64 KiB + a 32 KiB pair is a little slower, 1.3 s): both sources really were parsed
     expect(importerCalls().protobuf - before.protobuf).toBe(2);
     expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("fields; one entity may have at most 2,000") });
   }, 120_000);
@@ -833,27 +848,29 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
 
     expect(Date.now() - started).toBeLessThan(1_500); // the parser alone takes 10+ s on it and starves the server meanwhile
     expect(failure(result)).toMatchObject({
-      code: "VALIDATION_ERROR", message: expect.stringContaining("The document is too large once its references are resolved (limit 4 MiB)"),
-      details: { limit: 4 * 1024 * 1024 }, suggestedFix: expect.stringContaining("Reduce how often"),
+      code: "VALIDATION_ERROR", message: expect.stringContaining("The document is too large once its references are resolved (limit 2 MiB): every place that refers to a shared definition counts a full copy of it."),
+      details: { limit: 2 * 1024 * 1024 }, suggestedFix: expect.stringContaining("Reduce how often"),
     });
     expect(codeOf(await previewAsyncApiImport(productId, { content }, ctx))).toBe("VALIDATION_ERROR");
     expect(parserRuns()).toBe(before); // neither the import nor the preview reached the parser
   }, 120_000);
 
-  it("a chain of 10 (121 KB expanded) passes the gate and is validated; a chain of 15 (3.9 MB, just under the limit) is still validated and takes seconds, not minutes", async () => {
+  it("a chain of 10 (121 KB expanded) passes the gate and is validated; a chain of 14 (1.9 MB, just under the limit) is still validated and takes about a second; 15 (3.9 MB) is refused", async () => {
     const { ctx, productId } = await setup();
     const before = parserRuns();
 
     unwrap(await previewAsyncApiImport(productId, { content: doublingDocument(10) }, ctx));
     expect(parserRuns() - before).toBe(1);
     const started = Date.now();
-    unwrap(await previewAsyncApiImport(productId, { content: doublingDocument(15) }, ctx));
+    unwrap(await previewAsyncApiImport(productId, { content: doublingDocument(14) }, ctx));
 
     expect(parserRuns() - before).toBe(2);
-    expect(Date.now() - started).toBeLessThan(8_000); // about 1.4 s here: the worst the gate lets through
+    expect(Date.now() - started).toBeLessThan(6_000); // about 0.7 s here: the worst the gate lets through for this shape
+    expect(codeOf(await previewAsyncApiImport(productId, { content: doublingDocument(15) }, ctx))).toBe("VALIDATION_ERROR");
+    expect(parserRuns() - before).toBe(2); // the refused one never reached the parser
   }, 120_000);
 
-  it("one trait of 1,000 properties used by 400 messages (111 KB of file, 40 MB expanded) is refused quickly, before the parser, whichever bound sees it first", async () => {
+  it("one trait of 1,000 properties used by 400 messages (111 KB of file, 40 MB expanded) is refused quickly by the expansion gate, before extraction and the parser", async () => {
     const { ctx, productId } = await setup();
     const messages = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`m${i}`, { payload: objectPayload("id"), traits: [{ $ref: "#/components/messageTraits/big" }] }]));
     const document = JSON.parse(smallDocument("Shared trait", messages)) as { components: Record<string, unknown> };
@@ -866,24 +883,131 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
 
     expect(Date.now() - started).toBeLessThan(3_000);
-    // the pure layer's own expansion budget (REF_TOO_LARGE) stops this shape in this base; once it stops over-counting shared targets the gate does
-    // (the gate alone is pinned on this very document in the unit test import-limits.test.ts)
-    const error = failure(result);
-    expect(["REF_TOO_LARGE", "VALIDATION_ERROR"]).toContain(error?.code);
-    if (error?.code === "VALIDATION_ERROR") expect(error.message).toContain("too large once its references are resolved");
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("too large once its references are resolved") });
     expect(parserRuns()).toBe(before);
   }, 120_000);
 
-  it("a schema that has more than 2,000 fields is refused naming the entity and the limit; nothing is created", async () => {
+  /** What the slow steps have run so far: the pure layer's reading of the text, its extraction, the AsyncAPI parser, the mapper. */
+  const slowSteps = () => ({
+    source: vi.mocked(parseAsyncApiSource).mock.calls.length, extract: vi.mocked(extractPayloads).mock.calls.length, parser: parserRuns(),
+    map: vi.mocked(mapAsyncApiToEventDocument).mock.calls.length,
+  });
+  /** A valid small document with `patch` applied to it. */
+  const patched = (patch: (document: Record<string, unknown> & { components: Record<string, unknown> }) => void): string => {
+    const document = JSON.parse(smallDocument("Patched", { a: { payload: objectPayload("id") } })) as Record<string, unknown> & { components: Record<string, unknown> };
+    patch(document);
+    return JSON.stringify(document);
+  };
+  const base36 = (count: number): string[] => Array.from({ length: count }, (_, i) => i.toString(36));
+  const flatMap = (count: number): Record<string, number> => Object.fromEntries(base36(count).map((key) => [key, 0]));
+  const refusedBeforeAnySlowStep = async (content: string, expected: RegExp, productId: string, ctx: Awaited<ReturnType<typeof setup>>["ctx"]) => {
+    expect(Buffer.byteLength(content)).toBeLessThan(1024 * 1024);
+    const before = slowSteps();
+    const started = Date.now();
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringMatching(expected), suggestedFix: expect.any(String) });
+    expect(codeOf(await previewAsyncApiImport(productId, { content }, ctx))).toBe("VALIDATION_ERROR");
+    expect(slowSteps()).toEqual(before); // not even the source parse, no extraction, no parser, no mapper: for the import and for the preview
+  };
+
+  it("a flat map of 109,623 keys (about 1 MiB; the parser alone takes 95 s) is refused in well under a second, before any slow step, and creates nothing", async () => {
     const { ctx, productId } = await setup();
-    const content = sharedSchemaDocument(2001, 1);
+    const content = patched((d) => { d["x-ext"] = flatMap(109_623); });
+    await refusedBeforeAnySlowStep(content, /An object in the document \(at "\/x-ext"\) has more than 2,000 entries \(limit 2,000\): split it or remove unused entries\./, productId, ctx);
+  }, 120_000);
+
+  it("a YAML flat map of 60,000 keys (24 s in the pure layer's own parse alone) is refused in well under a second, before the source parse, and creates nothing", async () => {
+    const { ctx, productId } = await setup();
+    const yaml = `asyncapi: 3.0.0\ninfo:\n  title: Wide yaml\n  version: 1.0.0\nx-ext:\n${base36(60_000).map((key) => `  ${key}: 0`).join("\n")}\n`;
+    await refusedBeforeAnySlowStep(yaml, /An object in the document \(at "\/x-ext"\) has more than 2,000 entries/, productId, ctx);
+  }, 120_000);
+
+  it("40,000 channels and 15,000 operations (each about 1 MiB or less; 38 s and 10 s in the parser) are refused the same way", async () => {
+    const { ctx, productId } = await setup();
+    await refusedBeforeAnySlowStep(patched((d) => { d.channels = Object.fromEntries(base36(40_000).map((key) => [key, {}])); }), /at "\/channels"\) has more than 2,000 entries/, productId, ctx);
+    const operations = Object.fromEntries(base36(15_000).map((key) => [key, { action: "send", channel: { $ref: "#/channels/events" } }]));
+    await refusedBeforeAnySlowStep(patched((d) => { d.operations = operations; }), /at "\/operations"\) has more than 2,000 entries/, productId, ctx);
+  }, 120_000);
+
+  it("95 channels that share one component channel of 40,000 messages are refused by the entry cap, before any slow step", async () => {
+    const { ctx, productId } = await setup();
+    const content = patched((d) => {
+      d.components.channels = { big: { address: "big", messages: Object.fromEntries(base36(40_000).map((key) => [key, {}])) } };
+      d.channels = Object.fromEntries(base36(95).map((key) => [key, { $ref: "#/components/channels/big" }]));
+    });
+    await refusedBeforeAnySlowStep(content, /at "\/components\/channels\/big\/messages"\) has more than 2,000 entries/, productId, ctx);
+  }, 120_000);
+
+  it("a server-variable enum of 115,136 strings (about 1 MiB; 11.5 s in the mapper alone) is refused in well under a second, before any slow step", async () => {
+    const { ctx, productId } = await setup();
+    const strings = Array.from({ length: 115_136 }, (_, i) => i.toString(36));
+    const content = patched((d) => { d.servers = { broker: { host: "{v}.example.com:9092", protocol: "kafka", variables: { v: { enum: strings, default: "0" } } } }; });
+    await refusedBeforeAnySlowStep(content, /A list in the document \(at "\/servers\/broker\/variables\/v\/enum"\) has more than 5,000 entries \(limit 5,000\): shorten it or remove unused entries\./, productId, ctx);
+  }, 120_000);
+
+  it("an enum of 4,999 strings imports end to end in seconds (the list cap is 5,000)", async () => {
+    const { ctx, s, productId } = await setup();
+    const strings = base36(4_999);
+    const content = patched((d) => {
+      d.info = { title: `Enum ${s}`, version: "1.0.0" };
+      d.servers = { broker: { host: "{v}.example.com:9092", protocol: "kafka", variables: { v: { enum: strings, default: "0" } } } };
+    });
+    const started = Date.now();
+
+    const { eventId } = unwrap(await importAsyncApi(productId, { content }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(4_000);
+    const server = (await storedDocument(eventId)).servers[0];
+    expect(server.variables?.v?.enum).toHaveLength(4_999);
+  }, 120_000);
+
+  it("an object of exactly 2,000 entries passes (and is validated), 2,001 is refused; ten objects of 1,999 entries pass and finish in seconds", async () => {
+    const { ctx, productId } = await setup();
+    const before = parserRuns();
+    unwrap(await previewAsyncApiImport(productId, { content: patched((d) => { d["x-ext"] = flatMap(2_000); }) }, ctx));
+    expect(parserRuns() - before).toBe(1);
+    expect(codeOf(await previewAsyncApiImport(productId, { content: patched((d) => { d["x-ext"] = flatMap(2_001); }) }, ctx))).toBe("VALIDATION_ERROR");
+    expect(parserRuns() - before).toBe(1);
+
+    const many = patched((d) => { for (let i = 0; i < 10; i += 1) d[`x-ext-${i}`] = flatMap(1_999); });
+    const started = Date.now();
+    unwrap(await previewAsyncApiImport(productId, { content: many }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(4_000); // about 1 s here: the worst the cap lets through is bounded, not 95 s
+    expect(parserRuns() - before).toBe(2);
+  }, 120_000);
+
+  it("a 500 KB string shared by 10 entries (5 MB once resolved, from a 520 KB file) is refused by the gate, which counts the string bytes for every use, before any slow step", async () => {
+    const { ctx, productId } = await setup();
+    const content = patched((d) => {
+      d["x-blob"] = "x".repeat(500_000);
+      d.components.messageTraits = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`t${i}`, { summary: { $ref: "#/x-blob" } }]));
+    });
+    await refusedBeforeAnySlowStep(content, /too large once its references are resolved \(limit 2 MiB\)/, productId, ctx);
+  }, 120_000);
+
+  it("an Avro record that has more than 2,000 fields is refused by the field cap naming the entity and the limit; nothing is created", async () => {
+    const { ctx, s, productId } = await setup();
+    const avro = { type: "record", name: "Wide", fields: Array.from({ length: 2001 }, (_, i) => ({ name: `f${i}`, type: "string" })) };
+    const content = smallDocument("Wide avro", { [`wide${s}`]: { payload: { schemaFormat: "application/vnd.apache.avro;version=1.9.0", schema: avro } } });
 
     const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
 
     expect(failure(result)).toMatchObject({
-      code: "VALIDATION_ERROR", message: expect.stringContaining('The entity "M0" (from m0:payload) would have 2,001 fields; one entity may have at most 2,000'),
-      details: { entity: "M0", fields: 2001, limit: 2000 },
+      code: "VALIDATION_ERROR", message: expect.stringContaining(`The entity "Wide" (from wide${s}:payload) would have 2,001 fields; one entity may have at most 2,000.`),
+      details: { entity: "Wide", fields: 2001, limit: 2000 },
     });
+  }, 120_000);
+
+  it("a JSON Schema with 2,001 properties never gets that far: the entry cap of 2,000 refuses its properties map first", async () => {
+    const { ctx, productId } = await setup();
+    const before = importerCalls();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content: sharedSchemaDocument(2001, 1) }, ctx));
+
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("has more than 2,000 entries (limit 2,000)"), details: { kind: "object", entries: 2001 } });
+    expect(importerCalls()).toEqual(before);
   }, 120_000);
 
   it("fields per import: 5 messages x 2,000 fields = 10,000 is exactly at the cap and the shared schema is parsed ONCE; 6 messages are refused", async () => {

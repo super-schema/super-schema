@@ -163,7 +163,7 @@ export async function createNameAllocator(db: PrismaClient, scope: LevelScope): 
         return ok(candidate);
       }
       return err({
-        code: "CONFLICT", message: `No free name was found for "${requested}" (${requested}2 to ${requested}${MAX_NAME_ATTEMPTS} are all taken)`,
+        code: "CONFLICT", message: `No free name was found for "${requested}" (${requested}2 to ${requested}${MAX_NAME_ATTEMPTS} are all taken).`,
         suggestedFix: "Rename the message in the document, or remove the entities you no longer use, and import again.",
       });
     },
@@ -314,7 +314,7 @@ export async function createPayloadEntities(productId: string, payloads: readonl
         });
         if (skipped.length > 0) {
           throw new ServiceErrorRejection({
-            code: "CONFLICT", message: `A name this import needs was taken while it ran (${skipped[0]}); nothing was imported`,
+            code: "CONFLICT", message: `A name this import needs was taken while it ran (${skipped[0]}); nothing was imported.`,
             suggestedFix: "Import again.", details: { skipped },
           });
         }

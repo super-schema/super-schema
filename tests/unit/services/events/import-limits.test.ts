@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { resolveLocalRefs, type ExtractedPayload } from "@/lib/events/import";
 import {
   MAX_EXPANDED_DOCUMENT_BYTES, MAX_FIELDS_PER_ENTITY, MAX_FIELDS_PER_IMPORT, MAX_IMPORT_ENTITIES, MAX_IMPORT_PAYLOADS, MAX_JSON_PAYLOAD_BYTES,
-  MAX_PROTOBUF_PAYLOAD_BYTES, MAX_TOTAL_PAYLOAD_BYTES, MAX_TOTAL_PROTOBUF_BYTES, boundText, checkExpandedSize, checkPayloadLimits, checkPlanLimits,
-  expandedSizeUpTo, sizeUpTo, type PlanShape,
+  MAX_LIST_ENTRIES, MAX_OBJECT_ENTRIES, MAX_PROTOBUF_PAYLOAD_BYTES, MAX_TOTAL_PAYLOAD_BYTES, MAX_TOTAL_PROTOBUF_BYTES, boundText, checkEntryCounts,
+  checkExpandedSize, checkPayloadLimits, checkPlanLimits, checkSourceLimits, expandedSizeUpTo, sizeUpTo, type PlanShape,
 } from "@/services/events/import-limits";
 
 // The bounds of the AsyncAPI import (WP-I2 fix round 1): every cap at its boundary, exactly at the cap = fine, one over = refused.
@@ -30,7 +30,8 @@ describe("the limits are the ones the review asked for", () => {
     expect([MAX_JSON_PAYLOAD_BYTES, MAX_PROTOBUF_PAYLOAD_BYTES, MAX_TOTAL_PAYLOAD_BYTES]).toEqual([256 * 1024, 64 * 1024, 2 * 1024 * 1024]);
     expect([MAX_FIELDS_PER_ENTITY, MAX_FIELDS_PER_IMPORT]).toEqual([2_000, 10_000]);
     expect(MAX_TOTAL_PROTOBUF_BYTES).toBe(96 * 1024);
-    expect(MAX_EXPANDED_DOCUMENT_BYTES).toBe(4 * 1024 * 1024);
+    expect(MAX_EXPANDED_DOCUMENT_BYTES).toBe(2 * 1024 * 1024);
+    expect([MAX_OBJECT_ENTRIES, MAX_LIST_ENTRIES]).toEqual([2_000, 5_000]);
   });
 });
 
@@ -73,7 +74,7 @@ describe("checkPayloadLimits: how big each payload is", () => {
     expect(checkPayloadLimits([json(schemaOfSize(MAX_JSON_PAYLOAD_BYTES))]).success).toBe(true);
     const over = failureOf(checkPayloadLimits([json(schemaOfSize(MAX_JSON_PAYLOAD_BYTES + 1), "orderCreated")]));
     expect(over).toMatchObject({
-      code: "VALIDATION_ERROR", message: 'The payload of message "orderCreated" is larger than 256 KiB, the most an import reads from one JSON Schema or Avro schema',
+      code: "VALIDATION_ERROR", message: 'The payload of message "orderCreated" is larger than 256 KiB, the most an import reads from one JSON Schema or Avro schema.',
       details: { messageKey: "orderCreated", role: "payload", limit: MAX_JSON_PAYLOAD_BYTES },
     });
   });
@@ -87,7 +88,7 @@ describe("checkPayloadLimits: how big each payload is", () => {
   it("a Protobuf payload of exactly 64 KiB is fine, one character more is refused", () => {
     expect(checkPayloadLimits([proto("x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES))]).success).toBe(true);
     expect(failureOf(checkPayloadLimits([proto("x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES + 1), "big")]))).toMatchObject({
-      message: 'The payload of message "big" is larger than 64 KiB, the most an import reads from one Protobuf schema', details: { limit: MAX_PROTOBUF_PAYLOAD_BYTES },
+      message: 'The payload of message "big" is larger than 64 KiB, the most an import reads from one Protobuf schema.', details: { limit: MAX_PROTOBUF_PAYLOAD_BYTES },
     });
   });
 
@@ -143,7 +144,7 @@ describe("checkPlanLimits", () => {
     expect(checkPlanLimits([plan([entity(2000)])]).success).toBe(true);
     const over = checkPlanLimits([plan([entity(2001, "Order")], "orderCreated:payload")]);
     expect(over.success ? null : over.error).toMatchObject({
-      code: "VALIDATION_ERROR", message: 'The entity "Order" (from orderCreated:payload) would have 2,001 fields; one entity may have at most 2,000',
+      code: "VALIDATION_ERROR", message: 'The entity "Order" (from orderCreated:payload) would have 2,001 fields; one entity may have at most 2,000.',
       details: { entity: "Order", pin: "orderCreated:payload", fields: 2001, limit: 2000 },
     });
   });
@@ -204,10 +205,31 @@ describe("expandedSizeUpTo / checkExpandedSize", () => {
     expect(performance.now() - started).toBeLessThan(500);
     expect(refused.success ? null : refused.error).toMatchObject({
       code: "VALIDATION_ERROR", details: { limit: MAX_EXPANDED_DOCUMENT_BYTES },
-      message: "The document is too large once its references are resolved (limit 4 MiB): every place that refers to a shared definition counts a full copy of it",
+      message: "The document is too large once its references are resolved (limit 2 MiB): every place that refers to a shared definition counts a full copy of it.",
     });
     expect(JSON.stringify(doublingDocument(17)).length).toBeLessThan(3_000);
     expect(checkExpandedSize(doublingDocument(10)).success).toBe(true);
+  });
+
+  it("a shared STRING is counted at its full length for every use (the gate counts bytes, not references)", () => {
+    const blob = "x".repeat(1_000);
+    const document = { blob, a: { $ref: "#/blob" }, b: { $ref: "#/blob" }, c: [{ $ref: "#/blob" }, { k: { $ref: "#/blob" } }] };
+    expect(expandedSizeUpTo(document, Number.MAX_SAFE_INTEGER)).toBe(expandedLength(document));
+    expect(expandedLength(document)).toBeGreaterThan(5 * 1_000); // the blob is in the document once and in the expansion five times
+    // 500 KB shared by 5 entries is 2.5 MB > 2 MiB, though the document holds it once
+    const big = { "x-blob": "x".repeat(500_000), ...Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`t${i}`, { summary: { $ref: "#/x-blob" } }])) };
+    expect(JSON.stringify(big).length).toBeLessThan(510_000);
+    expect(checkExpandedSize(big).success).toBe(false);
+    expect(checkExpandedSize({ ...big, t3: 0, t4: 0 }).success).toBe(true); // 3 uses = 1.5 MB
+  });
+
+  it("28,432 trait entries that each refer to one shared string: the gate alone refuses it (and so does the entry cap), instantly", () => {
+    const traits = Object.fromEntries(Array.from({ length: 28_432 }, (_, i) => [`t${i}`, { summary: { $ref: "#/x-blob" } }]));
+    const document = { "x-blob": "x".repeat(100_000), components: { messageTraits: traits } };
+    const started = performance.now();
+    expect(checkExpandedSize(document).success).toBe(false);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(checkEntryCounts(document).success).toBe(false);
   });
 
   it("one trait of 1,000 properties used by 400 messages is 10 MB expanded (40 MB with the channel and operations that refer to the messages) from a 111 KB file: refused by the gate alone, in milliseconds", () => {
@@ -222,7 +244,7 @@ describe("expandedSizeUpTo / checkExpandedSize", () => {
     expect(expandedSizeUpTo(document, Number.MAX_SAFE_INTEGER)).toBeGreaterThan(10_000_000);
   });
 
-  it("the limit itself: a document of exactly 4 MiB expanded is fine, one more character is refused", () => {
+  it("the limit itself: a document of exactly 2 MiB expanded is fine, one more character is refused", () => {
     const padded = (extra: number) => ({ pad: "x".repeat(MAX_EXPANDED_DOCUMENT_BYTES - JSON.stringify({ pad: "" }).length + extra) });
     expect(checkExpandedSize(padded(0)).success).toBe(true);
     expect(JSON.stringify(padded(0)).length).toBe(MAX_EXPANDED_DOCUMENT_BYTES);
@@ -251,5 +273,123 @@ describe("expandedSizeUpTo / checkExpandedSize", () => {
     expect(expandedSizeUpTo(refined, 1_000_000)).toBe(expandedLength(refined));
     const beside = { s: "text", use: { $ref: "#/s", description: "ignored" } };
     expect(expandedSizeUpTo(beside, 1_000_000)).toBe(expandedLength(beside));
+  });
+});
+
+// ── how many entries one object or list may have (the parser is quadratic in the keys of one object; the mapper in the length of a list) ──
+
+const baseOf36 = (n: number): string[] => Array.from({ length: n }, (_, i) => i.toString(36));
+const mapOf = (n: number): Record<string, number> => Object.fromEntries(baseOf36(n).map((key) => [key, 0]));
+const countFailure = (document: unknown) => {
+  const result = checkEntryCounts(document);
+  return result.success ? null : result.error;
+};
+
+describe("checkEntryCounts", () => {
+  it("an object of exactly 2,000 entries is fine, 2,001 is refused naming the limit, the pointer and the count", () => {
+    expect(checkEntryCounts({ components: { "x-ext": mapOf(MAX_OBJECT_ENTRIES) } }).success).toBe(true);
+    expect(countFailure({ components: { "x-ext": mapOf(MAX_OBJECT_ENTRIES + 1) } })).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: 'An object in the document (at "/components/x-ext") has more than 2,000 entries (limit 2,000): split it or remove unused entries.',
+      details: { kind: "object", pointer: "/components/x-ext", entries: 2001, limit: 2000 }, suggestedFix: expect.any(String),
+    });
+  });
+
+  it("a list of exactly 5,000 entries is fine, 5,001 is refused naming the limit and the pointer", () => {
+    const enumeration = (n: number) => ({ servers: { s: { variables: { v: { enum: baseOf36(n) } } } } });
+    expect(checkEntryCounts(enumeration(MAX_LIST_ENTRIES)).success).toBe(true);
+    expect(countFailure(enumeration(MAX_LIST_ENTRIES + 1))).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: 'A list in the document (at "/servers/s/variables/v/enum") has more than 5,000 entries (limit 5,000): shorten it or remove unused entries.',
+      details: { kind: "list", pointer: "/servers/s/variables/v/enum", entries: 5001, limit: 5000 },
+    });
+  });
+
+  it("the document itself, a list inside a list and a path through an array are named", () => {
+    expect(countFailure(mapOf(2001))?.message).toContain("An object in the document (the document itself)");
+    expect(countFailure({ a: [{ b: [[], baseOf36(5001)] }] })?.details).toMatchObject({ pointer: "/a/0/b/1", kind: "list" });
+    expect(countFailure({ a: [1, { b: mapOf(2001) }] })?.details).toMatchObject({ pointer: "/a/1/b", kind: "object" });
+  });
+
+  it("refuses a 109,623-key flat map, 40,000 channels, 17,000 operations and 40,000 messages of a shared channel instantly", () => {
+    const shapes: unknown[] = [
+      { "x-ext": mapOf(109_623) },
+      { channels: mapOf(40_000) },
+      { operations: Object.fromEntries(baseOf36(17_000).map((k) => [k, { action: "send", channel: { $ref: "#/channels/c" } }])) },
+      { components: { channels: { big: { messages: mapOf(40_000) } } }, channels: Object.fromEntries(baseOf36(95).map((k) => [k, { $ref: "#/components/channels/big" }])) },
+    ];
+    for (const shape of shapes) {
+      const started = performance.now();
+      expect(countFailure(shape)?.code).toBe("VALIDATION_ERROR");
+      expect(performance.now() - started).toBeLessThan(500);
+    }
+  });
+
+  it("4,097 sibling keys that share a long prefix are over the cap too", () => {
+    const prefix = "a-very-long-common-prefix-for-every-sibling-key-";
+    expect(countFailure({ m: Object.fromEntries(baseOf36(4097).map((k) => [`${prefix}${k}`, 0])) })?.details).toMatchObject({ entries: 4097 });
+  });
+
+  it("many objects just under the cap are fine, however many; scalars and lists of scalars at the root are fine", () => {
+    const many = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`x-ext-${i}`, mapOf(MAX_OBJECT_ENTRIES - 1)]));
+    expect(checkEntryCounts(many).success).toBe(true);
+    for (const value of [null, 5, "text", [], [1, 2, 3]]) expect(checkEntryCounts(value).success).toBe(true);
+  });
+
+  it("a very deep document does not overflow the stack, and a long pointer is bounded in the message", () => {
+    let deep: unknown = {};
+    for (let i = 0; i < 100_000; i += 1) deep = { next: deep };
+    expect(checkEntryCounts(deep).success).toBe(true);
+    const longKey = "k".repeat(1_000);
+    const error = countFailure({ [longKey]: mapOf(2001) });
+    expect(error?.message.length).toBeLessThan(400);
+    expect(error?.message).toContain("\u2026");
+  });
+});
+
+// ── the same limits on the file TEXT, before the pure layer's own (quadratic) parse ──
+
+describe("checkSourceLimits", () => {
+  const yamlMap = (n: number) => `asyncapi: 3.0.0\ninfo:\n  title: t\n  version: 1.0.0\nx-ext:\n${baseOf36(n).map((key) => `  ${key}: 0`).join("\n")}\n`;
+  const sourceFailure = (text: string) => {
+    const result = checkSourceLimits(text);
+    return result.success ? null : result.error;
+  };
+
+  it("refuses a JSON file whose flat map has 109,623 keys in milliseconds", () => {
+    const text = JSON.stringify({ asyncapi: "3.0.0", info: { title: "t", version: "1.0.0" }, "x-ext": mapOf(109_623) });
+    expect(text.length).toBeLessThan(1024 * 1024);
+    const started = performance.now();
+    expect(sourceFailure(text)?.message).toContain('(at "/x-ext") has more than 2,000 entries');
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("refuses a YAML file whose flat map has 60,000 keys well under a second (the pure layer's own parse takes 24 s on it)", () => {
+    const text = yamlMap(60_000);
+    const started = performance.now();
+    expect(sourceFailure(text)?.details).toMatchObject({ kind: "object", pointer: "/x-ext", entries: expect.toSatisfy((n: number) => n > 59_000) }); // keys such as 1e3 and 1000 are one YAML key
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("lets through what is within the limits, YAML and JSON, with a byte-order mark and leading whitespace, anchors and aliases", () => {
+    expect(checkSourceLimits(yamlMap(2_000)).success).toBe(true);
+    expect(checkSourceLimits(`﻿  \n${JSON.stringify({ a: mapOf(2_000) })}`).success).toBe(true);
+    expect(checkSourceLimits("asyncapi: 3.0.0\nbase: &b\n  a: 1\ncopy: *b\nother: *b\n").success).toBe(true);
+  });
+
+  it("applies the expansion limit to the text too (a doubling chain of 17 in YAML and in JSON)", () => {
+    const document = doublingDocument(17);
+    expect(sourceFailure(JSON.stringify(document))?.message).toContain("too large once its references are resolved");
+    const lines = Object.entries((document.components as { schemas: Record<string, unknown> }).schemas).map(([key, value]) => `    ${key}: ${JSON.stringify(value)}`);
+    expect(sourceFailure(`asyncapi: 3.0.0\ncomponents:\n  schemas:\n${lines.join("\n")}\n`)?.message).toContain("too large once its references are resolved");
+  });
+
+  it("is not the one to report text it cannot read (a syntax error, an alias bomb, nothing at all): that is the pure layer's message", () => {
+    for (const text of ["", "   ", "{ not json", "a: [unclosed", "a: b: c"]) expect(sourceFailure(text), text).toBeNull();
+    const bomb = ['x-lol0: &lol0 ["lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol"]'];
+    for (let i = 1; i <= 9; i += 1) bomb.push(`x-lol${i}: &lol${i} [${Array(9).fill(`*lol${i - 1}`).join(", ")}]`);
+    const started = performance.now();
+    expect(sourceFailure(bomb.join("\n"))).toBeNull(); // the alias limit stops the expansion
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
