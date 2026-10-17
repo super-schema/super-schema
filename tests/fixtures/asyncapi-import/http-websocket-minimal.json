@@ -1,0 +1,92 @@
+{
+  "asyncapi": "3.0.0",
+  "info": {
+    "title": "Echo and orders over HTTP and WebSocket",
+    "version": "1.0.0",
+    "description": "A minimal document with an HTTP server and a WebSocket server."
+  },
+  "servers": {
+    "api": {
+      "host": "api.example.com",
+      "pathname": "/v1",
+      "protocol": "https",
+      "description": "The HTTP API"
+    },
+    "echo": {
+      "host": "echo.example.com",
+      "protocol": "wss",
+      "description": "The WebSocket echo server"
+    }
+  },
+  "defaultContentType": "application/json",
+  "channels": {
+    "postOrders": {
+      "address": "/orders",
+      "servers": [{ "$ref": "#/servers/api" }],
+      "messages": {
+        "orderPlaced": { "$ref": "#/components/messages/orderPlaced" }
+      }
+    },
+    "echoSocket": {
+      "address": "/echo",
+      "servers": [{ "$ref": "#/servers/echo" }],
+      "messages": {
+        "echo": { "$ref": "#/components/messages/echo" }
+      },
+      "bindings": {
+        "ws": {
+          "method": "GET",
+          "bindingVersion": "0.1.0"
+        }
+      }
+    }
+  },
+  "operations": {
+    "placeOrder": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/postOrders" },
+      "summary": "Place an order",
+      "bindings": {
+        "http": {
+          "method": "POST",
+          "bindingVersion": "0.3.0"
+        }
+      },
+      "messages": [{ "$ref": "#/channels/postOrders/messages/orderPlaced" }]
+    },
+    "sendEcho": {
+      "action": "send",
+      "channel": { "$ref": "#/channels/echoSocket" },
+      "messages": [{ "$ref": "#/channels/echoSocket/messages/echo" }]
+    },
+    "receiveEcho": {
+      "action": "receive",
+      "channel": { "$ref": "#/channels/echoSocket" },
+      "messages": [{ "$ref": "#/channels/echoSocket/messages/echo" }]
+    }
+  },
+  "components": {
+    "messages": {
+      "orderPlaced": {
+        "title": "Order placed",
+        "payload": {
+          "type": "object",
+          "required": ["orderId"],
+          "properties": {
+            "orderId": { "type": "string" },
+            "total": { "type": "number", "minimum": 0 }
+          }
+        }
+      },
+      "echo": {
+        "title": "Echo",
+        "payload": {
+          "type": "object",
+          "properties": {
+            "text": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

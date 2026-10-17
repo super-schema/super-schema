@@ -1,0 +1,125 @@
+asyncapi: 3.0.0
+info:
+  title: Order events with envelope headers
+  version: 1.0.0
+servers:
+  broker:
+    host: broker.example.com:9092
+    protocol: kafka
+channels:
+  orders:
+    address: orders.v1
+    messages:
+      orderCreated:
+        $ref: '#/components/messages/orderCreated'
+      orderShipped:
+        $ref: '#/components/messages/orderShipped'
+      orderCancelled:
+        $ref: '#/components/messages/orderCancelled'
+operations:
+  publishOrderCreated:
+    action: send
+    channel:
+      $ref: '#/channels/orders'
+    messages:
+      - $ref: '#/channels/orders/messages/orderCreated'
+  publishOrderShipped:
+    action: send
+    channel:
+      $ref: '#/channels/orders'
+    messages:
+      - $ref: '#/channels/orders/messages/orderShipped'
+  publishOrderCancelled:
+    action: send
+    channel:
+      $ref: '#/channels/orders'
+    messages:
+      - $ref: '#/channels/orders/messages/orderCancelled'
+components:
+  messages:
+    orderCreated:
+      title: Order created
+      traits:
+        - $ref: '#/components/messageTraits/cloudEventsEnvelope'
+        - $ref: '#/components/messageTraits/traceContext'
+      payload:
+        type: object
+        properties:
+          orderId:
+            type: string
+    orderShipped:
+      title: Order shipped
+      traits:
+        - $ref: '#/components/messageTraits/cloudEventsLookalike'
+        - $ref: '#/components/messageTraits/tenantHeaders'
+      payload:
+        type: object
+        properties:
+          orderId:
+            type: string
+    orderCancelled:
+      title: Order cancelled
+      traits:
+        - $ref: '#/components/messageTraits/cloudEventsEnvelope'
+      payload:
+        type: object
+        properties:
+          orderId:
+            type: string
+          reason:
+            type: string
+  messageTraits:
+    cloudEventsEnvelope:
+      summary: Our CloudEvents envelope
+      description: Every event carries the CloudEvents context attributes.
+      headers:
+        type: object
+        required:
+          - specversion
+          - id
+          - source
+          - type
+        properties:
+          specversion:
+            type: string
+          id:
+            type: string
+          source:
+            type: string
+          type:
+            type: string
+          time:
+            type: string
+            format: date-time
+      bindings:
+        kafka:
+          bindingVersion: 0.5.0
+    traceContext:
+      summary: W3C trace headers
+      headers:
+        type: object
+        properties:
+          traceparent:
+            type: string
+          tracestate:
+            type: string
+    cloudEventsLookalike:
+      summary: Looks like CloudEvents but has no source
+      headers:
+        type: object
+        properties:
+          specversion:
+            type: string
+          id:
+            type: string
+          type:
+            type: string
+    tenantHeaders:
+      summary: Our own headers
+      headers:
+        type: object
+        properties:
+          x-tenant-id:
+            type: string
+          traceparent:
+            type: string

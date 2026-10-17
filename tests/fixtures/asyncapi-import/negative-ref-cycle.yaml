@@ -1,0 +1,33 @@
+asyncapi: 3.0.0
+info:
+  title: Reference cycle
+  version: 1.0.0
+channels:
+  nodes:
+    address: nodes.v1
+    messages:
+      nodeCreated:
+        $ref: '#/components/messages/nodeCreated'
+operations:
+  publishNodeCreated:
+    action: send
+    channel:
+      $ref: '#/channels/nodes'
+components:
+  messages:
+    nodeCreated:
+      payload:
+        $ref: '#/components/schemas/Node'
+  schemas:
+    Node:
+      type: object
+      properties:
+        id:
+          type: string
+        child:
+          $ref: '#/components/schemas/Tree'
+    Tree:
+      type: object
+      properties:
+        root:
+          $ref: '#/components/schemas/Node'
