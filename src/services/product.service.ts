@@ -268,7 +268,9 @@ export async function deleteProduct(
   const blocker = combineBlockers([contentBlocker, eventsBlocked?.message]);
   if (blocker) {
     return err({
-      // The long-standing blockers keep their code; event references alone are an IN_USE.
+      // The long-standing blockers keep their code. Event references can only exist when the product owns events, and events are
+      // content the delete would cascade, so `contentBlocker` is always set then and the answer is VALIDATION_ERROR; the IN_USE arm
+      // is a safety net for a reference list that arrives without any content (it names the events through `details.events`).
       code: contentBlocker ? "VALIDATION_ERROR" : "IN_USE",
       message: blocker,
       ...(eventsBlocked && { details: { events: eventsBlocked.details } }),

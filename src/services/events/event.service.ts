@@ -7,6 +7,7 @@ import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { collectDocumentEdges, collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, isLibraryTrait, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
+import { propertiesNoun, propertiesSet } from "@/lib/events/document/wording";
 import { referenceableItems } from "@/lib/events/external-refs";
 import { normalizeCatalogName } from "@/lib/events/inputs";
 import type { LevelScope } from "@/lib/levels";
@@ -123,11 +124,12 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
     if (!isLibraryTrait(t)) return;
     const pointer = `/traits/${i}/libraryTraitId`;
     const library = traitById.get(t.libraryTraitId);
-    if (!library) problems.push({ pointer, message: `Library trait "${t.libraryTraitId}" not found` });
+    const sets = propertiesNoun(t.kind); // the user's words for a trait: "message properties" / "operation properties"
+    if (!library) problems.push({ pointer, message: `Library ${sets} "${t.libraryTraitId}" not found` });
     else if (library.productId !== null || (library.domainId !== null && library.domainId !== scope.domainId)) {
-      problems.push({ pointer, message: `Library trait "${library.name}" is not available to this event: only tenant-level traits and traits of the event's own domain can be used` });
+      problems.push({ pointer, message: `Library ${sets} "${library.name}" are not available to this event: only tenant-level ${sets} and ${sets} of the event's own domain can be used` });
     } else if (library.kind !== t.kind) {
-      problems.push({ pointer, message: `Library trait "${library.name}" is of kind ${library.kind}, but "${t.key}" is of kind ${t.kind}` });
+      problems.push({ pointer, message: `Library "${library.name}" is a ${propertiesSet(library.kind)}, but "${t.key}" is declared as a ${propertiesSet(t.kind)}` });
     }
   });
 

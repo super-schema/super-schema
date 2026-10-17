@@ -142,8 +142,9 @@ describe("listExternalEventCandidates", () => {
     // `_` and `%` are not wildcards: "Orders?<stamp>" does not match "Orders_<stamp>"
     expect(await names(`Orders%${a.s}`)).toEqual([]);
     expect(await names(`Order__${a.s}`)).toEqual([]);
-    // nor is a backslash an escape: `\_` stays a literal backslash + underscore (matching nothing), and `\X` is not a literal X
-    // (an unescaped `\X` would match the look-alike "OrdersX<stamp>" and an unescaped `\_` would match "Orders_<stamp>")
+    // nor is a backslash an escape. `\X` is the assertion that discriminates: with the backslash left unescaped, LIKE would read `\X`
+    // as a literal X and find the look-alike "OrdersX<stamp>". `\_` could not tell the difference (unescaped, it becomes a literal
+    // backslash followed by a wildcard, which no event name matches either): it only pins that a typed backslash stays a backslash.
     expect(await names(`Orders\\_${a.s}`)).toEqual([]);
     expect(await names(`Orders\\X${a.s}`)).toEqual([]);
     expect(await names(`OrdersX${a.s}`)).toEqual([`OrdersX${a.s}`]); // control: the look-alike is there and found by its real name

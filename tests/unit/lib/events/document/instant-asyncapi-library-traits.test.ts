@@ -114,7 +114,9 @@ describe("buildInstantAsyncApi: without the library definitions", () => {
     wrong.set("lib-ce", { name: "CloudEvents", kind: "OPERATION", spec: spec("CloudEvents") });
     const r = buildInstantAsyncApi(document(), { ...OPTS, libraryTraits: wrong });
     expect(r.document).toBeNull();
-    expect(errorsOf(r.diagnostics).map((d) => d.message).join("\n")).toMatch(/Library trait "lib-ce" is a OPERATION trait/);
+    const text = errorsOf(r.diagnostics).map((d) => d.message).join("\n");
+    expect(text).toMatch(/Library "lib-ce" is a set of operation properties, but "[^"]+" is declared as a set of message properties/);
+    expect(text).not.toMatch(/\btraits?\b/i);
   });
 });
 

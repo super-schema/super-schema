@@ -14,6 +14,7 @@ import { createRepresentations, type EntityFormats, type RepresentationEngine } 
 import {
   isLibraryTrait, type DocChannel, type DocMessage, type DocServer, type DocumentProblem, type EventDocument,
 } from "./types";
+import { propertiesNoun, propertiesSet } from "./wording";
 
 export interface MessageArtifacts { payloads: SchemaArtifact[]; headers?: SchemaArtifact; keys: SchemaArtifact[] }
 export interface ExternalItems { channel?: ResolvedChannel; message?: ResolvedMessage; traits?: ResolvedTrait[] }
@@ -198,9 +199,9 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     }
     const pointer = `/traits/${i}/libraryTraitId`;
     const frozen = input.libraryTraits.get(t.libraryTraitId);
-    if (!frozen) { problem(pointer, `Library trait "${t.libraryTraitId}" was not found`); return; }
+    if (!frozen) { problem(pointer, `Library ${propertiesNoun(t.kind)} "${t.libraryTraitId}" not found`); return; }
     if (frozen.kind !== t.kind) {
-      problem(pointer, `Library trait "${t.libraryTraitId}" is a ${frozen.kind} trait, but "${t.key}" is declared as a ${t.kind} trait`);
+      problem(pointer, `Library "${t.libraryTraitId}" is a ${propertiesSet(frozen.kind)}, but "${t.key}" is declared as a ${propertiesSet(t.kind)}`);
       return;
     }
     resolvedTraits.set(t.key, { ...clone(toResolvedTrait(frozen, input.libraryTraitHeaders.get(t.libraryTraitId))), id: t.key });
@@ -226,7 +227,7 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     for (const id of items.message.traitRefs ?? []) {
       const trait = supplied.get(id);
       if (!trait || trait.kind !== "MESSAGE") {
-        problem(pointer, `External message "${ref.itemKey}" (reference "${ref.key}") uses trait "${id}", which event version ${ref.eventVersionId} did not supply`);
+        problem(pointer, `External message "${ref.itemKey}" (reference "${ref.key}") uses ${propertiesNoun("MESSAGE")} "${id}", which event version ${ref.eventVersionId} did not supply`);
         continue;
       }
       traits.push({ ...clone(trait), id: scoped(id) });
@@ -243,8 +244,8 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
 
   const takeTrait = (key: string, kind: TraitKind, pointer: string) => {
     const declared = localTraits.get(key);
-    if (!declared) { problem(pointer, `Unknown trait "${key}"`); return; }
-    if (declared.item.kind !== kind) { problem(pointer, `Trait "${key}" is a ${declared.item.kind} trait, expected a ${kind} trait`); return; }
+    if (!declared) { problem(pointer, `Unknown ${propertiesNoun(kind)} "${key}"`); return; }
+    if (declared.item.kind !== kind) { problem(pointer, `"${key}" is not a ${propertiesSet(kind)}`); return; }
     const trait = resolvedTraits.get(key);
     if (trait && !traits.has(trait.id)) traits.set(trait.id, trait);
   };
