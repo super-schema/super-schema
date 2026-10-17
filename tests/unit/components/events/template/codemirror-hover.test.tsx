@@ -69,6 +69,13 @@ describe("plainHover", () => {
     expect(dom.querySelector(".cm6-json-schema-hover--code-wrapper > code.cm6-json-schema-hover--code")?.textContent).toBe("string");
   });
 
+  it("drops the markdown backticks of the library's own type line (`enum`: `a` or `b`), and shows the description as it was written", () => {
+    const dom = plainHover({ message: "snake_case and *stars* stay", typeInfo: "`enum`: `a` or `b``format`: date-time" });
+    expect(dom.querySelector("code")?.textContent).toBe("enum: a or bformat: date-time");
+    expect(dom.querySelector(".cm6-json-schema-hover--description")?.textContent).toBe("snake_case and *stars* stay");
+    expect(plainHover({ typeInfo: "``" }).childElementCount).toBe(0);
+  });
+
   it("leaves out what is not text or is empty: no description (null), a number, an object, and no type information", () => {
     for (const message of [null, undefined, "", 5, { a: 1 }, ["x"]]) {
       expect(plainHover({ message, typeInfo: "integer" }).querySelector(".cm6-json-schema-hover--description"), String(message)).toBeNull();

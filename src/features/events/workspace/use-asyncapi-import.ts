@@ -142,7 +142,7 @@ export function useAsyncApiImport({ productId, onImported, onLockChange }: {
         setInputFailure(plainFailure(FILE_EMPTY));
         return;
       }
-      if (text.includes("\0") || text.includes("�")) {
+      if (text.includes("\0") || text.includes("\u{FFFD}")) {
         setInputFailure(plainFailure(FILE_UNREADABLE));
         return;
       }

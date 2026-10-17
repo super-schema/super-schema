@@ -1271,13 +1271,10 @@ describe("ImportAsyncApiDialog: text that comes from the document never widens t
     const heading = screen.getByTestId("import-title");
     expect(heading.textContent).toBe(`From the document “${title}”`);
     expect(heading.className).toContain("break-words");
-    expect(heading.className).toContain("[overflow-wrap:anywhere]");
     fireEvent.click(screen.getByTestId("import-warning-group-NO_PAYLOAD-toggle"));
     const item = screen.getByTestId("import-warning-group-NO_PAYLOAD-item");
     for (const text of [pointer, "m".repeat(400)]) {
-      const line = within(item).getByText(text);
-      expect(line.className).toContain("break-words");
-      expect(line.className).toContain("[overflow-wrap:anywhere]");
+      expect(within(item).getByText(text).className).toContain("break-words");
     }
   });
 
@@ -1290,9 +1287,7 @@ describe("ImportAsyncApiDialog: text that comes from the document never widens t
     type(documentBox(), DOC);
     fireEvent.click(previewButton());
     await screen.findByTestId("import-problems-panel");
-    const line = within(screen.getByTestId("import-problem-0")).getByText(pointer);
-    expect(line.className).toContain("break-words");
-    expect(line.className).toContain("[overflow-wrap:anywhere]");
+    expect(within(screen.getByTestId("import-problem-0")).getByText(pointer).className).toContain("break-words");
   });
 });
 

@@ -4,6 +4,7 @@
 // (a test enforces it). It is loaded on demand with `import()` from `JsonEditor.tsx`, so none of it is in the first bundle of a page.
 // The schema support (`codemirror-json-schema` and `@codemirror/autocomplete`) is a second step: it is loaded with its own `import()`,
 // the first time an editor is given a schema, and never otherwise.
+import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { json, jsonLanguage } from "@codemirror/lang-json";
 import { yaml } from "@codemirror/lang-yaml";
@@ -137,8 +138,10 @@ export function lintJson(text: string): Diagnostic[] {
 //    and no error: that part of the schema is simply not checked. So callers must hand over a schema whose `$ref`s resolve inside it;
 //    this file does not and cannot check that.
 //  - Importing it starts a ~600 KB highlighter (shiki) for its markdown hovers. That is why nothing here imports it statically.
-//  - Its hover renders a schema's description as markdown into innerHTML (an image link would be fetched on hover): `plainHover` is
-//    handed over as its `formatHover` and shows text only.
+//  - Its hover, its completion info and its lint messages render markdown into innerHTML (a description with an image link would be
+//    fetched; a backtick in a value breaks out of the code span in a message). Covered here: `plainHover` is its `formatHover`
+//    (text only), `textOnlyCompletion` takes the non-text `info` off the completion options, and `schemaWarnings` drops its
+//    `renderMessage`. Anything new from the library that takes a description or a message needs the same look.
 //  - `jsonSchema()` would add a parse-error linter of its own next to ours; only the single pieces are used.
 //  - With the `@lezer/json` of this repo (its tree has a node for each ":") the library's table of JSON pointers puts the value of
 //    every property on the colon, and so every marker. `jsonDocument` gives it a correct table instead.
@@ -235,7 +238,12 @@ function schemaWarnings(library: SchemaLibrary): (view: EditorView) => Diagnosti
     try {
       if (jsonProblem(view.state.doc.toString()) !== null) return [];
       const length = view.state.doc.length;
-      return lint(view).map((d) => ({ ...d, severity: "warning", to: d.to > d.from ? d.to : Math.min(d.from + 1, length) }));
+      // Built field by field, NOT `...d`: the library puts a `renderMessage` on every diagnostic that sets innerHTML from markdown of the
+      // message, and the message holds values and property names of the document (a backtick in one breaks out of the code span into
+      // markup, an image link is fetched). Without a `renderMessage` @codemirror/lint shows the message as text.
+      return lint(view).map((d): Diagnostic => ({
+        from: d.from, to: d.to > d.from ? d.to : Math.min(d.from + 1, length), severity: "warning", message: d.message, source: d.source,
+      }));
     } catch {
       return [];
     }
@@ -248,7 +256,8 @@ function schemaWarnings(library: SchemaLibrary): (view: EditorView) => Diagnosti
  * third-party descriptions into entities, and `![x](https://third.party/p.png)` would make the browser fetch that URL as soon as someone
  * hovers. `textContent` shows the description and the type literally and parses nothing, so no element, image or link can come out of
  * it. (`jsonSchemaHover({ formatHover })` is the library's own option for this, 0.8.1; the class names are the library's, which the
- * theme styles.) Values that are not text (a schema may hold any JSON as a `description`) are left out.
+ * theme styles.) Values that are not text (a schema may hold any JSON as a `description`) are left out. The description is shown as
+ * written; the type line is the library's own markdown (`` `enum`: `a` or `b` ``), so its backticks are dropped.
  */
 export function plainHover({ message, typeInfo }: { message?: unknown; typeInfo?: unknown }): HTMLElement {
   const block = (tag: "div" | "code", className: string, text: string): HTMLElement => {
@@ -260,13 +269,40 @@ export function plainHover({ message, typeInfo }: { message?: unknown; typeInfo?
   const root = document.createElement("div");
   root.className = "cm6-json-schema-hover";
   if (typeof message === "string" && message !== "") root.append(block("div", "cm6-json-schema-hover--description", message));
-  if (typeof typeInfo === "string" && typeInfo !== "") {
+  const typeLine = typeof typeInfo === "string" ? typeInfo.replaceAll("`", "") : "";
+  if (typeLine !== "") {
     const wrapper = document.createElement("div");
     wrapper.className = "cm6-json-schema-hover--code-wrapper";
-    wrapper.append(block("code", "cm6-json-schema-hover--code", typeInfo));
+    wrapper.append(block("code", "cm6-json-schema-hover--code", typeLine));
     root.append(wrapper);
   }
   return root;
+}
+
+/** One completion option as the editor may show it: `info` only if it is a string (shown as a text node), see `textOnlyCompletion`. */
+function withTextInfo(option: Completion): Completion {
+  if (option.info === undefined || typeof option.info === "string") return option;
+  const copy = { ...option };
+  delete copy.info;
+  return copy;
+}
+
+type CompletionSource = (context: CompletionContext) => CompletionResult | never[];
+
+/**
+ * The library's completion source with every `info` that is not text taken away. For a property the library makes
+ * `info: () => el("div", { inner: renderMarkdown(description) })`: running that function parses the description as markdown into
+ * innerHTML, so an image link in it is fetched (a description is the schema author's; imported documents bring third-party ones in),
+ * and the description cannot be had any other way (it is only in that function's closure). So those are dropped: labels, types, details,
+ * `apply` and the rest of each option are untouched, the type stays in `detail`, and the hover shows the description as text
+ * (`plainHover`). A string `info` (an enum or const value's description) stays: @codemirror/autocomplete shows a string as a text node.
+ * Anything else (a schema's `description` may be any JSON, and a non-string would be called as a function) goes too.
+ */
+export function textOnlyCompletion(source: CompletionSource): CompletionSource {
+  return (context) => {
+    const result = source(context);
+    return Array.isArray(result) ? result : { ...result, options: result.options.map(withTextInfo) }; // the library answers [] when it has nothing
+  };
 }
 
 /** What a schema adds to an editor: the schema itself, its warnings, the hover text and the completion of its properties and values. */
@@ -276,7 +312,7 @@ function schemaExtensions({ library, autocompletion }: SchemaSupport, schema: Sc
     linter(schemaWarnings(library), { needsRefresh: library.handleRefresh, delay: 250 }),
     hoverTooltip(library.jsonSchemaHover({ formatHover: plainHover })),
     autocompletion(),
-    jsonLanguage.data.of({ autocomplete: library.jsonCompletion() }),
+    jsonLanguage.data.of({ autocomplete: textOnlyCompletion(library.jsonCompletion()) }),
   ];
 }
 

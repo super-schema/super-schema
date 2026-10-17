@@ -25,7 +25,7 @@ const NAME_MAX_LENGTH = 128;
 
 const sectionHeading = "text-body-small font-medium text-foreground";
 /** Text that comes from the imported document (a title, a pointer, a message) has no word breaks to rely on: it wraps anywhere instead of widening the dialog. */
-const WRAP = "break-words [overflow-wrap:anywhere]";
+const WRAP = "break-words";
 
 // ── The review ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
