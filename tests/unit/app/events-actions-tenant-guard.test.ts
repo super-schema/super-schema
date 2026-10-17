@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   requireOwnedEvent: vi.fn(), listExternalEventCandidates: vi.fn(), listExternalEventVersions: vi.fn(), getExternalVersionItems: vi.fn(), getExternalRefStatuses: vi.fn(),
   renderPinJsonSchema: vi.fn(),
   createTrait: vi.fn(), updateTrait: vi.fn(), deleteTrait: vi.fn(),
+  previewAsyncApiImport: vi.fn(), importAsyncApi: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -41,6 +42,7 @@ vi.mock("@/services/events/event-publish.service", () => ({
   previewEventPublish: h.previewEventPublish, publishEvent: h.publishEvent, listEventVersions: h.listEventVersions,
 }));
 vi.mock("@/services/events/trait.service", () => ({ createTrait: h.createTrait, updateTrait: h.updateTrait, deleteTrait: h.deleteTrait }));
+vi.mock("@/services/events/asyncapi-import.service", () => ({ previewAsyncApiImport: h.previewAsyncApiImport, importAsyncApi: h.importAsyncApi }));
 // The external-reference loaders and the event ownership read are their own tested units (event-external-ref-actions.test.ts and the
 // integration tests): here they are spies, so what is proven is the PARENT check in front of them (the real `withOwnedTarget`).
 vi.mock("@/services/events/external-refs.service", () => ({
@@ -55,9 +57,9 @@ vi.mock("@/services/events/service-guards", async (importOriginal) => ({
 }));
 
 import {
-  createEventAction, deleteEventAction, emitEventDraftAction, getExternalRefStatusesAction, getExternalVersionItemsAction, listEventVersionsAction,
-  listExternalEventCandidatesAction, listExternalEventVersionsAction, pinJsonSchemaAction, previewEventDocumentAction, previewEventPublishAction,
-  publishEventAction, readEventVersionAction, renameEventAction, updateEventDocumentAction,
+  createEventAction, deleteEventAction, emitEventDraftAction, getExternalRefStatusesAction, getExternalVersionItemsAction, importAsyncApiAction,
+  listEventVersionsAction, listExternalEventCandidatesAction, listExternalEventVersionsAction, pinJsonSchemaAction, previewAsyncApiImportAction,
+  previewEventDocumentAction, previewEventPublishAction, publishEventAction, readEventVersionAction, renameEventAction, updateEventDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { createTraitAction, deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -89,7 +91,7 @@ beforeEach(() => {
     "createEvent", "updateEventDocument", "renameEvent", "deleteEvent", "emitEventDocumentPreview", "emitEventDraft",
     "previewEventPublish", "publishEvent", "listEventVersions", "emitEventStoredVersion",
     "listExternalEventCandidates", "listExternalEventVersions", "getExternalVersionItems", "getExternalRefStatuses", "renderPinJsonSchema",
-    "createTrait", "updateTrait", "deleteTrait",
+    "createTrait", "updateTrait", "deleteTrait", "previewAsyncApiImport", "importAsyncApi",
   ] as const) h[key].mockResolvedValue(OK);
   h.requireOwnedEvent.mockResolvedValue({ success: true, data: "e1" });
 });
@@ -116,6 +118,9 @@ const PRODUCT_CASES: Array<{ label: string; call: (productId: string) => Promise
   { label: "getExternalRefStatusesAction", call: (p) => getExternalRefStatusesAction(p, []), service: h.getExternalRefStatuses, mutates: false },
   // The schema of a message's payload / headers pin (the example editor's validation and "Generate from payload"): a read-only render.
   { label: "pinJsonSchemaAction", call: (p) => pinJsonSchemaAction(p, { entityId: "ent-1", entityVersionId: null }), service: h.renderPinJsonSchema, mutates: false },
+  // The AsyncAPI importer (productId FIRST): the preview is read-only, the import creates entities and an event in the client-supplied product.
+  { label: "previewAsyncApiImportAction", call: (p) => previewAsyncApiImportAction(p, { content: "asyncapi: 3.0.0\n" }), service: h.previewAsyncApiImport, mutates: false },
+  { label: "importAsyncApiAction", call: (p) => importAsyncApiAction(p, { content: "asyncapi: 3.0.0\n" }), service: h.importAsyncApi, mutates: true },
 ];
 
 const NOT_FOUND = (id: string) => ({ success: false, error: `Product "${id}" not found`, code: "NOT_FOUND" });
