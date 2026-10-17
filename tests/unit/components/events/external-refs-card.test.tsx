@@ -15,6 +15,7 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", ()
 
 import type { SectionProps } from "@/features/events/builder/EventBuilder";
 import { ExternalRefsCard } from "@/features/events/builder/sections/ExternalRefsCard";
+import { updateDuplicateText } from "@/features/events/builder/labels";
 import type { DocExternalRef, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import type { ExternalItemKind, ExternalRefInput, ExternalRefStatus, ExternalVersionItems } from "@/lib/events/external-refs";
 import { renderSection, sampleDocument } from "./builder-harness";
@@ -438,6 +439,101 @@ describe("ExternalRefsCard: Update", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     click("external-ref-remove-Order-placed");
     expect(missing("external-ref-refused-Order-placed")).toBe(true);
+  });
+
+  // The picker forbids a second reference to an item the document already uses from the same version; Update must not create one either.
+  describe("when another reference already points at the same item of the latest version", () => {
+    const SAME_ITEM_LATEST: DocExternalRef = { key: "Order-placed-v2", eventVersionId: "vv2", kind: "message", itemKey: "OrderPlaced" };
+
+    it("refuses, inline, naming the other reference's key, and changes nothing", async () => {
+      const before = docWith([MSG, SAME_ITEM_LATEST]);
+      const { probe } = renderCard("message", before);
+      await statusOf("Order-placed");
+      click("external-ref-update-Order-placed");
+      const refused = await screen.findByTestId("external-ref-refused-Order-placed");
+      expect(refused.textContent).toBe(updateDuplicateText("OrderPlaced", "2.0", "Order-placed-v2"));
+      expect(refused.textContent).toContain('"Order-placed-v2"');
+      expect(refused.textContent).toContain("v2.0");
+      expect(probe.draft.doc).toEqual(before);
+      expect(probe.draft.dirty).toBe(false);
+      expect(h.statuses).toHaveBeenCalledTimes(1); // nothing re-pointed, so nothing asked again
+    });
+
+    it("also refuses when the key was only possibly missing (the latest version still has the item), after its items were asked for", async () => {
+      answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] }); // listed, but the item list of vv2 below still has this message
+      const before = docWith([MSG, SAME_ITEM_LATEST]);
+      const { probe } = renderCard("message", before);
+      await statusOf("Order-placed");
+      click("external-ref-update-Order-placed");
+      const refused = await screen.findByTestId("external-ref-refused-Order-placed");
+      expect(h.items).toHaveBeenCalledWith("p1", "vv2");
+      expect(refused.textContent).toContain('"Order-placed-v2"');
+      expect(refused.textContent).not.toContain("no longer has");
+      expect(probe.draft.doc).toEqual(before);
+    });
+
+    it("judges the document as it is when the items arrive, not as it was at the click", async () => {
+      answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] });
+      const gate = deferred<unknown>();
+      h.items.mockImplementation(async (_p: string, versionId: string) => (versionId === "vv2" ? gate.promise : { success: true, data: itemsOf("1.0") }));
+      const { probe } = renderCard("message", docWith([MSG]));
+      await statusOf("Order-placed");
+      click("external-ref-update-Order-placed");
+      await waitFor(() => expect(h.items).toHaveBeenCalledWith("p1", "vv2"));
+      // meanwhile another reference to the same item of vv2 appears
+      act(() => probe.draft.update((d) => ({ ...d, externalRefs: [...d.externalRefs, SAME_ITEM_LATEST] })));
+      await act(async () => { gate.resolve({ success: true, data: itemsOf("2.0") }); });
+      expect((await screen.findByTestId("external-ref-refused-Order-placed")).textContent).toContain('"Order-placed-v2"');
+      expect(probe.draft.doc.externalRefs).toEqual([MSG, SAME_ITEM_LATEST]);
+    });
+
+    it("is unaffected when the other reference is of another item of the same version", async () => {
+      const OTHER_ITEM: DocExternalRef = { key: "Order-shipped", eventVersionId: "vv2", kind: "message", itemKey: "OrderShipped" };
+      const { probe } = renderCard("message", docWith([MSG, OTHER_ITEM]));
+      await statusOf("Order-placed");
+      click("external-ref-update-Order-placed");
+      expect(probe.draft.doc.externalRefs).toEqual([{ ...MSG, eventVersionId: "vv2" }, OTHER_ITEM]);
+      expect(missing("external-ref-refused-Order-placed")).toBe(true);
+    });
+
+    it("is unaffected when no other reference matches: the same item of another version, or the same item key of the other kind", async () => {
+      const SAME_ITEM_OLDER: DocExternalRef = { key: "Order-placed-old", eventVersionId: "vv1", kind: "message", itemKey: "OrderPlaced" };
+      const OTHER_KIND: DocExternalRef = { key: "placed-topic", eventVersionId: "vv2", kind: "channel", itemKey: "OrderPlaced" };
+      const { probe } = renderCard("message", docWith([MSG, SAME_ITEM_OLDER, OTHER_KIND]));
+      await statusOf("Order-placed");
+      click("external-ref-update-Order-placed");
+      expect(probe.draft.doc.externalRefs[0]).toEqual({ ...MSG, eventVersionId: "vv2" });
+      expect(missing("external-ref-refused-Order-placed")).toBe(true);
+    });
+
+    it("is unaffected for a channel when the matching reference is a message", async () => {
+      const MSG_SAME_KEY: DocExternalRef = { key: "billing-message", eventVersionId: "vv2", kind: "message", itemKey: "billing" };
+      const { probe } = renderCard("channel", docWith([CHAN, MSG_SAME_KEY]));
+      await statusOf("billing-topic");
+      click("external-ref-update-billing-topic");
+      expect(probe.draft.doc.externalRefs[0]).toEqual({ ...CHAN, eventVersionId: "vv2" });
+    });
+
+    it("refuses a channel reference the same way", async () => {
+      const CHAN_LATEST: DocExternalRef = { key: "billing-v2", eventVersionId: "vv2", kind: "channel", itemKey: "billing" };
+      const before = docWith([CHAN, CHAN_LATEST]);
+      const { probe } = renderCard("channel", before);
+      await statusOf("billing-topic");
+      click("external-ref-update-billing-topic");
+      expect((await screen.findByTestId("external-ref-refused-billing-topic")).textContent).toContain('"billing-v2"');
+      expect(probe.draft.doc).toEqual(before);
+    });
+
+    it("clears the refusal once the other reference is removed, and the Update then goes through", async () => {
+      const { probe } = renderCard("message", docWith([MSG, SAME_ITEM_LATEST]));
+      await statusOf("Order-placed");
+      click("external-ref-update-Order-placed");
+      await screen.findByTestId("external-ref-refused-Order-placed");
+      click("external-ref-remove-Order-placed-v2");
+      expect(missing("external-ref-refused-Order-placed")).toBe(true);
+      click("external-ref-update-Order-placed");
+      expect(probe.draft.doc.externalRefs).toEqual([{ ...MSG, eventVersionId: "vv2" }]);
+    });
   });
 });
 

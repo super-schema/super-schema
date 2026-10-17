@@ -33,6 +33,7 @@ const ID = {
   manager: "product-manager-input",
   team: "product-team-emails-input",
   teamChip: "product-team-emails-chip",
+  teamRemove: "product-team-emails-remove",
   contacts: "product-contacts",
   shownLead: "product-contact-engineering-lead",
   shownManager: "product-contact-manager",
@@ -209,7 +210,7 @@ test.describe("edit a product's contacts", () => {
     await expect(dialog.getByTestId(ID.manager)).toHaveValue("");
     await dialog.getByTestId(ID.lead).fill("");
     while ((await dialog.getByTestId(ID.teamChip).count()) > 0) {
-      await dialog.getByTestId("product-team-emails-remove").first().click();
+      await dialog.getByTestId(ID.teamRemove).first().click();
     }
     await saveAndClose(page, dialog);
     await page.reload();

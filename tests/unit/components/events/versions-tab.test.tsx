@@ -99,6 +99,67 @@ describe("VersionsTab: the list", () => {
     expect(screen.queryByTestId("event-version-list-empty")).toBeNull();
   });
 
+  describe("Retry after a failed load", () => {
+    const retry = () => screen.getByTestId("event-versions-retry");
+
+    it("sits next to the error, as a button", async () => {
+      h.list.mockResolvedValue({ success: false, error: "Try later" });
+      renderTab();
+      const alert = await screen.findByTestId("event-versions-error");
+      expect(within(alert).getByRole("button", { name: "Retry" })).toBe(retry());
+    });
+
+    it("asks again: a success replaces the error with the list, a second failure shows the error again", async () => {
+      h.list.mockResolvedValueOnce({ success: false, error: "Try later" });
+      renderTab();
+      await screen.findByTestId("event-versions-error");
+      expect(h.list).toHaveBeenCalledTimes(1);
+
+      // Retry -> failure again: the error is back (and so is Retry), with the new answer's text.
+      const second = deferred<unknown>();
+      h.list.mockReturnValueOnce(second.promise);
+      fireEvent.click(retry());
+      expect(screen.getByTestId("event-versions-loading")).toBeDefined(); // the old error is gone while it asks
+      expect(screen.queryByTestId("event-versions-error")).toBeNull();
+      await act(async () => { second.resolve({ success: false, error: "Still down" }); });
+      expect(screen.getByTestId("event-versions-error").textContent).toContain("Still down");
+      expect(h.list).toHaveBeenCalledTimes(2);
+
+      // Retry -> success: the list replaces the error.
+      h.list.mockResolvedValueOnce({ success: true, data: [V11, V10] });
+      fireEvent.click(retry());
+      await screen.findByTestId("event-version-list");
+      expect(screen.queryByTestId("event-versions-error")).toBeNull();
+      expect(rows()).toHaveLength(2);
+      expect(h.list).toHaveBeenCalledTimes(3);
+      expect(h.list).toHaveBeenLastCalledWith("ev1", "p1");
+    });
+
+    it("works after a rejected action too, and never prints the cause", async () => {
+      h.list.mockRejectedValueOnce(new Error("connect ECONNREFUSED 10.0.0.5:5432"));
+      renderTab();
+      await screen.findByTestId("event-versions-error");
+      h.list.mockRejectedValueOnce(new Error("connect ECONNREFUSED 10.0.0.5:5432"));
+      fireEvent.click(retry());
+      await waitFor(() => expect(h.list).toHaveBeenCalledTimes(2));
+      expect((await screen.findByTestId("event-versions-error")).textContent).toContain("Something went wrong");
+      expect(screen.getByTestId("event-versions-error").textContent).not.toContain("ECONNREFUSED");
+      h.list.mockResolvedValueOnce({ success: true, data: [V10] });
+      fireEvent.click(retry());
+      await screen.findByTestId("event-version-list");
+      expect(rows()).toHaveLength(1);
+    });
+
+    it("is not shown while the list loads or once it is shown", async () => {
+      const pending = deferred<unknown>();
+      h.list.mockReturnValue(pending.promise);
+      renderTab();
+      expect(screen.queryByTestId("event-versions-retry")).toBeNull();
+      await act(async () => { pending.resolve({ success: true, data: [V11, V10] }); });
+      expect(screen.queryByTestId("event-versions-retry")).toBeNull();
+    });
+  });
+
   it("never prints the cause of a rejected action or raw database text", async () => {
     h.list.mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.5:5432"));
     renderTab();

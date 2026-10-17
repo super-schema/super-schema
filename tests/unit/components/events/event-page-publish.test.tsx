@@ -287,6 +287,49 @@ describe("EventPage: the Publish dialog", () => {
     fireEvent.click(button("confirm-publish"));
     expect((await within(dialog).findByText("OrderCreated has no published version pinned")).textContent).toBe("OrderCreated has no published version pinned");
     expect(screen.getByRole("dialog")).toBeDefined();
+    expect(within(dialog).queryByTestId("publish-error-blockers")).toBeNull(); // nothing to list: just the message
+  });
+
+  it("lists every blocker of a publish refused at the server (a race), a message that came from several places once", async () => {
+    h.publish.mockResolvedValue({
+      success: false, error: "Order has no published version pinned; Shipment has no published version pinned", code: "PUBLISH_BLOCKED",
+      suggestedFix: "Resolve every blocker, then publish again.",
+      details: {
+        blockers: [
+          { kind: "UNPUBLISHED_PIN", message: "Order has no published version pinned", pointer: "/messages/0/payload" },
+          { kind: "UNRESOLVED_REFERENCE", message: "Order has no published version pinned", pointer: "/components/messages/m/payload" },
+          { kind: "UNPUBLISHED_PIN", message: "Shipment has no published version pinned", pointer: "/messages/1/payload" },
+        ],
+      },
+    });
+    renderPage();
+    const dialog = await open();
+    await within(dialog).findByTestId("confirm-publish");
+    fireEvent.click(button("confirm-publish"));
+    const list = await within(dialog).findByTestId("publish-error-blockers");
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Order has no published version pinned", "Shipment has no published version pinned",
+    ]);
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(button("confirm-publish").disabled).toBe(false);
+    // The next attempt starts clean.
+    h.publish.mockResolvedValue({ success: true, data: { ...SUMMARY, label: "1.0" } });
+    fireEvent.click(button("confirm-publish"));
+    await waitFor(() => expect(h.toastSuccess).toHaveBeenCalled());
+  });
+
+  it("shows only the message for a refusal of another code, even if its details carry blockers", async () => {
+    h.publish.mockResolvedValue({
+      success: false, error: "The event changed while publishing.", code: "CONFLICT", suggestedFix: "Reload the event and publish again.",
+      details: { blockers: [{ kind: "VALIDATION_ERROR", message: "must not be listed" }] },
+    });
+    renderPage();
+    const dialog = await open();
+    await within(dialog).findByTestId("confirm-publish");
+    fireEvent.click(button("confirm-publish"));
+    expect((await within(dialog).findByText(/The event changed while publishing\./)).textContent).toContain("Reload the event and publish again.");
+    expect(within(dialog).queryByTestId("publish-error-blockers")).toBeNull();
+    expect(within(dialog).queryByText("must not be listed")).toBeNull();
   });
 });
 
@@ -480,7 +523,8 @@ describe("EventPage: the Used by tab", () => {
     renderPage({ initialTab: "used-by" });
     const link = await screen.findByRole("link", { name: "Event billing v1.2" });
     expect(link.getAttribute("href")).toBe("/schemas/payments/billing/events/ev9");
-    expect(screen.getByText("Showing the first 50 references.")).toBeDefined();
+    // One row came back before the scan limit cut the list: the text counts what is shown, not the limit.
+    expect(screen.getByText("Showing the first reference.")).toBeDefined();
   });
 
   it("shows the lookup's error and keeps the page usable", async () => {

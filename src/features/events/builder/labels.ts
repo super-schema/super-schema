@@ -1,9 +1,11 @@
 // src/features/events/builder/labels.ts
-// The user-facing wording of the event builder, in one place: the names of "traits" and the copy of external references. AsyncAPI calls
-// traits traits; users do not understand that word, so the UI says "Message properties" and keeps "(Trait)" in brackets as the technical
-// secondary text. Change a name here and it changes everywhere (the builder section, the Enterprise / Domain tab and sidebar leaf, the
-// create menu, page titles, empty states, tooltips). The external-reference section further down holds the card, picker and operation
-// copy for channels and messages that another event published.
+// The user-facing wording of the event builder, in one place: every label, name and sentence its sections, cards and dialogs show, so a
+// change of wording is one edit. Two groups:
+//  - the names of message and operation properties. AsyncAPI calls them "traits"; users do not understand that word, so the UI says
+//    "Message properties" and keeps "(Trait)" in brackets as the technical secondary text. Change a name here and it changes everywhere
+//    (the builder section, the Enterprise / Domain tab and sidebar leaf, the create menu, page titles, empty states, tooltips);
+//  - the external-reference section further down: the card, picker and operation copy for channels and messages that another event
+//    published.
 // Internal names (section id `traits`, URL `?tab=traits`, test ids `trait-*`) are NOT user-facing and stay as they are. Pure, client-safe.
 import type { TraitKind } from "@/lib/event-specs/types";
 import type { ExternalItemKind } from "@/lib/events/external-refs";
@@ -48,6 +50,12 @@ export const groupLabel = (kind: TraitKind): string => (kind === "MESSAGE" ? GRO
 
 export const BUILT_IN_NOTE = "Built in — can't be modified";
 export const LIBRARY_NOTE = "From the library — edit it under Message properties at the Tenant/Domain level";
+/**
+ * The note of a properties table whose headers come from an entity pin (a legacy set): the sentence up to the entity, which the table
+ * completes with the entity's name and version. The first stands where the table would say "No properties", the second under the rows.
+ */
+export const PINNED_PROPERTIES_LEAD = "Properties come from the entity";
+export const PINNED_HEADERS_LEAD = "Headers also come from the entity";
 
 /** "1 property" / "8 properties". */
 export const propertyCountText = (count: number): string => `${count} ${count === 1 ? "property" : "properties"}`;
@@ -114,6 +122,12 @@ export const updateRefusedText = (itemKey: string, latest: string, operations: s
 /** The sentence under a reference whose update was refused because the latest version's items could not be checked: nothing was changed. */
 export const updateUnconfirmedText = (itemKey: string, latest: string): string =>
   `Cannot update to v${latest}: it may no longer have "${itemKey}", and its items could not be checked. Nothing was changed; try again.`;
+/**
+ * The sentence under a reference whose update was refused because ANOTHER reference of the same kind already points at the same item of
+ * the latest version: re-pointing would leave two references to one item (the picker forbids that too). Nothing was changed.
+ */
+export const updateDuplicateText = (itemKey: string, latest: string, otherKey: string): string =>
+  `Cannot update to v${latest}: "${otherKey}" already points at "${itemKey}" in that version. Remove one of the two references instead.`;
 /**
  * The note left after an update removed a reference no operation used: the latest version no longer has the item. `channels` are the
  * local channels whose allowed messages it was also taken out of (the update strips it from them silently), named and counted.

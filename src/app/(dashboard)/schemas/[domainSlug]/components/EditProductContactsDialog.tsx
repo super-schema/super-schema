@@ -75,6 +75,13 @@ function EditContactsForm({ productId, productName, contacts, busy, onBusyChange
   // A second submit in the same tick would still see `busy === false` in its closure.
   const inFlight = useRef(false);
 
+  function edit(next: ProductContactsDraft) {
+    setDraft(next);
+    // The form-level server message was about the values that were submitted: the first edit retires it (a field's own message
+    // clears per field, in `ProductContactFields`).
+    setError(null);
+  }
+
   async function submit() {
     if (inFlight.current) return;
     // The same rules the create form and the service apply; every bad field is shown at once.
@@ -128,7 +135,7 @@ function EditContactsForm({ productId, productName, contacts, busy, onBusyChange
         </DialogDescription>
       </DialogHeader>
 
-      <ProductContactFields value={draft} errors={fieldErrors} onChange={setDraft} onErrorsChange={setFieldErrors} disabled={busy} />
+      <ProductContactFields value={draft} errors={fieldErrors} onChange={edit} onErrorsChange={setFieldErrors} disabled={busy} />
 
       {error && <p role="alert" data-testid="edit-product-contacts-error" className="text-body-small text-destructive">{error}</p>}
 

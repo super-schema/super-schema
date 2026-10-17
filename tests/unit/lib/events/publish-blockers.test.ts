@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { EventPublishAnalysis, EventPublishBlocker } from "@/lib/events/publish-plan";
-import { foldPublishBlockers } from "@/lib/events/publish-blockers";
+import { blockersOfFailedPublish, foldPublishBlockers } from "@/lib/events/publish-blockers";
 
 function analysis(blockers: EventPublishBlocker[]): EventPublishAnalysis {
   return {
@@ -63,5 +63,49 @@ describe("foldPublishBlockers", () => {
   it("is a no-op for an analysis without blockers", () => {
     const input = analysis([]);
     expect(foldPublishBlockers(input).blockers).toEqual([]);
+  });
+});
+
+// What the Publish dialog lists when a publish is refused at the server (the plan changed between its preview and the confirm).
+describe("blockersOfFailedPublish", () => {
+  const missing = '"ver-9" is not a published version of Order';
+
+  it("reads every blocker of a PUBLISH_BLOCKED failure, folded like the preview's: one row per message, in order, without a pointer", () => {
+    const rows = blockersOfFailedPublish({
+      code: "PUBLISH_BLOCKED",
+      details: {
+        blockers: [
+          { kind: "MISSING_ENTITY", message: missing, pointer: "/messages/0/payload" },
+          { kind: "UNPUBLISHED_PIN", message: "Shipment has no published version pinned", pointer: "/messages/1/payload" },
+          { kind: "UNRESOLVED_REFERENCE", message: missing, pointer: "/components/messages/order-created/payload" },
+        ],
+      },
+    });
+    expect(rows).toEqual([
+      { kind: "MISSING_ENTITY", message: missing },
+      { kind: "UNPUBLISHED_PIN", message: "Shipment has no published version pinned" },
+    ]);
+  });
+
+  it("is empty for every other code, even when its details carry blockers (only PUBLISH_BLOCKED's details are read)", () => {
+    const details = { blockers: [{ kind: "VALIDATION_ERROR", message: "internal detail" }] };
+    for (const code of ["CONFLICT", "VALIDATION_ERROR", "BUMP_TOO_LOW", "INVALID_PLAN_INPUT", "NOT_FOUND", "DB_ERROR", "INTERNAL_ERROR", undefined]) {
+      expect(blockersOfFailedPublish({ code, details })).toEqual([]);
+    }
+  });
+
+  it("is empty without details, without a blockers list, or with an empty one", () => {
+    expect(blockersOfFailedPublish({ code: "PUBLISH_BLOCKED" })).toEqual([]);
+    expect(blockersOfFailedPublish({ code: "PUBLISH_BLOCKED", details: {} })).toEqual([]);
+    expect(blockersOfFailedPublish({ code: "PUBLISH_BLOCKED", details: { blockers: [] } })).toEqual([]);
+    expect(blockersOfFailedPublish({ code: "PUBLISH_BLOCKED", details: { blockers: "not a list" } })).toEqual([]);
+  });
+
+  it("skips entries that are not a blocker (no text to show) and gives a kind-less one a plain kind", () => {
+    const rows = blockersOfFailedPublish({
+      code: "PUBLISH_BLOCKED",
+      details: { blockers: [null, 7, "x", {}, { kind: "NO_CHANGES" }, { kind: "NO_CHANGES", message: "   " }, { kind: 3, message: "kept" }, { message: 4 }] },
+    });
+    expect(rows).toEqual([{ kind: "BLOCKER", message: "kept" }]);
   });
 });

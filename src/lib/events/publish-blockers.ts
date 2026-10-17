@@ -1,6 +1,18 @@
 // src/lib/events/publish-blockers.ts
 // What the Publish dialog shows of an event's blockers. Pure — client-safe.
-import type { EventPublishAnalysis, EventPublishBlocker } from "@/lib/events/publish-plan";
+import type { EventPublishAnalysis } from "@/lib/events/publish-plan";
+
+/** One row per distinct message; the first blocker of a message decides its kind and the order is that of first appearance. */
+function foldByMessage<K extends string>(blockers: ReadonlyArray<{ kind: K; message: string }>): Array<{ kind: K; message: string }> {
+  const seen = new Set<string>();
+  const rows: Array<{ kind: K; message: string }> = [];
+  for (const { kind, message } of blockers) {
+    if (seen.has(message)) continue;
+    seen.add(message);
+    rows.push({ kind, message });
+  }
+  return rows;
+}
 
 /**
  * One row per distinct message. One root cause reaches the planner several times: a pin to a missing entity version is a facts
@@ -10,12 +22,25 @@ import type { EventPublishAnalysis, EventPublishBlocker } from "@/lib/events/pub
  * appearance. The input is not changed.
  */
 export function foldPublishBlockers(analysis: EventPublishAnalysis): EventPublishAnalysis {
-  const seen = new Set<string>();
-  const blockers: EventPublishBlocker[] = [];
-  for (const { kind, message } of analysis.blockers) {
-    if (seen.has(message)) continue;
-    seen.add(message);
-    blockers.push({ kind, message });
+  return { ...analysis, blockers: foldByMessage(analysis.blockers) };
+}
+
+/**
+ * The blockers of a REFUSED publish (the plan changed between the dialog's preview and its confirm), folded like the preview's, for
+ * the dialog to list under its error. Only `PUBLISH_BLOCKED` carries them: the `details` of any other code are never read here, and
+ * an answer without a usable list (missing, malformed, entries without text) gives none, so the caller falls back to the one-line
+ * message. `details` comes over the wire: nothing in it is trusted beyond its `message` and `kind` strings.
+ */
+export function blockersOfFailedPublish(failure: { code?: string; details?: object }): Array<{ kind: string; message: string }> {
+  if (failure.code !== "PUBLISH_BLOCKED") return [];
+  const listed = (failure.details as { blockers?: unknown } | undefined)?.blockers;
+  if (!Array.isArray(listed)) return [];
+  const rows: Array<{ kind: string; message: string }> = [];
+  for (const entry of listed as unknown[]) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { kind, message } = entry as { kind?: unknown; message?: unknown };
+    if (typeof message !== "string" || message.trim() === "") continue;
+    rows.push({ kind: typeof kind === "string" ? kind : "BLOCKER", message });
   }
-  return { ...analysis, blockers };
+  return foldByMessage(rows);
 }

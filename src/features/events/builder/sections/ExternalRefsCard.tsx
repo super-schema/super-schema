@@ -4,7 +4,8 @@
 // The external references of ONE kind, under the Channels / Messages list: channels and messages that another published event defines
 // and this event uses as they were in a published version. Each row says what it points at (source event, version, the item's title),
 // carries an "External" badge, shows whether its source event has moved on (`v1.0 → v2.0 available`, a major called out) and offers
-//   Update  — re-point to the latest version. Refused, inline, when the latest version dropped the item and an operation uses it;
+//   Update  — re-point to the latest version. Refused, inline, when the latest version dropped the item and an operation uses it, or when
+//             another reference of this kind already points at that item of the latest version (it would be a duplicate);
 //             removed, with a note, when it dropped the item and nothing uses it;
 //   Remove  — with its impact first ("Used by 2 operations"): what uses the reference is taken out of it only after a confirmation.
 // The status is best effort (see `use-external-ref-status`): without it a row simply has no badge. A key listed in
@@ -15,11 +16,11 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { DocExternalRef, DocumentProblem } from "@/lib/events/document/types";
+import type { DocExternalRef, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import type { ExternalItemKind, ExternalRefStatus, ExternalVersionItems } from "@/lib/events/external-refs";
 import {
   ADD_FROM_ANOTHER_EVENT, DETAILS_UNAVAILABLE, EXTERNAL_BADGE, externalRefsEmpty, externalRefsTitle, MAJOR_BADGE, newerVersionText, REMOVE_REFERENCE,
-  removeConfirmText, removeReferenceLabel, updateRefusedText, updateRemovedText, updateToLabel, updateToText, updateUnconfirmedText, usedByText,
+  removeConfirmText, removeReferenceLabel, updateDuplicateText, updateRefusedText, updateRemovedText, updateToLabel, updateToText, updateUnconfirmedText, usedByText,
 } from "../labels";
 import { problemMessage, problemsByField } from "../problems";
 import type { DraftState } from "../use-event-draft";
@@ -76,10 +77,20 @@ export function ExternalRefsCard({ kind, draft, problems }: {
     const status = statuses?.get(ref.eventVersionId);
     if (!status || !status.newerAvailable || checking !== null) return;
     clearMessages();
-    const repoint = () =>
+    // Re-points `ref` to the latest version, unless ANOTHER reference of its kind already points at that very item there: that would leave
+    // two references to one item (the picker forbids it too). Refused, inline, nothing changed. `current` is the document as it is NOW.
+    const repoint = (current: EventDocument) => {
+      const other = current.externalRefs.find(
+        (r) => r.key !== ref.key && r.kind === ref.kind && r.eventVersionId === status.latestVersionId && r.itemKey === ref.itemKey,
+      );
+      if (other) {
+        setRefusal({ key: ref.key, text: updateDuplicateText(ref.itemKey, status.latestLabel, other.key) });
+        return;
+      }
       update((d) => ({ ...d, externalRefs: d.externalRefs.map((r) => (r.key === ref.key ? { ...r, eventVersionId: status.latestVersionId } : r)) }));
+    };
     if (!status.itemsMissingInLatest.includes(ref.itemKey)) {
-      repoint();
+      repoint(latestDoc.current);
       return;
     }
     // The key is only POSSIBLY missing: the status lists keys, flat, and a channel and a message can share one. Ask the latest version
@@ -94,7 +105,7 @@ export function ExternalRefsCard({ kind, draft, problems }: {
       return;
     }
     if ((ref.kind === "channel" ? latest.channels : latest.messages).some((item) => item.key === ref.itemKey)) {
-      repoint(); // the latest version still has this very item: the key was listed for the other kind
+      repoint(now); // the latest version still has this very item: the key was listed for the other kind
       return;
     }
     const usage = externalRefUsage(now, ref);

@@ -102,12 +102,28 @@ describe("UsedByPanel", () => {
   describe("a truncated list", () => {
     const row = { id: "r1", fromKind: "EVENT_SPEC_VERSION", role: "PAYLOAD", isDraft: false, target: "Order v1.0", label: "Event a v1.0", href: "/a" };
 
-    it("says so, below the rows that are shown", async () => {
-      h.listUsagesAction.mockResolvedValue({ success: true, data: { rows: [row], truncated: true } });
+    it("says so, below the rows that are shown, with the number of rows it actually shows", async () => {
+      // The scan limit can cut the list short of USAGE_ROW_LIMIT: the text counts the rows on screen, never the limit.
+      const rows = [row, { ...row, id: "r2", label: "Event b v1.0", href: "/b" }, { ...row, id: "r3", label: "Event c v1.0", href: "/c" }];
+      h.listUsagesAction.mockResolvedValue({ success: true, data: { rows, truncated: true } });
       render(<UsedByPanel subject={{ kind: "event", eventId: "ev1" }} />);
       expect(await screen.findByRole("link", { name: "Event a v1.0" })).toBeDefined();
-      expect(screen.getByTestId("used-by-truncated").textContent).toBe(`Showing the first ${USAGE_ROW_LIMIT} references.`);
+      expect(screen.getAllByRole("link")).toHaveLength(3);
+      expect(screen.getByTestId("used-by-truncated").textContent).toBe("Showing the first 3 references.");
+      expect(screen.getByTestId("used-by-truncated").textContent).not.toContain(String(USAGE_ROW_LIMIT));
+    });
+
+    it("counts a full page as the limit (the common case) and a single row in the singular", async () => {
+      const full = Array.from({ length: USAGE_ROW_LIMIT }, (_, i) => ({ ...row, id: `r${i}`, label: `Event ${i} v1.0`, href: `/e${i}` }));
+      h.listUsagesAction.mockResolvedValue({ success: true, data: { rows: full, truncated: true } });
+      const { unmount } = render(<UsedByPanel subject={{ kind: "event", eventId: "ev1" }} />);
+      await screen.findByRole("link", { name: "Event 0 v1.0" });
       expect(screen.getByTestId("used-by-truncated").textContent).toBe("Showing the first 50 references.");
+      unmount();
+      h.listUsagesAction.mockResolvedValue({ success: true, data: { rows: [row], truncated: true } });
+      render(<UsedByPanel subject={{ kind: "event", eventId: "ev1" }} />);
+      await screen.findByRole("link", { name: "Event a v1.0" });
+      expect(screen.getByTestId("used-by-truncated").textContent).toBe("Showing the first reference.");
     });
 
     it("says nothing when the list is complete", async () => {
