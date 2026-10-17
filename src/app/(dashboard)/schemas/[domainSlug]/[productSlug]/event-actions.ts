@@ -6,13 +6,14 @@ import { getActiveTenantId } from "@/lib/active-tenant";
 import type { PublishInput } from "@/lib/entity-versioning/types";
 import type { ExternalEventCandidate, ExternalRefInput, ExternalRefStatus, ExternalVersionItems, ExternalVersionOption } from "@/lib/events/external-refs";
 import type { EventPublishAnalysis } from "@/lib/events/publish-plan";
-import type { EventVersionSummary } from "@/lib/events/types";
+import type { EntityPin, EventVersionSummary } from "@/lib/events/types";
 import { emitEventDocumentPreview, emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
 import { listEventVersions, previewEventPublish, publishEvent } from "@/services/events/event-publish.service";
 import { createEvent, deleteEvent, renameEvent, updateEventDocument, type EventDetail } from "@/services/events/event.service";
 import {
   getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions,
 } from "@/services/events/external-refs.service";
+import { renderPinJsonSchema } from "@/services/events/pin-json-schema.service";
 import { requireOwnedEvent } from "@/services/events/service-guards";
 import { GENERIC_ACTION_ERROR, type ActionResult } from "@/types/action-result";
 import { ok, type Result } from "@/types/result";
@@ -105,6 +106,19 @@ export async function getExternalVersionItemsAction(productId: string, eventVers
 export async function getExternalRefStatusesAction(productId: string, refs: ExternalRefInput[]): Promise<ActionResult<ExternalRefStatus[]>> {
   return readAction(productId, "getExternalRefStatusesAction", async (ctx) =>
     getExternalRefStatuses(ctx, { tenantId: await getActiveTenantId(), refs }));
+}
+
+// ── Message examples ───────────────────────────────────────────────────────────────────────────────────────────────────
+// The schema a message's example payload / headers is checked against, and generated from (`pin-json-schema.service.ts`).
+
+/**
+ * The JSON Schema (draft-07, one self-contained document) of the entity a message pins: a pinned version renders that version, an
+ * unpinned pin the entity's current draft. `pin` is CLIENT-supplied: the service validates its shape, and the tenant is the
+ * server-resolved ACTIVE one, so an entity of another tenant reads exactly like a missing one (NOT_FOUND). Failures that carry raw
+ * renderer text are already replaced by the service; a schema over 512 KB is TOO_LARGE.
+ */
+export async function pinJsonSchemaAction(productId: string, pin: EntityPin): Promise<ActionResult<{ schema: Record<string, unknown> }>> {
+  return readAction(productId, "pinJsonSchemaAction", async (ctx) => renderPinJsonSchema(ctx, { tenantId: await getActiveTenantId(), pin }));
 }
 
 // ── Publish, versions ──────────────────────────────────────────────────────────────────────────────────────────────────

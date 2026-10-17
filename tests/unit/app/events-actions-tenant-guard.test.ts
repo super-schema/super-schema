@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   emitEventDocumentPreview: vi.fn(), emitEventDraft: vi.fn(), emitEventStoredVersion: vi.fn(),
   previewEventPublish: vi.fn(), publishEvent: vi.fn(), listEventVersions: vi.fn(),
   requireOwnedEvent: vi.fn(), listExternalEventCandidates: vi.fn(), listExternalEventVersions: vi.fn(), getExternalVersionItems: vi.fn(), getExternalRefStatuses: vi.fn(),
+  renderPinJsonSchema: vi.fn(),
   createTrait: vi.fn(), updateTrait: vi.fn(), deleteTrait: vi.fn(),
 }));
 
@@ -46,6 +47,8 @@ vi.mock("@/services/events/external-refs.service", () => ({
   listExternalEventCandidates: h.listExternalEventCandidates, listExternalEventVersions: h.listExternalEventVersions,
   getExternalVersionItems: h.getExternalVersionItems, getExternalRefStatuses: h.getExternalRefStatuses,
 }));
+// The pin schema renderer (message examples) is its own tested unit (pin-json-schema.service.test.ts): a spy behind the parent check.
+vi.mock("@/services/events/pin-json-schema.service", () => ({ renderPinJsonSchema: h.renderPinJsonSchema }));
 vi.mock("@/services/events/service-guards", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/services/events/service-guards")>()),
   requireOwnedEvent: h.requireOwnedEvent,
@@ -53,7 +56,7 @@ vi.mock("@/services/events/service-guards", async (importOriginal) => ({
 
 import {
   createEventAction, deleteEventAction, emitEventDraftAction, getExternalRefStatusesAction, getExternalVersionItemsAction, listEventVersionsAction,
-  listExternalEventCandidatesAction, listExternalEventVersionsAction, previewEventDocumentAction, previewEventPublishAction,
+  listExternalEventCandidatesAction, listExternalEventVersionsAction, pinJsonSchemaAction, previewEventDocumentAction, previewEventPublishAction,
   publishEventAction, readEventVersionAction, renameEventAction, updateEventDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { createTraitAction, deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
@@ -85,7 +88,7 @@ beforeEach(() => {
   for (const key of [
     "createEvent", "updateEventDocument", "renameEvent", "deleteEvent", "emitEventDocumentPreview", "emitEventDraft",
     "previewEventPublish", "publishEvent", "listEventVersions", "emitEventStoredVersion",
-    "listExternalEventCandidates", "listExternalEventVersions", "getExternalVersionItems", "getExternalRefStatuses",
+    "listExternalEventCandidates", "listExternalEventVersions", "getExternalVersionItems", "getExternalRefStatuses", "renderPinJsonSchema",
     "createTrait", "updateTrait", "deleteTrait",
   ] as const) h[key].mockResolvedValue(OK);
   h.requireOwnedEvent.mockResolvedValue({ success: true, data: "e1" });
@@ -111,6 +114,8 @@ const PRODUCT_CASES: Array<{ label: string; call: (productId: string) => Promise
   { label: "listExternalEventVersionsAction", call: (p) => listExternalEventVersionsAction(p, "src1"), service: h.listExternalEventVersions, mutates: false },
   { label: "getExternalVersionItemsAction", call: (p) => getExternalVersionItemsAction(p, "v1"), service: h.getExternalVersionItems, mutates: false },
   { label: "getExternalRefStatusesAction", call: (p) => getExternalRefStatusesAction(p, []), service: h.getExternalRefStatuses, mutates: false },
+  // The schema of a message's payload / headers pin (the example editor's validation and "Generate from payload"): a read-only render.
+  { label: "pinJsonSchemaAction", call: (p) => pinJsonSchemaAction(p, { entityId: "ent-1", entityVersionId: null }), service: h.renderPinJsonSchema, mutates: false },
 ];
 
 const NOT_FOUND = (id: string) => ({ success: false, error: `Product "${id}" not found`, code: "NOT_FOUND" });

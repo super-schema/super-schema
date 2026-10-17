@@ -17,6 +17,13 @@ export interface TemplateFormContext {
   /** For fields of kind "entityPin". */
   entityOptions?: EntityOption[];
   loadVersions?: LoadVersions;
+  /**
+   * For the examples of ONE message: the JSON Schema of its payload and of its headers (fully self-contained, draft-07 style), each
+   * `null` while it is loading, failed to load, or the message has no such pin. Absent where examples have no message to check
+   * against (a trait's examples). The example `payload` / `headers` fields are checked against, and generated from, these
+   * (see `example-schema.ts`); nothing else reads them.
+   */
+  pinSchemas?: { payload?: Record<string, unknown> | null; headers?: Record<string, unknown> | null };
 }
 
 /** A problem to show next to the field it points at: a JSON pointer into the document and the message. */
