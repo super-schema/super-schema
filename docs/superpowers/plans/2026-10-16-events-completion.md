@@ -54,6 +54,7 @@ Inputs and conditions the spec implies but no obvious test covers, most likely t
 2. **Publish cuts from the saved draft only.** The Publish button is disabled while the builder has unsaved edits (tooltip "Save your changes first"). No auto-save-then-publish.
 3. **External refs:** any *published* event of the tenant except itself (same or another product), pinned to one version; updating to a newer version is always manual.
 4. **Leave dialog** offers *Save & leave / Discard & leave / Stay*. It uses the Navigation API where the browser has it (Chromium), with a link-click + Back-button fallback elsewhere; a programmatic `router.push` is only caught on the Navigation API path.
+   **As built:** the assumption that a Navigation-API `navigate` cancel guards `router.push` was false for Next 16.2.2 (it renders the new route first and calls `history.pushState` afterwards; cancelling that push is a silent no-op). Link clicks are intercepted before the router and the shell code that navigates asks `canNavigate(href)` first (sidebar rows, command palette, new-entity shortcut, notification centre); the Navigation API only cancels Back/Forward and document navigations.
 5. **Governance** for MAJOR publishes is not wired for events (it never was in the legacy service); `governanceRequestId` stays unused.
 6. **Data change that needs your yes:** re-point `checkout-event` from the old `CloudEvents-legacy` library trait to the built-in CloudEvents, then delete the legacy trait and the `CloudEventsHeaders` entity (WP-D).
 
@@ -355,6 +356,8 @@ export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null };
 ---
 
 ## WP-J (optional): Dependency-free schema lint for JSON fields
+
+> **DROPPED (2026-10-16).** The premise below was false: `JsonEditor`'s `schema` prop is reserved and ignored and no schema validator exists in the repo. The implementer's alternative (surfacing the builder's pointer-addressed problems as editor markers) had no reachable producer, so it was not merged. Schema-aware lint stays an open gap (REVIEW.md §6.3).
 
 Only if you want it; `codemirror-json-schema` cannot be installed (registry policy). `JsonEditor` already accepts a `schema` prop and shows `JSON.parse` + schema errors inline. This package adds editor-level squiggles using what is already installed: `@codemirror/lint` plus the `@lezer/json` tree behind `@codemirror/lang-json` to map an error's JSON pointer to a document range (the validator is the existing inline one; no `ajv` import).
 

@@ -1,6 +1,6 @@
 # Events — self-contained Event + visual AsyncAPI builder
 
-Status: **as built, 2026-10-17** (merged to `main`). See `docs/events/REVIEW.md` for the review map and the known gaps. Changes since the original design: the payload format follows the **message** (Auto / explicit representation) instead of the channel (Q7 superseded); the legacy Message/Channel catalog tables, services and pages were removed (guarded migration `20261020_drop_legacy_event_catalog`); traits are presented as **Message properties (Trait)** with built-in CloudEvents 1.0 and W3C Trace Context (read-only, properties shown in the UI) and a single + Add flow; CodeMirror 6 is installed and powers the JSON fields and the live code panel; products have Engineering Lead, Manager and Team emails.
+Status: **as built, 2026-10-16** (merged to `main`, including the completion round: publish and versions, used-by, external-reference UI, in-app leave guard, product contact editing). See `docs/events/REVIEW.md` for the review map and the known gaps. Changes since the original design: the payload format follows the **message** (Auto / explicit representation) instead of the channel (Q7 superseded); the legacy Message/Channel catalog tables, services and pages were removed (guarded migration `20261020_drop_legacy_event_catalog`); traits are presented as **Message properties (Trait)** with built-in CloudEvents 1.0 and W3C Trace Context (read-only, properties shown in the UI) and a single + Add flow; CodeMirror 6 is installed and powers the JSON fields and the live code panel; products have Engineering Lead, Manager and Team emails.
 Supersedes, in `2026-10-13-events-asyncapi-design.md`: decision **Q2** (catalog + composed specs), **Q10** (Messages versioned), the Message/Channel/product-Trait rows of **§4.1**, the `/messages`, `/channels`, product `/traits` routes of **§4.5**, and the Message/Channel/Trait tables and `EventSpecDocument` shape of **§6.1**.
 Unchanged from that spec: levels and name uniqueness (§4.2–4.4), Draft + Publish `MAJOR.MINOR`, entity-version pinning, TypeSpec-canonical payloads (Q4), emission pipeline (§7).
 
@@ -29,7 +29,7 @@ Success: one **New Event** entry; one Event page that is the whole AsyncAPI docu
 - **Menu** (product level): New Entity · New Custom Data Type · New API · **New Event**. Removed: New Event Spec, New Message, New Channel, product-level New Trait. Tenant/Domain keep "New Trait" (library).
 - **New Event dialog:** name, description, spec format (radio cards; AsyncAPI 3.0 only, enabled). No "Import existing…" link yet: the AsyncAPI importer is not built (`AsyncApi3Adapter.import()` returns `NOT_IMPLEMENTED`, Epic 19) — the link is added when that importer exists.
 - **Events tab** (product): one flat list — name, spec badge, version, Draft badge, channel/message/operation counts. No Specs/Messages/Channels sections.
-- **Event page** `/schemas/[d]/[p]/events/[eventId]` — header (name, spec badge, version, Draft indicator, Save, Publish); tabs `?tab=design|preview|source|versions|used-by`; Design renders the builder registered for `specType`; deep link `?section=<section>&item=<key>`.
+- **Event page** `/schemas/[d]/[p]/events/[eventId]` — header (name, spec badge, version, Draft indicator, Save, Publish); tabs `?tab=design|docs|versions|used-by` (no Source tab: the live Code panel is the source view and Versions → View shows a published version's code); Design renders the builder registered for `specType`; deep link `?section=<section>&item=<key>`.
 - **Redirects:** `/specs/[id]` → `/events/[id]` (same id). Old `/messages/*`, `/channels/*`, product `/traits/*` → Events list with a one-time notice ("moved into events"); no id mapping is kept.
 - All URLs through `assetHref()`; reserved slugs already include `events`.
 
@@ -133,7 +133,7 @@ Cross-cutting: parser problems map by JSON Pointer onto fields; Problems panel w
 
 ### 7.3 `JsonEditor` and CodeMirror 6
 
-`JsonEditor({ value, onChange, schema?, ariaLabel, readOnly?, height? })` is the only place CodeMirror is imported. Final implementation: CodeMirror 6 (`@codemirror/state`, `view`, `commands`, `language`, `lang-json`, `lint`, and `codemirror-json-schema` for schema-aware lint/autocomplete), lazy-loaded (`next/dynamic`, `ssr: false`) so it costs nothing until an Advanced field opens. **Blocker (2026-10-15):** the npm registry (`us-central1-npm.pkg.dev/.../npm-all`) answers `403` to every package, so the dependency cannot be installed yet. Until then `JsonEditor` ships as a textarea with the identical props, JSON.parse + schema validation, and the same inline error contract; swapping in CodeMirror touches this one file.
+`JsonEditor({ value, onChange, schema?, ariaLabel, readOnly?, height? })` is the only place CodeMirror is imported. Final implementation: CodeMirror 6 (`@codemirror/state`, `view`, `commands`, `language`, `lang-json`, `lint`, and `codemirror-json-schema` for schema-aware lint/autocomplete), lazy-loaded (`next/dynamic`, `ssr: false`) so it costs nothing until an Advanced field opens. **As built (2026-10-16):** CodeMirror 6 is installed and `JsonEditor` uses it (the textarea with the same props is the fallback while it loads and in tests). `codemirror-json-schema` is **not** installed — the registry answers `403` by security policy for that package — so there is no schema-aware lint: the `schema` prop is reserved and ignored, and a JSON field shows JSON parse errors plus the builder's own pointer-addressed problems.
 
 ## 8. Infra-source seam (deferred, shaped now)
 
@@ -172,4 +172,4 @@ Infra provider registry and sync; other spec types; undo/redo in the builder; sc
 1. Dev DB holds only test rows → clean break is acceptable. **Checked 2026-10-15 on the shared dev Postgres:** 1 unpublished draft event spec, no published versions; mostly test-named rows. Other environments are protected by the migration guard (§10).
 2. Product-level Traits go away; the Tenant/Domain library stays.
 3. Operations are their own builder section.
-4. CodeMirror dependency install is blocked until the registry 403 is resolved.
+4. CodeMirror was installed once the registry was fixed (2026-10-16); only `codemirror-json-schema` stays blocked (403).
