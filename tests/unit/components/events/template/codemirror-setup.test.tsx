@@ -130,6 +130,27 @@ describe("theme and highlighting use the app's design tokens, never fixed colour
     const ours = css.split("}").filter((rule) => rule.includes("var(--")).join("}");
     expect(ours).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
+
+  it("styles the warnings of a schema, its hover text and its completion list with tokens too", () => {
+    make();
+    const css = Array.from(document.querySelectorAll("style")).map((s) => s.textContent ?? "").join("\n");
+    // other packages' own base themes have rules for some of these selectors too: ours is the one that uses the token
+    const rule = (selector: string) => css.split("}").filter((r) => r.includes(selector)).join("}");
+    expect(rule(".cm-diagnostic-warning")).toContain("var(--warning)");
+    expect(rule(".cm6-json-schema-hover")).toContain("padding");
+    expect(rule("aria-selected")).toContain("var(--accent-foreground)");
+  });
+});
+
+describe("without a schema", () => {
+  it("the base extensions carry no completion, and the editor holds no schema until it is given one", async () => {
+    expect(stateOf().languageDataAt("autocomplete", 0)).toEqual([]);
+    const { handle } = make();
+    const dispatch = vi.spyOn(handle.view, "dispatch");
+    await handle.setSchema(null);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(handle.view.state.languageDataAt("autocomplete", 1)).toEqual([]);
+  });
 });
 
 describe("createEditor", () => {

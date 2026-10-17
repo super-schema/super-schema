@@ -3,7 +3,7 @@
 // src/features/events/builder/template/controls/JsonControl.tsx
 // kind "json": a JSON editor (see JsonEditor: CodeMirror, or a textarea until it has loaded). The text is local state: invalid JSON stays
 // in the editor with a message and writes nothing until it parses; empty text removes the value. The text is not reformatted after
-// the user typed it.
+// the user typed it. A `schema` only adds warnings in the editor: it never decides whether the value is written or whether it is invalid.
 import { useState } from "react";
 import { isEmptyValue } from "../value";
 import { jsonProblem } from "./editor-text";
@@ -25,7 +25,7 @@ const pretty = (v: unknown) => (v === undefined ? "" : JSON.stringify(v, null, 2
 /** Two values are the same for the form when their JSON is, with nothing and `{}` / `[]` counting as one. */
 const same = (a: unknown, b: unknown) => (isEmptyValue(a) && isEmptyValue(b)) || JSON.stringify(a) === JSON.stringify(b);
 
-export function JsonControl({ field, id, value, onChange, disabled, required, invalid, describedBy, placeholder }: ControlProps) {
+export function JsonControl({ field, id, value, onChange, disabled, required, invalid, describedBy, placeholder, schema }: ControlProps) {
   const [text, setText] = useState(pretty(value));
   const [seen, setSeen] = useState(value);
   // The value changed from outside: show it, unless the text already stands for it.
@@ -40,7 +40,7 @@ export function JsonControl({ field, id, value, onChange, disabled, required, in
   return (
     <>
       <JsonEditor
-        id={id} value={text} language="json" ariaLabel={field.label} disabled={disabled} placeholder={placeholder}
+        id={id} value={text} language="json" ariaLabel={field.label} disabled={disabled} placeholder={placeholder} schema={schema}
         required={required} invalid={invalid || problem !== null}
         describedBy={[describedBy, problem ? validationId : undefined].filter(Boolean).join(" ") || undefined}
         onChange={(next) => {

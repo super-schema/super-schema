@@ -1,7 +1,47 @@
 import { describe, expect, it } from "vitest";
 import {
-  errorPosition, jsonProblem, lineColumn, minimalChange, normalizeLineBreaks,
+  errorPosition, jsonProblem, lineColumn, minimalChange, normalizeLineBreaks, schemaKey,
 } from "@/features/events/builder/template/controls/editor-text";
+
+describe("schemaKey: schemas compared by what they say, not by identity", () => {
+  const schema = () => ({ type: "object", required: ["a", "b"], properties: { b: { type: "string" }, a: { enum: [1, 2], type: "number" } } });
+
+  it("is the same for a schema rebuilt as a new object, and for the same content with its keys in another order", () => {
+    expect(schemaKey(schema())).toBe(schemaKey(schema()));
+    const reordered = { properties: { a: { type: "number", enum: [1, 2] }, b: { type: "string" } }, required: ["a", "b"], type: "object" };
+    expect(schemaKey(reordered)).toBe(schemaKey(schema()));
+  });
+
+  it("differs when a value, a key or the order of an array differs", () => {
+    const base = schemaKey(schema());
+    expect(schemaKey({ ...schema(), type: "array" })).not.toBe(base);
+    expect(schemaKey({ ...schema(), extra: true })).not.toBe(base);
+    expect(schemaKey({ ...schema(), required: ["b", "a"] })).not.toBe(base);
+    expect(schemaKey({ ...schema(), properties: { a: { type: "number", enum: [2, 1] }, b: { type: "string" } } })).not.toBe(base);
+  });
+
+  it("is null for no schema", () => {
+    expect(schemaKey(null)).toBeNull();
+    expect(schemaKey(undefined)).toBeNull();
+  });
+
+  it("keeps an empty schema (it accepts everything, but it is a schema)", () => {
+    expect(schemaKey({})).toBe("{}");
+  });
+
+  it("is null for something that cannot be written as JSON, instead of throwing", () => {
+    const cyclic: Record<string, unknown> = { type: "object" };
+    cyclic.self = cyclic;
+    expect(schemaKey(cyclic)).toBeNull();
+  });
+
+  it("keeps a `__proto__` property of parsed JSON as the data it is", () => {
+    const withProto = JSON.parse('{"properties": {"__proto__": {"type": "string"}}}') as Record<string, unknown>;
+    const without = { properties: {} };
+    expect(schemaKey(withProto)).toContain("__proto__");
+    expect(schemaKey(withProto)).not.toBe(schemaKey(without));
+  });
+});
 
 describe("lineColumn", () => {
   it("counts lines and columns from 1", () => {

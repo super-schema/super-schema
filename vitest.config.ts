@@ -12,6 +12,7 @@ export default defineConfig({
   test: {
     include: ["tests/unit/**/*.test.{ts,tsx}", "tests/integration/**/*.test.{ts,tsx}"],
     setupFiles: ["./tests/setup.ts"],
+    server: { deps: { inline: ["codemirror-json-schema"] } },
     coverage: {
       provider: "v8",
     },
