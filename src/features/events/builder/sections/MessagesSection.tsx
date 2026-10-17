@@ -25,7 +25,7 @@ import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
-import { usePinJsonSchema } from "../use-pin-json-schema";
+import { usePinJsonSchemaState } from "../use-pin-json-schema";
 import {
   allMessageKeys, blockedText, channelLabel, CheckboxGroup, ItemList, messageLabel, Notice, plural, renameAndSelect, setMessageAllowed,
   withoutMessage,
@@ -192,11 +192,15 @@ function MessageForm({ draft, options, index, message, problems, context, cards,
   // The examples are checked against the schema of the message's own payload / headers entity. The schemas are rendered by the server
   // (the TypeSpec compiler), so they are asked for only while an example is on screen. A pin without a schema is `null`.
   const examplesShown = cards.isOpen("examples") && (message.examples?.length ?? 0) > 0;
-  const payloadSchema = usePinJsonSchema(draft.productId, message.payload, examplesShown);
-  const headersSchema = usePinJsonSchema(draft.productId, message.headers, examplesShown);
+  const payloadSchema = usePinJsonSchemaState(draft.productId, message.payload, examplesShown);
+  const headersSchema = usePinJsonSchemaState(draft.productId, message.headers, examplesShown);
   const exampleContext = useMemo<TemplateFormContext>(
-    () => ({ ...context, pinSchemas: { payload: payloadSchema, headers: headersSchema } }),
-    [context, payloadSchema, headersSchema],
+    () => ({
+      ...context,
+      pinSchemas: { payload: payloadSchema.schema, headers: headersSchema.schema },
+      pinSchemasLoading: { payload: payloadSchema.loading, headers: headersSchema.loading },
+    }),
+    [context, payloadSchema.schema, payloadSchema.loading, headersSchema.schema, headersSchema.loading],
   );
 
   function patch(change: (m: DocMessage) => DocMessage) {

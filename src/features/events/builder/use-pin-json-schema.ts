@@ -36,6 +36,16 @@ export function resetPinSchemaCache(): void {
  * `enabled` is false. `productId` is the product the user works in (the action checks it against the active tenant).
  */
 export function usePinJsonSchema(productId: string, pin: EntityPin | null | undefined, enabled = true): Schema | null {
+  return usePinJsonSchemaState(productId, pin, enabled).schema;
+}
+
+/**
+ * `usePinJsonSchema` that also says whether the answer is still on its way: `loading` is true from the render that wants a schema until
+ * it has arrived or failed (a schema render takes seconds), and false when none is wanted, when it is there, and after a failure.
+ */
+export function usePinJsonSchemaState(
+  productId: string, pin: EntityPin | null | undefined, enabled = true,
+): { schema: Schema | null; loading: boolean } {
   const entityId = pin?.entityId ?? "";
   const versionId = pin?.entityVersionId ?? null;
   const wanted = enabled && entityId !== "";
@@ -61,7 +71,8 @@ export function usePinJsonSchema(productId: string, pin: EntityPin | null | unde
     return () => { cancelled = true; };
   }, [wanted, kept, productId, entityId, versionId, slot]);
 
-  if (!wanted) return null;
-  if (kept !== undefined) return kept;
-  return answer !== null && answer.slot === slot ? answer.schema : null;
+  if (!wanted) return { schema: null, loading: false };
+  if (kept !== undefined) return { schema: kept, loading: false };
+  if (answer !== null && answer.slot === slot) return { schema: answer.schema, loading: false };
+  return { schema: null, loading: true };
 }

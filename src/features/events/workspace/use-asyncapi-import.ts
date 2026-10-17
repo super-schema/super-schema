@@ -7,21 +7,27 @@
 //   input      the document is pasted or read from a file; Preview asks the server what an import would do (writes nothing).
 //   preview    the review: the resolved event name (editable), counts, entities, warnings. A document the server refuses with a list of
 //              problems is shown here too, as the list, with no way to import it. Any other refusal stays on `input`, next to the text.
-//   importing  the import is running. `imported` is the success (the dialog stays locked: the host navigates to the event) and `failed`
-//              the failure (what the server did to undo it, then Back or Try again).
+//   importing  the import is running. `imported` is the success (the dialog stays locked: the host navigates to the event, and if that
+//              takes `IMPORT_STALL_MS` the dialog unlocks and says so, `stalled`) and `failed` the failure (what the server did to undo it,
+//              then Back or Try again; after a failure of unknown outcome only Back (to the document) and Close, and the tree is refreshed).
 //
 // Both server actions return an `ActionResult` and never throw; a rejected promise (network, serialization) is shown as the generic
 // message. A second Preview or Import in the same tick is ignored (`inFlight`, a ref: the closure of a second click still sees the old state).
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { importAsyncApiAction, previewAsyncApiImportAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { normalizeCatalogName } from "@/lib/events/inputs";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { AsyncApiImportPreview } from "@/services/events/asyncapi-import.service";
 import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
-import { DOCUMENT_TOO_LARGE, EVENT_NAME_REQUIRED, FILE_UNREADABLE, importedToast, MAX_DOCUMENT_BYTES, type ImportStep } from "./import-labels";
+import {
+  DOCUMENT_TOO_LARGE, EVENT_NAME_REQUIRED, FILE_EMPTY, FILE_UNREADABLE, importedToast, MAX_DOCUMENT_BYTES, type ImportStep,
+} from "./import-labels";
 
 export type ImportStage = "input" | "preview" | "importing" | "imported" | "failed";
+
+/** How long the dialog stays locked after a success while the host opens the event: past this the user can close it (the event exists). */
+export const IMPORT_STALL_MS = 15_000;
 
 /** One thing the AsyncAPI validator found wrong, `pointer` an RFC 6901 pointer into the document ("" = the document itself). */
 export interface ImportProblem { pointer: string; message: string }
@@ -68,6 +74,12 @@ export function failureOf(result: { error: string; code?: string; details?: obje
 }
 
 const plainFailure = (text: string): ImportFailure => ({ code: null, text, problems: [], leftovers: [] });
+
+/** The service's refusal of a name, as sentences: "<message>. <fix>" (no second full stop when the message already ends one). */
+function nameErrorText(message: string, fix: string | undefined): string {
+  const first = /[.!?]$/.test(message) ? message : `${message}.`;
+  return fix ? `${first} ${fix}` : first;
+}
 
 /** Whether the text is over the dialog's limit, measured in UTF-8 bytes as the request carries it (a `.length` would undercount accented and CJK text). */
 function overLimit(text: string): boolean {
@@ -124,6 +136,16 @@ export function useAsyncApiImport({ productId, onImported, onLockChange }: {
     }
     try {
       const text = await readAsText(picked);
+      // Nothing to import, or not text at all: a binary file decodes to U+FFFD (or NUL) characters, which re-encode to far more bytes than
+      // the file had and would then be refused as "larger than 800 KB". Neither fills the box.
+      if (text.trim() === "") {
+        setInputFailure(plainFailure(FILE_EMPTY));
+        return;
+      }
+      if (text.includes("\0") || text.includes("�")) {
+        setInputFailure(plainFailure(FILE_UNREADABLE));
+        return;
+      }
       setContent(text);
       setFile({ name: picked.name, text });
       setInputFailure(null);
@@ -172,6 +194,8 @@ export function useAsyncApiImport({ productId, onImported, onLockChange }: {
 
   async function runImport() {
     if (inFlight.current || (stage !== "preview" && stage !== "failed")) return;
+    // After a failure of unknown outcome the import may have landed: a second one could create the event twice (Back, and a new preview, is the way on).
+    if (stage === "failed" && importFailure?.unknownOutcome === true) return;
     if (review?.kind !== "preview" || source.current === null) return;
     const trimmed = eventName.trim();
     if (trimmed === "") {
@@ -181,7 +205,7 @@ export function useAsyncApiImport({ productId, onImported, onLockChange }: {
     // The service's own rule, so the user is told here, next to the field, and nothing is sent.
     const name = normalizeCatalogName(trimmed, "Event");
     if (!name.success) {
-      setNameError([name.error.message, name.error.suggestedFix].filter(Boolean).join(" "));
+      setNameError(nameErrorText(name.error.message, name.error.suggestedFix));
       return;
     }
     inFlight.current = true;
@@ -199,13 +223,18 @@ export function useAsyncApiImport({ productId, onImported, onLockChange }: {
       setStage("failed");
       onLockChange(false);
       inFlight.current = false;
+      // If the import did land, the explorer must show the event and its entities: the dialog sends the user to look there.
+      void invalidateDomainsTree();
       return;
     }
     if (!result.success) {
-      setImportFailure(failureOf(result));
+      const failure = failureOf(result);
+      setImportFailure(failure);
       setStage("failed");
       onLockChange(false);
       inFlight.current = false;
+      // What could not be rolled back is in the product now and the user is told to delete it: the tree must show it.
+      if (failure.leftovers.length > 0) void invalidateDomainsTree();
       return;
     }
     // Stays locked and in flight: the host navigates to the event, and a second import now would create a duplicate.
@@ -215,15 +244,32 @@ export function useAsyncApiImport({ productId, onImported, onLockChange }: {
     onImported(result.data.eventId);
   }
 
-  /** Back from the review to the document, or from a failure to the review. Not while something runs. */
+  // After a success the host opens the event. If that has not happened `IMPORT_STALL_MS` later the user is let out: the dialog unlocks and
+  // says the event exists. The timer goes when the dialog does (the wizard unmounts, which clears it).
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (stage !== "imported") return undefined;
+    const timer = setTimeout(() => {
+      setStalled(true);
+      onLockChange(false);
+    }, IMPORT_STALL_MS);
+    return () => clearTimeout(timer);
+  }, [stage, onLockChange]);
+
+  /**
+   * Back from the review to the document, or from a failure to the review. Not while something runs. After a failure of unknown outcome
+   * it goes to the document instead: the name on the review may be taken by the import that did land, and only a new preview says so
+   * (it then offers the numbered name).
+   */
   function back() {
     if (inFlight.current) return;
     if (stage === "preview") {
       setNameError(null);
       setStage("input");
     } else if (stage === "failed") {
+      const unknownOutcome = importFailure?.unknownOutcome === true;
       setImportFailure(null);
-      setStage("preview");
+      setStage(unknownOutcome ? "input" : "preview");
     }
   }
 
@@ -234,7 +280,7 @@ export function useAsyncApiImport({ productId, onImported, onLockChange }: {
   }
 
   return {
-    stage, step, content, editContent, loadFile, inputFailure, previewing, review, eventName, setEventName, nameError, importFailure, back, submit,
+    stage, step, content, editContent, loadFile, inputFailure, previewing, review, eventName, setEventName, nameError, importFailure, back, submit, stalled,
     /** The preview is running or the import is: controls that start or change something are off. */
     working: previewing || stage === "importing" || stage === "imported",
   };

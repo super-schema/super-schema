@@ -8,9 +8,17 @@ import { forceLinting, forEachDiagnostic } from "@codemirror/lint";
 import { EditorView } from "@codemirror/view";
 import { act, cleanup, configure, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BindingsForm } from "@/features/events/builder/template";
 import { bindingVersion } from "@/lib/events/templates";
+
+// The first test pays the cold dynamic import of the editor setup and the schema library (about 1 s idle, over 5 s under a loaded full run).
+vi.setConfig({ testTimeout: 30_000 });
+beforeAll(async () => {
+  await import("@/features/events/builder/template/controls/codemirror-setup");
+  await import("codemirror-json-schema");
+  await import("@codemirror/autocomplete");
+}, 60_000);
 
 // Markers arrive after the linter's 250 ms delay (or at once when forced); a loaded machine needs more than the 1 s default.
 configure({ asyncUtilTimeout: 4000 });

@@ -33,6 +33,7 @@ export const stepIndicator = (step: ImportStep): string => `Step ${step} of 3: $
 
 export const BACK = "Back";
 export const CANCEL = "Cancel";
+export const CLOSE = "Close";
 export const PREVIEW = "Preview";
 export const CHECKING = "Checking…";
 export const IMPORT = "Import";
@@ -58,6 +59,7 @@ export const MAX_DOCUMENT_BYTES = 800_000;
 /** Shown for a file or a pasted text over `MAX_DOCUMENT_BYTES`. */
 export const DOCUMENT_TOO_LARGE = "The document is larger than 800 KB. Split it or remove unused components.";
 export const FILE_UNREADABLE = "The file could not be read";
+export const FILE_EMPTY = "The file is empty.";
 
 // ── Step 2: the review ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -110,6 +112,7 @@ export const IMPORT_WARNING_LABELS: Record<ImportWarningCode, string> = {
 export const warningGroupLabel = (code: string): string => (Object.hasOwn(IMPORT_WARNING_LABELS, code) ? IMPORT_WARNING_LABELS[code as ImportWarningCode] : code);
 export const warningCount = (n: number): string => plural(n, "warning", "warnings");
 export const WARNINGS_HEADING = "Warnings";
+export const WARNINGS_NOTE = "Warnings do not stop the import.";
 /** Where in the SOURCE file a warning points; "" is the document itself. */
 export const warningPointer = (pointer: string): string => (pointer === "" ? "the document" : pointer);
 /** How many items of a group are listed before "Show all". */
@@ -134,13 +137,18 @@ export const omittedWarningsNote = (n: number): string => `${n} more ${n === 1 ?
 
 export const PROBLEMS_HEADING = "This document cannot be imported";
 export const PROBLEMS_LEAD = "Nothing was created. Fix these problems in the document, then preview it again.";
-export const problemCount = (n: number): string => plural(n, "problem", "problems");
+/**
+ * How many problems the server reports at most (`MAX_PARSER_PROBLEMS` in `src/services/events/import-limits.ts`; a test pins the two
+ * equal). A list that long was cut off by the server, so its length is a lower bound, not a count.
+ */
+export const PROBLEMS_SHOWN_CAP = 100;
+export const problemCount = (n: number): string => (n >= PROBLEMS_SHOWN_CAP ? `at least ${PROBLEMS_SHOWN_CAP} problems` : plural(n, "problem", "problems"));
 /** How many problems are listed; the rest is a count. */
 export const PROBLEMS_SHOWN = 50;
 export const problemsMore = (n: number): string => `and ${n} more not shown`;
 
 /** The first line of an error, by its code. Every importer error code has one; a code from elsewhere has none (its message stands alone). */
-export const ERROR_HEADLINES: Record<ImportErrorCode | "COMPILE_TIMEOUT", string> = {
+export const ERROR_HEADLINES: Record<ImportErrorCode, string> = {
   PARSE_ERROR: "The document could not be read",
   UNSUPPORTED_VERSION: "AsyncAPI 3.0 only",
   TOO_LARGE: "The document is too large",
@@ -151,8 +159,9 @@ export const ERROR_HEADLINES: Record<ImportErrorCode | "COMPILE_TIMEOUT", string
   MISSING_PAYLOAD_PIN: "A message has no payload entity",
   VALIDATION_ERROR: "The document cannot be imported",
   IMPORT_FAILED: "The import failed",
-  COMPILE_TIMEOUT: "Checking the document took too long",
 };
+/** The first line of `IMPORT_FAILED` when it refuses a PREVIEW: a preview writes nothing, so it is not an import that failed. */
+export const PREVIEW_FAILED_HEADING = "The document could not be processed";
 export const errorHeadline = (code: string | null | undefined): string | null =>
   code !== null && code !== undefined && Object.hasOwn(ERROR_HEADLINES, code) ? ERROR_HEADLINES[code as keyof typeof ERROR_HEADLINES] : null;
 
@@ -162,10 +171,12 @@ export const IMPORTING_HEADING = "Importing…";
 export const IMPORTING_STATUS = "Creating the entities, then the event. Keep this window open.";
 export const IMPORTED_HEADING = "Imported";
 export const IMPORTED_STATUS = "Opening the event…";
+/** Shown when opening the event takes too long (see `IMPORT_STALL_MS`): the import itself is done, only the page change hangs. */
+export const IMPORT_STALLED = "This is taking longer than expected. The event was created; you can close this window and find it in the explorer on the left.";
 export const FAILED_HEADING = "The import failed";
 export const NOTHING_CREATED = "Nothing was created.";
 /** Instead of "Nothing was created." when the connection failed: the server may have finished the import. */
-export const OUTCOME_UNKNOWN = "The connection failed, so it is not known whether the import went through. Check this product's Events list before you try again.";
+export const OUTCOME_UNKNOWN = "The connection failed, so it is not known whether the import went through. Close this window and look for the event in the explorer on the left before you import again.";
 export const LEFTOVERS_LEAD = "Some of what the import had created could not be removed again:";
 export const LEFTOVERS_ACTION = "Delete them by hand in this product before you import again; their names are taken until you do.";
 export const leftoverEntity = (name: string | null): string => (name === null ? "An entity" : `The entity "${name}"`);

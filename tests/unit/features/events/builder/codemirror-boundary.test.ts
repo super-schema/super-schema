@@ -20,8 +20,12 @@ function sourceFiles(dir: string): string[] {
 }
 const relative = (file: string) => path.relative(ROOT, file).split(path.sep).join("/");
 
-// every way a module can name a package: from "x", import "x", import("x"), require("x"), export ... from "x"
-const PACKAGE = /(?:from\s*|import\s*\(?\s*|require\s*\(\s*)["'](@codemirror\/[^"']+|@lezer\/[^"']+|codemirror(?:-json-schema)?)["']/g;
+// every way a module can name a package: from "x", import "x", import("x"), require("x"), export ... from "x"; a subpath of the two plain
+// packages counts too (`codemirror-json-schema/yaml`)
+const PACKAGE = /(?:from\s*|import\s*\(?\s*|require\s*\(\s*)["'](@codemirror\/[^"']+|@lezer\/[^"']+|codemirror(?:-json-schema)?(?:\/[^"']*)?)["']/g;
+
+/** A module specifier that ends in `codemirror-setup`, from any folder: "./codemirror-setup", "../controls/codemirror-setup", "@/features/…/codemirror-setup". */
+const SETUP_SPECIFIER = /["'](?:[^"']*\/)?codemirror-setup["']/;
 
 /** The packages `text` names, in the order it names them. */
 const packagesIn = (text: string): string[] => Array.from(text.matchAll(PACKAGE), (match) => match[1]);
@@ -49,8 +53,14 @@ describe("CodeMirror is confined to its wrapper", () => {
     expect(packagesIn('import { EditorView } from "codemirror";')).toEqual(["codemirror"]);
     expect(packagesIn('import type { SyntaxNode } from "@lezer/common";')).toEqual(["@lezer/common"]);
     expect(packagesIn('import { autocompletion } from "@codemirror/autocomplete";')).toEqual(["@codemirror/autocomplete"]);
+    // a subpath of the package is the package
+    expect(packagesIn('import { yamlSchema } from "codemirror-json-schema/yaml";')).toEqual(["codemirror-json-schema/yaml"]);
+    expect(packagesIn('const lib = await import("codemirror-json-schema/json5");')).toEqual(["codemirror-json-schema/json5"]);
+    expect(packagesIn("import { x } from 'codemirror/dist/index.js';")).toEqual(["codemirror/dist/index.js"]);
     expect(packagesIn('import { x } from "codemirror-json5";')).toEqual([]);
+    expect(packagesIn('import { x } from "codemirror-json5/sub";')).toEqual([]);
     expect(packagesIn('import { x } from "./codemirror-json-schema-helpers";')).toEqual([]);
+    expect(packagesIn('import { x } from "codemirror-json-schema-helpers/sub";')).toEqual([]);
   });
 
   it("is imported by JsonEditor.tsx's setup module and by nothing else", () => {
@@ -108,9 +118,31 @@ describe("CodeMirror is confined to its wrapper", () => {
 
   it("nothing else in src imports the setup module, so only JsonEditor can pull it in", () => {
     const importers = files
-      .filter((file) => relative(file) !== ALLOWED[0] && /["'](?:\.\/|@\/features\/events\/builder\/template\/controls\/)codemirror-setup["']/.test(readFileSync(file, "utf8")))
+      .filter((file) => relative(file) !== ALLOWED[0] && SETUP_SPECIFIER.test(readFileSync(file, "utf8")))
       .map(relative);
     expect(importers).toEqual([]);
+  });
+
+  it("the setup-module matcher catches it from any folder, by any path, and nothing that only looks like it", () => {
+    for (const bad of [
+      'import("./codemirror-setup")',
+      "import('./codemirror-setup')",
+      'import { x } from "./controls/codemirror-setup";',
+      'import { x } from "../controls/codemirror-setup";',
+      'import { x } from "../../template/controls/codemirror-setup";',
+      'import { x } from "@/features/events/builder/template/controls/codemirror-setup";',
+      'import { x } from "codemirror-setup";',
+    ]) {
+      expect(SETUP_SPECIFIER.test(bad), bad).toBe(true);
+    }
+    for (const fine of [
+      'import { x } from "./codemirror-setup-helpers";',
+      'import { x } from "./my-codemirror-setup";',
+      'import { x } from "./codemirror-setup.test-utils";',
+      'import { x } from "./controls/codemirror-jsdom";',
+    ]) {
+      expect(SETUP_SPECIFIER.test(fine), fine).toBe(false);
+    }
   });
 
   it("the CodeMirror packages are direct dependencies, not left to chance", () => {

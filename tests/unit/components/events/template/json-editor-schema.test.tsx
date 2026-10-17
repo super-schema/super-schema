@@ -9,11 +9,19 @@ import { CompletionContext, type CompletionResult } from "@codemirror/autocomple
 import { forceLinting, forEachDiagnostic } from "@codemirror/lint";
 import { EditorView } from "@codemirror/view";
 import { act, cleanup, configure, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createEditor, type EditorHandle, type EditorOptions } from "@/features/events/builder/template/controls/codemirror-setup";
 import { JsonControl } from "@/features/events/builder/template/controls/JsonControl";
 import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
 import type { ControlProps } from "@/features/events/builder/template/controls/types";
+
+// The first test pays the cold dynamic import of the editor setup and the schema library (about 1 s idle, over 5 s under a loaded full run).
+vi.setConfig({ testTimeout: 30_000 });
+beforeAll(async () => {
+  await import("@/features/events/builder/template/controls/codemirror-setup");
+  await import("codemirror-json-schema");
+  await import("@codemirror/autocomplete");
+}, 60_000);
 
 const h = vi.hoisted(() => ({ loads: 0, updates: 0, hovers: 0, completions: 0, failApply: 0 }));
 vi.mock("codemirror-json-schema", async (importOriginal) => {

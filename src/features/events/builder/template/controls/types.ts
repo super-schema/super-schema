@@ -24,6 +24,12 @@ export interface TemplateFormContext {
    * (see `example-schema.ts`); nothing else reads them.
    */
   pinSchemas?: { payload?: Record<string, unknown> | null; headers?: Record<string, unknown> | null };
+  /**
+   * Beside `pinSchemas`: which of those schemas is still on its way (rendering one takes seconds). A `null` schema that is loading is
+   * told apart from one that is not coming (no entity chosen, or the load failed): the Generate button says "Loading the schema…"
+   * for the first and "Needs a … entity with a schema." for the second.
+   */
+  pinSchemasLoading?: { payload?: boolean; headers?: boolean };
 }
 
 /** A problem to show next to the field it points at: a JSON pointer into the document and the message. */

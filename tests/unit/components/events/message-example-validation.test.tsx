@@ -8,7 +8,7 @@ import { forEachDiagnostic } from "@codemirror/lint";
 import { EditorView } from "@codemirror/view";
 import { act, cleanup, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessagesSection } from "@/features/events/builder/sections/MessagesSection";
 import { PropertiesSection } from "@/features/events/builder/sections/PropertiesSection";
 import { exampleSchema, exampleSource } from "@/features/events/builder/template/controls/example-schema";
@@ -21,6 +21,14 @@ import { ENTITY_OPTIONS, PIN, renderSection, sampleDocument } from "./builder-ha
 
 type Schema = Record<string, unknown>;
 type Outcome = { success: true; data: { schema: Schema } } | { success: false; error: string; code: string };
+
+// The first test pays the cold dynamic import of the editor setup and the schema library (about 1 s idle, over 5 s under a loaded full run).
+vi.setConfig({ testTimeout: 30_000 });
+beforeAll(async () => {
+  await import("@/features/events/builder/template/controls/codemirror-setup");
+  await import("codemirror-json-schema");
+  await import("@codemirror/autocomplete");
+}, 60_000);
 
 const h = vi.hoisted(() => ({ pinJsonSchemaAction: vi.fn(), listPinnableVersionsAction: vi.fn() }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
@@ -134,6 +142,8 @@ describe("an example payload against the schema of the message's payload entity"
     await renderMessages(documentWith([{ payload: { orderId: "o-1", quantity: 2 } }]));
     const view = await editorOf("payload");
     await waitFor(() => expect(h.pinJsonSchemaAction).toHaveBeenCalled());
+    // "the action was called" is not "the schema is installed": the button is enabled once the schema has arrived, so the wait below proves something
+    await waitFor(() => expect(generateButton().disabled).toBe(false));
     await act(async () => { await sleep(400); });
     expect(markers(view)).toEqual([]);
   });
@@ -142,6 +152,7 @@ describe("an example payload against the schema of the message's payload entity"
     const { probe } = await renderMessages(documentWith([{ payload: { orderId: "o-1" } }]));
     const view = await editorOf("payload");
     await waitFor(() => expect(h.pinJsonSchemaAction).toHaveBeenCalled());
+    await waitFor(() => expect(generateButton().disabled).toBe(false));
     replaceText(view, '{"orderId": 5, "colour": "red"}');
     await waitFor(() => expect(probe.draft.doc.messages[0].examples?.[0].payload).toEqual({ orderId: 5, colour: "red" }));
     await waitFor(() => expect(markers(view).map((m) => m.severity)).toEqual(["warning", "warning"]));
@@ -156,6 +167,8 @@ describe("an example payload against the schema of the message's payload entity"
     const payload = await editorOf("payload");
     await waitFor(() => expect(markers(headers)).toHaveLength(1));
     expect(markers(headers)[0]).toMatchObject({ severity: "warning", text: "7" });
+    // the payload's own schema has arrived too (its button is enabled), so the empty list below is a verdict and not a race
+    await waitFor(() => expect(generateButton("payload").disabled).toBe(false));
     await act(async () => { await sleep(400); });
     expect(markers(payload)).toEqual([]);
     expect(h.pinJsonSchemaAction.mock.calls.map(([, pin]) => (pin as EntityPin).entityId).sort()).toEqual(["ent-1", "ent-2"]);
@@ -271,18 +284,35 @@ describe("no stale schema", () => {
 });
 
 describe("Generate from payload", () => {
-  it("is not usable until the schema is known, and says why", async () => {
+  it("is not usable until the schema is known, and says why: it is still loading, then it is there", async () => {
     const pending = deferred();
     serve({ "ent-1": pending.promise });
     await renderMessages(documentWith([{ name: "empty" }]));
     await editorOf("payload");
     expect(generateButton().disabled).toBe(true);
-    expect(screen.getByTestId("message-examples-0-payload-generate-hint").textContent).toBe("Needs a payload entity with a schema.");
+    // the schema is being rendered (it takes seconds): not "needs an entity", which the user already chose
+    expect(screen.getByTestId("message-examples-0-payload-generate-hint").textContent).toBe("Loading the schema…");
     expect(generateButton().textContent).toBe("Generate from payload");
     expect(generateButton("headers").textContent).toBe("Generate from headers");
+    expect(screen.getByTestId("message-examples-0-headers-generate-hint").textContent).toBe("Needs a headers entity with a schema.");
     pending.resolve(ok(ORDER));
     await waitFor(() => expect(generateButton().disabled).toBe(false));
     expect(screen.queryByTestId("message-examples-0-payload-generate-hint")).toBeNull();
+  });
+
+  it("says 'Needs a payload entity with a schema.' when there is none coming: the load failed, or the message has no payload entity", async () => {
+    serve({ "ent-1": { success: false, error: "The schema of this entity could not be generated", code: "ARTIFACT_RENDER_FAILED" } });
+    await renderMessages(documentWith([{ name: "empty" }]));
+    await editorOf("payload");
+    await waitFor(() => expect(screen.getByTestId("message-examples-0-payload-generate-hint").textContent).toBe("Needs a payload entity with a schema."));
+    expect(generateButton().disabled).toBe(true);
+    cleanup();
+
+    const doc = documentWith([{ name: "empty" }]);
+    doc.messages[0].payload = { entityId: "", entityVersionId: null };
+    await renderMessages(doc);
+    await editorOf("payload");
+    expect(screen.getByTestId("message-examples-0-payload-generate-hint").textContent).toBe("Needs a payload entity with a schema.");
   });
 
   it("fills an empty example at once, with pretty JSON the editor then reports as valid", async () => {

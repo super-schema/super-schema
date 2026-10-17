@@ -170,13 +170,18 @@ test.describe("importing an AsyncAPI document end to end", () => {
     });
 
     await test.step("the explorer lists the entities, and they are unpublished drafts", async () => {
-      const explorer = page.getByTestId("left-sidebar");
-      for (const name of ENTITIES) await expect(explorer.getByText(name, { exact: true }), `explorer row ${name}`).toBeVisible({ timeout: 30_000 });
       const { rows } = await pg().query(
-        `SELECT name, status, "latestVersionId" FROM entities WHERE "productId" = $1 AND name = ANY($2) ORDER BY name`,
+        `SELECT id, name, status, "latestVersionId" FROM entities WHERE "productId" = $1 AND name = ANY($2) ORDER BY name`,
         [f.product.id, [...ENTITIES]]
       );
-      expect(rows).toEqual(ENTITIES.map((name) => ({ name, status: "DRAFT", latestVersionId: null })));
+      expect(rows.map((r) => ({ name: r.name, status: r.status, latestVersionId: r.latestVersionId }))).toEqual(
+        ENTITIES.map((name) => ({ name, status: "DRAFT", latestVersionId: null }))
+      );
+      // A hard load shows the sidebar's fallback and then the real one, for a moment both: read rows from it only once there is one. The row
+      // is found by the entity's id (its testid), not by its text, which the event's own page and the dialog could repeat.
+      await expect(page.getByTestId("left-sidebar")).toHaveCount(1, { timeout: 30_000 });
+      const explorer = page.getByTestId("left-sidebar");
+      for (const row of rows) await expect(explorer.getByTestId(`entity-${row.id}`), `explorer row ${row.name}`).toBeVisible({ timeout: 30_000 });
       const versions = await pg().query(`SELECT count(*) AS n FROM entity_versions ev JOIN entities e ON e.id = ev."entityId" WHERE e."productId" = $1`, [f.product.id]);
       expect(Number(versions.rows[0].n), "nothing was published").toBe(0);
       const after = await inventory(f.product.id);

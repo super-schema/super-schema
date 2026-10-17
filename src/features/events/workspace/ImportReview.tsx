@@ -15,15 +15,17 @@ import type { ImportFailure, ImportProblem } from "./use-asyncapi-import";
 import {
   builtInTraitsText, COUNT_LABELS, DRAFTS_HEADING, DRAFTS_NOTE, entitiesHeading, errorHeadline, EVENT_NAME_HINT, EVENT_NAME_LABEL,
   FAILED_HEADING, fieldCount, FORMAT_LABELS, fromDocumentTitle, IMPORT_WARNING_LABELS, LEFTOVERS_ACTION, LEFTOVERS_LEAD,
-  leftoverEntity, leftoverEvent, NO_ENTITIES, NOTHING_CREATED, omittedWarningsCount, omittedWarningsNote, OUTCOME_UNKNOWN, problemCount,
-  PROBLEMS_HEADING, PROBLEMS_LEAD, PROBLEMS_SHOWN, problemsMore, RENAMED_BADGE, renamedNote, showAllWarnings, warningCount, warningGroupLabel,
-  warningPointer, WARNINGS_HEADING, WARNINGS_SHOWN_PER_GROUP,
+  leftoverEntity, leftoverEvent, NO_ENTITIES, NOTHING_CREATED, omittedWarningsCount, omittedWarningsNote, OUTCOME_UNKNOWN, PREVIEW_FAILED_HEADING,
+  problemCount, PROBLEMS_HEADING, PROBLEMS_LEAD, PROBLEMS_SHOWN, problemsMore, RENAMED_BADGE, renamedNote, showAllWarnings, warningCount,
+  warningGroupLabel, warningPointer, WARNINGS_HEADING, WARNINGS_NOTE, WARNINGS_SHOWN_PER_GROUP,
 } from "./import-labels";
 
 /** Longest name the catalog accepts (`CATALOG_NAME_PATTERN`); the service owns the character rules and the client states them. */
 const NAME_MAX_LENGTH = 128;
 
 const sectionHeading = "text-body-small font-medium text-foreground";
+/** Text that comes from the imported document (a title, a pointer, a message) has no word breaks to rely on: it wraps anywhere instead of widening the dialog. */
+const WRAP = "break-words [overflow-wrap:anywhere]";
 
 // ── The review ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -46,7 +48,7 @@ export function ReviewPanel({ preview, eventName, nameError, onEventNameChange, 
         />
         <p id="import-event-name-hint" data-testid="import-event-name-hint" className="text-caption text-muted-foreground">{EVENT_NAME_HINT}</p>
         {nameError && <p id="import-event-name-error" role="alert" data-testid="import-event-name-error" className="text-body-small text-destructive">{nameError}</p>}
-        <p data-testid="import-title" className="text-caption text-muted-foreground">{fromDocumentTitle(preview.title)}</p>
+        <p data-testid="import-title" className={`${WRAP} text-caption text-muted-foreground`}>{fromDocumentTitle(preview.title)}</p>
       </div>
 
       <dl data-testid="import-counts" className="grid grid-cols-3 gap-space-2 sm:grid-cols-6">
@@ -136,6 +138,7 @@ function WarningGroups({ warnings }: { warnings: readonly ImportWarning[] }) {
       <h3 id="import-warnings-heading" className={`${sectionHeading} flex items-center gap-space-2`}>
         {WARNINGS_HEADING} <Badge variant="secondary" data-testid="import-warnings-count">{warningCount(total)}</Badge>
       </h3>
+      <p data-testid="import-warnings-note" className="text-caption text-muted-foreground">{WARNINGS_NOTE}</p>
       <ul className="divide-y divide-border/60 rounded-lg border border-border/60">
         {groups.map((group) => <WarningGroup key={group.code} group={group} />)}
       </ul>
@@ -165,8 +168,8 @@ function WarningGroup({ group }: { group: WarningGroupData }) {
           <ul data-testid={`${id}-list`} className="space-y-space-2">
             {shown.map((warning, i) => (
               <li key={i} data-testid={`${id}-item`} className="text-body-small">
-                <p className="text-foreground">{warning.message}</p>
-                <p className="font-mono text-caption text-muted-foreground">{warningPointer(warning.pointer)}</p>
+                <p className={`${WRAP} text-foreground`}>{warning.message}</p>
+                <p className={`${WRAP} font-mono text-caption text-muted-foreground`}>{warningPointer(warning.pointer)}</p>
               </li>
             ))}
           </ul>
@@ -189,8 +192,8 @@ function ProblemList({ problems }: { problems: readonly ImportProblem[] }) {
       <ul data-testid="import-problems" aria-label={PROBLEMS_HEADING} className="max-h-64 space-y-space-2 overflow-y-auto">
         {shown.map((problem, i) => (
           <li key={i} data-testid={`import-problem-${i}`} className="rounded-md border border-border/50 p-space-3">
-            <p className="text-body-small text-foreground">{problem.message}</p>
-            <p className="font-mono text-caption text-muted-foreground">{warningPointer(problem.pointer)}</p>
+            <p className={`${WRAP} text-body-small text-foreground`}>{problem.message}</p>
+            <p className={`${WRAP} font-mono text-caption text-muted-foreground`}>{warningPointer(problem.pointer)}</p>
           </li>
         ))}
       </ul>
@@ -215,7 +218,8 @@ export function ProblemsPanel({ failure }: { failure: ImportFailure }) {
 
 /** A refusal that has no list (an unreadable file, AsyncAPI 2.x, a reference cycle, a timeout, …): its headline and the server's words. */
 export function InputFailureAlert({ failure }: { failure: ImportFailure }) {
-  const headline = errorHeadline(failure.code);
+  // `IMPORT_FAILED` on a preview: nothing was imported (a preview writes nothing), so "The import failed" would be wrong here.
+  const headline = failure.code === "IMPORT_FAILED" ? PREVIEW_FAILED_HEADING : errorHeadline(failure.code);
   return (
     <div role="alert" data-testid="import-error" className="space-y-space-1 text-body-small text-destructive">
       {headline && <p data-testid="import-error-headline" className="font-medium">{headline}</p>}
