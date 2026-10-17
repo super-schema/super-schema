@@ -306,7 +306,7 @@ export function checkEntryCounts(raw: unknown): Result<void> {
   return ok(undefined);
 }
 
-/** The check that runs right after `checkEntryCounts`, before anything slow: a document that is too big once its references are resolved is refused (nothing is created). */
+/** The check that runs right after `checkEntryCounts`, before anything slow: a document that is too big once its references are resolved is refused (nothing is written at all: the tenant's built-in library traits are installed only after the AsyncAPI parser has accepted the document). */
 export function checkExpandedSize(raw: unknown): Result<void> {
   if (expandedSizeUpTo(raw, MAX_EXPANDED_DOCUMENT_BYTES) <= MAX_EXPANDED_DOCUMENT_BYTES) return ok(undefined);
   return refuse(

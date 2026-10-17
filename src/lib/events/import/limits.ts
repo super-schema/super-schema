@@ -1,7 +1,10 @@
 // src/lib/events/import/limits.ts
-// The bounds on what the AsyncAPI importer's pure layer PARSES, RESOLVES and MAPS (memory, the stack, and the cost of this layer, except a
-// flood of YAML syntax errors). They do NOT bound the time of the AsyncAPI parser, which the service runs afterwards, nor the YAML error
-// flood: both are documented in `src/services/events/import-limits.ts` (KNOWN LIMITATION). Pure — client-safe.
+// The bounds on what the AsyncAPI importer's pure layer PARSES and RESOLVES: memory and the stack (YAML aliases, nesting, key length, the
+// number of values, the expansion of references). They do NOT bound: (a) the cost of MAPPING a document with very wide objects or lists
+// (some steps are quadratic in them): that bound is `checkEntryCounts` / `checkExpandedSize` in the SERVICE layer
+// (`src/services/events/import-limits.ts`), which the service runs before the mapper and a caller of the pure layer alone does not get;
+// (b) the time of the AsyncAPI parser, which the service runs afterwards; (c) a flood of YAML syntax errors. (b) and (c) are documented
+// in `src/services/events/import-limits.ts` (KNOWN LIMITATION). Pure — client-safe.
 
 /** YAML aliases the parser resolves before it gives up (the `yaml` package counts them against the size of what they expand to). */
 export const MAX_ALIAS_COUNT = 100;

@@ -495,3 +495,161 @@ describe("exampleFromSchema: shapes the sampler reads differently from a gate th
     })).toEqual({ a: "x", b: [0, 0] });
   });
 });
+
+// Every unit of work of the copy is paid for before it is done, and the weight of what the sampler would build counts the TEXT of names.
+// Each hostile shape below got past round 2 (measured there: up to 43 s, 1.3 GB, one a V8 out-of-memory abort).
+describe("exampleFromSchema: work and names are charged to the budget before they are done", () => {
+  beforeEach(() => {
+    vi.mocked(sample).mockClear();
+  });
+
+  /** Refused with EXAMPLE_TOO_LARGE inside `ms`, the sampler never called. */
+  function refusedFast(schema: Schema, label: string, ms = 200): void {
+    const started = performance.now();
+    const result = exampleFromSchema(schema);
+    expect(performance.now() - started, label).toBeLessThan(ms);
+    expect(failure(result), label).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+    expect(sample, label).not.toHaveBeenCalled();
+  }
+  const entries = (count: number, value: () => unknown, prefix = "p"): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (let i = 0; i < count; i++) out[`${prefix}${i}`] = value();
+    return out;
+  };
+  const refs = (count: number, to = "#/definitions/A"): Record<string, Schema> => entries(count, () => ({ $ref: to }), "u") as Record<string, Schema>;
+  const used = (count: number, definition: Schema): Schema => ({ type: "object", properties: refs(count), definitions: { A: definition } });
+
+  it("`true` properties: 2,000 of them used through 4,000 references (a boolean is a unit of work like any schema)", () => {
+    refusedFast(used(4_000, { type: "object", properties: entries(2_000, () => true) }), "2,000 true x 4,000 refs");
+  });
+
+  it("100,000 `true` properties used through 1,000 references: refused at once, not built (it was 32 s and an out-of-memory abort)", () => {
+    refusedFast(used(1_000, { type: "object", properties: entries(100_000, () => true) }), "100,000 true x 1,000 refs", 500);
+  });
+
+  it("an `allOf` of 2,000 `true` and a tuple of 2,000 `false`, each used through 4,000 references", () => {
+    refusedFast(used(4_000, { allOf: Array.from({ length: 2_000 }, () => true) }), "allOf of true");
+    refusedFast(used(4_000, { type: "array", items: Array.from({ length: 2_000 }, () => false) }), "tuple of false");
+    refusedFast(used(4_000, { type: "array", prefixItems: Array.from({ length: 2_000 }, () => null) }), "tuple of null");
+  });
+
+  it("a node of 100,000 `x-` keys under `allOf` / `oneOf` / `anyOf` / `if`, used through 1,000 references, costs what a node costs, whatever its width", () => {
+    const wide = (n: number): Record<string, unknown> => entries(n, () => 1, "x-");
+    for (const [label, host] of [
+      ["allOf", { allOf: [{}] }], ["oneOf", { oneOf: [{}] }], ["anyOf", { anyOf: [{}] }], ["if / then", { type: "object", if: {}, then: { properties: { a: { type: "string" } } } }],
+    ] as const) {
+      const schema = used(1_000, { ...host, ...wide(100_000) });
+      const started = performance.now();
+      const result = exampleFromSchema(schema);
+      expect(performance.now() - started, label).toBeLessThan(500); // it was 43.6 s, with the sampler running
+      expect(result.success, label).toBe(true);
+      if (result.success) expect(Object.keys(result.data as object), label).toHaveLength(1_000);
+    }
+    // the same with fewer keys and more uses
+    const started = performance.now();
+    expect(exampleFromSchema(used(4_000, { allOf: [{}], ...wide(1_000) })).success).toBe(true);
+    expect(exampleFromSchema(used(1_000, { allOf: [{}], ...wide(5_000) })).success).toBe(true);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("a property name of a million characters through 1,000 uses, one of 100 KB through 4,000, and an additionalProperties name of a million at the deepest of nine", () => {
+    refusedFast(used(1_000, { type: "object", properties: { ["n".repeat(1 << 20)]: { type: "string" } } }), "1 MiB name x 1,000");
+    refusedFast(used(4_000, { type: "object", properties: { ["n".repeat(100_000)]: { type: "string" } } }), "100 KB name x 4,000");
+    let deepest: Schema = { type: "string", "x-additionalPropertiesName": "n".repeat(1 << 20) };
+    for (let level = 0; level < 9; level++) deepest = { type: "object", additionalProperties: deepest };
+    refusedFast(deepest, "x-additionalPropertiesName 1 MiB at the deepest of nine");
+  });
+
+  it("still generates what real schemas look like: 30 `x-` keys on a node, 300 properties, 100 properties with 50-character names, a 1,000-character name once", () => {
+    expect(example({ type: "object", properties: { a: { type: "string", ...entries(30, () => ({ any: "thing" }), "x-") } }, ...entries(30, () => 1, "x-") })).toEqual({ a: "string" });
+    expect(Object.keys(example({ type: "object", properties: entries(300, () => ({ type: "string" })) }) as object)).toHaveLength(300);
+    const named: Record<string, Schema> = {};
+    for (let i = 0; i < 100; i++) named[`${"p".repeat(48)}${String(i).padStart(2, "0")}`] = { type: "integer" };
+    expect(Object.keys(example({ type: "object", properties: named }) as object)).toHaveLength(100);
+    expect(Object.keys(example({ type: "object", properties: { ["long".repeat(250)]: { type: "string" } } }) as object)).toEqual(["long".repeat(250)]);
+    // a name on `additionalProperties` that is only a few characters
+    expect(example({ type: "object", additionalProperties: { type: "string", "x-additionalPropertiesName": "key" } })).toEqual({ key1: "string", key2: "string" });
+    expect(failure(exampleFromSchema({ type: "object", additionalProperties: { type: "string", "x-additionalPropertiesName": { not: "text" } } }))).toMatchObject({ code: "EXAMPLE_FAILED" });
+  });
+
+  it("answers a schema nested thousands of levels deep with a plain message, not the engine's", () => {
+    let schema: Schema = { type: "string" };
+    for (let level = 0; level < 20_000; level++) schema = { type: "object", properties: { a: schema } };
+    const result = exampleFromSchema(schema);
+    expect(failure(result)).toEqual({ code: "EXAMPLE_FAILED", message: "This schema is nested too deeply to generate an example from." });
+  });
+});
+
+// The combinations the sampler handles on ONE node, as real schemas write them: each must give exactly what the sampler gives for the schema as written.
+describe("exampleFromSchema: allOf with oneOf / anyOf / if-then on one node, and references that bring their own example", () => {
+  beforeEach(() => {
+    vi.mocked(sample).mockClear();
+  });
+  const OPTIONS = { skipReadOnly: true, quiet: true, maxSampleDepth: 10 };
+  /** The example, which must be what the sampler gives for the same schema (with its `$ref`s), and which is returned. */
+  function sameAsSampler(schema: Schema): unknown {
+    const mine = example(schema);
+    const theirs = JSON.parse(JSON.stringify(sample(schema as never, OPTIONS, schema))) as unknown;
+    expect(mine).toEqual(theirs);
+    return mine;
+  }
+
+  it("an envelope by allOf with its variants by oneOf (and by anyOf)", () => {
+    const definitions = {
+      Base: { type: "object", properties: { id: { type: "string" }, kind: { type: "string", enum: ["a", "b"] } } },
+      A: { type: "object", properties: { a: { type: "integer" } } },
+      B: { type: "object", properties: { b: { type: "string" } } },
+    };
+    const byOneOf = sameAsSampler({ allOf: [{ $ref: "#/definitions/Base" }], oneOf: [{ $ref: "#/definitions/A" }, { $ref: "#/definitions/B" }], definitions });
+    expect(byOneOf).toEqual({ id: "string", kind: "a", a: 0 });
+    expect(sameAsSampler({ allOf: [{ $ref: "#/definitions/Base" }], anyOf: [{ $ref: "#/definitions/B" }, { $ref: "#/definitions/A" }], definitions })).toEqual({ id: "string", kind: "a", b: "string" });
+    // nested in a property, and all three on one node
+    expect(sameAsSampler({ type: "object", properties: { event: { allOf: [{ $ref: "#/definitions/Base" }], oneOf: [{ $ref: "#/definitions/A" }] } }, definitions })).toEqual({ event: { id: "string", kind: "a", a: 0 } });
+    sameAsSampler({ type: "object", allOf: [{ $ref: "#/definitions/Base" }], oneOf: [{ $ref: "#/definitions/A" }], anyOf: [{ $ref: "#/definitions/B" }], definitions });
+  });
+
+  it("allOf with an if / then on the same node, and oneOf with an if / then", () => {
+    expect(sameAsSampler({
+      allOf: [{ type: "object", properties: { a: { type: "string" } } }],
+      if: { properties: { a: { const: "x" } } }, then: { properties: { b: { type: "string" } } },
+    })).toEqual({ a: "string", b: "string" });
+    expect(sameAsSampler({
+      oneOf: [{ type: "object", properties: { a: { type: "string" } } }],
+      if: { properties: { a: { const: "x" } } }, then: { properties: { b: { type: "string" } } },
+    })).toEqual({ b: "string", a: "string" });
+    sameAsSampler({ type: "object", properties: { x: { type: "integer" } }, allOf: [{ properties: { y: { type: "string" } } }], oneOf: [{ properties: { z: { type: "string" } } }], if: {}, then: { required: ["x"] } });
+  });
+
+  it("a reference to a definition with its own example, const, allOf or oneOf, in a property, an entry and a variant", () => {
+    const definitions = {
+      E: { type: "string", example: "from-ref" },
+      C: { const: "fixed" },
+      All: { allOf: [{ type: "object", properties: { a: { type: "string" } } }, { properties: { b: { type: "integer" } } }] },
+      One: { oneOf: [{ type: "object", properties: { c: { type: "string" } } }, { type: "string" }] },
+    };
+    expect(sameAsSampler({ type: "object", properties: { e: { $ref: "#/definitions/E" }, c: { $ref: "#/definitions/C" }, all: { $ref: "#/definitions/All" }, one: { $ref: "#/definitions/One" } }, definitions }))
+      .toEqual({ e: "from-ref", c: "fixed", all: { a: "string", b: 0 }, one: { c: "string" } });
+    sameAsSampler({ allOf: [{ $ref: "#/definitions/All" }, { $ref: "#/definitions/E" }, { $ref: "#/definitions/C" }], definitions });
+    sameAsSampler({ type: "object", properties: { v: { oneOf: [{ $ref: "#/definitions/E" }, { $ref: "#/definitions/One" }] } }, allOf: [{ $ref: "#/definitions/One" }], definitions });
+  });
+
+  it("a stripe-style event: envelope, variants, nested objects, enums, read-only fields", () => {
+    sameAsSampler({
+      title: "ChargeCreated",
+      allOf: [{ $ref: "#/definitions/Envelope" }, { type: "object", properties: { data: { type: "object", properties: { object: { $ref: "#/definitions/Charge" } }, required: ["object"] } }, required: ["data"] }],
+      definitions: {
+        Envelope: { type: "object", required: ["id", "type"], properties: { id: { type: "string", examples: ["evt_1"] }, type: { const: "charge.succeeded" }, livemode: { type: "boolean" } } },
+        Charge: { allOf: [{ $ref: "#/definitions/Resource" }], oneOf: [{ $ref: "#/definitions/Card" }, { $ref: "#/definitions/Bank" }], properties: { amount: { type: "integer" } }, discriminator: { propertyName: "object" } },
+        Resource: { type: "object", properties: { id: { type: "string", readOnly: true }, created: { type: "integer" } } },
+        Card: { type: "object", properties: { last4: { type: "string", minLength: 4, maxLength: 4 } } },
+        Bank: { type: "object", properties: { routing: { type: "string" } } },
+      },
+    });
+  });
+
+  it("refuses by name what it cannot reproduce: an if / then that brings its own value next to oneOf / anyOf / allOf", () => {
+    const broughtIn = failure(exampleFromSchema({ oneOf: [{ type: "object" }], if: {}, then: { const: "c" } }));
+    expect(broughtIn).toMatchObject({ code: "EXAMPLE_FAILED", message: expect.stringContaining("`oneOf` on a node whose `if` / `then` or `$ref` brings a `const`, `enum`, `examples` or `default` of its own") });
+    expect(failure(exampleFromSchema({ allOf: [{ type: "object" }], if: {}, then: { example: 3 } }))).toMatchObject({ message: expect.stringContaining("`allOf` on a node whose `if` / `then` or `$ref` brings an `example` of its own") });
+  });
+});

@@ -86,7 +86,7 @@ function readInput(input: unknown): Result<{ content: string; fileName?: string;
 }
 
 /**
- * The AsyncAPI parser's verdict on the document: any error blocks the import (nothing is created); warnings are reported (the first
+ * The AsyncAPI parser's verdict on the document: any error blocks the import (nothing is written at all: the tenant's built-in library traits are installed only after this step); warnings are reported (the first
  * `MAX_PARSER_WARNINGS`, then one summary line); info and hints are style advice and are dropped.
  *
  * NOT time-bounded, and not interruptible: the parser is asynchronous in name only. It runs long synchronous stretches (Spectral), so a
@@ -217,11 +217,11 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const planLimits = checkPlanLimits(planned.plans);
   if (!planLimits.success) return planLimits;
 
-  // 3. The AsyncAPI parser: an error means nothing is created. It cannot be interrupted; what it is given was bounded above.
+  // 3. The AsyncAPI parser: an error means nothing is written at all (the built-in traits are installed in step 4). It cannot be interrupted; what it is given was bounded above.
   const validated = await validateWithParser(raw);
   if (!validated.success) return validated;
 
-  // 4. Map the document once with stand-in pins: a document the mapper rejects must create nothing.
+  // 4. Map the document once with stand-in pins: a document the mapper rejects must create no event and no entity (the built-in traits are installed just before, idempotently).
   const builtIns = await loadBuiltInTraits(ctx, scope.tenantId, install);
   if (!builtIns.success) return builtIns;
   const standIn = new Map<string, EntityPin>(planned.plans.map((plan) => [plan.pinKey, { entityId: "placeholder", entityVersionId: null }]));
