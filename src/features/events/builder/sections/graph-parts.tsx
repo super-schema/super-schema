@@ -7,7 +7,7 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { renameKey, type KeyKind } from "@/lib/events/document/keys";
-import type { DocChannel, DocMessage, DocOperation, DocumentProblem, EventDocument } from "@/lib/events/document/types";
+import type { DocChannel, DocExternalRef, DocMessage, DocOperation, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import type { DraftState } from "../use-event-draft";
 
 // ── document helpers (pure) ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -64,6 +64,59 @@ export function blockedText(messageKey: string, channelKey: string, operations: 
   const one = operations.length === 1;
   const names = operations.map((o) => `"${o.key}"`).join(", ");
   return `Cannot remove "${messageKey}" from channel "${channelKey}": ${one ? "operation" : "operations"} ${names} ${one ? "uses" : "use"} it. Remove it from ${one ? "that operation" : "those operations"} first.`;
+}
+
+/** `doc` without `messageKey` anywhere: channels, operations and operation replies. Untouched items keep their identity. */
+export function withoutMessage(doc: EventDocument, messageKey: string): EventDocument {
+  const dropFromOperation = (o: DocOperation): DocOperation => {
+    const inOwn = o.messageKeys.includes(messageKey);
+    const inReply = o.reply?.messageKeys?.includes(messageKey) ?? false;
+    if (!inOwn && !inReply) return o;
+    const next: DocOperation = { ...o, messageKeys: o.messageKeys.filter((k) => k !== messageKey) };
+    if (o.reply?.messageKeys) next.reply = { ...o.reply, messageKeys: o.reply.messageKeys.filter((k) => k !== messageKey) };
+    return next;
+  };
+  return {
+    ...doc,
+    channels: doc.channels.map((c) => (c.messageKeys.includes(messageKey) ? { ...c, messageKeys: c.messageKeys.filter((k) => k !== messageKey) } : c)),
+    operations: doc.operations.map(dropFromOperation),
+  };
+}
+
+/** `doc` without the operations on `channelKey`, and without the reply of an operation that answers on it (what removing a channel does). */
+export function withoutChannel(doc: EventDocument, channelKey: string): EventDocument {
+  return {
+    ...doc,
+    operations: doc.operations.filter((o) => o.channelKey !== channelKey).map((o) => {
+      if (o.reply?.channelKey !== channelKey) return o;
+      const next = { ...o };
+      delete next.reply;
+      return next;
+    }),
+  };
+}
+
+/**
+ * Where the external reference `ref` is used: the operations that send / receive on it (a channel) or carry it (a message, own or in a
+ * reply), and, for a message, the local channels that allow it. Nothing else can name an external key.
+ */
+export function externalRefUsage(doc: EventDocument, ref: Pick<DocExternalRef, "key" | "kind">): { operations: DocOperation[]; channels: DocChannel[] } {
+  if (ref.kind === "channel") {
+    return { channels: [], operations: doc.operations.filter((o) => o.channelKey === ref.key || o.reply?.channelKey === ref.key) };
+  }
+  return {
+    channels: doc.channels.filter((c) => c.messageKeys.includes(ref.key)),
+    operations: doc.operations.filter((o) => o.messageKeys.includes(ref.key) || (o.reply?.messageKeys ?? []).includes(ref.key)),
+  };
+}
+
+/** `doc` without the external reference `key` and without every use of it, unless a local item still defines that key. Unknown key: `doc` itself. */
+export function withoutExternalRef(doc: EventDocument, key: string): EventDocument {
+  const ref = doc.externalRefs.find((r) => r.key === key);
+  if (!ref) return doc;
+  const next: EventDocument = { ...doc, externalRefs: doc.externalRefs.filter((r) => r.key !== key) };
+  if (ref.kind === "channel") return next.channels.some((c) => c.key === key) ? next : withoutChannel(next, key);
+  return next.messages.some((m) => m.key === key) ? next : withoutMessage(next, key);
 }
 
 /** Rename `from` to `to` through `renameKey` (references follow) and keep the item selected. Does nothing when the rename is refused. */

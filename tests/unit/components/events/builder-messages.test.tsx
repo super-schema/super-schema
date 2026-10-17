@@ -14,6 +14,11 @@ import { ENTITY_OPTIONS, PIN, renderBuilder, renderSection, sampleDocument } fro
 // The picker's default version loader is a server action: keep it out of the test process.
 const h = vi.hoisted(() => ({ listPinnableVersionsAction: vi.fn() }));
 vi.mock("@/features/events/pin-actions", () => ({ listPinnableVersionsAction: h.listPinnableVersionsAction }));
+// So are the actions the external-reference card uses.
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({
+  getExternalRefStatusesAction: () => Promise.resolve({ success: false, error: "unavailable" }),
+  getExternalVersionItemsAction: () => Promise.resolve({ success: false, error: "unavailable" }),
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -966,5 +971,26 @@ describe("MessagesSection: nothing is lost, nothing empty is added", () => {
     expect(probe.draft.doc.messages[1]).toEqual({ key: "message", payload: { entityId: "ent-2", entityVersionId: "ver-2" }, traitKeys: [] });
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
     expect(probe.draft.problems).toEqual([]);
+  });
+});
+
+describe("MessagesSection: external references", () => {
+  it("shows the card of external messages under the list, and also while there are no local messages", async () => {
+    await renderMessages();
+    expect(text("external-refs-message")).toContain("Messages from other events");
+    expect(missing("external-refs-channel")).toBe(true);
+    cleanup();
+    renderSection(MessagesSection, { doc: emptyEventDocument("Empty") });
+    expect(screen.getByTestId("message-empty")).toBeDefined();
+    expect(text("external-refs-empty")).toContain("Messages from other events");
+  });
+
+  it("lists the references of the document in the card and counts them with the messages in the outline", async () => {
+    const doc = sampleDocument();
+    doc.externalRefs = [{ key: "Order-placed", eventVersionId: "vv1", kind: "message", itemKey: "OrderPlaced" }];
+    renderBuilder({ doc, section: "messages" });
+    await settle();
+    expect(screen.getByTestId("external-ref-row-Order-placed")).toBeDefined();
+    expect(text("outline-count-messages")).toBe("2");
   });
 });

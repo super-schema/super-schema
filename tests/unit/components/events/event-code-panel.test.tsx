@@ -346,6 +346,20 @@ describe("EventCodePanel: diagnostics", () => {
     click("code-diagnostics-toggle");
     expect(screen.getByTestId("diagnostics-list").textContent).toContain("AuditRecorded");
   });
+
+  it("tells the user the draft preview leaves an external reference out, until the server's full render (which resolves it) arrives", async () => {
+    const doc = makeDoc();
+    doc.externalRefs = [{ key: "ext", eventVersionId: "evv-1", kind: "message", itemKey: "AuditRecorded" }];
+    render(<EventCodePanel {...props({ doc })} />);
+    click("code-diagnostics-toggle");
+    const hint = text("diagnostics-list") ?? "";
+    expect(hint).toContain("is not shown in the draft preview");
+    expect(hint).toContain("the full render resolves it from its published version");
+    await flush(CODE_DEBOUNCE_MS);
+    expect(chip().getAttribute("data-state")).toBe("full");
+    expect(screen.queryByTestId("code-diagnostics-count")).toBeNull();
+    expect(text("code-diagnostics")).toContain("No problems");
+  });
 });
 
 describe("EventCodePanel: a draft with problems", () => {

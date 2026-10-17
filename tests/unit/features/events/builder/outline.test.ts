@@ -168,3 +168,51 @@ describe("buildOutline", () => {
     expect(outline.every((n) => n.problems === 0)).toBe(true);
   });
 });
+
+describe("buildOutline: external references", () => {
+  /** brokenDoc + one external channel and two external messages. */
+  function withRefs(): EventDocument {
+    const doc = brokenDoc();
+    doc.externalRefs = [
+      { key: "billing-topic", eventVersionId: "vv1", kind: "channel", itemKey: "billing" },
+      { key: "Order-placed", eventVersionId: "vv1", kind: "message", itemKey: "OrderPlaced" },
+      { key: "Order-shipped", eventVersionId: "vv2", kind: "message", itemKey: "OrderShipped" },
+    ];
+    return doc;
+  }
+
+  it("counts a reference with the channels or messages it sits among", () => {
+    expect(buildOutline(withRefs(), []).map((n) => n.count)).toEqual([null, 1, 3, 4, 1, 0, 0]);
+  });
+
+  it("lists the references after the local items of their section", () => {
+    const outline = buildOutline(withRefs(), []);
+    expect(outline.find((n) => n.section === "channels")?.items.map((i) => i.key)).toEqual(["orders", "tenant", "billing-topic"]);
+    expect(outline.find((n) => n.section === "messages")?.items.map((i) => i.key)).toEqual(["OrderCreated", "OrderCancelled", "Order-placed", "Order-shipped"]);
+  });
+
+  it("puts a problem at /externalRefs/<i> in the section of that reference's kind, and on that reference's item", () => {
+    const outline = buildOutline(withRefs(), [
+      { pointer: "/externalRefs/0/itemKey", message: 'Item "billing" is not in that version' },
+      { pointer: "/externalRefs/2/eventVersionId", message: "That version is not published" },
+      { pointer: "/externalRefs/2/key", message: "Duplicate message key" },
+    ]);
+    const channels = outline.find((n) => n.section === "channels");
+    const messages = outline.find((n) => n.section === "messages");
+    expect(channels?.problems).toBe(1);
+    expect(channels?.items.map((i) => i.problems)).toEqual([0, 0, 1]);
+    expect(messages?.problems).toBe(2);
+    expect(messages?.items.map((i) => i.problems)).toEqual([0, 0, 0, 2]);
+  });
+
+  it("does not take a reference problem for a local item's: the same index counts only where it belongs", () => {
+    const outline = buildOutline(withRefs(), [{ pointer: "/externalRefs/1/itemKey", message: "x" }]);
+    expect(outline.find((n) => n.section === "messages")?.items.map((i) => i.problems)).toEqual([0, 0, 1, 0]);
+    expect(outline.find((n) => n.section === "channels")?.problems).toBe(0);
+  });
+
+  it("ignores a problem at a reference index that does not exist", () => {
+    const outline = buildOutline(withRefs(), [{ pointer: "/externalRefs/9/itemKey", message: "x" }, { pointer: "/externalRefs/01/itemKey", message: "x" }]);
+    expect(outline.every((n) => n.problems === 0)).toBe(true);
+  });
+});

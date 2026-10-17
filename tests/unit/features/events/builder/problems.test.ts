@@ -114,6 +114,33 @@ describe("locateProblem", () => {
   });
 });
 
+describe("locateProblem: external references", () => {
+  function withRefs(): EventDocument {
+    const d = doc();
+    d.externalRefs = [
+      { key: "billing-topic", eventVersionId: "vv1", kind: "channel", itemKey: "billing" },
+      { key: "Order-placed", eventVersionId: "vv1", kind: "message", itemKey: "OrderPlaced" },
+    ];
+    return d;
+  }
+
+  it("puts a problem at /externalRefs/<i>/… in the section of that reference's kind, with the reference's key", () => {
+    expect(locateProblem(withRefs(), "/externalRefs/0/itemKey")).toEqual({ section: "channels", item: "billing-topic" });
+    expect(locateProblem(withRefs(), "/externalRefs/1/eventVersionId")).toEqual({ section: "messages", item: "Order-placed" });
+    expect(locateProblem(withRefs(), "/externalRefs/1")).toEqual({ section: "messages", item: "Order-placed" });
+  });
+
+  it("leaves a pointer at the list itself, a missing or non-canonical index or a blank key unplaced", () => {
+    expect(locateProblem(withRefs(), "/externalRefs")).toEqual({ section: null, item: null });
+    expect(locateProblem(withRefs(), "/externalRefs/9/key")).toEqual({ section: null, item: null });
+    expect(locateProblem(withRefs(), "/externalRefs/01/key")).toEqual({ section: null, item: null });
+    expect(locateProblem(withRefs(), "/externalRefs/length/key")).toEqual({ section: null, item: null });
+    const blank = withRefs();
+    blank.externalRefs[0] = { ...blank.externalRefs[0], key: "" };
+    expect(locateProblem(blank, "/externalRefs/0/key")).toEqual({ section: "channels", item: null });
+  });
+});
+
 describe("problemsByField", () => {
   const problems = [
     { pointer: "/info/title", message: "title is required" },
