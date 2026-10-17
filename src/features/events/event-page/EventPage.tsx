@@ -4,6 +4,7 @@
 // The self-contained Event page: header (name, badges, Publish, rename, delete) and the Design | Docs | Versions | Used by tabs. The
 // builder stays mounted while another tab shows, so an unsaved edit survives a trip there; ?tab= / ?section= / ?item= / ?version=
 // follow the state.
+// Leaving with unsaved edits asks first (`useLeaveGuard` + `UnsavedChangesDialog`); tab and section switches never do.
 // The AsyncAPI code of the unsaved draft lives in the shell's right Detail Panel (see the "Code panel" block below).
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -22,7 +23,9 @@ import { assetHref, EVENT_TABS, nextEventTab, type BuilderSection, type EventTab
 import { instantLibraryTraits } from "@/lib/events/document/instant-asyncapi";
 import { foldPublishBlockers } from "@/lib/events/publish-blockers";
 import { EventBuilder } from "@/features/events/builder/EventBuilder";
+import { UnsavedChangesDialog } from "@/features/events/builder/UnsavedChangesDialog";
 import { useEventDraft } from "@/features/events/builder/use-event-draft";
+import { useLeaveGuard } from "@/features/events/builder/use-leave-guard";
 import { EventBreadcrumb } from "@/features/events/shared/EventBreadcrumb";
 import { PublishVersionButton } from "@/features/events/shared/PublishVersionButton";
 import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
@@ -66,6 +69,11 @@ function EventPageBody({ data }: { data: EventPageData }) {
   }, [router]);
   const draft = useEventDraft({ event, productId, saveDocument: updateEventDocumentAction, onSaved });
   const builderOptions = useMemo(() => ({ entityOptions, libraryTraits }), [entityOptions, libraryTraits]);
+
+  // ----- leaving with unsaved edits -----
+  // Stops guarding once the event is deleted: the page pushes `listHref` itself, and what is unsaved belongs to an event that is gone.
+  const [eventDeleted, setEventDeleted] = useState(false);
+  const leave = useLeaveGuard(draft.dirty && !eventDeleted);
 
   // The Docs tab renders the document in the sandboxed iframe; it is emitted only while that tab is open.
   const docsEnabled = tab === "docs" && draft.problems.length === 0;
@@ -207,6 +215,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
         return;
       }
       deleted = true;
+      setEventDeleted(true);
       void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted row stays until a reload
       router.push(listHref);
     } catch {
@@ -318,6 +327,11 @@ function EventPageBody({ data }: { data: EventPageData }) {
       <div role="tabpanel" id={panelDomId("used-by")} aria-labelledby={tabDomId("used-by")} data-testid="event-panel-used-by" hidden={tab !== "used-by"}>
         {tab === "used-by" && <UsedByPanel subject={{ kind: "event", eventId: event.id }} title="Used by" emptyText="No other event references this one." />}
       </div>
+
+      <UnsavedChangesDialog
+        pending={leave.pending} saving={draft.saving} error={draft.error}
+        onSaveAndLeave={draft.save} onDiscardAndLeave={draft.discard} onStay={() => leave.pending?.stay()}
+      />
     </div>
   );
 }
