@@ -5,7 +5,7 @@
 // `import-payload-entities.ts`.
 //
 // Order, so that a document that cannot be imported creates no event and no entity (the tenant's built-in library traits are installed
-// first, idempotently) and the inputs of the slow steps are bounded: check the size of the file; parse the source
+// idempotently in step 4, after the parser, and before the first entity is written) and the inputs of the slow steps are bounded: check the size of the file; parse the source
 // (`parseAsyncApiSource`: linear, and it refuses what is hostile or too deep); check the entries of every object and
 // list and the size of the document once its references are resolved (`import-limits.ts`, before ANYTHING slow walks the document);
 // extract the payloads; check THEIR limits before any importer runs; plan the entities (and check the entity and field limits); validate
@@ -298,7 +298,7 @@ function rolledBack(cause: ServiceError, deleted: number, leftovers: UndeletedEn
  * `preview.eventName`, whose document pins them without a version. If the event cannot be created or its document cannot be saved,
  * everything created is deleted again and the failure says so (`details.leftovers` names anything that could not be deleted).
  * A document that fails any check before the first write creates no event and no entity (the tenant's built-in library traits are
- * installed first, idempotently, as a tenant-level step of the import). Never throws.
+ * installed idempotently before the first entity is written, as a tenant-level step of the import). Never throws.
  */
 export async function importAsyncApi(productId: string, input: AsyncApiImportInput, ctx: ServiceContext): Promise<Result<{ eventId: string; preview: AsyncApiImportPreview }>> {
   let prepared: Result<Prepared>;

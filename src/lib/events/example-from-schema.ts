@@ -9,7 +9,7 @@
 // "Bounded": this runs in the BROWSER on a schema a tenant user wrote, and the sampler cannot be interrupted. A gate that counted the
 // schema as WRITTEN kept disagreeing with the sampler about what it would build (the sampler re-merges `if` / `then` until none is left,
 // follows a `$ref` that is a list or has no `#`, iterates `properties` that is a list, ...), so the sampler is never given that schema.
-// Every schema the sampler sees has been inlined and counted first, and every step has its own cost bound:
+// Every schema the sampler sees has been inlined and counted first, and every step has its own cost bound (one gap, below):
 //   1. `oversizedKeyword`: a sanity limit on the literals of the schema as written, one walk over the schema (the size of the input). A
 //      `minLength` or `minItems` over MAX_SIZE_KEYWORD is refused whatever it does (the sampler builds that many characters or items); so
 //      is a `minProperties`, which the sampler never reads, but nobody asks for 100,000 properties of an example;
@@ -27,6 +27,13 @@
 //      walks the copy, which has at most that many nodes, and stops at the budget;
 //   4. the sampler runs on the copy, which holds no `$ref` of the user's and no `if` / `then` for it to disagree about (the one reference
 //      left is a fixed one to the sampler's own "no value", see `cut`), and the example may not be longer than MAX_EXAMPLE_CHARS.
+//
+// KNOWN GAP (parked, hostile-only): the sampler's own walk of a `required` list (it builds a lookup from it for every object that has
+// `properties`, and walks it again for `maxProperties`) is NOT weighted, and the copy shares the list by reference across every use. A
+// list of 24,999 names reused through 300 / 1,000 / 3,000 references costs the sampler 0.45 / 1.4 / 4.3 s (100,000 names x 1,000 uses:
+// 6.7 s). A normal schema is nowhere near it (50 names x 3,000 uses: 49 ms; 1,000 names: 143 ms). It takes a deliberately hostile schema
+// written inside the tenant, the code before this change had the same cost, and the one who pays is the person who clicks Generate.
+// Weighting `required.length / 64` units per node that has `properties` (or copying only the names that exist in `properties`) closes it.
 import { sample } from "openapi-sampler";
 import { resolveLocalRef } from "@/lib/event-specs/json-pointer";
 import { SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } from "@/lib/event-specs/json-schema-keywords";
@@ -39,7 +46,7 @@ type Schema = Record<string, unknown>;
 const MAX_SAMPLE_DEPTH = 10;
 /**
  * The budget, in units of work, of BOTH the inlined copy (every `$ref` use counted in full; see `spend` for what a unit is) and what the
- * sampler would build from it (`outputWeight`). A 1,000-property payload is about 1,000. The sampler's work for a schema over it is
+ * sampler would build from it (`outputWeight`). A 1,000-property payload weighs about 2,000 (each property is its name plus its value). The sampler's work for a schema over it is
  * real work, but it is only an estimate: what the sampler builds and then throws away counts (the entries of an `allOf` but the last, a
  * `oneOf` entry that does not merge with its parent), and the estimate is not claimed to be tight. Nothing here proves a lower bound on
  * how much work a refused schema would have been.
