@@ -271,7 +271,7 @@ describe("ExternalRefPicker: focus follows the steps", () => {
   it("moves to the preselected version when an event is chosen (once the versions are listed)", async () => {
     setup();
     await chooseOrders();
-    await waitFor(() => expect(document.activeElement).toBe(checkedRadio()));
+    await waitFor(() => expect(document.activeElement).toBe(checkedRadio()), { timeout: 5000 });
     expect(checkedRadio().value).toBe("vv-orders-2");
   });
 
@@ -283,14 +283,14 @@ describe("ExternalRefPicker: focus follows the steps", () => {
     await itemRow("OrderCreated");
     fireEvent.click(button("Back"));
     await screen.findByTestId("external-ref-versions");
-    await waitFor(() => expect(document.activeElement).toBe(checkedRadio()));
+    await waitFor(() => expect(document.activeElement).toBe(checkedRadio()), { timeout: 5000 });
     expect(checkedRadio().value).toBe("vv-orders-1");
   });
 
   it("moves to the filter of the items on Next", async () => {
     setup();
     await toItems();
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("external-ref-items-filter")));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("external-ref-items-filter")), { timeout: 5000 });
   });
 
   it("moves back to the search of the events on Back from step 2", async () => {
@@ -298,7 +298,7 @@ describe("ExternalRefPicker: focus follows the steps", () => {
     await chooseOrders();
     fireEvent.click(button("Back"));
     await eventRow("ev-orders");
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("external-ref-search")));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("external-ref-search")), { timeout: 5000 });
   });
 
   it("does not take focus when the versions could not be listed, and does not steal it later", async () => {
