@@ -17,6 +17,18 @@ export { MAX_ALIAS_COUNT, MAX_NESTING_DEPTH };
 /** Longest piece of a parser's own error text echoed in a message. */
 const MAX_ERROR_TEXT_LENGTH = 200;
 
+/**
+ * Keys, besides the reserved ones (`isReservedKey`: `__proto__`, `constructor`, `prototype`), that an imported document may not contain
+ * because the AsyncAPI parser CRASHES on them. Found by running every name of `Object.getOwnPropertyNames(Object.prototype)` as a key in
+ * 34 places of a valid document (payload properties, components, channel / message / server / operation / parameter keys, bindings,
+ * `x-` maps, tags, headers, variables ...) through `createAsyncApiParser().validate`: only `hasOwnProperty` crashes (in every place a key
+ * can be: "target.hasOwnProperty is not a function", and the user would see the generic internal error for a valid document). The others
+ * (`valueOf`, `toString`, `toLocaleString`, `isPrototypeOf`, `propertyIsEnumerable`, `__defineGetter__`, `__defineSetter__`,
+ * `__lookupGetter__`, `__lookupSetter__`) are read fine and stay importable. A parser upgrade can change the list: run that probe again.
+ */
+const PARSER_UNSAFE_KEYS: ReadonlySet<string> = new Set(["hasOwnProperty"]);
+const isForbiddenKey = (key: string): boolean => isReservedKey(key) || PARSER_UNSAFE_KEYS.has(key);
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const fail = (code: string, message: string, extra?: { details?: object; suggestedFix?: string }) => err({ code, message, ...extra });
 
@@ -31,12 +43,14 @@ function describeKind(value: unknown): string {
  * A `yaml` error as one line: "Map keys must be unique at line 2, column 1". The parser is told NOT to pretty-print its errors
  * (`prettyErrors: false`): its pretty-printer copies and scans the offending source line for EVERY error, so a text with many errors on one
  * long line (156 KiB of `[%,%,...` has about 78,000) took 4.3 s, 313 KiB 17 s and 1 MiB 145 s. Only the first error is ever shown, so its
- * position is worked out here, once, with a binary search in the line counter the parser already filled in.
+ * position is worked out here, once, with a binary search in the line counter the parser already filled in. (Exported for its unit test.)
  */
-function yamlMessage(e: { message: string; pos: readonly number[] }, lines: LineCounter): string {
+export function yamlMessage(e: { message: string; pos: readonly number[] }, lines: LineCounter): string {
   const at = e.pos[0] === undefined || e.pos[0] < 0 ? undefined : lines.linePos(e.pos[0]);
-  const text = e.message.split("\n")[0].replace(/:\s*$/, "");
-  return boundText(at ? `${text} at line ${at.line}, column ${at.col}` : text, MAX_ERROR_TEXT_LENGTH);
+  const first = e.message.split("\n")[0];
+  // With a position the message is kept whole: a colon at its end is the token it echoes ("Not a YAML token: [:"), and the parser's own
+  // pretty message only ever lost the colon it added itself after "line 1, column 2". Without a position the text is all there is.
+  return boundText(at ? `${first} at line ${at.line}, column ${at.col}` : first.replace(/:\s*$/, ""), MAX_ERROR_TEXT_LENGTH);
 }
 
 /**
@@ -75,9 +89,9 @@ function scan(root: unknown, forbiddenKeys: boolean): { message: string; details
           details: { pointer: boundPointer(pointer), length: key.length, limit: MAX_KEY_LENGTH },
         };
       }
-      if (forbiddenKeys && isReservedKey(key)) {
+      if (forbiddenKeys && isForbiddenKey(key)) {
         const pointer = pointerOf(frame, key);
-        return { message: `The key "${boundText(key)}" at "${boundText(pointer, 120)}" is not allowed in an imported document (it collides with built-in JavaScript properties); rename it and import again`, details: { pointer: boundPointer(pointer), key: boundText(key) } };
+        return { message: `The key "${boundText(key)}" at "${boundText(pointer, 120)}" is not allowed in an imported document (it collides with the name of a built-in JavaScript property and cannot be imported); rename it and import again`, details: { pointer: boundPointer(pointer), key: boundText(key) } };
       }
       stack.push({ value: (value as Record<string, unknown>)[key], depth: depth + 1, parent: frame, key });
     }
@@ -135,7 +149,7 @@ function parseYamlText(text: string): Result<unknown> {
   // repeated keys are found below, in linear time; errors are not pretty-printed (see `yamlMessage`): only the first is shown
   const doc = parseDocument(text, { uniqueKeys: false, lineCounter: lines, prettyErrors: false });
   const first = doc.errors[0];
-  if (first && /call stack/i.test(first.message)) {
+  if (first && first.code === "RESOURCE_EXHAUSTION" && /call stack/i.test(first.message)) {
     // the `yaml` parser is recursive: a text nested far past the limit overflows ITS stack and says so as an error, not as a throw
     return fail("PARSE_ERROR", `The file is nested too deeply to read (the limit is ${MAX_NESTING_DEPTH} levels)`, { suggestedFix: "Flatten the nesting and import again." });
   }
@@ -171,7 +185,7 @@ export function assertDocumentBounds(document: unknown): Result<void> {
 /**
  * YAML or JSON text → a plain object.
  * Rejects (all as `Result` errors, nothing throws): text over 1 MiB (`TOO_LARGE`); text that is not YAML/JSON, holds two documents, repeats a
- * key, uses more than 100 YAML aliases, nests deeper than 256 levels, has a key longer than 1,024 characters, or contains a `__proto__` / `constructor` / `prototype` key
+ * key, uses more than 100 YAML aliases, nests deeper than 256 levels, has a key longer than 1,024 characters, or contains a `__proto__` / `constructor` / `prototype` / `hasOwnProperty` key
  * (`PARSE_ERROR`); a document that is not an object or has no `asyncapi` field (`PARSE_ERROR`); anything but AsyncAPI 3.x (`UNSUPPORTED_VERSION`).
  */
 export function parseAsyncApiSource(text: string): Result<RawAsyncApi3> {
@@ -217,6 +231,7 @@ export function parseAsyncApiSource(text: string): Result<RawAsyncApi3> {
     return ok(value as RawAsyncApi3);
   } catch (e) {
     // A pathological file can exhaust the stack inside a parser; it is still just a file the user must change.
-    return fail("PARSE_ERROR", `The file could not be read${e instanceof RangeError ? " (it is nested too deeply)" : ""}: ${e instanceof Error ? boundText(e.message, MAX_ERROR_TEXT_LENGTH) : "unknown error"}`);
+    // Fixed text: what an unexpected exception says (it can quote the document, or the parser's internals) is never echoed.
+    return fail("PARSE_ERROR", `The file could not be read${e instanceof RangeError ? " (it is nested too deeply)" : " as YAML or JSON"}.`);
   }
 }
