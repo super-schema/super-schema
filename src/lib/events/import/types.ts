@@ -12,10 +12,11 @@ import type { EntityPin } from "@/lib/events/types";
  * - BUILTIN_TRAIT_MAPPED: a message trait was replaced by a built-in library trait (CloudEvents, W3C Trace Context).
  * - KEY_ADJUSTED: a key was not usable as a document key (or was taken), so a valid one was generated.
  * - SANITIZED_VALUE: a value the event document rejects (an unknown property, a wrong type, a blank required field) was removed.
+ * - VALIDATION_WARNING: a non-blocking finding of the AsyncAPI validator (reported by the importing step, which runs the validator).
  */
 export type ImportWarningCode =
   | "UNSUPPORTED_PAYLOAD_FORMAT" | "NO_PAYLOAD" | "UNSUPPORTED_EXTENSION" | "DROPPED_CONSTRUCT" | "ENTITY_RENAMED"
-  | "BUILTIN_TRAIT_MAPPED" | "KEY_ADJUSTED" | "SANITIZED_VALUE";
+  | "BUILTIN_TRAIT_MAPPED" | "KEY_ADJUSTED" | "SANITIZED_VALUE" | "VALIDATION_WARNING";
 
 /** `pointer` is an RFC 6901 JSON Pointer into the SOURCE file ("" = the document itself). */
 export interface ImportWarning { pointer: string; code: ImportWarningCode; message: string }

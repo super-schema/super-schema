@@ -18,6 +18,11 @@ const FAMILIES: ReadonlyArray<{ kind: BuiltInTraitKind; markerPrefix: string }> 
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** Which built-in family a library trait's `x-bundled` marker (`cloudevents@1.0`) belongs to; `null` for any other marker. */
+export function builtInKindOfMarker(marker: string): BuiltInTraitKind | null {
+  return FAMILIES.find((family) => marker.startsWith(family.markerPrefix))?.kind ?? null;
+}
+
 interface Definition { kind: BuiltInTraitKind; name: string; required: string[]; allowed: Set<string> }
 
 /** The built-in definitions, read once from `BUNDLED_TRAITS`. */

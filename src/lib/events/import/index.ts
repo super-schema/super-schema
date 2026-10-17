@@ -4,6 +4,6 @@ export { parseAsyncApiSource } from "./source";
 export { createRefResolver, resolveLocalRefs, type RefResolver } from "./refs";
 export { extractPayloads, pascalName } from "./payloads";
 export { mapAsyncApiToEventDocument } from "./map-document";
-export { detectBuiltInTrait, type BuiltInMatch, type BuiltInTraitKind } from "./builtin-traits";
+export { builtInKindOfMarker, detectBuiltInTrait, type BuiltInMatch, type BuiltInTraitKind } from "./builtin-traits";
 export { MAX_ALIAS_COUNT, MAX_DOCUMENT_NODES, MAX_EXPANDED_NODES, MAX_NESTING_DEPTH } from "./limits";
 export type { ExtractedPayload, ImportErrorCode, ImportWarning, ImportWarningCode, MapContext, RawAsyncApi3 } from "./types";

@@ -7,6 +7,7 @@ import type { PublishInput } from "@/lib/entity-versioning/types";
 import type { ExternalEventCandidate, ExternalRefInput, ExternalRefStatus, ExternalVersionItems, ExternalVersionOption } from "@/lib/events/external-refs";
 import type { EventPublishAnalysis } from "@/lib/events/publish-plan";
 import type { EventVersionSummary } from "@/lib/events/types";
+import { importAsyncApi, previewAsyncApiImport, type AsyncApiImportInput, type AsyncApiImportPreview } from "@/services/events/asyncapi-import.service";
 import { emitEventDocumentPreview, emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
 import { listEventVersions, previewEventPublish, publishEvent } from "@/services/events/event-publish.service";
 import { createEvent, deleteEvent, renameEvent, updateEventDocument, type EventDetail } from "@/services/events/event.service";
@@ -136,4 +137,21 @@ export async function readEventVersionAction(eventId: string, productId: string,
     const stored = await emitEventStoredVersion(eventId, productId, label, ctx);
     return stored.success ? ok({ yaml: stored.data.yaml, json: stored.data.json }) : stored;
   });
+}
+
+// ── Import an AsyncAPI 3.0 document ────────────────────────────────────────────────────────────────────────────────────
+// The services are `asyncapi-import.service.ts`. `input` is the file text and two optional names, all untrusted: the service validates
+// them and bounds the document (1 MiB, entity count, the parser's time). The product is checked first, like every action above.
+
+/** What importing the document into this product would do (resolved event name, counts, entities with their final names, warnings). Writes nothing. */
+export async function previewAsyncApiImportAction(productId: string, input: AsyncApiImportInput): Promise<ActionResult<AsyncApiImportPreview>> {
+  return readAction(productId, "previewAsyncApiImportAction", (ctx) => previewAsyncApiImport(productId, input, ctx));
+}
+
+/**
+ * Imports the document: draft entities for the payloads, then the event that pins them. A failure after the entities were created
+ * deletes them again (`details.leftovers` names anything that could not be deleted), so a failed import leaves nothing behind.
+ */
+export async function importAsyncApiAction(productId: string, input: AsyncApiImportInput): Promise<ActionResult<{ eventId: string; preview: AsyncApiImportPreview }>> {
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => importAsyncApi(productId, input, ctx)), "importAsyncApiAction");
 }

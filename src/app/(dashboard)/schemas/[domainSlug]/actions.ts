@@ -19,6 +19,7 @@ import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
+import { createImportedEntities, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok } from "@/types/result";
@@ -1201,10 +1202,6 @@ function emptyImportResult(errors: string[] = []): BulkImportResult {
   };
 }
 
-// Every imported asset now costs a few registry/pre-check queries inside the transaction,
-// so a large import can outlast Prisma's 5s interactive-transaction default.
-const IMPORT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
-
 const IMPORT_KIND_LABEL: Record<RegistryKind, string> = {
   entity: "Entity",
   sharedEnum: "Enum",
@@ -1405,49 +1402,18 @@ export async function createDomainAssetsFromImportAction(
       const importedFormat =
         typeof payload.sourceFormat === "string" && payload.sourceFormat.trim() !== "" ? payload.sourceFormat.trim() : undefined;
 
-      for (const entity of sortByInheritance(payload.entities)) {
-        const name = entity.name.trim();
-        if (!(await isNameFree("entity", name, productScope.data))) continue;
-
-        const reservedMsg = reservedEntitySlugMessage(name);
-        if (reservedMsg) {
-          skipped.push(reservedMsg);
-          continue;
-        }
-
-        const slug = generateSlug(entity.name);
-        const slugTaken = await tx.entity.findFirst({
-          where: { slug, productId: importProductId },
-          select: { id: true },
-        });
-        if (slugTaken) {
-          skipped.push(`Entity "${entity.name}" already exists — skipped`);
-          continue;
-        }
-
-        const parentEntityId = entity.extends ? entityRefs.get(entity.extends)?.id : undefined;
-        // metadata.sourceFormat records the format the entity was imported in: a message's "Auto" representation follows it
-        // (Avro-imported stays Avro). Model tags travel next to it. Nothing is written when neither is known.
-        const entityMetadata = {
-          ...(entity.tags && entity.tags.length > 0 ? { tags: entity.tags } : {}),
-          ...(importedFormat ? { sourceFormat: importedFormat } : {}),
-        };
-        const created = await tx.entity.create({
-          data: {
-            name,
-            slug,
-            ...productScope.data,
-            description: entity.description ?? "",
-            ownerId: currentUserId,
-            ...(parentEntityId ? { parentEntityId } : {}),
-            ...(Object.keys(entityMetadata).length > 0 ? { metadata: entityMetadata } : {}),
-            fields: {
-              create: entity.fields.map((field, index) => mapFieldCreateInput(field, index)),
-            },
-          },
-        });
-
-        entityRefs.set(entity.name, { id: created.id, productId: importProductId });
+      // The loop itself is shared with the AsyncAPI import service (`createImportedEntities`).
+      const createdEntities = await createImportedEntities(tx, {
+        entities: sortByInheritance(payload.entities),
+        productScope: productScope.data,
+        productId: importProductId,
+        ownerId: currentUserId,
+        sourceFormat: importedFormat,
+        isNameFree: (name) => isNameFree("entity", name, productScope.data),
+        skip: (message) => skipped.push(message),
+        refs: entityRefs,
+      });
+      for (const created of createdEntities) {
         result.entityIds.push(created.id);
         result.entitiesCreated++;
       }

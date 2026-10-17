@@ -56,7 +56,7 @@ describe("fixtures", () => {
 
   it("the importer's index exports the whole pure surface", () => {
     expect(Object.keys(importer).sort()).toEqual([
-      "MAX_ALIAS_COUNT", "MAX_DOCUMENT_NODES", "MAX_EXPANDED_NODES", "MAX_NESTING_DEPTH", "createRefResolver", "detectBuiltInTrait",
+      "MAX_ALIAS_COUNT", "MAX_DOCUMENT_NODES", "MAX_EXPANDED_NODES", "MAX_NESTING_DEPTH", "builtInKindOfMarker", "createRefResolver", "detectBuiltInTrait",
       "extractPayloads", "mapAsyncApiToEventDocument", "parseAsyncApiSource", "pascalName", "resolveLocalRefs",
     ]);
   });
