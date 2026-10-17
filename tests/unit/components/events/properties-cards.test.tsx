@@ -226,15 +226,31 @@ describe("MessagePropertiesCard: a new local set", () => {
     expect(probe.draft.doc.messages.map((m) => m.traitKeys)).toEqual([["idem"], ["idem"]]);
   });
 
-  it("shows a stored headers entity pin as a read-only note and keeps it", async () => {
+  it("shows a stored headers entity pin, linked, where a table without rows would say there are no properties, and keeps it", async () => {
     const doc = baseDoc();
     doc.traits = [{ key: "idem", kind: "MESSAGE", spec: { name: "Idempotent" }, headers: { entityId: "ent-2", entityVersionId: "ver-2" } }];
     doc.messages[0] = { ...doc.messages[0], traitKeys: ["idem"] };
     const { probe } = await renderMessages(doc);
     click("message-prop-toggle-idem");
-    expect(text("message-prop-idem-pin-note")).toBe("Headers come from the entity OrderCancelled.");
+    expect(text("message-prop-idem-pin-note")).toBe("Properties come from the entity OrderCancelled v1.0.");
+    expect(screen.getByRole("link", { name: "OrderCancelled" }).getAttribute("href")).toBe("/schemas/payments/checkout/ordercancelled");
+    expect(missing("message-prop-idem-empty")).toBe(true); // never "No properties" for a pinned set
+    expect(screen.getAllByText(/come from the entity/)).toHaveLength(1);
     type(box("message-prop-idem-name"), "Renamed");
     expect(probe.draft.doc.traits[0]).toMatchObject({ headers: { entityId: "ent-2", entityVersionId: "ver-2" } });
+  });
+
+  it("with rows of its own a pinned set shows them and keeps the one-line note under the table", async () => {
+    const doc = baseDoc();
+    doc.traits = [{
+      key: "idem", kind: "MESSAGE", spec: { name: "Idempotent", headers: { type: "object", properties: { source: { type: "string" } } } },
+      headers: { entityId: "ent-2", entityVersionId: "ver-2" },
+    }];
+    doc.messages[0] = { ...doc.messages[0], traitKeys: ["idem"] };
+    await renderMessages(doc);
+    click("message-prop-toggle-idem");
+    expect(box("message-prop-idem-name-0").value).toBe("source");
+    expect(text("message-prop-idem-pin-note")).toBe("Headers also come from the entity OrderCancelled v1.0.");
   });
 });
 

@@ -9,8 +9,8 @@ export const TRAITS_SEGMENT = "traits";
 /** URL segment of the self-contained Event page (`<product>/events/<id>`). */
 export const EVENT_PAGE_SEGMENT = "events";
 
-/** Tabs of the Event page. Slice 2 appends "source" | "versions" | "used-by". */
-export const EVENT_TABS = ["design", "docs"] as const;
+/** Tabs of the Event page, in the order the page shows them. */
+export const EVENT_TABS = ["design", "docs", "versions", "used-by"] as const;
 export type EventTab = (typeof EVENT_TABS)[number];
 const DEFAULT_EVENT_TAB: EventTab = "design";
 /**
@@ -29,6 +29,19 @@ export function normalizeEventTab(value: string | null | undefined): EventTab {
   if (typeof value !== "string") return DEFAULT_EVENT_TAB;
   if ((EVENT_TABS as readonly string[]).includes(value)) return value as EventTab;
   return EVENT_TAB_ALIASES.get(value) ?? DEFAULT_EVENT_TAB;
+}
+
+/**
+ * The tab a key press on the tab list moves to (roving tabindex): ArrowRight / ArrowLeft wrap around, Home and End jump to the
+ * ends; any other key is not navigation (null).
+ */
+export function nextEventTab(current: EventTab, key: string): EventTab | null {
+  const at = EVENT_TABS.indexOf(current);
+  if (key === "ArrowRight") return EVENT_TABS[(at + 1) % EVENT_TABS.length];
+  if (key === "ArrowLeft") return EVENT_TABS[(at - 1 + EVENT_TABS.length) % EVENT_TABS.length];
+  if (key === "Home") return EVENT_TABS[0];
+  if (key === "End") return EVENT_TABS[EVENT_TABS.length - 1];
+  return null;
 }
 
 /** Sections of the Design tab's builder, in outline order. A value that is none of these (an old link) falls back to "metadata". */

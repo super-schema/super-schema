@@ -45,7 +45,26 @@ export function securitySchemeAt(pointer: string): string | null {
   return segments[2] ?? null;
 }
 
+/**
+ * Where a pointer into `/externalRefs/<i>/…` lands: a reference is listed with the items of its own kind, so a problem on it belongs
+ * to the Channels or Messages section. `index` is the reference's position in `externalRefs`. Null for any other pointer, and for a
+ * reference the document does not have (the list itself, a missing or non-canonical index).
+ */
+export function externalRefTarget(doc: EventDocument, pointer: string): { section: "channels" | "messages"; index: number } | null {
+  const segments = segmentsOf(pointer);
+  if (!segments || segments[0] !== "externalRefs" || segments[1] === undefined || !INDEX_PATTERN.test(segments[1])) return null;
+  const index = Number(segments[1]);
+  const ref = doc.externalRefs[index];
+  if (!ref) return null;
+  return { section: ref.kind === "channel" ? "channels" : "messages", index };
+}
+
 export function locateProblem(doc: EventDocument, pointer: string): ProblemLocation {
+  const external = externalRefTarget(doc, pointer);
+  if (external) {
+    const key = doc.externalRefs[external.index].key;
+    return { section: external.section, item: key ? key : null };
+  }
   const { section, index } = pointerTarget(pointer);
   if (section === "advanced") {
     const name = securitySchemeAt(pointer);
@@ -71,23 +90,10 @@ export function problemsByField(problems: DocumentProblem[], prefix: string): Do
   return uniqueProblems(problems.filter((p) => p.pointer === prefix || p.pointer.startsWith(`${prefix}/`)));
 }
 
-/**
- * What the user reads for a problem. The document parser (a backend module) still says "trait" in two messages about the sets a message or an
- * operation points at; the user knows them as message / operation properties, so those two are reworded here. Everything else is shown as it is.
- */
-export function userProblemText(problem: DocumentProblem): string {
-  const kind = problem.pointer.startsWith("/operations/") ? "operation" : "message";
-  const unknown = /^Unknown trait "(.*)"$/.exec(problem.message);
-  if (unknown) return `Unknown ${kind} properties "${unknown[1]}"`;
-  const wrongKind = /^Trait "(.*)" is not a (message|operation) trait$/.exec(problem.message);
-  if (wrongKind) return `"${wrongKind[1]}" is not a set of ${wrongKind[2]} properties`;
-  return problem.message;
-}
-
 /** One line for a field's error slot: the distinct messages joined, or undefined when the field has no problem. */
 export function problemMessage(problems: DocumentProblem[]): string | undefined {
   if (problems.length === 0) return undefined;
-  return [...new Set(problems.map(userProblemText))].join("; ");
+  return [...new Set(problems.map((p) => p.message))].join("; ");
 }
 
 /** `details.problems` of a failed action result, ignoring anything that is not a `{ pointer, message }` pair of strings. */

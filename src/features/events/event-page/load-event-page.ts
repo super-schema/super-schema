@@ -25,6 +25,8 @@ export interface EventPageData {
   initialSection: BuilderSection;
   /** `?item=`: the key of the builder item to select; null = none. */
   initialItem: string | null;
+  /** `?version=`: the published version the Versions tab opens on (a label like "1.1", not checked here); null = none. */
+  initialVersion: string | null;
 }
 
 /**
@@ -47,7 +49,7 @@ function libraryOption(option: LibraryTraitSource, kind: LibraryTraitOption["kin
  * its id (never its name).
  */
 export async function loadEventPage(params: {
-  domainSlug: string; productSlug: string; eventId: string; tab?: string; section?: string; item?: string;
+  domainSlug: string; productSlug: string; eventId: string; tab?: string; section?: string; item?: string; version?: string;
 }): Promise<EventPageData | null> {
   const route = await resolveProductRoute(params.domainSlug, params.productSlug);
   if (!route) return null;
@@ -88,5 +90,6 @@ export async function loadEventPage(params: {
     initialTab: normalizeEventTab(params.tab),
     initialSection: normalizeBuilderSection(params.section),
     initialItem: params.item ? params.item : null,
+    initialVersion: params.version ? params.version : null,
   };
 }

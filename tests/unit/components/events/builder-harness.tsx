@@ -33,8 +33,8 @@ export function sampleDocument(): EventDocument {
 }
 
 export const ENTITY_OPTIONS: EntityOption[] = [
-  { id: "ent-1", name: "OrderCreated", ownerLabel: "Payments / Checkout", latestVersionId: "ver-1", latestVersionLabel: "v1.0" },
-  { id: "ent-2", name: "OrderCancelled", ownerLabel: "Payments / Checkout", latestVersionId: "ver-2", latestVersionLabel: "v1.0" },
+  { id: "ent-1", name: "OrderCreated", ownerLabel: "Payments / Checkout", latestVersionId: "ver-1", latestVersionLabel: "1.0", href: "/schemas/payments/checkout/ordercreated" },
+  { id: "ent-2", name: "OrderCancelled", ownerLabel: "Payments / Checkout", latestVersionId: "ver-2", latestVersionLabel: "1.0", href: "/schemas/payments/checkout/ordercancelled" },
 ];
 
 export function makeEvent(document: EventDocument = sampleDocument(), id = "ev1"): EventDetail {

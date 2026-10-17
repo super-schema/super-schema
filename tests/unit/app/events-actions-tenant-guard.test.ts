@@ -16,7 +16,9 @@ const h = vi.hoisted(() => ({
   findProduct: vi.fn(),
   findTenant: vi.fn(),
   createEvent: vi.fn(), updateEventDocument: vi.fn(), renameEvent: vi.fn(), deleteEvent: vi.fn(),
-  emitEventDocumentPreview: vi.fn(), emitEventDraft: vi.fn(),
+  emitEventDocumentPreview: vi.fn(), emitEventDraft: vi.fn(), emitEventStoredVersion: vi.fn(),
+  previewEventPublish: vi.fn(), publishEvent: vi.fn(), listEventVersions: vi.fn(),
+  requireOwnedEvent: vi.fn(), listExternalEventCandidates: vi.fn(), listExternalEventVersions: vi.fn(), getExternalVersionItems: vi.fn(), getExternalRefStatuses: vi.fn(),
   createTrait: vi.fn(), updateTrait: vi.fn(), deleteTrait: vi.fn(),
 }));
 
@@ -31,11 +33,28 @@ vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole
 vi.mock("@/services/events/event.service", () => ({
   createEvent: h.createEvent, updateEventDocument: h.updateEventDocument, renameEvent: h.renameEvent, deleteEvent: h.deleteEvent,
 }));
-vi.mock("@/services/events/event-emit.service", () => ({ emitEventDocumentPreview: h.emitEventDocumentPreview, emitEventDraft: h.emitEventDraft }));
+vi.mock("@/services/events/event-emit.service", () => ({
+  emitEventDocumentPreview: h.emitEventDocumentPreview, emitEventDraft: h.emitEventDraft, emitEventStoredVersion: h.emitEventStoredVersion,
+}));
+vi.mock("@/services/events/event-publish.service", () => ({
+  previewEventPublish: h.previewEventPublish, publishEvent: h.publishEvent, listEventVersions: h.listEventVersions,
+}));
 vi.mock("@/services/events/trait.service", () => ({ createTrait: h.createTrait, updateTrait: h.updateTrait, deleteTrait: h.deleteTrait }));
+// The external-reference loaders and the event ownership read are their own tested units (event-external-ref-actions.test.ts and the
+// integration tests): here they are spies, so what is proven is the PARENT check in front of them (the real `withOwnedTarget`).
+vi.mock("@/services/events/external-refs.service", () => ({
+  listExternalEventCandidates: h.listExternalEventCandidates, listExternalEventVersions: h.listExternalEventVersions,
+  getExternalVersionItems: h.getExternalVersionItems, getExternalRefStatuses: h.getExternalRefStatuses,
+}));
+vi.mock("@/services/events/service-guards", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/events/service-guards")>()),
+  requireOwnedEvent: h.requireOwnedEvent,
+}));
 
 import {
-  createEventAction, deleteEventAction, emitEventDraftAction, previewEventDocumentAction, renameEventAction, updateEventDocumentAction,
+  createEventAction, deleteEventAction, emitEventDraftAction, getExternalRefStatusesAction, getExternalVersionItemsAction, listEventVersionsAction,
+  listExternalEventCandidatesAction, listExternalEventVersionsAction, previewEventDocumentAction, previewEventPublishAction,
+  publishEventAction, readEventVersionAction, renameEventAction, updateEventDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { createTraitAction, deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -65,8 +84,11 @@ beforeEach(() => {
   h.findTenant.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
   for (const key of [
     "createEvent", "updateEventDocument", "renameEvent", "deleteEvent", "emitEventDocumentPreview", "emitEventDraft",
+    "previewEventPublish", "publishEvent", "listEventVersions", "emitEventStoredVersion",
+    "listExternalEventCandidates", "listExternalEventVersions", "getExternalVersionItems", "getExternalRefStatuses",
     "createTrait", "updateTrait", "deleteTrait",
   ] as const) h[key].mockResolvedValue(OK);
+  h.requireOwnedEvent.mockResolvedValue({ success: true, data: "e1" });
 });
 
 // ---------------------------------------------------------------------------
@@ -80,6 +102,15 @@ const PRODUCT_CASES: Array<{ label: string; call: (productId: string) => Promise
   { label: "deleteEventAction", call: (p) => deleteEventAction("e1", p), service: h.deleteEvent, mutates: true },
   { label: "previewEventDocumentAction", call: (p) => previewEventDocumentAction("e1", p, {}), service: h.emitEventDocumentPreview, mutates: false },
   { label: "emitEventDraftAction", call: (p) => emitEventDraftAction("e1", p), service: h.emitEventDraft, mutates: false },
+  { label: "previewEventPublishAction", call: (p) => previewEventPublishAction("e1", p), service: h.previewEventPublish, mutates: false },
+  { label: "publishEventAction", call: (p) => publishEventAction("e1", p, { bump: "MINOR" }), service: h.publishEvent, mutates: true },
+  { label: "listEventVersionsAction", call: (p) => listEventVersionsAction("e1", p), service: h.listEventVersions, mutates: false },
+  { label: "readEventVersionAction", call: (p) => readEventVersionAction("e1", p, "1.0"), service: h.emitEventStoredVersion, mutates: false },
+  // The external-reference read actions (the reference picker and the "newer version" badge): read-only, tenant-scoped loaders.
+  { label: "listExternalEventCandidatesAction", call: (p) => listExternalEventCandidatesAction(p, "e1", "ord"), service: h.listExternalEventCandidates, mutates: false },
+  { label: "listExternalEventVersionsAction", call: (p) => listExternalEventVersionsAction(p, "src1"), service: h.listExternalEventVersions, mutates: false },
+  { label: "getExternalVersionItemsAction", call: (p) => getExternalVersionItemsAction(p, "v1"), service: h.getExternalVersionItems, mutates: false },
+  { label: "getExternalRefStatusesAction", call: (p) => getExternalRefStatusesAction(p, []), service: h.getExternalRefStatuses, mutates: false },
 ];
 
 const NOT_FOUND = (id: string) => ({ success: false, error: `Product "${id}" not found`, code: "NOT_FOUND" });

@@ -8,11 +8,12 @@
 // Every card with something in it shows how many fields are set; the open / closed choice is kept while switching from one message to another,
 // and a card that holds a problem opens by itself. The key is generated: a placeholder until the user leaves the form, then named from the
 // name or title; the "Identifier" below the cards is the only place it shows. Every edit goes through `draft.update(fn)`.
+// Under the list sits the card of EXTERNAL messages (messages another published event defines and this one uses): `ExternalRefsCard`.
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { JsonObject, PayloadFormat } from "@/lib/event-specs/types";
-import type { DocMessage, DocOperation, DocumentProblem, EventDocument } from "@/lib/events/document/types";
+import type { DocMessage, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import { TEMPLATES, type ObjectTemplate } from "@/lib/events/templates";
 import type { EntityPin } from "@/lib/events/types";
 import type { EntityOption } from "@/features/events/shared/EntityPinPicker";
@@ -26,8 +27,10 @@ import { BindingsForm, TemplateForm, type TemplateFormContext } from "../templat
 import type { DraftState } from "../use-event-draft";
 import {
   allMessageKeys, blockedText, channelLabel, CheckboxGroup, ItemList, messageLabel, Notice, plural, renameAndSelect, setMessageAllowed,
+  withoutMessage,
 } from "./graph-parts";
 import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
+import { ExternalRefsCard } from "./ExternalRefsCard";
 import { FormCard, useCardState, type CardState } from "./FormCard";
 import { MessagePropertiesCard } from "./MessagePropertiesCard";
 import { representationNote } from "./representation-note";
@@ -111,23 +114,6 @@ function PinField({ id, label, hint, optional, entities, value, onChange, error 
   );
 }
 
-/** `doc` without `messageKey` anywhere: channels, operations and operation replies. Untouched items keep their identity. */
-function withoutMessage(doc: EventDocument, messageKey: string): EventDocument {
-  const dropFromOperation = (o: DocOperation): DocOperation => {
-    const inOwn = o.messageKeys.includes(messageKey);
-    const inReply = o.reply?.messageKeys?.includes(messageKey) ?? false;
-    if (!inOwn && !inReply) return o;
-    const next: DocOperation = { ...o, messageKeys: o.messageKeys.filter((k) => k !== messageKey) };
-    if (o.reply?.messageKeys) next.reply = { ...o.reply, messageKeys: o.reply.messageKeys.filter((k) => k !== messageKey) };
-    return next;
-  };
-  return {
-    ...doc,
-    channels: doc.channels.map((c) => (c.messageKeys.includes(messageKey) ? { ...c, messageKeys: c.messageKeys.filter((k) => k !== messageKey) } : c)),
-    operations: doc.operations.map(dropFromOperation),
-  };
-}
-
 export function MessagesSection({ draft, options, selectedItem, onSelectItem, onSectionChange }: SectionProps) {
   const { doc, update } = draft;
   const messages = doc.messages;
@@ -186,6 +172,8 @@ export function MessagesSection({ draft, options, selectedItem, onSelectItem, on
           />
         </div>
       )}
+
+      <ExternalRefsCard kind="message" draft={draft} problems={problems} />
     </section>
   );
 }

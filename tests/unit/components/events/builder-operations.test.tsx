@@ -197,11 +197,12 @@ describe("OperationsSection: action", () => {
 });
 
 describe("OperationsSection: channel and messages (a channel with no messages blocks nothing)", () => {
-  it("the channel select lists the document's channels and nothing else", () => {
+  it("the channel select lists the document's channels, then its external channel references, marked", () => {
     const doc = richDoc();
-    doc.externalRefs = [{ key: "remote", eventVersionId: "v1", kind: "channel", itemKey: "x" }];
+    doc.externalRefs = [{ key: "remote", eventVersionId: "v1", kind: "channel", itemKey: "x" }, { key: "remote-msg", eventVersionId: "v1", kind: "message", itemKey: "y" }];
     renderSection(OperationsSection, { doc });
-    expect(optionValues(field("Channel"))).toEqual(["orders", "refunds", "empty"]);
+    expect(optionValues(field("Channel"))).toEqual(["orders", "refunds", "empty", "remote"]);
+    expect(Array.from(field("Channel").querySelectorAll("option")).map((o) => o.textContent)).toEqual(["orders", "refunds", "empty", "remote (external)"]);
     expect(field("Channel").value).toBe("orders");
   });
 
@@ -310,6 +311,132 @@ describe("OperationsSection: channel and messages (a channel with no messages bl
     type(field("Channel"), "orders");
     expect(probe.draft.problems).toEqual([]);
     expect(optionValues(field("Channel"))).not.toContain("ghost");
+  });
+});
+
+describe("OperationsSection: external references (the card of Channels / Messages adds them; operations use them here)", () => {
+  const MESSAGE_REF = { key: "Order-placed", eventVersionId: "v1", kind: "message", itemKey: "OrderPlaced" } as const;
+  const CHANNEL_REF = { key: "billing-topic", eventVersionId: "v1", kind: "channel", itemKey: "billing" } as const;
+  /** richDoc + one external message and one external channel; the `orders` channel allows the external message. */
+  function docWithRefs(): EventDocument {
+    const doc = richDoc();
+    doc.externalRefs = [{ ...MESSAGE_REF }, { ...CHANNEL_REF }];
+    doc.channels[0].messageKeys = [...doc.channels[0].messageKeys, MESSAGE_REF.key];
+    return doc;
+  }
+  const labelOf = (testId: string) => screen.getByTestId(testId).closest("label")?.textContent;
+
+  it("fixture: the document is valid", () => {
+    expect(parseEventDocument(docWithRefs()).success).toBe(true);
+  });
+
+  it("offers an external message that a local channel allows, marked external, and uses it", () => {
+    const { probe } = renderSection(OperationsSection, { doc: docWithRefs() });
+    expect(checklist("operation-messages")).toEqual(["OrderCreated", "OrderUpdated", "Order-placed"]);
+    expect(labelOf("operation-messages-option-Order-placed")).toBe("Order-placed (external)");
+    expect(labelOf("operation-messages-option-OrderCreated")).toBe("OrderCreated");
+    fireEvent.click(box("operation-messages-option-Order-placed"));
+    expect(probe.draft.doc.operations[0].messageKeys).toEqual(["OrderCreated", "Order-placed"]);
+    expect(probe.draft.problems).toEqual([]);
+  });
+
+  it("puts an operation on an external channel: every message of the document is then offered, the external ones marked", () => {
+    const { probe } = renderSection(OperationsSection, { doc: docWithRefs() });
+    type(field("Channel"), "billing-topic");
+    expect(probe.draft.doc.operations[0].channelKey).toBe("billing-topic");
+    // Nothing can be checked against a channel the event does not own, so no message has to go.
+    expect(probe.draft.doc.operations[0].messageKeys).toEqual(["OrderCreated"]);
+    expect(missing("operation-channel-notice")).toBe(true);
+    expect(checklist("operation-messages")).toEqual(["OrderCreated", "OrderUpdated", "RefundIssued", "Order-placed"]);
+    expect(labelOf("operation-messages-option-Order-placed")).toBe("Order-placed (external)");
+    fireEvent.click(box("operation-messages-option-Order-placed"));
+    expect(probe.draft.doc.operations[0]).toMatchObject({ channelKey: "billing-topic", messageKeys: ["OrderCreated", "Order-placed"] });
+    expect(probe.draft.problems).toEqual([]);
+    expect(parseEventDocument(probe.draft.doc).success).toBe(true);
+  });
+
+  it("offers external channels as the reply channel too", () => {
+    const { probe } = renderSection(OperationsSection, { doc: docWithRefs() });
+    openCard("reply");
+    click("operation-reply-toggle");
+    expect(optionValues(field("Reply channel"))).toEqual(["orders", "refunds", "empty", "billing-topic"]);
+    type(field("Reply channel"), "billing-topic");
+    expect(probe.draft.doc.operations[0].reply?.channelKey).toBe("billing-topic");
+    expect(checklist("operation-reply-messages")).toEqual(["OrderCreated", "OrderUpdated", "RefundIssued", "Order-placed"]);
+    fireEvent.click(box("operation-reply-messages-option-Order-placed"));
+    expect(probe.draft.doc.operations[0].reply?.messageKeys).toEqual(["Order-placed"]);
+    expect(probe.draft.problems).toEqual([]);
+  });
+
+  it("an external channel is a channel: 'Add a channel first' is not shown, and a new operation starts on it", () => {
+    const doc = emptyEventDocument("Billing");
+    doc.externalRefs = [{ ...CHANNEL_REF }];
+    const { probe } = renderSection(OperationsSection, { doc });
+    expect(missing("operation-needs-channel")).toBe(true);
+    click("operation-empty-add");
+    expect(probe.draft.doc.operations[0]).toMatchObject({ action: "send", channelKey: "billing-topic", messageKeys: [] });
+    expect(probe.draft.problems).toEqual([]);
+  });
+
+  it("an external message alone is not a channel: the notice still asks for one", () => {
+    const doc = emptyEventDocument("Billing");
+    doc.externalRefs = [{ ...MESSAGE_REF }];
+    renderSection(OperationsSection, { doc });
+    expect(screen.getByTestId("operation-needs-channel")).toBeDefined();
+  });
+
+  // The message list is "what the channel allows" only for a LOCAL channel; on an external one every message of the event is offered,
+  // so the hint and the empty text must not say a channel has to allow them.
+  describe("the copy under the messages follows the kind of channel", () => {
+    it("says messages must be allowed on the chosen channel for a local channel", () => {
+      renderSection(OperationsSection, { doc: docWithRefs() });
+      expect(text("operation-messages-hint")).toBe("Only messages allowed on the chosen channel are listed.");
+    });
+
+    it("says every message of the event is offered, and nothing about allowing them, for an external channel", () => {
+      renderSection(OperationsSection, { doc: docWithRefs() });
+      type(field("Channel"), "billing-topic");
+      const hint = text("operation-messages-hint") ?? "";
+      expect(hint).toBe("Every message of this event can be used on a channel from another event.");
+      expect(hint).not.toContain("allowed on the chosen channel");
+    });
+
+    it("names the local channel that has no messages, and asks to allow some on it", () => {
+      renderSection(OperationsSection, { doc: docWithRefs() });
+      type(field("Channel"), "empty");
+      expect(text("operation-messages-empty")).toBe(
+        'Channel "empty" has no messages yet. Allow messages on it in Channels or Messages; an operation can be saved without any.'
+      );
+    });
+
+    it("says the EVENT has no messages for an external channel with none to offer, instead of asking to allow messages on it", () => {
+      const doc = emptyEventDocument("Billing");
+      doc.externalRefs = [{ ...CHANNEL_REF }];
+      renderSection(OperationsSection, { doc });
+      click("operation-empty-add");
+      const empty = text("operation-messages-empty") ?? "";
+      expect(empty).toBe("This event has no messages yet. Add one in Messages; an operation can be saved without any.");
+      expect(empty).not.toContain("Allow messages on it");
+    });
+
+    it("does the same for the reply messages", () => {
+      const doc = emptyEventDocument("Billing");
+      doc.externalRefs = [{ ...CHANNEL_REF }];
+      renderSection(OperationsSection, { doc });
+      click("operation-empty-add");
+      openCard("reply");
+      click("operation-reply-toggle");
+      type(field("Reply channel"), "billing-topic");
+      expect(text("operation-reply-messages-empty")).toBe("This event has no messages yet. Add one in Messages.");
+      cleanup();
+
+      const local = richDoc();
+      renderSection(OperationsSection, { doc: local });
+      openCard("reply");
+      click("operation-reply-toggle");
+      type(field("Reply channel"), "empty");
+      expect(text("operation-reply-messages-empty")).toBe('Channel "empty" has no messages yet. Allow messages on it in Channels or Messages.');
+    });
   });
 });
 

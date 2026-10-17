@@ -2,8 +2,11 @@
 import { assetHref } from "@/lib/navigation/asset-href";
 import { ok, err, type Result } from "@/types/result";
 
-/** What "Who uses X?" can be asked about: an entity (events, library traits and other entities pin its versions). */
-export type UsageSubject = { kind: "entity"; entityId: string };
+/**
+ * What "Who uses X?" can be asked about: an entity (events, library traits and other entities pin its versions) or an
+ * event (other events reference its published versions as external references).
+ */
+export type UsageSubject = { kind: "entity"; entityId: string } | { kind: "event"; eventId: string };
 export type UsageFromKind = "ENTITY_VERSION" | "EVENT_SPEC" | "EVENT_SPEC_VERSION" | "TRAIT";
 
 export interface UsageRow {
@@ -17,6 +20,25 @@ export interface UsageRow {
   /** Null when the referrer no longer exists (a ghost edge) — rendered as plain text. */
   href: string | null;
 }
+
+/** The rows of one lookup; `truncated` says more existed than were returned (a bounded lookup hit its limit). Not an array entry. */
+export type UsageRowList = UsageRow[] & { readonly truncated: boolean };
+
+export function usageRowList(rows: UsageRow[], truncated: boolean): UsageRowList {
+  return Object.defineProperty(rows, "truncated", { value: truncated, enumerable: false }) as UsageRowList;
+}
+
+/**
+ * What `listUsagesAction` sends to the browser. A server action's serializer keeps array entries only, so the `truncated` flag of a
+ * `UsageRowList` would be lost on the wire: the action returns the two as plain properties of one object instead.
+ */
+export interface UsageList {
+  rows: UsageRow[];
+  truncated: boolean;
+}
+
+/** Rows an event's lookup returns at most (the service's `MAX_EVENT_REFERRERS`; a test keeps them equal): what a truncated list says it shows. */
+export const USAGE_ROW_LIMIT = 50;
 
 interface At {
   domainSlug: string | null;
@@ -42,10 +64,11 @@ export interface ReferenceLike {
 export function parseUsageSubject(value: unknown): Result<UsageSubject> {
   const bad = (message: string) => err({ code: "VALIDATION_ERROR" as const, message });
   if (typeof value !== "object" || value === null || Array.isArray(value)) return bad("Usage subject must be an object");
-  const v = value as { kind?: unknown; entityId?: unknown };
+  const v = value as { kind?: unknown; entityId?: unknown; eventId?: unknown };
   const nonEmpty = (x: unknown): x is string => typeof x === "string" && x.trim() !== "";
   if (v.kind === "entity") return nonEmpty(v.entityId) ? ok({ kind: "entity", entityId: v.entityId }) : bad("entityId must be a non-empty string");
-  return bad('Usage subject kind must be "entity"');
+  if (v.kind === "event") return nonEmpty(v.eventId) ? ok({ kind: "event", eventId: v.eventId }) : bad("eventId must be a non-empty string");
+  return bad('Usage subject kind must be "entity" or "event"');
 }
 
 const product = (a: At) => (a.domainSlug && a.productSlug ? { domainSlug: a.domainSlug, productSlug: a.productSlug } : null);

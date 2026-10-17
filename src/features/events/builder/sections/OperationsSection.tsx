@@ -2,8 +2,9 @@
 
 // src/features/events/builder/sections/OperationsSection.tsx
 // Operations: send/receive, the channel, the messages (limited to that channel's messages) and an optional reply, drawn by hand
-// because they can only offer valid combinations; everything else the AsyncAPI operation object defines (title, summary,
-// description, traits, security, tags, external docs, bindings) comes from the template form. The form is accordion cards:
+// because they can only offer valid combinations. The channel may be one of the event's own or an external channel reference, and a
+// local channel may allow external messages (Channels); they are marked "(external)". Everything else the AsyncAPI operation object
+// defines (title, summary, description, traits, security, tags, external docs, bindings) comes from the template form. The form is accordion cards:
 //   open:       Basics (action, channel, messages) · Operation properties (Trait) · Details (title, summary, description)
 //   collapsed:  Reply (open when the operation has one) · Bindings · Docs & tags · Security
 // A card shows how many fields are set, keeps its open / closed state while switching operations, and opens by itself when it holds a
@@ -14,18 +15,18 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { JsonObject, OperationAction } from "@/lib/event-specs/types";
-import type { DocChannel, DocOperation, DocReplyAddress, DocumentProblem, EventDocument } from "@/lib/events/document/types";
+import type { DocOperation, DocReplyAddress, DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import { TEMPLATES } from "@/lib/events/templates";
 import { autoRenameKey, leftForm, newKey } from "../auto-key";
 import { Field, selectClass } from "../controls";
 import type { SectionProps } from "../EventBuilder";
 import { IdentifierDisclosure } from "../Identifier";
-import { operationPropertiesTitle } from "../labels";
+import { externalItemLabel, operationMessagesEmpty, operationMessagesHint, operationPropertiesTitle, replyMessagesEmpty } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
-import { CheckboxGroup, ItemList, Notice, renameAndSelect } from "./ChannelsSection";
+import { allMessageKeys, CheckboxGroup, ItemList, Notice, renameAndSelect } from "./ChannelsSection";
 import { FormCard, useCardState, type CardState } from "./FormCard";
 import { bindingCount, cardsWithProblems, cardTemplate, mergeValue, pickValue, setFieldCount } from "./form-cards";
 import { OperationPropertiesCard } from "./OperationPropertiesCard";
@@ -37,8 +38,8 @@ const ACTIONS: Array<{ value: OperationAction; title: string; description: strin
 const ACTION_WORDS: Record<string, string> = { send: "Sends", receive: "Receives" };
 
 /** The channel a new reply starts on: another channel when there is one (request/reply usually crosses channels), else this one. */
-function defaultReplyChannel(channels: DocChannel[], operationChannel: string): string | undefined {
-  return channels.find((c) => c.key !== operationChannel)?.key ?? (channels.some((c) => c.key === operationChannel) ? operationChannel : undefined);
+function defaultReplyChannel(channelKeys: string[], operationChannel: string): string | undefined {
+  return channelKeys.find((k) => k !== operationChannel) ?? (channelKeys.includes(operationChannel) ? operationChannel : undefined);
 }
 
 /**
@@ -88,8 +89,31 @@ function applyFormValue(o: DocOperation, next: Record<string, unknown>): DocOper
 const toggled = (keys: string[], key: string, on: boolean): string[] =>
   on ? (keys.includes(key) ? keys : [...keys, key]) : keys.filter((k) => k !== key);
 
-const messagesOf = (channels: DocChannel[], channelKey: string | undefined): string[] =>
-  channels.find((c) => c.key === channelKey)?.messageKeys ?? [];
+/** The channels an operation can be on: the document's own, then its external channel references (marked). */
+const channelChoices = (doc: EventDocument): Array<{ key: string; label: string }> => [
+  ...doc.channels.map((c) => ({ key: c.key, label: c.key })),
+  ...doc.externalRefs.filter((r) => r.kind === "channel").map((r) => ({ key: r.key, label: externalItemLabel(r.key) })),
+];
+
+/** The channel is one another event owns (an external reference), and not shadowed by a local channel of the same key. */
+const isExternalChannel = (doc: EventDocument, channelKey: string | undefined): boolean =>
+  !doc.channels.some((c) => c.key === channelKey) && doc.externalRefs.some((r) => r.kind === "channel" && r.key === channelKey);
+
+/**
+ * The messages an operation on `channelKey` can use: the ones a local channel allows (an external message among them, once the channel
+ * allows it); on an external channel every message of the document, because the parser cannot check them against a channel the event
+ * does not own; none for a channel the document does not have.
+ */
+function messagesOf(doc: EventDocument, channelKey: string | undefined): string[] {
+  const local = doc.channels.find((c) => c.key === channelKey);
+  if (local) return local.messageKeys;
+  return isExternalChannel(doc, channelKey) ? allMessageKeys(doc) : [];
+}
+
+/** A message in a checklist: an external reference is marked as such. */
+const messageChoice = (doc: EventDocument) => (key: string) => ({
+  value: key, label: doc.externalRefs.some((r) => r.kind === "message" && r.key === key) ? externalItemLabel(key) : key,
+});
 
 /** One sentence naming what a channel change took away. */
 function droppedText(dropped: string[], channelKey: string): string {
@@ -99,14 +123,14 @@ function droppedText(dropped: string[], channelKey: string): string {
 export function OperationsSection({ draft, options, selectedItem, onSelectItem, onSectionChange }: SectionProps) {
   const { doc, update } = draft;
   const operations = doc.operations;
-  const channels = doc.channels;
+  const choices = channelChoices(doc);
   // The client parse and a failed save usually report the same problems: show each once.
   const problems = uniqueProblems(draft.problems.concat(draft.serverProblems));
 
   const selected = selectedItem === null ? -1 : operations.findIndex((o) => o.key === selectedItem);
   const activeIndex = selected >= 0 ? selected : operations.length > 0 ? 0 : -1;
   const active = activeIndex >= 0 ? operations[activeIndex] : null;
-  const needsChannel = channels.length === 0;
+  const needsChannel = choices.length === 0;
   const context = useMemo(() => buildReferenceContext(doc, { entityOptions: options.entityOptions }), [doc, options.entityOptions]);
   // Which cards are open lives here, not in the form: the form is rebuilt for every operation, the choice must survive.
   const errored = cardsWithProblems(problems, `/operations/${activeIndex}`, CARD_POINTERS);
@@ -115,7 +139,7 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
   function addOperation() {
     if (needsChannel) return;
     const key = newKey(doc, "operation");
-    const channelKey = channels[0].key;
+    const channelKey = choices[0].key;
     update((d) => ({ ...d, operations: [...d.operations, { key, action: "send", channelKey, messageKeys: [], traitKeys: [] }] }));
     onSelectItem(key);
   }
@@ -178,16 +202,16 @@ export function OperationsSection({ draft, options, selectedItem, onSelectItem, 
   );
 }
 
-function ChannelSelect({ id, label, value, channels, error, required, onChange }: {
-  id: string; label: string; value: string; channels: DocChannel[]; error?: string; required?: boolean; onChange: (next: string) => void;
+function ChannelSelect({ id, label, value, choices, error, required, onChange }: {
+  id: string; label: string; value: string; choices: Array<{ key: string; label: string }>; error?: string; required?: boolean; onChange: (next: string) => void;
 }) {
-  const known = channels.some((c) => c.key === value);
+  const known = choices.some((c) => c.key === value);
   return (
     <Field label={label} htmlFor={id} error={error}>
       <select id={id} data-testid={id} aria-required={required} className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
         {value === "" && <option value="">Select a channel</option>}
         {value !== "" && !known && <option value={value}>{value} (not defined)</option>}
-        {channels.map((c) => <option key={c.key} value={c.key}>{c.key}</option>)}
+        {choices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
       </select>
     </Field>
   );
@@ -199,6 +223,7 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
 }) {
   const { doc, update } = draft;
   const channels = doc.channels;
+  const choices = channelChoices(doc);
   const [channelNotice, setChannelNotice] = useState<string | null>(null);
   const [replyNotice, setReplyNotice] = useState<string | null>(null);
   const errorAt = (suffix: string) => problemMessage(problemsByField(problems, `/operations/${index}${suffix}`));
@@ -222,7 +247,7 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
   }
 
   function changeChannel(next: string) {
-    const allowed = new Set(messagesOf(channels, next));
+    const allowed = new Set(messagesOf(doc, next));
     const dropped = operation.messageKeys.filter((k) => !allowed.has(k));
     patch((o) => ({ ...o, channelKey: next, messageKeys: o.messageKeys.filter((k) => allowed.has(k)) }));
     setChannelNotice(dropped.length > 0 ? droppedText(dropped, next) : null);
@@ -243,14 +268,14 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
         delete next.reply;
         return next;
       }
-      const channelKey = defaultReplyChannel(channels, o.channelKey);
+      const channelKey = defaultReplyChannel(choices.map((c) => c.key), o.channelKey);
       next.reply = { ...(channelKey ? { channelKey } : {}), messageKeys: [] };
       return next;
     });
   }
 
   function changeReplyChannel(next: string) {
-    const allowed = new Set(messagesOf(channels, next));
+    const allowed = new Set(messagesOf(doc, next));
     const dropped = (operation.reply?.messageKeys ?? []).filter((k) => !allowed.has(k));
     patch((o) => ({ ...o, reply: { ...o.reply, channelKey: next, messageKeys: (o.reply?.messageKeys ?? []).filter((k) => allowed.has(k)) } }));
     setReplyNotice(dropped.length > 0 ? droppedText(dropped, next) : null);
@@ -286,9 +311,9 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
     onSelectItem(null);
   }
 
-  const channelExists = channels.some((c) => c.key === operation.channelKey);
+  const channelExists = choices.some((c) => c.key === operation.channelKey);
   const reply = operation.reply;
-  const replyChannelExists = reply?.channelKey !== undefined && channels.some((c) => c.key === reply.channelKey);
+  const replyChannelExists = reply?.channelKey !== undefined && choices.some((c) => c.key === reply.channelKey);
   const actionError = errorAt("/action");
   const actionErrorId = "operation-action-error";
   const formValue = toFormValue(operation);
@@ -342,19 +367,19 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
             </fieldset>
 
             <ChannelSelect
-              id="operation-channel" label="Channel" required value={operation.channelKey} channels={channels}
+              id="operation-channel" label="Channel" required value={operation.channelKey} choices={choices}
               error={errorAt("/channelKey")} onChange={changeChannel}
             />
             {channelNotice && <Notice id="operation-channel-notice">{channelNotice}</Notice>}
 
             <CheckboxGroup
               id="operation-messages" label="Messages" checked={operation.messageKeys} onToggle={toggleMessage}
-              options={messagesOf(channels, operation.channelKey).map((k) => ({ value: k, label: k }))}
+              options={messagesOf(doc, operation.channelKey).map(messageChoice(doc))}
               strayLabel="not on this channel" error={errorAt("/messageKeys")}
               empty={channelExists
-                ? `Channel "${operation.channelKey}" has no messages yet. Allow messages on it in Channels or Messages; an operation can be saved without any.`
+                ? operationMessagesEmpty(operation.channelKey, isExternalChannel(doc, operation.channelKey))
                 : "Choose a channel to see the messages it allows."}
-              hint="Only messages allowed on the chosen channel are listed."
+              hint={operationMessagesHint(isExternalChannel(doc, operation.channelKey))}
             />
           </>
         ))}
@@ -374,16 +399,16 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
               {reply !== undefined && (
                 <div className="space-y-space-3">
                   <ChannelSelect
-                    id="operation-reply-channel" label="Reply channel" value={reply.channelKey ?? ""} channels={channels}
+                    id="operation-reply-channel" label="Reply channel" value={reply.channelKey ?? ""} choices={choices}
                     error={errorAt("/reply/channelKey")} onChange={changeReplyChannel}
                   />
                   {replyNotice && <Notice id="operation-reply-notice">{replyNotice}</Notice>}
                   <CheckboxGroup
                     id="operation-reply-messages" label="Reply messages" checked={reply.messageKeys ?? []} onToggle={toggleReplyMessage}
-                    options={messagesOf(channels, reply.channelKey).map((k) => ({ value: k, label: k }))}
+                    options={messagesOf(doc, reply.channelKey).map(messageChoice(doc))}
                     strayLabel="not on this channel" error={errorAt("/reply/messageKeys")}
                     empty={replyChannelExists
-                      ? `Channel "${reply.channelKey}" has no messages yet. Allow messages on it in Channels or Messages.`
+                      ? replyMessagesEmpty(reply.channelKey ?? "", isExternalChannel(doc, reply.channelKey))
                       : "Choose a reply channel to see the messages it allows."}
                   />
                   <TemplateForm

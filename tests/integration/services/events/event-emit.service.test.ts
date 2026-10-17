@@ -8,6 +8,8 @@ import { err, ok, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import type { ArtifactRenderer, ArtifactSubject } from "@/services/events/artifact-renderer";
 import { emitEventDocumentPreview, emitEventDraft, emitEventStoredVersion } from "@/services/events/event-emit.service";
+import { createEvent, updateEventDocument } from "@/services/events/event.service";
+import { getExternalVersionItems } from "@/services/events/external-refs.service";
 import { loadEventSnapshot, resolveEventSnapshot } from "@/services/events/event-snapshot";
 import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
@@ -491,7 +493,9 @@ describe.sequential("loadEventSnapshot / resolveEventSnapshot", () => {
       id: event.id, name: event.name, tenantId: TENANT, domainId: own.domain.id, productId: own.product.id, productSlug: own.product.slug, specType: "asyncapi@3.0",
     });
     expect(snapshot.document).toEqual(doc);
-    expect(snapshot.latest).toEqual({ id: latest.id, major: 3, minor: 2, sourceDocument: doc, resolvedSpec: null });
+    // publish reads the version's sequence (next sequence), its frozen traits (library drift) and its stored compat report (the
+    // representations it was published in) from here; the version was seeded with the column's default report
+    expect(snapshot.latest).toEqual({ id: latest.id, major: 3, minor: 2, sequence: 1, sourceDocument: doc, resolvedSpec: null, frozenTraits: [], compatReport: {} });
     expect([...snapshot.libraryTraits.keys()]).toEqual([libraryTrait.id]);
     expect(snapshot.libraryTraits.get(libraryTrait.id)).toMatchObject({ id: libraryTrait.id, name: libraryTrait.name, kind: "MESSAGE", ownerSlug: own.domain.slug, headersEntityVersionId: ceHeaders.version.id });
     // external items come from the referenced version's stored resolvedSpec, by externalRef key
@@ -553,6 +557,55 @@ describe.sequential("loadEventSnapshot / resolveEventSnapshot", () => {
     expect(snapshot.libraryTraits.size).toBe(0);
     // the version's major is known even though it has no resolvedSpec
     expect(snapshot.externalMajors).toEqual({ [legacyExternalVersion.id]: 1, [externalVersion.id]: 1 });
+  }, 60_000);
+
+  it("treats a corrupt stored item alike in the picker, on save and in the snapshot: not offered, not accepted, unresolved", async () => {
+    // Items the ids of which exist but whose stored shape the assembler cannot use: no channel profile, no message payloads,
+    // a traitRefs entry that is not a string. A readable item of the same spec stays usable.
+    const spec = externalResolvedSpec();
+    const [fine] = spec.messages;
+    const corruptSpec = {
+      ...spec,
+      channels: [...spec.channels, { id: "no-profile", name: "no-profile", productSlug: other.product.slug, address: null, protocol: "kafka" }],
+      messages: [
+        fine,
+        { id: "no-payloads", name: "no-payloads", productSlug: other.product.slug, traitRefs: [] },
+        { ...fine, id: "bad-traits", name: "bad-traits", traitRefs: ["Audited", 7] },
+      ],
+    };
+    const corruptEvent = await prisma.eventSpec.create({
+      data: { name: `corrupt-${other.s}`, tenantId: TENANT, domainId: other.domain.id, productId: other.product.id, document: emptyEventDocument("corrupt") as unknown as Prisma.InputJsonValue },
+    });
+    const corruptVersion = await seedVersion(corruptEvent.id, { major: 1, minor: 0, sequence: 1, resolvedSpec: corruptSpec as unknown as Prisma.InputJsonValue });
+    const refs = [
+      { key: "ok", eventVersionId: corruptVersion.id, kind: "message" as const, itemKey: "PaymentReceived" },
+      { key: "chan", eventVersionId: corruptVersion.id, kind: "channel" as const, itemKey: "no-profile" },
+      { key: "msg", eventVersionId: corruptVersion.id, kind: "message" as const, itemKey: "no-payloads" },
+      { key: "traits", eventVersionId: corruptVersion.id, kind: "message" as const, itemKey: "bad-traits" },
+    ];
+
+    // The picker lists the readable message only.
+    const items = unwrap(await getExternalVersionItems(ctx, { tenantId: TENANT, eventVersionId: corruptVersion.id }));
+    expect(items.channels.map((c) => c.key)).toEqual(["payments-in"]);
+    expect(items.messages.map((m) => m.key)).toEqual(["PaymentReceived"]);
+
+    // Save validation refuses the three corrupt refs and accepts the readable one.
+    const consumer = unwrap(await createEvent(own.product.id, { name: `consumer-${own.s}` }, ctx));
+    const owner = { level: "PRODUCT" as const, productId: own.product.id };
+    const saved = await updateEventDocument(consumer.id, { ...emptyEventDocument("consumer"), externalRefs: refs }, owner, ctx);
+    expect(saved.success).toBe(false);
+    const problems = (!saved.success && (saved.error.details as { problems: Array<{ pointer: string; message: string }> }).problems) || [];
+    expect(problems.map((p) => p.pointer)).toEqual(["/externalRefs/1/itemKey", "/externalRefs/2/itemKey", "/externalRefs/3/itemKey"]);
+    expect(unwrap(await updateEventDocument(consumer.id, { ...emptyEventDocument("consumer"), externalRefs: refs.slice(0, 1) }, owner, ctx)).document.externalRefs).toHaveLength(1);
+
+    // The snapshot (a draft stored before the version was corrupted, here seeded directly) resolves the readable ref only.
+    const event = await seedEvent({ ...emptyEventDocument("direct"), externalRefs: refs });
+    const snapshot = unwrap(await loadEventSnapshot(prisma, event.id));
+    expect([...snapshot.external.keys()]).toEqual(["ok"]);
+    const out = unwrap(await emitEventDraft(event.id, own.product.id, ctx, { renderer: stubRenderer().renderer }));
+    expect(errorsOf(out.diagnostics).map((d) => `${d.code} ${d.pointer}`).sort()).toEqual(
+      ["UNRESOLVED_REFERENCE /externalRefs/1", "UNRESOLVED_REFERENCE /externalRefs/2", "UNRESOLVED_REFERENCE /externalRefs/3"]
+    );
   }, 60_000);
 
   it("never reads another tenant's library traits or published events", async () => {

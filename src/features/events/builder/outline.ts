@@ -2,13 +2,13 @@
 // The builder's left outline as data: one node per section with its item count and problem counts. Pure — no React.
 import type { DocumentProblem, EventDocument } from "@/lib/events/document/types";
 import { MESSAGE_PROPERTIES } from "./labels";
-import { isIndexedSection, pointerTarget, securitySchemeAt, uniqueProblems } from "./problems";
+import { externalRefTarget, isIndexedSection, pointerTarget, securitySchemeAt, uniqueProblems } from "./problems";
 import { BUILDER_SECTIONS, type BuilderSection } from "./sections";
 
 export interface OutlineNode {
   section: BuilderSection;
   label: string;
-  /** Number of items: the list sections' entries, message properties (local and library), security schemes (Advanced); null for Metadata. */
+  /** Number of items: the list sections' entries (Channels and Messages include their external references), message properties (local and library), security schemes (Advanced); null for Metadata. */
   count: number | null;
   /** Problems located in this section. */
   problems: number;
@@ -22,7 +22,12 @@ export const SECTION_LABELS: Record<BuilderSection, string> = {
 };
 
 export function buildOutline(doc: EventDocument, problems: DocumentProblem[]): OutlineNode[] {
-  const targets = uniqueProblems(problems).map((p) => ({ ...pointerTarget(p.pointer), scheme: securitySchemeAt(p.pointer) }));
+  // A problem on an external reference (`/externalRefs/<i>/…`) is counted where the reference is listed: with the channels or messages.
+  const targets = uniqueProblems(problems).map((p) => {
+    const external = externalRefTarget(doc, p.pointer);
+    if (external) return { section: external.section as BuilderSection | null, index: null, ref: external.index, scheme: null };
+    return { ...pointerTarget(p.pointer), ref: null, scheme: securitySchemeAt(p.pointer) };
+  });
   return BUILDER_SECTIONS.map((section): OutlineNode => {
     const inSection = targets.filter((t) => t.section === section);
     const label = SECTION_LABELS[section];
@@ -36,12 +41,18 @@ export function buildOutline(doc: EventDocument, problems: DocumentProblem[]): O
     }
     if (!isIndexedSection(section)) return { section, label, count: null, problems: inSection.length, items: [] };
     const list = doc[section];
+    // Channels and messages are listed together with the external references of their kind (after the local ones).
+    const refKind = section === "channels" ? "channel" : section === "messages" ? "message" : null;
+    const refs = refKind === null ? [] : doc.externalRefs.map((ref, position) => ({ ref, position })).filter(({ ref }) => ref.kind === refKind);
     return {
-      section, label, count: list.length, problems: inSection.length,
+      section, label, count: list.length + refs.length, problems: inSection.length,
       // By position, not by key: two items can share a (broken) key.
-      items: list.map((entry, index) => ({
-        key: entry.key, label: entry.key, problems: inSection.filter((t) => t.index === index).length,
-      })),
+      items: [
+        ...list.map((entry, index) => ({
+          key: entry.key, label: entry.key, problems: inSection.filter((t) => t.index === index).length,
+        })),
+        ...refs.map(({ ref, position }) => ({ key: ref.key, label: ref.key, problems: inSection.filter((t) => t.ref === position).length })),
+      ],
     };
   });
 }

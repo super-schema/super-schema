@@ -15,8 +15,8 @@ vi.mock("@/services/name-registry.service", () => ({
   withTenantNameLock: (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) => fn(mockTx),
 }));
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const prisma: Record<string, unknown> = {
     entity: {
       create: vi.fn(),
       findMany: vi.fn(),
@@ -40,8 +40,13 @@ vi.mock("@/lib/db", () => ({
     schemaReference: { findMany: vi.fn().mockResolvedValue([]) },
     // Event documents pin entities without foreign keys: the event guard reads them (A9).
     eventSpec: { findMany: vi.fn().mockResolvedValue([]) },
-  },
-}));
+    // The guarded delete locks the entity row (`SELECT ... FOR UPDATE`, answered with the id it was given) and runs in one transaction
+    // (the callback gets this same client, so every delegate above is what the transaction reads and writes).
+    $queryRaw: vi.fn(async (_strings: TemplateStringsArray, id: string) => [{ id }]),
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
+  };
+  return { prisma };
+});
 
 import {
   createEntity,
@@ -500,6 +505,32 @@ describe("Entity Service", () => {
         expect(result.error.code).toBe("NOT_FOUND");
       }
       expect(prisma.entity.delete).not.toHaveBeenCalled();
+    });
+
+    it("locks the entity row in ONE transaction, then runs the guards on the locked state, then deletes", async () => {
+      const order = (mock: unknown) => (mock as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0];
+
+      expect((await deleteEntity("ent-1", mockCtx)).success).toBe(true);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect((vi.mocked(prisma.$queryRaw).mock.calls[0][0] as unknown as string[]).join("?")).toBe('SELECT "id" FROM "entities" WHERE "id" = ? FOR UPDATE');
+      expect(vi.mocked(prisma.$queryRaw).mock.calls[0][1]).toBe("ent-1");
+      expect(order(prisma.$transaction)).toBeLessThan(order(prisma.$queryRaw));
+      expect(order(prisma.$queryRaw)).toBeLessThan(order(prisma.trait.findMany)); // the pin guard
+      expect(order(prisma.$queryRaw)).toBeLessThan(order(prisma.eventSpec.findMany)); // the event guard
+      expect(order(prisma.trait.findMany)).toBeLessThan(order(prisma.entity.delete));
+      expect(order(prisma.eventSpec.findMany)).toBeLessThan(order(prisma.entity.delete));
+    });
+
+    it("a row that went away between the read and the lock is NOT_FOUND: nothing is deleted or audited", async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([] as never);
+
+      const result = await deleteEntity("ent-1", mockCtx);
+
+      expect(result).toMatchObject({ success: false, error: { code: "NOT_FOUND", message: 'Entity with ID "ent-1" not found' } });
+      expect(prisma.entity.delete).not.toHaveBeenCalled();
+      expect(deleteAudits()).toHaveLength(0);
     });
 
     describe("an entity-version reference (no FK) blocks the delete BEFORE it is attempted", () => {

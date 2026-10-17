@@ -2,6 +2,7 @@
 // The reference context the template forms read: every `refersTo` target the catalog uses must have an options list.
 import { describe, expect, it } from "vitest";
 import { buildReferenceContext } from "@/features/events/builder/references";
+import { EXTERNAL_SUFFIX, externalItemLabel } from "@/features/events/builder/labels";
 import { TEMPLATES, bindingTemplate, BINDING_PROTOCOLS, type FieldTemplate } from "@/lib/events/templates";
 import { emptyEventDocument } from "@/lib/events/document/types";
 import { maximalDocument } from "../../../lib/events/document/fixtures/maximal-document";
@@ -115,5 +116,14 @@ describe("buildReferenceContext: the options of each target", () => {
     expect(labels(next.channel)).toEqual(["orders", "replies", "remote-orders (external)"]);
     expect(values(next.message)).toEqual(["OrderCreated", "OrderSummary", "remote-summary"]);
     expect(labels(next.message)).toEqual(["OrderCreated", "OrderSummary", "remote-summary (external)"]);
+  });
+
+  it("marks an external reference with the very label the pick lists use: one suffix, defined once in labels", () => {
+    const doc = emptyEventDocument("svc");
+    doc.externalRefs = [{ key: "remote-orders", eventVersionId: "v1", kind: "channel", itemKey: "orders" }];
+    const next = buildReferenceContext(doc, { entityOptions: [] }).references!;
+    expect(labels(next.channel)).toEqual([externalItemLabel("remote-orders")]);
+    expect(externalItemLabel("remote-orders")).toBe(`remote-orders ${EXTERNAL_SUFFIX}`);
+    expect(EXTERNAL_SUFFIX).toBe("(external)");
   });
 });

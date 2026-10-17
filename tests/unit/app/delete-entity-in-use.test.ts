@@ -15,6 +15,9 @@ const { mockPrisma } = await vi.hoisted(async () => {
       entityVersion: { findMany: vi.fn() },
       schemaReference: { findMany: vi.fn() },
       auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
+      // The guarded delete locks the entity row and runs in one transaction on this same client (see beforeEach).
+      $queryRaw: vi.fn(),
+      $transaction: vi.fn(),
     },
   };
 });
@@ -44,6 +47,8 @@ beforeEach(() => {
   mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", name: "Order", tenantId: "tenant-1" });
   mockPrisma.entity.delete.mockResolvedValue({ id: "ent-1" });
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+  mockPrisma.$queryRaw.mockImplementation(async (_strings: TemplateStringsArray, id: string) => [{ id }]);
+  mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma));
   fn(mockPrisma.trait.findMany).mockResolvedValue([]);
   mockPrisma.entityVersion.findMany.mockResolvedValue([]);
   mockPrisma.schemaReference.findMany.mockResolvedValue([]);
@@ -107,6 +112,27 @@ describe("deleteEntityAction — pinned entities", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("locks the entity row in ONE transaction before the guards and the delete (race-free against a publish)", async () => {
+    const order = (mock: unknown) => (mock as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0];
+
+    expect(await deleteEntityAction("ent-1")).toEqual({ success: true });
+
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$queryRaw.mock.calls[0][0].join("?")).toBe('SELECT "id" FROM "entities" WHERE "id" = ? FOR UPDATE');
+    expect(mockPrisma.$queryRaw.mock.calls[0][1]).toBe("ent-1");
+    expect(order(mockPrisma.$queryRaw)).toBeLessThan(order(fn(mockPrisma.trait.findMany)));
+    expect(order(fn(mockPrisma.trait.findMany))).toBeLessThan(order(mockPrisma.entity.delete));
+  });
+
+  it("answers a row that went away between the read and the lock like a missing entity: nothing deleted, nothing audited", async () => {
+    mockPrisma.$queryRaw.mockResolvedValueOnce([]);
+
+    expect(await deleteEntityAction("ent-1")).toEqual({ error: "Entity not found" });
+    expect(mockPrisma.entity.delete).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("still deletes unreferenced entities, and keeps its not-found / stale-session answers", async () => {

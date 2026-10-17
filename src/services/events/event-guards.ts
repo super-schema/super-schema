@@ -45,7 +45,7 @@ export type EventReferrerList = EventReferrerUsage[] & { readonly truncated: boo
 export const MAX_EVENT_REFERRERS = 50;
 const MAX_NAMED_REFERRERS = 5;
 /** Rows read per source before the list is flagged truncated. Any hit blocks; only the first few are ever named. */
-const MAX_REFERRER_SCAN = 200;
+export const MAX_REFERRER_SCAN = 200;
 /** Ids per `IN (...)` list (a domain can own many event versions). */
 const ID_CHUNK = 1000;
 
@@ -74,12 +74,21 @@ function compareLabels(a: string, b: string): number {
   return aMajor - bMajor || aMinor - bMinor || a.localeCompare(b);
 }
 
-/** Edges (draft and published, from events) into the given target versions: at most `MAX_REFERRER_SCAN`, then `truncated`. */
-async function scanEdges(db: Db, toKind: "ENTITY_VERSION" | "EVENT_SPEC_VERSION", toIds: string[]): Promise<{ edges: ScannedEdge[]; truncated: boolean }> {
+/**
+ * Edges (draft and published, from events) into the given target versions: at most `MAX_REFERRER_SCAN`, then `truncated`.
+ * `exclude` leaves edges out IN THE QUERY: filtering them after the scan would let edges that can never count (an event's own,
+ * the ones of the scope being deleted) fill the `MAX_REFERRER_SCAN` window and push the real referrers out of it.
+ */
+async function scanEdges(
+  db: Db,
+  toKind: "ENTITY_VERSION" | "EVENT_SPEC_VERSION",
+  toIds: string[],
+  exclude: Prisma.SchemaReferenceWhereInput[] = []
+): Promise<{ edges: ScannedEdge[]; truncated: boolean }> {
   const edges: ScannedEdge[] = [];
   for (let i = 0; i < toIds.length && edges.length <= MAX_REFERRER_SCAN; i += ID_CHUNK) {
     const rows = await db.schemaReference.findMany({
-      where: { toKind, toId: { in: toIds.slice(i, i + ID_CHUNK) }, fromKind: { in: EDGE_SOURCES } },
+      where: { toKind, toId: { in: toIds.slice(i, i + ID_CHUNK) }, fromKind: { in: EDGE_SOURCES }, ...(exclude.length > 0 && { NOT: exclude }) },
       select: { fromKind: true, fromId: true, toId: true },
       orderBy: [{ fromId: "asc" }, { id: "asc" }],
       take: MAX_REFERRER_SCAN + 1 - edges.length,
@@ -238,13 +247,20 @@ export async function findEventVersionReferrers(db: Db, eventId: string): Promis
 /**
  * Events OUTSIDE the product / domain being deleted (same tenant) that reference a published version of an event INSIDE it.
  * The delete cascades the inside events and their versions, which would leave those references dangling for good.
+ * The scope's own events (their drafts and their versions) are left out by the scan's query, not after it: a scope that
+ * references itself more than `MAX_REFERRER_SCAN` times must not crowd the outside referrers out of the scan.
  */
 export async function findCrossProductEventRefs(db: Db, scope: DeleteGuardScope): Promise<EventReferrerList> {
-  const inside = scope.kind === "product" ? { productId: scope.productId } : { domainId: scope.domainId };
-  const versions = await db.eventSpecVersion.findMany({ where: { eventSpec: { tenantId: scope.tenantId, ...inside } }, select: { id: true, major: true, minor: true } });
+  const inside = { tenantId: scope.tenantId, ...(scope.kind === "product" ? { productId: scope.productId } : { domainId: scope.domainId }) };
+  const versions = await db.eventSpecVersion.findMany({ where: { eventSpec: inside }, select: { id: true, major: true, minor: true } });
   if (versions.length === 0) return referrerList([], false);
-  const scan = await scanEdges(db, "EVENT_SPEC_VERSION", versions.map((v) => v.id));
+  const insideEvents = await db.eventSpec.findMany({ where: inside, select: { id: true } });
+  const scan = await scanEdges(db, "EVENT_SPEC_VERSION", versions.map((v) => v.id), [
+    { fromKind: "EVENT_SPEC", fromId: { in: insideEvents.map((e) => e.id) } },
+    { fromKind: "EVENT_SPEC_VERSION", fromId: { in: versions.map((v) => v.id) } },
+  ]);
   const hits = await hitsOfEdges(db, scope.tenantId, scan.edges, new Map(versions.map((v) => [v.id, formatVersionLabel(v)])));
+  // Kept as the backstop for the query's filter (an edge from a row the scope owns can never be a referrer).
   const isInside = (spec: SpecRow) => (scope.kind === "product" ? spec.productId === scope.productId : spec.domainId === scope.domainId);
   return collect(hits, scan.truncated, isInside);
 }
@@ -289,16 +305,22 @@ function clauseOf(kind: EventsGuardKind, action: EventsGuardAction, listed: Even
   }
 }
 
+const isTruncated = (found: EventReferrer[]) => (found as { truncated?: unknown }).truncated === true || found.length > MAX_EVENT_REFERRERS;
+
+/** What an EMPTY list says when the scan that produced it hit its limit: nothing could be named, so it cannot be said that nothing refers. */
+const UNVERIFIED_CLAUSE = "events may still reference it (too many references to check)";
+
 function build(kind: EventsGuardKind, name: string, found: EventReferrer[], action: EventsGuardAction) {
-  const truncated = (found as { truncated?: unknown }).truncated === true || found.length > MAX_EVENT_REFERRERS;
+  const truncated = isTruncated(found);
   const listed = found.slice(0, MAX_EVENT_REFERRERS);
-  const clause = clauseOf(kind, action, listed, describeReferrers(listed, truncated));
+  const clause = listed.length === 0 ? UNVERIFIED_CLAUSE : clauseOf(kind, action, listed, describeReferrers(listed, truncated));
   return { truncated, listed, clause, prefix: `${kind} "${name}" cannot be ${action}: ` };
 }
 
 function suggestedFixFor(kind: EventsGuardKind, listed: EventReferrer[]): string {
-  const published = listed.find((r) => r.published);
   const noun = KIND_NOUN[kind];
+  if (listed.length === 0) return `Remove the references that point at it first, then try again, or keep the ${noun}.`;
+  const published = listed.find((r) => r.published);
   if (published) {
     return `Published versions cannot be changed, so delete event "${published.eventName}" (which removes its published versions)${listed.length > 1 ? " and the other referrers listed" : ""} first, or keep the ${noun}.`;
   }
@@ -309,9 +331,11 @@ function suggestedFixFor(kind: EventsGuardKind, listed: EventReferrer[]): string
  * IN_USE naming the events (drafts and published versions alike, at most five by name) that hold the entity / library trait /
  * event / product / domain, or null when none does. `details` is `{ referrers, truncated }` (bounded, the event delete's shape).
  * `action` only changes the entity wording: `"retired"` says it is the LATEST version that is pinned.
+ * Fails CLOSED: an empty list whose scan hit its limit (`truncated`) is "unknown", not "none" — it reports IN_USE with an empty
+ * `referrers` list and `truncated: true` rather than letting the delete / retire through.
  */
 export function eventsInUseError(kind: EventsGuardKind, name: string, found: EventReferrer[], action: EventsGuardAction = "deleted"): ServiceError | null {
-  if (found.length === 0) return null;
+  if (found.length === 0 && !isTruncated(found)) return null;
   const { truncated, listed, clause, prefix } = build(kind, name, found, action);
   return {
     code: "IN_USE",

@@ -15,7 +15,10 @@ vi.mock("sonner", () => ({ toast: { success: h.toastSuccess, error: vi.fn() } })
 vi.mock("@/hooks/useDomainsTree", () => ({ useInvalidateDomainsTree: () => h.invalidate }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({
   updateEventDocumentAction: h.update, renameEventAction: h.rename, deleteEventAction: h.remove, previewEventDocumentAction: h.preview,
+  // The Publish / Versions / Used by flows have their own file (event-page-publish.test.tsx).
+  previewEventPublishAction: vi.fn(), publishEventAction: vi.fn(), listEventVersionsAction: vi.fn(), readEventVersionAction: vi.fn(),
 }));
+vi.mock("@/app/(dashboard)/schemas/usage-actions", () => ({ listUsagesAction: vi.fn() }));
 // The real component renders a sandboxed iframe (covered by asyncapi-preview.test.tsx).
 vi.mock("@/features/events/event-specs/AsyncApiPreview", () => ({
   AsyncApiPreview: (p: { document: unknown; title: string }) => <div data-testid="asyncapi-preview" data-title={p.title}>{JSON.stringify(p.document)}</div>,
@@ -49,7 +52,7 @@ function pageData(over: Partial<EventPageData> = {}): EventPageData {
   return {
     event: makeEvent(), productId: "p1", domainSlug: "payments", productSlug: "checkout", entityOptions: ENTITY_OPTIONS, libraryTraits: LIBRARY_TRAITS,
     crumbs: [{ label: "Domains", href: "/schemas" }, { label: "Payments", href: "/schemas/payments" }, { label: "Events", href: LIST_HREF }, { label: "orders" }],
-    listHref: LIST_HREF, initialTab: "design", initialSection: "metadata", initialItem: null, ...over,
+    listHref: LIST_HREF, initialTab: "design", initialSection: "metadata", initialItem: null, initialVersion: null, ...over,
   };
 }
 const renderPage = (over: Partial<EventPageData> = {}) => render(<EventPage data={pageData(over)} />);
@@ -109,9 +112,9 @@ describe("EventPage: header", () => {
     expect(screen.getByTestId("event-spec-badge").textContent).toBe("openapi@3.1");
   });
 
-  it("has the Design and Docs tabs, and no others in this slice", () => {
+  it("has the Design, Docs, Versions and Used by tabs", () => {
     renderPage();
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Design", "Docs"]);
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Design", "Docs", "Versions", "Used by"]);
     expect(screen.getByRole("tablist").getAttribute("aria-label")).toBe("orders sections");
   });
 
@@ -226,21 +229,22 @@ describe("EventPage: tabs", () => {
     expect(design.getAttribute("tabindex")).toBe("-1");
     expect(document.activeElement).toBe(docs);
 
-    fireEvent.keyDown(docs, { key: "ArrowRight" });
-    expect(design.getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(design, { key: "ArrowLeft" });
-    expect(docs.getAttribute("aria-selected")).toBe("true");
+    // The four tabs cycle in full (see event-page-publish.test.tsx); from the last one the arrow wraps to Design.
     fireEvent.keyDown(docs, { key: "Home" });
     expect(design.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(design, { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: "Used by" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Used by" }), { key: "ArrowRight" });
+    expect(design.getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(design, { key: "End" });
-    expect(docs.getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(docs, { key: "a" });
-    expect(docs.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Used by" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Used by" }), { key: "a" });
+    expect(screen.getByRole("tab", { name: "Used by" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("links every tab to its panel", () => {
     renderPage();
-    for (const [name, panel] of [["Design", "event-panel-design"], ["Docs", "event-panel-docs"]] as const) {
+    for (const [name, panel] of [["Design", "event-panel-design"], ["Docs", "event-panel-docs"], ["Versions", "event-panel-versions"], ["Used by", "event-panel-used-by"]] as const) {
       const tab = screen.getByRole("tab", { name });
       const el = screen.getByTestId(panel);
       expect(tab.getAttribute("aria-controls")).toBe(el.id);

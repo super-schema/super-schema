@@ -21,6 +21,7 @@ import {
   RightPanelContentProvider,
   useRightPanelContent,
 } from "@/hooks/useRightPanelContent";
+import { canNavigate } from "@/lib/navigation/before-navigate";
 import { newEntityHrefForPath } from "@/lib/navigation/new-entity-target";
 import { useModKey } from "@/lib/platform";
 
@@ -75,6 +76,10 @@ export function DashboardClientShell({ children }: { children: React.ReactNode }
       palette.open();
       return;
     }
+
+    // Leaving this page is a navigation like any other: a page with unsaved work can veto it (and asks the user itself). The
+    // `new-entity` event below must not fire then either, so the check comes first.
+    if (pathname !== target && !canNavigate(target)) return;
 
     document.dispatchEvent(new CustomEvent("super-schema:new-entity"));
 

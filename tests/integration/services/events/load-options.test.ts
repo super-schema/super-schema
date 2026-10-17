@@ -63,6 +63,8 @@ describe("event option loaders (tenant scoping)", () => {
       const mine = (id: string) => entities.find((e) => e.id === id);
       expect(mine(published.entity.id)).toMatchObject({
         name: `Order${own.s}`, ownerLabel: ownerOf(own), latestVersionId: published.version.id, latestVersionLabel: "1.0",
+        // the page of the entity, so a pin note can link to it
+        href: `/schemas/${own.domain.slug}/${own.product.slug}/${published.entity.slug}`,
       });
       expect(mine(draft.id)).toMatchObject({ latestVersionId: null, latestVersionLabel: null });
       expect(ids(entities)).not.toContain(foreign.entity.id);

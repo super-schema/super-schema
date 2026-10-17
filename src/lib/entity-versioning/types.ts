@@ -14,6 +14,9 @@ export interface PublishInput {
   changeSummary?: string;
 }
 
+/** The longest change summary (after trimming) an entity or an event publish accepts: the text lands in an immutable version row and audit entry. */
+export const MAX_CHANGE_SUMMARY = 500;
+
 /** A published version without its (large) frozen source and field snapshot. */
 export interface EntityVersionSummary {
   id: string;

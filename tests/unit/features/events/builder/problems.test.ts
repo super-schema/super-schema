@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  locateProblem, problemMessage, problemsByField, readProblems, uniqueProblems, userProblemText,
+  locateProblem, problemMessage, problemsByField, readProblems, uniqueProblems,
 } from "@/features/events/builder/problems";
 import { emptyEventDocument, type EventDocument } from "@/lib/events/document/types";
 
@@ -114,6 +114,33 @@ describe("locateProblem", () => {
   });
 });
 
+describe("locateProblem: external references", () => {
+  function withRefs(): EventDocument {
+    const d = doc();
+    d.externalRefs = [
+      { key: "billing-topic", eventVersionId: "vv1", kind: "channel", itemKey: "billing" },
+      { key: "Order-placed", eventVersionId: "vv1", kind: "message", itemKey: "OrderPlaced" },
+    ];
+    return d;
+  }
+
+  it("puts a problem at /externalRefs/<i>/… in the section of that reference's kind, with the reference's key", () => {
+    expect(locateProblem(withRefs(), "/externalRefs/0/itemKey")).toEqual({ section: "channels", item: "billing-topic" });
+    expect(locateProblem(withRefs(), "/externalRefs/1/eventVersionId")).toEqual({ section: "messages", item: "Order-placed" });
+    expect(locateProblem(withRefs(), "/externalRefs/1")).toEqual({ section: "messages", item: "Order-placed" });
+  });
+
+  it("leaves a pointer at the list itself, a missing or non-canonical index or a blank key unplaced", () => {
+    expect(locateProblem(withRefs(), "/externalRefs")).toEqual({ section: null, item: null });
+    expect(locateProblem(withRefs(), "/externalRefs/9/key")).toEqual({ section: null, item: null });
+    expect(locateProblem(withRefs(), "/externalRefs/01/key")).toEqual({ section: null, item: null });
+    expect(locateProblem(withRefs(), "/externalRefs/length/key")).toEqual({ section: null, item: null });
+    const blank = withRefs();
+    blank.externalRefs[0] = { ...blank.externalRefs[0], key: "" };
+    expect(locateProblem(blank, "/externalRefs/0/key")).toEqual({ section: "channels", item: null });
+  });
+});
+
 describe("problemsByField", () => {
   const problems = [
     { pointer: "/info/title", message: "title is required" },
@@ -181,30 +208,5 @@ describe("uniqueProblems / problemMessage / readProblems", () => {
     expect(readProblems({})).toEqual([]);
     expect(readProblems({ problems: "nope" })).toEqual([]);
     expect(readProblems(null)).toEqual([]);
-  });
-});
-
-describe("userProblemText: the parser's two 'trait' messages read as message / operation properties", () => {
-  it("rewords an unknown reference by the kind of the item that holds it", () => {
-    expect(userProblemText({ pointer: "/messages/0/traitKeys/1", message: 'Unknown trait "Gone"' })).toBe('Unknown message properties "Gone"');
-    expect(userProblemText({ pointer: "/operations/2/traitKeys/0", message: 'Unknown trait "Gone"' })).toBe('Unknown operation properties "Gone"');
-  });
-
-  it("rewords a reference to a set of the other kind", () => {
-    expect(userProblemText({ pointer: "/messages/0/traitKeys/0", message: 'Trait "retry" is not a message trait' })).toBe('"retry" is not a set of message properties');
-    expect(userProblemText({ pointer: "/operations/0/traitKeys/0", message: 'Trait "envelope" is not a operation trait' })).toBe('"envelope" is not a set of operation properties');
-  });
-
-  it("leaves every other problem as it is", () => {
-    expect(userProblemText({ pointer: "/messages/0/title", message: "title must be a string" })).toBe("title must be a string");
-    expect(userProblemText({ pointer: "/traits/0", message: "A trait needs exactly one of spec or libraryTraitId" })).toBe("A trait needs exactly one of spec or libraryTraitId");
-  });
-
-  it("is what problemMessage shows, joined and de-duplicated", () => {
-    expect(problemMessage([
-      { pointer: "/messages/0/traitKeys/0", message: 'Unknown trait "A"' },
-      { pointer: "/messages/0/traitKeys/1", message: 'Unknown trait "B"' },
-      { pointer: "/messages/0/traitKeys/2", message: 'Unknown trait "A"' },
-    ])).toBe('Unknown message properties "A"; Unknown message properties "B"');
   });
 });

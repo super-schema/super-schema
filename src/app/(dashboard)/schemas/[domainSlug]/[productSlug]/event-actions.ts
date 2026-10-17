@@ -2,10 +2,20 @@
 
 import { unstable_rethrow } from "next/navigation";
 import { getActionContext, NOT_AUTHENTICATED, runMutation, toActionResult, withOwnedTarget } from "@/lib/action-context";
-import { emitEventDocumentPreview, emitEventDraft, type EventEmission } from "@/services/events/event-emit.service";
+import { getActiveTenantId } from "@/lib/active-tenant";
+import type { PublishInput } from "@/lib/entity-versioning/types";
+import type { ExternalEventCandidate, ExternalRefInput, ExternalRefStatus, ExternalVersionItems, ExternalVersionOption } from "@/lib/events/external-refs";
+import type { EventPublishAnalysis } from "@/lib/events/publish-plan";
+import type { EventVersionSummary } from "@/lib/events/types";
+import { emitEventDocumentPreview, emitEventDraft, emitEventStoredVersion, type EventEmission } from "@/services/events/event-emit.service";
+import { listEventVersions, previewEventPublish, publishEvent } from "@/services/events/event-publish.service";
 import { createEvent, deleteEvent, renameEvent, updateEventDocument, type EventDetail } from "@/services/events/event.service";
+import {
+  getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions,
+} from "@/services/events/external-refs.service";
+import { requireOwnedEvent } from "@/services/events/service-guards";
 import { GENERIC_ACTION_ERROR, type ActionResult } from "@/types/action-result";
-import type { Result } from "@/types/result";
+import { ok, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
 const productOwner = (productId: string) => ({ level: "PRODUCT" as const, productId });
@@ -62,4 +72,68 @@ export async function previewEventDocumentAction(eventId: string, productId: str
 /** The AsyncAPI emission of the SAVED draft (what Publish will cut from). Read-only; same nullable artifacts as the preview. */
 export async function emitEventDraftAction(eventId: string, productId: string): Promise<ActionResult<EventEmission>> {
   return readAction(productId, "emitEventDraftAction", (ctx) => emitEventDraft(eventId, productId, ctx));
+}
+
+// ── External event references: read actions ────────────────────────────────────────────────────────────────────────────
+// The loaders of `external-refs.service.ts` for the reference picker and the "newer version available" badge. `productId` is
+// the product the user works in (checked by `readAction` -> `withOwnedTarget`, like every action above). The tenant is the
+// server-resolved ACTIVE tenant, and the event the candidate list leaves out is checked to be one of that product's events:
+// neither is ever taken on trust from the client.
+
+/** Published events of the tenant to reference, searched by event / domain / product name. `eventId` is the event being edited (never offered). */
+export async function listExternalEventCandidatesAction(productId: string, eventId: string, query?: string): Promise<ActionResult<ExternalEventCandidate[]>> {
+  return readAction(productId, "listExternalEventCandidatesAction", async (ctx) => {
+    const own = await requireOwnedEvent(ctx, eventId, productOwner(productId));
+    if (!own.success) return own;
+    return listExternalEventCandidates(ctx, { tenantId: await getActiveTenantId(), excludeEventId: own.data, query });
+  });
+}
+
+/** The referenceable versions of the event `sourceEventId` (any product of the tenant), newest first. */
+export async function listExternalEventVersionsAction(productId: string, sourceEventId: string): Promise<ActionResult<ExternalVersionOption[]>> {
+  return readAction(productId, "listExternalEventVersionsAction", async (ctx) =>
+    listExternalEventVersions(ctx, { tenantId: await getActiveTenantId(), eventId: sourceEventId }));
+}
+
+/** The channels and messages the published version `eventVersionId` offers. */
+export async function getExternalVersionItemsAction(productId: string, eventVersionId: string): Promise<ActionResult<ExternalVersionItems>> {
+  return readAction(productId, "getExternalVersionItemsAction", async (ctx) =>
+    getExternalVersionItems(ctx, { tenantId: await getActiveTenantId(), eventVersionId }));
+}
+
+/** One status per referenced version: is a newer version published, is it a new major, which referenced items did it drop. */
+export async function getExternalRefStatusesAction(productId: string, refs: ExternalRefInput[]): Promise<ActionResult<ExternalRefStatus[]>> {
+  return readAction(productId, "getExternalRefStatusesAction", async (ctx) =>
+    getExternalRefStatuses(ctx, { tenantId: await getActiveTenantId(), refs }));
+}
+
+// ── Publish, versions ──────────────────────────────────────────────────────────────────────────────────────────────────
+// The services are `event-publish.service.ts` (publish, preview, list) and `event-emit.service.ts` (a stored version's code). All four
+// take the CLIENT-supplied `productId` and the service compares the event against it, behind the same parent check as above.
+
+/** What the Publish dialog shows: the version a publish would write, the suggested bump and EVERY blocker. Writes nothing. */
+export async function previewEventPublishAction(eventId: string, productId: string): Promise<ActionResult<EventPublishAnalysis>> {
+  return readAction(productId, "previewEventPublishAction", (ctx) => previewEventPublish(eventId, productId, ctx));
+}
+
+/**
+ * Cuts an immutable version from the SAVED draft. `input` (bump, change summary) is untrusted; the service validates it and the
+ * raise-only bump rule. A blocked plan answers PUBLISH_BLOCKED with every blocker in `details.blockers`, a save racing the publish a
+ * retryable CONFLICT.
+ */
+export async function publishEventAction(eventId: string, productId: string, input: PublishInput): Promise<ActionResult<EventVersionSummary>> {
+  return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => publishEvent(eventId, productId, input, ctx)), "publishEventAction");
+}
+
+/** The published versions of the event, newest first. */
+export async function listEventVersionsAction(eventId: string, productId: string): Promise<ActionResult<EventVersionSummary[]>> {
+  return readAction(productId, "listEventVersionsAction", (ctx) => listEventVersions(eventId, productId, ctx));
+}
+
+/** The stored AsyncAPI document of one published version (`label` like "1.1"), exactly as it was saved, as YAML and JSON text. */
+export async function readEventVersionAction(eventId: string, productId: string, label: string): Promise<ActionResult<{ yaml: string; json: string }>> {
+  return readAction(productId, "readEventVersionAction", async (ctx) => {
+    const stored = await emitEventStoredVersion(eventId, productId, label, ctx);
+    return stored.success ? ok({ yaml: stored.data.yaml, json: stored.data.json }) : stored;
+  });
 }

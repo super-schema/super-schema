@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { describeUsage, parseUsageSubject, type UsageLookups } from "@/lib/events/usage";
+import { describeUsage, parseUsageSubject, usageRowList, USAGE_ROW_LIMIT, type UsageLookups } from "@/lib/events/usage";
+import { MAX_EVENT_REFERRERS } from "@/services/events/event-guards";
 
 const at = { domainSlug: "payments", productSlug: "checkout" };
 const lookups: UsageLookups = {
@@ -70,11 +71,46 @@ describe("parseUsageSubject", () => {
     expect(parseUsageSubject({ kind: "entity", entityId: "e1", extra: 1 })).toEqual({ success: true, data: { kind: "entity", entityId: "e1" } });
   });
 
+  it("accepts an event subject with a non-empty id and strips extra keys", () => {
+    expect(parseUsageSubject({ kind: "event", eventId: "x" })).toEqual({ success: true, data: { kind: "event", eventId: "x" } });
+    expect(parseUsageSubject({ kind: "event", eventId: "x", entityId: "e1", extra: 1 })).toEqual({ success: true, data: { kind: "event", eventId: "x" } });
+  });
+
   it("rejects untrusted shapes, including the retired message subject", () => {
     for (const bad of [null, undefined, "x", 1, [], {}, { kind: "entity" }, { kind: "entity", entityId: "" }, { kind: "entity", entityId: 3 }, { kind: "message", messageId: "m1" }, { kind: "trait", id: "t" }]) {
       const r = parseUsageSubject(bad);
       expect(r.success).toBe(false);
       expect(!r.success && r.error.code).toBe("VALIDATION_ERROR");
     }
+  });
+
+  it("rejects an event subject without a usable id, and a subject of the other kind's shape", () => {
+    for (const bad of [
+      { kind: "event" }, { kind: "event", eventId: "" }, { kind: "event", eventId: "   " }, { kind: "event", eventId: 3 }, { kind: "event", eventId: null },
+      { kind: "event", entityId: "e1" }, { kind: "entity", eventId: "x" }, { kind: "events", eventId: "x" }, { kind: "product", id: "p1" },
+    ]) {
+      const r = parseUsageSubject(bad);
+      expect(r.success).toBe(false);
+      expect(!r.success && r.error.code).toBe("VALIDATION_ERROR");
+    }
+  });
+});
+
+describe("usageRowList", () => {
+  const row = { id: "r1", fromKind: "EVENT_SPEC" as const, role: "MESSAGE", isDraft: true, target: "T v1.0", label: "Event c (draft)", href: null };
+
+  it("is the rows themselves, carrying a truncated flag that is not one of the array's own entries", () => {
+    const list = usageRowList([row], true);
+    expect(list).toEqual([row]);
+    expect(list.length).toBe(1);
+    expect(list.truncated).toBe(true);
+    expect(JSON.stringify(list)).toBe(JSON.stringify([row]));
+    expect(usageRowList([], false).truncated).toBe(false);
+  });
+});
+
+describe("USAGE_ROW_LIMIT", () => {
+  it("is the number of rows the service returns for an event, so the panel's truncation note names the right limit", () => {
+    expect(USAGE_ROW_LIMIT).toBe(MAX_EVENT_REFERRERS);
   });
 });

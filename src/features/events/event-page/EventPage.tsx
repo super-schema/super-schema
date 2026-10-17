@@ -1,8 +1,10 @@
 "use client";
 
 // src/features/events/event-page/EventPage.tsx
-// The self-contained Event page: header (name, badges, rename, delete) and the Design | Docs tabs. The builder stays mounted
-// while Docs shows, so an unsaved edit survives a trip to the other tab; ?tab= / ?section= / ?item= follow the state.
+// The self-contained Event page: header (name, badges, Publish, rename, delete) and the Design | Docs | Versions | Used by tabs. The
+// builder stays mounted while another tab shows, so an unsaved edit survives a trip there; ?tab= / ?section= / ?item= / ?version=
+// follow the state.
+// Leaving with unsaved edits asks first (`useLeaveGuard` + `UnsavedChangesDialog`); tab and section switches never do.
 // The AsyncAPI code of the unsaved draft lives in the shell's right Detail Panel (see the "Code panel" block below).
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
@@ -12,23 +14,30 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  deleteEventAction, renameEventAction, updateEventDocumentAction,
+  deleteEventAction, previewEventPublishAction, publishEventAction, renameEventAction, updateEventDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
-import { assetHref, EVENT_TABS, type BuilderSection, type EventTab } from "@/lib/navigation/asset-href";
+import type { PublishInput } from "@/lib/entity-versioning/types";
+import { assetHref, EVENT_TABS, nextEventTab, type BuilderSection, type EventTab } from "@/lib/navigation/asset-href";
 import { instantLibraryTraits } from "@/lib/events/document/instant-asyncapi";
+import { foldPublishBlockers } from "@/lib/events/publish-blockers";
 import { EventBuilder } from "@/features/events/builder/EventBuilder";
+import { UnsavedChangesDialog } from "@/features/events/builder/UnsavedChangesDialog";
 import { useEventDraft } from "@/features/events/builder/use-event-draft";
+import { useLeaveGuard } from "@/features/events/builder/use-leave-guard";
 import { EventBreadcrumb } from "@/features/events/shared/EventBreadcrumb";
+import { PublishVersionButton } from "@/features/events/shared/PublishVersionButton";
+import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
 import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
 import { ConnectedEventCodePanel } from "./EventCodePanel";
 import { createEventCodeSourceStore, EventCodeSourceProvider, type EventCodeSource } from "./event-code-source";
 import { EventPreview } from "./EventPreview";
 import type { EventPageData } from "./load-event-page";
 import { useEventPreview } from "./use-event-preview";
+import { VersionsTab } from "./VersionsTab";
 
-const TAB_LABELS: Record<EventTab, string> = { design: "Design", docs: "Docs" };
+const TAB_LABELS: Record<EventTab, string> = { design: "Design", docs: "Docs", versions: "Versions", "used-by": "Used by" };
 const tabDomId = (tab: EventTab) => `event-tab-${tab}`;
 const panelDomId = (tab: EventTab) => `event-panel-${tab}`;
 
@@ -51,6 +60,8 @@ function EventPageBody({ data }: { data: EventPageData }) {
   const [tab, setTab] = useState<EventTab>(data.initialTab);
   const [section, setSection] = useState<BuilderSection>(data.initialSection);
   const [item, setItem] = useState<string | null>(data.initialItem);
+  /** The published version the Versions tab shows (`?version=`); kept while another tab shows, written to the URL only on Versions. */
+  const [version, setVersion] = useState<string | null>(data.initialVersion);
 
   const onSaved = useCallback(() => {
     toast.success("Draft saved");
@@ -58,6 +69,11 @@ function EventPageBody({ data }: { data: EventPageData }) {
   }, [router]);
   const draft = useEventDraft({ event, productId, saveDocument: updateEventDocumentAction, onSaved });
   const builderOptions = useMemo(() => ({ entityOptions, libraryTraits }), [entityOptions, libraryTraits]);
+
+  // ----- leaving with unsaved edits -----
+  // Stops guarding once the event is deleted: the page pushes `listHref` itself, and what is unsaved belongs to an event that is gone.
+  const [eventDeleted, setEventDeleted] = useState(false);
+  const leave = useLeaveGuard(draft.dirty && !eventDeleted);
 
   // The Docs tab renders the document in the sandboxed iframe; it is emitted only while that tab is open.
   const docsEnabled = tab === "docs" && draft.problems.length === 0;
@@ -93,21 +109,34 @@ function EventPageBody({ data }: { data: EventPageData }) {
   // The URL follows the state. History API, not `router.replace`: Next syncs `useSearchParams` with it and no server render is
   // needed to switch a client tab or section. Defaults are omitted by `assetHref`, so an old `?tab=editor` is rewritten clean.
   useEffect(() => {
-    const href = assetHref({ kind: "event", id: event.id, domainSlug, productSlug }, { tab, section, item: item ?? undefined });
+    const href = assetHref(
+      { kind: "event", id: event.id, domainSlug, productSlug },
+      { tab, section, item: item ?? undefined, version: tab === "versions" && version !== null ? version : undefined }
+    );
     if (`${window.location.pathname}${window.location.search}` !== href) window.history.replaceState(null, "", href);
-  }, [tab, section, item, event.id, domainSlug, productSlug]);
+  }, [tab, section, item, version, event.id, domainSlug, productSlug]);
 
   function onTabKeyDown(e: KeyboardEvent<HTMLButtonElement>, id: EventTab) {
-    const at = EVENT_TABS.indexOf(id);
-    let next: number;
-    if (e.key === "ArrowRight") next = (at + 1) % EVENT_TABS.length;
-    else if (e.key === "ArrowLeft") next = (at - 1 + EVENT_TABS.length) % EVENT_TABS.length;
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = EVENT_TABS.length - 1;
-    else return;
+    const next = nextEventTab(id, e.key);
+    if (next === null) return;
     e.preventDefault();
-    setTab(EVENT_TABS[next]);
-    document.getElementById(tabDomId(EVENT_TABS[next]))?.focus();
+    setTab(next);
+    document.getElementById(tabDomId(next))?.focus();
+  }
+
+  // ----- publish -----
+  // Publish cuts a version from the SAVED draft, so it waits for a clean save. Problems come first: while the draft has any it cannot
+  // be saved either, and "save your changes" would send the user in a circle. While a save is running the hint says so.
+  const publishBlockedReason = draft.problems.length > 0
+    ? "Fix the highlighted problems first"
+    : draft.saving ? "Saving your changes…" : draft.dirty ? "Save your changes first" : null;
+  async function loadPublishPreview() {
+    const result = await previewEventPublishAction(event.id, productId);
+    return result.success ? { success: true as const, data: foldPublishBlockers(result.data) } : result;
+  }
+  async function publishDraft(input: PublishInput) {
+    const result = await publishEventAction(event.id, productId, input);
+    return result.success ? { success: true as const, data: { label: result.data.label } } : result;
   }
 
   // ----- rename -----
@@ -175,7 +204,8 @@ function EventPageBody({ data }: { data: EventPageData }) {
 
   async function remove() {
     if (deleteInFlight.current) return;
-    if (!window.confirm(`Delete event "${name}"? Its draft is removed with it.`)) return;
+    const removed = event.latestVersionLabel ? "Its draft and its published versions are" : "Its draft is";
+    if (!window.confirm(`Delete event "${name}"? ${removed} removed with it.`)) return;
     deleteInFlight.current = true;
     setDeleting(true);
     setDeleteError(null);
@@ -187,6 +217,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
         return;
       }
       deleted = true;
+      setEventDeleted(true);
       void invalidateDomainsTree(); // the explorer reads a cached tree: without this the deleted row stays until a reload
       router.push(listHref);
     } catch {
@@ -238,6 +269,11 @@ function EventPageBody({ data }: { data: EventPageData }) {
           )}
         </div>
         <div className="flex items-center gap-space-2">
+          <PublishVersionButton
+            subjectName={name} description="Publishing freezes the saved draft as an immutable version that other events can reference."
+            loadPreview={loadPublishPreview} publish={publishDraft} disabled={publishBlockedReason !== null}
+            title={publishBlockedReason ?? undefined} testId="event-publish"
+          />
           <Button
             type="button" variant="outline" onClick={togglePanel} data-testid="event-code-toggle" className="gap-1.5"
             aria-pressed={!isPanelCollapsed} title={isPanelCollapsed ? "Show the live code panel" : "Hide the live code panel"}
@@ -269,7 +305,7 @@ function EventPageBody({ data }: { data: EventPageData }) {
         ))}
       </div>
 
-      {/* Both panels exist so every tab's aria-controls resolves. Design is never unmounted (unsaved edits live in its draft); Docs' content is. */}
+      {/* Every panel exists so every tab's aria-controls resolves. Design is never unmounted (unsaved edits live in its draft); the other tabs' content is. */}
       <div role="tabpanel" id={panelDomId("design")} aria-labelledby={tabDomId("design")} data-testid="event-panel-design" hidden={tab !== "design"}>
         <EventBuilder draft={draft} options={builderOptions} section={section} onSectionChange={setSection} item={item} onItemChange={setItem} />
       </div>
@@ -285,6 +321,19 @@ function EventPageBody({ data }: { data: EventPageData }) {
           </div>
         )}
       </div>
+      <div role="tabpanel" id={panelDomId("versions")} aria-labelledby={tabDomId("versions")} data-testid="event-panel-versions" hidden={tab !== "versions"}>
+        {tab === "versions" && (
+          <VersionsTab eventId={event.id} productId={productId} latestLabel={event.latestVersionLabel} version={version} onVersionChange={setVersion} />
+        )}
+      </div>
+      <div role="tabpanel" id={panelDomId("used-by")} aria-labelledby={tabDomId("used-by")} data-testid="event-panel-used-by" hidden={tab !== "used-by"}>
+        {tab === "used-by" && <UsedByPanel subject={{ kind: "event", eventId: event.id }} title="Used by" emptyText="No other event references this one." />}
+      </div>
+
+      <UnsavedChangesDialog
+        pending={leave.pending} saving={draft.saving} error={draft.error}
+        onSaveAndLeave={draft.save} onDiscardAndLeave={draft.discard} onStay={() => leave.pending?.stay()}
+      />
     </div>
   );
 }

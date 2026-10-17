@@ -14,6 +14,7 @@ import { createRepresentations, type EntityFormats, type RepresentationEngine } 
 import {
   isLibraryTrait, type DocChannel, type DocMessage, type DocServer, type DocumentProblem, type EventDocument,
 } from "./types";
+import { propertiesNoun, propertiesSet } from "./wording";
 
 export interface MessageArtifacts { payloads: SchemaArtifact[]; headers?: SchemaArtifact; keys: SchemaArtifact[] }
 export interface ExternalItems { channel?: ResolvedChannel; message?: ResolvedMessage; traits?: ResolvedTrait[] }
@@ -149,6 +150,23 @@ const toLocalMessage = (m: DocMessage, productSlug: string, artifacts: MessageAr
 type ExternalResolved = { channel?: ResolvedChannel; message?: ResolvedMessage; traits: ResolvedTrait[] };
 
 /**
+ * A referenced event version's stored channel as this event carries it: the channel itself (address, protocol, profile, bindings,
+ * documentation) and nothing that points at the SOURCE event's own ids. A version published with `emitAll` stores its channels with
+ * `serverRefs` (its servers), `messageRefs` (the messages it lists) and `messageProfiles` (keyed by its message ids); in this event
+ * those ids name nothing — the assembler would report them as unknown server / message references — or, worse, name a LOCAL item
+ * that happens to share the id and silently give it the source's wire format. The messages on the channel here are the ones this
+ * event's own operations put on it. `messageProfiles` is DROPPED, not remapped: an external message that goes on an external
+ * channel is therefore rendered by `message.profile ?? channel.profile`, never by a per-message profile the source recorded.
+ */
+function externalChannelCopy(channel: ResolvedChannel): ResolvedChannel {
+  const copy = clone(channel);
+  delete copy.serverRefs;
+  delete copy.messageRefs;
+  delete copy.messageProfiles;
+  return copy;
+}
+
+/**
  * Document → `ResolvedEventSpec`. Like the v1 resolver, only what operations use is carried over (channels, messages,
  * and the traits of used messages and operations, in first-reference order) and every unresolved reference is reported
  * together as one `UNRESOLVED_REFERENCES` error with a pointer into the document.
@@ -181,9 +199,9 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     }
     const pointer = `/traits/${i}/libraryTraitId`;
     const frozen = input.libraryTraits.get(t.libraryTraitId);
-    if (!frozen) { problem(pointer, `Library trait "${t.libraryTraitId}" was not found`); return; }
+    if (!frozen) { problem(pointer, `Library ${propertiesNoun(t.kind)} "${t.libraryTraitId}" not found`); return; }
     if (frozen.kind !== t.kind) {
-      problem(pointer, `Library trait "${t.libraryTraitId}" is a ${frozen.kind} trait, but "${t.key}" is declared as a ${t.kind} trait`);
+      problem(pointer, `Library "${t.libraryTraitId}" is a ${propertiesSet(frozen.kind)}, but "${t.key}" is declared as a ${propertiesSet(t.kind)}`);
       return;
     }
     resolvedTraits.set(t.key, { ...clone(toResolvedTrait(frozen, input.libraryTraitHeaders.get(t.libraryTraitId))), id: t.key });
@@ -197,7 +215,7 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     const items = input.external.get(ref.key);
     if (ref.kind === "channel") {
       if (!items?.channel) { problem(pointer, `External channel "${ref.itemKey}" (reference "${ref.key}") was not found in event version ${ref.eventVersionId}`); return; }
-      external.set(ref.key, { channel: { ...clone(items.channel), id: ref.key }, traits: [] });
+      external.set(ref.key, { channel: { ...externalChannelCopy(items.channel), id: ref.key }, traits: [] });
       return;
     }
     if (!items?.message) { problem(pointer, `External message "${ref.itemKey}" (reference "${ref.key}") was not found in event version ${ref.eventVersionId}`); return; }
@@ -209,7 +227,7 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
     for (const id of items.message.traitRefs ?? []) {
       const trait = supplied.get(id);
       if (!trait || trait.kind !== "MESSAGE") {
-        problem(pointer, `External message "${ref.itemKey}" (reference "${ref.key}") uses trait "${id}", which event version ${ref.eventVersionId} did not supply`);
+        problem(pointer, `External message "${ref.itemKey}" (reference "${ref.key}") uses ${propertiesNoun("MESSAGE")} "${id}", which event version ${ref.eventVersionId} did not supply`);
         continue;
       }
       traits.push({ ...clone(trait), id: scoped(id) });
@@ -226,8 +244,8 @@ export function resolveDocument(input: ResolveDocumentInput): Result<ResolvedEve
 
   const takeTrait = (key: string, kind: TraitKind, pointer: string) => {
     const declared = localTraits.get(key);
-    if (!declared) { problem(pointer, `Unknown trait "${key}"`); return; }
-    if (declared.item.kind !== kind) { problem(pointer, `Trait "${key}" is a ${declared.item.kind} trait, expected a ${kind} trait`); return; }
+    if (!declared) { problem(pointer, `Unknown ${propertiesNoun(kind)} "${key}"`); return; }
+    if (declared.item.kind !== kind) { problem(pointer, `"${key}" is not a ${propertiesSet(kind)}`); return; }
     const trait = resolvedTraits.get(key);
     if (trait && !traits.has(trait.id)) traits.set(trait.id, trait);
   };

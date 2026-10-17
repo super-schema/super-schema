@@ -32,8 +32,10 @@ function contactFieldErrors(details: object | undefined): ProductContactErrors |
 }
 
 /**
- * Session + REAL role (`getActionContext`, the same resolution the Events actions use: the session user mapped to a `User`
- * row, the effective role failing closed to VIEWER) around one product service call. Product service failures keep their
+ * Session + active tenant around one product service call: `getActionContext` (the same resolution the Events actions use) maps
+ * the session user to a `User` row and resolves the effective role (failing closed to VIEWER) for the service context and the
+ * audit trail. The role is NOT enforced here: no action or service call below checks it, so any signed-in member of the
+ * active tenant who passes the ownership check below can run these. Product service failures keep their
  * message, except `DB_ERROR` / `INTERNAL_ERROR`, which become the generic message; an unexpected throw (the product service
  * rethrows anything that is not a unique-constraint hit) is logged server-side and answered with the generic message too,
  * so the form never sees raw driver text and never hangs on a rejected action. Next's own control-flow throws pass through.

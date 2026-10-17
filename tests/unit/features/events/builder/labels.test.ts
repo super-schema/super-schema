@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   addPropertiesLabel, BUILT_IN_NOTE, chooserItemText, groupLabel, LIBRARY_NOTE, MESSAGE_PROPERTIES, messagePropertiesTitle, newPropertiesLabel,
-  NEW_PROPERTIES_DESCRIPTION, NEW_PROPERTIES_MENU, OPERATION_PROPERTIES, operationPropertiesTitle, propertiesName, propertiesNameLower, propertiesTitle,
-  propertyCountText, TRAIT_BADGE, TRAIT_SUFFIX,
+  NEW_PROPERTIES_DESCRIPTION, NEW_PROPERTIES_MENU, OPERATION_PROPERTIES, operationPropertiesTitle, PINNED_HEADERS_LEAD, PINNED_PROPERTIES_LEAD, propertiesName,
+  propertiesNameLower, propertiesTitle, propertyCountText, TRAIT_BADGE, TRAIT_SUFFIX, updateDuplicateText,
 } from "@/features/events/builder/labels";
 
 describe("labels: one source for the names users see", () => {
@@ -47,5 +47,16 @@ describe("labels: one source for the names users see", () => {
     expect(propertyCountText(8)).toBe("8 properties");
     expect(chooserItemText("CloudEvents 1.0", 8)).toBe("CloudEvents 1.0 — 8 properties");
     expect(chooserItemText("Retry policy", null)).toBe("Retry policy");
+  });
+
+  it("words the note of a properties table whose headers come from a pinned entity (the table appends the entity and its version)", () => {
+    expect(PINNED_PROPERTIES_LEAD).toBe("Properties come from the entity");
+    expect(PINNED_HEADERS_LEAD).toBe("Headers also come from the entity");
+  });
+
+  it("names the reference that already points at the item an Update would re-point to, and what to do instead", () => {
+    expect(updateDuplicateText("OrderPlaced", "2.0", "Order-placed-v2")).toBe(
+      'Cannot update to v2.0: "Order-placed-v2" already points at "OrderPlaced" in that version. Remove one of the two references instead.',
+    );
   });
 });

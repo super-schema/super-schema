@@ -4,11 +4,12 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { ScopeTarget } from "@/lib/asset-scope";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
-import { collectDocumentEdges, collectDocumentRefs } from "@/lib/events/document/edges";
+import { collectDocumentEdges, collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, isLibraryTrait, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
+import { propertiesNoun, propertiesSet } from "@/lib/events/document/wording";
+import { referenceableItems } from "@/lib/events/external-refs";
 import { normalizeCatalogName } from "@/lib/events/inputs";
-import type { EntityPin } from "@/lib/events/types";
 import type { LevelScope } from "@/lib/levels";
 import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
 import { auditedWrite } from "@/services/events/audited";
@@ -76,36 +77,6 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
 
 // ── reference validation ────────────────────────────────────────────────────────────────────────────────────────────────
 
-type PinSite = { pointer: string; pin: EntityPin };
-
-/** Every entity pin of the document with its pointer — the same sites `collectDocumentEdges` / `collectDocumentRefs` read. */
-function pinSites(doc: EventDocument): PinSite[] {
-  const sites: PinSite[] = [];
-  doc.messages.forEach((m, i) => {
-    sites.push({ pointer: `/messages/${i}/payload`, pin: m.payload });
-    if (m.headers) sites.push({ pointer: `/messages/${i}/headers`, pin: m.headers });
-    if (m.keyPin) sites.push({ pointer: `/messages/${i}/keyPin`, pin: m.keyPin });
-  });
-  doc.traits.forEach((t, i) => {
-    if (!isLibraryTrait(t) && t.headers) sites.push({ pointer: `/traits/${i}/headers`, pin: t.headers });
-  });
-  return sites;
-}
-
-/** The ids of a stored `ResolvedEventSpec`'s channels or messages; `null` when there is no usable resolved spec (NULL column, malformed JSON). */
-function resolvedItemIds(resolvedSpec: Prisma.JsonValue | null, kind: "channel" | "message"): Set<string> | null {
-  if (resolvedSpec === null || typeof resolvedSpec !== "object" || Array.isArray(resolvedSpec)) return null;
-  const items = resolvedSpec[kind === "channel" ? "channels" : "messages"];
-  const ids = new Set<string>();
-  if (Array.isArray(items)) {
-    for (const item of items) {
-      const id = item !== null && typeof item === "object" && !Array.isArray(item) ? item.id : undefined;
-      if (typeof id === "string") ids.add(id);
-    }
-  }
-  return ids;
-}
-
 /**
  * Everything the document points at must exist where the spec says it may (§4 / §10), reported all at once, in this order:
  * pins, library traits, external refs. Four batched reads however large the document is; every lookup is tenant-filtered, so
@@ -113,7 +84,8 @@ function resolvedItemIds(resolvedSpec: Prisma.JsonValue | null, kind: "channel" 
  *  - Pins (same rules as `resolvePin`): the entity is in this tenant; a non-null version belongs to that entity.
  *  - Library traits: same tenant, level tenant or this event's own domain (never product-level, never another domain), same kind.
  *  - External refs: a published `EventSpecVersion` (the row exists only once published) of this tenant, not of this event, whose
- *    stored `resolvedSpec` is non-null and contains the item (`channels[].id` / `messages[].id` = the ref's `itemKey`).
+ *    stored `resolvedSpec` is non-null and holds a referenceable item (`isReferenceableItem`: the `channels[]` / `messages[]` entry
+ *    whose `id` is the ref's `itemKey`, with the shape the assembler needs).
  */
 async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, eventId: string, doc: EventDocument): Promise<DocumentProblem[]> {
   const refs = collectDocumentRefs(doc);
@@ -135,7 +107,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
   const externalById = new Map(externals.map((v) => [v.id, v]));
 
   const problems: DocumentProblem[] = [];
-  for (const { pointer, pin } of pinSites(doc)) {
+  for (const { pointer, pin } of collectPinSites(doc)) {
     const entity = entityById.get(pin.entityId);
     if (!entity) {
       problems.push({ pointer: `${pointer}/entityId`, message: `Entity "${pin.entityId}" not found in this tenant` });
@@ -152,11 +124,12 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
     if (!isLibraryTrait(t)) return;
     const pointer = `/traits/${i}/libraryTraitId`;
     const library = traitById.get(t.libraryTraitId);
-    if (!library) problems.push({ pointer, message: `Library trait "${t.libraryTraitId}" not found` });
+    const sets = propertiesNoun(t.kind); // the user's words for a trait: "message properties" / "operation properties"
+    if (!library) problems.push({ pointer, message: `Library ${sets} "${t.libraryTraitId}" not found` });
     else if (library.productId !== null || (library.domainId !== null && library.domainId !== scope.domainId)) {
-      problems.push({ pointer, message: `Library trait "${library.name}" is not available to this event: only tenant-level traits and traits of the event's own domain can be used` });
+      problems.push({ pointer, message: `Library ${sets} "${library.name}" are not available to this event: only tenant-level ${sets} and ${sets} of the event's own domain can be used` });
     } else if (library.kind !== t.kind) {
-      problems.push({ pointer, message: `Library trait "${library.name}" is of kind ${library.kind}, but "${t.key}" is of kind ${t.kind}` });
+      problems.push({ pointer, message: `Library "${library.name}" is a ${propertiesSet(library.kind)}, but "${t.key}" is declared as a ${propertiesSet(t.kind)}` });
     }
   });
 
@@ -172,7 +145,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
       return;
     }
     const label = `Version ${formatVersionLabel(version)} of "${version.eventSpec.name}"`;
-    const items = resolvedItemIds(version.resolvedSpec, r.kind);
+    const items = referenceableItems(version.resolvedSpec, r.kind);
     if (items === null) {
       problems.push({ pointer, message: `${label} cannot be referenced: it has no resolved spec (published before event documents v2)` });
     } else if (!items.has(r.itemKey)) {

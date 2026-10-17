@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NotificationCenter } from "@/components/custom/NotificationCenter/NotificationCenter";
 import { getNotificationNavigationUrl } from "@/components/custom/NotificationCenter/useNotificationCenter";
 import type { NotificationItemData } from "@/components/custom/NotificationCenter/NotificationCenter.types";
+import { BEFORE_NAVIGATE_EVENT, beforeNavigateHref } from "@/lib/navigation/before-navigate";
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
@@ -69,6 +70,44 @@ describe("NotificationCenter navigation", () => {
 
     await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/schemas/enterprise/entities/customer"));
     expect(mocks.markAsRead).toHaveBeenCalledWith("resolved");
+  });
+
+  describe("a page with unsaved work can veto the navigation", () => {
+    const asked: Array<string | null> = [];
+    let veto = false;
+    const listener = (e: Event) => {
+      asked.push(beforeNavigateHref(e));
+      if (veto) e.preventDefault();
+    };
+    beforeEach(() => {
+      asked.length = 0;
+    });
+    afterEach(() => document.removeEventListener(BEFORE_NAVIGATE_EVENT, listener));
+    const listenFor = (vetoes: boolean) => {
+      veto = vetoes;
+      document.addEventListener(BEFORE_NAVIGATE_EVENT, listener);
+    };
+
+    it("asks the page where the notification goes, then navigates when nothing is vetoed", async () => {
+      listenFor(false);
+      render(<NotificationCenter />);
+      fireEvent.click(screen.getByTestId("notification-item-resolved"));
+
+      await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/schemas/enterprise/entities/customer"));
+      expect(asked).toEqual(["/schemas/enterprise/entities/customer"]);
+      expect(mocks.markAsRead).toHaveBeenCalledWith("resolved");
+    });
+
+    it("does not navigate, and does not mark it read, when the page vetoes; the panel still closes", async () => {
+      listenFor(true);
+      render(<NotificationCenter />);
+      fireEvent.click(screen.getByTestId("notification-item-resolved"));
+
+      await waitFor(() => expect(mocks.setOpen).toHaveBeenCalledWith(false));
+      expect(asked).toEqual(["/schemas/enterprise/entities/customer"]);
+      expect(mocks.push).not.toHaveBeenCalled();
+      expect(mocks.markAsRead).not.toHaveBeenCalled(); // the user did not go there
+    });
   });
 
   it("renders an unresolved notification as a non-clickable item that never navigates", () => {

@@ -6,6 +6,7 @@
 // and the messages it allows. The payload format is no longer asked: a channel follows its messages (round-2 R4) unless the user
 // overrides it under Advanced. The key is generated: a placeholder until the user leaves the form, then named from the title or
 // address; the "Identifier" below the form is the only place it shows. Every edit goes through `draft.update(fn)`.
+// Under the list sits the card of EXTERNAL channels (channels another published event defines and this one uses): `ExternalRefsCard`.
 //
 // The pieces the Messages and Operations sections share live in ./graph-parts; the ones Operations imports from here are re-exported.
 import { useMemo, useState } from "react";
@@ -19,13 +20,15 @@ import { autoRenameKey, leftForm, newKey } from "../auto-key";
 import { Field, ProtocolInput, selectClass } from "../controls";
 import type { SectionProps } from "../EventBuilder";
 import { IdentifierDisclosure } from "../Identifier";
+import { externalItemLabel } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
 import type { DraftState } from "../use-event-draft";
+import { ExternalRefsCard } from "./ExternalRefsCard";
 import {
   aliasPointers, allChannelKeys, blockedText, channelLabel, CheckboxGroup, ItemList, messageLabel, Notice, plural, pointerSegment,
-  renameAndSelect, setMessageAllowed,
+  renameAndSelect, setMessageAllowed, withoutChannel,
 } from "./graph-parts";
 
 export {
@@ -186,6 +189,8 @@ export function ChannelsSection({ draft, options, selectedItem, onSelectItem }: 
           />
         </div>
       )}
+
+      <ExternalRefsCard kind="channel" draft={draft} problems={problems} />
     </section>
   );
 }
@@ -282,17 +287,7 @@ function ChannelForm({ draft, index, channel, problems, context, onSelectItem }:
     update((d) => {
       const channelsLeft = d.channels.filter((_, i) => i !== index);
       const stillDefined = channelsLeft.some((c) => c.key === key) || d.externalRefs.some((r) => r.kind === "channel" && r.key === key);
-      if (stillDefined) return { ...d, channels: channelsLeft };
-      return {
-        ...d,
-        channels: channelsLeft,
-        operations: d.operations.filter((o) => o.channelKey !== key).map((o) => {
-          if (o.reply?.channelKey !== key) return o;
-          const next = { ...o };
-          delete next.reply;
-          return next;
-        }),
-      };
+      return stillDefined ? { ...d, channels: channelsLeft } : withoutChannel({ ...d, channels: channelsLeft }, key);
     });
     onSelectItem(null);
   }
@@ -352,7 +347,11 @@ function ChannelForm({ draft, index, channel, problems, context, onSelectItem }:
           />
           <CheckboxGroup
             id="channel-messages" label="Allowed messages" checked={channel.messageKeys} onToggle={toggleMessage} error={errorAt("/messageKeys")}
-            options={doc.messages.map((m) => ({ value: m.key, label: messageLabel(m) }))}
+            options={[
+              ...doc.messages.map((m) => ({ value: m.key, label: messageLabel(m) })),
+              // An operation can only use an external message on a channel that allows it.
+              ...doc.externalRefs.filter((r) => r.kind === "message").map((r) => ({ value: r.key, label: externalItemLabel(r.key) })),
+            ]}
             empty="No messages yet. Add one in Messages, then allow it here."
             hint="Operations on this channel can only use these messages."
           />
