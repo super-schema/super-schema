@@ -155,7 +155,9 @@ export async function readEventVersionAction(eventId: string, productId: string,
 
 // ── Import an AsyncAPI 3.0 document ────────────────────────────────────────────────────────────────────────────────────
 // The services are `asyncapi-import.service.ts`. `input` is the file text and two optional names, all untrusted: the service validates
-// them and bounds the document (1 MiB, entity count, the parser's time). The product is checked first, like every action above.
+// them and bounds what the parser is GIVEN (1 MiB, entries per object and list, expanded size, entity counts); the parser itself cannot be
+// interrupted, so the request's time is NOT bounded (see `src/services/events/import-limits.ts`, KNOWN LIMITATION). The product is checked
+// first, like every action above.
 
 /** What importing the document into this product would do (resolved event name, counts, entities with their final names, warnings). Writes nothing. */
 export async function previewAsyncApiImportAction(productId: string, input: AsyncApiImportInput): Promise<ActionResult<AsyncApiImportPreview>> {

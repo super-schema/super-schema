@@ -12,6 +12,7 @@ import { BUNDLED_TRAITS, bundledMarker } from "@/lib/events/bundled-traits";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { isLibraryTrait, type EventDocument } from "@/lib/events/document/types";
 import { extractPayloads, mapAsyncApiToEventDocument, pascalName } from "@/lib/events/import";
+import { omittedWarningsMessage, OMITTED_WARNINGS_PATTERN } from "@/lib/events/import/bound";
 import type { ImportWarning } from "@/lib/events/import";
 import { parseAvroDocument } from "@/lib/importers/avro.importer";
 import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
@@ -386,6 +387,21 @@ describe("importAsyncApi: names", () => {
     expect(preview.warnings.find((w) => w.pointer === "" && w.code === "ENTITY_RENAMED")?.message).toContain(`${l.event}3`);
   }, 120_000);
 
+  it("the preview carries at most 200 characters of the document's title (it is document text, up to 1 MB), cut with an ellipsis", async () => {
+    const { ctx, productId } = await setup();
+    const title = `Orders ${"T".repeat(100_000)}`;
+    const content = smallDocument(title, { m: { payload: objectPayload("id") } });
+    expect(content.length).toBeGreaterThan(100_000);
+
+    const preview = unwrap(await previewAsyncApiImport(productId, { content }, ctx));
+
+    expect(preview.title).toHaveLength(200);
+    expect(preview.title).toBe(`${title.slice(0, 199)}…`);
+    // a title that fits is shown as it is
+    const short = unwrap(await previewAsyncApiImport(productId, { content: smallDocument("Short title", { m: { payload: objectPayload("id") } }) }, ctx));
+    expect(short.title).toBe("Short title");
+  }, 120_000);
+
   it("an event name the user gives is used; a taken one is resolved; an invalid one is refused before anything runs", async () => {
     const { ctx, s, productId } = await setup();
     const content = fixture("request-reply.yaml");
@@ -503,7 +519,11 @@ describe("importAsyncApi: what the AsyncAPI parser says", () => {
     const { preview } = unwrap(await importAsyncApi(productId, { content: fixture("request-reply.yaml") }, ctx));
 
     expect(preview.warnings.filter((w) => w.code === "VALIDATION_WARNING")).toHaveLength(100);
-    expect(preview.warnings.filter((w) => w.message === "50 more warnings were omitted")).toEqual([{ pointer: "", code: "DROPPED_CONSTRUCT", message: "50 more warnings were omitted" }]);
+    // the one summary line is the shared wording, and the review's pattern recognises it with the right count (producer and recogniser cannot drift)
+    const summary = preview.warnings.filter((w) => w.code === "DROPPED_CONSTRUCT" && OMITTED_WARNINGS_PATTERN.test(w.message));
+    expect(summary).toEqual([{ pointer: "", code: "DROPPED_CONSTRUCT", message: omittedWarningsMessage(50) }]);
+    expect(summary[0].message).toBe("50 more warnings were omitted");
+    expect(OMITTED_WARNINGS_PATTERN.exec(summary[0].message)?.[1]).toBe("50");
     expect(Math.max(...preview.warnings.map((w) => w.message.length))).toBeLessThanOrEqual(500);
   }, 120_000);
 
@@ -516,7 +536,10 @@ describe("importAsyncApi: what the AsyncAPI parser says", () => {
     const { preview } = unwrap(await importAsyncApi(productId, { content: fixture("request-reply.yaml") }, ctx));
 
     expect(preview.warnings.filter((w) => w.code === "VALIDATION_WARNING")).toHaveLength(100);
-    expect(preview.warnings).toContainEqual({ pointer: "", code: "DROPPED_CONSTRUCT", message: "1 more warning was omitted" });
+    const summary = preview.warnings.filter((w) => w.code === "DROPPED_CONSTRUCT" && OMITTED_WARNINGS_PATTERN.test(w.message));
+    expect(summary).toEqual([{ pointer: "", code: "DROPPED_CONSTRUCT", message: omittedWarningsMessage(1) }]);
+    expect(summary[0].message).toBe("1 more warning was omitted");
+    expect(OMITTED_WARNINGS_PATTERN.exec(summary[0].message)?.[1]).toBe("1");
   }, 120_000);
 
   it("lists at most 100 parser errors (the message counts the rest), and nothing is created", async () => {
@@ -851,7 +874,7 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     expect(Date.now() - started).toBeLessThan(1_500); // the parser alone takes 10+ s on it and starves the server meanwhile
     expect(failure(result)).toMatchObject({
       code: "VALIDATION_ERROR", message: expect.stringContaining("The document is too large once its references are resolved (limit 2 MiB): every place that refers to a shared definition counts a full copy of it."),
-      details: { limit: 2 * 1024 * 1024 }, suggestedFix: expect.stringContaining("Inline less, or share smaller schemas"),
+      details: { limit: 2 * 1024 * 1024 }, suggestedFix: expect.stringContaining("Use fewer or smaller schemas that many messages share, or split the document into smaller files"),
     });
     expect(codeOf(await previewAsyncApiImport(productId, { content }, ctx))).toBe("VALIDATION_ERROR");
     expect(parserRuns()).toBe(before); // neither the import nor the preview reached the parser
@@ -1018,6 +1041,22 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     expect(slowSteps()).toEqual(before);
   }, 120_000);
 
+  it("a flood of YAML errors at 313 KiB (about 160,000) is refused in seconds through the import and the preview: 17 s before the errors were left unprinted, about 2 s now", async () => {
+    const { ctx, productId } = await setup();
+    const content = `[${"%,".repeat(160_256)}`;
+    expect(Buffer.byteLength(content)).toBeGreaterThanOrEqual(313 * 1024);
+    const before = slowSteps();
+
+    for (const run of [() => importAsyncApi(productId, { content }, ctx), () => previewAsyncApiImport(productId, { content }, ctx)]) {
+      const started = Date.now();
+      const result = await nothingCreated(productId, run);
+      expect(Date.now() - started).toBeLessThan(8_000); // 4 x the 1.8 - 2.0 s measured; the unfixed code needs 17 s
+      expect(failure(result)).toMatchObject({ code: "PARSE_ERROR", message: expect.stringContaining("The file is not valid YAML: Plain value cannot start with directive indicator character % at line 1, column 2") });
+      expect(failure(result)?.message.length).toBeLessThan(400);
+    }
+    expect(slowSteps()).toEqual(before);
+  }, 120_000);
+
   it("98 YAML aliases of one 880 KB string are refused (86 MB once resolved) by the expansion gate, not by time", async () => {
     const { ctx, productId } = await setup();
     const yaml = `asyncapi: 3.0.0\ninfo:\n  title: Aliases\n  version: 1.0.0\nx-leaf: &leaf ${"x".repeat(880 * 1024)}\n${Array.from({ length: 98 }, (_, i) => `x-copy${i}: *leaf`).join("\n")}\n`;
@@ -1046,6 +1085,36 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
       expect(failure(result)?.message, label).toContain("is not allowed in an imported document");
     }
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  }, 120_000);
+
+  it("a key named hasOwnProperty (the AsyncAPI parser throws on it, which would be the generic internal error for a valid document) is refused with the same clean message, wherever it sits", async () => {
+    const { ctx, productId } = await setup();
+    const documents: Array<[string, string, string]> = [
+      ["JSON x- map", '{"asyncapi":"3.0.0","info":{"title":"t","version":"1.0.0"},"x-ext":{"hasOwnProperty":1}}', "/x-ext/hasOwnProperty"],
+      ["YAML x- map", "asyncapi: 3.0.0\ninfo:\n  title: t\n  version: 1.0.0\nx-ext:\n  hasOwnProperty: 1\n", "/x-ext/hasOwnProperty"],
+      ["a payload property", smallDocument("t", { m: { payload: objectPayload("hasOwnProperty") } }), "/components/messages/m/payload/properties/hasOwnProperty"],
+      ["a message", smallDocument("t", { hasOwnProperty: { payload: objectPayload("id") } }), "/components/messages/hasOwnProperty"],
+    ];
+    for (const [label, content, pointer] of documents) {
+      for (const run of [() => importAsyncApi(productId, { content }, ctx), () => previewAsyncApiImport(productId, { content }, ctx)]) {
+        const result = await nothingCreated(productId, run);
+        expect(failure(result), label).toMatchObject({ code: "PARSE_ERROR", message: expect.stringContaining(`The key "hasOwnProperty" at "${pointer}" is not allowed in an imported document`) });
+        expect(failure(result)?.message, label).toContain("rename it");
+      }
+    }
+  }, 120_000);
+
+  it("the other names of Object.prototype (valueOf, toString ...) are fine as keys: they import, as messages and as payload properties", async () => {
+    const { ctx, productId } = await setup();
+    const names = ["toString", "valueOf", "toLocaleString", "isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"];
+    const content = smallDocument("Prototype names", Object.fromEntries(names.map((name) => [name, { payload: objectPayload(...names) }])));
+
+    const { eventId, preview } = unwrap(await importAsyncApi(productId, { content }, ctx));
+
+    expect(preview.entities).toHaveLength(names.length);
+    const document = await storedDocument(eventId);
+    expect(document.messages.map((m) => m.key).sort()).toEqual([...names].sort());
+    expect(document.messages.every((m) => m.payload.entityVersionId === null)).toBe(true);
   }, 120_000);
 
   it("names the first oversized object in document order: two objects of 2,001 entries, the earlier one is the one named", async () => {
