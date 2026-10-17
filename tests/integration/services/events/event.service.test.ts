@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
-import { cleanupDomains, cleanupTenantTraits, connectTestDb, createEventSpecVersion, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
+import { cleanupDomains, cleanupTenantTraits, connectTestDb, createEventSpecVersion, createProductScope, resolvedChannel, resolvedMessage, stamp, TENANT, testContext, unwrap } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 import { createEvent, deleteEvent, getEvent, renameEvent, updateEventDocument } from "@/services/events/event.service";
 import { emptyEventDocument, type DocExternalRef, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
@@ -61,7 +61,7 @@ async function seedPublishedEvent(sc: Scope, ctx: ServiceContext, name: string, 
   await prisma.eventSpec.update({ where: { id: event.id }, data: { latestVersionId: version.id, hasUnpublishedChanges: false } });
   return { event, version };
 }
-const RESOLVED = { channels: [{ id: "orders" }], messages: [{ id: "M" }] };
+const RESOLVED = { channels: [resolvedChannel("orders")], messages: [resolvedMessage("M")] };
 
 /** A Proxy over a Prisma object whose listed members are replaced; everything else is the real thing. */
 function replacing<T extends object>(target: T, overrides: Record<string, unknown>): T {
@@ -342,7 +342,7 @@ describe("event.service", () => {
     const { ctx, scope, owner } = await setup();
     const other = await otherProduct(ctx);
     const theirs = await seedPublishedEvent(other.scope, ctx, "theirs", RESOLVED);
-    const sibling = await seedPublishedEvent(scope, ctx, "sibling", { channels: [], messages: [{ id: "S" }] });
+    const sibling = await seedPublishedEvent(scope, ctx, "sibling", { channels: [], messages: [resolvedMessage("S")] });
     const ev = unwrap(await createEvent(scope.product.id, { name: `consumer-${scope.s}` }, ctx));
 
     const doc: EventDocument = {

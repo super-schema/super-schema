@@ -7,10 +7,8 @@ import { failureOf, inActiveTenant, notFoundFailure, unexpectedFailure } from "@
 import { getEffectiveRole } from "@/services/rbac.service";
 import { listEntityVersions, previewPublish, publishEntity } from "@/services/entity-version.service";
 import type { PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
-import { isBumpKind, type EntityVersionSummary, type PublishInput } from "@/lib/entity-versioning/types";
+import { isBumpKind, MAX_CHANGE_SUMMARY, type EntityVersionSummary, type PublishInput } from "@/lib/entity-versioning/types";
 import type { ServiceContext } from "@/types/service-context";
-
-const MAX_CHANGE_SUMMARY = 500;
 
 /** Same role resolution as actions.ts (fail-closed to VIEWER). */
 async function serviceContext(userId: string): Promise<ServiceContext> {

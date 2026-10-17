@@ -3,12 +3,13 @@ import { afterAll, describe, expect, it } from "vitest";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
-import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
+import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, resolvedMessage, stamp, TENANT, testContext, unwrap } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
 import { emptyEventDocument } from "@/lib/events/document/types";
 import {
-  getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions, requireOwnedEvent,
+  getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions,
 } from "@/services/events/external-refs.service";
+import { requireOwnedEvent } from "@/services/events/service-guards";
 
 const prisma = connectTestDb();
 const domainIds: string[] = [];
@@ -126,6 +127,10 @@ describe("listExternalEventCandidates", () => {
     const orders = await createEvent(a, TENANT, `Orders_${a.s}`);
     const payments = await createEvent(a, TENANT, `payments-${a.s}`);
     for (const e of [orders, payments]) await publish(ctx, e.id, { major: 1, minor: 0, sequence: 1, kind: "INITIAL", spec: resolved([], []) });
+    // A look-alike of "Orders_<stamp>" without the underscore, in another product: it is what an UNESCAPED backslash would let through.
+    const b = await product(ctx, "extother");
+    const lookalike = await createEvent(b, TENANT, `OrdersX${a.s}`);
+    await publish(ctx, lookalike.id, { major: 1, minor: 0, sequence: 1, kind: "INITIAL", spec: resolved([], []) });
     const names = async (query?: string) => unwrap(await listExternalEventCandidates(ctx, { tenantId: TENANT, excludeEventId: "none", query })).map((c) => c.eventName);
 
     expect(await names(`ORDERS_${a.s.toUpperCase()}`)).toEqual([`Orders_${a.s}`]); // event name, case-insensitive
@@ -137,9 +142,30 @@ describe("listExternalEventCandidates", () => {
     // `_` and `%` are not wildcards: "Orders?<stamp>" does not match "Orders_<stamp>"
     expect(await names(`Orders%${a.s}`)).toEqual([]);
     expect(await names(`Order__${a.s}`)).toEqual([]);
-    expect(await names(`Orders\\${a.s}`)).toEqual([]); // nor is a backslash an escape
+    // nor is a backslash an escape: `\_` stays a literal backslash + underscore (matching nothing), and `\X` is not a literal X
+    // (an unescaped `\X` would match the look-alike "OrdersX<stamp>" and an unescaped `\_` would match "Orders_<stamp>")
+    expect(await names(`Orders\\_${a.s}`)).toEqual([]);
+    expect(await names(`Orders\\X${a.s}`)).toEqual([]);
+    expect(await names(`OrdersX${a.s}`)).toEqual([`OrdersX${a.s}`]); // control: the look-alike is there and found by its real name
     // blank query = no filter (only that something comes back; the shared database has other events)
     expect((await names("   ")).length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("caps the search text at 128 characters, the longest an event name can be, instead of sending it whole to the database", async () => {
+    const { ctx } = await setup();
+    const a = await product(ctx, "extsrc");
+    const longName = `cap-${a.s}`.padEnd(128, "p"); // an event name at the limit
+    const event = await createEvent(a, TENANT, longName);
+    await publish(ctx, event.id, { major: 1, minor: 0, sequence: 1, kind: "INITIAL", spec: resolved([], []) });
+    const names = async (query: string) => unwrap(await listExternalEventCandidates(ctx, { tenantId: TENANT, excludeEventId: "none", query })).map((c) => c.eventName);
+
+    expect(longName).toHaveLength(128);
+    expect(await names(longName)).toEqual([longName]);
+    // 40 more characters of tail: past the cap they are ignored, so the event is still found (uncapped, nothing could match)
+    expect(await names(`${longName}${"tail".repeat(10)}`)).toEqual([longName]);
+    // the cap is applied to the trimmed text, and an over-long text of something else matches nothing and is no error
+    expect(await names(`   ${longName}   `)).toEqual([longName]);
+    expect(await names(`${"z".repeat(500)}-${a.s}`)).toEqual([]);
   }, 60_000);
 
   it("limits the answer: 25 by default, at most 50, at least 1", async () => {
@@ -282,7 +308,12 @@ describe("getExternalVersionItems", () => {
     const odd = await createEvent(a, TENANT, `odd-${a.s}`);
     const messy = await publish(ctx, odd.id, {
       major: 1, minor: 0, sequence: 1, kind: "INITIAL", latest: false,
-      spec: { channels: "oops", messages: [null, 3, { id: 5 }, { name: "no-id" }, { id: "M", title: 9, summary: "ok" }] },
+      spec: {
+        channels: "oops",
+        // a real item among entries that are not objects, have no string id, or are corrupt (no payloads / non-string traitRefs):
+        // the corrupt ones are not offered, exactly as save validation and the snapshot refuse them
+        messages: [null, 3, { id: 5 }, { name: "no-id" }, { id: "no-payloads", traitRefs: [] }, resolvedMessage("bad-traits", { traitRefs: [1] }), resolvedMessage("M", { title: 9, summary: "ok" })],
+      },
     });
     expect(unwrap(await getExternalVersionItems(ctx, { tenantId: TENANT, eventVersionId: messy.id }))).toEqual({
       eventName: `odd-${a.s}`, label: "1.0", channels: [], messages: [{ key: "M", summary: "ok" }],

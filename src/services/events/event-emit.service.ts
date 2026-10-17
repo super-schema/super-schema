@@ -1,7 +1,6 @@
 // src/services/events/event-emit.service.ts
 // Emission of a self-contained event (spec 2026-10-15-events-self-contained-design §7): the saved draft, an unsaved document
 // (preview) or a published version. Nothing here writes.
-import type { PrismaClient } from "@/generated/prisma/client";
 import {
   canonicalizeDocumentOrder, getEventSpecAdapter, normalizeDiagnostics, StructuralAsyncApi3Validator, toJson, toYaml,
   type Diagnostic, type EmitOutput, type EventSpecValidator, type JsonObject, type ResolvedEventSpec,
@@ -14,7 +13,7 @@ import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import { getSharedArtifactRenderer, type ArtifactRenderer } from "./artifact-renderer";
 import { DRAFT_VERSION, loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
-import { guardRead, loadOwnedRow, requireId } from "./service-guards";
+import { assertOwnedEvent, guardRead, requireId } from "./service-guards";
 
 /** Collaborators of an emission, replaceable in tests: the artifact renderer and the validators run on the assembled document. */
 export interface EmitDeps {
@@ -46,24 +45,6 @@ export interface EventEmission {
   json: string | null;
   yaml: string | null;
   diagnostics: Diagnostic[];
-}
-
-/**
- * Spec §10 ownership, checked ONCE per call before anything is read, rendered or written: the page's product must own the event
- * (unknown event or product → NOT_FOUND, another product's or tenant's event → FORBIDDEN). Neither error carries `details`, and
- * the label is the caller's own id (never the row's name), so a foreign event's name, document or versions never leak.
- */
-async function assertOwnedEvent(db: PrismaClient, eventId: string, productId: string): Promise<Result<void>> {
-  const eventIdOk = requireId(eventId, "eventId");
-  if (!eventIdOk.success) return eventIdOk;
-  const productIdOk = requireId(productId, "productId");
-  if (!productIdOk.success) return productIdOk;
-  const owned = await loadOwnedRow(db, {
-    kind: "Event", id: eventId, owner: { level: "PRODUCT", productId: productIdOk.data },
-    // Only the level columns: nothing of a foreign event is read.
-    load: (id) => db.eventSpec.findUnique({ where: { id }, select: { tenantId: true, domainId: true, productId: true } }),
-  });
-  return owned.success ? ok(undefined) : owned;
 }
 
 /** Render, resolve, assemble and validate one snapshot as the draft (`info.version` = "draft"). */

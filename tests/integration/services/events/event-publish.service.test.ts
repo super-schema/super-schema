@@ -11,7 +11,7 @@ import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, type DocMessage, type EventDocument } from "@/lib/events/document/types";
 import type { EventPublishBlocker } from "@/lib/events/publish-plan";
 import type { EntityPin } from "@/lib/events/types";
-import type { PublishInput } from "@/lib/entity-versioning/types";
+import { MAX_CHANGE_SUMMARY, type PublishInput } from "@/lib/entity-versioning/types";
 import { err, ok, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import type { ArtifactRenderer } from "@/services/events/artifact-renderer";
@@ -452,6 +452,24 @@ describe("publishEvent", () => {
     expect(await versionRows(id)).toEqual([]);
     // null / blank are fine: a blank summary is stored as no summary
     expect(unwrap(await publish(id, { changeSummary: "   " })).changeSummary).toBeNull();
+  }, 120_000);
+
+  it("rejects a change summary over 500 characters before reading anything, and accepts exactly 500", async () => {
+    const id = await draft(orderDocument());
+    // A context whose database fails on ANY access: a rejection that came after a read would surface as DB_ERROR, not VALIDATION_ERROR.
+    const untouchable = { ...ctx, prisma: new Proxy({}, { get: () => { throw new Error("the publish read the database"); } }) as unknown as PrismaClient };
+    const tooLong = "x".repeat(MAX_CHANGE_SUMMARY + 1);
+    for (const changeSummary of [tooLong, `  ${tooLong}  `]) {
+      const rejected = await publishEvent(id, own.product.id, { changeSummary }, untouchable, { renderer });
+      expect(failureCode(rejected)).toBe("VALIDATION_ERROR");
+      expect(rejected.success ? "" : rejected.error.message).toBe(`Change summary must be at most ${MAX_CHANGE_SUMMARY} characters`);
+    }
+    expect(await versionRows(id)).toEqual([]);
+    expect(await prisma.auditLog.count({ where: { action: "PUBLISH_VERSION", entityType: "EventSpec", entityId: id } })).toBe(0);
+    // The cap is on the trimmed text: exactly 500 characters (even padded with blanks) publishes and is stored trimmed.
+    const exact = "y".repeat(MAX_CHANGE_SUMMARY);
+    expect(unwrap(await publish(id, { changeSummary: `  ${exact}  ` })).changeSummary).toBe(exact);
+    expect((await versionRows(id))[0].changeSummary).toBe(exact);
   }, 120_000);
 
   it("publishes an event that receives a message through an external ref and freezes it in resolvedSpec", async () => {

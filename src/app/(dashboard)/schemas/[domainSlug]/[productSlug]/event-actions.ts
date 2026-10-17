@@ -11,8 +11,9 @@ import { emitEventDocumentPreview, emitEventDraft, emitEventStoredVersion, type 
 import { listEventVersions, previewEventPublish, publishEvent } from "@/services/events/event-publish.service";
 import { createEvent, deleteEvent, renameEvent, updateEventDocument, type EventDetail } from "@/services/events/event.service";
 import {
-  getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions, requireOwnedEvent,
+  getExternalRefStatuses, getExternalVersionItems, listExternalEventCandidates, listExternalEventVersions,
 } from "@/services/events/external-refs.service";
+import { requireOwnedEvent } from "@/services/events/service-guards";
 import { GENERIC_ACTION_ERROR, type ActionResult } from "@/types/action-result";
 import { ok, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";

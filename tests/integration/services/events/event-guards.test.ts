@@ -1,7 +1,7 @@
 import "dotenv/config"; // first: @/lib/db (pulled in by the services) reads DB_PROVIDER at import time
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
-import type { Result, ServiceError } from "@/types/result";
+import { ok, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
 const { access } = vi.hoisted(() => ({ access: { userId: "", isAdmin: true } }));
@@ -12,10 +12,12 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: async () => "tenant_default" }));
 
 import { deleteDomainAction } from "@/app/(dashboard)/schemas/actions";
+import type { SchemaArtifact } from "@/lib/event-specs/types";
 import { collectDocumentEdges } from "@/lib/events/document/edges";
 import { emptyEventDocument, type DocMessage, type DocTrait, type EventDocument } from "@/lib/events/document/types";
 import type { EntityPin } from "@/lib/events/types";
 import { deleteEntity, updateEntity } from "@/services/entity.service";
+import type { ArtifactRenderer } from "@/services/events/artifact-renderer";
 import {
   eventsInUseError,
   findCrossProductEventRefs,
@@ -23,13 +25,16 @@ import {
   findEventVersionReferrers,
   findLibraryTraitEventReferrers,
   MAX_EVENT_REFERRERS,
+  MAX_REFERRER_SCAN,
+  withEventsInUse,
   type EventReferrerUsage,
 } from "@/services/events/event-guards";
 import { createEvent, deleteEvent, updateEventDocument } from "@/services/events/event.service";
+import { publishEvent } from "@/services/events/event-publish.service";
 import { deleteTrait } from "@/services/events/trait.service";
 import { deleteProduct } from "@/services/product.service";
 import { createForeignTenant } from "./foreign-tenant";
-import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, stamp, TENANT, testContext, unwrap } from "./helpers";
+import { cleanupDomains, connectTestDb, createEventSpecVersion, createProductScope, resolvedChannel, resolvedMessage, stamp, TENANT, testContext, unwrap } from "./helpers";
 
 const prisma = connectTestDb();
 const domainIds: string[] = [];
@@ -79,15 +84,43 @@ const fail = (r: Result<unknown>): ServiceError => {
 const referrersOf = (e: ServiceError) => (e.details as { referrers: Array<Record<string, unknown>>; truncated: boolean }).referrers;
 const draftEdges = (eventId: string) => prisma.schemaReference.findMany({ where: { fromKind: "EVENT_SPEC", fromId: eventId } });
 
-const RESOLVED = { channels: [{ id: "orders" }], messages: [{ id: "M" }] };
+const RESOLVED = { channels: [resolvedChannel("orders")], messages: [resolvedMessage("M")] };
+
+/** The artifact renderer of the real publish, replaced by a stand-in (no TypeSpec compile): every pin renders as a tiny record. */
+const stubRenderer: ArtifactRenderer = {
+  async render(_subject, format) {
+    const artifact: SchemaArtifact =
+      format === "avro"
+        ? { format: "avro", schema: { type: "record", name: "Order", fields: [{ name: "id", type: "string" }] } }
+        : { format: "json-schema", dialect: "draft-07", schema: { type: "object", title: "Order", properties: { id: { type: "string" } } } };
+    return ok({ artifact, warnings: [] });
+  },
+};
+/** A complete document `publishEvent` accepts: one Kafka/Avro channel and a send operation for a message pinned to the entity's version. */
+const publishableDoc = (order: Pick<Published, "entity" | "version">): EventDocument => ({
+  ...emptyEventDocument("checkout-service"),
+  servers: [{ key: "kafka-prod", protocol: "kafka", host: "kafka-prod.internal:9092" }],
+  channels: [{ key: "orders", address: "payments.orders.v1", protocol: "kafka", serverKeys: ["kafka-prod"], format: "avro", messageKeys: ["order-created"] }],
+  messages: [{ key: "order-created", contentType: "avro/binary", payload: pinOf(order), traitKeys: [] }],
+  operations: [{ key: "publishOrderCreated", action: "send", channelKey: "orders", messageKeys: ["order-created"], traitKeys: [] }],
+});
+/** A document that receives the producer's `order-created` message through an external reference to its published version. */
+const consumerDoc = (producerVersionId: string): EventDocument => ({
+  ...emptyEventDocument("fraud-scorer"),
+  servers: [{ key: "kafka-in", protocol: "kafka", host: "kafka-in.internal:9092" }],
+  channels: [{ key: "inbox", address: "fraud.inbox.v1", protocol: "kafka", serverKeys: ["kafka-in"], format: "avro", messageKeys: ["payment-received"] }],
+  externalRefs: [{ key: "payment-received", eventVersionId: producerVersionId, kind: "message", itemKey: "order-created" }],
+  operations: [{ key: "consumePayment", action: "receive", channelKey: "inbox", messageKeys: ["payment-received"], traitKeys: [] }],
+});
 
 async function newEvent(ctx: ServiceContext, sc: Scope, name: string) {
   return unwrap(await createEvent(sc.product.id, { name: `${name}-${sc.s}` }, ctx));
 }
 
 /**
- * Event publish (task A8) is not available yet: a published version is its row plus the non-draft edges publish writes
- * (`fromKind: EVENT_SPEC_VERSION`) from the document. `resolvedSpec: null` is a version published before document v2.
+ * A published version seeded directly: its row plus the non-draft edges publish writes (`fromKind: EVENT_SPEC_VERSION`) from the
+ * document. Used for what a real publish cannot produce on demand: `resolvedSpec: null` (a version published before document v2),
+ * a hand-picked `frozenTraits` / `sourceDocument`, or a cross-tenant row. The lifecycle test goes through the real `publishEvent`.
  */
 async function publishDirect(
   ctx: ServiceContext,
@@ -374,6 +407,65 @@ describe("event pin-integrity guards", () => {
     expect(unwrap(await deleteEvent(target.event.id, owner, ctx))).toEqual({ id: target.event.id });
   }, 60_000);
 
+  it("protects what a REAL publish pins and references: the entity, the event and the product all refuse to go", async () => {
+    const { ctx, scope, owner, order } = await setup("life");
+    const consumers = await otherProduct(ctx, "life-con");
+
+    // A producer pinned to Order 1.0, published through the real `publishEvent` (stub renderer: no TypeSpec compile).
+    const producer = await newEvent(ctx, scope, "producer");
+    unwrap(await updateEventDocument(producer.id, publishableDoc(order), owner, ctx));
+    const producerVersion = unwrap(await publishEvent(producer.id, scope.product.id, {}, ctx, { renderer: stubRenderer }));
+    // The draft lets go of the pin: only what publish wrote protects the entity from here on.
+    unwrap(await updateEventDocument(producer.id, emptyEventDocument("no pin"), owner, ctx));
+    expect(await draftEdges(producer.id)).toEqual([]);
+    expect(await prisma.schemaReference.count({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: producerVersion.id, toKind: "ENTITY_VERSION", toId: order.version.id } })).toBe(1);
+
+    // 1. deleteEntity: pinned by the published version.
+    const pinned = fail(await deleteEntity(order.entity.id, ctx));
+    expect(pinned.code).toBe("IN_USE");
+    expect(pinned.message).toBe(`Entity "Order" cannot be deleted: it is pinned by event ${producer.name} ${where(scope)}.`);
+    expect(referrersOf(pinned)).toEqual([
+      { eventId: producer.id, name: producer.name, domain: scope.domain.name, product: scope.product.name, referencedVersions: ["1.0"], draft: false, published: true },
+    ]);
+    expect(pinned.suggestedFix).toContain("Published versions cannot be changed");
+    expect(await prisma.entity.count({ where: { id: order.entity.id } })).toBe(1);
+
+    // A consumer in another product receives the producer's message through an external ref, and is published for real as well.
+    const consumer = await newEvent(ctx, consumers.scope, "consumer");
+    unwrap(await updateEventDocument(consumer.id, consumerDoc(producerVersion.id), consumers.owner, ctx));
+    const consumerVersion = unwrap(await publishEvent(consumer.id, consumers.scope.product.id, {}, ctx, { renderer: stubRenderer }));
+    unwrap(await updateEventDocument(consumer.id, emptyEventDocument("no ref"), consumers.owner, ctx));
+    expect(await draftEdges(consumer.id)).toEqual([]);
+    expect(await prisma.schemaReference.count({ where: { fromKind: "EVENT_SPEC_VERSION", fromId: consumerVersion.id, toKind: "EVENT_SPEC_VERSION", toId: producerVersion.id } })).toBe(1);
+
+    // 2. deleteEvent: the producer's published version is referenced by the consumer's published version.
+    const eventBlocked = fail(await deleteEvent(producer.id, owner, ctx));
+    expect(eventBlocked.code).toBe("IN_USE");
+    expect(eventBlocked.message).toBe(
+      `Event "${producer.name}" cannot be deleted: its published versions are referenced by ${consumer.name} ${where(consumers.scope)}.`
+    );
+    expect(referrersOf(eventBlocked)).toEqual([
+      { eventId: consumer.id, name: consumer.name, domain: consumers.scope.domain.name, product: consumers.scope.product.name, referencedVersions: ["1.0"], draft: false, published: true },
+    ]);
+    expect(await prisma.eventSpec.count({ where: { id: producer.id } })).toBe(1);
+
+    // 3. deleteProduct / deleteDomainAction: the producer's product owns that event, so the delete was never open (its content blocks
+    // it, VALIDATION_ERROR), and the event guard adds who references it from outside.
+    const productBlocked = fail(await deleteProduct(scope.product.id, ctx));
+    expect(productBlocked.message).toContain(`other products' events reference its events: ${consumer.name} ${where(consumers.scope)}`);
+    expect((productBlocked.details as { events: { referrers: Array<{ eventId: string; published: boolean }> } }).events.referrers).toMatchObject([{ eventId: consumer.id, published: true }]);
+    expect(await findCrossProductEventRefs(prisma, { kind: "product", productId: scope.product.id, tenantId: TENANT })).toMatchObject([{ eventId: consumer.id, published: true, draft: false }]);
+    expect(await deleteDomainAction(scope.domain.id)).toMatchObject({ error: expect.stringContaining(`${consumer.name} ${where(consumers.scope)}`) });
+    expect(await prisma.product.count({ where: { id: scope.product.id } })).toBe(1);
+
+    // Deleting the consumer (its version and edges go with it) releases the producer; deleting the producer releases the entity.
+    unwrap(await deleteEvent(consumer.id, consumers.owner, ctx));
+    expect(await findCrossProductEventRefs(prisma, { kind: "product", productId: scope.product.id, tenantId: TENANT })).toEqual([]);
+    unwrap(await deleteEvent(producer.id, owner, ctx));
+    unwrap(await deleteEntity(order.entity.id, ctx));
+    expect(await prisma.entity.count({ where: { id: order.entity.id } })).toBe(0);
+  }, 120_000);
+
   it("blocks deleting a product whose published event is referenced from another product", async () => {
     const ctx = await testContext(prisma);
     access.userId = ctx.userId;
@@ -423,6 +515,79 @@ describe("event pin-integrity guards", () => {
     expect(plain.details).toBeUndefined();
     const plainDomain = (await deleteDomainAction(scope.domain.id)) as { error: string };
     expect(plainDomain.error).not.toContain("reference its events");
+  }, 60_000);
+
+  it("finds an outside referrer even when more than MAX_REFERRER_SCAN edges from inside the scope sort first", async () => {
+    const ctx = await testContext(prisma);
+    access.userId = ctx.userId;
+    const scope = await createProductScope(prisma, ctx, "crowd");
+    domainIds.push(scope.domain.id);
+    const consumers = await otherProduct(ctx, "crowd-out");
+    const target = await publishedEvent(ctx, scope, "target", emptyEventDocument("target"));
+    const s = stamp();
+
+    // More inside drafts than one scan reads, all pointing at the target's version, ids sorting BEFORE the one outside referrer
+    // (the scan is ordered by fromId): the inside edges alone fill the whole scan unless the query itself leaves them out.
+    const insideIds = Array.from({ length: MAX_REFERRER_SCAN + 5 }, (_, i) => `a-${s}-${String(i).padStart(3, "0")}`);
+    await prisma.eventSpec.createMany({
+      data: insideIds.map((id) => ({ id, name: id, document: emptyEventDocument(id) as unknown as Prisma.InputJsonValue, ...level(scope) })),
+    });
+    const edgeTo = (fromId: string) => ({ fromKind: "EVENT_SPEC" as const, fromId, role: "MESSAGE" as const, toKind: "EVENT_SPEC_VERSION" as const, toId: target.version.id, isDraft: true });
+    await prisma.schemaReference.createMany({ data: insideIds.map(edgeTo) });
+    const outsideId = `z-${s}`;
+    const outside = await prisma.eventSpec.create({
+      data: { id: outsideId, name: `outside-${s}`, document: withRefs(target.version.id) as unknown as Prisma.InputJsonValue, ...level(consumers.scope) },
+    });
+    await prisma.schemaReference.create({ data: edgeTo(outsideId) });
+
+    const product = { kind: "product" as const, productId: scope.product.id, tenantId: TENANT };
+    const domain = { kind: "domain" as const, domainId: scope.domain.id, tenantId: TENANT };
+    for (const guarded of [product, domain]) {
+      const found = await findCrossProductEventRefs(prisma, guarded);
+      expect(found.map((r) => r.eventId), guarded.kind).toEqual([outside.id]);
+      expect(found.truncated, guarded.kind).toBe(false);
+    }
+
+    // The guard blocks: the product delete names the outside event, and so does the domain action.
+    const blocked = fail(await deleteProduct(scope.product.id, ctx));
+    expect(blocked.message).toContain(`other products' events reference its events: ${outside.name} ${where(consumers.scope)}`);
+    expect((blocked.details as { events: { referrers: Array<{ eventId: string }>; truncated: boolean } }).events).toMatchObject({ referrers: [{ eventId: outside.id }], truncated: false });
+    expect(await deleteDomainAction(scope.domain.id)).toMatchObject({ error: expect.stringContaining(`${outside.name} ${where(consumers.scope)}`) });
+    expect(await prisma.product.count({ where: { id: scope.product.id } })).toBe(1);
+    expect(await prisma.domain.count({ where: { id: scope.domain.id } })).toBe(1);
+  }, 60_000);
+
+  it("fails closed when the scan hit its limit and nothing could be named", async () => {
+    const ctx = await testContext(prisma);
+    access.userId = ctx.userId;
+    const scope = await createProductScope(prisma, ctx, "closed");
+    domainIds.push(scope.domain.id);
+    const target = await publishedEvent(ctx, scope, "target", emptyEventDocument("target"));
+    const s = stamp();
+
+    // More edges than one scan reads whose referrers no longer exist (the edge table has no FK): a full scan, but not one name.
+    const staleIds = Array.from({ length: MAX_REFERRER_SCAN + 5 }, (_, i) => `stale-${s}-${String(i).padStart(3, "0")}`);
+    await prisma.schemaReference.createMany({
+      data: staleIds.map((fromId) => ({ fromKind: "EVENT_SPEC" as const, fromId, role: "MESSAGE" as const, toKind: "EVENT_SPEC_VERSION" as const, toId: target.version.id, isDraft: true })),
+    });
+    cleanups.push(async () => {
+      await prisma.schemaReference.deleteMany({ where: { fromKind: "EVENT_SPEC", fromId: { in: staleIds } } });
+    });
+
+    const product = { kind: "product" as const, productId: scope.product.id, tenantId: TENANT };
+    const found = await findCrossProductEventRefs(prisma, product);
+    expect([...found]).toEqual([]);
+    expect(found.truncated).toBe(true);
+
+    // An empty-but-truncated answer is "unknown", never "none": the guard reports it as in use instead of letting the delete through.
+    const unknown = eventsInUseError("Product", "P", found);
+    expect(unknown?.code).toBe("IN_USE");
+    expect(unknown?.message).toBe('Product "P" cannot be deleted: events may still reference it (too many references to check).');
+    expect(unknown?.details).toEqual({ referrers: [], truncated: true });
+    expect(unknown?.suggestedFix).toBe("Remove the references that point at it first, then try again, or keep the product.");
+    const blocked = fail(await deleteProduct(scope.product.id, ctx));
+    expect((blocked.details as { events: { referrers: unknown[]; truncated: boolean } }).events).toEqual({ referrers: [], truncated: true });
+    expect(blocked.message).toContain("events may still reference it (too many references to check)");
   }, 60_000);
 
   it("returns a bounded referrer list (truncated flag) for an entity pinned by 60 events", async () => {
@@ -602,6 +767,26 @@ describe("eventsInUseError", () => {
 
   it("is null for an empty list", () => {
     for (const kind of ["Entity", "Trait", "Event", "Product", "Domain"] as const) expect(eventsInUseError(kind, "X", [])).toBeNull();
+  });
+
+  it("fails closed for an empty list whose scan hit its limit, words it per kind, and merges it with another blocker", () => {
+    const unknown = Object.defineProperty([] as EventReferrerUsage[], "truncated", { value: true, enumerable: false });
+    for (const kind of ["Entity", "Trait", "Event", "Product", "Domain"] as const) {
+      const error = eventsInUseError(kind, "X", unknown);
+      expect(error?.code, kind).toBe("IN_USE");
+      expect(error?.message, kind).toBe(`${kind} "X" cannot be deleted: events may still reference it (too many references to check).`);
+      expect(error?.details, kind).toEqual({ referrers: [], truncated: true });
+    }
+    expect(eventsInUseError("Entity", "Order", unknown, "retired")?.message).toBe('Entity "Order" cannot be retired: events may still reference it (too many references to check).');
+    // An empty list that was NOT cut short is still "no referrer".
+    expect(eventsInUseError("Entity", "Order", Object.defineProperty([], "truncated", { value: false, enumerable: false }))).toBeNull();
+
+    const existing = { code: "IN_USE" as const, message: 'Entity "Order" cannot be deleted: it is used by Trait "T".', suggestedFix: "Re-pin or delete those traits first." };
+    const merged = withEventsInUse(existing, "Entity", "Order", unknown);
+    expect(merged?.code).toBe("IN_USE");
+    expect(merged?.message).toBe('Entity "Order" cannot be deleted: it is used by Trait "T", and events may still reference it (too many references to check).');
+    expect(merged?.details).toEqual({ events: { referrers: [], truncated: true } });
+    expect(withEventsInUse(null, "Entity", "Order", unknown)?.code).toBe("IN_USE");
   });
 
   it("names up to five referrers as name (domain/product) and counts the rest", () => {

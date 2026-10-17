@@ -5,7 +5,7 @@
 // re-verifies everything the plan depended on and only then writes.
 import { isDeepStrictEqual } from "node:util";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { isBumpKind, type BumpKind, type PublishInput } from "@/lib/entity-versioning/types";
+import { isBumpKind, MAX_CHANGE_SUMMARY, type BumpKind, type PublishInput } from "@/lib/entity-versioning/types";
 import {
   GENERIC_VALIDATION_FAILURE, normalizeDiagnostics, type Diagnostic, type EmitOutput, type ResolvedEventSpec,
 } from "@/lib/event-specs";
@@ -25,7 +25,7 @@ import { gatherPublishFacts, type PublishFacts } from "./event-publish-facts";
 import { loadEventSnapshot, resolveEventSnapshot, type EventSnapshot } from "./event-snapshot";
 import { isConcurrentWriteFailure } from "./publish-concurrency";
 import { replaceReferences } from "./schema-references";
-import { guardRead, loadOwnedRow, requireId } from "./service-guards";
+import { assertOwnedEvent, guardRead } from "./service-guards";
 import { toEventVersionSummary, VERSION_SUMMARY_SELECT } from "./version-summary";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -35,25 +35,6 @@ const notFound = (eventId: string) => err({ code: "NOT_FOUND", message: `Event "
 /** The retryable "something changed under the publish" failure (lock re-verification, unique index, FK to a removed row, lock timeout / deadlock — see `isConcurrentWriteFailure`). */
 const changedDuringPublish = () =>
   err({ code: "CONFLICT", message: "The event changed while publishing.", suggestedFix: "Reload the event and publish again." });
-
-/**
- * Spec §10 ownership, checked ONCE per call before anything is read, rendered or written (an event's level columns never change):
- * the page's product must own the event (unknown event or product → NOT_FOUND, another product's or tenant's event → FORBIDDEN).
- * Neither error carries `details`, and the label is the caller's own id (never the row's name), so a foreign event's name,
- * document or versions never leak.
- */
-async function assertOwnedEvent(db: PrismaClient, eventId: string, productId: string): Promise<Result<void>> {
-  const eventIdOk = requireId(eventId, "eventId");
-  if (!eventIdOk.success) return eventIdOk;
-  const productIdOk = requireId(productId, "productId");
-  if (!productIdOk.success) return productIdOk;
-  const owned = await loadOwnedRow(db, {
-    kind: "Event", id: eventId, owner: { level: "PRODUCT", productId: productIdOk.data },
-    // Only the level columns: nothing of a foreign event is read.
-    load: (id) => db.eventSpec.findUnique({ where: { id }, select: { tenantId: true, domainId: true, productId: true } }),
-  });
-  return owned.success ? ok(undefined) : owned;
-}
 
 interface Prepared {
   snapshot: EventSnapshot;
@@ -141,8 +122,11 @@ export async function previewEventPublish(eventId: string, productId: string, ct
  * Lock contract (spec §10): `event_specs` row FOR UPDATE → the pinned entities' rows `FOR SHARE ... ORDER BY id` → re-read the
  * snapshot and the facts and compare → only then write the version row, the frozen edges and the event's pointer. A save of the
  * draft (which updates the event row first) therefore either finished before the lock (the re-verification sees it) or waits for
- * this commit; a concurrent entity delete (which needs the entity row exclusively) either finished first (the re-verification
- * sees the missing version) or waits until the version exists and then sees it as a referrer.
+ * this commit. A concurrent entity delete is only ordered against the PIN CHECK, not against the publish as a whole: one that
+ * finished before the lock is seen (the pinned version is missing, so the re-verification fails). But `deleteEntity` reads its
+ * event referrers (`findEntityEventReferrers`) outside any transaction and only then runs `prisma.entity.delete`, so a delete whose
+ * referrer read ran just before this commit has not seen the new published edge, waits at most for our `FOR SHARE`, and still
+ * deletes the entity: a millisecond window in which a pin can end up dangling. Closing it means giving `deleteEntity` a transaction.
  */
 export async function publishEvent(eventId: string, productId: string, input: PublishInput, ctx: ServiceContext, deps: EmitDeps = {}): Promise<Result<EventVersionSummary>> {
   // Untrusted action input: null / non-object → no options; a bump or summary of the wrong type is rejected, never coerced.
@@ -153,6 +137,10 @@ export async function publishEvent(eventId: string, productId: string, input: Pu
   }
   const bump = opts.bump;
   const changeSummary = opts.changeSummary?.trim() ? opts.changeSummary.trim() : null;
+  // The summary is stored in the immutable version row and audit entry: bounded here (the entity publish action's cap), before anything is read.
+  if (changeSummary !== null && changeSummary.length > MAX_CHANGE_SUMMARY) {
+    return err({ code: "VALIDATION_ERROR", message: `Change summary must be at most ${MAX_CHANGE_SUMMARY} characters` });
+  }
 
   // Phase 1: ownership (once — scope never changes) + the unlocked plan.
   const prepared = await guardRead(async () => {

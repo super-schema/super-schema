@@ -10,6 +10,7 @@ import { parseEventDocument } from "@/lib/events/document/parse";
 import { entitySourceFormat } from "@/lib/events/document/representation";
 import { planDocumentArtifacts, resolveDocument, type ExternalItems, type MessageArtifacts } from "@/lib/events/document/resolve";
 import { isLibraryTrait, type DocExternalRef, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
+import { referenceableItems } from "@/lib/events/external-refs";
 import { isJsonObject } from "@/lib/events/inputs";
 import type { EntityPin, FrozenTrait } from "@/lib/events/types";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
@@ -59,24 +60,22 @@ const byId = (list: unknown, id: string) => (Array.isArray(list) ? list.find((x)
 
 /**
  * The referenced item inside a published version's stored `resolvedSpec`, or null when it cannot be used: the version has no
- * `resolvedSpec` (published before document v2), the item is not in it, or it does not have the shape the assembler needs
- * (the resolver then reports the ref as unresolved, instead of the assembler crashing on a malformed stored value).
+ * `resolvedSpec` (published before document v2), the item is not in it, or it is not `isReferenceableItem` (the resolver then
+ * reports the ref as unresolved, instead of the assembler crashing on a malformed stored value).
  * An external message brings the traits it lists in `traitRefs` — those that the stored spec holds; the resolver flags any it lacks.
  */
 function externalItems(ref: DocExternalRef, resolvedSpec: unknown): ExternalItems | null {
   if (!isJsonObject(resolvedSpec)) return null;
-  if (ref.kind === "channel") {
-    const channel = byId(resolvedSpec.channels, ref.itemKey);
-    return channel && isJsonObject(channel.profile) ? { channel: channel as unknown as ResolvedChannel } : null;
-  }
-  const message = byId(resolvedSpec.messages, ref.itemKey);
-  if (!message || !Array.isArray(message.payloads) || !Array.isArray(message.traitRefs) || !message.traitRefs.every((id) => typeof id === "string")) return null;
+  // The one rule every reader shares (`isReferenceableItem`): the entry must have the shape the assembler needs.
+  const item = referenceableItems(resolvedSpec, ref.kind)?.get(ref.itemKey);
+  if (!item) return null;
+  if (ref.kind === "channel") return { channel: item as unknown as ResolvedChannel };
   const traits: ResolvedTrait[] = [];
-  for (const id of message.traitRefs as string[]) {
+  for (const id of item.traitRefs as string[]) {
     const trait = byId(resolvedSpec.traits, id);
     if (trait) traits.push(trait as unknown as ResolvedTrait);
   }
-  return { message: message as unknown as ResolvedMessage, traits };
+  return { message: item as unknown as ResolvedMessage, traits };
 }
 
 /**

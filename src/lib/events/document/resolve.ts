@@ -154,7 +154,8 @@ type ExternalResolved = { channel?: ResolvedChannel; message?: ResolvedMessage; 
  * `serverRefs` (its servers), `messageRefs` (the messages it lists) and `messageProfiles` (keyed by its message ids); in this event
  * those ids name nothing — the assembler would report them as unknown server / message references — or, worse, name a LOCAL item
  * that happens to share the id and silently give it the source's wire format. The messages on the channel here are the ones this
- * event's own operations put on it.
+ * event's own operations put on it. `messageProfiles` is DROPPED, not remapped: an external message that goes on an external
+ * channel is therefore rendered by `message.profile ?? channel.profile`, never by a per-message profile the source recorded.
  */
 function externalChannelCopy(channel: ResolvedChannel): ResolvedChannel {
   const copy = clone(channel);

@@ -17,8 +17,12 @@ vi.mock("@/lib/current-user", () => ({ resolveCurrentUserId: h.resolveCurrentUse
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: vi.fn().mockResolvedValue({ success: true, data: "VIEWER" }) }));
 vi.mock("@/services/events/external-refs.service", () => ({
-  requireOwnedEvent: h.requireOwnedEvent, listExternalEventCandidates: h.listCandidates, listExternalEventVersions: h.listVersions,
+  listExternalEventCandidates: h.listCandidates, listExternalEventVersions: h.listVersions,
   getExternalVersionItems: h.getItems, getExternalRefStatuses: h.getStatuses,
+}));
+vi.mock("@/services/events/service-guards", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/events/service-guards")>()),
+  requireOwnedEvent: h.requireOwnedEvent,
 }));
 
 import {
