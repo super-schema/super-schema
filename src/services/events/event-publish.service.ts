@@ -11,6 +11,7 @@ import {
 } from "@/lib/event-specs";
 import { classifyEventBump } from "@/lib/events/document/bump";
 import { collectDocumentEdges } from "@/lib/events/document/edges";
+import { effectiveRepresentationFormats } from "@/lib/events/document/representation";
 import {
   analyzeVersionedPublish, planVersionedPublish, provisionalLabel,
   type EventPublishAnalysis, type EventPublishBlocker, type VersionedPublishInput,
@@ -188,7 +189,13 @@ export async function publishEvent(eventId: string, productId: string, input: Pu
                 resolvedSpec: resolved as unknown as Prisma.InputJsonValue, // external refs reuse this without re-rendering
                 frozenTraits: [...snapshot.libraryTraits.values()] as unknown as Prisma.InputJsonValue,
                 changeKind: plan.data.changeKind,
-                compatReport: { reasons: plan.data.reasons, diagnostics: diagnostics.filter((d) => d.severity !== "error") } as unknown as Prisma.InputJsonValue,
+                // reasons / diagnostics as before; `representations` = the format every message was emitted in: the baseline the next
+                // publish compares an entity's recorded source format against (it is not part of the draft document)
+                compatReport: {
+                  reasons: plan.data.reasons,
+                  diagnostics: diagnostics.filter((d) => d.severity !== "error"),
+                  representations: effectiveRepresentationFormats(snapshot.document, snapshot.entityFormats),
+                } as unknown as Prisma.InputJsonValue,
                 changeSummary,
                 publishedById: ctx.userId,
               },

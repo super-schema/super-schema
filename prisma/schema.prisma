@@ -478,7 +478,8 @@ model EventSpecVersion {
   /// NULL for versions published before document v2. Immutable like the rest of the row.
   resolvedSpec        Json?
   changeKind          EntityVersionChangeKind
-  /// { reasons: string[]; diagnostics: Diagnostic[] } (warnings / info at publish).
+  /// { reasons: string[]; diagnostics: Diagnostic[]; representations: Record<messageKey, PayloadFormat> } — warnings / info at publish,
+  /// and the effective representation of every message (absent on versions published before it was stored).
   compatReport        Json                    @default("{}")
   changeSummary       String?
   publishedById       String

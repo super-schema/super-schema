@@ -31,10 +31,10 @@ export interface EventSnapshot {
   event: { id: string; name: string; tenantId: string; domainId: string; productId: string; productSlug: string; specType: string };
   document: EventDocument;
   /**
-   * The latest published version. `sourceDocument` and `frozenTraits` are stored JSON, handed over as read: whoever uses them parses
-   * and shape-checks them (publish does — `event-publish-facts.ts`).
+   * The latest published version. `sourceDocument`, `frozenTraits` and `compatReport` are stored JSON, handed over as read: whoever
+   * uses them parses and shape-checks them (publish does — `event-publish-facts.ts`).
    */
-  latest: { id: string; major: number; minor: number; sequence: number; sourceDocument: unknown; resolvedSpec: unknown; frozenTraits: unknown } | null;
+  latest: { id: string; major: number; minor: number; sequence: number; sourceDocument: unknown; resolvedSpec: unknown; frozenTraits: unknown; compatReport: unknown } | null;
   /** The tenant's library traits the document points at, by `libraryTraitId`. A trait that was not found is simply absent. */
   libraryTraits: Map<string, FrozenTrait>;
   /** What each `externalRefs[]` entry resolves to, by ref key, from the referenced version's stored `resolvedSpec`. A ref that cannot be resolved is absent. */
@@ -51,7 +51,7 @@ export interface EventSnapshot {
 const EVENT_SELECT = {
   id: true, name: true, specType: true, document: true, tenantId: true, domainId: true, productId: true,
   product: { select: { slug: true } },
-  latestVersion: { select: { id: true, major: true, minor: true, sequence: true, sourceDocument: true, resolvedSpec: true, frozenTraits: true } },
+  latestVersion: { select: { id: true, major: true, minor: true, sequence: true, sourceDocument: true, resolvedSpec: true, frozenTraits: true, compatReport: true } },
 } satisfies Prisma.EventSpecSelect;
 
 const EXTERNAL_VERSION_SELECT = { id: true, major: true, resolvedSpec: true } satisfies Prisma.EventSpecVersionSelect;
@@ -144,6 +144,7 @@ export async function loadEventSnapshot(db: Db, eventId: string, override?: Even
       ? {
           id: row.latestVersion.id, major: row.latestVersion.major, minor: row.latestVersion.minor, sequence: row.latestVersion.sequence,
           sourceDocument: row.latestVersion.sourceDocument, resolvedSpec: row.latestVersion.resolvedSpec, frozenTraits: row.latestVersion.frozenTraits,
+          compatReport: row.latestVersion.compatReport,
         }
       : null,
     libraryTraits,
