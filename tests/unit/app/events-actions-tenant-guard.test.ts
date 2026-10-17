@@ -16,7 +16,8 @@ const h = vi.hoisted(() => ({
   findProduct: vi.fn(),
   findTenant: vi.fn(),
   createEvent: vi.fn(), updateEventDocument: vi.fn(), renameEvent: vi.fn(), deleteEvent: vi.fn(),
-  emitEventDocumentPreview: vi.fn(), emitEventDraft: vi.fn(),
+  emitEventDocumentPreview: vi.fn(), emitEventDraft: vi.fn(), emitEventStoredVersion: vi.fn(),
+  previewEventPublish: vi.fn(), publishEvent: vi.fn(), listEventVersions: vi.fn(),
   createTrait: vi.fn(), updateTrait: vi.fn(), deleteTrait: vi.fn(),
 }));
 
@@ -31,11 +32,17 @@ vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole
 vi.mock("@/services/events/event.service", () => ({
   createEvent: h.createEvent, updateEventDocument: h.updateEventDocument, renameEvent: h.renameEvent, deleteEvent: h.deleteEvent,
 }));
-vi.mock("@/services/events/event-emit.service", () => ({ emitEventDocumentPreview: h.emitEventDocumentPreview, emitEventDraft: h.emitEventDraft }));
+vi.mock("@/services/events/event-emit.service", () => ({
+  emitEventDocumentPreview: h.emitEventDocumentPreview, emitEventDraft: h.emitEventDraft, emitEventStoredVersion: h.emitEventStoredVersion,
+}));
+vi.mock("@/services/events/event-publish.service", () => ({
+  previewEventPublish: h.previewEventPublish, publishEvent: h.publishEvent, listEventVersions: h.listEventVersions,
+}));
 vi.mock("@/services/events/trait.service", () => ({ createTrait: h.createTrait, updateTrait: h.updateTrait, deleteTrait: h.deleteTrait }));
 
 import {
-  createEventAction, deleteEventAction, emitEventDraftAction, previewEventDocumentAction, renameEventAction, updateEventDocumentAction,
+  createEventAction, deleteEventAction, emitEventDraftAction, listEventVersionsAction, previewEventDocumentAction, previewEventPublishAction,
+  publishEventAction, readEventVersionAction, renameEventAction, updateEventDocumentAction,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import { createTraitAction, deleteTraitAction, updateTraitAction } from "@/app/(dashboard)/schemas/trait-actions";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -65,6 +72,7 @@ beforeEach(() => {
   h.findTenant.mockImplementation(async ({ where }: { where: { id: string } }) => ({ id: where.id }));
   for (const key of [
     "createEvent", "updateEventDocument", "renameEvent", "deleteEvent", "emitEventDocumentPreview", "emitEventDraft",
+    "previewEventPublish", "publishEvent", "listEventVersions", "emitEventStoredVersion",
     "createTrait", "updateTrait", "deleteTrait",
   ] as const) h[key].mockResolvedValue(OK);
 });
@@ -80,6 +88,10 @@ const PRODUCT_CASES: Array<{ label: string; call: (productId: string) => Promise
   { label: "deleteEventAction", call: (p) => deleteEventAction("e1", p), service: h.deleteEvent, mutates: true },
   { label: "previewEventDocumentAction", call: (p) => previewEventDocumentAction("e1", p, {}), service: h.emitEventDocumentPreview, mutates: false },
   { label: "emitEventDraftAction", call: (p) => emitEventDraftAction("e1", p), service: h.emitEventDraft, mutates: false },
+  { label: "previewEventPublishAction", call: (p) => previewEventPublishAction("e1", p), service: h.previewEventPublish, mutates: false },
+  { label: "publishEventAction", call: (p) => publishEventAction("e1", p, { bump: "MINOR" }), service: h.publishEvent, mutates: true },
+  { label: "listEventVersionsAction", call: (p) => listEventVersionsAction("e1", p), service: h.listEventVersions, mutates: false },
+  { label: "readEventVersionAction", call: (p) => readEventVersionAction("e1", p, "1.0"), service: h.emitEventStoredVersion, mutates: false },
 ];
 
 const NOT_FOUND = (id: string) => ({ success: false, error: `Product "${id}" not found`, code: "NOT_FOUND" });

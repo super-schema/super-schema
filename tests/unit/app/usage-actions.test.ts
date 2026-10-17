@@ -17,10 +17,11 @@ vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: vi.fn().mockResolv
 vi.mock("@/services/events/usage.service", () => ({ findUsages: h.findUsages }));
 
 import { listUsagesAction } from "@/app/(dashboard)/schemas/usage-actions";
+import { usageRowList } from "@/lib/events/usage";
 
 const CTX = { userId: "user-1", userRole: "VIEWER", prisma: { tag: "prisma" } };
 const SUBJECT = { kind: "entity", entityId: "e1" } as const;
-const ROWS = [{ id: "r1", fromKind: "MESSAGE", role: "PAYLOAD", isDraft: true, target: "Order v1.0", label: "Message M (draft)", href: "/x" }];
+const ROWS = [{ id: "r1", fromKind: "EVENT_SPEC" as const, role: "PAYLOAD", isDraft: true, target: "Order v1.0", label: "Event M (draft)", href: "/x" }];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -37,10 +38,28 @@ describe("listUsagesAction", () => {
   });
 
   it("scopes the lookup to the server-resolved active tenant and never revalidates (read-only)", async () => {
-    h.findUsages.mockResolvedValue({ success: true, data: ROWS });
-    expect(await listUsagesAction(SUBJECT)).toEqual({ success: true, data: ROWS });
+    h.findUsages.mockResolvedValue({ success: true, data: usageRowList([...ROWS], false) });
+    expect(await listUsagesAction(SUBJECT)).toEqual({ success: true, data: { rows: ROWS, truncated: false } });
     expect(h.findUsages).toHaveBeenCalledWith(SUBJECT, CTX, "tenant-active");
     expect(h.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  // `findUsages` returns an array carrying a NON-index `truncated` property; the server-action serializer drops such properties,
+  // so the action must return `{ rows, truncated }` itself. A JSON round trip stands in for the wire.
+  it("keeps `truncated` across the wire: the data is { rows, truncated }, not an array with a hidden property", async () => {
+    h.findUsages.mockResolvedValue({ success: true, data: usageRowList([...ROWS], true) });
+    const result = await listUsagesAction({ kind: "event", eventId: "ev1" });
+    const wire = JSON.parse(JSON.stringify(result));
+    expect(wire).toEqual({ success: true, data: { rows: ROWS, truncated: true } });
+    expect(Array.isArray(wire.data)).toBe(false);
+    expect(h.findUsages).toHaveBeenCalledWith({ kind: "event", eventId: "ev1" }, CTX, "tenant-active");
+  });
+
+  it("reports a list that is not truncated as `truncated: false` (also for a plain array without the flag)", async () => {
+    h.findUsages.mockResolvedValue({ success: true, data: usageRowList([], false) });
+    expect(JSON.parse(JSON.stringify(await listUsagesAction(SUBJECT)))).toEqual({ success: true, data: { rows: [], truncated: false } });
+    h.findUsages.mockResolvedValue({ success: true, data: ROWS });
+    expect(JSON.parse(JSON.stringify(await listUsagesAction(SUBJECT)))).toEqual({ success: true, data: { rows: ROWS, truncated: false } });
   });
 
   it("maps a service failure through toActionResult", async () => {

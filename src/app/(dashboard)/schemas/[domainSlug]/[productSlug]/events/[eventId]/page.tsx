@@ -11,7 +11,9 @@ export default async function EventRoute({
   const { domainSlug, productSlug, eventId } = await params;
   const query = (await searchParams) ?? {};
   const pick = (v: string | string[] | undefined) => (typeof v === "string" ? v : undefined);
-  const data = await loadEventPage({ domainSlug, productSlug, eventId, tab: pick(query.tab), section: pick(query.section), item: pick(query.item) });
+  const data = await loadEventPage({
+    domainSlug, productSlug, eventId, tab: pick(query.tab), section: pick(query.section), item: pick(query.item), version: pick(query.version),
+  });
   if (!data) notFound();
   return <EventPage data={data} />;
 }

@@ -22,7 +22,7 @@ import "dotenv/config";
 import { randomBytes } from "node:crypto";
 import { TEST_EMAIL } from "./auth";
 
-interface PgPool {
+export interface PgPool {
   query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
   end(): Promise<void>;
 }
@@ -31,7 +31,7 @@ const DEFAULT_TENANT_ID = "tenant_default";
 
 let pool: PgPool | undefined;
 
-function pg(): PgPool {
+export function pg(): PgPool {
   if (!pool) {
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {

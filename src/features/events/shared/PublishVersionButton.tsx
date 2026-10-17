@@ -10,7 +10,7 @@ import {
   type PublishPreview,
 } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/PublishEntityDialog";
 import type { PublishInput } from "@/lib/entity-versioning/types";
-import type { ActionResult } from "@/types/action-result";
+import { actionErrorText, type ActionResult } from "@/types/action-result";
 
 function errorMessage(e: unknown): string {
   return e instanceof Error && e.message ? e.message : "Unexpected error";
@@ -23,12 +23,14 @@ export interface PublishVersionButtonProps {
   publish: (input: PublishInput) => Promise<ActionResult<{ label: string }>>;
   onPublished?: (label: string) => void;
   disabled?: boolean;
+  /** Tooltip of the button; a disabled button uses it to say why. */
+  title?: string;
   testId?: string;
 }
 
 /** Publish button + the shared raise-only publish dialog (same UX as entities, spec §5.3 / §7.4). */
 export function PublishVersionButton({
-  subjectName, description, loadPreview, publish, onPublished, disabled, testId = "publish-version-button",
+  subjectName, description, loadPreview, publish, onPublished, disabled, title, testId = "publish-version-button",
 }: PublishVersionButtonProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -45,7 +47,7 @@ export function PublishVersionButton({
     try {
       const r = await loadPreview();
       if (r.success) setPreview(r.data);
-      else setLoadError(r.error);
+      else setLoadError(actionErrorText(r));
     } catch (e) {
       // Without this the dialog would spin on "Checking changes…" forever.
       setLoadError(`Could not load the publish preview: ${errorMessage(e)}`);
@@ -58,7 +60,7 @@ export function PublishVersionButton({
     try {
       const r = await publish(input);
       if (!r.success) {
-        setPublishError(r.error);
+        setPublishError(actionErrorText(r)); // message + the service's suggested fix (a CONFLICT says to reload and publish again)
         return;
       }
       setOpen(false);
@@ -75,7 +77,7 @@ export function PublishVersionButton({
 
   return (
     <>
-      <Button variant="outline" onClick={openDialog} disabled={disabled} className="gap-1.5" data-testid={testId}>
+      <Button variant="outline" onClick={openDialog} disabled={disabled} title={title} className="gap-1.5" data-testid={testId}>
         <Upload className="w-4 h-4" />
         Publish
       </Button>

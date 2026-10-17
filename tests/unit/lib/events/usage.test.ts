@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { describeUsage, parseUsageSubject, usageRowList, type UsageLookups } from "@/lib/events/usage";
+import { describeUsage, parseUsageSubject, usageRowList, USAGE_ROW_LIMIT, type UsageLookups } from "@/lib/events/usage";
+import { MAX_EVENT_REFERRERS } from "@/services/events/event-guards";
 
 const at = { domainSlug: "payments", productSlug: "checkout" };
 const lookups: UsageLookups = {
@@ -105,5 +106,11 @@ describe("usageRowList", () => {
     expect(list.truncated).toBe(true);
     expect(JSON.stringify(list)).toBe(JSON.stringify([row]));
     expect(usageRowList([], false).truncated).toBe(false);
+  });
+});
+
+describe("USAGE_ROW_LIMIT", () => {
+  it("is the number of rows the service returns for an event, so the panel's truncation note names the right limit", () => {
+    expect(USAGE_ROW_LIMIT).toBe(MAX_EVENT_REFERRERS);
   });
 });

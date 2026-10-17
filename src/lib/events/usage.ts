@@ -28,6 +28,18 @@ export function usageRowList(rows: UsageRow[], truncated: boolean): UsageRowList
   return Object.defineProperty(rows, "truncated", { value: truncated, enumerable: false }) as UsageRowList;
 }
 
+/**
+ * What `listUsagesAction` sends to the browser. A server action's serializer keeps array entries only, so the `truncated` flag of a
+ * `UsageRowList` would be lost on the wire: the action returns the two as plain properties of one object instead.
+ */
+export interface UsageList {
+  rows: UsageRow[];
+  truncated: boolean;
+}
+
+/** Rows an event's lookup returns at most (the service's `MAX_EVENT_REFERRERS`; a test keeps them equal): what a truncated list says it shows. */
+export const USAGE_ROW_LIMIT = 50;
+
 interface At {
   domainSlug: string | null;
   productSlug: string | null;

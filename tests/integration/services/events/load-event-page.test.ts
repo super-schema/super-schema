@@ -76,7 +76,7 @@ async function createEvent(at: { tenantId: string; domainId: string; productId: 
   return prisma.eventSpec.create({ data: { name, ...at, document } });
 }
 
-const route = (eventId: string, extra: { tab?: string; section?: string; item?: string } = {}) =>
+const route = (eventId: string, extra: { tab?: string; section?: string; item?: string; version?: string } = {}) =>
   loadEventPage({ domainSlug: own.domain.slug, productSlug: own.product.slug, eventId, ...extra });
 
 beforeAll(async () => {
@@ -212,6 +212,11 @@ describe("loadEventPage — this product's event", () => {
     expect(await route(mine.id, { tab: "document" })).toMatchObject({ initialTab: "docs" });
     expect(await route(mine.id, { tab: "diagnostics" })).toMatchObject({ initialTab: "docs" });
     expect(await route(mine.id, { tab: "nonsense", section: "nonsense", item: "" })).toMatchObject({ initialTab: "design", initialSection: "metadata", initialItem: null });
+    // The Versions and Used by tabs, and the version the Versions tab opens on (an unknown label is the tab's own error, not a 404).
+    expect(await route(mine.id)).toMatchObject({ initialVersion: null });
+    expect(await route(mine.id, { tab: "versions", version: "1.1" })).toMatchObject({ initialTab: "versions", initialVersion: "1.1" });
+    expect(await route(mine.id, { tab: "used-by" })).toMatchObject({ initialTab: "used-by", initialVersion: null });
+    expect(await route(mine.id, { version: "" })).toMatchObject({ initialVersion: null });
   });
 });
 
