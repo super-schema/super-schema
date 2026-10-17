@@ -45,7 +45,26 @@ export function securitySchemeAt(pointer: string): string | null {
   return segments[2] ?? null;
 }
 
+/**
+ * Where a pointer into `/externalRefs/<i>/…` lands: a reference is listed with the items of its own kind, so a problem on it belongs
+ * to the Channels or Messages section. `index` is the reference's position in `externalRefs`. Null for any other pointer, and for a
+ * reference the document does not have (the list itself, a missing or non-canonical index).
+ */
+export function externalRefTarget(doc: EventDocument, pointer: string): { section: "channels" | "messages"; index: number } | null {
+  const segments = segmentsOf(pointer);
+  if (!segments || segments[0] !== "externalRefs" || segments[1] === undefined || !INDEX_PATTERN.test(segments[1])) return null;
+  const index = Number(segments[1]);
+  const ref = doc.externalRefs[index];
+  if (!ref) return null;
+  return { section: ref.kind === "channel" ? "channels" : "messages", index };
+}
+
 export function locateProblem(doc: EventDocument, pointer: string): ProblemLocation {
+  const external = externalRefTarget(doc, pointer);
+  if (external) {
+    const key = doc.externalRefs[external.index].key;
+    return { section: external.section, item: key ? key : null };
+  }
   const { section, index } = pointerTarget(pointer);
   if (section === "advanced") {
     const name = securitySchemeAt(pointer);

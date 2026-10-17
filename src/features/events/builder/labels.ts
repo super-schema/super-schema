@@ -4,6 +4,7 @@
 // (the builder section, the Enterprise / Domain tab and sidebar leaf, the create menu, page titles, empty states, tooltips).
 // Internal names (section id `traits`, URL `?tab=traits`, test ids `trait-*`) are NOT user-facing and stay as they are. Pure, client-safe.
 import type { TraitKind } from "@/lib/event-specs/types";
+import type { ExternalItemKind } from "@/lib/events/external-refs";
 
 export const MESSAGE_PROPERTIES = "Message properties";
 export const OPERATION_PROPERTIES = "Operation properties";
@@ -53,3 +54,67 @@ export const chooserItemText = (name: string, count: number | null): string => (
 
 /** The explanation shown where a built-in set is opened. */
 export const builtInExplanation = (name: string): string => `${name} is built in: its properties are defined by a specification, so it cannot be changed or deleted. Apply it to a message as it is.`;
+
+// ── External references: channels and messages another event published, used here ──────────────────────────────────────────
+// "External" is the word users see; the document calls them `externalRefs`.
+
+export const EXTERNAL_BADGE = "External";
+/** "Order-placed (external)": how a pick list names an external reference (the same suffix `references.ts` gives the template forms). */
+export const externalItemLabel = (key: string): string => `${key} (external)`;
+export const MAJOR_BADGE = "Major";
+export const ADD_FROM_ANOTHER_EVENT = "Add from another event";
+export const REMOVE_REFERENCE = "Remove";
+/** "Channels from other events" / "Messages from other events": the heading of the card under a list. */
+export const externalRefsTitle = (kind: ExternalItemKind): string => (kind === "channel" ? "Channels from other events" : "Messages from other events");
+export const externalRefsEmpty = (kind: ExternalItemKind): string =>
+  `Use a ${kind} that another published event defines. It stays a copy of that published version until you update it.`;
+/** "v1.2 → v2.0 available": the line under a reference whose source event published a later version. */
+export const newerVersionText = (current: string, latest: string): string => `v${current} → v${latest} available`;
+export const updateToText = (latest: string): string => `Update to v${latest}`;
+/** "Used by 2 operations" / "Used by 1 channel and 2 operations": what removing a reference would touch. */
+export const usedByText = (channels: number, operations: number): string => {
+  const parts = [
+    channels > 0 ? `${channels} ${channels === 1 ? "channel" : "channels"}` : null,
+    operations > 0 ? `${operations} ${operations === 1 ? "operation" : "operations"}` : null,
+  ].filter(Boolean);
+  return `Used by ${parts.join(" and ")}`;
+};
+export const DETAILS_UNAVAILABLE = "Details unavailable";
+
+/** The sentence under a reference whose update was refused. */
+export const updateRefusedText = (itemKey: string, latest: string, operations: string[]): string => {
+  const one = operations.length === 1;
+  const names = operations.map((k) => `"${k}"`).join(", ");
+  return `Cannot update to v${latest}: it no longer has "${itemKey}", and ${one ? "operation" : "operations"} ${names} ${one ? "uses" : "use"} it. Take it out of ${one ? "that operation" : "those operations"} first.`;
+};
+/** The note left after an update removed a reference nothing used. */
+export const updateRemovedText = (itemKey: string, latest: string): string => `Removed "${itemKey}": v${latest} no longer has it and nothing used it.`;
+/** The question asked before removing a reference that is in use. `used` is what uses it ("2 operations (a, b)"), `consequence` what removing does. */
+export const removeConfirmText = (kind: ExternalItemKind, key: string, used: string, consequence: string): string =>
+  `External ${kind} "${key}" is used by ${used}. Removing it will ${consequence}. Remove it?`;
+
+/** The picker dialog: event → version → item. */
+export const addExternalTitle = (kind: ExternalItemKind): string => `Add a ${kind} from another event`;
+export const pickerStepText = (step: 1 | 2 | 3, kind: ExternalItemKind): string => {
+  const name = step === 1 ? "Choose the event" : step === 2 ? "Choose the version" : `Choose the ${kind}`;
+  return `Step ${step} of 3 · ${name}`;
+};
+export const SEARCH_EVENTS_PLACEHOLDER = "Search published events by name, domain or product…";
+export const SEARCH_EVENTS_LABEL = "Search published events";
+export const EVENTS_LOADING = "Loading published events…";
+export const noEventsText = (query: string): string => (query === "" ? "No other event has been published yet." : `No published event matches “${query}”.`);
+export const loadFailedText = (what: string, reason: string): string => `Could not load ${what}: ${reason}`;
+export const VERSIONS_LABEL = "Version";
+export const VERSIONS_LOADING = "Loading versions…";
+export const NO_VERSIONS = "This event has no version that can be referenced.";
+export const LATEST_BADGE = "Latest";
+export const publishedOnText = (day: string): string => `Published ${day}`;
+export const itemsLabel = (kind: ExternalItemKind): string => (kind === "channel" ? "Channels" : "Messages");
+export const filterItemsLabel = (kind: ExternalItemKind): string => `Filter the ${kind === "channel" ? "channels" : "messages"}`;
+export const ITEMS_LOADING = "Loading…";
+export const noItemsText = (kind: ExternalItemKind, versionLabel: string): string => `Version v${versionLabel} has no ${kind === "channel" ? "channels" : "messages"} to use.`;
+export const ALREADY_USED = "Already used";
+export const PICKER_BACK = "Back";
+export const PICKER_NEXT = "Next";
+export const PICKER_ADD = "Add";
+export const PICKER_CANCEL = "Cancel";

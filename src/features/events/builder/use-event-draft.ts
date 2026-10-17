@@ -11,6 +11,9 @@ import { actionErrorText, GENERIC_ACTION_ERROR, type ActionResult } from "@/type
 import { readProblems } from "./problems";
 
 export interface DraftState {
+  /** The event being edited and the product it lives in: what a section needs to call the read actions (external references). */
+  eventId: string;
+  productId: string;
   doc: EventDocument;
   setDoc: (next: EventDocument) => void;
   update: (fn: (d: EventDocument) => EventDocument) => void;
@@ -135,7 +138,7 @@ export function useEventDraft(args: {
   }, [dirty]);
 
   return {
-    doc: core.doc, setDoc, update, problems, serverProblems: core.serverProblems,
+    eventId: event.id, productId, doc: core.doc, setDoc, update, problems, serverProblems: core.serverProblems,
     dirty, saving, error: core.error, save, discard,
   };
 }

@@ -11,6 +11,12 @@ import { bindingVersion, TEMPLATES } from "@/lib/events/templates";
 import { maximalDocument } from "../../lib/events/document/fixtures/maximal-document";
 import { PIN, renderBuilder, renderSection, sampleDocument } from "./builder-harness";
 
+// The external-reference card asks the server about the references of a document: keep that action module out of the test process.
+vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", () => ({
+  getExternalRefStatusesAction: () => Promise.resolve({ success: false, error: "unavailable" }),
+  getExternalVersionItemsAction: () => Promise.resolve({ success: false, error: "unavailable" }),
+}));
+
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => {
   cleanup();
@@ -994,5 +1000,46 @@ describe("ChannelsSection: nothing is lost, nothing empty is added", () => {
     expect(probe.draft.doc.channels[2]).toEqual({ key: "channel", address: "audit.v1", protocol: "kafka", serverKeys: [], messageKeys: [] });
     expect(parseEventDocument(probe.draft.doc).success).toBe(true);
     expect(probe.draft.problems).toEqual([]);
+  });
+});
+
+describe("ChannelsSection: external references", () => {
+  it("shows the card of external channels under the list, and also while there are no local channels", () => {
+    renderSection(ChannelsSection);
+    expect(text("external-refs-channel")).toContain("Channels from other events");
+    expect(missing("external-refs-message")).toBe(true);
+    cleanup();
+    renderSection(ChannelsSection, { doc: emptyEventDocument("Empty") });
+    expect(screen.getByTestId("channel-empty")).toBeDefined();
+    expect(text("external-refs-empty")).toContain("Channels from other events");
+  });
+
+  it("lists the references of the document in the card and counts them with the channels in the outline", () => {
+    const doc = sampleDocument();
+    doc.externalRefs = [{ key: "billing-topic", eventVersionId: "vv1", kind: "channel", itemKey: "billing" }];
+    renderBuilder({ doc, section: "channels" });
+    expect(screen.getByTestId("external-ref-row-billing-topic")).toBeDefined();
+    expect(text("outline-count-channels")).toBe("3");
+  });
+
+  it("offers the external messages among the messages a channel allows, marked, so an operation on the channel can use them", () => {
+    const doc = sampleDocument();
+    doc.externalRefs = [
+      { key: "Order-placed", eventVersionId: "vv1", kind: "message", itemKey: "OrderPlaced" },
+      { key: "billing-topic", eventVersionId: "vv1", kind: "channel", itemKey: "billing" },
+    ];
+    const { probe } = renderSection(ChannelsSection, { doc });
+    const labelOf = (key: string) => box(`channel-messages-option-${key}`).closest("label")?.textContent;
+    expect(labelOf("OrderCreated")).toBe("OrderCreated");
+    expect(labelOf("Order-placed")).toBe("Order-placed (external)");
+    expect(missing("channel-messages-option-billing-topic")).toBe(true);
+    click("channel-messages-option-Order-placed");
+    expect(probe.draft.doc.channels[0].messageKeys).toEqual(["OrderCreated", "Order-placed"]);
+    expect(probe.draft.problems).toEqual([]);
+    // An operation that uses it on this channel keeps it there, as for a local message.
+    act(() => probe.draft.update((d) => ({ ...d, operations: [...d.operations, { key: "receivePlaced", action: "receive", channelKey: "orders", messageKeys: ["Order-placed"], traitKeys: [] }] })));
+    click("channel-messages-option-Order-placed");
+    expect(probe.draft.doc.channels[0].messageKeys).toEqual(["OrderCreated", "Order-placed"]);
+    expect(text("channel-messages-blocked")).toContain('"receivePlaced"');
   });
 });
