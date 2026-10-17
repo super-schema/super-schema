@@ -12,12 +12,38 @@ type Outcome = { status: "error"; message: string } | { status: "ready"; list: U
 
 const LOAD_FAILED = "Could not load usages. Try again.";
 
+/** A subject as two primitives (kind, id): stable effect dependencies, rebuilt into the action's input by `subjectOf`. */
+interface SubjectParts {
+  kind: UsageSubject["kind"];
+  id: string;
+}
+/** Exhaustive over the subject kinds: a new kind is a compile error here until it is handled (and in `subjectOf`). */
+function partsOf(subject: UsageSubject): SubjectParts {
+  switch (subject.kind) {
+    case "event":
+      return { kind: "event", id: subject.eventId };
+    case "entity":
+      return { kind: "entity", id: subject.entityId };
+    default:
+      return subject satisfies never;
+  }
+}
+function subjectOf({ kind, id }: SubjectParts): UsageSubject {
+  switch (kind) {
+    case "event":
+      return { kind, eventId: id };
+    case "entity":
+      return { kind, entityId: id };
+    default:
+      return kind satisfies never;
+  }
+}
+
 /** Spec 18.9 "Who uses X?" — published uses first, drafts flagged, deleted referrers shown as plain text. The subject is an entity or an event. */
 export function UsedByPanel({
   subject, title = "Used by", emptyText = "Nothing references this yet.",
 }: { subject: UsageSubject; title?: string; emptyText?: string }) {
-  const kind = subject.kind;
-  const id = subject.kind === "event" ? subject.eventId : subject.entityId;
+  const { kind, id } = partsOf(subject);
   const key = `${kind}:${id}`;
   // The outcome is keyed by subject: a result for a previous subject counts as "still loading" for the new one.
   const [result, setResult] = useState<{ key: string; outcome: Outcome } | null>(null);
@@ -25,7 +51,7 @@ export function UsedByPanel({
 
   useEffect(() => {
     let cancelled = false;
-    const current: UsageSubject = kind === "event" ? { kind, eventId: id } : { kind, entityId: id };
+    const current = subjectOf({ kind, id });
     const settle = (next: Outcome) => {
       if (!cancelled) setResult({ key, outcome: next });
     };

@@ -263,6 +263,56 @@ describe("ExternalRefPicker: step 3, the item", () => {
   });
 });
 
+describe("ExternalRefPicker: focus follows the steps", () => {
+  // Choosing an event, Next and Back unmount the control that had focus: the new step's primary control must take it, or a keyboard
+  // user lands on <body> inside a dialog.
+  const checkedRadio = () => within(screen.getByTestId("external-ref-versions")).getAllByRole("radio").find((r) => (r as HTMLInputElement).checked) as HTMLInputElement;
+
+  it("moves to the preselected version when an event is chosen (once the versions are listed)", async () => {
+    setup();
+    await chooseOrders();
+    await waitFor(() => expect(document.activeElement).toBe(checkedRadio()));
+    expect(checkedRadio().value).toBe("vv-orders-2");
+  });
+
+  it("moves to the version the user had picked when coming back from step 3", async () => {
+    setup();
+    await chooseOrders();
+    fireEvent.click(within(screen.getByTestId("external-ref-version-vv-orders-1")).getByRole("radio"));
+    fireEvent.click(button("Next"));
+    await itemRow("OrderCreated");
+    fireEvent.click(button("Back"));
+    await screen.findByTestId("external-ref-versions");
+    await waitFor(() => expect(document.activeElement).toBe(checkedRadio()));
+    expect(checkedRadio().value).toBe("vv-orders-1");
+  });
+
+  it("moves to the filter of the items on Next", async () => {
+    setup();
+    await toItems();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("external-ref-items-filter")));
+  });
+
+  it("moves back to the search of the events on Back from step 2", async () => {
+    setup();
+    await chooseOrders();
+    fireEvent.click(button("Back"));
+    await eventRow("ev-orders");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("external-ref-search")));
+  });
+
+  it("does not take focus when the versions could not be listed, and does not steal it later", async () => {
+    h.versions.mockResolvedValue({ success: false, error: "Forbidden", code: "FORBIDDEN" });
+    setup();
+    fireEvent.click(await eventRow("ev-orders"));
+    await screen.findByRole("alert");
+    const back = button("Back");
+    back.focus();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(document.activeElement).toBe(back);
+  });
+});
+
 describe("ExternalRefPicker: confirm", () => {
   it("adds { key, eventVersionId, kind, itemKey } with a key made from the item's title, then closes", async () => {
     const { onAdd, onOpenChange } = setup();

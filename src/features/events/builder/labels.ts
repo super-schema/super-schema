@@ -1,7 +1,9 @@
 // src/features/events/builder/labels.ts
-// The user-facing names of "traits", in one place. AsyncAPI calls them traits; users do not understand that word, so the UI says
-// "Message properties" and keeps "(Trait)" in brackets as the technical secondary text. Change a name here and it changes everywhere
-// (the builder section, the Enterprise / Domain tab and sidebar leaf, the create menu, page titles, empty states, tooltips).
+// The user-facing wording of the event builder, in one place: the names of "traits" and the copy of external references. AsyncAPI calls
+// traits traits; users do not understand that word, so the UI says "Message properties" and keeps "(Trait)" in brackets as the technical
+// secondary text. Change a name here and it changes everywhere (the builder section, the Enterprise / Domain tab and sidebar leaf, the
+// create menu, page titles, empty states, tooltips). The external-reference section further down holds the card, picker and operation
+// copy for channels and messages that another event published.
 // Internal names (section id `traits`, URL `?tab=traits`, test ids `trait-*`) are NOT user-facing and stay as they are. Pure, client-safe.
 import type { TraitKind } from "@/lib/event-specs/types";
 import type { ExternalItemKind } from "@/lib/events/external-refs";
@@ -59,8 +61,10 @@ export const builtInExplanation = (name: string): string => `${name} is built in
 // "External" is the word users see; the document calls them `externalRefs`.
 
 export const EXTERNAL_BADGE = "External";
-/** "Order-placed (external)": how a pick list names an external reference (the same suffix `references.ts` gives the template forms). */
-export const externalItemLabel = (key: string): string => `${key} (external)`;
+/** The mark after an external reference's key in a pick list or a checklist: the ONE definition (`references.ts` builds its options with `externalItemLabel` too). */
+export const EXTERNAL_SUFFIX = "(external)";
+/** "Order-placed (external)": how a pick list names an external reference. */
+export const externalItemLabel = (key: string): string => `${key} ${EXTERNAL_SUFFIX}`;
 export const MAJOR_BADGE = "Major";
 export const ADD_FROM_ANOTHER_EVENT = "Add from another event";
 export const REMOVE_REFERENCE = "Remove";
@@ -71,6 +75,10 @@ export const externalRefsEmpty = (kind: ExternalItemKind): string =>
 /** "v1.2 → v2.0 available": the line under a reference whose source event published a later version. */
 export const newerVersionText = (current: string, latest: string): string => `v${current} → v${latest} available`;
 export const updateToText = (latest: string): string => `Update to v${latest}`;
+/** The accessible name of a row's Update button: the visible words first, then WHICH reference ("Update to v2.0: Order placed"). */
+export const updateToLabel = (latest: string, title: string): string => `${updateToText(latest)}: ${title}`;
+/** The accessible name of a row's Remove button ("Remove Order placed"). */
+export const removeReferenceLabel = (title: string): string => `${REMOVE_REFERENCE} ${title}`;
 /** "Used by 2 operations" / "Used by 1 channel and 2 operations": what removing a reference would touch. */
 export const usedByText = (channels: number, operations: number): string => {
   const parts = [
@@ -81,14 +89,41 @@ export const usedByText = (channels: number, operations: number): string => {
 };
 export const DETAILS_UNAVAILABLE = "Details unavailable";
 
-/** The sentence under a reference whose update was refused. */
+// The copy under an operation's messages. On a LOCAL channel the list is what that channel allows; on an EXTERNAL channel (one another
+// event owns) every message of this event is offered, because nothing can be checked against a channel the event does not own.
+export const operationMessagesHint = (externalChannel: boolean): string =>
+  externalChannel ? "Every message of this event can be used on a channel from another event." : "Only messages allowed on the chosen channel are listed.";
+/** What the operation's own messages list says when it is empty (`channelKey` names the local channel; an external channel names the event). */
+export const operationMessagesEmpty = (channelKey: string, externalChannel: boolean): string =>
+  externalChannel
+    ? "This event has no messages yet. Add one in Messages; an operation can be saved without any."
+    : `Channel "${channelKey}" has no messages yet. Allow messages on it in Channels or Messages; an operation can be saved without any.`;
+/** The same for the messages of the operation's reply. */
+export const replyMessagesEmpty = (channelKey: string, externalChannel: boolean): string =>
+  externalChannel ? "This event has no messages yet. Add one in Messages." : `Channel "${channelKey}" has no messages yet. Allow messages on it in Channels or Messages.`;
+
+/**
+ * The sentence under a reference whose update was refused because the latest version really no longer has the item (its own item
+ * list was checked) and operations still use it.
+ */
 export const updateRefusedText = (itemKey: string, latest: string, operations: string[]): string => {
   const one = operations.length === 1;
   const names = operations.map((k) => `"${k}"`).join(", ");
   return `Cannot update to v${latest}: it no longer has "${itemKey}", and ${one ? "operation" : "operations"} ${names} ${one ? "uses" : "use"} it. Take it out of ${one ? "that operation" : "those operations"} first.`;
 };
-/** The note left after an update removed a reference nothing used. */
-export const updateRemovedText = (itemKey: string, latest: string): string => `Removed "${itemKey}": v${latest} no longer has it and nothing used it.`;
+/** The sentence under a reference whose update was refused because the latest version's items could not be checked: nothing was changed. */
+export const updateUnconfirmedText = (itemKey: string, latest: string): string =>
+  `Cannot update to v${latest}: it may no longer have "${itemKey}", and its items could not be checked. Nothing was changed; try again.`;
+/**
+ * The note left after an update removed a reference no operation used: the latest version no longer has the item. `channels` are the
+ * local channels whose allowed messages it was also taken out of (the update strips it from them silently), named and counted.
+ */
+export const updateRemovedText = (itemKey: string, latest: string, channels: string[]): string => {
+  const alsoTaken = channels.length === 0
+    ? ""
+    : ` It was also taken out of the allowed messages of ${channels.length} ${channels.length === 1 ? "channel" : "channels"} (${channels.join(", ")}).`;
+  return `Removed "${itemKey}": v${latest} no longer has it and no operation used it.${alsoTaken}`;
+};
 /** The question asked before removing a reference that is in use. `used` is what uses it ("2 operations (a, b)"), `consequence` what removing does. */
 export const removeConfirmText = (kind: ExternalItemKind, key: string, used: string, consequence: string): string =>
   `External ${kind} "${key}" is used by ${used}. Removing it will ${consequence}. Remove it?`;
@@ -109,7 +144,6 @@ export const VERSIONS_LOADING = "Loading versions…";
 export const NO_VERSIONS = "This event has no version that can be referenced.";
 export const LATEST_BADGE = "Latest";
 export const publishedOnText = (day: string): string => `Published ${day}`;
-export const itemsLabel = (kind: ExternalItemKind): string => (kind === "channel" ? "Channels" : "Messages");
 export const filterItemsLabel = (kind: ExternalItemKind): string => `Filter the ${kind === "channel" ? "channels" : "messages"}`;
 export const ITEMS_LOADING = "Loading…";
 export const noItemsText = (kind: ExternalItemKind, versionLabel: string): string => `Version v${versionLabel} has no ${kind === "channel" ? "channels" : "messages"} to use.`;

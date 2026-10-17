@@ -5,7 +5,8 @@
 // would take the user off this page is cancelled and turned into a question: `pending` is that question, `proceed()` leaves for real and
 // `stay()` drops it. The page renders `UnsavedChangesDialog` from it.
 //
-//   Guarded:  a click on a same-site link (next/link, plain <a>), the shell's own navigation (`canNavigate`, the explorer rows), and
+//   Guarded:  a click on a same-site link (next/link, plain <a>), the shell's own navigation (`canNavigate`: the explorer rows, the command
+//             palette, the new-entity shortcut, notifications), and
 //             Back / Forward. Where the browser has the Navigation API (`window.navigation`, Chromium) a cancelable `navigate` event does
 //             the Back / Forward part, and also catches document navigations (a link to another site, `location.assign`). Elsewhere
 //             Back / Forward are caught with a popstate sentinel: while dirty one extra history entry for this same URL is pushed, a
@@ -19,9 +20,10 @@
 // and calls history.pushState afterwards (in an insertion effect of the same commit). A `navigate` listener that cancels THAT push finds
 // the new page already on screen under the old URL and this page, with its draft, unmounted (cancelling pushState is a silent no-op). So
 // the click interceptor runs on both paths, the shell asks first (`canNavigate`), and the `navigate` listener leaves same-document pushes
-// alone: it is the net for what cancels cleanly (Back / Forward, document navigations). A programmatic `router.push` from any other
-// place (the command palette, a shortcut) is not guarded, in any browser: it would have to call `canNavigate` first, like the explorer.
-import { useEffect, useState } from "react";
+// alone: it is the net for what cancels cleanly (Back / Forward, document navigations). The shell's programmatic navigations (the explorer
+// rows, the command palette, the new-entity shortcut, a notification) call `canNavigate` first; a `router.push` from any place that does
+// not is not guarded, in any browser, and would silently lose the draft.
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BEFORE_NAVIGATE_EVENT, beforeNavigateHref } from "@/lib/navigation/before-navigate";
 
@@ -72,12 +74,25 @@ function resolveTarget(url: string): { href: string; sameSite: boolean; staysHer
 }
 
 const SENTINEL_KEY = "__eventLeaveGuard";
-const isSentinel = (state: unknown): boolean => typeof state === "object" && state !== null && SENTINEL_KEY in state;
 
 /** `dirty` false → no listeners and `pending` stays null. */
 export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null } {
   const router = useRouter();
   const [pending, setPending] = useState<PendingLeave | null>(null);
+  // Whether the current history entry is our sentinel (no Navigation API only). It is tracked here and NOT read back from `history.state`:
+  // the page rewrites ?tab= / ?section= with `history.replaceState`, and Next's patched `replaceState` replaces the entry's state, marker
+  // included, so a second sentinel would stack on the next dirty toggle.
+  const onSentinel = useRef(false);
+
+  // Any history traversal may move us off the sentinel entry, whatever the guard is doing: forget it. Registered before the guard's own
+  // popstate listener (same component, earlier effect), so a guarded Back is forgotten first and then re-pushed.
+  useEffect(() => {
+    const leftSentinel = () => {
+      onSentinel.current = false;
+    };
+    window.addEventListener("popstate", leftSentinel);
+    return () => window.removeEventListener("popstate", leftSentinel);
+  }, []);
 
   useEffect(() => {
     if (!dirty) return;
@@ -154,10 +169,14 @@ export function useLeaveGuard(dirty: boolean): { pending: PendingLeave | null } 
       removeHistoryGuard = () => nav.removeEventListener("navigate", onNavigate);
     } else {
       // Same URL, no `url` argument: only a history entry, which Back then lands on instead of leaving.
-      if (!isSentinel(window.history.state)) window.history.pushState({ [SENTINEL_KEY]: true }, "");
+      const pushSentinel = () => {
+        window.history.pushState({ [SENTINEL_KEY]: true }, "");
+        onSentinel.current = true;
+      };
+      if (!onSentinel.current) pushSentinel();
       const onPopState = () => {
         if (off) return;
-        window.history.pushState({ [SENTINEL_KEY]: true }, ""); // back on a sentinel, so the next Back asks again
+        pushSentinel(); // back on a sentinel, so the next Back asks again
         ask("", () => window.history.go(-2)); // past the page's own entry and the sentinel
       };
       window.addEventListener("popstate", onPopState);

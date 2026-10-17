@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The explorer rows navigate with `router.push` from a click handler, which no link interception or history event can stop before Next has
 // rendered the new route. So a row asks the page first (`canNavigate`): a page with unsaved work vetoes it and asks the user itself.
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { assetHref } from "@/lib/navigation/asset-href";
@@ -77,5 +77,33 @@ describe("LeftSidebar: a page with unsaved work can veto a row's navigation", ()
     fireEvent.click(screen.getByTestId("product-p1-events"));
     expect(asked).toEqual([]);
     expect(push).not.toHaveBeenCalled();
+  });
+
+  // A folder row expands AND navigates; a vetoed click does neither (the page stays, so nothing should change under the user's hand).
+  describe("a folder row", () => {
+    const expandButton = () => within(screen.getByTestId("domain-d1")).queryByRole("button", { name: "Expand Payments" });
+    const collapseButton = () => within(screen.getByTestId("domain-d1")).queryByRole("button", { name: "Collapse Payments" });
+
+    it("stays collapsed when the page vetoes the click", () => {
+      location.pathname = "/schemas"; // not under the domain: collapsed to begin with
+      veto = true;
+      render(<LeftSidebar {...props} />);
+      expect(expandButton()).not.toBeNull();
+      fireEvent.click(screen.getByTestId("domain-d1"));
+
+      expect(asked).toEqual(["/schemas/payments"]);
+      expect(push).not.toHaveBeenCalled();
+      expect(expandButton()).not.toBeNull();
+      expect(collapseButton()).toBeNull();
+    });
+
+    it("expands and navigates when nobody objects", () => {
+      location.pathname = "/schemas";
+      render(<LeftSidebar {...props} />);
+      fireEvent.click(screen.getByTestId("domain-d1"));
+
+      expect(push).toHaveBeenCalledWith("/schemas/payments");
+      expect(collapseButton()).not.toBeNull();
+    });
   });
 });

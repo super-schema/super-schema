@@ -266,6 +266,31 @@ describe("useLeaveGuard: Back and Forward without the Navigation API (popstate s
     expect(push).toHaveBeenCalledTimes(1); // still on the sentinel entry: never stacked
   });
 
+  it("does not stack a second sentinel when the page rewrites the URL between dirty toggles (replaceState drops what history.state held)", () => {
+    const push = vi.spyOn(window.history, "pushState");
+    const { rerender } = setup(true);
+    expect(push).toHaveBeenCalledTimes(1);
+    // The page rewrites ?tab= / ?section= with replaceState; Next's patched replaceState replaces the entry's state, marker included.
+    window.history.replaceState(null, "", `${HERE}?tab=docs`);
+    expect(window.history.state).toBeNull();
+    rerender({ dirty: false });
+    rerender({ dirty: true });
+    rerender({ dirty: false });
+    window.history.replaceState(null, "", `${HERE}?tab=code`);
+    rerender({ dirty: true });
+    expect(push).toHaveBeenCalledTimes(1); // the sentinel is still the entry behind us
+  });
+
+  it("pushes a fresh sentinel when the user went back while the draft was clean (the sentinel is no longer the current entry)", () => {
+    const push = vi.spyOn(window.history, "pushState");
+    const { rerender } = setup(true);
+    expect(push).toHaveBeenCalledTimes(1);
+    rerender({ dirty: false });
+    act(() => { window.dispatchEvent(new PopStateEvent("popstate")); }); // Back while clean: nothing asks, we are on the page's own entry again
+    rerender({ dirty: true });
+    expect(push).toHaveBeenCalledTimes(2); // Back must be caught again
+  });
+
   it("asks on popstate, puts the sentinel back, and proceed() goes past both entries", () => {
     const push = vi.spyOn(window.history, "pushState");
     const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);

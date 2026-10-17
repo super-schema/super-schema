@@ -31,6 +31,7 @@ vi.mock("@/components/layout/StatusBar", () => ({ StatusBar: () => null }));
 vi.mock("@/components/layout/TopBar", () => ({ TopBar: () => null }));
 
 import { DashboardClientShell } from "@/components/layout/DashboardClientShell";
+import { BEFORE_NAVIGATE_EVENT, beforeNavigateHref } from "@/lib/navigation/before-navigate";
 
 const CASES: Array<{ name: string; pathname: string; target: string | null }> = [
   { name: "a product page", pathname: "/schemas/payments/checkout", target: "/schemas/payments/checkout/new" },
@@ -100,5 +101,68 @@ describe("DashboardClientShell new-entity shortcut", () => {
 
     expect(nav.push).not.toHaveBeenCalled();
     expect(screen.getByTestId("palette-open")).toBeTruthy();
+  });
+
+  // Leaving for the new-entity page is a navigation like any other: a page with unsaved work (the event builder) can veto it, and
+  // then the `new-entity` event that precedes the push must not fire either (it would open a creation dialog over the page that stays).
+  describe("a page with unsaved work can veto the navigation", () => {
+    const TARGET = "/schemas/payments/checkout/new";
+    const asked: Array<string | null> = [];
+    const created: Event[] = [];
+    let veto = false;
+    const onBeforeNavigate = (e: Event) => {
+      asked.push(beforeNavigateHref(e));
+      if (veto) e.preventDefault();
+    };
+    const onNewEntity = (e: Event) => void created.push(e);
+
+    beforeEach(() => {
+      asked.length = 0;
+      created.length = 0;
+      document.addEventListener("super-schema:new-entity", onNewEntity);
+    });
+    afterEach(() => {
+      document.removeEventListener(BEFORE_NAVIGATE_EVENT, onBeforeNavigate);
+      document.removeEventListener("super-schema:new-entity", onNewEntity);
+    });
+    const listenFor = (vetoes: boolean) => {
+      veto = vetoes;
+      document.addEventListener(BEFORE_NAVIGATE_EVENT, onBeforeNavigate);
+    };
+    const triggers: Array<[string, () => void]> = [
+      ["Cmd+N", () => void fireEvent.keyDown(document, { key: "n", metaKey: true })],
+      ["the palette 'New Entity' action", () => palette.actions.find((a) => a.id === "new-entity")!.onSelect()],
+    ];
+
+    describe.each(triggers)("%s", (_name, trigger) => {
+      it("asks the page where it goes, fires the new-entity event and navigates when nothing is vetoed", () => {
+        listenFor(false);
+        renderAt("/schemas/payments/checkout/order");
+        trigger();
+
+        expect(asked).toEqual([TARGET]);
+        expect(created).toHaveLength(1);
+        expect(nav.push).toHaveBeenCalledWith(TARGET);
+      });
+
+      it("does neither when the page vetoes it", () => {
+        listenFor(true);
+        renderAt("/schemas/payments/checkout/order");
+        trigger();
+
+        expect(asked).toEqual([TARGET]);
+        expect(created).toHaveLength(0);
+        expect(nav.push).not.toHaveBeenCalled();
+        expect(screen.queryByTestId("palette-open")).toBeNull();
+      });
+
+      it("behaves exactly as before when no page listens", () => {
+        renderAt("/schemas/payments/checkout/order");
+        trigger();
+
+        expect(created).toHaveLength(1);
+        expect(nav.push).toHaveBeenCalledWith(TARGET);
+      });
+    });
   });
 });

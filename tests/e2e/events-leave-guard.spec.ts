@@ -4,7 +4,8 @@
  * Navigation API path (`window.navigation`) is the one exercised for Back; the sidebar rows and links are caught before the router.
  *
  *   1. A clean page never asks (sidebar, then Back). With an edit: a sidebar click asks, Stay keeps the edit; the Back button asks,
- *      Stay keeps the edit; Back then Discard & leave goes back and the edit is gone.
+ *      Stay keeps the edit; a breadcrumb link (a real next/link) asks, Stay keeps the edit; Back then Discard & leave goes back and the
+ *      edit is gone.
  *   2. Save & leave saves the draft and then navigates; reopening the event shows the saved title.
  *   3. A save the server refuses (the title is required) keeps the user on the page, the dialog open and the error visible; nothing was
  *      lost and nothing leaked (no driver / Prisma text); Stay, Discard, and the sidebar then works.
@@ -140,6 +141,18 @@ test.describe("leave guard end to end", () => {
       await back;
       await expect(page).toHaveURL(onEventPage);
       await expect(titleInput(page)).toHaveValue(`${flow.title} edited`);
+    });
+
+    await test.step("a real <Link> (the breadcrumb) asks too, before the router: Stay keeps the page and the edit", async () => {
+      const dialog = leaveDialog(page);
+      await centerPanel(page).getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: "Events", exact: true }).click();
+      await expect(dialog).toBeVisible();
+      await expect(page).toHaveURL(onEventPage);
+      await dialog.getByTestId("leave-stay").click();
+      await expect(dialog).toBeHidden();
+      await expect(page).toHaveURL(onEventPage);
+      await expect(titleInput(page)).toHaveValue(`${flow.title} edited`);
+      await expect(statusOf(page)).toHaveText("Unsaved changes");
     });
 
     await test.step("Back, then Discard & leave: goes back to the product page, and the edit is gone", async () => {

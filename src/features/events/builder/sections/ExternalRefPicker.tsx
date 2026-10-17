@@ -105,6 +105,15 @@ function PickerFlow({ productId, eventId, kind, doc, searchRef, onAdd, onClose }
   const [pickedVersion, setPickedVersion] = useState<string | null>(null);
   const [itemKey, setItemKey] = useState<string | null>(null);
   const [refKey, setRefKey] = useState("");
+  // Choosing an event, Next and Back unmount the control that had focus. `goTo` marks that focus is owed to the new step's primary control
+  // (the search, the selected version, the items' filter): the effect below pays it as soon as that control exists.
+  const versionsRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const focusOwed = useRef(false);
+  const goTo = (next: 1 | 2 | 3) => {
+    focusOwed.current = true;
+    setStep(next);
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => setTerm(query.trim()), SEARCH_DEBOUNCE_MS);
@@ -118,6 +127,18 @@ function PickerFlow({ productId, eventId, kind, doc, searchRef, onAdd, onClose }
   const versionId = pickedVersion !== null && versionList.some((v) => v.versionId === pickedVersion) ? pickedVersion : (versionList[0]?.versionId ?? null);
   const items = useLoaded<ExternalVersionItems>(step === 3 && versionId ? `i:${versionId}` : null, (a) => a.getExternalVersionItemsAction(productId, versionId ?? ""));
 
+  useEffect(() => {
+    if (!focusOwed.current) return;
+    const target = step === 1 ? searchRef.current : step === 3 ? filterRef.current : versionsRef.current?.querySelector<HTMLInputElement>("input:checked") ?? null;
+    if (target !== null) {
+      focusOwed.current = false;
+      target.focus();
+    } else if (step === 2 && versions.state !== "loading") {
+      focusOwed.current = false; // no version to land on (failed, or none): do not grab focus later, out of the blue
+    }
+    // Step 2's radios only exist once the versions are listed: the run after that pays the debt.
+  }, [step, versions.state, versionList.length, searchRef]);
+
   const taken = useMemo(() => takenKeys(doc, "externalRef"), [doc]);
   // The server leaves the event itself out; this keeps it out even if an answer ever included it.
   const events = (candidates.state === "ready" ? candidates.data : candidates.state === "loading" ? candidates.stale : undefined)?.filter((c) => c.eventId !== eventId);
@@ -128,7 +149,7 @@ function PickerFlow({ productId, eventId, kind, doc, searchRef, onAdd, onClose }
     setEvent(candidate);
     setPickedVersion(null);
     setItemKey(null);
-    setStep(2);
+    goTo(2);
   }
   function chooseVersion(id: string) {
     setPickedVersion(id);
@@ -194,7 +215,7 @@ function PickerFlow({ productId, eventId, kind, doc, searchRef, onAdd, onClose }
               <p data-testid="external-ref-versions-empty" className="text-body-small text-muted-foreground">{NO_VERSIONS}</p>
             )}
             {versionList.length > 0 && (
-              <div role="radiogroup" aria-label={VERSIONS_LABEL} data-testid="external-ref-versions" className="space-y-space-1">
+              <div role="radiogroup" aria-label={VERSIONS_LABEL} ref={versionsRef} data-testid="external-ref-versions" className="space-y-space-1">
                 {versionList.map((v, i) => (
                   <label
                     key={v.versionId} data-testid={`external-ref-version-${v.versionId}`}
@@ -217,7 +238,7 @@ function PickerFlow({ productId, eventId, kind, doc, searchRef, onAdd, onClose }
         {step === 3 && (
           <>
             <Command label={filterItemsLabel(kind)} className="h-auto rounded-lg border border-border p-0">
-              <CommandInput data-testid="external-ref-items-filter" placeholder={`${filterItemsLabel(kind)}…`} aria-label={filterItemsLabel(kind)} />
+              <CommandInput ref={filterRef} data-testid="external-ref-items-filter" placeholder={`${filterItemsLabel(kind)}…`} aria-label={filterItemsLabel(kind)} />
               <CommandList>
                 {items.state === "loading" && <p data-testid="external-ref-items-loading" className="px-space-3 py-space-2 text-body-small text-muted-foreground">{ITEMS_LOADING}</p>}
                 {items.state === "failed" && <p role="alert" className="px-space-3 py-space-2 text-body-small text-destructive">{loadFailedText(kind === "channel" ? "the channels" : "the messages", items.error)}</p>}
@@ -253,9 +274,9 @@ function PickerFlow({ productId, eventId, kind, doc, searchRef, onAdd, onClose }
           <Button type="button" variant="outline" size="sm" onClick={onClose}>{PICKER_CANCEL}</Button>
         ) : (
           <>
-            <Button type="button" variant="outline" size="sm" onClick={() => setStep(step === 3 ? 2 : 1)}>{PICKER_BACK}</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => goTo(step === 3 ? 2 : 1)}>{PICKER_BACK}</Button>
             {step === 2 ? (
-              <Button type="button" size="sm" disabled={versionId === null} onClick={() => setStep(3)}>{PICKER_NEXT}</Button>
+              <Button type="button" size="sm" disabled={versionId === null} onClick={() => goTo(3)}>{PICKER_NEXT}</Button>
             ) : (
               <Button type="button" size="sm" disabled={itemKey === null} onClick={add}>{PICKER_ADD}</Button>
             )}

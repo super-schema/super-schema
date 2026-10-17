@@ -8,6 +8,7 @@ import {
   NotificationItem,
   NotificationGroupHeader,
 } from "@/features/notifications";
+import { canNavigate } from "@/lib/navigation/before-navigate";
 import { useNotificationCenter } from "./useNotificationCenter";
 import type { NotificationItemData } from "./NotificationCenter.types";
 
@@ -50,6 +51,11 @@ export function NotificationCenter() {
   ) => {
     const url = getNavigationUrl(notification);
     if (!url) return;
+    // A page with unsaved work can veto the navigation (it asks the user itself): then nothing is marked read, because the user did not go there.
+    if (!canNavigate(url)) {
+      setOpen(false);
+      return;
+    }
     if (!notification.read) {
       await markAsRead(notification.id);
     }
