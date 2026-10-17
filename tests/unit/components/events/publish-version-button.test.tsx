@@ -68,6 +68,38 @@ describe("PublishVersionButton", () => {
     expect(h.refresh).not.toHaveBeenCalled();
   });
 
+  it("adds the service's suggested fix to a failed publish and to a failed preview", async () => {
+    const publish = vi.fn(async () => ({ success: false as const, error: "The event changed while publishing.", code: "CONFLICT", suggestedFix: "Reload the event and publish again." }));
+    render(<PublishVersionButton subjectName="x" description="d" loadPreview={okPreview} publish={publish} />);
+    fireEvent.click(screen.getByTestId("publish-version-button"));
+    fireEvent.click(await screen.findByText("confirm"));
+    expect((await screen.findByRole("alert")).textContent).toBe("The event changed while publishing. Reload the event and publish again.");
+    cleanup();
+    render(
+      <PublishVersionButton
+        subjectName="x" description="d" publish={vi.fn()}
+        loadPreview={async () => ({ success: false, error: "Not found.", code: "NOT_FOUND", suggestedFix: "Reload the page." })}
+      />
+    );
+    fireEvent.click(screen.getByTestId("publish-version-button"));
+    expect((await screen.findByRole("alert")).textContent).toBe("Not found. Reload the page.");
+  });
+
+  it("never shows a database failure's text (an opaque code becomes the generic message)", async () => {
+    const publish = vi.fn(async () => ({ success: false as const, error: 'relation "event_spec_versions" does not exist', code: "DB_ERROR" }));
+    render(<PublishVersionButton subjectName="x" description="d" loadPreview={okPreview} publish={publish} />);
+    fireEvent.click(screen.getByTestId("publish-version-button"));
+    fireEvent.click(await screen.findByText("confirm"));
+    expect((await screen.findByRole("alert")).textContent).not.toContain("event_spec_versions");
+  });
+
+  it("passes a title to the button (the reason it is disabled) and honours disabled", () => {
+    render(<PublishVersionButton subjectName="x" description="d" loadPreview={okPreview} publish={vi.fn()} disabled title="Save your changes first" />);
+    const button = screen.getByTestId("publish-version-button") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("title")).toBe("Save your changes first");
+  });
+
   it("a rejecting loadPreview surfaces an error instead of spinning forever", async () => {
     render(
       <PublishVersionButton

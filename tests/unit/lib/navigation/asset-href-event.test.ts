@@ -79,8 +79,8 @@ describe("assetHref — existing kinds are untouched by the event kind", () => {
 });
 
 describe("event tabs and builder sections", () => {
-  it("exposes the Design and Docs tabs and the seven builder sections", () => {
-    expect([...EVENT_TABS]).toEqual(["design", "docs"]);
+  it("exposes the four tabs and the seven builder sections", () => {
+    expect([...EVENT_TABS]).toEqual(["design", "docs", "versions", "used-by"]);
     expect([...BUILDER_SECTIONS]).toEqual(["metadata", "servers", "channels", "messages", "operations", "traits", "advanced"]);
   });
 

@@ -28,6 +28,14 @@ describe("event route", () => {
     expect(element.props).toEqual({ data });
   });
 
+  it("hands ?version= on to the loader (the Versions tab's selected version)", async () => {
+    h.load.mockResolvedValue({});
+    await EventRoute({ params, searchParams: Promise.resolve({ tab: "versions", version: "1.1" }) });
+    expect(h.load).toHaveBeenCalledWith({ domainSlug: "payments", productSlug: "checkout", eventId: "ev1", tab: "versions", section: undefined, item: undefined, version: "1.1" });
+    await EventRoute({ params, searchParams: Promise.resolve({ version: ["1.0", "1.1"] }) });
+    expect(h.load).toHaveBeenLastCalledWith(expect.objectContaining({ version: undefined }));
+  });
+
   it("hands an old ?tab alias to the loader untouched (the loader normalizes it)", async () => {
     h.load.mockResolvedValue({});
     await EventRoute({ params, searchParams: Promise.resolve({ tab: "editor" }) });
@@ -38,7 +46,7 @@ describe("event route", () => {
     h.load.mockResolvedValue({});
     await EventRoute({ params, searchParams: Promise.resolve({ tab: ["preview", "design"], section: ["servers", "channels"], item: ["a", "b"] }) });
     await EventRoute({ params });
-    const none = { domainSlug: "payments", productSlug: "checkout", eventId: "ev1", tab: undefined, section: undefined, item: undefined };
+    const none = { domainSlug: "payments", productSlug: "checkout", eventId: "ev1", tab: undefined, section: undefined, item: undefined, version: undefined };
     expect(h.load).toHaveBeenNthCalledWith(1, none);
     expect(h.load).toHaveBeenNthCalledWith(2, none);
   });

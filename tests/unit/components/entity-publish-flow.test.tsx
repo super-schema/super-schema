@@ -60,7 +60,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getHistory.mockResolvedValue({ versions: [] });
   mocks.listVersions.mockResolvedValue({ success: true, versions: [] });
-  mocks.listUsages.mockResolvedValue({ success: true, data: [] });
+  mocks.listUsages.mockResolvedValue({ success: true, data: { rows: [], truncated: false } });
 });
 afterEach(cleanup);
 
@@ -88,7 +88,10 @@ describe("Used-by panel on the versions tab", () => {
   it("looks up who uses the entity and lists the referrers under the published versions", async () => {
     mocks.listUsages.mockResolvedValue({
       success: true,
-      data: [{ id: "r1", fromKind: "MESSAGE", role: "PAYLOAD", isDraft: true, target: "Customer v1.0", label: "Message CustomerSeen (draft)", href: "/schemas/payments/checkout?tab=events&section=messages" }],
+      data: {
+        rows: [{ id: "r1", fromKind: "MESSAGE", role: "PAYLOAD", isDraft: true, target: "Customer v1.0", label: "Message CustomerSeen (draft)", href: "/schemas/payments/checkout?tab=events&section=messages" }],
+        truncated: false,
+      },
     });
     render(<EntityWorkspace {...props()} />);
     expect(screen.queryByTestId("used-by-panel")).toBeNull();
