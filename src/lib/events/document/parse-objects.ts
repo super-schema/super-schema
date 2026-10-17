@@ -78,11 +78,12 @@ export function createObjectReaders(bad: Bad) {
     if (v === undefined || v === null) return undefined;
     if (!Array.isArray(v)) { bad(at, `${leaf(at)} must be an array of strings`); return undefined; }
     const out: string[] = [];
+    const seen = unique ? new Set<string>() : null; // a Set beside the list: `includes` on it is quadratic for a long enum
     v.forEach((x, j) => {
       if (typeof x !== "string" || x.trim() === "") { bad(`${at}/${j}`, `${leaf(at)} entries must be non-empty strings`); return; }
       const t = x.trim();
-      if (unique && out.includes(t)) bad(`${at}/${j}`, `Duplicate value "${t}" in ${leaf(at)}`);
-      else out.push(t);
+      if (seen?.has(t)) bad(`${at}/${j}`, `Duplicate value "${t}" in ${leaf(at)}`);
+      else { seen?.add(t); out.push(t); }
     });
     return out;
   };

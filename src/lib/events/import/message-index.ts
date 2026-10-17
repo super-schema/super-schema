@@ -4,7 +4,9 @@
 // Both `extractPayloads` (payload.ts) and the mapper (map-document.ts) need the SAME key for the same message, so both read it from here:
 // a component message keeps its component key (`components.messages.X` is key `X`); an inline message of a channel is keyed by its
 // channel-local key; a key that is not valid, or is taken, is adjusted the same way for both.
-import { ok, type Result } from "@/types/result";
+import { err, ok, type Result } from "@/types/result";
+import { boundPointer, boundText } from "./bound";
+import { MAX_CHANNEL_MESSAGE_PAIRS } from "./limits";
 import { jsonPointer } from "@/lib/event-specs/json-pointer";
 import { assignKeys, type KeyRequest } from "./keys";
 import { isRef, type RefResolver } from "./refs";
@@ -42,6 +44,8 @@ export function indexMessages(raw: RawAsyncApi3, refs: RefResolver): Result<Mess
   const byPointer = new Map<string, IndexedMessage>();
   const byComponentKey = new Map<string, IndexedMessage>();
   const channels = new Map<string, Map<string, IndexedMessage>>();
+  const byChannelDefinition = new Map<string, Map<string, IndexedMessage>>(); // by where the channel is defined
+  let pairs = 0;
   const ordered: IndexedMessage[] = [];
   const requests = { component: [] as KeyRequest[], inline: [] as KeyRequest[] };
 
@@ -51,7 +55,7 @@ export function indexMessages(raw: RawAsyncApi3, refs: RefResolver): Result<Mess
     const known = byPointer.get(target.data.pointer);
     if (known) return ok(known);
     if (!isBag(target.data.value)) {
-      warnings.push({ pointer: at, code: "SANITIZED_VALUE", message: `A message must be an object; "${sourceKey}" is not, so it was left out` });
+      warnings.push({ pointer: at, code: "SANITIZED_VALUE", message: `A message must be an object; "${boundText(sourceKey)}" is not, so it was left out` });
       return ok(null);
     }
     const message: IndexedMessage = { key: "", pointer: target.data.pointer, node: target.data.value, sourceKey };
@@ -74,18 +78,33 @@ export function indexMessages(raw: RawAsyncApi3, refs: RefResolver): Result<Mess
     const channel = refs.deref(channelValue, channelAt);
     if (!channel.success) return channel;
     if (!isBag(channel.data.value)) continue;
-    const local = new Map<string, IndexedMessage>();
+    // Channels that refer to one shared channel definition share its messages: walk the definition once, not once per referencing channel.
+    let local = byChannelDefinition.get(channel.data.pointer);
+    if (!local) {
+      local = new Map<string, IndexedMessage>();
+      for (const [localKey, value] of entriesOf(channel.data.value.messages)) {
+        const message = define(value, `${channel.data.pointer}${jsonPointer("messages", localKey)}`, localKey, false);
+        if (!message.success) return message;
+        if (message.data) local.set(localKey, message.data);
+      }
+      byChannelDefinition.set(channel.data.pointer, local);
+    }
     channels.set(channelKey, local);
-    for (const [localKey, value] of entriesOf(channel.data.value.messages)) {
-      const message = define(value, `${channel.data.pointer}${jsonPointer("messages", localKey)}`, localKey, false);
-      if (!message.success) return message;
-      if (message.data) local.set(localKey, message.data);
+    // What the event document stores is every channel's own list of messages, so the pairs are counted once per channel, shared definition or not.
+    pairs += local.size;
+    if (pairs > MAX_CHANNEL_MESSAGE_PAIRS) {
+      return err({
+        code: "REF_TOO_LARGE",
+        message: `The channels list more than ${MAX_CHANNEL_MESSAGE_PAIRS.toLocaleString("en-US")} messages in all (a channel definition that several channels refer to counts once for each of them); it was rejected as too large.`,
+        details: { pointer: boundPointer(channelAt), limit: MAX_CHANNEL_MESSAGE_PAIRS },
+        suggestedFix: "Let fewer channels refer to the same large channel, or split the document.",
+      });
     }
   }
 
   const taken = new Set<string>();
-  const componentKeys = assignKeys(requests.component, taken, "message", warnings);
-  const inlineKeys = assignKeys(requests.inline, taken, "message", warnings);
+  const componentKeys = assignKeys(requests.component, taken, "message", (w) => warnings.push(w));
+  const inlineKeys = assignKeys(requests.inline, taken, "message", (w) => warnings.push(w));
   for (const message of ordered) message.key = (componentKeys.get(message.pointer) ?? inlineKeys.get(message.pointer)) as string;
   return ok({ messages: ordered, byComponentKey, channels, warnings });
 }

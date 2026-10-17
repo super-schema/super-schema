@@ -18,14 +18,16 @@ import {
   type EventDocument,
 } from "@/lib/events/document/types";
 import { ANY_PROPERTIES, propertiesSet } from "@/lib/events/document/wording";
-import { suggestKey } from "@/lib/events/templates/keys";
 import type { EntityPin } from "@/lib/events/types";
+import { boundChain, boundPointer, boundText, CHAIN_ENTRY_LENGTH, createWarningSink, MAX_CHAIN_ENTRIES } from "./bound";
 import { detectBuiltInTrait } from "./builtin-traits";
-import { assignKeys, uniqueIn, type KeyRequest } from "./keys";
+import { assignKeys, suggestTraitKey, uniqueIn, type KeyRequest } from "./keys";
 import { entriesOf, indexMessages, isBag, type IndexedMessage, type MessageIndex } from "./message-index";
 import { describeMessageSchemas, type PayloadDescription } from "./payloads";
 import { createRefResolver, isRef, refTargetPointer, refTargetSegments } from "./refs";
 import { createSanitizer } from "./sanitize";
+import { assertDocumentBounds } from "./source";
+import { CHARS_PER_NODE } from "./limits";
 import type { ImportWarning, ImportWarningCode, MapContext, RawAsyncApi3 } from "./types";
 
 const ROOT_KEYS = new Set(["asyncapi", "info", "servers", "defaultContentType", "channels", "operations", "components"]);
@@ -49,6 +51,8 @@ const PROTOCOL_ALIASES: Readonly<Record<string, string>> = {
   "kafka-secure": "kafka", mqtts: "mqtt", "secure-mqtt": "mqtt", amqps: "amqp", https: "http", wss: "ws", websocket: "ws", websockets: "ws",
 };
 const DEFAULT_CHANNEL_PROTOCOL = "kafka";
+/** Most of the parser's problems an error carries in its details (the message names the first and counts the rest). */
+const MAX_PROBLEMS = 20;
 const channelProtocolName = (protocol: string): string => {
   const name = protocol.trim().toLowerCase();
   return Object.hasOwn(PROTOCOL_ALIASES, name) ? PROTOCOL_ALIASES[name] : name;
@@ -80,19 +84,25 @@ export function mapAsyncApiToEventDocument(raw: RawAsyncApi3, ctx: MapContext): 
     return mapDocument(raw, ctx);
   } catch (e) {
     if (e instanceof Stop) return err(e.error);
-    return err({ code: "IMPORT_FAILED", message: "The AsyncAPI document could not be processed; it is probably too large or too deeply nested.", details: { reason: e instanceof Error ? e.message : String(e) } });
+    return err({ code: "IMPORT_FAILED", message: "The AsyncAPI document could not be processed; it is probably too large or too deeply nested.", details: { reason: boundText(e instanceof Error ? e.message : e, 200) } });
   }
 }
 
 function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: EventDocument; warnings: ImportWarning[] }> {
-  const warnings: ImportWarning[] = [];
-  const warn = (pointer: string, code: ImportWarningCode, message: string): void => { warnings.push({ pointer, code, message }); };
+  const bounds = assertDocumentBounds(raw); // the caller normally parsed the text with `parseAsyncApiSource`; an object handed over directly is checked here
+  if (!bounds.success) return bounds;
+  // Everything document-controlled that goes into a message is bounded (`bound.ts`), and so is the number of warnings kept.
+  const sink = createWarningSink();
+  const warn = (pointer: string, code: ImportWarningCode, message: string): void => { sink.add({ pointer, code, message }); };
 
   const refs = createRefResolver(raw);
-  const checked = refs.check();
+  // a recursive SCHEMA is reported per payload (`describeMessageSchemas`); a loop anywhere else fails when the part that holds it is read
+  const checked = refs.check({ tolerateCycles: true });
   if (!checked.success) return err(checked.error);
   const inline = (value: unknown, at: string): unknown => must(refs.inline(value, at));
-  const { ax, read, readEach } = createSanitizer((w) => warnings.push(w));
+  /** Writing a target out as text costs its length: charge it to the expansion budget (a string is one value per CHARS_PER_NODE characters). */
+  const chargeText = (text: string, at: string): void => must(refs.chargeNodes(Math.ceil(text.length / CHARS_PER_NODE), at));
+  const { ax, read, readEach } = createSanitizer(sink.add);
 
   const at = (base: string, key: string): string => `${base}${jsonPointer(key)}`;
   /** `node[key]`, refs inlined, read with `reader`; anything the document would reject is removed and reported. */
@@ -109,8 +119,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const noteUnknown = (node: Record<string, unknown>, known: ReadonlySet<string>, base: string, what: string): void => {
     for (const key of Object.keys(node)) {
       if (known.has(key)) continue;
-      if (key.startsWith("x-")) warn(at(base, key), "UNSUPPORTED_EXTENSION", `The extension "${key}" on ${what} has no place in an event, so it was not imported`);
-      else warn(at(base, key), "DROPPED_CONSTRUCT", `"${key}" is not a property of ${what}, so it was not imported`);
+      if (key.startsWith("x-")) warn(at(base, key), "UNSUPPORTED_EXTENSION", `The extension "${boundText(key)}" on ${what} has no place in an event, so it was not imported`);
+      else warn(at(base, key), "DROPPED_CONSTRUCT", `"${boundText(key)}" is not a property of ${what}, so it was not imported`);
     }
   };
   /** The entry of a map (a server, a channel, an operation, …): a `$ref` to a component is followed. Not an object = left out. */
@@ -119,7 +129,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     for (const [sourceKey, entry] of entriesOf(value)) {
       const target = must(refs.deref(entry, at(base, sourceKey)));
       if (!isBag(target.value)) {
-        warn(at(base, sourceKey), "SANITIZED_VALUE", `${what} "${sourceKey}" is not an object, so it was left out of the import`);
+        warn(at(base, sourceKey), "SANITIZED_VALUE", `${what} "${boundText(sourceKey)}" is not an object, so it was left out of the import`);
         continue;
       }
       out.push({ sourceKey, pointer: target.pointer, node: target.value });
@@ -152,6 +162,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const schemeKeyOf = new Map<string, string>(); // key in the file → document key
   const takenSchemeKeys = new Set<string>();
   const schemeKeyByContent = new Map<string, string>();
+  /** A scheme reached by a `$ref` to somewhere that is not a security scheme (`#/x-s`): read once per TARGET, not once per use. `null` = it was not valid. */
+  const schemeKeyByTarget = new Map<string, string | null>();
 
   const readScheme = (node: unknown, pointer: string, label: string): DocSecurityScheme | undefined => {
     if (!isBag(node)) {
@@ -159,7 +171,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       return undefined;
     }
     if (!SECURITY_SCHEME_TYPES.some((type) => type === node.type)) {
-      warn(pointer, "DROPPED_CONSTRUCT", `The security scheme ${label} has the type ${JSON.stringify(node.type)}, which events do not support, so it was not imported`);
+      warn(pointer, "DROPPED_CONSTRUCT", `The security scheme ${label} has the type ${boundText(typeof node.type === "string" ? `"${node.type}"` : node.type)}, which events do not support, so it was not imported`);
       return undefined;
     }
     const scheme = read(ax.securityScheme, node, pointer);
@@ -170,10 +182,10 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const validSchemes: Array<{ sourceKey: string; pointer: string; scheme: DocSecurityScheme }> = [];
   for (const [sourceKey, value] of entriesOf(components.securitySchemes)) {
     const pointer = jsonPointer("components", "securitySchemes", sourceKey);
-    const scheme = readScheme(inline(value, pointer), pointer, `"${sourceKey}"`);
+    const scheme = readScheme(inline(value, pointer), pointer, `"${boundText(sourceKey)}"`);
     if (scheme) validSchemes.push({ sourceKey, pointer, scheme });
   }
-  const assignedSchemeKeys = assignKeys(validSchemes.map((s): KeyRequest => ({ id: s.sourceKey, key: s.sourceKey, pointer: s.pointer })), takenSchemeKeys, "security scheme", warnings);
+  const assignedSchemeKeys = assignKeys(validSchemes.map((s): KeyRequest => ({ id: s.sourceKey, key: s.sourceKey, pointer: s.pointer })), takenSchemeKeys, "security scheme", sink.add);
   for (const { sourceKey, scheme } of validSchemes) {
     const key = assignedSchemeKeys.get(sourceKey) as string;
     schemeKeyOf.set(sourceKey, key);
@@ -188,20 +200,31 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       return undefined;
     }
     const out: string[] = [];
-    const add = (key: string): void => { if (!out.includes(key)) out.push(key); };
+    const listed = new Set<string>(); // a list can name thousands of schemes: a Set, never `includes` on the growing list
+    const add = (key: string): void => { if (!listed.has(key)) { listed.add(key); out.push(key); } };
     value.forEach((entry, i) => {
       const entryAt = `${base}/${i}`;
       const segments = refTargetSegments(entry);
       if (segments && segments.length === 3 && segments[0] === "components" && segments[1] === "securitySchemes") {
         const key = schemeKeyOf.get(segments[2]);
         if (key) add(key);
-        else warn(entryAt, "DROPPED_CONSTRUCT", `The reference to the security scheme "${segments[2]}" was left out: that scheme was not imported`);
+        else warn(entryAt, "DROPPED_CONSTRUCT", `The reference to the security scheme "${boundText(segments[2])}" was left out: that scheme was not imported`);
         return;
       }
       // a scheme written in place (or a reference to somewhere else): store it as a component so it can be referenced by key
+      const target = isRef(entry) ? must(refs.deref(entry, entryAt)).pointer : null;
+      if (target !== null && schemeKeyByTarget.has(target)) {
+        const known = schemeKeyByTarget.get(target);
+        if (known) add(known);
+        return;
+      }
       const scheme = readScheme(inline(entry, entryAt), entryAt, "written here");
-      if (!scheme) return;
+      if (!scheme) {
+        if (target !== null) schemeKeyByTarget.set(target, null);
+        return;
+      }
       const content = JSON.stringify(scheme);
+      chargeText(content, entryAt);
       let key = schemeKeyByContent.get(content);
       if (key === undefined) {
         key = uniqueIn(slugKey(String(scheme.type)), takenSchemeKeys);
@@ -210,6 +233,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         schemeKeyByContent.set(content, key);
         warn(entryAt, "KEY_ADJUSTED", `The security scheme written here was stored as securitySchemes."${key}" so it can be referenced by key`);
       }
+      if (target !== null) schemeKeyByTarget.set(target, key);
       add(key);
     });
     return compactList(out);
@@ -220,6 +244,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   const traitByPointer = new Map<string, TraitDef>();
   const takenTraitKeys = new Set<string>();
   const inlineTraitByContent = new Map<string, TraitDef>();
+  /** Properties reached by a `$ref` to somewhere that is not a component (`#/x-t`): written out and compared once per TARGET, not once per use. */
+  const inlineTraitByTarget = new Map<string, TraitDef>();
   const traitRequests: KeyRequest[] = [];
   for (const [kind, section] of [["MESSAGE", "messageTraits"], ["OPERATION", "operationTraits"]] as const) {
     const entries = entriesOf(components[section]);
@@ -230,7 +256,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       let def = traitByPointer.get(target.pointer);
       if (!def) {
         if (!isBag(target.value)) {
-          warn(pointer, "SANITIZED_VALUE", `The ${propertiesSet(kind)} "${sourceKey}" is not an object, so it was left out of the import`);
+          warn(pointer, "SANITIZED_VALUE", `The ${propertiesSet(kind)} "${boundText(sourceKey)}" is not an object, so it was left out of the import`);
           continue;
         }
         def = { key: "", kind, pointer: target.pointer, node: target.value };
@@ -241,19 +267,27 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       traitByPointer.set(pointer, def);
     }
   }
-  const assignedTraitKeys = assignKeys(traitRequests, takenTraitKeys, ANY_PROPERTIES, warnings);
+  const assignedTraitKeys = assignKeys(traitRequests, takenTraitKeys, ANY_PROPERTIES, sink.add);
   for (const def of traitDefs) def.key = assignedTraitKeys.get(def.pointer) as string;
 
   /** Properties written in place in a `traits` list get a generated key (from their name or title); equal ones share it. */
-  const inlineTrait = (kind: TraitKind, node: Record<string, unknown>, pointer: string): TraitDef => {
+  const inlineTrait = (kind: TraitKind, node: Record<string, unknown>, pointer: string, shared: boolean): TraitDef => {
+    const targetKey = shared ? `${kind}:${pointer}` : null;
+    const reached = targetKey === null ? undefined : inlineTraitByTarget.get(targetKey);
+    if (reached) return reached;
     const content = `${kind}:${JSON.stringify(node)}`;
+    chargeText(content, pointer);
     const known = inlineTraitByContent.get(content);
-    if (known) return known;
-    const key = suggestKey("trait", { name: node.name, title: node.title }, takenTraitKeys);
+    if (known) {
+      if (targetKey !== null) inlineTraitByTarget.set(targetKey, known);
+      return known;
+    }
+    const key = suggestTraitKey(node, takenTraitKeys);
     takenTraitKeys.add(key);
     const def: TraitDef = { key, kind, pointer, node };
     traitDefs.push(def);
     inlineTraitByContent.set(content, def);
+    if (targetKey !== null) inlineTraitByTarget.set(targetKey, def);
     return def;
   };
   /** A `traits` list → the keys of those traits (kind-checked, deduplicated). */
@@ -264,6 +298,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       return [];
     }
     const out: string[] = [];
+    const listed = new Set<string>();
     value.forEach((entry, i) => {
       const entryAt = `${base}/${i}`;
       let def: TraitDef | undefined;
@@ -271,8 +306,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         const target = must(refs.deref(entry, entryAt));
         const named = refTargetPointer(entry);
         def = (named === null ? undefined : traitByPointer.get(named)) ?? traitByPointer.get(target.pointer);
-        if (!def && isBag(target.value)) def = inlineTrait(kind, target.value, target.pointer);
-      } else if (isBag(entry)) def = inlineTrait(kind, entry, entryAt);
+        if (!def && isBag(target.value)) def = inlineTrait(kind, target.value, target.pointer, true);
+      } else if (isBag(entry)) def = inlineTrait(kind, entry, entryAt, false);
       if (!def) {
         warn(entryAt, "SANITIZED_VALUE", `Each entry of a traits list must be a reference or an object, so this one was left out of the import`);
         return;
@@ -281,7 +316,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         warn(entryAt, "DROPPED_CONSTRUCT", `"${def.key}" is a ${propertiesSet(def.kind)}, not a ${propertiesSet(kind)}, so it was left out here`);
         return;
       }
-      if (!out.includes(def.key)) out.push(def.key);
+      if (!listed.has(def.key)) { listed.add(def.key); out.push(def.key); }
     });
     return out;
   };
@@ -297,7 +332,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     const libraryTraitId = match?.kind === "cloudEvents" ? ctx.builtInTraitIds.cloudEvents : match?.kind === "traceContext" ? ctx.builtInTraitIds.traceContext : undefined;
     if (match && libraryTraitId) {
       const dropped = Object.keys(spec).filter((key) => key !== "headers");
-      const lost = dropped.length > 0 ? `; its own ${dropped.join(", ")} ${dropped.length === 1 ? "was" : "were"} not kept` : "";
+      const lost = dropped.length > 0 ? `; its own ${boundChain(dropped, MAX_CHAIN_ENTRIES, 40, ", ")} ${dropped.length === 1 ? "was" : "were"} not kept` : "";
       warn(def.pointer, "BUILTIN_TRAIT_MAPPED", `The ${propertiesSet("MESSAGE")} "${def.key}" match the built-in "${match.name}" and were replaced by it${lost}`);
       return { key: def.key, kind: "MESSAGE", libraryTraitId };
     }
@@ -306,8 +341,9 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
 
   // ── servers ──
   const serverDefs = definitions(raw.servers, "/servers", "The server");
-  const assignedServerKeys = assignKeys(serverDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("servers", d.sourceKey) })), new Set(), "server", warnings);
+  const assignedServerKeys = assignKeys(serverDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("servers", d.sourceKey) })), new Set(), "server", sink.add);
   const serverKeyOf = new Map<string, string>();
+  const protocolOfServer = new Map<string, string>(); // by document key
   const servers: DocServer[] = [];
   const sources = { servers: [] as string[], channels: [] as string[], messages: [] as string[], traits: [] as string[], operations: [] as string[] };
   for (const def of serverDefs) {
@@ -319,7 +355,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     let pathname = field(node, "pathname", pointer, ax.str);
     if (pathname !== undefined && !pathname.startsWith("/")) {
       pathname = `/${pathname}`;
-      warn(at(pointer, "pathname"), "SANITIZED_VALUE", `A pathname must start with "/", so "${pathname}" is imported`);
+      warn(at(pointer, "pathname"), "SANITIZED_VALUE", `A pathname must start with "/", so "${boundText(pathname)}" is imported`);
     }
     let variables = field(node, "variables", pointer, ax.variables);
     if (variables) {
@@ -327,7 +363,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       const kept: Record<string, NonNullable<typeof variables>[string]> = {};
       for (const [name, variable] of Object.entries(variables)) {
         if (used.has(name)) setOwn(kept, name, variable);
-        else warn(at(at(pointer, "variables"), name), "SANITIZED_VALUE", `The variable "${name}" does not appear as {${name}} in the host or the pathname, so it was left out of the import`);
+        else warn(at(at(pointer, "variables"), name), "SANITIZED_VALUE", `The variable "${boundText(name)}" does not appear as {${boundText(name)}} in the host or the pathname, so it was left out of the import`);
       }
       variables = nonEmptyRecord(kept);
     }
@@ -338,14 +374,18 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       security: securityKeys(node.security, at(pointer, "security")), tags: listField(node, "tags", pointer, ax.tag),
       externalDocs: field(node, "externalDocs", pointer, ax.externalDocs), bindings: field(node, "bindings", pointer, ax.jsonObject),
     });
+    protocolOfServer.set(key, servers[servers.length - 1].protocol);
     sources.servers.push(pointer);
   }
 
   // ── channels ──
   const messageIndex: MessageIndex = must(indexMessages(raw, refs));
-  warnings.push(...messageIndex.warnings);
+  for (const warning of messageIndex.warnings) sink.add(warning);
+  // the protocols the document's servers use, worked out once (every channel that names no server needs them)
+  let protocolsOfDocument: string[] | undefined;
+  const documentProtocols = (): string[] => (protocolsOfDocument ??= [...new Set(servers.map((server) => channelProtocolName(server.protocol)))]);
   const channelDefs = definitions(raw.channels, "/channels", "The channel");
-  const assignedChannelKeys = assignKeys(channelDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("channels", d.sourceKey) })), new Set(), "channel", warnings);
+  const assignedChannelKeys = assignKeys(channelDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("channels", d.sourceKey) })), new Set(), "channel", sink.add);
   const channelKeyOf = new Map<string, string>();
   const channelMessageKeys = new Map<string, Set<string>>();
   const channels: DocChannel[] = [];
@@ -361,6 +401,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
       else warn(at(pointer, "address"), "SANITIZED_VALUE", "address must be a string or null, so it was left out of the import");
     }
     const serverKeys: string[] = [];
+    const listedServers = new Set<string>();
     const serverProtocols: string[] = [];
     if (Array.isArray(node.servers)) {
       node.servers.forEach((entry, i) => {
@@ -370,29 +411,58 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
           warn(`${at(pointer, "servers")}/${i}`, "DROPPED_CONSTRUCT", "A channel's servers must be references to #/servers/…; this one was left out of the import");
           return;
         }
-        if (!serverKeys.includes(serverKey)) serverKeys.push(serverKey);
-        serverProtocols.push(servers.find((s) => s.key === serverKey)?.protocol ?? "");
+        if (!listedServers.has(serverKey)) {
+          listedServers.add(serverKey);
+          serverKeys.push(serverKey);
+        }
+        serverProtocols.push(protocolOfServer.get(serverKey) ?? "");
       });
     } else if (node.servers !== undefined && node.servers !== null) {
       warn(at(pointer, "servers"), "SANITIZED_VALUE", "servers must be a list, so it was left out of the import");
     }
 
     const bindings = field(node, "bindings", pointer, ax.jsonObject);
-    const protocolSource = serverProtocols.find((p) => p !== "") ?? Object.keys(bindings ?? {})[0] ?? servers[0]?.protocol ?? DEFAULT_CHANNEL_PROTOCOL;
+    // A document channel has no protocol; the event document needs one. Evidence, best first: the channel's own servers, its bindings, the
+    // document's servers. A guess (several protocols to choose from, or nothing at all) is reported so the user checks it.
+    const channelServerProtocols = serverProtocols.filter((p) => p !== "");
+    const distinct = (list: string[]): string[] => [...new Set(list.map(channelProtocolName))];
+    const bindingProtocol = Object.keys(bindings ?? {})[0];
+    let protocolSource: string;
+    if (channelServerProtocols.length > 0) {
+      protocolSource = channelServerProtocols[0];
+      const different = distinct(channelServerProtocols);
+      if (different.length > 1) warn(pointer, "SANITIZED_VALUE", `This channel is on servers with different protocols (${boundChain(different, MAX_CHAIN_ENTRIES, 40, ", ")}) but an event channel has one; "${boundText(different[0], 40)}" was used. Check the channel's protocol.`);
+    } else if (bindingProtocol !== undefined) {
+      protocolSource = bindingProtocol;
+    } else if (servers.length > 0) {
+      protocolSource = servers[0].protocol;
+      const different = documentProtocols();
+      if (different.length > 1) warn(pointer, "SANITIZED_VALUE", `This channel names no server and the document's servers use different protocols (${boundChain(different, MAX_CHAIN_ENTRIES, 40, ", ")}); the first server's, "${boundText(different[0], 40)}", was assumed. Check the channel's protocol.`);
+    } else {
+      protocolSource = DEFAULT_CHANNEL_PROTOCOL;
+      warn(pointer, "SANITIZED_VALUE", `Nothing in the document tells the protocol of this channel (it names no server and has no bindings); "${DEFAULT_CHANNEL_PROTOCOL}" was assumed. Check the channel's protocol.`);
+    }
 
     let parameters = field(node, "parameters", pointer, ax.parameters);
     if (address !== null) {
-      const missing = [...address.matchAll(/\{([^{}]*)\}/g)].map((m) => m[1].trim()).filter((name) => name !== "" && !(parameters && Object.hasOwn(parameters, name)));
-      for (const name of new Set(missing)) {
-        parameters = { ...(parameters ?? {}) };
-        setOwn(parameters, name, {} as DocChannelParameter);
-        warn(at(pointer, "parameters"), "SANITIZED_VALUE", `The address uses {${name}} but defines no parameter for it, so an empty one was added`);
+      const missing = new Set<string>();
+      for (const match of address.matchAll(/\{([^{}]*)\}/g)) {
+        const name = match[1].trim();
+        if (name !== "" && !(parameters && Object.hasOwn(parameters, name))) missing.add(name);
+      }
+      if (missing.size > 0) {
+        parameters = { ...(parameters ?? {}) }; // one copy, not one per missing name
+        for (const name of missing) {
+          setOwn(parameters, name, {} as DocChannelParameter);
+          warn(at(pointer, "parameters"), "SANITIZED_VALUE", `The address uses {${boundText(name)}} but defines no parameter for it, so an empty one was added`);
+        }
       }
     }
 
-    const messageKeys: string[] = [];
-    for (const message of messageIndex.channels.get(def.sourceKey)?.values() ?? []) if (!messageKeys.includes(message.key)) messageKeys.push(message.key);
-    channelMessageKeys.set(key, new Set(messageKeys));
+    const channelMessages = new Set<string>(); // insertion-ordered and unique: a channel can hold tens of thousands of messages
+    for (const message of messageIndex.channels.get(def.sourceKey)?.values() ?? []) channelMessages.add(message.key);
+    const messageKeys = [...channelMessages];
+    channelMessageKeys.set(key, channelMessages);
 
     channels.push({
       key, address, protocol: channelProtocolName(protocolSource), serverKeys, bindings,
@@ -409,8 +479,10 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     const schemas = must(describeMessageSchemas(refs, message));
     const noteSchema = (role: "payload" | "headers", description: PayloadDescription): void => {
       const place = at(pointer, role);
-      if (description.format === "unsupported") {
-        const written = description.schemaFormat !== undefined ? `is written as ${description.schemaFormat}` : "is not a schema object";
+      if (description.recursive) {
+        warn(place, "UNSUPPORTED_PAYLOAD_FORMAT", `The ${role} of "${key}" refers to itself (${boundChain(description.recursive, MAX_CHAIN_ENTRIES, CHAIN_ENTRY_LENGTH)}) and cannot be imported; an empty entity was created instead`);
+      } else if (description.format === "unsupported") {
+        const written = description.schemaFormat !== undefined ? `is written as ${boundText(description.schemaFormat)}` : "is not a schema object";
         warn(place, "UNSUPPORTED_PAYLOAD_FORMAT", `The ${role} of "${key}" ${written}, which events cannot import; an entity with no fields stands in for it, describe it there`);
       } else if (description.format === "none" && role === "payload") {
         warn(place, "NO_PAYLOAD", `"${key}" has no payload; a message needs one, so an entity with no fields stands in for it`);
@@ -421,7 +493,7 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     if (!payload) {
       throw new Stop({
         code: "MISSING_PAYLOAD_PIN", message: `No entity was given for the payload of message "${key}" (${key}:payload); create the entities before mapping the document`,
-        details: { pin: `${key}:payload`, pointer: at(pointer, "payload") },
+        details: { pin: `${key}:payload`, pointer: boundPointer(at(pointer, "payload")) },
       });
     }
     let headers: EntityPin | undefined;
@@ -457,13 +529,14 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     }
     const allowed = channel ? channelMessageKeys.get(channel.key) : undefined;
     const out: string[] = [];
+    const listed = new Set<string>();
     value.forEach((entry, i) => {
       const entryAt = `${base}/${i}`;
       const segments = refTargetSegments(entry);
       let message: IndexedMessage | undefined;
       if (segments && segments.length === 4 && segments[0] === "channels" && segments[2] === "messages") {
         if (channel && segments[1] !== channel.sourceKey) {
-          warn(entryAt, "DROPPED_CONSTRUCT", `This message belongs to channel "${segments[1]}", not to the channel of this operation, so it was left out of the import`);
+          warn(entryAt, "DROPPED_CONSTRUCT", `This message belongs to channel "${boundText(segments[1])}", not to the channel of this operation, so it was left out of the import`);
           return;
         }
         message = messageIndex.channels.get(segments[1])?.get(segments[3]);
@@ -474,13 +547,13 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
         warn(entryAt, "DROPPED_CONSTRUCT", "This does not point at a message of the operation's channel, so it was left out of the import");
         return;
       }
-      if (!out.includes(message.key)) out.push(message.key);
+      if (!listed.has(message.key)) { listed.add(message.key); out.push(message.key); }
     });
     return out;
   };
 
   const operationDefs = definitions(raw.operations, "/operations", "The operation");
-  const assignedOperationKeys = assignKeys(operationDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("operations", d.sourceKey) })), new Set(), "operation", warnings);
+  const assignedOperationKeys = assignKeys(operationDefs.map((d): KeyRequest => ({ id: d.sourceKey, key: d.sourceKey, pointer: jsonPointer("operations", d.sourceKey) })), new Set(), "operation", sink.add);
   const operations: DocOperation[] = [];
   for (const def of operationDefs) {
     const { node, pointer } = def;
@@ -488,8 +561,8 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
     const channel = channelRef(node.channel);
     if (!channel) {
       throw new Stop({
-        code: "VALIDATION_ERROR", message: `The operation "${def.sourceKey}" does not name a channel of this document (${at(pointer, "channel")} must be a reference like #/channels/…)`,
-        details: { pointer: at(pointer, "channel") },
+        code: "VALIDATION_ERROR", message: `The operation "${boundText(def.sourceKey)}" does not name a channel of this document (${boundText(at(pointer, "channel"), 200)} must be a reference like #/channels/…)`,
+        details: { pointer: boundPointer(at(pointer, "channel")) },
       });
     }
     let reply: DocOperation["reply"];
@@ -543,10 +616,22 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   if (parameters) documentComponents.parameters = parameters;
   if (Object.keys(schemes).length > 0) documentComponents.securitySchemes = schemes;
 
+  // A component the document has no place for is read where something refers to it. What nothing refers to (or only itself, or only other
+  // unused components) is reported once per section.
+  const inlinedEntry = (pointer: string): boolean => INLINED_COMPONENTS.some((section) => pointer.startsWith(`/components/${section}/`));
+  const reached = new Set<string>();
+  const pending: string[] = [];
+  const reach = (target: string): void => {
+    if (!inlinedEntry(target) || reached.has(target)) return;
+    reached.add(target);
+    pending.push(target);
+  };
+  for (const [owner, targets] of refs.edges) if (!inlinedEntry(owner)) for (const target of targets) reach(target);
+  for (let owner = pending.pop(); owner !== undefined; owner = pending.pop()) for (const target of refs.edges.get(owner) ?? []) reach(target);
   for (const section of INLINED_COMPONENTS) {
-    const unused = entriesOf(components[section]).map(([key]) => key).filter((key) => !refs.followed.has(jsonPointer("components", section, key)));
+    const unused = entriesOf(components[section]).map(([key]) => key).filter((key) => !reached.has(jsonPointer("components", section, key)));
     if (unused.length === 0) continue;
-    const shown = unused.slice(0, 5).join(", ") + (unused.length > 5 ? ", …" : "");
+    const shown = boundChain(unused, MAX_CHAIN_ENTRIES, 40, ", ");
     warn(jsonPointer("components", section), "DROPPED_CONSTRUCT", `components.${section} has ${unused.length} ${unused.length === 1 ? "entry" : "entries"} that nothing refers to (${shown}), so ${unused.length === 1 ? "it was" : "they were"} not imported`);
   }
 
@@ -558,19 +643,24 @@ function mapDocument(raw: RawAsyncApi3, ctx: MapContext): Result<{ document: Eve
   };
   const parsed = parseEventDocument(candidate);
   if (!parsed.success) {
-    const problems = ((parsed.error.details as { problems?: Array<{ pointer: string; message: string }> } | undefined)?.problems ?? []).map((problem) => {
+    const found = (parsed.error.details as { problems?: Array<{ pointer: string; message: string }> } | undefined)?.problems ?? [];
+    // the parser's text can echo document text too: the first MAX_PROBLEMS problems are kept, each one bounded
+    const problems = found.slice(0, MAX_PROBLEMS).map((problem) => {
       const m = /^\/(servers|channels|messages|traits|operations)\/(\d+)(\/.*)?$/.exec(problem.pointer);
       const base = m ? sources[m[1] as keyof typeof sources][Number(m[2])] : undefined;
-      return { ...problem, sourcePointer: base !== undefined ? `${base}${m?.[3] ?? ""}` : problem.pointer };
+      return {
+        pointer: boundPointer(problem.pointer), message: boundText(problem.message, 300),
+        sourcePointer: boundPointer(base !== undefined ? `${base}${m?.[3] ?? ""}` : problem.pointer),
+      };
     });
     const first = problems[0];
     return err({
       code: "VALIDATION_ERROR",
-      message: `The AsyncAPI document cannot become an event: ${first ? `${first.message} (at ${first.sourcePointer === "" ? "the document" : first.sourcePointer})` : "it is not valid"}${problems.length > 1 ? `, and ${problems.length - 1} more problem${problems.length > 2 ? "s" : ""}` : ""}`,
-      details: { problems },
+      message: `The AsyncAPI document cannot become an event: ${first ? `${first.message} (at ${first.sourcePointer === "" ? "the document" : boundText(first.sourcePointer, 200)})` : "it is not valid"}${found.length > 1 ? `, and ${found.length - 1} more problem${found.length > 2 ? "s" : ""}` : ""}`,
+      details: { problems, ...(found.length > problems.length && { omitted: found.length - problems.length }) },
       suggestedFix: "Fix the document and import it again.",
     });
   }
   // nothing in the result may be shared with the file the caller still holds
-  return ok({ document: structuredClone(parsed.data), warnings });
+  return ok({ document: structuredClone(parsed.data), warnings: sink.finish() });
 }

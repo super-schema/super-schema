@@ -201,11 +201,80 @@ describe("extractPayloads: shared and renamed schemas", () => {
 describe("extractPayloads: rejects", () => {
   it.each([
     ["negative-external-ref.yaml", "EXTERNAL_REF"],
-    ["negative-ref-cycle.yaml", "REF_CYCLE"],
     ["negative-missing-ref.yaml", "REF_NOT_FOUND"],
   ])("%s as %s", (name, code) => {
     const result = extractPayloads(fixture(name));
     expect(result.success ? "ok" : result.error.code).toBe(code);
+  });
+
+  it("a loop in a chain of wrappers (payload -> A -> B -> A) is still REF_CYCLE: there is no schema to degrade", () => {
+    const result = extractPayloads({
+      asyncapi: "3.0.0",
+      components: { messages: { m: { payload: { $ref: "#/components/schemas/A" } } }, schemas: { A: { $ref: "#/components/schemas/B" }, B: { $ref: "#/components/schemas/A" } } },
+    });
+    expect(result.success ? "ok" : result.error.code).toBe("REF_CYCLE");
+  });
+
+  it("an external or missing ref inside a recursive schema is still an error", () => {
+    const result = extractPayloads({
+      asyncapi: "3.0.0",
+      components: { messages: { m: { payload: { $ref: "#/components/schemas/C" } } }, schemas: { C: { items: { $ref: "#/components/schemas/C" }, other: { $ref: "#/components/schemas/Nope" } } } },
+    });
+    expect(result.success ? "ok" : result.error.code).toBe("REF_NOT_FOUND");
+  });
+});
+
+describe("extractPayloads: a schema that refers to itself (recursive type)", () => {
+  it("recursive-payload-placeholder.yaml (Node -> Tree -> Node): the payload is unsupported, with no raw schema, and the import is not refused", () => {
+    const list = extract(fixture("recursive-payload-placeholder.yaml"));
+    expect(list).toEqual([
+      { messageKey: "nodeCreated", role: "payload", sourcePointer: "/components/messages/nodeCreated/payload", format: "unsupported", raw: undefined, suggestedName: "NodeCreated" },
+    ]);
+  });
+
+  describe("recursive-schemas.yaml", () => {
+    const list = extract(fixture("recursive-schemas.yaml"));
+
+    it("the self-referencing payload and headers are unsupported", () => {
+      expect(find(list, "commentPosted")).toMatchObject({ format: "unsupported", raw: undefined, sourcePointer: "/components/messages/commentPosted/payload" });
+      expect(find(list, "commentPosted", "headers")).toMatchObject({ format: "unsupported", raw: undefined });
+    });
+
+    it("every other payload is extracted as before", () => {
+      expect(find(list, "commentCounted")).toMatchObject({ format: "json-schema", raw: { type: "object", properties: { count: { type: "integer" } } } });
+      expect(list.map((p) => `${p.messageKey}:${p.role}`)).toEqual(["commentPosted:payload", "commentPosted:headers", "commentCounted:payload"]);
+    });
+  });
+
+  it("a recursive schema nothing uses does not matter at all", () => {
+    const list = extract({
+      asyncapi: "3.0.0",
+      components: { messages: { m: { payload: { type: "object" } } }, schemas: { Tree: { properties: { children: { items: { $ref: "#/components/schemas/Tree" } } } } } },
+    });
+    expect(list).toEqual([{ messageKey: "m", role: "payload", sourcePointer: "/components/messages/m/payload", format: "json-schema", raw: { type: "object" }, suggestedName: "M" }]);
+  });
+
+  it("a recursive schema inside a multi-format wrapper, and one reached through another schema", () => {
+    const list = extract({
+      asyncapi: "3.0.0",
+      components: {
+        messages: {
+          wrapped: { payload: { schemaFormat: "application/schema+json;version=draft-07", schema: { $ref: "#/components/schemas/Comment" } } },
+          nested: { payload: { $ref: "#/components/schemas/Holder" } },
+          fine: { payload: { $ref: "#/components/schemas/Leaf" } },
+        },
+        schemas: {
+          Comment: { items: { $ref: "#/components/schemas/Comment" } },
+          Holder: { properties: { comment: { $ref: "#/components/schemas/Comment" } } },
+          Leaf: { type: "string" },
+        },
+      },
+    });
+    expect(list.map((p) => [p.messageKey, p.format, p.raw])).toEqual([["wrapped", "unsupported", undefined], ["nested", "unsupported", undefined], ["fine", "json-schema", { type: "string" }]]);
+  });
+
+  it("extractPayloads reads schemas only: a loop through a trait and a message is found by the mapper, not here", () => {
+    expect(extractPayloads(fixture("negative-ref-cycle-trait-message.yaml")).success).toBe(true);
   });
 });
 

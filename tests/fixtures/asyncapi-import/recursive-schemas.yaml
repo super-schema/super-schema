@@ -1,0 +1,66 @@
+asyncapi: 3.0.0
+info:
+  title: Comments with replies
+  version: 1.0.0
+  description: A payload that refers to itself (replies are comments), and a recursive schema nothing uses.
+servers:
+  broker:
+    host: broker.example.com:9092
+    protocol: kafka
+channels:
+  comments:
+    address: comments.v1
+    messages:
+      commentPosted:
+        $ref: '#/components/messages/commentPosted'
+      commentCounted:
+        $ref: '#/components/messages/commentCounted'
+operations:
+  receiveComments:
+    action: receive
+    channel:
+      $ref: '#/channels/comments'
+    messages:
+      - $ref: '#/channels/comments/messages/commentPosted'
+      - $ref: '#/channels/comments/messages/commentCounted'
+components:
+  messages:
+    commentPosted:
+      title: Comment posted
+      headers:
+        $ref: '#/components/schemas/ThreadHeaders'
+      payload:
+        $ref: '#/components/schemas/Comment'
+    commentCounted:
+      title: Comment counted
+      payload:
+        type: object
+        properties:
+          count:
+            type: integer
+  schemas:
+    Comment:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        replies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+    ThreadHeaders:
+      type: object
+      properties:
+        parent:
+          $ref: '#/components/schemas/ThreadHeaders'
+    TreeNode:
+      type: object
+      properties:
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/TreeNode'

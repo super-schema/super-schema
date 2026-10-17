@@ -14,7 +14,8 @@ import type { ImportWarning, MapContext, RawAsyncApi3 } from "@/lib/events/impor
 const DIR = path.join(process.cwd(), "tests/fixtures/asyncapi-import");
 const FIXTURES = [
   "builtin-traits.yaml", "http-websocket-minimal.json", "inline-messages-and-traits.yaml", "multi-format-payloads.yaml",
-  "request-reply.yaml", "streetlights-kafka.yaml", "streetlights-mqtt.yaml", "unsupported-payloads.yaml",
+  "recursive-payload-placeholder.yaml", "recursive-schemas.yaml", "request-reply.yaml", "streetlights-kafka.yaml", "streetlights-mqtt.yaml",
+  "unsupported-payloads.yaml",
 ];
 
 function load(name: string): RawAsyncApi3 {
@@ -545,6 +546,7 @@ describe("security schemes", () => {
 describe("keys", () => {
   it("a valid component key is kept as written, whatever order the file lists them in", () => {
     const raw = doc({
+      servers: { s: { host: "h:1", protocol: "kafka" } },
       channels: { c: { address: "a", messages: { x: { $ref: "#/components/messages/a b" }, y: { $ref: "#/components/messages/a-b" } } } },
       components: { messages: { "a b": { payload: { type: "object" } }, "a-b": { payload: { type: "object" } } } },
     });
@@ -634,6 +636,150 @@ describe("channel protocol", () => {
 
   it("the server itself keeps the protocol as written", () => {
     expect(mapRaw(tiny({ server: { protocol: "kafka-secure" } })).document.servers[0].protocol).toBe("kafka-secure");
+  });
+
+  describe("a guessed protocol is reported, a protocol with evidence is not", () => {
+    const guesses = (warnings: ImportWarning[]) => warnings.filter((w) => /^(This channel is on servers with different protocols|This channel names no server and the document's servers use different protocols|Nothing in the document tells the protocol of this channel)/.test(w.message));
+    const twoProtocols = (raw: RawAsyncApi3) => { (raw.servers as Record<string, unknown>).other = { host: "h:2", protocol: "mqtt" }; };
+
+    it("nothing tells the protocol (no server, no bindings): kafka is assumed, and the warning says so", () => {
+      const raw = tiny();
+      delete raw.servers;
+      const { document, warnings } = mapRaw(raw);
+      expect(document.channels[0].protocol).toBe("kafka");
+      expect(guesses(warnings)).toEqual([expect.objectContaining({ code: "SANITIZED_VALUE", pointer: "/channels/c", message: expect.stringMatching(/Nothing in the document tells the protocol.*"kafka" was assumed/) })]);
+    });
+
+    it("the channel names no server and the document's servers disagree: the first server's protocol is taken, and the warning lists them", () => {
+      const raw = tiny();
+      twoProtocols(raw);
+      const { document, warnings } = mapRaw(raw);
+      expect(document.channels[0].protocol).toBe("kafka");
+      expect(guesses(warnings)).toEqual([expect.objectContaining({ code: "SANITIZED_VALUE", pointer: "/channels/c", message: expect.stringMatching(/different protocols \(kafka, mqtt\).*first server's, "kafka"/) })]);
+    });
+
+    it("the channel is on servers with different protocols: the first one is used, and the warning lists them", () => {
+      const raw = tiny({ channel: { servers: [{ $ref: "#/servers/other" }, { $ref: "#/servers/s" }] } });
+      twoProtocols(raw);
+      const { document, warnings } = mapRaw(raw);
+      expect(document.channels[0].protocol).toBe("mqtt");
+      expect(guesses(warnings)).toEqual([expect.objectContaining({ code: "SANITIZED_VALUE", pointer: "/channels/c", message: expect.stringMatching(/servers with different protocols \(mqtt, kafka\).*"mqtt" was used/) })]);
+    });
+
+    it("no warning when there is evidence: one server protocol in the document, the channel's own server, its bindings", () => {
+      expect(guesses(mapRaw(tiny()).warnings)).toEqual([]);
+      const named = tiny({ channel: { servers: [{ $ref: "#/servers/other" }] } });
+      twoProtocols(named);
+      expect(guesses(mapRaw(named).warnings)).toEqual([]);
+      const bound = tiny({ channel: { bindings: { mqtt: { bindingVersion: "0.2.0" } } } });
+      twoProtocols(bound);
+      expect(guesses(mapRaw(bound).warnings)).toEqual([]);
+      const noServers = tiny({ channel: { bindings: { mqtt: { bindingVersion: "0.2.0" } } } });
+      delete noServers.servers;
+      expect(guesses(mapRaw(noServers).warnings)).toEqual([]);
+    });
+
+    it("spellings of one protocol are not a disagreement (kafka-secure and kafka, https and http)", () => {
+      const raw = tiny({ server: { protocol: "kafka-secure" } });
+      (raw.servers as Record<string, unknown>).plain = { host: "h:2", protocol: "Kafka" };
+      expect(guesses(mapRaw(raw).warnings)).toEqual([]);
+      const channelOn = tiny({ channel: { servers: [{ $ref: "#/servers/s" }, { $ref: "#/servers/plain" }] }, server: { protocol: "https" } });
+      (channelOn.servers as Record<string, unknown>).plain = { host: "h:2", protocol: "http" };
+      expect(guesses(mapRaw(channelOn).warnings)).toEqual([]);
+    });
+
+    it("every channel that is guessed is reported once, at its own place", () => {
+      const raw = doc({
+        servers: { a: { host: "h:1", protocol: "kafka" }, b: { host: "h:2", protocol: "mqtt" } },
+        channels: { one: { address: "1" }, two: { address: "2" }, three: { address: "3", servers: [{ $ref: "#/servers/b" }] } },
+      });
+      expect(guesses(mapRaw(raw).warnings).map((w) => w.pointer)).toEqual(["/channels/one", "/channels/two"]);
+    });
+  });
+});
+
+describe("a schema that refers to itself degrades that payload only", () => {
+  it("recursive-payload-placeholder.yaml (Node -> Tree -> Node): the event imports, the payload is pinned to its placeholder, the warning names the loop", () => {
+    const raw = load("recursive-payload-placeholder.yaml");
+    const { document, warnings } = mapRaw(raw);
+    expect(document.messages.map((m) => [m.key, m.payload.entityId])).toEqual([["nodeCreated", "ent-nodeCreated-payload"]]);
+    expect(warnings.filter((w) => w.pointer.startsWith("/components/messages"))).toEqual([{
+      pointer: "/components/messages/nodeCreated/payload", code: "UNSUPPORTED_PAYLOAD_FORMAT",
+      message: 'The payload of "nodeCreated" refers to itself (#/components/schemas/Node → #/components/schemas/Tree → #/components/schemas/Node) and cannot be imported; an empty entity was created instead',
+    }]);
+    expect(parseEventDocument(document).success).toBe(true);
+  });
+
+  it("recursive-schemas.yaml: payload and headers are each reported, the other message imports untouched", () => {
+    const { document, warnings } = mapFixture("recursive-schemas.yaml");
+    expect(keysOf(document.messages)).toEqual(["commentPosted", "commentCounted"]);
+    expect(document.messages[0].headers).toEqual({ entityId: "ent-commentPosted-headers", entityVersionId: null });
+    expect(warnings.map((w) => [w.code, w.pointer]).sort()).toEqual([
+      ["DROPPED_CONSTRUCT", "/components/schemas"],
+      ["UNSUPPORTED_PAYLOAD_FORMAT", "/components/messages/commentPosted/headers"],
+      ["UNSUPPORTED_PAYLOAD_FORMAT", "/components/messages/commentPosted/payload"],
+    ]);
+    expect(warnings.find((w) => w.pointer === "/components/schemas")?.message).toMatch(/1 entry that nothing refers to \(TreeNode\)/);
+    expect(warnings.find((w) => w.pointer.endsWith("commentPosted/payload"))?.message).toContain("refers to itself (#/components/schemas/Comment → #/components/schemas/Comment)");
+  });
+
+  it("a recursive schema in an unused component imports cleanly; only the unused-component warning remains", () => {
+    const { warnings } = mapRaw(tiny({ components: { schemas: { Tree: { properties: { children: { items: { $ref: "#/components/schemas/Tree" } } } } } } }));
+    expect(warnings.map((w) => [w.code, w.pointer])).toEqual([["DROPPED_CONSTRUCT", "/components/schemas"]]);
+  });
+
+  it("a recursive schema inside a multi-format wrapper, and a self-referencing headers schema, are reported the same way", () => {
+    const raw = tiny({
+      message: {
+        payload: { schemaFormat: "application/schema+json;version=draft-07", schema: { $ref: "#/components/schemas/C" } },
+        headers: { $ref: "#/components/schemas/C" },
+      },
+      components: { schemas: { C: { properties: { next: { $ref: "#/components/schemas/C" } } } } },
+    });
+    const { warnings } = mapRaw(raw);
+    expect(warnings.map((w) => [w.code, w.pointer])).toEqual([
+      ["UNSUPPORTED_PAYLOAD_FORMAT", "/components/messages/m/payload"], ["UNSUPPORTED_PAYLOAD_FORMAT", "/components/messages/m/headers"],
+    ]);
+    expect(warnings[0].message).toContain("refers to itself");
+  });
+
+  describe("every other loop still fails the import (REF_CYCLE)", () => {
+    it("a payload that is a chain of wrappers A -> B -> A", () => {
+      const raw = tiny({ message: { payload: { $ref: "#/components/schemas/A" } }, components: { schemas: { A: { $ref: "#/components/schemas/B" }, B: { $ref: "#/components/schemas/A" } } } });
+      expect(failure(raw).code).toBe("REF_CYCLE");
+    });
+
+    it("a loop through bindings", () => {
+      const raw = tiny({
+        message: { bindings: { $ref: "#/components/messageBindings/b" } },
+        components: { messageBindings: { b: { kafka: { $ref: "#/components/messageBindings/b" } } } },
+      });
+      expect(failure(raw).code).toBe("REF_CYCLE");
+    });
+
+    it("a recursive schema used as the headers of a trait, which stay inline in the trait", () => {
+      const raw = tiny({
+        message: { traits: [{ $ref: "#/components/messageTraits/t" }] },
+        components: {
+          messageTraits: { t: { headers: { $ref: "#/components/schemas/H" } } },
+          schemas: { H: { properties: { up: { $ref: "#/components/schemas/H" } } } },
+        },
+      });
+      expect(failure(raw).code).toBe("REF_CYCLE");
+    });
+
+    it("a recursive schema inside a message example", () => {
+      const raw = tiny({
+        message: { examples: [{ payload: { $ref: "#/components/schemas/H" } }] },
+        components: { schemas: { H: { next: { $ref: "#/components/schemas/H" } } } },
+      });
+      expect(failure(raw).code).toBe("REF_CYCLE");
+    });
+
+    it("an external ref or a missing ref next to a recursive schema", () => {
+      const schemas = { C: { items: { $ref: "#/components/schemas/C" }, other: { $ref: "https://example.com/x.json" } } };
+      expect(failure(tiny({ message: { payload: { $ref: "#/components/schemas/C" } }, components: { schemas } })).code).toBe("EXTERNAL_REF");
+    });
   });
 });
 
@@ -726,11 +872,10 @@ describe("operations and references", () => {
 describe("hostile input", () => {
   it.each([
     ["negative-external-ref.yaml", "EXTERNAL_REF"],
-    ["negative-ref-cycle.yaml", "REF_CYCLE"],
+    ["negative-ref-cycle-trait-message.yaml", "REF_CYCLE"],
     ["negative-missing-ref.yaml", "REF_NOT_FOUND"],
   ])("%s is rejected as %s and creates nothing", (name, code) => {
-    const raw = load(name);
-    const error = failure(raw, { payloadPins: new Map(), builtInTraitIds: {} });
+    const error = failure(load(name));
     expect(error.code).toBe(code);
   });
 
@@ -801,3 +946,56 @@ describe("hostile input", () => {
     expect(elapsed).toBeLessThan(1500);
   });
 });
+
+describe("a $ref to a target that is not a component is read once per target, not once per use", () => {
+  it("properties that many entries refer to (#/x-t) are ONE local trait; a target used as message and as operation properties gives one of each", () => {
+    const raw = tiny({
+      message: { traits: [{ $ref: "#/x-t" }, { $ref: "#/x-t" }] },
+      operation: { traits: [{ $ref: "#/x-o" }, { $ref: "#/x-o" }] },
+    });
+    (raw as Record<string, unknown>)["x-t"] = { summary: "s" };
+    (raw as Record<string, unknown>)["x-o"] = { summary: "s" };
+    const { document } = mapRaw(raw);
+    expect(document.traits).toEqual([
+      { key: "trait", kind: "MESSAGE", spec: { summary: "s" } },
+      { key: "trait-2", kind: "OPERATION", spec: { summary: "s" } },
+    ]);
+    expect(document.messages[0].traitKeys).toEqual(["trait"]);
+    expect(document.operations[0].traitKeys).toEqual(["trait-2"]);
+  });
+
+  it("two targets with the same content still share one trait (content is compared once per target)", () => {
+    const raw = tiny({ message: { traits: [{ $ref: "#/x-a" }, { $ref: "#/x-b" }, { summary: "s" }] } });
+    (raw as Record<string, unknown>)["x-a"] = { summary: "s" };
+    (raw as Record<string, unknown>)["x-b"] = { summary: "s" };
+    const { document } = mapRaw(raw);
+    expect(document.traits.map((t) => t.key)).toEqual(["trait"]);
+    expect(document.messages[0].traitKeys).toEqual(["trait"]);
+  });
+
+  it("a security scheme that several entries refer to (#/x-s) is stored once, with one note; an invalid one is reported once", () => {
+    const raw = tiny({
+      server: { security: [{ $ref: "#/x-s" }, { $ref: "#/x-bad" }, { $ref: "#/x-s" }, { $ref: "#/x-bad" }] },
+      operation: { security: [{ $ref: "#/x-s" }, { $ref: "#/x-bad" }] },
+    });
+    (raw as Record<string, unknown>)["x-s"] = { type: "userPassword" };
+    (raw as Record<string, unknown>)["x-bad"] = { type: "apiKey" };
+    const { document, warnings } = mapRaw(raw);
+    expect(Object.keys(document.components?.securitySchemes ?? {})).toEqual(["userPassword"]);
+    expect(document.servers[0].security).toEqual(["userPassword"]);
+    expect(document.operations[0].security).toEqual(["userPassword"]);
+    expect(byCode(warnings, "KEY_ADJUSTED")).toHaveLength(1);
+    expect(warnings.filter((w) => w.code === "DROPPED_CONSTRUCT" && /is not valid/.test(w.message))).toHaveLength(1);
+  });
+
+  it("a huge target cannot be referenced without limit: 2,000 uses of a 200 KB trait are REF_TOO_LARGE, 20 are fine", () => {
+    const withUses = (uses: number) => {
+      const raw = tiny({ message: { traits: Array.from({ length: uses }, () => ({ $ref: "#/x-big" })) } });
+      (raw as Record<string, unknown>)["x-big"] = { summary: "s".repeat(200_000) };
+      return raw;
+    };
+    expect(failure(withUses(2000), { payloadPins: new Map(), builtInTraitIds: {} }).code).toBe("REF_TOO_LARGE");
+    expect(mapRaw(withUses(20)).document.traits).toHaveLength(1);
+  });
+});
+

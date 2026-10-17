@@ -129,7 +129,7 @@ describe("resolveLocalRefs: rejects", () => {
   });
 
   it("a longer cycle (Node → Tree → Node) as REF_CYCLE, naming the whole chain", () => {
-    const error = failureOf(fixture("negative-ref-cycle.yaml"));
+    const error = failureOf(fixture("recursive-payload-placeholder.yaml"));
     expect(error.code).toBe("REF_CYCLE");
     expect(error.message).toContain("#/components/schemas/Node");
     expect(error.message).toContain("#/components/schemas/Tree");
@@ -215,3 +215,127 @@ describe("refTargetPointer", () => {
     expect(refTargetPointer(null)).toBeNull();
   });
 });
+
+describe("cycles in schema content: inlineSchema and check({ tolerateCycles })", () => {
+  const recursive = doc({
+    components: {
+      schemas: {
+        Comment: { type: "object", properties: { replies: { type: "array", items: { $ref: "#/components/schemas/Comment" } } } },
+        Plain: { type: "object", properties: { id: { type: "string" } } },
+        Node: { type: "object", properties: { child: { $ref: "#/components/schemas/Tree" } } },
+        Tree: { type: "object", properties: { root: { $ref: "#/components/schemas/Node" } } },
+        UsesComment: { type: "object", properties: { comment: { $ref: "#/components/schemas/Comment" } } },
+      },
+    },
+  });
+  const schema = (name: string) => ({ $ref: `#/components/schemas/${name}` });
+
+  it("a schema that refers to itself comes back as `recursive`, with the chain that closes the loop", () => {
+    const result = createRefResolver(recursive).inlineSchema(schema("Comment"), "/payload");
+    expect(result).toEqual({ success: true, data: { recursive: ["#/components/schemas/Comment", "#/components/schemas/Comment"] } });
+  });
+
+  it("a loop through several schemas names all of them", () => {
+    const result = createRefResolver(recursive).inlineSchema(schema("Node"), "/payload");
+    expect(result.success && "recursive" in result.data && result.data.recursive).toEqual(["#/components/schemas/Node", "#/components/schemas/Tree", "#/components/schemas/Node"]);
+  });
+
+  it("a schema without a loop is an ordinary value, also after the document was checked with cycles tolerated", () => {
+    const resolver = createRefResolver(recursive);
+    expect(resolver.check({ tolerateCycles: true }).success).toBe(true);
+    expect(resolver.inlineSchema(schema("Plain"), "/payload")).toEqual({ success: true, data: { value: { type: "object", properties: { id: { type: "string" } } } } });
+  });
+
+  it("a schema that merely USES a recursive one is recursive too, however often and in whatever order they are read", () => {
+    const resolver = createRefResolver(recursive);
+    expect(resolver.check({ tolerateCycles: true }).success).toBe(true);
+    for (const name of ["UsesComment", "Comment", "UsesComment", "Plain", "Comment"]) {
+      const result = resolver.inlineSchema(schema(name), "/payload");
+      expect(result.success && "recursive" in result.data, name).toBe(name !== "Plain");
+    }
+  });
+
+  it("the loop is only tolerated for schema content: after a tolerated check, strict inline of anything that leads into it is REF_CYCLE", () => {
+    const resolver = createRefResolver(recursive);
+    expect(resolver.check({ tolerateCycles: true }).success).toBe(true);
+    for (const name of ["Comment", "UsesComment", "Node"]) {
+      const strict = resolver.inline(schema(name), "/binding");
+      expect(strict.success ? "ok" : strict.error.code, name).toBe("REF_CYCLE");
+    }
+    expect(resolver.inline(schema("Plain"), "/binding").success).toBe(true);
+  });
+
+  it("a strict resolver that never tolerated the loop refuses it in the first place", () => {
+    const fresh = createRefResolver(recursive);
+    const checked = fresh.check();
+    expect(checked.success ? "ok" : checked.error.code).toBe("REF_CYCLE");
+    expect(fresh.inline(schema("Comment"), "/x").success).toBe(false);
+  });
+
+  it("a wrapper chain that loops (A -> B -> A) is still found by deref", () => {
+    const resolver = createRefResolver(doc({ components: { schemas: { A: { $ref: "#/components/schemas/B" }, B: { $ref: "#/components/schemas/A" } } } }));
+    expect(resolver.check({ tolerateCycles: true }).success).toBe(true);
+    const result = resolver.deref(schema("A"), "/payload");
+    expect(result.success ? "ok" : result.error.code).toBe("REF_CYCLE");
+  });
+
+  it.each([
+    ["an external ref", { $ref: "https://example.com/x.json" }, "EXTERNAL_REF"],
+    ["a missing ref", { $ref: "#/components/schemas/Nope" }, "REF_NOT_FOUND"],
+  ])("%s inside a recursive schema is still an error, in check and in inlineSchema", (_label, bad, code) => {
+    const value = doc({ components: { schemas: { Comment: { items: { $ref: "#/components/schemas/Comment" }, extra: bad } } } });
+    const checked = createRefResolver(value).check({ tolerateCycles: true });
+    expect(checked.success ? "ok" : checked.error.code).toBe(code);
+    const inlined = createRefResolver(value).inlineSchema(schema("Comment"), "/payload");
+    expect(inlined.success ? "ok" : inlined.error.code).toBe(code);
+  });
+
+  it("an expansion bomb is still REF_TOO_LARGE with cycles tolerated", () => {
+    const schemas: Record<string, unknown> = { S0: { type: "string" } };
+    for (let i = 1; i <= 40; i += 1) schemas[`S${i}`] = { allOf: [{ $ref: `#/components/schemas/S${i - 1}` }, { $ref: `#/components/schemas/S${i - 1}` }] };
+    const checked = createRefResolver(doc({ components: { schemas } })).check({ tolerateCycles: true });
+    expect(checked.success ? "ok" : checked.error.code).toBe("REF_TOO_LARGE");
+  });
+
+  it("a recursive schema used by thousands of messages stays cheap (each loop is cut once, then remembered)", () => {
+    const messages: Record<string, unknown> = {};
+    for (let i = 0; i < 3000; i += 1) messages[`m${i}`] = { payload: schema("Comment") };
+    const resolver = createRefResolver({ ...recursive, components: { ...(recursive.components as object), messages } });
+    const started = Date.now();
+    expect(resolver.check({ tolerateCycles: true }).success).toBe(true);
+    for (let i = 0; i < 3000; i += 1) expect(resolver.inlineSchema(schema("Comment"), `/components/messages/m${i}/payload`).success).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("a doubling chain over a recursive schema stays cheap: the loop is found once and remembered", () => {
+    const schemas: Record<string, unknown> = { S0: { items: { $ref: "#/components/schemas/S0" } } };
+    for (let i = 1; i <= 40; i += 1) schemas[`S${i}`] = { allOf: [{ $ref: `#/components/schemas/S${i - 1}` }, { $ref: `#/components/schemas/S${i - 1}` }] };
+    const started = Date.now();
+    const result = createRefResolver(doc({ components: { schemas } })).check({ tolerateCycles: true });
+    expect(result.success).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe("the expansion budget counts what a string costs, and chargeNodes", () => {
+  const usesOf = (uses: number, chars: number) => doc({ big: { text: "x".repeat(chars) }, list: Array.from({ length: uses }, () => ({ $ref: "#/big" })) });
+
+  it("a string is charged one value per 64 characters on every use: 700 uses of a 500 KB string are refused, 100 are not", () => {
+    const refused = createRefResolver(usesOf(700, 500_000)).check();
+    expect(refused.success ? "ok" : refused.error.code).toBe("REF_TOO_LARGE");
+    expect(createRefResolver(usesOf(100, 500_000)).check().success).toBe(true);
+  });
+
+  it("short strings stay cheap: 100,000 uses of a 100-character string", () => {
+    expect(createRefResolver(usesOf(100_000, 100)).check().success).toBe(true);
+  });
+
+  it("chargeNodes spends the same budget: within it is fine, over it is REF_TOO_LARGE naming where", () => {
+    const resolver = createRefResolver({});
+    expect(resolver.chargeNodes(1_000_000, "/a")).toEqual({ success: true, data: undefined });
+    const over = resolver.chargeNodes(4_000_001, "/components/messages/m/traits/3");
+    expect(over.success ? "ok" : over.error.code).toBe("REF_TOO_LARGE");
+    expect(over.success ? "" : over.error.message).toContain("/components/messages/m/traits/3");
+  });
+});
+
