@@ -1,0 +1,89 @@
+asyncapi: 3.0.0
+info:
+  title: Pricing request-reply
+  version: 1.0.0
+  description: A request sent on one channel and answered on another.
+servers:
+  broker:
+    host: broker.example.com:4222
+    protocol: nats
+channels:
+  priceRequests:
+    address: pricing.requests
+    messages:
+      priceRequest:
+        $ref: '#/components/messages/priceRequest'
+  priceReplies:
+    address: pricing.replies.{requestId}
+    parameters:
+      requestId:
+        description: The request this reply answers.
+        location: $message.header#/requestId
+    messages:
+      priceReply:
+        $ref: '#/components/messages/priceReply'
+  audit:
+    address: pricing.audit
+    messages:
+      priceAudited:
+        $ref: '#/components/messages/priceReply'
+operations:
+  askPrice:
+    action: send
+    channel:
+      $ref: '#/channels/priceRequests'
+    summary: Ask the pricing service for a price.
+    messages:
+      - $ref: '#/channels/priceRequests/messages/priceRequest'
+    reply:
+      address:
+        description: Where the reply is sent
+        location: $message.header#/replyTo
+      channel:
+        $ref: '#/channels/priceReplies'
+      messages:
+        - $ref: '#/channels/priceReplies/messages/priceReply'
+  answerPrice:
+    action: receive
+    channel:
+      $ref: '#/channels/priceRequests'
+    messages:
+      - $ref: '#/channels/priceRequests/messages/priceRequest'
+    reply:
+      channel:
+        $ref: '#/channels/priceReplies'
+  auditPrice:
+    action: receive
+    channel:
+      $ref: '#/channels/audit'
+    messages:
+      - $ref: '#/channels/audit/messages/priceAudited'
+components:
+  messages:
+    priceRequest:
+      title: Price request
+      correlationId:
+        $ref: '#/components/correlationIds/requestId'
+      payload:
+        type: object
+        properties:
+          sku:
+            type: string
+          quantity:
+            type: integer
+    priceReply:
+      title: Price reply
+      correlationId:
+        description: The id of the request that is answered
+        location: $message.header#/requestId
+      payload:
+        type: object
+        properties:
+          sku:
+            type: string
+          price:
+            type: number
+  correlationIds:
+    requestId:
+      description: Request id, set by the caller
+      location: $message.header#/requestId

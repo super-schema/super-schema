@@ -1,0 +1,118 @@
+asyncapi: 3.0.0
+info:
+  title: Sensor readings in several schema formats
+  version: 1.0.0
+servers:
+  broker:
+    host: broker.example.com:9092
+    protocol: kafka
+channels:
+  readings:
+    address: sensors.readings
+    messages:
+      defaultSchema:
+        $ref: '#/components/messages/defaultSchema'
+      asyncApiSchema:
+        $ref: '#/components/messages/asyncApiSchema'
+      draft07Schema:
+        $ref: '#/components/messages/draft07Schema'
+      avroReading:
+        $ref: '#/components/messages/avroReading'
+      protobufReading:
+        $ref: '#/components/messages/protobufReading'
+      openApiReading:
+        $ref: '#/components/messages/openApiReading'
+operations:
+  receiveReadings:
+    action: receive
+    channel:
+      $ref: '#/channels/readings'
+    messages:
+      - $ref: '#/channels/readings/messages/defaultSchema'
+      - $ref: '#/channels/readings/messages/asyncApiSchema'
+      - $ref: '#/channels/readings/messages/draft07Schema'
+      - $ref: '#/channels/readings/messages/avroReading'
+      - $ref: '#/channels/readings/messages/protobufReading'
+      - $ref: '#/channels/readings/messages/openApiReading'
+components:
+  messages:
+    defaultSchema:
+      title: Reading (default schema format)
+      headers:
+        type: object
+        properties:
+          sensor-id:
+            type: string
+      payload:
+        type: object
+        properties:
+          value:
+            type: number
+    asyncApiSchema:
+      title: Reading (AsyncAPI schema)
+      payload:
+        schemaFormat: application/vnd.aai.asyncapi+json;version=3.0.0
+        schema:
+          type: object
+          properties:
+            value:
+              type: number
+            unit:
+              $ref: '#/components/schemas/unit'
+    draft07Schema:
+      title: Reading (JSON Schema draft-07)
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema:
+          $schema: http://json-schema.org/draft-07/schema#
+          type: object
+          required:
+            - value
+          properties:
+            value:
+              type: number
+            unit:
+              $ref: '#/components/schemas/unit'
+    avroReading:
+      name: AvroReading
+      title: Reading (Avro)
+      contentType: avro/binary
+      payload:
+        schemaFormat: application/vnd.apache.avro;version=1.9.0
+        schema:
+          type: record
+          name: Reading
+          namespace: com.example.sensors
+          fields:
+            - name: sensorId
+              type: string
+            - name: value
+              type: double
+    protobufReading:
+      title: Reading (Protobuf)
+      contentType: application/x-protobuf
+      payload:
+        schemaFormat: application/vnd.google.protobuf;version=3
+        schema: |
+          syntax = "proto3";
+
+          message ProtoReading {
+            string sensor_id = 1;
+            double value = 2;
+          }
+    openApiReading:
+      title: Reading (OpenAPI schema)
+      payload:
+        schemaFormat: application/vnd.oai.openapi;version=3.0.0
+        schema:
+          type: object
+          nullable: true
+          properties:
+            value:
+              type: number
+  schemas:
+    unit:
+      type: string
+      enum:
+        - celsius
+        - fahrenheit
