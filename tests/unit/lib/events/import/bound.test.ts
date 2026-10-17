@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   boundChain, boundPointer, boundText, createWarningSink, MAX_MESSAGE_LENGTH, MAX_POINTER_LENGTH, MAX_WARNINGS,
 } from "@/lib/events/import/bound";
+import { MAX_REF_LENGTH } from "@/lib/events/import/limits";
 import { extractPayloads } from "@/lib/events/import/payloads";
 import { mapAsyncApiToEventDocument } from "@/lib/events/import/map-document";
 import { parseAsyncApiSource } from "@/lib/events/import/source";
@@ -17,7 +18,7 @@ describe("boundText", () => {
     expect(boundText("")).toBe("");
   });
 
-  it("cuts one character over the cap and ends with an ellipsis: the result is exactly the cap long", () => {
+  it("cuts one character over the cap and ends with an ellipsis: the result is the cap long", () => {
     const cut = boundText("a".repeat(81));
     expect(cut).toBe(`${"a".repeat(79)}…`);
     expect(cut).toHaveLength(80);
@@ -35,6 +36,7 @@ describe("boundText", () => {
     const text = `${"a".repeat(78)}😀tail`; // the emoji occupies code units 78 and 79
     const cut = boundText(text, 80);
     expect(cut).toBe(`${"a".repeat(78)}…`);
+    expect(cut).toHaveLength(79); // at most the cap: one shorter when the cut would split a pair
     expect(cut).not.toMatch(/[\ud800-\udbff]…$/);
     expect(boundText(`${"a".repeat(77)}😀tail`, 80)).toBe(`${"a".repeat(77)}😀…`);
   });
@@ -187,9 +189,12 @@ function sharedRecursiveSchema(count: number, keyLength: number): RawAsyncApi3 {
   });
 }
 
-describe("the recursion warning of many messages that share one recursive schema under a huge key", () => {
-  it("300 messages, a 100 KB key: the import still maps and all warning text stays under 30,000 characters (it was 60,043,690)", () => {
-    const { document, warnings } = imported(sharedRecursiveSchema(300, 100_000));
+/** The longest key a `$ref` can reach: `#/components/schemas/<key>` may be 1,024 characters at most. */
+const LONGEST_REACHABLE_KEY = MAX_REF_LENGTH - "#/components/schemas/".length;
+
+describe("the recursion warning of many messages that share one recursive schema under a very long key", () => {
+  it(`300 messages, the longest key a $ref can reach (${LONGEST_REACHABLE_KEY} characters): the import still maps and all warning text stays under 30,000 characters (with a 100 KB key it was 60,043,690)`, () => {
+    const { document, warnings } = imported(sharedRecursiveSchema(300, LONGEST_REACHABLE_KEY));
     expect(document.messages).toHaveLength(300);
     expect(textOf(warnings)).toBeLessThan(30_000);
     expect(warnings).toHaveLength(MAX_WARNINGS + 1);
@@ -198,8 +203,19 @@ describe("the recursion warning of many messages that share one recursive schema
     expect(warnings.at(-1)).toEqual({ pointer: "", code: "DROPPED_CONSTRUCT", message: `${300 - MAX_WARNINGS} more warnings were omitted` });
   });
 
-  it("thousands of messages (5,000, a 20 KB key): bounded the same way, every message still pinned", () => {
-    const { document, warnings } = imported(sharedRecursiveSchema(5000, 20_000));
+  it("the original probe (a 100 KB key) can no longer be built: the key cap refuses the text, the ref cap refuses the document handed over", () => {
+    const raw = sharedRecursiveSchema(300, 100_000);
+    const text = parseAsyncApiSource(JSON.stringify(raw));
+    expect(text.success).toBe(false);
+    if (!text.success) expect(text.error.message).toContain("1,024");
+    const extracted = extractPayloads(raw);
+    expect(extracted.success ? "ok" : extracted.error.code).toBe("REF_TOO_LARGE");
+    const mapped = mapAsyncApiToEventDocument(raw, { payloadPins: new Map(), builtInTraitIds: {} });
+    expect(mapped.success ? "ok" : mapped.error.code).toBe("REF_TOO_LARGE");
+  });
+
+  it("thousands of messages (5,000, the longest reachable key): bounded the same way, every message still pinned", () => {
+    const { document, warnings } = imported(sharedRecursiveSchema(5000, LONGEST_REACHABLE_KEY));
     expect(document.messages).toHaveLength(5000);
     expect(textOf(warnings)).toBeLessThan(30_000);
     expect(warnings.at(-1)?.message).toBe(`${5000 - MAX_WARNINGS} more warnings were omitted`);
@@ -275,7 +291,9 @@ describe("every other echo of document text is bounded", () => {
     const { warnings } = imported(raw);
     expect(warnings.length).toBeGreaterThan(5);
     for (const w of warnings) {
-      expect(w.message.length, w.message.slice(0, 120)).toBeLessThanOrEqual(MAX_MESSAGE_LENGTH);
+      // 400, well under the sink's own 600-character trim: a site that echoes document text unbounded cannot hide behind the trim
+      expect(w.message.length, `${w.code}: ${w.message.slice(0, 120)}`).toBeLessThan(400);
+      expect(w.message.length).toBeLessThanOrEqual(MAX_MESSAGE_LENGTH);
       expect(w.pointer.length).toBeLessThanOrEqual(MAX_POINTER_LENGTH);
     }
     const kinds = new Set(warnings.map((w) => w.code));
@@ -284,20 +302,20 @@ describe("every other echo of document text is bounded", () => {
     expect(unused?.message).toMatch(/\(\d+k+…, .*\(7 more\)\)/);
   });
 
-  it("a $ref that is a megabyte long: the error names it in a few characters and carries it bounded", () => {
+  it("a $ref that is a megabyte long: refused by length (REF_TOO_LARGE), named in a few characters and carried bounded", () => {
     const result = mapAsyncApiToEventDocument(
       doc({ components: { messages: { m: { payload: { $ref: `https://example.com/${big}` } } } } }),
       { payloadPins: new Map(), builtInTraitIds: {} },
     );
     expect(result.success).toBe(false);
     if (result.success) return;
-    expect(result.error.code).toBe("EXTERNAL_REF");
-    expect(result.error.message.length).toBeLessThan(600);
+    expect(result.error.code).toBe("REF_TOO_LARGE");
+    expect(result.error.message.length).toBeLessThan(400);
     expect((result.error.details as { ref: string; pointer: string }).ref.length).toBeLessThanOrEqual(MAX_POINTER_LENGTH);
   });
 
   it("a reference loop through bindings names its first entries only", () => {
-    const keys = Array.from({ length: 12 }, (_, i) => `${i}${big}`);
+    const keys = Array.from({ length: 12 }, (_, i) => `${i}${"k".repeat(400)}`); // long, but short enough for a $ref
     const bindings = Object.fromEntries(keys.map((k, i) => [k, { kafka: { $ref: `#/components/messageBindings/${keys[(i + 1) % 12]}` } }]));
     const raw = doc({ components: { messages: { m: { payload: { type: "object" }, bindings: { $ref: `#/components/messageBindings/${keys[0]}` } } }, messageBindings: bindings } });
     const result = mapAsyncApiToEventDocument(raw, { payloadPins: new Map([["m:payload", { entityId: "e", entityVersionId: null }]]), builtInTraitIds: {} });
@@ -308,14 +326,28 @@ describe("every other echo of document text is bounded", () => {
     expect(result.error.message).toContain("(8 more)");
   });
 
-  it("a forbidden key under a 100 KB path, and a server with a 100 KB problem, give short messages", () => {
+  it("a 100 KB key is refused by the key cap with a short message; a forbidden key under a long (but legal) path is bounded", () => {
     // JSON, not YAML: YAML does not allow a simple key longer than 1,024 characters
-    const parsed = parseAsyncApiSource(JSON.stringify({ asyncapi: "3.0.0" }).replace("}", `,"x-${big}":{"__proto__":1}}`));
-    expect(parsed.success).toBe(false);
-    if (!parsed.success) {
-      expect(parsed.error.message.length).toBeLessThan(500);
-      expect((parsed.error.details as { pointer: string }).pointer.length).toBeLessThanOrEqual(MAX_POINTER_LENGTH);
+    const tooLong = parseAsyncApiSource(JSON.stringify({ asyncapi: "3.0.0" }).replace("}", `,"x-${big}":{"__proto__":1}}`));
+    expect(tooLong.success).toBe(false);
+    if (!tooLong.success) {
+      expect(tooLong.error.message).toContain("1,024");
+      expect(tooLong.error.message.length).toBeLessThan(400);
+      expect((tooLong.error.details as { pointer: string }).pointer.length).toBeLessThanOrEqual(MAX_POINTER_LENGTH);
     }
+    // ten levels of 1,000-character keys (each one legal) put `__proto__` under a path of about 10 KB
+    let inner = '{"__proto__":1}';
+    for (let level = 0; level < 10; level += 1) inner = `{"x${level}${"k".repeat(1000)}":${inner}}`;
+    const forbidden = parseAsyncApiSource(`{"asyncapi":"3.0.0","x-wrap":${inner}}`);
+    expect(forbidden.success).toBe(false);
+    if (!forbidden.success) {
+      expect(forbidden.error.message).toContain("__proto__");
+      expect(forbidden.error.message.length).toBeLessThan(500);
+      expect((forbidden.error.details as { pointer: string }).pointer).toHaveLength(MAX_POINTER_LENGTH);
+    }
+  });
+
+  it("a server with a 100 KB key and an invalid host handed straight to the mapper (defence in depth) gives short, bounded problems", () => {
     const invalid = mapAsyncApiToEventDocument(doc({ servers: { [big]: { host: "kafka://h:1", protocol: "kafka" } } }), { payloadPins: new Map(), builtInTraitIds: {} });
     expect(invalid.success).toBe(false);
     if (!invalid.success) {

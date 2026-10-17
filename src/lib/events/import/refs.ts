@@ -12,11 +12,11 @@
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { jsonPointer, localRef, resolveLocalRef, unescapePointerSegment } from "@/lib/event-specs/json-pointer";
 import { setOwn } from "@/lib/event-specs/own-property";
-import { MAX_EXPANDED_NODES, MAX_NESTING_DEPTH } from "./limits";
+import { MAX_EXPANDED_NODES, MAX_NESTING_DEPTH, MAX_REF_LENGTH } from "./limits";
 import { boundChain, boundPointer, boundText, CHAIN_ENTRY_LENGTH, MAX_CHAIN_ENTRIES } from "./bound";
 
-/** The longest chain of `$ref` wrappers `deref` follows. */
-const MAX_DEREF_HOPS = 64;
+/** The longest chain of `$ref` wrappers `deref` follows (a real file has one or two; each hop is paid again for every use). */
+const MAX_DEREF_HOPS = 16;
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -127,6 +127,12 @@ export function createRefResolver(root: unknown): RefResolver {
   };
 
   function locate(ref: string): { pointer: string; segments: string[]; value: unknown } {
+    // Every use of a reference is split, decoded and resolved again, so the work grows with its length: refuse a long one before touching it.
+    if (ref.length > MAX_REF_LENGTH) {
+      return fail("REF_TOO_LARGE", `A reference is longer than ${MAX_REF_LENGTH.toLocaleString("en-US")} characters (${ref.length.toLocaleString("en-US")}, starting "${boundText(ref, 60)}") at ${here()}; references that long are not paths into the document, so it was rejected.`, {
+        ref, suggestedFix: "Give what is referenced shorter names, and keep the path to it short.",
+      });
+    }
     const classified = classify(ref);
     if (classified.kind === "external") {
       return fail("EXTERNAL_REF", `The reference "${boundText(ref, 120)}" at ${here()} points outside the document. Only references inside the document (#/components/…) can be imported; external files and URLs are never fetched.`, {

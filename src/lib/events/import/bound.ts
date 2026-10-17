@@ -34,7 +34,7 @@ function textOf(value: unknown): string {
 }
 
 /**
- * `value` as text of at most `max` characters: longer text is cut and ends with `…` (the result is exactly `max` long). A character that
+ * `value` as text of at most `max` characters: longer text is cut and ends with `…` (the result is at most `max` long). A character that
  * would be cut in half (a surrogate pair) is dropped whole. Anything that is not a string is shown as `String(value)` / JSON first.
  */
 export function boundText(value: unknown, max: number = MAX_TEXT_LENGTH): string {

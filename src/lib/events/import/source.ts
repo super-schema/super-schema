@@ -8,7 +8,7 @@ import { err, ok, type Result } from "@/types/result";
 import { MAX_IMPORT_CONTENT_BYTES } from "@/lib/compiler/import-limits";
 import { isReservedKey } from "@/lib/event-specs/own-property";
 import { jsonPointer } from "@/lib/event-specs/json-pointer";
-import { MAX_ALIAS_COUNT, MAX_DOCUMENT_NODES, MAX_NESTING_DEPTH } from "./limits";
+import { MAX_ALIAS_COUNT, MAX_DOCUMENT_NODES, MAX_KEY_LENGTH, MAX_NESTING_DEPTH } from "./limits";
 import { boundPointer, boundText } from "./bound";
 import type { RawAsyncApi3 } from "./types";
 
@@ -32,7 +32,7 @@ function yamlMessage(e: { message: string }): string {
   return boundText(e.message.split("\n")[0].replace(/:\s*$/, ""), MAX_ERROR_TEXT_LENGTH);
 }
 
-/** Every key must be safe, nothing may nest too deep, and the expanded document must stay small. Iterative: a hostile file cannot overflow the stack here. */
+/** Every key must be safe and short, nothing may nest too deep, and the expanded document must stay small. Iterative: a hostile file cannot overflow the stack here. */
 function scan(root: unknown): { message: string; details: object } | null {
   type Frame = { value: unknown; depth: number; parent: Frame | null; key: string | number };
   const stack: Frame[] = [{ value: root, depth: 0, parent: null, key: "" }];
@@ -58,6 +58,13 @@ function scan(root: unknown): { message: string; details: object } | null {
       continue;
     }
     for (const key of Object.keys(value)) {
+      if (key.length > MAX_KEY_LENGTH) {
+        const pointer = pointerOf(frame, key);
+        return {
+          message: `A key is longer than ${MAX_KEY_LENGTH.toLocaleString("en-US")} characters (${key.length.toLocaleString("en-US")}, starting "${boundText(key, 40)}") at "${boundText(pointerOf(frame), 120)}"; keys that long are not names, so the document was rejected`,
+          details: { pointer: boundPointer(pointer), length: key.length, limit: MAX_KEY_LENGTH },
+        };
+      }
       if (isReservedKey(key)) {
         const pointer = pointerOf(frame, key);
         return { message: `The key "${boundText(key)}" at "${boundText(pointer, 120)}" is not allowed in an imported document (it collides with built-in JavaScript properties); rename it and import again`, details: { pointer: boundPointer(pointer), key: boundText(key) } };
@@ -107,7 +114,7 @@ function parseYamlText(text: string): Result<unknown> {
 /**
  * YAML or JSON text → a plain object.
  * Rejects (all as `Result` errors, nothing throws): text over 1 MiB (`TOO_LARGE`); text that is not YAML/JSON, holds two documents, repeats a
- * key, uses more than 100 YAML aliases, nests deeper than 256 levels, or contains a `__proto__` / `constructor` / `prototype` key
+ * key, uses more than 100 YAML aliases, nests deeper than 256 levels, has a key longer than 1,024 characters, or contains a `__proto__` / `constructor` / `prototype` key
  * (`PARSE_ERROR`); a document that is not an object or has no `asyncapi` field (`PARSE_ERROR`); anything but AsyncAPI 3.x (`UNSUPPORTED_VERSION`).
  */
 export function parseAsyncApiSource(text: string): Result<RawAsyncApi3> {
