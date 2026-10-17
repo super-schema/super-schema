@@ -112,6 +112,19 @@ function orderDocument(o: DocOptions = {}): EventDocument {
   };
 }
 
+/**
+ * `orderDocument` with its channel left on Auto (no explicit format): the message follows its payload entity's recorded source format
+ * (`entity.metadata.sourceFormat`), so changing that format changes what is emitted without touching the document.
+ */
+function autoDocument(o: DocOptions = {}): EventDocument {
+  const doc = orderDocument(o);
+  return { ...doc, channels: [{ key: "orders", address: "payments.orders.v1", protocol: "kafka", serverKeys: ["kafka-prod"], messageKeys: ["order-created"] }] };
+}
+/** The representation an entity was imported in, straight into its metadata (what an import records; the draft event is not touched). */
+const recordFormat = (e: Versioned, sourceFormat: string) => prisma.entity.update({ where: { id: e.entityId }, data: { metadata: { sourceFormat } } });
+/** `compatReport.representations` of a stored version row. */
+const storedRepresentations = (row: { compatReport: unknown }) => obj(row.compatReport).representations;
+
 /** An event saved through the real service (pins, library traits and refs validated; draft edges written). */
 async function draft(doc: EventDocument): Promise<string> {
   const event = unwrap(await createEvent(own.product.id, { name: `evt-${stamp()}` }, ctx));
@@ -338,6 +351,67 @@ describe("publishEvent", () => {
     // and once published, the edit is no longer pending
     expect(blockersOf(await publish(id)).map((b) => b.kind)).toEqual(["NO_CHANGES"]);
   }, 180_000);
+
+  it("stores the effective representation of every message with the version", async () => {
+    const id = await published(orderDocument()); // the channel names Avro explicitly
+
+    const [row] = await versionRows(id);
+
+    expect(obj(row.compatReport)).toMatchObject({ reasons: expect.any(Array), diagnostics: expect.any(Array), representations: { "order-created": "avro" } });
+  }, 120_000);
+
+  it("treats a change of an entity's recorded source format as a change: MAJOR, stored, and quiet again once published", async () => {
+    const formatted = await versionedEntity("Formatted", ["1.0"]);
+    await recordFormat(formatted, "avro");
+    const id = await published(autoDocument({ payload: pin(formatted, "1.0") }));
+    const [first] = await versionRows(id);
+    expect(storedRepresentations(first)).toEqual({ "order-created": "avro" });
+    expect((await preview(id)).blockers.map((b) => b.kind)).toEqual(["NO_CHANGES"]); // the draft is unchanged and so is the format
+
+    await recordFormat(formatted, "json-schema"); // only the entity's recorded format moves: the draft document is untouched
+    expect((await eventRow(id)).document).toEqual(first.sourceDocument);
+
+    const analysis = await preview(id);
+    expect(analysis.blockers).toEqual([]);
+    expect(analysis.suggestedBump).toBe("MAJOR");
+    expect(analysis.reasons).toEqual(['Message "order-created": representation Avro → JSON Schema']);
+
+    expect(unwrap(await publish(id))).toMatchObject({ label: "2.0", changeKind: "MAJOR", sequence: 2 });
+    const versions = await versionRows(id);
+    expect(storedRepresentations(versions[1])).toEqual({ "order-created": "json-schema" });
+    expect(versions[1].compatReport).toMatchObject({ reasons: ['Message "order-created": representation Avro → JSON Schema'] });
+    // the new version is the baseline now
+    expect(blockersOf(await publish(id)).map((b) => b.kind)).toEqual(["NO_CHANGES"]);
+    expect((await preview(id)).blockers.map((b) => b.kind)).toEqual(["NO_CHANGES"]);
+  }, 180_000);
+
+  it("a version published before representations were stored behaves as before: no false change and no false MAJOR", async () => {
+    const formatted = await versionedEntity("LegacyFormatted", ["1.0"]);
+    await recordFormat(formatted, "avro");
+    const doc = autoDocument({ payload: pin(formatted, "1.0") });
+    // the ways a stored value can be unusable: absent (the `{}` default), or not a map of known formats — never an error, never a change
+    const legacy: unknown[] = [{}, { reasons: [], diagnostics: [] }, { representations: "garbage" }, { representations: { "order-created": "bogus" } }, { representations: [] }];
+    for (const compatReport of legacy) {
+      const event = await seedEvent(doc);
+      const row = await createEventSpecVersion(prisma, {
+        eventSpecId: event.id, major: 1, minor: 0, sequence: 1, changeKind: "INITIAL", publishedById: ctx.userId, document: { asyncapi: "3.0.0" },
+        sourceDocument: JSON.parse(JSON.stringify(doc)) as Prisma.InputJsonValue, frozenTraits: [], compatReport: compatReport as Prisma.InputJsonValue,
+      });
+      await prisma.eventSpec.update({ where: { id: event.id }, data: { latestVersionId: row.id, hasUnpublishedChanges: false } });
+
+      expect((await preview(event.id)).blockers.map((b) => b.kind)).toEqual(["NO_CHANGES"]);
+      await recordFormat(formatted, "json-schema"); // nothing stored to compare with: exactly as before this existed
+      expect((await preview(event.id)).blockers.map((b) => b.kind)).toEqual(["NO_CHANGES"]);
+
+      // a real edit is classified without a phantom representation change
+      await save(event.id, autoDocument({ payload: pin(formatted, "1.0"), description: "now with a description" }));
+      const analysis = await preview(event.id);
+      expect(analysis.blockers).toEqual([]);
+      expect(analysis.suggestedBump).toBe("MINOR");
+      expect(analysis.reasons.join("\n")).not.toContain("representation");
+      await recordFormat(formatted, "avro");
+    }
+  }, 240_000);
 
   it("keeps the frozen library trait copy until the next publish", async () => {
     const trait = await libraryTrait("Frozen", { summary: "first summary" });

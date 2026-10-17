@@ -493,8 +493,9 @@ describe.sequential("loadEventSnapshot / resolveEventSnapshot", () => {
       id: event.id, name: event.name, tenantId: TENANT, domainId: own.domain.id, productId: own.product.id, productSlug: own.product.slug, specType: "asyncapi@3.0",
     });
     expect(snapshot.document).toEqual(doc);
-    // publish reads the version's sequence (next sequence) and its frozen traits (library drift) from here
-    expect(snapshot.latest).toEqual({ id: latest.id, major: 3, minor: 2, sequence: 1, sourceDocument: doc, resolvedSpec: null, frozenTraits: [] });
+    // publish reads the version's sequence (next sequence), its frozen traits (library drift) and its stored compat report (the
+    // representations it was published in) from here; the version was seeded with the column's default report
+    expect(snapshot.latest).toEqual({ id: latest.id, major: 3, minor: 2, sequence: 1, sourceDocument: doc, resolvedSpec: null, frozenTraits: [], compatReport: {} });
     expect([...snapshot.libraryTraits.keys()]).toEqual([libraryTrait.id]);
     expect(snapshot.libraryTraits.get(libraryTrait.id)).toMatchObject({ id: libraryTrait.id, name: libraryTrait.name, kind: "MESSAGE", ownerSlug: own.domain.slug, headersEntityVersionId: ceHeaders.version.id });
     // external items come from the referenced version's stored resolvedSpec, by externalRef key

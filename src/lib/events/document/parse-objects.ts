@@ -11,6 +11,7 @@ import type {
   DocChannelParameter, DocCorrelationId, DocExternalDocs, DocMessageExample, DocReplyAddress, DocSecurityScheme, DocServerVariable, DocTag,
 } from "./types";
 import { KEY_PATTERN, SECURITY_SCHEME_TYPES } from "./types";
+import { propertiesSet } from "./wording";
 
 export type Bag = Record<string, unknown>;
 export type Bad = (pointer: string, message: string) => void;
@@ -233,11 +234,11 @@ export function createObjectReaders(bad: Bad) {
   };
 
   // ── local trait specs ──
-  const messageTraitSpec = shape<JsonObject>("a message trait", {
+  const messageTraitSpec = shape<JsonObject>(`a ${propertiesSet("MESSAGE")}`, {
     name: str, title: str, summary: str, description: str, contentType: str, correlationId, tags, externalDocs, deprecated: bool, examples,
     bindings: jsonObject, headers: jsonObject,
   });
-  const operationTraitSpec = shape<JsonObject>("an operation trait", {
+  const operationTraitSpec = shape<JsonObject>(`a ${propertiesSet("OPERATION")}`, {
     title: str, summary: str, description: str, security: strings(), tags, externalDocs, bindings: jsonObject,
   });
   /** A local trait's `spec`, checked against the properties AsyncAPI defines for the trait's kind. */

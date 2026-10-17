@@ -5,9 +5,13 @@ import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import { cleanupDomains, cleanupTenantTraits, connectTestDb, createEventSpecVersion, createProductScope, resolvedChannel, resolvedMessage, stamp, TENANT, testContext, unwrap } from "./helpers";
 import { createForeignTenantFixture } from "./foreign-tenant-fixture";
+import { propertiesNameLower } from "@/features/events/builder/labels";
 import { createEvent, deleteEvent, getEvent, renameEvent, updateEventDocument } from "@/services/events/event.service";
 import { emptyEventDocument, type DocExternalRef, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
 
+// The user's words for a trait (builder/labels.ts): the save validation's texts are checked against them, so a renamed label fails here.
+const MESSAGE_PROPERTIES = propertiesNameLower("MESSAGE");
+const OPERATION_PROPERTIES = propertiesNameLower("OPERATION");
 const prisma = connectTestDb();
 const domainIds: string[] = [];
 const tenantTraitIds: string[] = [];
@@ -196,7 +200,7 @@ describe("event.service", () => {
       { pointer: "/messages/0/payload/entityId", message: 'Entity "no-such-entity" not found in this tenant' },
       { pointer: "/messages/0/headers/entityVersionId", message: '"no-such-version" is not a published version of Order' },
       { pointer: "/messages/0/keyPin/entityId", message: 'Entity "no-such-key-entity" not found in this tenant' },
-      { pointer: "/traits/0/libraryTraitId", message: 'Library trait "no-such-trait" not found' },
+      { pointer: "/traits/0/libraryTraitId", message: `Library ${MESSAGE_PROPERTIES} "no-such-trait" not found` },
       { pointer: "/externalRefs/0/eventVersionId", message: 'Event version "no-such-event-version" not found' },
     ]);
     // Nothing was written.
@@ -268,11 +272,11 @@ describe("event.service", () => {
         { key: "C", kind: "MESSAGE", libraryTraitId: operationTrait.id },
       ]), owner, ctx);
       expect(failureCode(r)).toBe("VALIDATION_ERROR");
-      const reasons = "only tenant-level traits and traits of the event's own domain can be used";
+      const reasons = `only tenant-level ${MESSAGE_PROPERTIES} and ${MESSAGE_PROPERTIES} of the event's own domain can be used`;
       expect(problemsOf(r)).toEqual([
-        { pointer: "/traits/0/libraryTraitId", message: `Library trait "${otherDomain.name}" is not available to this event: ${reasons}` },
-        { pointer: "/traits/1/libraryTraitId", message: `Library trait "${foreign.trait.id}" not found` },
-        { pointer: "/traits/2/libraryTraitId", message: `Library trait "${operationTrait.name}" is of kind OPERATION, but "C" is of kind MESSAGE` },
+        { pointer: "/traits/0/libraryTraitId", message: `Library ${MESSAGE_PROPERTIES} "${otherDomain.name}" are not available to this event: ${reasons}` },
+        { pointer: "/traits/1/libraryTraitId", message: `Library ${MESSAGE_PROPERTIES} "${foreign.trait.id}" not found` },
+        { pointer: "/traits/2/libraryTraitId", message: `Library "${operationTrait.name}" is a set of ${OPERATION_PROPERTIES}, but "C" is declared as a set of ${MESSAGE_PROPERTIES}` },
       ]);
       expect(JSON.stringify(r)).not.toContain(foreign.trait.name);
       expect((await storedDocument(ev.id) as { traits: unknown[] }).traits).toEqual([]);

@@ -3,6 +3,7 @@
 import { err, ok, type Result } from "@/types/result";
 import { isReservedKey } from "@/lib/event-specs/own-property";
 import { KEY_MAX_LENGTH, KEY_PATTERN, type EventDocument } from "./types";
+import { ANY_PROPERTIES } from "./wording";
 
 export type KeyKind = "server" | "channel" | "message" | "trait" | "operation" | "externalRef";
 
@@ -42,7 +43,8 @@ export function renameKey(doc: EventDocument, kind: KeyKind, from: string, to: s
     trait: () => next.traits.map((t) => t.key), channel: channelish, message: messageish,
     externalRef: () => (refKind(from) === "channel" ? channelish() : messageish()) };
   const pool = exists[kind]();
-  if (!pool.includes(from)) return fail(`No ${kind} with key "${from}"`);
+  // A trait is "message properties" / "operation properties" to the user; no key means no kind to name, so both.
+  if (!pool.includes(from)) return fail(`No ${kind === "trait" ? ANY_PROPERTIES : kind} with key "${from}"`);
   if (from === to) return ok(next);
   if (pool.includes(to)) return fail(`The key "${to}" is already used`);
   // External-reference keys are unique across both kinds (the parser checks them overall).

@@ -14,8 +14,7 @@ import {
 } from "@/lib/editable-fields";
 import { parseScopeTarget, requireId } from "@/services/events/service-guards";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
-import { entityDeleteFailure, explainEntityDeleteFailure } from "@/services/events/entity-pin-usage";
-import { findEntityEventReferrers, withEventsInUse } from "@/services/events/event-guards";
+import { deleteEntityGuarded, entityDeleteFailure } from "@/services/events/entity-pin-usage";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
@@ -412,25 +411,20 @@ export async function deleteEntityAction(entityId: string) {
     });
     // An entity of another tenant reads exactly like a missing one (same answer, nothing deleted).
     if (!entity || !(await isInActiveTenant(entity.tenantId))) return { error: "Entity not found" };
+    const target = entity;
 
-    // Library traits that pin it, and other entities whose published versions reference one of its versions (no FK:
-    // only this guard stops that delete and leaves a dangling edge that breaks rendering of the referencing version);
-    // merged with the events (drafts and published versions, pinned or unpinned) that name it, which have no FK either.
-    const inUse = withEventsInUse(
-      await explainEntityDeleteFailure(prisma, entity),
-      "Entity",
-      entity.name,
-      await findEntityEventReferrers(prisma, entity)
-    );
-    if (inUse) return { error: inUseText(inUse) };
-
+    // The guards (library traits that pin it, other entities whose published versions reference one of its versions, events —
+    // drafts and published versions, pinned or unpinned — that name it: none of them has a foreign key that would stop the
+    // delete) and the delete itself run in ONE transaction under the entity row's lock: an event publish can no longer slip a
+    // published pin onto it between the check and the delete. A blocked delete aborts before the audit row.
     await withAudit({
       action: "DELETE",
       entityType: "Entity",
       entityId,
       userId: currentUserId,
       fn: async () => {
-        await prisma.entity.delete({ where: { id: entityId } });
+        const blocked = await deleteEntityGuarded(prisma, target);
+        if (blocked) throw new ServiceErrorRejection(blocked);
         return { id: entityId };
       },
     });
@@ -440,6 +434,10 @@ export async function deleteEntityAction(entityId: string) {
   } catch (e: unknown) {
     if (e instanceof AuditUserMissingError) {
       return { error: "Your session is stale. Sign out and sign in again, then retry." };
+    }
+    if (e instanceof ServiceErrorRejection) {
+      // IN_USE names what holds it; NOT_FOUND = the row went away since it was read: the same answer as a missing entity.
+      return { error: e.serviceError.code === "NOT_FOUND" ? "Entity not found" : inUseText(e.serviceError) };
     }
     // P2003 (a pin that landed since the check) -> IN_USE by name; lock timeout / deadlock -> retryable CONFLICT; anything
     // else -> the generic message (the driver text is logged, never shown).

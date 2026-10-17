@@ -18,8 +18,8 @@ import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioni
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
-import { entityDeleteFailure, explainEntityDeleteFailure } from "@/services/events/entity-pin-usage";
-import { eventsInUseError, findEntityEventReferrers, findEntityLatestVersionEventReferrers, withEventsInUse } from "@/services/events/event-guards";
+import { deleteEntityGuarded, entityDeleteFailure } from "@/services/events/entity-pin-usage";
+import { eventsInUseError, findEntityLatestVersionEventReferrers } from "@/services/events/event-guards";
 import { guardRead } from "@/services/events/service-guards";
 
 export async function createEntity(
@@ -296,8 +296,10 @@ export async function updateEntity(
  * version of another entity that references one of its versions (`schema_references`, no FK: spec §6.1 says a version
  * referenced by a published version cannot be deleted, and the check has to be ours), and no event that names it (a draft
  * or published version, pinned or unpinned: event documents pin without foreign keys, so that guard is ours too and its
- * outcome is merged into the same IN_USE). The pin guard runs before the delete and again after a P2003, so a pin that lands
- * in between is still reported by name; the event guard runs before only (an event pin has no FK to raise a P2003).
+ * outcome is merged into the same IN_USE). Both guards and the delete run in ONE transaction under the entity row's lock
+ * (`deleteEntityGuarded`), so an event publish cannot slip a published pin onto the entity between the guard and the delete;
+ * the pin guard also runs again after a P2003, so a trait pin that lands meanwhile is still reported by name (an event pin
+ * has no FK to raise a P2003: the lock is what orders it). Nothing is audited when the delete is blocked.
  * Never throws: a lock timeout / deadlock is a retryable CONFLICT, any other database failure a DB_ERROR with the generic message.
  */
 export async function deleteEntity(
@@ -314,14 +316,7 @@ export async function deleteEntity(
         suggestedFix: "Verify the entity ID and try again.",
       });
     }
-
-    const inUse = withEventsInUse(
-      await explainEntityDeleteFailure(prisma, existing),
-      "Entity",
-      existing.name,
-      await findEntityEventReferrers(prisma, existing)
-    );
-    if (inUse) return err(inUse);
+    const target = existing;
 
     await withAudit({
       action: "DELETE",
@@ -330,11 +325,14 @@ export async function deleteEntity(
       userId: ctx.userId,
       beforeState: existing as unknown as object,
       fn: async () => {
-        await prisma.entity.delete({ where: { id } });
+        // A blocked delete aborts here, so it is never audited (withAudit only logs after fn resolves).
+        const blocked = await deleteEntityGuarded(prisma, target);
+        if (blocked) throw new ServiceErrorRejection(blocked);
         return null;
       },
     });
   } catch (e: unknown) {
+    if (e instanceof ServiceErrorRejection) return err(e.serviceError);
     if (e instanceof AuditUserMissingError) return err({ code: "UNAUTHORIZED", message: e.message });
     return err(await entityDeleteFailure(prisma, existing ?? { id }, e));
   }

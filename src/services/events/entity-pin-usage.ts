@@ -2,6 +2,7 @@
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { dbErrorResult } from "@/lib/db-error";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
+import { findEntityEventReferrers, withEventsInUse } from "@/services/events/event-guards";
 import { isConcurrentWriteFailure } from "@/services/events/publish-concurrency";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
 import type { ServiceError } from "@/types/result";
@@ -146,6 +147,48 @@ export function entityInUseError(entityName: string, usage: EntityPinUsage): Ser
  */
 export async function explainEntityDeleteFailure(db: Db, entity: DeletableEntity): Promise<ServiceError | null> {
   return entityInUseError(entity.name, await findEntityPinUsage(db, entity));
+}
+
+/**
+ * Upper bound of the guarded delete's transaction, its lock wait included: a publish keeps the pinned entity's row (FOR SHARE) for
+ * its own transaction, which is capped at 15 seconds as well. Past it the delete is a retryable CONFLICT (`isConcurrentWriteFailure`).
+ */
+const ENTITY_DELETE_TIMEOUT_MS = 15_000;
+
+/**
+ * The guarded delete of an entity, as ONE transaction: lock the entity row (`FOR UPDATE`), run both guards (`explainEntityDeleteFailure`
+ * and the event guard) on what is committed once that lock is held, and only then delete. An event publish holds every entity it pins
+ * `FOR SHARE` until it commits, so the two serialize on this row: a publish that committed first has written its published edge before
+ * the guard reads (the delete is IN_USE), and one that comes later waits for this transaction, finds the entity gone and fails its own
+ * re-verification (a retryable CONFLICT, nothing written). Without the lock, a publish that committed between the guard's read and the
+ * delete left a published pin on a deleted entity.
+ *
+ * The lock order cannot close a cycle with publish (`event_specs` row, then the pinned entities' rows in id order): this takes one
+ * entity row and nothing else first, and publish never waits for anything this transaction holds beyond that row.
+ *
+ * Returns what stopped it — IN_USE (what holds the entity) or NOT_FOUND (the row went away since the caller read it) — and null once
+ * the entity is deleted; a blocked delete writes nothing. A database failure THROWS (the transaction is rolled back first): map it
+ * with `entityDeleteFailure`. Auditing is the caller's: it must audit only when this returns null.
+ */
+export async function deleteEntityGuarded(db: PrismaClient, entity: DeletableEntity): Promise<ServiceError | null> {
+  return db.$transaction(
+    async (tx): Promise<ServiceError | null> => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "entities" WHERE "id" = ${entity.id} FOR UPDATE`;
+      if (locked.length === 0) {
+        return { code: "NOT_FOUND", message: `Entity with ID "${entity.id}" not found`, suggestedFix: "Verify the entity ID and try again." };
+      }
+      const inUse = withEventsInUse(
+        await explainEntityDeleteFailure(tx, entity),
+        "Entity",
+        entity.name,
+        await findEntityEventReferrers(tx, entity)
+      );
+      if (inUse) return inUse;
+      await tx.entity.delete({ where: { id: entity.id } });
+      return null;
+    },
+    { timeout: ENTITY_DELETE_TIMEOUT_MS }
+  );
 }
 
 /** The retryable "something changed under the delete" failure (lock timeout, deadlock, serialization failure, ...). */

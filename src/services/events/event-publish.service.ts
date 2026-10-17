@@ -11,6 +11,7 @@ import {
 } from "@/lib/event-specs";
 import { classifyEventBump } from "@/lib/events/document/bump";
 import { collectDocumentEdges } from "@/lib/events/document/edges";
+import { effectiveRepresentationFormats } from "@/lib/events/document/representation";
 import {
   analyzeVersionedPublish, planVersionedPublish, provisionalLabel,
   type EventPublishAnalysis, type EventPublishBlocker, type VersionedPublishInput,
@@ -122,11 +123,14 @@ export async function previewEventPublish(eventId: string, productId: string, ct
  * Lock contract (spec §10): `event_specs` row FOR UPDATE → the pinned entities' rows `FOR SHARE ... ORDER BY id` → re-read the
  * snapshot and the facts and compare → only then write the version row, the frozen edges and the event's pointer. A save of the
  * draft (which updates the event row first) therefore either finished before the lock (the re-verification sees it) or waits for
- * this commit. A concurrent entity delete is only ordered against the PIN CHECK, not against the publish as a whole: one that
- * finished before the lock is seen (the pinned version is missing, so the re-verification fails). But `deleteEntity` reads its
- * event referrers (`findEntityEventReferrers`) outside any transaction and only then runs `prisma.entity.delete`, so a delete whose
- * referrer read ran just before this commit has not seen the new published edge, waits at most for our `FOR SHARE`, and still
- * deletes the entity: a millisecond window in which a pin can end up dangling. Closing it means giving `deleteEntity` a transaction.
+ * this commit. An entity delete serializes against the publish on the entity's row: `deleteEntity` / `deleteEntityAction` lock it
+ * FOR UPDATE in the one transaction that holds their guard and the delete (`deleteEntityGuarded`), so whichever takes the row
+ * first wins. A delete that went first removes the entity (and its versions) before our `FOR SHARE` is granted, the
+ * re-verification no longer finds the pinned version and the publish fails with a retryable CONFLICT, nothing written; a publish
+ * that went first has committed its published edge before the delete's guard reads, so the delete is IN_USE. The two lock orders
+ * cannot close a cycle: the delete takes one entity row and nothing else first. Retiring an entity is NOT ordered this way: its
+ * guard is a courtesy check (nothing dangles when a pin reaches an entity that is retired meanwhile), and a publish does not look at
+ * the entity's status.
  */
 export async function publishEvent(eventId: string, productId: string, input: PublishInput, ctx: ServiceContext, deps: EmitDeps = {}): Promise<Result<EventVersionSummary>> {
   // Untrusted action input: null / non-object → no options; a bump or summary of the wrong type is rejected, never coerced.
@@ -185,7 +189,13 @@ export async function publishEvent(eventId: string, productId: string, input: Pu
                 resolvedSpec: resolved as unknown as Prisma.InputJsonValue, // external refs reuse this without re-rendering
                 frozenTraits: [...snapshot.libraryTraits.values()] as unknown as Prisma.InputJsonValue,
                 changeKind: plan.data.changeKind,
-                compatReport: { reasons: plan.data.reasons, diagnostics: diagnostics.filter((d) => d.severity !== "error") } as unknown as Prisma.InputJsonValue,
+                // reasons / diagnostics as before; `representations` = the format every message was emitted in: the baseline the next
+                // publish compares an entity's recorded source format against (it is not part of the draft document)
+                compatReport: {
+                  reasons: plan.data.reasons,
+                  diagnostics: diagnostics.filter((d) => d.severity !== "error"),
+                  representations: effectiveRepresentationFormats(snapshot.document, snapshot.entityFormats),
+                } as unknown as Prisma.InputJsonValue,
                 changeSummary,
                 publishedById: ctx.userId,
               },

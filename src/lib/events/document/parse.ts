@@ -10,6 +10,7 @@ import {
   type DocumentProblem, type EventDocument, type Origin,
 } from "./types";
 import { createObjectReaders, isBag, ptr, type Bad, type Bag } from "./parse-objects";
+import { ANY_PROPERTIES, propertiesNoun } from "./wording";
 
 /** A parsed array item plus what the cross-reference pass needs to know about it. */
 type Entry<T, X extends object = object> = { value: T; keyOk: boolean } & X;
@@ -18,10 +19,7 @@ const FORMATS: readonly PayloadFormat[] = ["avro", "json-schema", "protobuf"];
 const DIALECTS: readonly JsonSchemaDialect[] = ["draft-07", "2020-12"];
 const ACTIONS: readonly OperationAction[] = ["send", "receive"];
 const TRAIT_KINDS: readonly TraitKind[] = ["MESSAGE", "OPERATION"];
-// What the user calls a trait. The UI's words live in `features/events/builder/labels.ts`, which `src/lib` does not import, so they are
-// repeated here; tests/unit/lib/events/document/parse-wording.test.ts fails if they drift. Problem text never says "trait".
-const propertiesNoun = (kind: TraitKind): string => `${kind.toLowerCase()} properties`;
-const ANY_PROPERTIES = "message or operation properties";
+// What the user calls a trait is in ./wording.ts. Problem text never says "trait".
 const REF_KINDS: readonly DocExternalRef["kind"][] = ["channel", "message"];
 const oneOf = <T extends string>(list: readonly T[], v: unknown): T | undefined => list.find((x) => x === v);
 const compact = <T extends object>(v: T): T => Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined)) as T;
@@ -286,7 +284,7 @@ export function parseEventDocument(value: unknown): Result<EventDocument> {
   const rawTraits = r.array(value, "traits", "");
   const traits = rawTraits.map((raw, i): Entry<DocTrait, { kind: TraitKind | undefined }> => {
     const p = `/traits/${i}`;
-    const t = r.item(raw, p, "trait");
+    const t = r.item(raw, p, `set of ${ANY_PROPERTIES}`);
     const { key, keyOk } = r.docKey(t, p);
     const kind = oneOf(TRAIT_KINDS, t.kind);
     if (!kind) bad(`${p}/kind`, `kind must be one of ${TRAIT_KINDS.join(", ")}`);
