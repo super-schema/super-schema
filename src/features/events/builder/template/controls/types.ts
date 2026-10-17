@@ -66,6 +66,11 @@ export interface ControlProps {
   errors?: ReadonlyArray<FormProblem>;
   /** The surrounding builder's references and entities. */
   context?: TemplateFormContext;
+  /**
+   * For a "json" field: a fully inlined JSON Schema its text is checked against (violations are warnings, the value is written all
+   * the same). `null` or `undefined`: no schema, the editor behaves as it always did. See `JsonEditor`.
+   */
+  schema?: Record<string, unknown> | null;
   /** Renders fields inside this control (objects, list items, a tag's details). */
   renderFields: RenderFields;
 }

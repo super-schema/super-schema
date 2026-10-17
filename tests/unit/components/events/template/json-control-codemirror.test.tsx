@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
 // JsonControl through the REAL CodeMirror editor (jsdom with the stand-ins of ./codemirror-jsdom): the same contract as the textarea.
+// Nothing in this file gives the editor a schema, so none of it may load the schema library (see the last test); the library's tests
+// are in json-editor-schema.test.tsx.
 import "./codemirror-jsdom";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
 import { field, renderField, type HarnessOptions } from "./harness";
+
+// a module factory runs when (and only when) the module is first imported
+const loaded = vi.hoisted(() => ({ schemaLibrary: 0, completion: 0 }));
+vi.mock("codemirror-json-schema", async (importOriginal) => {
+  loaded.schemaLibrary++;
+  return importOriginal();
+});
+vi.mock("@codemirror/autocomplete", async (importOriginal) => {
+  loaded.completion++;
+  return importOriginal();
+});
 
 afterEach(cleanup);
 
@@ -110,5 +124,23 @@ describe("JsonControl with CodeMirror", () => {
     expect(content().getAttribute("aria-required")).toBe("true");
     expect(content().getAttribute("aria-invalid")).toBe("true");
     expect(content().getAttribute("aria-describedby")).toContain("f-thing-error f-thing-hint");
+  });
+
+  it("never loads the schema library when there is no schema, with `schema` absent, null or for text that is not JSON", async () => {
+    const { view, probe } = await mount({ value: { thing: { a: 1 } } });
+    write(view, '{"a": "anything", "b": [1, 2]}');
+    expect(probe.value).toEqual({ thing: { a: "anything", b: [1, 2] } });
+    write(view, "{ broken");
+    cleanup();
+
+    const absent = render(<JsonEditor id="ed-a" value="{}" language="json" ariaLabel="Absent" />);
+    await waitFor(() => expect(absent.container.querySelector(".cm-editor")).not.toBeNull());
+    const none = render(<JsonEditor id="ed-n" value="{}" language="json" ariaLabel="None" schema={null} />);
+    await waitFor(() => expect(none.container.querySelector(".cm-editor")).not.toBeNull());
+    const yamlWithSchema = render(<JsonEditor id="ed-y" value="a: 1" language="yaml" ariaLabel="Yaml" schema={{ type: "object" }} />);
+    await waitFor(() => expect(yamlWithSchema.container.querySelector(".cm-editor")).not.toBeNull());
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 30); }); });
+
+    expect(loaded).toEqual({ schemaLibrary: 0, completion: 0 });
   });
 });

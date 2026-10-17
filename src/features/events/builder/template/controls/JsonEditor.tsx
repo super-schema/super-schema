@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { EditorHandle, EditorLanguage, EditorOptions } from "./codemirror-setup";
-import { jsonProblem } from "./editor-text";
+import { jsonProblem, schemaKey } from "./editor-text";
 
 export type { EditorLanguage } from "./codemirror-setup";
 
@@ -26,10 +26,14 @@ export interface JsonEditorProps {
   /** The accessible name. */
   ariaLabel: string;
   /**
-   * A JSON Schema to validate the text against. Reserved and currently ignored: it needs the optional `codemirror-json-schema`, which
-   * is not installed (it pulls in shiki, markdown-it and json-schema-library, none of which this repo has).
+   * A JSON Schema to check the text against (language "json", while the text can be edited): violations get warning markers and hover and
+   * completion help, they are never errors, never reach `onErrorChange` and never stop the text from being used. `null` or `undefined`:
+   * no schema, and the editor is exactly what it is without this prop (the schema library is not even loaded).
+   * It must be FULLY INLINED, draft-07 style: the library checks with draft-04 rules and ignores a `$ref` it cannot resolve (see
+   * `codemirror-setup.ts`). It is compared by content, so a schema rebuilt on every render does nothing; a large one is still worth a
+   * `useMemo`, because the comparison costs a pass over it whenever the object is a new one.
    */
-  schema?: unknown;
+  schema?: Record<string, unknown> | null;
   /** A CSS height for the editor to fill (`"100%"`, 240); without one it grows with the text, between a minimum and a maximum. */
   height?: string | number;
   /** The parse problem of JSON text (with line and column), or null when there is none. Reported when it changes. */
@@ -63,7 +67,7 @@ export function codeMirrorSupported(): boolean {
 }
 
 export function JsonEditor({
-  id, value, onChange, language, readOnly = false, ariaLabel, height, onErrorChange,
+  id, value, onChange, language, readOnly = false, ariaLabel, schema, height, onErrorChange,
   disabled = false, required = false, invalid = false, describedBy, placeholder,
 }: JsonEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -82,10 +86,15 @@ export function JsonEditor({
     [language, readOnly, disabled, fill, id, ariaLabel, invalid, required, editorDescribedBy, placeholder]
   );
 
+  // The schema that applies: JSON only, and only while the text can be edited (a read-only editor has no lint markers either). It is
+  // known by its content (`schemaKey`), so an object that is rebuilt on every render is the same schema and changes nothing below.
+  const appliedSchema = editable && language === "json" ? (schema ?? null) : null;
+  const appliedSchemaKey = useMemo(() => schemaKey(appliedSchema), [appliedSchema]);
+
   // What the load effect (which runs once) needs to read when CodeMirror arrives: the newest of everything.
-  const latest = useRef({ value, onChange, onErrorChange, options });
+  const latest = useRef({ value, onChange, onErrorChange, options, schema: appliedSchema });
   useEffect(() => {
-    latest.current = { value, onChange, onErrorChange, options };
+    latest.current = { value, onChange, onErrorChange, options, schema: appliedSchema };
   });
 
   // Load CodeMirror, then build the editor on the document as it is by then; destroy it when this goes away.
@@ -144,6 +153,14 @@ export function JsonEditor({
   useEffect(() => {
     handleRef.current?.reconfigure(options);
   }, [options, ready]);
+
+  // The schema, by content: it is installed (loading the schema library the first time), swapped when its content changes, and removed
+  // for none. The handle copes with a load that fails (the editor stays as it is) and with newer calls overtaking older ones.
+  useEffect(() => {
+    const handle = handleRef.current;
+    if (handle === null) return;
+    void handle.setSchema(appliedSchemaKey === null ? null : latest.current.schema);
+  }, [appliedSchemaKey, ready]);
 
   // The parse problem of JSON text, reported when it changes. Computed here, not by the lint source, so it is the same with or without
   // CodeMirror and does not wait for the linter's delay.
