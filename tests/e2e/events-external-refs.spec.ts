@@ -182,7 +182,7 @@ async function addMessage(page: Page, title: string, payloadEntityName: string, 
 async function addSendOperation(page: Page, channelKey: string, messageKey: string): Promise<void> {
   const main = centerPanel(page);
   await main.getByTestId(ID.outline("operations")).click();
-  await main.getByRole("button", { name: "Add operation" }).click();
+  await main.getByRole("button", { name: "Add operation", exact: true }).click();
   await main.getByTestId("operation-channel").selectOption(channelKey);
   await main.getByTestId(ID.operationMessageOption(messageKey)).check();
 }
@@ -318,13 +318,13 @@ test.describe("external event references end to end", () => {
       await main.getByTestId(ID.channelMessageOption(flow.messageRefKey)).check();
 
       await main.getByTestId(ID.outline("operations")).click();
-      await main.getByRole("button", { name: "Add operation" }).click();
+      await main.getByRole("button", { name: "Add operation", exact: true }).click();
       await main.getByTestId(ID.operationActionReceive).check();
       await main.getByTestId("operation-channel").selectOption(channelKey);
       await main.getByTestId(ID.operationMessageOption(flow.messageRefKey)).check();
 
       // The external channel is offered by the channel select; on it every message of the event can be used.
-      await main.getByRole("button", { name: "Add operation" }).click();
+      await main.getByRole("button", { name: "Add operation", exact: true }).click();
       await main.getByTestId("operation-channel").selectOption(flow.channelRefKey);
       await main.getByTestId(ID.operationMessageOption(flow.messageRefKey)).check();
 

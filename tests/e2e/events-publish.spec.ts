@@ -202,7 +202,7 @@ test.describe("event publish end to end", () => {
     const code = main.getByTestId("event-version-code-text");
     await main.getByRole("button", { name: "View v1.0" }).click();
     await expect(page).toHaveURL(/[?&]version=1\.0\b/);
-    await expect(code).toContainText(/version:\s*"?1\.0"?/, { timeout: 60_000 });
+    await expect(code).toContainText(/version:\s*['"]?1\.0['"]?/, { timeout: 60_000 });
     await main.getByTestId("version-code-format-json").click();
     await expect(code).toContainText(/"version":\s*"1\.0"/);
 
