@@ -1,0 +1,17 @@
+asyncapi: 3.0.0
+info:
+  title: Alias bomb
+  version: 1.0.0
+x-lol0: &lol0 ["lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol", "lol"]
+x-lol1: &lol1 [*lol0, *lol0, *lol0, *lol0, *lol0, *lol0, *lol0, *lol0, *lol0]
+x-lol2: &lol2 [*lol1, *lol1, *lol1, *lol1, *lol1, *lol1, *lol1, *lol1, *lol1]
+x-lol3: &lol3 [*lol2, *lol2, *lol2, *lol2, *lol2, *lol2, *lol2, *lol2, *lol2]
+x-lol4: &lol4 [*lol3, *lol3, *lol3, *lol3, *lol3, *lol3, *lol3, *lol3, *lol3]
+x-lol5: &lol5 [*lol4, *lol4, *lol4, *lol4, *lol4, *lol4, *lol4, *lol4, *lol4]
+x-lol6: &lol6 [*lol5, *lol5, *lol5, *lol5, *lol5, *lol5, *lol5, *lol5, *lol5]
+x-lol7: &lol7 [*lol6, *lol6, *lol6, *lol6, *lol6, *lol6, *lol6, *lol6, *lol6]
+x-lol8: &lol8 [*lol7, *lol7, *lol7, *lol7, *lol7, *lol7, *lol7, *lol7, *lol7]
+x-lol9: &lol9 [*lol8, *lol8, *lol8, *lol8, *lol8, *lol8, *lol8, *lol8, *lol8]
+channels:
+  orders:
+    address: orders.v1
