@@ -297,7 +297,8 @@ function rolledBack(cause: ServiceError, deleted: number, leftovers: UndeletedEn
  * Imports the document: the entities (drafts, unpublished, `metadata.sourceFormat` set) in one transaction, then the event named
  * `preview.eventName`, whose document pins them without a version. If the event cannot be created or its document cannot be saved,
  * everything created is deleted again and the failure says so (`details.leftovers` names anything that could not be deleted).
- * A document that fails any check before the first write creates nothing. Never throws.
+ * A document that fails any check before the first write creates no event and no entity (the tenant's built-in library traits are
+ * installed first, idempotently, as a tenant-level step of the import). Never throws.
  */
 export async function importAsyncApi(productId: string, input: AsyncApiImportInput, ctx: ServiceContext): Promise<Result<{ eventId: string; preview: AsyncApiImportPreview }>> {
   let prepared: Result<Prepared>;

@@ -1,5 +1,7 @@
 // src/lib/events/import/limits.ts
-// The bounds that keep a hostile AsyncAPI file from exhausting memory, time or the stack. Pure — client-safe.
+// The bounds on what the AsyncAPI importer's pure layer PARSES, RESOLVES and MAPS (memory, the stack, and the cost of this layer, except a
+// flood of YAML syntax errors). They do NOT bound the time of the AsyncAPI parser, which the service runs afterwards, nor the YAML error
+// flood: both are documented in `src/services/events/import-limits.ts` (KNOWN LIMITATION). Pure — client-safe.
 
 /** YAML aliases the parser resolves before it gives up (the `yaml` package counts them against the size of what they expand to). */
 export const MAX_ALIAS_COUNT = 100;

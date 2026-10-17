@@ -166,7 +166,8 @@ export async function previewAsyncApiImportAction(productId: string, input: Asyn
 
 /**
  * Imports the document: draft entities for the payloads, then the event that pins them. A failure after the entities were created
- * deletes them again (`details.leftovers` names anything that could not be deleted), so a failed import leaves nothing behind.
+ * deletes them again (`details.leftovers` names anything that could not be deleted), so a failed import leaves no event and no entity behind
+ * (the tenant's built-in library traits, installed first and idempotently, stay).
  */
 export async function importAsyncApiAction(productId: string, input: AsyncApiImportInput): Promise<ActionResult<{ eventId: string; preview: AsyncApiImportPreview }>> {
   return runMutation((ctx) => withOwnedTarget(productOwner(productId), () => importAsyncApi(productId, input, ctx)), "importAsyncApiAction");
