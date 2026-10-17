@@ -507,6 +507,18 @@ describe("importAsyncApi: what the AsyncAPI parser says", () => {
     expect(Math.max(...preview.warnings.map((w) => w.message.length))).toBeLessThanOrEqual(500);
   }, 120_000);
 
+  it("says it in the singular when ONE warning is over the cap", async () => {
+    const { ctx, productId } = await setup();
+    vi.spyOn(Parser.prototype, "validate").mockResolvedValueOnce(
+      Array.from({ length: 101 }, (_, i) => diagnostic("asyncapi-info-contact", 1, `Warning number ${i}`, ["info", String(i)])) as never,
+    );
+
+    const { preview } = unwrap(await importAsyncApi(productId, { content: fixture("request-reply.yaml") }, ctx));
+
+    expect(preview.warnings.filter((w) => w.code === "VALIDATION_WARNING")).toHaveLength(100);
+    expect(preview.warnings).toContainEqual({ pointer: "", code: "DROPPED_CONSTRUCT", message: "1 more warning was omitted" });
+  }, 120_000);
+
   it("lists at most 100 parser errors (the message counts the rest), and nothing is created", async () => {
     const { ctx, productId } = await setup();
     vi.spyOn(Parser.prototype, "validate").mockResolvedValueOnce(
@@ -719,8 +731,8 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
 
     expect(Date.now() - started).toBeLessThan(3_000); // the importer alone would take minutes
     expect(failure(result)).toMatchObject({
-      code: "VALIDATION_ERROR", message: expect.stringContaining(`The payload of message "big${s}" is larger than 128 KiB`),
-      details: { messageKey: `big${s}`, role: "payload", limit: 128 * 1024 },
+      code: "VALIDATION_ERROR", message: expect.stringContaining(`The payload of message "big${s}" is larger than 64 KiB`),
+      details: { messageKey: `big${s}`, role: "payload", limit: 64 * 1024 },
     });
     expect(importerCalls()).toEqual(before);
   }, 120_000);
@@ -753,6 +765,113 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     expect(["REF_TOO_LARGE", "VALIDATION_ERROR"]).toContain(error?.code);
     if (error?.code === "VALIDATION_ERROR") expect(error.message).toContain("add up to more than 2 MiB");
     expect(importerCalls()).toEqual(before);
+  }, 120_000);
+
+  /** The densest Protobuf source of at most `maxBytes`: one message of enum-typed fields on one line (the slowest shape measured for the importer). */
+  const compactEnumSource = (maxBytes: number, tag: string): string => {
+    const head = `syntax="proto3";enum E${tag}{A${tag}=0;}message M${tag}{`;
+    const parts = [head];
+    let length = head.length + 1;
+    for (let i = 0; ; i += 1) {
+      const field = `E${tag} f${i}=${i + 1};`;
+      if (length + field.length > maxBytes) break;
+      parts.push(field);
+      length += field.length;
+    }
+    return `${parts.join("")}}`;
+  };
+  const protobufMessage = (source: string) => ({ payload: { schemaFormat: "application/vnd.google.protobuf;version=3", schema: source } });
+
+  it("two distinct maximal-density Protobuf sources at the 96 KiB total are parsed (the slowest allowed case) and finish in seconds: the field cap, not the clock, refuses them", async () => {
+    const { ctx, s, productId } = await setup();
+    const a = compactEnumSource(48 * 1024, "a");
+    const b = compactEnumSource(48 * 1024, "b");
+    expect(a.length + b.length).toBeLessThanOrEqual(96 * 1024);
+    const content = smallDocument("Dense protobuf", { [`a${s}`]: protobufMessage(a), [`b${s}`]: protobufMessage(b) });
+    const before = importerCalls();
+    const started = Date.now();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(4_000); // about 1.2 s here: both sources really were parsed
+    expect(importerCalls().protobuf - before.protobuf).toBe(2);
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("fields; one entity may have at most 2,000") });
+  }, 120_000);
+
+  it("two Protobuf sources of 60 KiB and 40 KiB are past the 96 KiB total: refused before any importer runs", async () => {
+    const { ctx, s, productId } = await setup();
+    const content = smallDocument("Too much protobuf", { [`a${s}`]: protobufMessage(compactEnumSource(60 * 1024, "a")), [`b${s}`]: protobufMessage(compactEnumSource(40 * 1024, "b")) });
+    const before = importerCalls();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR", message: expect.stringContaining("The Protobuf schemas of this document add up to more than 96 KiB"), details: { limit: 96 * 1024 } });
+    expect(importerCalls()).toEqual(before);
+  }, 120_000);
+
+  /** A valid document plus an UNUSED chain of `levels` schemas that each refer to the one before TWICE: 2.5 KB of file, an expansion that doubles per level. */
+  const doublingDocument = (levels: number): string => {
+    const document = JSON.parse(smallDocument("Doubling", { a: { payload: objectPayload("id") } })) as { components: Record<string, unknown> };
+    const schemas: Record<string, unknown> = { s0: { type: "string" } };
+    for (let i = 1; i <= levels; i += 1) {
+      const previous = { $ref: `#/components/schemas/s${i - 1}` };
+      schemas[`s${i}`] = { type: "object", properties: { a: previous, b: previous } };
+    }
+    document.components.schemas = schemas;
+    return JSON.stringify(document);
+  };
+  const parserRuns = () => vi.spyOn(Parser.prototype, "validate").mock.calls.length;
+
+  it("a 2.5 KB document whose references expand to 15 MB (a doubling chain of 17) is refused before the AsyncAPI parser runs, quickly, and creates nothing", async () => {
+    const { ctx, productId } = await setup();
+    const content = doublingDocument(17);
+    expect(Buffer.byteLength(content)).toBeLessThan(3_000);
+    const before = parserRuns();
+    const started = Date.now();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(1_500); // the parser alone takes 10+ s on it and starves the server meanwhile
+    expect(failure(result)).toMatchObject({
+      code: "VALIDATION_ERROR", message: expect.stringContaining("The document is too large once its references are resolved (limit 4 MiB)"),
+      details: { limit: 4 * 1024 * 1024 }, suggestedFix: expect.stringContaining("Reduce how often"),
+    });
+    expect(codeOf(await previewAsyncApiImport(productId, { content }, ctx))).toBe("VALIDATION_ERROR");
+    expect(parserRuns()).toBe(before); // neither the import nor the preview reached the parser
+  }, 120_000);
+
+  it("a chain of 10 (121 KB expanded) passes the gate and is validated; a chain of 15 (3.9 MB, just under the limit) is still validated and takes seconds, not minutes", async () => {
+    const { ctx, productId } = await setup();
+    const before = parserRuns();
+
+    unwrap(await previewAsyncApiImport(productId, { content: doublingDocument(10) }, ctx));
+    expect(parserRuns() - before).toBe(1);
+    const started = Date.now();
+    unwrap(await previewAsyncApiImport(productId, { content: doublingDocument(15) }, ctx));
+
+    expect(parserRuns() - before).toBe(2);
+    expect(Date.now() - started).toBeLessThan(8_000); // about 1.4 s here: the worst the gate lets through
+  }, 120_000);
+
+  it("one trait of 1,000 properties used by 400 messages (111 KB of file, 40 MB expanded) is refused quickly, before the parser, whichever bound sees it first", async () => {
+    const { ctx, productId } = await setup();
+    const messages = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`m${i}`, { payload: objectPayload("id"), traits: [{ $ref: "#/components/messageTraits/big" }] }]));
+    const document = JSON.parse(smallDocument("Shared trait", messages)) as { components: Record<string, unknown> };
+    document.components.messageTraits = { big: { headers: { type: "object", properties: Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`p${i}`, { type: "string" }])) } } };
+    const content = JSON.stringify(document);
+    expect(Buffer.byteLength(content)).toBeLessThan(120_000);
+    const before = parserRuns();
+    const started = Date.now();
+
+    const result = await nothingCreated(productId, () => importAsyncApi(productId, { content }, ctx));
+
+    expect(Date.now() - started).toBeLessThan(3_000);
+    // the pure layer's own expansion budget (REF_TOO_LARGE) stops this shape in this base; once it stops over-counting shared targets the gate does
+    // (the gate alone is pinned on this very document in the unit test import-limits.test.ts)
+    const error = failure(result);
+    expect(["REF_TOO_LARGE", "VALIDATION_ERROR"]).toContain(error?.code);
+    if (error?.code === "VALIDATION_ERROR") expect(error.message).toContain("too large once its references are resolved");
+    expect(parserRuns()).toBe(before);
   }, 120_000);
 
   it("a schema that has more than 2,000 fields is refused naming the entity and the limit; nothing is created", async () => {
@@ -960,6 +1079,25 @@ describe("importAsyncApi: a failed import leaves nothing behind", () => {
     expect(error?.details).toMatchObject({ leftovers: [{ kind: "event" }] });
     expect((await inventory(productId)).events).toBe(1);
     expect((await inventory(productId)).entities).toBe(0);
+  }, 120_000);
+
+  it("an event that is already gone in the rollback (NOT_FOUND) is not a leftover either", async () => {
+    const { ctx, productId } = await setup();
+    vi.mocked(updateEventDocument).mockResolvedValueOnce(err({ code: "CONFLICT", message: "The event changed while saving" }));
+    const real = vi.mocked(deleteEvent).getMockImplementation() as typeof deleteEvent;
+    vi.mocked(deleteEvent).mockImplementationOnce(async (id, owner, c) => {
+      await prisma.eventSpec.delete({ where: { id } }); // someone else removes it first: the real delete then answers NOT_FOUND
+      return real(id, owner, c);
+    });
+
+    const result = await importAsyncApi(productId, { content: fixture("request-reply.yaml") }, ctx);
+
+    const error = failure(result);
+    expect(error?.code).toBe("CONFLICT");
+    expect(error?.message).toContain("Nothing was imported");
+    expect(error?.message).not.toContain("could not be undone");
+    expect(error?.details).toMatchObject({ leftovers: [] });
+    expect(await inventory(productId)).toEqual({ entities: 0, events: 0 });
   }, 120_000);
 
   it("a name taken after the names were resolved refuses the import as a retryable CONFLICT and creates none of its entities (one transaction)", async () => {

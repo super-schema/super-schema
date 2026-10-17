@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ExtractedPayload } from "@/lib/events/import";
+import { resolveLocalRefs, type ExtractedPayload } from "@/lib/events/import";
 import {
-  MAX_FIELDS_PER_ENTITY, MAX_FIELDS_PER_IMPORT, MAX_IMPORT_ENTITIES, MAX_IMPORT_PAYLOADS, MAX_JSON_PAYLOAD_BYTES, MAX_PROTOBUF_PAYLOAD_BYTES,
-  MAX_TOTAL_PAYLOAD_BYTES, MAX_TOTAL_PROTOBUF_BYTES, boundText, checkPayloadLimits, checkPlanLimits, sizeUpTo, type PlanShape,
+  MAX_EXPANDED_DOCUMENT_BYTES, MAX_FIELDS_PER_ENTITY, MAX_FIELDS_PER_IMPORT, MAX_IMPORT_ENTITIES, MAX_IMPORT_PAYLOADS, MAX_JSON_PAYLOAD_BYTES,
+  MAX_PROTOBUF_PAYLOAD_BYTES, MAX_TOTAL_PAYLOAD_BYTES, MAX_TOTAL_PROTOBUF_BYTES, boundText, checkExpandedSize, checkPayloadLimits, checkPlanLimits,
+  expandedSizeUpTo, sizeUpTo, type PlanShape,
 } from "@/services/events/import-limits";
 
 // The bounds of the AsyncAPI import (WP-I2 fix round 1): every cap at its boundary, exactly at the cap = fine, one over = refused.
@@ -26,9 +27,10 @@ const failureOf = (result: ReturnType<typeof checkPayloadLimits>) => (result.suc
 describe("the limits are the ones the review asked for", () => {
   it("names them in one place", () => {
     expect([MAX_IMPORT_ENTITIES, MAX_IMPORT_PAYLOADS]).toEqual([500, 500]);
-    expect([MAX_JSON_PAYLOAD_BYTES, MAX_PROTOBUF_PAYLOAD_BYTES, MAX_TOTAL_PAYLOAD_BYTES]).toEqual([256 * 1024, 128 * 1024, 2 * 1024 * 1024]);
+    expect([MAX_JSON_PAYLOAD_BYTES, MAX_PROTOBUF_PAYLOAD_BYTES, MAX_TOTAL_PAYLOAD_BYTES]).toEqual([256 * 1024, 64 * 1024, 2 * 1024 * 1024]);
     expect([MAX_FIELDS_PER_ENTITY, MAX_FIELDS_PER_IMPORT]).toEqual([2_000, 10_000]);
-    expect(MAX_TOTAL_PROTOBUF_BYTES).toBe(256 * 1024);
+    expect(MAX_TOTAL_PROTOBUF_BYTES).toBe(96 * 1024);
+    expect(MAX_EXPANDED_DOCUMENT_BYTES).toBe(4 * 1024 * 1024);
   });
 });
 
@@ -82,10 +84,10 @@ describe("checkPayloadLimits: how big each payload is", () => {
     expect(failureOf(checkPayloadLimits([json(schemaOfSize(MAX_JSON_PAYLOAD_BYTES + 1), "m", "headers")]))?.message).toContain('The headers of message "m"');
   });
 
-  it("a Protobuf payload of exactly 128 KiB is fine, one character more is refused", () => {
+  it("a Protobuf payload of exactly 64 KiB is fine, one character more is refused", () => {
     expect(checkPayloadLimits([proto("x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES))]).success).toBe(true);
     expect(failureOf(checkPayloadLimits([proto("x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES + 1), "big")]))).toMatchObject({
-      message: 'The payload of message "big" is larger than 128 KiB, the most an import reads from one Protobuf schema', details: { limit: MAX_PROTOBUF_PAYLOAD_BYTES },
+      message: 'The payload of message "big" is larger than 64 KiB, the most an import reads from one Protobuf schema', details: { limit: MAX_PROTOBUF_PAYLOAD_BYTES },
     });
   });
 
@@ -114,12 +116,16 @@ describe("checkPayloadLimits: how big they are together", () => {
     expect(failureOf(checkPayloadLimits(uses(11)))?.message).toContain("a schema that several messages share counts once per message");
   });
 
-  it("distinct Protobuf sources are capped at 256 KiB together (each is parsed once, and parsing is quadratic); a reused source counts once", () => {
-    const a = `a${"x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES - 1)}`;
-    const b = `b${"x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES - 1)}`;
-    expect(checkPayloadLimits([proto(a, "m1"), proto(b, "m2")]).success).toBe(true); // exactly 256 KiB
+  it("distinct Protobuf sources are capped at 96 KiB together (each is parsed once, and parsing is quadratic); a reused source counts once", () => {
+    const a = `a${"x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES - 1)}`; // 64 KiB
+    const b = `b${"x".repeat(MAX_TOTAL_PROTOBUF_BYTES - MAX_PROTOBUF_PAYLOAD_BYTES - 1)}`; // 32 KiB
+    expect(checkPayloadLimits([proto(a, "m1"), proto(b, "m2")]).success).toBe(true); // exactly 96 KiB
     expect(checkPayloadLimits([proto(a, "m1"), proto(a, "m2"), proto(a, "m3"), proto(b, "m4")]).success).toBe(true); // the reuse is free
-    expect(failureOf(checkPayloadLimits([proto(a, "m1"), proto(b, "m2"), proto("c", "m3")]))).toMatchObject({ details: { limit: MAX_TOTAL_PROTOBUF_BYTES, messageKey: "m3" } });
+    expect(failureOf(checkPayloadLimits([proto(a, "m1"), proto(b, "m2"), proto("c", "m3")]))).toMatchObject({
+      message: expect.stringContaining("add up to more than 96 KiB"), details: { limit: MAX_TOTAL_PROTOBUF_BYTES, messageKey: "m3" },
+    });
+    // two maximal sources are over (each is within its own cap)
+    expect(failureOf(checkPayloadLimits([proto(a, "m1"), proto(`c${"x".repeat(MAX_PROTOBUF_PAYLOAD_BYTES - 1)}`, "m2")]))?.details).toMatchObject({ limit: MAX_TOTAL_PROTOBUF_BYTES, messageKey: "m2" });
   });
 });
 
@@ -158,5 +164,92 @@ describe("boundText", () => {
     expect(boundText("a\nb\tc")).toBe("a b c");
     expect(boundText(undefined)).toBe("undefined");
     expect(boundText("x".repeat(30), 10)).toBe(`${"x".repeat(9)}…`);
+  });
+});
+
+// ── the size of the document once its references are replaced (what the AsyncAPI parser is handed) ──
+
+/** `levels` schemas that each refer to the one before TWICE: the expansion doubles at every level, the file barely grows. */
+function doublingDocument(levels: number, tail?: Record<string, unknown>): Record<string, unknown> {
+  const schemas: Record<string, unknown> = { s0: { type: "string" }, ...tail };
+  for (let i = 1; i <= levels; i += 1) {
+    const previous = { $ref: `#/components/schemas/s${i - 1}` };
+    schemas[`s${i}`] = { type: "object", properties: { a: previous, b: previous } };
+  }
+  return { asyncapi: "3.0.0", info: { title: "t", version: "1.0.0" }, components: { schemas } };
+}
+const expandedLength = (document: unknown): number => JSON.stringify((resolveLocalRefs(document) as { data: unknown }).data).length;
+
+describe("expandedSizeUpTo / checkExpandedSize", () => {
+  it("is exactly the length of the JSON text of the document with every reference replaced (checked against the pure layer's own expansion)", () => {
+    const plain = { a: [1, { b: "text" }], c: null };
+    expect(expandedSizeUpTo(plain, Number.MAX_SAFE_INTEGER)).toBe(JSON.stringify(plain).length);
+    for (const levels of [0, 1, 2, 5, 9]) {
+      const document = doublingDocument(levels);
+      expect(expandedSizeUpTo(document, Number.MAX_SAFE_INTEGER), `K=${levels}`).toBe(expandedLength(document));
+    }
+    const chained = { r: { $ref: "#/b" }, a: { x: [{ $ref: "#/c" }, { $ref: "#/c" }] }, b: { $ref: "#/a" }, c: "leaf" }; // a reference to a reference
+    expect(expandedSizeUpTo(chained, Number.MAX_SAFE_INTEGER)).toBe(expandedLength(chained));
+  });
+
+  it("measures a doubling chain of 60 levels (2^60 bytes) instantly, by stopping at the limit", () => {
+    const started = performance.now();
+    expect(expandedSizeUpTo(doublingDocument(60), MAX_EXPANDED_DOCUMENT_BYTES)).toBe(MAX_EXPANDED_DOCUMENT_BYTES + 1);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  it("refuses K=17 (about 15 MB expanded from a 2.5 KB file) well under a second and lets K=10 through", () => {
+    const started = performance.now();
+    const refused = checkExpandedSize(doublingDocument(17));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(refused.success ? null : refused.error).toMatchObject({
+      code: "VALIDATION_ERROR", details: { limit: MAX_EXPANDED_DOCUMENT_BYTES },
+      message: "The document is too large once its references are resolved (limit 4 MiB): every place that refers to a shared definition counts a full copy of it",
+    });
+    expect(JSON.stringify(doublingDocument(17)).length).toBeLessThan(3_000);
+    expect(checkExpandedSize(doublingDocument(10)).success).toBe(true);
+  });
+
+  it("one trait of 1,000 properties used by 400 messages is 10 MB expanded (40 MB with the channel and operations that refer to the messages) from a 111 KB file: refused by the gate alone, in milliseconds", () => {
+    const messages = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`m${i}`, { payload: { type: "object" }, traits: [{ $ref: "#/components/messageTraits/big" }] }]));
+    const big = { headers: { type: "object", properties: Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`p${i}`, { type: "string" }])) } };
+    const document = { asyncapi: "3.0.0", info: { title: "t", version: "1.0.0" }, components: { messages, messageTraits: { big } } };
+    expect(JSON.stringify(document).length).toBeLessThan(120_000);
+    const started = performance.now();
+    const refused = checkExpandedSize(document);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(refused.success).toBe(false);
+    expect(expandedSizeUpTo(document, Number.MAX_SAFE_INTEGER)).toBeGreaterThan(10_000_000);
+  });
+
+  it("the limit itself: a document of exactly 4 MiB expanded is fine, one more character is refused", () => {
+    const padded = (extra: number) => ({ pad: "x".repeat(MAX_EXPANDED_DOCUMENT_BYTES - JSON.stringify({ pad: "" }).length + extra) });
+    expect(checkExpandedSize(padded(0)).success).toBe(true);
+    expect(JSON.stringify(padded(0)).length).toBe(MAX_EXPANDED_DOCUMENT_BYTES);
+    expect(checkExpandedSize(padded(1)).success).toBe(false);
+  });
+
+  it("a recursive schema is not an error and does not let the measure be skipped: the recursion is counted once, the rest is still measured", () => {
+    const recursive = { Node: { type: "object", properties: { child: { $ref: "#/components/schemas/Tree" } } }, Tree: { type: "object", properties: { root: { $ref: "#/components/schemas/Node" } } } };
+    const alone = doublingDocument(0, recursive);
+    expect(checkExpandedSize(alone).success).toBe(true);
+    expect(expandedSizeUpTo(alone, MAX_EXPANDED_DOCUMENT_BYTES)).toBeLessThan(1_000);
+    expect(checkExpandedSize(doublingDocument(17, recursive)).success).toBe(false); // a cycle next to a doubling chain: still refused
+    const selfReference = { a: { $ref: "#/a" }, b: { x: { $ref: "#/b" } } };
+    expect(expandedSizeUpTo(selfReference, MAX_EXPANDED_DOCUMENT_BYTES)).toBeGreaterThan(0);
+  });
+
+  it("dangling and unusual references count as themselves and never throw; a very deep chain is simply over the limit", () => {
+    expect(() => expandedSizeUpTo({ a: { $ref: "#/missing" }, b: { $ref: "https://example.com/x.json" }, c: { $ref: "#anchor" }, d: { $ref: 5 } }, 1_000)).not.toThrow();
+    const chain: Record<string, unknown> = { use: { $ref: "#/r4999" }, leaf: "x" }; // `use` comes first: the whole chain is followed from there
+    for (let i = 0; i < 5_000; i += 1) chain[`r${i}`] = { $ref: i === 0 ? "#/leaf" : `#/r${i - 1}` };
+    expect(expandedSizeUpTo(chain, MAX_EXPANDED_DOCUMENT_BYTES)).toBe(MAX_EXPANDED_DOCUMENT_BYTES + 1);
+  });
+
+  it("keywords beside a $ref refine an object target (counted as the target plus the extra members), and are ignored beside a non-object target", () => {
+    const refined = { s: { type: "object", properties: {} }, use: { $ref: "#/s", description: "more" } };
+    expect(expandedSizeUpTo(refined, 1_000_000)).toBe(expandedLength(refined));
+    const beside = { s: "text", use: { $ref: "#/s", description: "ignored" } };
+    expect(expandedSizeUpTo(beside, 1_000_000)).toBe(expandedLength(beside));
   });
 });

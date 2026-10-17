@@ -117,7 +117,7 @@ export function planPayloadEntities(payloads: readonly ExtractedPayload[], fileN
         warnings.push({ pointer: payload.sourcePointer, code: "DROPPED_CONSTRUCT", message: `The ${payload.role} of "${payload.messageKey}": ${boundText(note)}` });
       }
       if (doc.warnings.length > MAX_NOTES_PER_PAYLOAD) {
-        warnings.push({ pointer: payload.sourcePointer, code: "DROPPED_CONSTRUCT", message: `The ${payload.role} of "${payload.messageKey}": ${doc.warnings.length - MAX_NOTES_PER_PAYLOAD} more notes were left out of this report` });
+        warnings.push({ pointer: payload.sourcePointer, code: "DROPPED_CONSTRUCT", message: `The ${payload.role} of "${payload.messageKey}": ${doc.warnings.length - MAX_NOTES_PER_PAYLOAD} more ${doc.warnings.length - MAX_NOTES_PER_PAYLOAD === 1 ? "note was" : "notes were"} left out of this report` });
       }
     }
   }
@@ -265,7 +265,7 @@ export async function resolveEntityNames(plans: readonly PlannedPayload[], alloc
     };
   });
   if (renamedFields > MAX_FIELD_RENAME_WARNINGS) {
-    warnings.push({ pointer: "", code: "SANITIZED_VALUE", message: `${renamedFields - MAX_FIELD_RENAME_WARNINGS} more fields were renamed because their URL slugs collided; they are not listed` });
+    warnings.push({ pointer: "", code: "SANITIZED_VALUE", message: renamedFields - MAX_FIELD_RENAME_WARNINGS === 1 ? "1 more field was renamed because its URL slug collided; it is not listed" : `${renamedFields - MAX_FIELD_RENAME_WARNINGS} more fields were renamed because their URL slugs collided; they are not listed` });
   }
   return ok({ payloads, warnings });
 }

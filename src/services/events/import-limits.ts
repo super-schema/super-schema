@@ -3,11 +3,17 @@
 // pure layer (`src/lib/events/import/limits.ts`); these are the bounds on what the import then DOES with the payload schemas, all checked
 // BEFORE the first write, so a document over any of them creates nothing and says which limit it hit.
 //
-// Why each exists (measured on the real importers): the JSON Schema and Avro importers are linear (a 256 KiB schema: 8 ms), the Protobuf
-// importer is quadratic in the fields of ONE message (5,000 fields in one message: 1.3 s, 20,000: 23 s) and runs synchronously, so nothing can
-// interrupt it: the only protection is to not hand it too much. A `$ref` that many messages share is inlined once per message, so reuse is
-// counted per use. Fields are rows inside one transaction that holds the tenant's name lock (it blocks every name-writing operation of the tenant).
+// Why each exists (measured on the real code): the JSON Schema and Avro importers are linear (a 256 KiB schema: 8 ms); the Protobuf importer
+// is quadratic in the fields of ONE message and runs synchronously, so nothing can interrupt it and the only protection is to not hand it too
+// much (worst compact case, enum-typed fields: 128 KiB 6.1 s, 64 KiB 1.45 s, 32 KiB 0.36 s, 16 KiB 0.1 s). The AsyncAPI parser (Spectral) is
+// not interruptible either and costs roughly 0.2 - 0.6 s per MB of its input AFTER every `$ref` is replaced by its target (3.9 MB of
+// expanded JSON: 2.3 s), so a 2 KiB document of references to a shared definition can be tens of MB for it: that expansion is measured
+// before it runs (`checkExpandedSize`, a millisecond or less). A `$ref` that
+// many messages share is inlined once per message, so reuse is counted per use. Fields are rows inside one transaction that holds the
+// tenant's name lock (it blocks every name-writing operation of the tenant).
+import { refTargetSegments } from "@/lib/events/import/refs";
 import type { ExtractedPayload } from "@/lib/events/import";
+import { jsonPointer, localRef, resolveLocalRef } from "@/lib/event-specs/json-pointer";
 import { err, ok, type Result } from "@/types/result";
 
 /** Most entities one import may create (payloads, headers and their definitions together). */
@@ -16,12 +22,14 @@ export const MAX_IMPORT_ENTITIES = 500;
 export const MAX_IMPORT_PAYLOADS = 500;
 /** Largest JSON Schema or Avro payload an importer is given (serialized JSON length, `$ref`s inlined). */
 export const MAX_JSON_PAYLOAD_BYTES = 256 * 1024;
-/** Largest Protobuf payload an importer is given (source length). */
-export const MAX_PROTOBUF_PAYLOAD_BYTES = 128 * 1024;
+/** Largest Protobuf payload an importer is given (source length). 64 KiB is about 1.1 s worst case (measured, 4,800 compact enum-typed fields) and still holds a fully legitimate 2,000-field message. */
+export const MAX_PROTOBUF_PAYLOAD_BYTES = 64 * 1024;
 /** Largest total of all payloads handed to importers, a schema used by N messages counting N times. */
 export const MAX_TOTAL_PAYLOAD_BYTES = 2 * 1024 * 1024;
-/** Largest total of DISTINCT Protobuf sources (each is parsed once, and parsing is quadratic): two maximal sources are about 3 s of blocked server. */
-export const MAX_TOTAL_PROTOBUF_BYTES = 256 * 1024;
+/** Largest total of DISTINCT Protobuf sources (each is parsed once, and parsing is quadratic): a 64 KiB and a 32 KiB source are about 1.4 s of blocked server at worst (measured). */
+export const MAX_TOTAL_PROTOBUF_BYTES = 96 * 1024;
+/** Largest the document may be once every `$ref` is replaced by its target (JSON text), the size the AsyncAPI parser is given. */
+export const MAX_EXPANDED_DOCUMENT_BYTES = 4 * 1024 * 1024;
 /** Most fields one entity may have. */
 export const MAX_FIELDS_PER_ENTITY = 2_000;
 /** Most fields the whole import may write (rows inside one transaction), an entity that is planned N times counting N times. */
@@ -136,6 +144,92 @@ export function checkPayloadLimits(payloads: readonly ExtractedPayload[]): Resul
     }
   }
   return ok(undefined);
+}
+
+/** Deepest nesting (references included) the expansion measure follows before it calls the document over the limit; the pure layer refuses far less. */
+const MAX_MEASURE_DEPTH = 1_000;
+class OverLimit extends Error {}
+
+/**
+ * The length of the document's JSON text once every local `$ref` is replaced by its target (what the AsyncAPI parser is handed), counted
+ * only until it exceeds `limit` (then `limit + 1` comes back). Nothing is expanded: a target's size is worked out once (memoised by its
+ * pointer) and added for every use, so a doubling chain of references costs one step per reference, not 2^n, and measuring costs about the
+ * size of the document. A reference that leads back into a target being measured (a recursive schema) is counted as the reference itself
+ * and not followed, so recursion neither fails the measure nor lets it be skipped. Exact for plain documents and for references without
+ * keywords beside them (checked against `resolveLocalRefs` in the unit tests); a `$ref` with siblings counts the target plus the siblings.
+ */
+export function expandedSizeUpTo(root: unknown, limit: number): number {
+  const sizes = new Map<string, number>();
+  const measuring = new Set<string>();
+
+  const targetSize = (pointer: string, target: unknown, depth: number): number => {
+    const known = sizes.get(pointer);
+    if (known !== undefined) return known;
+    measuring.add(pointer);
+    try {
+      const size = sizeOf(target, depth + 1);
+      sizes.set(pointer, size);
+      return size;
+    } finally {
+      measuring.delete(pointer);
+    }
+  };
+
+  const sizeOf = (node: unknown, depth: number): number => {
+    if (depth > MAX_MEASURE_DEPTH) throw new OverLimit();
+    if (typeof node === "string") return node.length + 2;
+    if (typeof node === "number" || typeof node === "boolean" || node === null) return String(node).length;
+    if (typeof node !== "object") return 0;
+    let total = 2;
+    if (Array.isArray(node)) {
+      total += Math.max(0, node.length - 1);
+      for (const item of node) {
+        total += sizeOf(item, depth + 1);
+        if (total > limit) throw new OverLimit();
+      }
+      return total;
+    }
+    const record = node as Record<string, unknown>;
+    const keys = Object.keys(record);
+    const segments = refTargetSegments(record);
+    if (segments !== null) {
+      const found = resolveLocalRef(root, localRef(...segments));
+      const pointer = jsonPointer(...segments);
+      if (!found.found || measuring.has(pointer)) return JSON.stringify(record).length; // dangling or recursive: the reference itself
+      const target = targetSize(pointer, found.value, depth);
+      const refines = typeof found.value === "object" && found.value !== null && !Array.isArray(found.value);
+      if (keys.length === 1 || !refines) return target; // like the pure layer: keywords beside a ref refine an OBJECT target only
+      const beside = keys.filter((key) => key !== "$ref");
+      total = target + beside.length; // a comma before each member added to the target's
+      for (const key of beside) {
+        total += key.length + 3 + sizeOf(record[key], depth + 1);
+        if (total > limit) throw new OverLimit();
+      }
+      return total;
+    }
+    total += Math.max(0, keys.length - 1);
+    for (const key of keys) {
+      total += key.length + 3 + sizeOf(record[key], depth + 1);
+      if (total > limit) throw new OverLimit();
+    }
+    return total;
+  };
+
+  try {
+    return Math.min(sizeOf(root, 0), limit + 1);
+  } catch (e) {
+    if (e instanceof OverLimit) return limit + 1;
+    throw e;
+  }
+}
+
+/** The check that runs before the AsyncAPI parser: a document that is too big once its references are resolved is refused (nothing is created). */
+export function checkExpandedSize(raw: unknown): Result<void> {
+  if (expandedSizeUpTo(raw, MAX_EXPANDED_DOCUMENT_BYTES) <= MAX_EXPANDED_DOCUMENT_BYTES) return ok(undefined);
+  return refuse(
+    `The document is too large once its references are resolved (limit ${formatBytes(MAX_EXPANDED_DOCUMENT_BYTES)}): every place that refers to a shared definition counts a full copy of it`,
+    { limit: MAX_EXPANDED_DOCUMENT_BYTES }, "Reduce how often large definitions are referenced (or how deeply they refer to each other), or split the document.",
+  );
 }
 
 /** The part of a planned payload the plan limits read (structural, so this module needs nothing from the planner). */

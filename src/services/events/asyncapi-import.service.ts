@@ -4,12 +4,13 @@
 // (unpinned: the user publishes the entities, then the event). The pure parts are `src/lib/events/import/*`; the entities are
 // `import-payload-entities.ts`.
 //
-// Order, so that a document that cannot be imported creates NOTHING and the work before the first write is bounded: read and check the
+// Order, so that a document that cannot be imported creates NOTHING and the inputs of the slow steps are bounded: read and check the
 // file, extract the payloads, CHECK THEIR LIMITS (`import-limits.ts`) before any importer runs, plan the entities (and check the entity
-// and field limits), validate with the AsyncAPI parser, map the document ONCE with stand-in pins (extracting the payloads succeeding does
-// not mean mapping will: a missing title, an operation without a channel and an oversized expansion are only found by mapping), and only
-// then write: entities (one transaction), the event, the document. If either of the last two fails, what was created is deleted again
-// and the error says so.
+// and field limits), check the size of the document once its references are resolved, validate with the AsyncAPI parser, map the document
+// ONCE with stand-in pins (extracting the payloads succeeding does not mean mapping will: a missing title, an operation without a channel
+// and an oversized expansion are only found by mapping), and only then write: entities (one transaction), the event, the document. If
+// either of the last two fails, what was created is deleted again and the error says so. The importers and the parser are synchronous
+// stretches of CPU that nothing can interrupt, so there is no time limit; the limits bound what they are given (see `import-limits.ts`).
 import type { Parser } from "@asyncapi/parser";
 import type { LevelScope } from "@/lib/levels";
 import { resolveScope } from "@/lib/asset-scope";
@@ -31,7 +32,7 @@ import {
   createNameAllocator, createPayloadEntities, deleteCreatedEntities, planPayloadEntities, resolveEntityNames,
   type CreatedPayloadEntities, type PlannedFormat, type ResolvedPayload, type UndeletedEntity,
 } from "@/services/events/import-payload-entities";
-import { boundText, checkPayloadLimits, checkPlanLimits, MAX_PARSER_PROBLEMS, MAX_PARSER_WARNINGS } from "@/services/events/import-limits";
+import { boundText, checkExpandedSize, checkPayloadLimits, checkPlanLimits, MAX_PARSER_PROBLEMS, MAX_PARSER_WARNINGS } from "@/services/events/import-limits";
 import { guardRead, requireId } from "@/services/events/service-guards";
 import { GENERIC_ACTION_ERROR, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
@@ -81,9 +82,10 @@ function readInput(input: unknown): Result<{ content: string; fileName?: string;
  * The AsyncAPI parser's verdict on the document: any error blocks the import (nothing is created); warnings are reported (the first
  * `MAX_PARSER_WARNINGS`, then one summary line); info and hints are style advice and are dropped.
  *
- * NOT time-bounded: the parser is asynchronous in name only. It runs long synchronous stretches (Spectral), so a timer cannot fire in the
- * middle of them and racing it against one would only guard a promise that never settles. What bounds its work is its input: the file
- * (1 MiB), the `$ref` expansion budget of the pure layer and the payload limits of `import-limits.ts`, all applied before this runs.
+ * NOT time-bounded, and not interruptible: the parser is asynchronous in name only. It runs long synchronous stretches (Spectral), so a
+ * timer cannot fire in the middle of them and racing it against one would only guard a promise that never settles. What is bounded is
+ * its INPUT, by the caller before this runs: the file (1 MiB), and the size of the document once its `$ref`s are replaced by their targets
+ * (`checkExpandedSize`: at its 4 MiB limit the parser took about 2.3 s, measured). Nothing else is claimed.
  */
 async function validateWithParser(raw: RawAsyncApi3): Promise<Result<ImportWarning[]>> {
   sharedParser ??= createAsyncApiParser();
@@ -104,7 +106,7 @@ async function validateWithParser(raw: RawAsyncApi3): Promise<Result<ImportWarni
   }
   const warnings = diagnostics.filter((d) => d.severity === "warning");
   const report = warnings.slice(0, MAX_PARSER_WARNINGS).map((d): ImportWarning => ({ pointer: boundText(d.pointer), code: "VALIDATION_WARNING", message: boundText(d.message) }));
-  if (warnings.length > MAX_PARSER_WARNINGS) report.push({ pointer: "", code: "DROPPED_CONSTRUCT", message: `${warnings.length - MAX_PARSER_WARNINGS} more warnings were omitted` });
+  if (warnings.length > MAX_PARSER_WARNINGS) report.push({ pointer: "", code: "DROPPED_CONSTRUCT", message: `${warnings.length - MAX_PARSER_WARNINGS} more ${warnings.length - MAX_PARSER_WARNINGS === 1 ? "warning was" : "warnings were"} omitted` });
   return ok(report);
 }
 
@@ -196,7 +198,10 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const planLimits = checkPlanLimits(planned.plans);
   if (!planLimits.success) return planLimits;
 
-  // 3. The AsyncAPI parser: an error means nothing is created.
+  // 3. The AsyncAPI parser: an error means nothing is created. It cannot be interrupted, so what it is given is bounded first: the size
+  // of the document once every reference is replaced by its target (a few bytes of references to a shared definition can be megabytes).
+  const expandedLimit = checkExpandedSize(raw);
+  if (!expandedLimit.success) return expandedLimit;
   const validated = await validateWithParser(raw);
   if (!validated.success) return validated;
 
@@ -302,7 +307,8 @@ export async function importAsyncApi(productId: string, input: AsyncApiImportInp
     try {
       if (eventId !== null) {
         const removed = await deleteEvent(eventId, owner, ctx);
-        if (!removed.success) eventLeft = { id: eventId, message: removed.error.message };
+        // an event that is already gone (NOT_FOUND: something else removed it) is what the rollback wants, not a leftover
+        if (!removed.success && removed.error.code !== "NOT_FOUND") eventLeft = { id: eventId, message: removed.error.message };
       }
     } catch (e: unknown) {
       console.error(`[importAsyncApi] deleting event ${eventId} failed`, e);
