@@ -204,17 +204,35 @@ describe("exampleFromSchema", () => {
   });
 
   it("refuses a schema whose definitions multiply into an enormous example", () => {
-    // 40 definitions, each with two properties that both refer to the next one: 2^40 values if every reference were followed.
+    // 40 definitions, each with four properties that all refer to the next one: the sampler stops 10 levels down, which is still 4^10 values.
     const definitions: Record<string, Schema> = {};
     for (let i = 0; i < 40; i++) {
-      definitions[`D${i}`] = i === 39
-        ? { type: "string" }
-        : { type: "object", properties: { a: { $ref: `#/definitions/D${i + 1}` }, b: { $ref: `#/definitions/D${i + 1}` } } };
+      const next = { $ref: `#/definitions/D${i + 1}` };
+      definitions[`D${i}`] = i === 39 ? { type: "string" } : { type: "object", properties: { a: next, b: next, c: next, d: next } };
     }
     const started = Date.now();
     const result = exampleFromSchema({ $ref: "#/definitions/D0", definitions });
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(failure(result)).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+  });
+
+  it("does NOT refuse a fan-out the sampler's own depth limit keeps small: two properties per level over 40 levels is about 2,000 values", () => {
+    const definitions: Record<string, Schema> = {};
+    for (let i = 0; i < 40; i++) {
+      const next = { $ref: `#/definitions/D${i + 1}` };
+      definitions[`D${i}`] = i === 39 ? { type: "string" } : { type: "object", properties: { a: next, b: next } };
+    }
+    const value = example({ $ref: "#/definitions/D0", definitions });
+    expect(JSON.stringify(value).length).toBeLessThan(100_000);
+    expect(JSON.stringify(value)).toContain('"a":{"a":{"a":');
+  });
+
+  it("refuses a doubling that no depth limit stops: two `allOf` entries per level over 40 levels", () => {
+    const definitions: Record<string, Schema> = { D0: { type: "object", properties: { id: { type: "string" } } } };
+    for (let i = 1; i <= 40; i++) definitions[`D${i}`] = { allOf: [{ $ref: `#/definitions/D${i - 1}` }, { $ref: `#/definitions/D${i - 1}` }] };
+    const started = Date.now();
+    expect(failure(exampleFromSchema({ $ref: "#/definitions/D40", definitions }))).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+    expect(Date.now() - started).toBeLessThan(200);
   });
 
   it("copes with a payload of a thousand properties", () => {
@@ -346,5 +364,134 @@ describe("exampleFromSchema: a hostile schema is refused before the sampler buil
     expect(value.log).toEqual(["string"]);
     expect(value.minItems).toBe(0);
     expect(value.sample).toEqual({ minLength: 1e9 });
+  });
+});
+
+// The gate and the sampler used to read a schema differently, so a schema could be small to the one and enormous to the other. Now the
+// schema is INLINED first (every `$ref` followed by our resolver, `if` / `then` merged until none is left, sizes counted while expanding),
+// and the sampler only ever sees that copy. Each shape below got through the old gate (measured: 84 MB - 1.3 GB, 0.5 - 3.4 s).
+describe("exampleFromSchema: shapes the sampler reads differently from a gate that counted the original", () => {
+  beforeEach(() => {
+    vi.mocked(sample).mockClear();
+  });
+
+  /** Refused with `code` in under 200 ms, the sampler never called. */
+  function refusedAs(code: "EXAMPLE_TOO_LARGE" | "EXAMPLE_FAILED", schema: Schema, label: string): void {
+    const started = performance.now();
+    const result = exampleFromSchema(schema);
+    expect(performance.now() - started, label).toBeLessThan(200);
+    expect(failure(result), label).toMatchObject({ code });
+    expect(sample, label).not.toHaveBeenCalled();
+  }
+  /** A definition of 90,000 strings (under the literal limit): cheap to write, a real cost for whoever builds it. */
+  const list = (): Schema => ({ type: "array", items: { type: "string" }, minItems: 90_000 });
+
+  it("nested if / then: `then: { if: {}, then: { minItems: 400 } }` on three nested levels (400 x 400 x 400 items)", () => {
+    const level = (inner: Schema): Schema => ({ type: "array", items: inner, if: {}, then: { if: {}, then: { minItems: 400 } } });
+    refusedAs("EXAMPLE_TOO_LARGE", level(level(level({ type: "string" }))), "three levels");
+    // one level on its own is a plain 400-item array and is fine
+    expect(example(level({ type: "string" }))).toHaveLength(400);
+  });
+
+  it("a `$ref` written as a one-element list (the sampler follows it, the old gate did not)", () => {
+    refusedAs("EXAMPLE_FAILED", { type: "object", properties: { big: { $ref: ["#/definitions/L"] } }, definitions: { L: list() } }, "array $ref");
+  });
+
+  it("a `$ref` without a leading # (the sampler resolves it, the old resolver found nothing and counted 1)", () => {
+    refusedAs("EXAMPLE_FAILED", { type: "object", properties: { big: { $ref: "/definitions/L" } }, definitions: { L: list() } }, "ref without #");
+    refusedAs("EXAMPLE_FAILED", { type: "object", properties: { big: { $ref: "%23/definitions/L" } }, definitions: { L: list() } }, "encoded #");
+    refusedAs("EXAMPLE_FAILED", { type: "object", properties: { big: { $ref: { x: 1 } } }, definitions: {} }, "object $ref");
+  });
+
+  it("`properties` as a list of schemas (the sampler iterates it, the old gate skipped it)", () => {
+    const properties = Array.from({ length: 10 }, () => ({ $ref: "#/definitions/L" }));
+    refusedAs("EXAMPLE_FAILED", { type: "object", properties, definitions: { L: list() } } as unknown as Schema, "array properties");
+    refusedAs("EXAMPLE_FAILED", { type: "object", properties: null } as unknown as Schema, "null properties");
+    refusedAs("EXAMPLE_FAILED", { type: "object", properties: { a: { type: "object", additionalProperties: [{ $ref: "#/definitions/L" }] } }, definitions: { L: list() } } as unknown as Schema, "array additionalProperties");
+    refusedAs("EXAMPLE_FAILED", { type: "array", items: "#/definitions/L", definitions: { L: list() } } as unknown as Schema, "string items");
+  });
+
+  it("an alias used while its target is being followed: R = $ref A, A.back = $ref R, 1,000 uses of R over 5,000 properties", () => {
+    const properties: Record<string, Schema> = { back: { $ref: "#/definitions/R" } };
+    for (let i = 0; i < 5_000; i++) properties[`p${i}`] = { type: "string" };
+    const used: Record<string, Schema> = { x: { $ref: "#/definitions/A" } };
+    for (let i = 0; i < 1_000; i++) used[`u${i}`] = { $ref: "#/definitions/R" };
+    refusedAs("EXAMPLE_TOO_LARGE", {
+      type: "object", properties: used,
+      definitions: { R: { $ref: "#/definitions/A" }, A: { type: "object", properties } },
+    }, "poisoned alias memo");
+  });
+
+  it("an alias chain that leads back to itself ends, and a cycle through allOf does too", () => {
+    expect(example({ properties: { a: { $ref: "#/definitions/R1" } }, definitions: { R1: { $ref: "#/definitions/R2" }, R2: { $ref: "#/definitions/R1" } } })).toEqual({});
+    expect(JSON.stringify(example({
+      type: "object", properties: { n: { $ref: "#/definitions/N" } },
+      definitions: { N: { allOf: [{ type: "object", properties: { next: { $ref: "#/definitions/N" }, id: { type: "string" } } }] } },
+    })).length).toBeLessThan(500);
+  });
+
+  it("a wide schema that fans out through $ref is counted per use while it is inlined, and stops at the budget", () => {
+    const definitions: Record<string, Schema> = { D0: { type: "string" } };
+    for (let i = 1; i <= 30; i++) {
+      const previous = { $ref: `#/definitions/D${i - 1}` };
+      definitions[`D${i}`] = { type: "object", properties: { a: previous, b: previous, c: previous } };
+    }
+    refusedAs("EXAMPLE_TOO_LARGE", { $ref: "#/definitions/D30", definitions }, "3^10 fan-out");
+    // what the sampler never visits is not inlined, so it is not counted: an array that holds nothing, over the same fan-out, is just empty
+    const started = performance.now();
+    expect(example({ type: "array", maxItems: 0, items: { $ref: "#/definitions/D30" }, definitions })).toEqual([]);
+    expect(example({ type: "string", properties: { a: { $ref: "#/definitions/D30" } }, definitions })).toBe("string");
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  it("still generates what real schemas ask for", () => {
+    const properties: Record<string, Schema> = {};
+    for (let i = 0; i < 300; i++) properties[`field${i}`] = { type: i % 3 === 0 ? "string" : i % 3 === 1 ? "integer" : "boolean" };
+    expect(Object.keys(example({ type: "object", properties }) as object)).toHaveLength(300);
+
+    const value = example({
+      type: "object",
+      properties: {
+        tags: { type: "array", items: { type: "string" }, minItems: 1_000 },
+        code: { type: "string", minLength: 255 },
+        note: { type: "string", maxLength: 1_048_576 },
+        log: { type: "array", items: { type: "string" }, maxItems: 1_000_000 },
+        kind: { type: "string", enum: Array.from({ length: 500 }, (_, i) => `K${i}`) },
+        home: { $ref: "#/definitions/Address" }, work: { $ref: "#/definitions/Address" }, other: { type: "array", items: { $ref: "#/definitions/Address" } },
+      },
+      definitions: { Address: { type: "object", properties: { zip: { type: "string" } } } },
+    }) as Record<string, unknown>;
+    expect(value.tags).toHaveLength(1_000);
+    expect((value.code as string).length).toBe(255);
+    expect(value.note).toBe("string");
+    expect(value.log).toEqual(["string"]);
+    expect(value.kind).toBe("K0");
+    expect([value.home, value.work, value.other]).toEqual([{ zip: "string" }, { zip: "string" }, [{ zip: "string" }]]);
+  });
+
+  it("a recursive tree is cut where it leads back to itself, through properties, items, allOf and oneOf", () => {
+    expect(example({
+      $ref: "#/definitions/Tree",
+      definitions: { Tree: { type: "object", properties: { value: { type: "string" }, left: { $ref: "#/definitions/Tree" }, kids: { type: "array", items: { $ref: "#/definitions/Tree" } } } } },
+    })).toEqual({ value: "string", left: {}, kids: [{}] });
+    expect(example({
+      type: "object", properties: { node: { $ref: "#/definitions/N" } },
+      definitions: { N: { oneOf: [{ type: "object", properties: { id: { type: "string" }, next: { $ref: "#/definitions/N" } } }, { type: "null" }] } },
+    })).toEqual({ node: { id: "string" } });
+  });
+
+  it("merges allOf and oneOf the way the sampler does, and if / then with a small minItems", () => {
+    expect(example({
+      allOf: [{ $ref: "#/definitions/Base" }, { type: "object", properties: { extra: { type: "integer" } } }],
+      definitions: { Base: { type: "object", properties: { id: { type: "string" } } } },
+    })).toEqual({ id: "string", extra: 0 });
+    expect(example({
+      type: "object", properties: { v: { oneOf: [{ $ref: "#/definitions/Str" }, { type: "integer" }] } }, definitions: { Str: { type: "string", enum: ["a"] } },
+    })).toEqual({ v: "a" });
+    expect(example({ type: "array", items: { type: "string" }, if: { minItems: 2 }, then: { minItems: 3 } })).toEqual(["string", "string", "string"]);
+    expect(example({
+      type: "object", properties: { a: { type: "string" } },
+      if: { properties: { a: { const: "x" } } }, then: { properties: { b: { type: "array", items: { type: "integer" }, minItems: 2 } } }, else: { properties: { c: { type: "string" } } },
+    })).toEqual({ a: "x", b: [0, 0] });
   });
 });

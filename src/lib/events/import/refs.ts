@@ -3,7 +3,8 @@
 //
 // An imported file may only refer to itself (`#/components/...`). External references (URLs, files, relative paths) are rejected, never
 // fetched; a reference that leads back to itself is an error; and every expansion is bounded, so neither a loop nor a "billion laughs"
-// chain of references can exhaust time, memory or the stack.
+// chain of references can exhaust time, memory or the stack (that is, the expansion of references: not the AsyncAPI parser, nor the YAML
+// read, which are covered by `src/services/events/import-limits.ts`).
 //
 // The importer needs two views of the same file: the IDENTITY of components that the event document keeps by key (messages, traits,
 // security schemes — so `$ref: '#/components/messages/X'` stays key `X`), and the CONTENT of everything the document stores inline
