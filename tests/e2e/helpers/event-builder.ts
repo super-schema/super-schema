@@ -46,8 +46,8 @@ export async function expectNoRawDbText(page: Page) {
   expect(text, `a rendered page leaked internal error text (${page.url()})`).not.toMatch(RAW_DB_TEXT);
 }
 
-/** Header New menu → New Event → name → Create; lands on the Event page and returns the new event's id. */
-export async function createEventFromMenu(page: Page, productUrl: string, name: string): Promise<string> {
+/** Header New menu → New Event: the New Event dialog, open. */
+export async function openNewEventDialog(page: Page, productUrl: string): Promise<Locator> {
   const main = centerPanel(page);
   await page.goto(productUrl);
   await main.getByTitle(BUILDER_ID.moreOptions).click();
@@ -55,6 +55,13 @@ export async function createEventFromMenu(page: Page, productUrl: string, name: 
 
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+/** Header New menu → New Event → name → Create; lands on the Event page and returns the new event's id. */
+export async function createEventFromMenu(page: Page, productUrl: string, name: string): Promise<string> {
+  const main = centerPanel(page);
+  const dialog = await openNewEventDialog(page, productUrl);
   await dialog.getByRole("textbox", { name: /name/i }).fill(name);
   await dialog.getByRole("button", { name: /^create/i }).click();
 
