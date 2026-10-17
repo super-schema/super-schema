@@ -5,6 +5,7 @@ import { dbErrorResult } from "@/lib/db-error";
 import { assertOwnedBy } from "@/lib/events/ownership";
 import type { LevelScope } from "@/lib/levels";
 import { ok, err, type Result } from "@/types/result";
+import type { ServiceContext } from "@/types/service-context";
 
 /** Upper bound for an untrusted id list (e.g. a channel's allowed messages). */
 export const MAX_ID_LIST = 200;
@@ -65,6 +66,35 @@ export async function loadOwnedRow<TRow extends LevelScope>(db: Db, p: OwnedRowP
 export function requireId(value: unknown, label: string): Result<string> {
   if (typeof value !== "string" || value.trim() === "") return invalid(`${label} must be a non-empty string`);
   return ok(value);
+}
+
+/** The level columns of an event by id and nothing else: a foreign event's name, document or versions are never read by an ownership check. */
+const eventLevelOf = (db: Db) => (id: string) => db.eventSpec.findUnique({ where: { id }, select: { tenantId: true, domainId: true, productId: true } });
+
+/**
+ * Spec §10 ownership of an event, checked ONCE per call before anything is read, rendered or written (an event's level columns never
+ * change): the page's product must own the event (unknown event or product → NOT_FOUND, another product's or tenant's event →
+ * FORBIDDEN). Neither error carries `details`, and the label is the caller's own id (never the row's name), so a foreign event's
+ * name, document or versions never leak. Used by the emit and publish services.
+ */
+export async function assertOwnedEvent(db: Db, eventId: string, productId: string): Promise<Result<void>> {
+  const eventIdOk = requireId(eventId, "eventId");
+  if (!eventIdOk.success) return eventIdOk;
+  const productIdOk = requireId(productId, "productId");
+  if (!productIdOk.success) return productIdOk;
+  const owned = await loadOwnedRow(db, { kind: "Event", id: eventId, owner: { level: "PRODUCT", productId: productIdOk.data }, load: eventLevelOf(db) });
+  return owned.success ? ok(undefined) : owned;
+}
+
+/**
+ * The id of an event that `owner` (the product the user is working in) owns, or NOT_FOUND / FORBIDDEN: the event the external-ref
+ * candidate list leaves out is the user's own, never one the client merely names. The read is the shared ownership guard.
+ */
+export async function requireOwnedEvent(ctx: ServiceContext, eventId: unknown, owner: ScopeTarget): Promise<Result<string>> {
+  const id = requireId(eventId, "eventId");
+  if (!id.success) return id;
+  const owned = await loadOwnedRow(ctx.prisma, { kind: "Event", id: id.data, owner, load: eventLevelOf(ctx.prisma) });
+  return owned.success ? ok(id.data) : owned;
 }
 
 /** A required string (the value is returned untrimmed; callers normalize). */

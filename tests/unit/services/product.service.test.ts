@@ -389,7 +389,8 @@ describe("Product Service", () => {
       function referencedByAnotherProductsEvent() {
         vi.mocked(prisma.eventSpecVersion.findMany).mockResolvedValue([{ id: "sv-in", major: 1, minor: 0 }] as never);
         vi.mocked(prisma.schemaReference.findMany).mockResolvedValue([{ fromKind: "EVENT_SPEC", fromId: "s-out", toId: "sv-in" }] as never);
-        vi.mocked(prisma.eventSpec.findMany).mockResolvedValue([spec] as never);
+        // 1st call: the ids of the product's own events (left out of the edge scan); then the events behind the edges found
+        vi.mocked(prisma.eventSpec.findMany).mockResolvedValueOnce([{ id: "s-in" }] as never).mockResolvedValue([spec] as never);
       }
 
       it("names the referencing event and product together with the content counts, with the structured details", async () => {
@@ -421,7 +422,17 @@ describe("Product Service", () => {
 
         const query = vi.mocked(prisma.eventSpecVersion.findMany).mock.calls[0][0] as { where: { eventSpec: unknown } };
         expect(query.where.eventSpec).toEqual({ tenantId: "tenant-1", productId: "prd-1" });
-        expect(vi.mocked(prisma.eventSpec.findMany).mock.calls[0][0]).toMatchObject({ where: { id: { in: ["s-out"] }, tenantId: "tenant-1" } });
+        // the product's own events are read to be left out of the edge scan by its query (not filtered after it) ...
+        expect(vi.mocked(prisma.eventSpec.findMany).mock.calls[0][0]).toMatchObject({ where: { tenantId: "tenant-1", productId: "prd-1" }, select: { id: true } });
+        expect(vi.mocked(prisma.schemaReference.findMany).mock.calls[0][0]).toMatchObject({
+          where: {
+            toKind: "EVENT_SPEC_VERSION",
+            toId: { in: ["sv-in"] },
+            NOT: [{ fromKind: "EVENT_SPEC", fromId: { in: ["s-in"] } }, { fromKind: "EVENT_SPEC_VERSION", fromId: { in: ["sv-in"] } }],
+          },
+        });
+        // ... and the events behind the edges that remain are looked up inside the tenant only
+        expect(vi.mocked(prisma.eventSpec.findMany).mock.calls[1][0]).toMatchObject({ where: { id: { in: ["s-out"] }, tenantId: "tenant-1" } });
       });
 
       it("ignores references from the product's own events", async () => {

@@ -4,6 +4,7 @@
 // PUBLISHED version; the item is found in that version's stored `resolvedSpec` by id (= the reference's `itemKey`), exactly as
 // `externalItems` (event-snapshot) and `validateDocumentRefs` (event.service) read it.
 import { isJsonObject } from "./inputs";
+import type { JsonObject } from "@/lib/event-specs/types";
 
 /** A published event the picker offers: its latest version carries a resolved spec. */
 export interface ExternalEventCandidate { eventId: string; eventName: string; domainName: string; productName: string; latestVersionId: string; latestLabel: string }
@@ -29,28 +30,53 @@ export function isNewerVersion(current: { major: number; minor: number }, latest
 }
 
 /**
- * The channels or messages of a stored `resolvedSpec`, one summary per entry that is an object with a string `id` (the first
- * entry wins for a repeated id; anything else in the array is skipped, never thrown on, and a title / summary / description
- * that is not a string is left out). `null` when there is no usable resolved spec (NULL column, not a JSON object), which is what
- * `validateDocumentRefs` calls "cannot be referenced"; an object without the array is an empty list.
+ * THE rule for whether a stored `resolvedSpec` entry can be referenced, shared by every reader (the picker through
+ * `externalItemSummaries`, save validation, the snapshot's `externalItems` and the status badge through `referenceableItems`):
+ * an object with a string `id` that has the shape the assembler needs. A channel needs a `profile` object; a message needs a
+ * `payloads` array and a `traitRefs` array of strings. A corrupt item is therefore never offered, never accepted on save and
+ * never resolved, instead of crashing the assembler later.
  */
-export function externalItemSummaries(resolvedSpec: unknown, kind: ExternalItemKind): ExternalItemSummary[] | null {
+export function isReferenceableItem(kind: ExternalItemKind, item: unknown): boolean {
+  if (!isJsonObject(item) || typeof item.id !== "string") return false;
+  if (kind === "channel") return isJsonObject(item.profile);
+  return Array.isArray(item.payloads) && Array.isArray(item.traitRefs) && item.traitRefs.every((id) => typeof id === "string");
+}
+
+/**
+ * The referenceable channels or messages of a stored `resolvedSpec`, by id. When an id repeats, the FIRST entry that has a string id
+ * is the item (the later ones are ignored even if the first is corrupt, so every reader agrees on which entry an id means); an
+ * entry that is not `isReferenceableItem` is left out. `null` when there is no usable resolved spec (NULL column, not a JSON
+ * object), which is what `validateDocumentRefs` calls "cannot be referenced"; an object without the array is an empty map.
+ */
+export function referenceableItems(resolvedSpec: unknown, kind: ExternalItemKind): Map<string, JsonObject> | null {
   if (!isJsonObject(resolvedSpec)) return null;
+  const items = new Map<string, JsonObject>();
   const entries = resolvedSpec[kind === "channel" ? "channels" : "messages"];
+  if (!Array.isArray(entries)) return items;
   const seen = new Set<string>();
-  const summaries: ExternalItemSummary[] = [];
-  if (!Array.isArray(entries)) return summaries;
   for (const entry of entries) {
     if (!isJsonObject(entry) || typeof entry.id !== "string" || seen.has(entry.id)) continue;
     seen.add(entry.id);
-    const summary: ExternalItemSummary = { key: entry.id };
+    if (isReferenceableItem(kind, entry)) items.set(entry.id, entry);
+  }
+  return items;
+}
+
+/**
+ * The channels or messages of a stored `resolvedSpec` that can be referenced (`referenceableItems`), one summary each; a title /
+ * summary / description that is not a string is left out. `null` when there is no usable resolved spec.
+ */
+export function externalItemSummaries(resolvedSpec: unknown, kind: ExternalItemKind): ExternalItemSummary[] | null {
+  const items = referenceableItems(resolvedSpec, kind);
+  if (items === null) return null;
+  return [...items.values()].map((entry) => {
+    const summary: ExternalItemSummary = { key: entry.id as string };
     for (const field of ["title", "summary", "description"] as const) {
       const text = entry[field];
       if (typeof text === "string") summary[field] = text;
     }
-    summaries.push(summary);
-  }
-  return summaries;
+    return summary;
+  });
 }
 
 /**

@@ -384,6 +384,60 @@ describe("OperationsSection: external references (the card of Channels / Message
     renderSection(OperationsSection, { doc });
     expect(screen.getByTestId("operation-needs-channel")).toBeDefined();
   });
+
+  // The message list is "what the channel allows" only for a LOCAL channel; on an external one every message of the event is offered,
+  // so the hint and the empty text must not say a channel has to allow them.
+  describe("the copy under the messages follows the kind of channel", () => {
+    it("says messages must be allowed on the chosen channel for a local channel", () => {
+      renderSection(OperationsSection, { doc: docWithRefs() });
+      expect(text("operation-messages-hint")).toBe("Only messages allowed on the chosen channel are listed.");
+    });
+
+    it("says every message of the event is offered, and nothing about allowing them, for an external channel", () => {
+      renderSection(OperationsSection, { doc: docWithRefs() });
+      type(field("Channel"), "billing-topic");
+      const hint = text("operation-messages-hint") ?? "";
+      expect(hint).toBe("Every message of this event can be used on a channel from another event.");
+      expect(hint).not.toContain("allowed on the chosen channel");
+    });
+
+    it("names the local channel that has no messages, and asks to allow some on it", () => {
+      renderSection(OperationsSection, { doc: docWithRefs() });
+      type(field("Channel"), "empty");
+      expect(text("operation-messages-empty")).toBe(
+        'Channel "empty" has no messages yet. Allow messages on it in Channels or Messages; an operation can be saved without any.'
+      );
+    });
+
+    it("says the EVENT has no messages for an external channel with none to offer, instead of asking to allow messages on it", () => {
+      const doc = emptyEventDocument("Billing");
+      doc.externalRefs = [{ ...CHANNEL_REF }];
+      renderSection(OperationsSection, { doc });
+      click("operation-empty-add");
+      const empty = text("operation-messages-empty") ?? "";
+      expect(empty).toBe("This event has no messages yet. Add one in Messages; an operation can be saved without any.");
+      expect(empty).not.toContain("Allow messages on it");
+    });
+
+    it("does the same for the reply messages", () => {
+      const doc = emptyEventDocument("Billing");
+      doc.externalRefs = [{ ...CHANNEL_REF }];
+      renderSection(OperationsSection, { doc });
+      click("operation-empty-add");
+      openCard("reply");
+      click("operation-reply-toggle");
+      type(field("Reply channel"), "billing-topic");
+      expect(text("operation-reply-messages-empty")).toBe("This event has no messages yet. Add one in Messages.");
+      cleanup();
+
+      const local = richDoc();
+      renderSection(OperationsSection, { doc: local });
+      openCard("reply");
+      click("operation-reply-toggle");
+      type(field("Reply channel"), "empty");
+      expect(text("operation-reply-messages-empty")).toBe('Channel "empty" has no messages yet. Allow messages on it in Channels or Messages.');
+    });
+  });
 });
 
 describe("OperationsSection: reply", () => {

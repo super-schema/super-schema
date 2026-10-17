@@ -7,6 +7,7 @@ import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import { collectDocumentEdges, collectDocumentRefs, collectPinSites } from "@/lib/events/document/edges";
 import { parseEventDocument } from "@/lib/events/document/parse";
 import { emptyEventDocument, isLibraryTrait, type DocumentProblem, type EventDocument } from "@/lib/events/document/types";
+import { referenceableItems } from "@/lib/events/external-refs";
 import { normalizeCatalogName } from "@/lib/events/inputs";
 import type { LevelScope } from "@/lib/levels";
 import { createInScope, ServiceErrorRejection, writeWithUniqueName } from "@/services/scoped-create.service";
@@ -75,20 +76,6 @@ function loadOwned(ctx: ServiceContext, id: string, owner: ScopeTarget): Promise
 
 // ── reference validation ────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** The ids of a stored `ResolvedEventSpec`'s channels or messages; `null` when there is no usable resolved spec (NULL column, malformed JSON). */
-function resolvedItemIds(resolvedSpec: Prisma.JsonValue | null, kind: "channel" | "message"): Set<string> | null {
-  if (resolvedSpec === null || typeof resolvedSpec !== "object" || Array.isArray(resolvedSpec)) return null;
-  const items = resolvedSpec[kind === "channel" ? "channels" : "messages"];
-  const ids = new Set<string>();
-  if (Array.isArray(items)) {
-    for (const item of items) {
-      const id = item !== null && typeof item === "object" && !Array.isArray(item) ? item.id : undefined;
-      if (typeof id === "string") ids.add(id);
-    }
-  }
-  return ids;
-}
-
 /**
  * Everything the document points at must exist where the spec says it may (§4 / §10), reported all at once, in this order:
  * pins, library traits, external refs. Four batched reads however large the document is; every lookup is tenant-filtered, so
@@ -96,7 +83,8 @@ function resolvedItemIds(resolvedSpec: Prisma.JsonValue | null, kind: "channel" 
  *  - Pins (same rules as `resolvePin`): the entity is in this tenant; a non-null version belongs to that entity.
  *  - Library traits: same tenant, level tenant or this event's own domain (never product-level, never another domain), same kind.
  *  - External refs: a published `EventSpecVersion` (the row exists only once published) of this tenant, not of this event, whose
- *    stored `resolvedSpec` is non-null and contains the item (`channels[].id` / `messages[].id` = the ref's `itemKey`).
+ *    stored `resolvedSpec` is non-null and holds a referenceable item (`isReferenceableItem`: the `channels[]` / `messages[]` entry
+ *    whose `id` is the ref's `itemKey`, with the shape the assembler needs).
  */
 async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, eventId: string, doc: EventDocument): Promise<DocumentProblem[]> {
   const refs = collectDocumentRefs(doc);
@@ -155,7 +143,7 @@ async function validateDocumentRefs(ctx: ServiceContext, scope: LevelScope, even
       return;
     }
     const label = `Version ${formatVersionLabel(version)} of "${version.eventSpec.name}"`;
-    const items = resolvedItemIds(version.resolvedSpec, r.kind);
+    const items = referenceableItems(version.resolvedSpec, r.kind);
     if (items === null) {
       problems.push({ pointer, message: `${label} cannot be referenced: it has no resolved spec (published before event documents v2)` });
     } else if (!items.has(r.itemKey)) {

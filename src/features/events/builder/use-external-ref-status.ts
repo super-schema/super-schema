@@ -62,11 +62,33 @@ export function useExternalRefStatus(productId: string, refs: readonly DocExtern
 }
 
 /**
- * The items (with their titles) and the source event's name of each version in `versionIds`, by version id. A version that cannot be
- * loaded is simply absent; each version is asked for once.
+ * The real item list of one published version, or `null` when it cannot be had (any failure, whatever its code; a rejected action
+ * included). For the one place that must not guess: an Update that would REMOVE a reference first checks the latest version itself.
  */
-export function useExternalRefItems(productId: string, versionIds: readonly string[]): ReadonlyMap<string, ExternalVersionItems> {
+export async function loadExternalVersionItems(productId: string, versionId: string): Promise<ExternalVersionItems | null> {
+  try {
+    const actions = await externalRefActions();
+    const result = await actions.getExternalVersionItemsAction(productId, versionId);
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What `useExternalRefItems` knows: the items of each version that loaded, and which versions it has finished asking about (loaded or failed). */
+export interface ExternalRefItems {
+  items: ReadonlyMap<string, ExternalVersionItems>;
+  /** Versions whose request is over. A version in neither `items` nor `settled` is still on its way: show nothing for it yet. */
+  settled: ReadonlySet<string>;
+}
+
+/**
+ * The items (with their titles) and the source event's name of each version in `versionIds`, by version id. A version that cannot be
+ * loaded is simply absent from `items` (and present in `settled`); each version is asked for once.
+ */
+export function useExternalRefItems(productId: string, versionIds: readonly string[]): ExternalRefItems {
   const [loaded, setLoaded] = useState<ReadonlyMap<string, ExternalVersionItems>>(() => new Map());
+  const [settled, setSettled] = useState<ReadonlySet<string>>(() => new Set());
   const asked = useRef(new Set<string>());
   const alive = useRef(true);
   const idsKey = [...new Set(versionIds)].join("\n");
@@ -81,16 +103,13 @@ export function useExternalRefItems(productId: string, versionIds: readonly stri
     for (const versionId of todo) {
       asked.current.add(versionId);
       void (async () => {
-        try {
-          const actions = await externalRefActions();
-          const result = await actions.getExternalVersionItemsAction(productId, versionId);
-          if (result.success && alive.current) setLoaded((prev) => new Map(prev).set(versionId, result.data));
-        } catch {
-          // shown by its key
-        }
+        const items = await loadExternalVersionItems(productId, versionId);
+        if (!alive.current) return;
+        if (items) setLoaded((prev) => new Map(prev).set(versionId, items));
+        setSettled((prev) => new Set(prev).add(versionId));
       })();
     }
   }, [productId, idsKey]);
 
-  return loaded;
+  return { items: loaded, settled };
 }

@@ -178,12 +178,14 @@ function ExplorerSidebar({
   );
   // Every navigation runs in a transition so the clicked row can show a pending
   // state, and never pushes the URL we are already on (it only expands).
-  // A page with unsaved work can veto it (the event builder asks the user itself).
+  // A page with unsaved work can veto it (the event builder asks the user itself):
+  // the veto comes first, so a vetoed click neither navigates nor opens the folder.
   const navigate = useCallback<SidebarNavigate>(
     (href, expandKey) => {
+      const here = href === currentUrlRef.current;
+      if (!here && !canNavigate(href)) return;
       if (expandKey) expand(expandKey);
-      if (href === currentUrlRef.current) return;
-      if (!canNavigate(href)) return;
+      if (here) return;
       setPendingHref(href);
       startTransition(() => {
         push(href);

@@ -25,6 +25,7 @@ import {
   type RecentEntityEntry,
 } from "@/lib/recent-entities";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { canNavigate } from "@/lib/navigation/before-navigate";
 import type { ExplorerTree } from "@/lib/navigation/build-explorer-tree";
 import type {
   CommandPaletteProps,
@@ -128,32 +129,46 @@ export function CommandPalette({
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [isOpen, onClose]);
 
-  const navigateToEntity = useCallback(
-    (entity: CommandPaletteEntity) => {
-      trackRecentEntity({
-        entityId: entity.id,
-        domainSlug: entity.domainSlug,
-        entityName: entity.name,
-        domainName: entity.domainName,
-        slug: entity.slug,
-        productSlug: entity.productSlug ?? null,
-      });
-      router.push(
-        assetHref({
-          kind: "entity",
-          slug: entity.slug || entity.id,
-          domainSlug: entity.domainSlug,
-          productSlug: entity.productSlug ?? null,
-        })
-      );
+  // Every navigation of the palette asks the page first (`canNavigate`): a page with unsaved work vetoes it and asks the user itself,
+  // and a push cannot be stopped once it has started. A vetoed selection pushes nothing and runs no `onGo` (the recent-entity
+  // bookkeeping); the palette closes either way.
+  const goTo = useCallback(
+    (href: string, onGo?: () => void) => {
+      if (canNavigate(href)) {
+        onGo?.();
+        router.push(href);
+      }
       onClose();
     },
     [router, onClose]
   );
 
+  const navigateToEntity = useCallback(
+    (entity: CommandPaletteEntity) => {
+      goTo(
+        assetHref({
+          kind: "entity",
+          slug: entity.slug || entity.id,
+          domainSlug: entity.domainSlug,
+          productSlug: entity.productSlug ?? null,
+        }),
+        () =>
+          trackRecentEntity({
+            entityId: entity.id,
+            domainSlug: entity.domainSlug,
+            entityName: entity.name,
+            domainName: entity.domainName,
+            slug: entity.slug,
+            productSlug: entity.productSlug ?? null,
+          })
+      );
+    },
+    [goTo]
+  );
+
   const navigateToField = useCallback(
     (field: CommandPaletteField) => {
-      router.push(
+      goTo(
         assetHref({
           kind: "field",
           entitySlug: field.entitySlug || field.entityId,
@@ -162,9 +177,8 @@ export function CommandPalette({
           productSlug: field.productSlug,
         })
       );
-      onClose();
     },
-    [router, onClose]
+    [goTo]
   );
 
   // Build recent entities from entries + fetched entities. The fetched list
@@ -331,10 +345,7 @@ export function CommandPalette({
               ))}
               <CommandItem
                 value="action go to domains"
-                onSelect={() => {
-                  router.push("/schemas");
-                  onClose();
-                }}
+                onSelect={() => goTo("/schemas")}
                 className="gap-2 cursor-pointer"
               >
                 <Zap className="w-4 h-4 text-muted-foreground" />

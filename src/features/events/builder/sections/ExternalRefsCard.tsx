@@ -8,9 +8,10 @@
 //             removed, with a note, when it dropped the item and nothing uses it;
 //   Remove  — with its impact first ("Used by 2 operations"): what uses the reference is taken out of it only after a confirmation.
 // The status is best effort (see `use-external-ref-status`): without it a row simply has no badge. A key listed in
-// `itemsMissingInLatest` is only "possibly missing" for this reference (a channel and a message can share a key), which is why an
-// update is refused only for a reference an operation actually uses.
-import { useState } from "react";
+// `itemsMissingInLatest` is only "possibly missing" for this reference (a channel and a message can share a key), so before an Update
+// removes or refuses anything it asks for the latest version's own item list: it removes only what that list really lacks, re-points
+// what it still has, and refuses (changing nothing) when the list cannot be loaded.
+import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,11 +19,11 @@ import type { DocExternalRef, DocumentProblem } from "@/lib/events/document/type
 import type { ExternalItemKind, ExternalRefStatus, ExternalVersionItems } from "@/lib/events/external-refs";
 import {
   ADD_FROM_ANOTHER_EVENT, DETAILS_UNAVAILABLE, EXTERNAL_BADGE, externalRefsEmpty, externalRefsTitle, MAJOR_BADGE, newerVersionText, REMOVE_REFERENCE,
-  removeConfirmText, updateRefusedText, updateRemovedText, updateToText, usedByText,
+  removeConfirmText, removeReferenceLabel, updateRefusedText, updateRemovedText, updateToLabel, updateToText, updateUnconfirmedText, usedByText,
 } from "../labels";
 import { problemMessage, problemsByField } from "../problems";
 import type { DraftState } from "../use-event-draft";
-import { useExternalRefItems, useExternalRefStatus } from "../use-external-ref-status";
+import { loadExternalVersionItems, useExternalRefItems, useExternalRefStatus } from "../use-external-ref-status";
 import { ExternalRefPicker } from "./ExternalRefPicker";
 import { externalRefUsage, Notice, plural, withoutExternalRef } from "./graph-parts";
 
@@ -47,6 +48,13 @@ export function ExternalRefsCard({ kind, draft, problems }: {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [refusal, setRefusal] = useState<{ key: string; text: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // The key of the reference whose latest version an Update is checking (one at a time), and the document as it is NOW: that check is
+  // asynchronous, and the edit that follows it must judge the document the user has, not the one they had when they clicked.
+  const [checking, setChecking] = useState<string | null>(null);
+  const latestDoc = useRef(doc);
+  useEffect(() => {
+    latestDoc.current = doc;
+  });
 
   // The row's position in the WHOLE list: that is what the document's problem pointers use.
   const rows = doc.externalRefs.map((ref, index) => ({ ref, index })).filter(({ ref }) => ref.kind === kind);
@@ -64,21 +72,38 @@ export function ExternalRefsCard({ kind, draft, problems }: {
     update((d) => ({ ...d, externalRefs: [...d.externalRefs, ref] }));
   }
 
-  function updateRef(ref: DocExternalRef) {
+  async function updateRef(ref: DocExternalRef) {
     const status = statuses?.get(ref.eventVersionId);
-    if (!status || !status.newerAvailable) return;
+    if (!status || !status.newerAvailable || checking !== null) return;
     clearMessages();
-    if (!status.itemsMissingInLatest.includes(ref.itemKey)) {
+    const repoint = () =>
       update((d) => ({ ...d, externalRefs: d.externalRefs.map((r) => (r.key === ref.key ? { ...r, eventVersionId: status.latestVersionId } : r)) }));
+    if (!status.itemsMissingInLatest.includes(ref.itemKey)) {
+      repoint();
       return;
     }
-    const using = externalRefUsage(doc, ref).operations;
-    if (using.length > 0) {
-      setRefusal({ key: ref.key, text: updateRefusedText(ref.itemKey, status.latestLabel, using.map((o) => o.key)) });
+    // The key is only POSSIBLY missing: the status lists keys, flat, and a channel and a message can share one. Ask the latest version
+    // for its real items before anything is removed or refused; if it cannot be asked, change nothing (fail closed).
+    setChecking(ref.key);
+    const latest = await loadExternalVersionItems(productId, status.latestVersionId);
+    setChecking(null);
+    const now = latestDoc.current;
+    if (!now.externalRefs.some((r) => r.key === ref.key && r.eventVersionId === ref.eventVersionId)) return; // removed or moved meanwhile
+    if (latest === null) {
+      setRefusal({ key: ref.key, text: updateUnconfirmedText(ref.itemKey, status.latestLabel) });
+      return;
+    }
+    if ((ref.kind === "channel" ? latest.channels : latest.messages).some((item) => item.key === ref.itemKey)) {
+      repoint(); // the latest version still has this very item: the key was listed for the other kind
+      return;
+    }
+    const usage = externalRefUsage(now, ref);
+    if (usage.operations.length > 0) {
+      setRefusal({ key: ref.key, text: updateRefusedText(ref.itemKey, status.latestLabel, usage.operations.map((o) => o.key)) });
       return;
     }
     update((d) => withoutExternalRef(d, ref.key));
-    setNote(updateRemovedText(ref.itemKey, status.latestLabel));
+    setNote(updateRemovedText(ref.itemKey, status.latestLabel, usage.channels.map((c) => c.key)));
   }
 
   function removeRef(ref: DocExternalRef) {
@@ -125,10 +150,11 @@ export function ExternalRefsCard({ kind, draft, problems }: {
             {rows.map(({ ref, index }) => (
               <ExternalRefRow
                 key={`${index}-${ref.key}`} kind={kind} reference={ref}
-                status={statuses?.get(ref.eventVersionId)} details={details.get(ref.eventVersionId)}
+                status={statuses?.get(ref.eventVersionId)} details={details.items.get(ref.eventVersionId)}
+                detailsSettled={details.settled.has(ref.eventVersionId)}
                 usage={externalRefUsage(doc, ref)} problem={problemMessage(problemsByField(problems, `/externalRefs/${index}`))}
-                refusal={refusal?.key === ref.key ? refusal.text : null}
-                onUpdate={() => updateRef(ref)} onRemove={() => removeRef(ref)}
+                refusal={refusal?.key === ref.key ? refusal.text : null} checking={checking !== null}
+                onUpdate={() => { void updateRef(ref); }} onRemove={() => removeRef(ref)}
               />
             ))}
           </ul>
@@ -140,14 +166,18 @@ export function ExternalRefsCard({ kind, draft, problems }: {
   );
 }
 
-function ExternalRefRow({ kind, reference, status, details, usage, problem, refusal, onUpdate, onRemove }: {
+function ExternalRefRow({ kind, reference, status, details, detailsSettled, usage, problem, refusal, checking, onUpdate, onRemove }: {
   kind: ExternalItemKind;
   reference: DocExternalRef;
   status: ExternalRefStatus | undefined;
   details: ExternalVersionItems | undefined;
+  /** The request for `details` is over (it may have failed): only then is "Details unavailable" true; until then the line says nothing. */
+  detailsSettled: boolean;
   usage: ReturnType<typeof externalRefUsage>;
   problem: string | undefined;
   refusal: string | null;
+  /** An Update is checking a latest version: no second one starts meanwhile. */
+  checking: boolean;
   onUpdate: () => void;
   onRemove: () => void;
 }) {
@@ -158,6 +188,7 @@ function ExternalRefRow({ kind, reference, status, details, usage, problem, refu
   const label = details?.label ?? status?.label;
   const newer = status?.newerAvailable === true ? status : null;
   const used = usage.channels.length + usage.operations.length > 0;
+  const caption = eventName ? `${eventName} · v${label}` : detailsSettled ? DETAILS_UNAVAILABLE : null;
 
   return (
     <li data-testid={`external-ref-row-${key}`} className="space-y-space-1 rounded-md border border-border bg-background p-space-3">
@@ -167,14 +198,19 @@ function ExternalRefRow({ kind, reference, status, details, usage, problem, refu
             <span className="truncate text-body-small font-medium text-foreground">{title}</span>
             <Badge variant="outline" data-testid={`external-ref-badge-${key}`}>{EXTERNAL_BADGE}</Badge>
           </p>
-          <p className="truncate text-caption text-muted-foreground">{eventName ? `${eventName} · v${label}` : DETAILS_UNAVAILABLE}</p>
+          {caption && <p className="truncate text-caption text-muted-foreground">{caption}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-space-2">
           {newer && (
-            <Button type="button" size="sm" variant="outline" onClick={onUpdate} data-testid={`external-ref-update-${key}`}>{updateToText(newer.latestLabel)}</Button>
+            <Button
+              type="button" size="sm" variant="outline" onClick={onUpdate} disabled={checking} data-testid={`external-ref-update-${key}`}
+              aria-label={updateToLabel(newer.latestLabel, title)}
+            >
+              {updateToText(newer.latestLabel)}
+            </Button>
           )}
           <Button
-            type="button" size="sm" variant="outline" onClick={onRemove} data-testid={`external-ref-remove-${key}`}
+            type="button" size="sm" variant="outline" onClick={onRemove} data-testid={`external-ref-remove-${key}`} aria-label={removeReferenceLabel(title)}
             className="gap-space-1 text-muted-foreground hover:text-destructive"
           >
             <Trash2 aria-hidden="true" className="size-3.5" /> {REMOVE_REFERENCE}

@@ -88,7 +88,7 @@ afterEach(() => {
 describe("EventPage: the Publish button", () => {
   it("sits in the header next to Code and Delete", () => {
     renderPage();
-    const header = publishButton().parentElement!;
+    const header = publishButton().closest("div")!; // the toolbar: the button's own wrapper is a span
     expect(within(header).getByTestId("event-code-toggle")).toBeDefined();
     expect(within(header).getByTestId("event-delete")).toBeDefined();
     expect(publishButton().textContent).toContain("Publish");
@@ -98,6 +98,7 @@ describe("EventPage: the Publish button", () => {
     renderPage();
     expect(publishButton().disabled).toBe(false);
     expect(publishButton().getAttribute("title")).toBeNull();
+    expect(publishButton().getAttribute("aria-describedby")).toBeNull();
   });
 
   it("is disabled while there are unsaved changes, says to save first, and is enabled again once saved", async () => {
@@ -111,7 +112,17 @@ describe("EventPage: the Publish button", () => {
     expect(publishButton().getAttribute("title")).toBeNull();
   });
 
-  it("is disabled while a save is in flight", async () => {
+  // A disabled button can show no tooltip and take no focus: the reason is also visible text, which the button names as its description.
+  it("shows the reason as visible text the button is described by, and the hover title on its wrapper", () => {
+    renderPage();
+    type(field("metadata-title"), "Orders v2");
+    const hint = screen.getByText("Save your changes first");
+    expect(publishButton().getAttribute("aria-describedby")).toBe(hint.id);
+    expect(publishButton().parentElement?.getAttribute("title")).toBe("Save your changes first");
+    expect(publishButton().getAttribute("title")).toBe("Save your changes first");
+  });
+
+  it("is disabled while a save is in flight, and says it is saving (not to save)", async () => {
     const saving = deferred<unknown>();
     h.update.mockReturnValue(saving.promise);
     renderPage();
@@ -119,9 +130,12 @@ describe("EventPage: the Publish button", () => {
     fireEvent.click(button("builder-save"));
     await waitFor(() => expect(h.update).toHaveBeenCalledTimes(1));
     expect(publishButton().disabled).toBe(true);
-    expect(publishButton().getAttribute("title")).toBe("Save your changes first");
+    expect(publishButton().getAttribute("title")).toBe("Saving your changes…");
+    expect(screen.getByText("Saving your changes…").id).toBe(publishButton().getAttribute("aria-describedby"));
+    expect(screen.queryByText("Save your changes first")).toBeNull();
     await act(async () => { saving.resolve({ success: true, data: makeEvent() }); });
     await waitFor(() => expect(publishButton().disabled).toBe(false));
+    expect(screen.queryByText("Saving your changes…")).toBeNull();
   });
 
   it("is disabled while the draft has problems, and says to fix them (not to save: it cannot be saved)", () => {

@@ -126,8 +126,10 @@ function EventPageBody({ data }: { data: EventPageData }) {
 
   // ----- publish -----
   // Publish cuts a version from the SAVED draft, so it waits for a clean save. Problems come first: while the draft has any it cannot
-  // be saved either, and "save your changes" would send the user in a circle.
-  const publishBlockedReason = draft.problems.length > 0 ? "Fix the highlighted problems first" : draft.dirty || draft.saving ? "Save your changes first" : null;
+  // be saved either, and "save your changes" would send the user in a circle. While a save is running the hint says so.
+  const publishBlockedReason = draft.problems.length > 0
+    ? "Fix the highlighted problems first"
+    : draft.saving ? "Saving your changes…" : draft.dirty ? "Save your changes first" : null;
   async function loadPublishPreview() {
     const result = await previewEventPublishAction(event.id, productId);
     return result.success ? { success: true as const, data: foldPublishBlockers(result.data) } : result;

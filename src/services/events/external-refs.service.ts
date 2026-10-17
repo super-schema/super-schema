@@ -6,18 +6,19 @@
 // Every function is scoped by `tenantId`, which the caller takes from the authenticated context, never from the client: an
 // event or version of another tenant reads exactly like a missing one (NOT_FOUND naming only the id the caller sent).
 import { Prisma } from "@/generated/prisma/client";
-import type { ScopeTarget } from "@/lib/asset-scope";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
 import {
   externalItemSummaries, isNewerVersion, missingItemKeys,
   type ExternalEventCandidate, type ExternalRefInput, type ExternalRefStatus, type ExternalVersionItems, type ExternalVersionOption,
 } from "@/lib/events/external-refs";
-import { guardRead, loadOwnedRow, MAX_ID_LIST, requireId } from "@/services/events/service-guards";
+import { guardRead, MAX_ID_LIST, requireId } from "@/services/events/service-guards";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
 const DEFAULT_CANDIDATE_LIMIT = 25;
 const MAX_CANDIDATE_LIMIT = 50;
+/** Event names are at most 128 characters (`CATALOG_NAME_PATTERN`): the search text is cut there rather than sent whole to a three-column `ILIKE`. */
+const MAX_QUERY_LENGTH = 128;
 
 /** Prisma passes `%` and `_` of a `contains` value on as LIKE wildcards; a search box holds plain text (`_` is even legal in an event name). */
 const likeEscaped = (text: string) => text.replace(/[\\%_]/g, "\\$&");
@@ -28,29 +29,13 @@ const notFound = (what: string, id: string) => err({ code: "NOT_FOUND", message:
 /** A version that carries a resolved spec (published since document v2); older versions cannot be referenced. */
 const HAS_RESOLVED_SPEC = { resolvedSpec: { not: Prisma.DbNull } } satisfies Prisma.EventSpecVersionWhereInput;
 
-// ── the event the picker is opened from ─────────────────────────────────────────────────────────────────────────────────
-
-/**
- * The id of an event that `owner` (the product the user is working in) owns, or NOT_FOUND / FORBIDDEN: the event the candidate
- * list leaves out is the user's own, never one the client merely names. The read is the shared ownership guard.
- */
-export async function requireOwnedEvent(ctx: ServiceContext, eventId: unknown, owner: ScopeTarget): Promise<Result<string>> {
-  const id = requireId(eventId, "eventId");
-  if (!id.success) return id;
-  const owned = await loadOwnedRow(ctx.prisma, {
-    kind: "Event", id: id.data, owner,
-    load: (rowId) => ctx.prisma.eventSpec.findUnique({ where: { id: rowId }, select: { tenantId: true, domainId: true, productId: true } }),
-  });
-  return owned.success ? ok(id.data) : owned;
-}
-
 // ── candidates ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export interface ListExternalEventCandidatesInput {
   tenantId: string;
   /** The event being edited: it can never reference itself, so it is never offered. */
   excludeEventId: string;
-  /** Matched case-insensitively against the event, domain and product name. */
+  /** Matched case-insensitively against the event, domain and product name; trimmed, then cut at 128 characters. */
   query?: string;
   /** Default 25, at most 50. */
   limit?: number;
@@ -75,7 +60,7 @@ export async function listExternalEventCandidates(ctx: ServiceContext, input: Li
   if (input.query !== undefined && typeof input.query !== "string") return invalid("query must be a string");
   const limit = candidateLimit(input.limit);
   if (!limit.success) return limit;
-  const query = input.query?.trim();
+  const query = input.query?.trim().slice(0, MAX_QUERY_LENGTH).trim();
   const needle = query ? likeEscaped(query) : undefined;
 
   return guardRead(async () => {

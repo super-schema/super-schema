@@ -138,6 +138,18 @@ export async function cleanupDomains(prisma: PrismaClient, domainIds: Array<stri
   await prisma.domain.deleteMany({ where: { id: { in: ids } } });
 }
 
+/**
+ * A channel / message entry as a published version's `resolvedSpec` really stores it (`ResolvedChannel` / `ResolvedMessage`, reduced
+ * to the fields the readers use). A hand-built fixture with fewer fields (`{ id: "M" }`) is NOT referenceable: the picker, save
+ * validation and the snapshot all reject it (`isReferenceableItem`), so fixtures build their items with these.
+ */
+export const resolvedChannel = (id: string, extra: Record<string, unknown> = {}) => ({
+  name: id, productSlug: "src", address: `${id}.v1`, protocol: "kafka", profile: { format: "avro" }, ...extra, id,
+});
+export const resolvedMessage = (id: string, extra: Record<string, unknown> = {}) => ({
+  name: id, productSlug: "src", traitRefs: [], payloads: [{ format: "avro", schema: { type: "record", name: id, fields: [] } }], ...extra, id,
+});
+
 /** Tenant-level traits live outside any domain; tests delete the ones they create. */
 export async function cleanupTenantTraits(prisma: PrismaClient, traitIds: string[]): Promise<void> {
   if (traitIds.length === 0) return;

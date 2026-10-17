@@ -211,8 +211,11 @@ async function addExternalRef(page: Page, section: "channels" | "messages", item
 
   // Step 1: search. The event being edited is never offered (it is unpublished here anyway); the source event is.
   await dialog.getByTestId(ID.refSearch).fill(flow.sourceName);
-  await dialog.getByTestId(ID.refEvent(flow.sourceId)).click();
+  // Checked while the list is on screen (step 1), and only once it has loaded: the source event is there, the event being edited is not.
+  // After the click the list is gone and "not offered" would hold for any reason.
+  await expect(dialog.getByTestId(ID.refEvent(flow.sourceId))).toBeVisible();
   await expect(dialog.getByTestId(ID.refEvent(flow.consumerId))).toHaveCount(0);
+  await dialog.getByTestId(ID.refEvent(flow.sourceId)).click();
 
   // Step 2: the newest version is preselected.
   await expect(dialog.getByRole("radio", { checked: true })).toBeVisible();

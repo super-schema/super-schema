@@ -16,7 +16,7 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions", ()
 import type { SectionProps } from "@/features/events/builder/EventBuilder";
 import { ExternalRefsCard } from "@/features/events/builder/sections/ExternalRefsCard";
 import type { DocExternalRef, DocumentProblem, EventDocument } from "@/lib/events/document/types";
-import type { ExternalItemKind, ExternalRefInput, ExternalRefStatus } from "@/lib/events/external-refs";
+import type { ExternalItemKind, ExternalRefInput, ExternalRefStatus, ExternalVersionItems } from "@/lib/events/external-refs";
 import { renderSection, sampleDocument } from "./builder-harness";
 
 beforeAll(() => {
@@ -41,13 +41,21 @@ function answerStatuses(vv1Status: Partial<ExternalRefStatus> = {}) {
   }));
 }
 
+/** What a version of the source event offers (vv1 is what the references point at, vv2 the newer one). */
+const itemsOf = (label: string, over: Partial<ExternalVersionItems> = {}): ExternalVersionItems => ({
+  eventName: "orders", label, channels: [{ key: "billing", title: "Billing topic" }], messages: [{ key: "OrderPlaced", title: "Order placed" }], ...over,
+});
+/** vv1 has everything; `latest` overrides what the newer version vv2 has (the real item list the Update checks before it removes anything). */
+function answerItems(latest: Partial<ExternalVersionItems> = {}) {
+  h.items.mockImplementation(async (_productId: string, versionId: string) => ({
+    success: true, data: versionId === "vv2" ? itemsOf("2.0", latest) : itemsOf("1.0"),
+  }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   answerStatuses();
-  h.items.mockResolvedValue({
-    success: true,
-    data: { eventName: "orders", label: "1.0", channels: [{ key: "billing", title: "Billing topic" }], messages: [{ key: "OrderPlaced", title: "Order placed" }] },
-  });
+  answerItems();
   h.candidates.mockResolvedValue({ success: true, data: [] });
   h.versions.mockResolvedValue({ success: true, data: [] });
 });
@@ -88,6 +96,11 @@ const missing = (testId: string) => screen.queryByTestId(testId) === null;
 /** Wait for the status of a row to be drawn. */
 const statusOf = (key: string) => screen.findByTestId(`external-ref-status-${key}`);
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
 
 describe("ExternalRefsCard: empty", () => {
   it("offers one primary action, 'Add from another event', and asks nothing of the server", async () => {
@@ -140,6 +153,46 @@ describe("ExternalRefsCard: the references", () => {
     await settle();
     expect(row.textContent).toContain("OrderPlaced");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("names each row's Update and Remove buttons after the item they act on (the visible words come first)", async () => {
+    const shipped: DocExternalRef = { key: "Order-shipped", eventVersionId: "vv1", kind: "message", itemKey: "OrderShipped" };
+    renderCard("message", docWith([MSG, shipped]));
+    await statusOf("Order-placed");
+    await waitFor(() => expect(screen.getByTestId("external-ref-row-Order-placed").textContent).toContain("Order placed"));
+    expect(screen.getByTestId("external-ref-remove-Order-placed").getAttribute("aria-label")).toBe("Remove Order placed");
+    expect(screen.getByTestId("external-ref-update-Order-placed").getAttribute("aria-label")).toBe("Update to v2.0: Order placed");
+    // two rows, two different names (a screen reader's button list no longer reads "Remove, Remove")
+    expect(screen.getByRole("button", { name: "Remove OrderShipped" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Update to v2.0: OrderShipped" })).toBeDefined();
+    expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
+  });
+
+  it("shows no 'Details unavailable' while the details are still loading, and says it once loading has failed", async () => {
+    const gate = deferred<unknown>();
+    h.items.mockReturnValue(gate.promise);
+    h.statuses.mockResolvedValue({ success: false, error: "unknown version", code: "NOT_FOUND" }); // so nothing else names the event
+    renderCard("message", docWith([MSG]));
+    await screen.findByTestId("external-ref-row-Order-placed");
+    await settle();
+    expect(screen.queryByText("Details unavailable")).toBeNull();
+    await act(async () => { gate.resolve({ success: false, error: "not found", code: "NOT_FOUND" }); });
+    expect(await screen.findByText("Details unavailable")).toBeDefined();
+  });
+
+  it("does not flash 'Details unavailable' right after an Update re-points to a version whose details are not loaded yet", async () => {
+    const gate = deferred<unknown>();
+    h.items.mockImplementation(async (_p: string, versionId: string) => (versionId === "vv2" ? gate.promise : { success: true, data: itemsOf("1.0") }));
+    renderCard("message", docWith([MSG]));
+    await statusOf("Order-placed");
+    h.statuses.mockResolvedValue({ success: false, error: "unknown version", code: "NOT_FOUND" }); // the re-point's status call has nothing to say
+    click("external-ref-update-Order-placed");
+    await waitFor(() => expect(h.items).toHaveBeenCalledWith("p1", "vv2"));
+    await settle();
+    expect(screen.queryByText("Details unavailable")).toBeNull();
+    await act(async () => { gate.resolve({ success: true, data: itemsOf("2.0") }); });
+    await waitFor(() => expect(screen.getByTestId("external-ref-row-Order-placed").textContent).toContain("v2.0"));
+    expect(screen.queryByText("Details unavailable")).toBeNull();
   });
 
   it("asks for the status of every reference of the document, not only this kind's", async () => {
@@ -237,67 +290,118 @@ describe("ExternalRefsCard: Update", () => {
     await waitFor(() => expect(missing("external-ref-status-Order-placed")).toBe(true));
   });
 
-  it("re-points a reference that an operation uses when the latest version still has the item", async () => {
+  it("re-points a reference that an operation uses when the latest version still has the item, without asking for its items", async () => {
     const { probe } = renderCard("message", docWith([MSG], { message: true }));
     await statusOf("Order-placed");
     click("external-ref-update-Order-placed");
     expect(probe.draft.doc.externalRefs[0].eventVersionId).toBe("vv2");
     expect(probe.draft.doc.operations.map((o) => o.messageKeys)).toEqual([["OrderCreated"], ["Order-placed"], ["Order-placed"]]);
+    expect(h.items).not.toHaveBeenCalledWith("p1", "vv2"); // the key is not listed as missing: nothing to check
   });
 
   it("refuses, with an inline message, when the latest version dropped the item and an operation uses it", async () => {
     answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] });
+    answerItems({ messages: [] }); // the latest version really has no such message
     const before = docWith([MSG], { message: true });
     const { probe } = renderCard("message", before);
     await statusOf("Order-placed");
     click("external-ref-update-Order-placed");
-    const refused = text("external-ref-refused-Order-placed");
-    expect(refused).toContain("v2.0");
-    expect(refused).toContain('"OrderPlaced"');
-    expect(refused).toContain('"receivePlaced"');
-    expect(refused).toContain('"auditPlaced"');
+    const refused = await screen.findByTestId("external-ref-refused-Order-placed");
+    // the key is only POSSIBLY missing, so the latest version's own item list is asked for first: product id first, then the version
+    expect(h.items).toHaveBeenCalledWith("p1", "vv2");
+    expect(refused.textContent).toContain("v2.0");
+    expect(refused.textContent).toContain('it no longer has "OrderPlaced"');
+    expect(refused.textContent).not.toContain("may no longer have"); // confirmed, not a guess
+    expect(refused.textContent).toContain('"receivePlaced"');
+    expect(refused.textContent).toContain('"auditPlaced"');
     expect(probe.draft.doc).toEqual(before);
     expect(probe.draft.dirty).toBe(false);
   });
 
-  it("removes a dropped item nobody uses, with a note", async () => {
+  it("removes a dropped item nobody uses, with a note that says the latest version no longer has it", async () => {
     answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] });
+    answerItems({ messages: [] });
     const { probe } = renderCard("message", docWith([MSG]));
     await statusOf("Order-placed");
     click("external-ref-update-Order-placed");
+    const noteEl = await screen.findByTestId("external-refs-note");
     expect(probe.draft.doc.externalRefs).toEqual([]);
-    const note = text("external-refs-note");
-    expect(note).toContain('"OrderPlaced"');
-    expect(note).toContain("v2.0");
+    expect(noteEl.textContent).toBe('Removed "OrderPlaced": v2.0 no longer has it and no operation used it.');
     expect(missing("external-ref-row-Order-placed")).toBe(true);
     // The card stays, with its empty state, so the note has somewhere to be.
     expect(text("external-refs-empty")).toContain("Messages from other events");
   });
 
-  it("a channel and a message that share an item key: the listed key refuses only the reference an operation uses", async () => {
+  it("says so, with the count, when removing the dropped item also took it out of the allowed messages of local channels", async () => {
+    answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] });
+    answerItems({ messages: [] });
+    // A local channel allows the message, but no operation uses it: Update may remove it, and must not claim that nothing used it.
+    const doc = docWith([MSG]);
+    doc.channels[0] = { ...doc.channels[0], messageKeys: [...doc.channels[0].messageKeys, MSG.key] };
+    doc.channels.push({ ...doc.channels[0], key: "audit", address: "audit", messageKeys: [MSG.key] });
+    const { probe } = renderCard("message", doc);
+    await statusOf("Order-placed");
+    click("external-ref-update-Order-placed");
+    const noteEl = await screen.findByTestId("external-refs-note");
+    expect(noteEl.textContent).toBe(
+      'Removed "OrderPlaced": v2.0 no longer has it and no operation used it. It was also taken out of the allowed messages of 2 channels (orders, audit).'
+    );
+    expect(noteEl.textContent).not.toContain("nothing used");
+    expect(probe.draft.doc.channels.filter((c) => c.messageKeys.includes(MSG.key))).toEqual([]);
+    expect(probe.draft.doc.channels.find((c) => c.key === "orders")?.messageKeys).toEqual(["OrderCreated"]);
+  });
+
+  it("a channel and a message that share an item key: a listed key never removes the reference whose item the latest version still has", async () => {
     const message: DocExternalRef = { key: "m-orders", eventVersionId: "vv1", kind: "message", itemKey: "orders" };
     const channel: DocExternalRef = { key: "c-orders", eventVersionId: "vv1", kind: "channel", itemKey: "orders" };
+    // The latest version dropped the CHANNEL "orders" but kept a MESSAGE "orders": the flat key list still says "orders" is missing.
     answerStatuses({ itemsMissingInLatest: ["orders"] });
+    answerItems({ channels: [], messages: [{ key: "orders", title: "Orders" }] });
     // Only the channel reference is used by an operation.
     const doc = docWith([message, channel], { channel: true });
     doc.operations = doc.operations.map((o) => (o.key === "receiveBilling" ? { ...o, channelKey: "c-orders" } : o));
     doc.operations.push({ key: "receiveOrders", action: "receive", channelKey: "c-orders", messageKeys: [], traitKeys: [] });
 
-    // The channel card: used and listed -> refused.
+    // The channel card: really dropped, and used -> refused.
     const { probe } = renderCard("channel", doc);
     await statusOf("c-orders");
     click("external-ref-update-c-orders");
-    expect(text("external-ref-refused-c-orders")).toContain('"receiveOrders"');
+    expect((await screen.findByTestId("external-ref-refused-c-orders")).textContent).toContain('"receiveOrders"');
     expect(probe.draft.dirty).toBe(false);
     cleanup();
 
-    // The message card: listed, but no operation uses the message reference -> removed with a note, never refused.
+    // The message card: the key is listed, but the latest version still has that MESSAGE -> re-pointed, not removed, no note.
     const second = renderCard("message", doc);
     await statusOf("m-orders");
     click("external-ref-update-m-orders");
+    await waitFor(() => expect(second.probe.draft.doc.externalRefs.find((r) => r.key === "m-orders")?.eventVersionId).toBe("vv2"));
+    expect(second.probe.draft.doc.externalRefs.map((r) => r.key)).toEqual(["m-orders", "c-orders"]);
     expect(missing("external-ref-refused-m-orders")).toBe(true);
-    expect(second.probe.draft.doc.externalRefs.map((r) => r.key)).toEqual(["c-orders"]);
-    expect(text("external-refs-note")).toContain('"orders"');
+    expect(missing("external-refs-note")).toBe(true);
+  });
+
+  it.each([
+    ["answers with a failure", () => h.items.mockImplementation(async (_p: string, versionId: string) => (
+      versionId === "vv2" ? { success: false, error: 'Event version "vv2" not found', code: "NOT_FOUND" } : { success: true, data: itemsOf("1.0") }))],
+    ["rejects", () => h.items.mockImplementation(async (_p: string, versionId: string) => {
+      if (versionId === "vv2") throw new Error("network down");
+      return { success: true, data: itemsOf("1.0") };
+    })],
+  ])("refuses (fails closed) and changes nothing when the latest version's items cannot be loaded: the lookup %s", async (_name, breakLookup) => {
+    answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] });
+    breakLookup();
+    // Not used by any operation: before, this would have been REMOVED on the strength of a flat key list alone.
+    const before = docWith([MSG]);
+    const { probe } = renderCard("message", before);
+    await statusOf("Order-placed");
+    click("external-ref-update-Order-placed");
+    const refused = await screen.findByTestId("external-ref-refused-Order-placed");
+    expect(refused.textContent).toContain('it may no longer have "OrderPlaced"');
+    expect(refused.textContent).not.toContain("network down"); // never the cause
+    expect(probe.draft.doc).toEqual(before);
+    expect(probe.draft.dirty).toBe(false);
+    expect(missing("external-refs-note")).toBe(true);
+    expect(screen.getByTestId("external-ref-row-Order-placed")).toBeDefined();
   });
 
   it("re-points a used reference whose key is not listed, even if another reference of the version is", async () => {
@@ -309,12 +413,28 @@ describe("ExternalRefsCard: Update", () => {
     expect(missing("external-ref-refused-Order-placed")).toBe(true);
   });
 
+  it("does nothing, and says nothing, when the reference was removed while its items were being loaded", async () => {
+    answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] });
+    const gate = deferred<unknown>();
+    h.items.mockImplementation(async (_p: string, versionId: string) => (versionId === "vv2" ? gate.promise : { success: true, data: itemsOf("1.0") }));
+    const { probe } = renderCard("message", docWith([MSG]));
+    await statusOf("Order-placed");
+    click("external-ref-update-Order-placed");
+    await waitFor(() => expect(h.items).toHaveBeenCalledWith("p1", "vv2"));
+    act(() => probe.draft.update((d) => ({ ...d, externalRefs: [] })));
+    await act(async () => { gate.resolve({ success: true, data: itemsOf("2.0", { messages: [] }) }); });
+    expect(missing("external-refs-note")).toBe(true);
+    expect(missing("external-ref-refused-Order-placed")).toBe(true);
+    expect(probe.draft.doc.externalRefs).toEqual([]);
+  });
+
   it("clears an earlier refusal or note once something else is edited through the card", async () => {
     answerStatuses({ itemsMissingInLatest: ["OrderPlaced"] });
+    answerItems({ messages: [] });
     renderCard("message", docWith([MSG], { message: true }));
     await statusOf("Order-placed");
     click("external-ref-update-Order-placed");
-    expect(missing("external-ref-refused-Order-placed")).toBe(false);
+    await screen.findByTestId("external-ref-refused-Order-placed");
     vi.spyOn(window, "confirm").mockReturnValue(true);
     click("external-ref-remove-Order-placed");
     expect(missing("external-ref-refused-Order-placed")).toBe(true);

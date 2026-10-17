@@ -21,7 +21,7 @@ import { autoRenameKey, leftForm, newKey } from "../auto-key";
 import { Field, selectClass } from "../controls";
 import type { SectionProps } from "../EventBuilder";
 import { IdentifierDisclosure } from "../Identifier";
-import { externalItemLabel, operationPropertiesTitle } from "../labels";
+import { externalItemLabel, operationMessagesEmpty, operationMessagesHint, operationPropertiesTitle, replyMessagesEmpty } from "../labels";
 import { problemMessage, problemsByField, uniqueProblems } from "../problems";
 import { buildReferenceContext } from "../references";
 import { BindingsForm, TemplateForm, type TemplateFormContext } from "../template";
@@ -95,6 +95,10 @@ const channelChoices = (doc: EventDocument): Array<{ key: string; label: string 
   ...doc.externalRefs.filter((r) => r.kind === "channel").map((r) => ({ key: r.key, label: externalItemLabel(r.key) })),
 ];
 
+/** The channel is one another event owns (an external reference), and not shadowed by a local channel of the same key. */
+const isExternalChannel = (doc: EventDocument, channelKey: string | undefined): boolean =>
+  !doc.channels.some((c) => c.key === channelKey) && doc.externalRefs.some((r) => r.kind === "channel" && r.key === channelKey);
+
 /**
  * The messages an operation on `channelKey` can use: the ones a local channel allows (an external message among them, once the channel
  * allows it); on an external channel every message of the document, because the parser cannot check them against a channel the event
@@ -103,7 +107,7 @@ const channelChoices = (doc: EventDocument): Array<{ key: string; label: string 
 function messagesOf(doc: EventDocument, channelKey: string | undefined): string[] {
   const local = doc.channels.find((c) => c.key === channelKey);
   if (local) return local.messageKeys;
-  return doc.externalRefs.some((r) => r.kind === "channel" && r.key === channelKey) ? allMessageKeys(doc) : [];
+  return isExternalChannel(doc, channelKey) ? allMessageKeys(doc) : [];
 }
 
 /** A message in a checklist: an external reference is marked as such. */
@@ -373,9 +377,9 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
               options={messagesOf(doc, operation.channelKey).map(messageChoice(doc))}
               strayLabel="not on this channel" error={errorAt("/messageKeys")}
               empty={channelExists
-                ? `Channel "${operation.channelKey}" has no messages yet. Allow messages on it in Channels or Messages; an operation can be saved without any.`
+                ? operationMessagesEmpty(operation.channelKey, isExternalChannel(doc, operation.channelKey))
                 : "Choose a channel to see the messages it allows."}
-              hint="Only messages allowed on the chosen channel are listed."
+              hint={operationMessagesHint(isExternalChannel(doc, operation.channelKey))}
             />
           </>
         ))}
@@ -404,7 +408,7 @@ function OperationForm({ draft, options, index, operation, problems, context, ca
                     options={messagesOf(doc, reply.channelKey).map(messageChoice(doc))}
                     strayLabel="not on this channel" error={errorAt("/reply/messageKeys")}
                     empty={replyChannelExists
-                      ? `Channel "${reply.channelKey}" has no messages yet. Allow messages on it in Channels or Messages.`
+                      ? replyMessagesEmpty(reply.channelKey ?? "", isExternalChannel(doc, reply.channelKey))
                       : "Choose a reply channel to see the messages it allows."}
                   />
                   <TemplateForm

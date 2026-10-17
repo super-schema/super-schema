@@ -224,7 +224,8 @@ describe("deleteDomainAction", () => {
     function referencedByAnotherDomainsEvent() {
       mockPrisma.eventSpecVersion.findMany.mockResolvedValue([{ id: "sv-in", major: 2, minor: 1 }]);
       mockPrisma.schemaReference.findMany.mockResolvedValue([{ fromKind: "EVENT_SPEC", fromId: "s-out", toId: "sv-in" }]);
-      mockPrisma.eventSpec.findMany.mockResolvedValue([spec]);
+      // 1st call: the ids of the domain's own events (left out of the edge scan); then the events behind the edges found
+      mockPrisma.eventSpec.findMany.mockResolvedValueOnce([{ id: "s-in" }]).mockResolvedValue([spec]);
     }
 
     it("reports entities, events and the referencing events of other domains together", async () => {
@@ -260,7 +261,17 @@ describe("deleteDomainAction", () => {
       expect(mockPrisma.eventSpecVersion.findMany.mock.calls[0][0]).toMatchObject({
         where: { eventSpec: { tenantId: "tenant-1", domainId: "domain-1" } },
       });
-      expect(mockPrisma.eventSpec.findMany.mock.calls[0][0]).toMatchObject({ where: { id: { in: ["s-out"] }, tenantId: "tenant-1" } });
+      // the domain's own events are read to be left out of the edge scan by its query (not filtered after it) ...
+      expect(mockPrisma.eventSpec.findMany.mock.calls[0][0]).toMatchObject({ where: { tenantId: "tenant-1", domainId: "domain-1" }, select: { id: true } });
+      expect(mockPrisma.schemaReference.findMany.mock.calls[0][0]).toMatchObject({
+        where: {
+          toKind: "EVENT_SPEC_VERSION",
+          toId: { in: ["sv-in"] },
+          NOT: [{ fromKind: "EVENT_SPEC", fromId: { in: ["s-in"] } }, { fromKind: "EVENT_SPEC_VERSION", fromId: { in: ["sv-in"] } }],
+        },
+      });
+      // ... and the events behind the edges that remain are looked up inside the tenant only
+      expect(mockPrisma.eventSpec.findMany.mock.calls[1][0]).toMatchObject({ where: { id: { in: ["s-out"] }, tenantId: "tenant-1" } });
     });
 
     it("does not look at events for non-admins", async () => {
