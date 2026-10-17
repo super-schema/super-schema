@@ -1,8 +1,9 @@
 // src/services/events/import-limits.ts
 // Every bound of the AsyncAPI import in ONE place. The file is capped at 1 MiB (`checkImportSize`), and `parseAsyncApiSource` (the pure
 // layer, `src/lib/events/import/`) refuses nesting over 256 levels, keys over 1,024 characters, more than 2 million values and more than 100
-// YAML aliases, all in linear time. These are the bounds on what the import then DOES with the parsed document, all checked BEFORE the slow
-// steps and the first write, so a document over any of them creates nothing and says which limit it hit.
+// YAML aliases, all in linear time (the YAML read itself is linear too, but see the error flood in KNOWN LIMITATION below). These are the
+// bounds on what the import then DOES with the parsed document, all checked BEFORE the slow steps and the first write, so a document over
+// any of them creates no event and no entity and says which limit it hit.
 //
 // Nothing in the importers or the AsyncAPI parser can be interrupted (they are long synchronous stretches of CPU, so a timer cannot fire in
 // the middle of them): the only protection is to bound what they are given, and the bounds below do NOT make the cost small, only
@@ -20,6 +21,9 @@
 // 1,999 `parameters` entries each, about 9.4 s in the parser (119,941 diagnostics); 70 `x-ext` objects of 1,999 keys, about 3.7 s. The
 // server's event loop is blocked meanwhile. Lowering the cap barely helps (500 entries: still 5.3 s). The real bound is to run the parser in a
 // worker thread with a hard timeout, which is a follow-up, not part of this feature.
+// The YAML read has a residual of its own: a file that is mostly syntax errors costs 5 - 9 s at 1 MiB (linear, and the cost is the `yaml`
+// package creating its own error objects, one stack trace each), next to the ~10 s `parser.validate` case above. Setting
+// `Error.stackTraceLimit = 0` around the parse would cut it below 2 s and was deliberately NOT done (it is a process-wide switch).
 // A `$ref` that many messages share is inlined once per message, so reuse is counted per use. Fields are rows inside one transaction that
 // holds the tenant's name lock (it blocks every name-writing operation of the tenant).
 import { boundText as boundForDisplay } from "@/lib/events/import/bound";
@@ -45,8 +49,8 @@ export const MAX_TOTAL_PROTOBUF_BYTES = 96 * 1024;
  * there whatever the shape. Deliberately TIGHT: the gate counts every use of a `$ref` target, and a message is used about four times (in
  * `components.messages`, in its channel entry, through `operation.channel` and in `operation.messages`). Measured: 100 messages that all
  * `$ref` ONE 10 KB payload schema expand to about 3.9 MiB and are refused, 50 pass (1.95 MiB); 100 fully inline 2.9 KB payloads that also
- * share a 2.9 KB type are refused at 2.24 MiB (2.4 KB each: 1.86 MiB, they pass). The refusal tells the user to inline less or to share
- * smaller schemas.
+ * share a 2.9 KB type are refused at 2.24 MiB (2.4 KB each: 1.86 MiB, they pass). Inlining does NOT help (an inlined copy counts as much
+ * as a reference to it, or more): the refusal tells the user to use fewer or smaller schemas that many messages share, or to split the file.
  */
 export const MAX_EXPANDED_DOCUMENT_BYTES = 2 * 1024 * 1024;
 /** Most entries any one object of the document may have (the parser's cost grows with the square of that): about 0.2 s per object at the cap; real maps have far fewer. */
@@ -254,7 +258,9 @@ export function expandedSizeUpTo(root: unknown, limit: number): number {
  * The check that runs on the parsed document (what `parseAsyncApiSource` returns) before anything slow: no object may have more than
  * `MAX_OBJECT_ENTRIES` entries and no list more than `MAX_LIST_ENTRIES`. One walk over the document, iterative (no stack overflow, whatever
  * the depth) and allocating only for objects and lists. It names the FIRST one over its limit in document order (children are pushed in
- * reverse, so the walk is pre-order: `{ a: 2001 keys, b: 2001 keys }` names `/a`, a parent before its children) by its pointer, built
+ * reverse, so the walk is pre-order: `{ a: 2001 keys, b: 2001 keys }` names `/a`, a parent before its children; "document order" is the
+ * order JavaScript keeps, which is exact only up to integer-like keys: those come first, in ascending order, so `{ b, "2", "1" }` names
+ * `/1`, not `/b`) by its pointer, built
  * without spreading the path (a path of 150,000 segments is fine) and bounded in the message. Only the entries written in the document
  * count: a `$ref` is not expanded here (`checkExpandedSize` measures that).
  */
@@ -305,7 +311,7 @@ export function checkExpandedSize(raw: unknown): Result<void> {
   if (expandedSizeUpTo(raw, MAX_EXPANDED_DOCUMENT_BYTES) <= MAX_EXPANDED_DOCUMENT_BYTES) return ok(undefined);
   return refuse(
     `The document is too large once its references are resolved (limit ${formatBytes(MAX_EXPANDED_DOCUMENT_BYTES)}): every place that refers to a shared definition counts a full copy of it`,
-    { limit: MAX_EXPANDED_DOCUMENT_BYTES }, "Inline less, or share smaller schemas: reduce how often large definitions are referenced (a message counts about four times, in its component, its channel entry and two operation lists), or split the document.",
+    { limit: MAX_EXPANDED_DOCUMENT_BYTES }, "Use fewer or smaller schemas that many messages share, or split the document into smaller files (a message counts about four times: in its component, its channel entry and two operation lists).",
   );
 }
 

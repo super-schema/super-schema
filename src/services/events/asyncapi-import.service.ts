@@ -4,8 +4,9 @@
 // (unpinned: the user publishes the entities, then the event). The pure parts are `src/lib/events/import/*`; the entities are
 // `import-payload-entities.ts`.
 //
-// Order, so that a document that cannot be imported creates NOTHING and the inputs of the slow steps are bounded: check the size of the
-// file; parse the source (`parseAsyncApiSource`: linear, and it refuses what is hostile or too deep); check the entries of every object and
+// Order, so that a document that cannot be imported creates no event and no entity (the tenant's built-in library traits are installed
+// first, idempotently) and the inputs of the slow steps are bounded: check the size of the file; parse the source
+// (`parseAsyncApiSource`: linear, and it refuses what is hostile or too deep); check the entries of every object and
 // list and the size of the document once its references are resolved (`import-limits.ts`, before ANYTHING slow walks the document);
 // extract the payloads; check THEIR limits before any importer runs; plan the entities (and check the entity and field limits); validate
 // with the AsyncAPI parser; map the document ONCE with stand-in pins (extracting the payloads succeeding does not mean mapping will: a
@@ -42,6 +43,9 @@ import { err, ok, type Result, type ServiceError } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 
 export interface AsyncApiImportInput { content: string; fileName?: string; eventName?: string }
+
+/** Longest document title the preview carries: the title is document-controlled text (up to about 1 MB), and the review only shows a heading. */
+const MAX_PREVIEW_TITLE = 200;
 
 export interface AsyncApiImportPreview {
   /** Resolved, unique in the product's line (it shares the line with entities). */
@@ -190,7 +194,8 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const scope = resolved.data;
   const sized = checkImportSize(content, "AsyncAPI document");
   if (!sized.success) return sized;
-  // 1b. Read the file (linear: it refuses what is hostile, too deep or repeated), then bound what everything slow is given: the entries of
+  // 1b. Read the file (linear: it refuses what is hostile, too deep or repeated; but a flood of syntax errors still costs 5 - 9 s at 1 MiB,
+  // see KNOWN LIMITATION in `import-limits.ts`), then bound what everything slow is given: the entries of
   // one object (the AsyncAPI parser's cost grows with their square) and of one list (the mapper de-duplicates quadratically), and the size
   // of the document once every reference is replaced by its target (a few bytes of references to a shared definition can be megabytes).
   const parsed = parseAsyncApiSource(content);
@@ -239,7 +244,7 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
 
   const usedBuiltIns = [...new Set(document.traits.filter(isLibraryTrait).flatMap((t) => builtIns.data.nameOf.get(t.libraryTraitId) ?? []))];
   const preview: AsyncApiImportPreview = {
-    eventName: finalEventName.data, title: document.info.title, counts: countsOf(document),
+    eventName: finalEventName.data, title: boundText(document.info.title, MAX_PREVIEW_TITLE), counts: countsOf(document),
     entities: named.data.payloads.flatMap((payload) => payload.entities.map(({ requestedName, name, renamed, fields, format }) => ({ requestedName, name, renamed, fields, format }))),
     builtInTraits: usedBuiltIns,
     warnings: [...validated.data, ...mapped.data.warnings, ...planned.warnings, ...named.data.warnings, ...eventWarnings],

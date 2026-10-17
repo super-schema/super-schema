@@ -423,7 +423,11 @@ describe("checkExpandedSize on catalogues of messages", () => {
     expect(expandedSizeUpTo(shared(100), 100 * MIB) / MIB).toBeCloseTo(3.9, 1);
     expect(checkExpandedSize(shared(50)).success).toBe(true);
     const refused = checkExpandedSize(shared(100));
-    expect(refused.success ? null : refused.error).toMatchObject({ suggestedFix: expect.stringContaining("Inline less, or share smaller schemas") });
+    expect(refused.success ? null : refused.error).toMatchObject({
+      suggestedFix: expect.stringContaining("Use fewer or smaller schemas that many messages share, or split the document into smaller files"),
+    });
+    // inlining counts as much as sharing, so it must not be advised
+    expect(refused.success ? "" : refused.error.suggestedFix).not.toMatch(/inline/i);
   });
 
   it("100 fully inline payloads of about 2.9 KB that also share a 2.9 KB type are refused (2.24 MiB); at 2.4 KB each they pass (1.86 MiB)", () => {

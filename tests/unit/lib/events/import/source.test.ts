@@ -2,9 +2,10 @@
 // WP-I1: text → plain object, with every hostile input rejected before anything else touches it.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Document, LineCounter } from "yaml";
 import { MAX_IMPORT_CONTENT_BYTES } from "@/lib/compiler/import-limits";
-import { MAX_ALIAS_COUNT, MAX_NESTING_DEPTH, parseAsyncApiSource } from "@/lib/events/import/source";
+import { MAX_ALIAS_COUNT, MAX_NESTING_DEPTH, parseAsyncApiSource, yamlMessage } from "@/lib/events/import/source";
 
 const fixture = (name: string): string => readFileSync(path.join(process.cwd(), "tests/fixtures/asyncapi-import", name), "utf8");
 
@@ -128,6 +129,51 @@ describe("parseAsyncApiSource: rejects", () => {
     expect(failure("asyncapi: 3.0.0\nx-a:\n  - prototype: 1\n").message).toContain("/x-a/0/prototype");
   });
 
+  it("a hasOwnProperty key anywhere (the AsyncAPI parser throws on it), naming the key, its place and what to do", () => {
+    for (const [text, pointer] of [
+      ["asyncapi: 3.0.0\nx-a:\n  hasOwnProperty: 1\n", "/x-a/hasOwnProperty"],
+      ['{"asyncapi":"3.0.0","components":{"messages":{"hasOwnProperty":{"payload":{}}}}}', "/components/messages/hasOwnProperty"],
+      ["asyncapi: 3.0.0\ncomponents:\n  schemas:\n    S:\n      properties:\n        hasOwnProperty: {type: string}\n", "/components/schemas/S/properties/hasOwnProperty"],
+    ] as const) {
+      const error = failure(text);
+      expect(error.code, text).toBe("PARSE_ERROR");
+      expect(error.message, text).toBe(`The key "hasOwnProperty" at "${pointer}" is not allowed in an imported document (it collides with the name of a built-in JavaScript property and cannot be imported); rename it and import again`);
+      expect(error.details, text).toMatchObject({ pointer, key: "hasOwnProperty" });
+    }
+  });
+
+  it("every other name of Object.prototype stays importable (the parser reads them fine as keys, see PARSER_UNSAFE_KEYS)", () => {
+    const refused = new Set(["__proto__", "constructor", "hasOwnProperty"]);
+    const names = Object.getOwnPropertyNames(Object.prototype).filter((name) => !refused.has(name));
+    expect(names).toEqual(expect.arrayContaining(["valueOf", "toString", "toLocaleString", "isPrototypeOf", "propertyIsEnumerable", "__defineGetter__", "__lookupSetter__"]));
+    for (const name of names) {
+      expect(parseAsyncApiSource(`asyncapi: 3.0.0\nx-a:\n  ${name}: 1\n`).success, name).toBe(true);
+      expect(parseAsyncApiSource(`{"asyncapi":"3.0.0","components":{"messages":{"${name}":{"payload":{"type":"object","properties":{"${name}":{"type":"string"}}}}}}}`).success, name).toBe(true);
+    }
+    for (const name of refused) expect(parseAsyncApiSource(`asyncapi: 3.0.0\nx-a:\n  ${name}: 1\n`).success, name).toBe(false);
+  });
+
+  describe("an exception nobody planned for", () => {
+    afterEach(() => vi.restoreAllMocks());
+    const throwing = (error: Error) => vi.spyOn(Document.prototype, "toJS").mockImplementation(() => { throw error; });
+
+    it("is a fixed message: its text, which can quote the document or the parser's internals, is never echoed", () => {
+      throwing(new Error("SECRET internals: the document says hunter2"));
+      const error = failure("asyncapi: 3.0.0\n");
+      expect(error.code).toBe("PARSE_ERROR");
+      expect(error.message).toBe("The file could not be read as YAML or JSON.");
+      expect(JSON.stringify(error)).not.toContain("hunter2");
+    });
+
+    it("keeps the nesting wording for a RangeError, still without its text, and the alias message for a ReferenceError", () => {
+      throwing(new RangeError("Maximum call stack size exceeded at SECRET"));
+      expect(failure("asyncapi: 3.0.0\n").message).toBe("The file could not be read (it is nested too deeply).");
+      vi.restoreAllMocks();
+      throwing(new ReferenceError("Excessive alias count indicates a resource exhaustion attack"));
+      expect(failure("asyncapi: 3.0.0\n").message).toMatch(/aliases/);
+    });
+  });
+
   it("nesting deeper than the limit, built iteratively (no stack overflow), in JSON and YAML", () => {
     const depth = MAX_NESTING_DEPTH + 50;
     const json = `{"asyncapi":"3.0.0","x-deep":${"[".repeat(depth)}${"]".repeat(depth)}}`;
@@ -237,6 +283,25 @@ describe("parseAsyncApiSource: YAML errors are not pretty-printed (that was quad
     expect(error.code).toBe("PARSE_ERROR");
     expect(error.message).toBe("The file is not valid YAML: Plain value cannot start with directive indicator character % at line 1, column 2");
   });
+
+  it("keeps a colon that ends an echoed token when a position follows it: only a message with NO position loses its trailing colon", () => {
+    // what the parser's own pretty message said ("... >a`: at line 1, column 2:" minus the colon it added after the column), exactly
+    expect(failure(">a`:").message).toBe("The file is not valid YAML: Block scalar header includes extra characters: >a`: at line 1, column 2");
+    expect(failure("| [:").message).toBe("The file is not valid YAML: Not a YAML token: [: at line 1, column 3");
+    // no position, no colon at the end (the position is what the colon introduced)
+    expect(yamlMessage({ message: "Something odd:", pos: [-1, -1] }, new LineCounter())).toBe("Something odd");
+    expect(yamlMessage({ message: "Something odd: x:", pos: [] }, new LineCounter())).toBe("Something odd: x");
+  });
+
+  it("313 KiB of `[%,%,...` (about 160,000 errors) is refused in about 2 s: it took 17 s while the parser pretty-printed every error", () => {
+    const text = `[${"%,".repeat(160_256)}`;
+    expect(Buffer.byteLength(text)).toBeGreaterThanOrEqual(313 * 1024);
+    const started = performance.now();
+    const error = failure(text);
+    // 4 x the 1.8 - 2.0 s measured here, far below 17 s: the 156 KiB test above would pass without the fix (4.3 s is under its bound)
+    expect(performance.now() - started).toBeLessThan(8_000);
+    expect(error.message).toBe("The file is not valid YAML: Plain value cannot start with directive indicator character % at line 1, column 2");
+  }, 60_000);
 
   it("a text nested so deeply that the YAML parser itself overflows its stack is a PARSE_ERROR that names nesting", () => {
     const error = failure(`asyncapi: 3.0.0\nx-deep: ${"[".repeat(150_000)}${"]".repeat(150_000)}\n`);

@@ -121,10 +121,14 @@ export async function gatherPublishFacts(db: Db, snapshot: EventSnapshot): Promi
   const entityName = new Map(entityRows.map((e) => [e.id, e.name]));
   const liveTraits = new Map(liveTraitRows.map((row) => [row.id, toFrozenTrait(row)]));
 
-  /** The version row a pin names, only when it really is a version of that entity. */
+  /**
+   * The version row a pin names, only when it really is a version of that entity AND its entity still loads. The relation is read in a
+   * second query, so an entity deleted between the two reads leaves a row whose `entity` is null: that version does not resolve (a
+   * MISSING_ENTITY blocker, an unknown headers pin), exactly like a missing version, and nothing below ever reads through it.
+   */
   const versionOf = (entityId: string, versionId: string | null) => {
     const row = versionId === null ? undefined : versionById.get(versionId);
-    return row && row.entityId === entityId ? row : undefined;
+    return row && row.entityId === entityId && row.entity != null ? row : undefined;
   };
   // `Object.fromEntries` defines own properties: an id like "__proto__" can never reach a prototype.
   const pinsOf = (sites: PinSite[]): Record<string, EventBumpPinFact> =>

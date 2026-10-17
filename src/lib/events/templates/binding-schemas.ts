@@ -3,6 +3,9 @@
 // found from the JSON pointer of the control that edits it, so the editor can warn about a value that does not fit. The schemas are
 // generated from the binding files of `@asyncapi/specs` (scripts/generate-asyncapi-templates.ts); nothing here depends on the
 // package at runtime. Pure — client-safe.
+// KNOWN GAP (sound: it can miss an error, never invent one): the Schema Object and the draft-07 meta-schema refer to themselves, so the
+// generator cuts each reference cycle and writes `{}` (accepts anything) there. The nested levels of a user's JSON Schema inside a binding
+// are therefore not checked, and bindings written inside a trait get no schema at all (`bindingFieldSchema` answers `null` for them).
 import { BINDING_JSON_SCHEMAS } from "./binding-json-schemas.generated";
 import type { BindingTarget } from "./types";
 
