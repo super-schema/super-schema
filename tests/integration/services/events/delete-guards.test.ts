@@ -207,8 +207,8 @@ describe("product / domain delete guards: references from other products' events
     let foreign: Awaited<ReturnType<typeof createForeignTenantFixture>> | undefined;
     const domainIds: string[] = [];
     try {
-      const { owner, published } = await twoProducts();
-      domainIds.push(owner.domain.id);
+      const { owner, consumer, published } = await twoProducts();
+      domainIds.push(owner.domain.id, consumer.domain.id);
       foreign = await createForeignTenantFixture(prisma, ctx);
       const foreignEvent = await prisma.eventSpec.create({
         data: { name: `foreign-${foreign.s}`, document: eventDocument("f"), tenantId: foreign.tenant.id, domainId: foreign.domain.id, productId: foreign.product.id },
