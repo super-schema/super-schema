@@ -70,8 +70,12 @@ export function JsonControl({ field, id, value, onChange, disabled, required, in
     }
     // Nothing to write is not a value to write: `{}` and `null` would clear the field.
     if (result.success && isEmptyValue(result.data)) setGenerateProblem(GENERATE_EMPTY);
-    else if (result.success) onChange(result.data);
-    else setGenerateProblem(GENERATE_FAILED);
+    else if (result.success) {
+      // The text is set here too: the form only changes it when the stored value changes, and the stored value can already be this very
+      // example while the text next to it is broken (the way back from a typo: Generate, Replace).
+      setText(pretty(result.data));
+      onChange(result.data);
+    } else setGenerateProblem(GENERATE_FAILED);
     generateRef.current?.focus();
   }
   function ask() {

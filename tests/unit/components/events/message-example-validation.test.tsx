@@ -7,6 +7,7 @@ import "./template/codemirror-jsdom";
 import { forEachDiagnostic } from "@codemirror/lint";
 import { EditorView } from "@codemirror/view";
 import { act, cleanup, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MessagesSection } from "@/features/events/builder/sections/MessagesSection";
 import { PropertiesSection } from "@/features/events/builder/sections/PropertiesSection";
@@ -405,6 +406,52 @@ describe("JsonControl: the Generate button on its own", () => {
     await click("f-generate");
     expect(screen.getByTestId("f-generate-confirm")).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
+
+    // ...and Replace completes it: the broken text is replaced by the example, which clears the "Not valid JSON" message
+    expect(screen.getByTestId("f-validation").textContent).toMatch(/^Not valid JSON: /);
+    await click("f-generate-replace");
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(GENERATED));
+    const view = EditorView.findFromDOM(wrapper.querySelector(".cm-editor") as HTMLElement) as EditorView;
+    await waitFor(() => expect(view.state.doc.toString()).toBe(JSON.stringify(GENERATED, null, 2)));
+    expect(screen.queryByTestId("f-validation")).toBeNull();
+    expect(screen.queryByTestId("f-generate-confirm")).toBeNull();
+  });
+
+  it("replaces broken text with the example even when the stored value already IS that example (Generate, break the text, Generate, Replace)", async () => {
+    // A form that keeps the value, as the real one does: writing a value equal to the stored one changes nothing there, so the editor's text
+    // can only be put right by the control itself.
+    function Stored() {
+      const [value, setValue] = useState<unknown>(undefined);
+      return (
+        <>
+          <JsonControl
+            field={FIELD} id="f" value={value} onChange={setValue} required={false} invalid={false} path="/messages/0/examples/0/payload"
+            renderFields={() => null} schema={ORDER} context={{ pinSchemas: { payload: ORDER, headers: null } }}
+          />
+          <output data-testid="stored">{JSON.stringify(value)}</output>
+        </>
+      );
+    }
+    render(<Stored />);
+    const wrapper = await screen.findByTestId("f-editor");
+    await waitFor(() => expect(wrapper.getAttribute("data-editor")).toBe("codemirror"));
+    const view = EditorView.findFromDOM(wrapper.querySelector(".cm-editor") as HTMLElement) as EditorView;
+    const generated = JSON.stringify(GENERATED, null, 2);
+
+    await click("f-generate"); // empty: no question
+    await waitFor(() => expect(view.state.doc.toString()).toBe(generated));
+    expect(screen.getByTestId("stored").textContent).toBe(JSON.stringify(GENERATED));
+
+    replaceText(view, generated.slice(0, -1)); // a closing brace deleted: invalid text, the stored value stays the example
+    await waitFor(() => expect(screen.getByTestId("f-validation").textContent).toMatch(/^Not valid JSON: /));
+    expect(screen.getByTestId("stored").textContent).toBe(JSON.stringify(GENERATED));
+
+    await click("f-generate");
+    expect(screen.getByTestId("f-generate-confirm")).toBeTruthy();
+    await click("f-generate-replace");
+    await waitFor(() => expect(view.state.doc.toString()).toBe(generated));
+    expect(screen.queryByTestId("f-validation")).toBeNull();
+    expect(screen.getByTestId("stored").textContent).toBe(JSON.stringify(GENERATED));
   });
 
   it("shows no button outside the message example fields", () => {

@@ -8,7 +8,9 @@
 //
 // "Bounded": the sampler cuts a recursive `$ref` at its second visit and stops descending at `maxSampleDepth`, but it follows a
 // reference every time it meets it, so definitions that fan out (A has two properties of type B, B two of type C, ...) multiply into
-// a huge value. `expandedSize` counts what the sampler would visit, once per definition, and the schema is refused above a budget.
+// a huge value, and it writes `minItems` copies of an array's item (a `@minItems(1000000000)` would never finish, 1000 x 1000 nested
+// arrays is a million values). `expandedSize` counts what the sampler would visit, once per definition, and the schema is refused
+// above a budget.
 import { sample } from "openapi-sampler";
 import { resolveLocalRef } from "@/lib/event-specs/json-pointer";
 import { SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } from "@/lib/event-specs/json-schema-keywords";
@@ -24,10 +26,10 @@ const MAX_EXPANDED_NODES = 25_000;
 
 const isSchema = (v: unknown): v is Schema => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Keywords whose value is a map of schemas, a list of schemas, or one schema, as far as sampling goes. */
+/** Keywords whose value is a map of schemas, a list of schemas, or one schema, as far as sampling goes (the array part is `itemsSize`). */
 const MAP_KEYWORDS = ["properties", "patternProperties"] as const;
-const LIST_KEYWORDS = ["allOf", "anyOf", "oneOf", "prefixItems"] as const;
-const ONE_KEYWORDS = ["items", "additionalProperties", "not", "if", "then", "else"] as const;
+const LIST_KEYWORDS = ["allOf", "anyOf", "oneOf"] as const;
+const ONE_KEYWORDS = ["additionalProperties", "not", "if", "then", "else"] as const;
 
 /** How many schema nodes sampling `root` would visit, counting each use of a `$ref` in full; saturates just above the budget. */
 function expandedSize(root: Schema): number {
@@ -42,14 +44,36 @@ function expandedSize(root: Schema): number {
     const children: unknown[] = [
       ...MAP_KEYWORDS.flatMap((keyword) => (isSchema(node[keyword]) ? Object.values(node[keyword]) : [])),
       ...LIST_KEYWORDS.flatMap((keyword) => listOf(node[keyword])),
-      ...ONE_KEYWORDS.flatMap((keyword) => (Array.isArray(node[keyword]) ? listOf(node[keyword]) : [node[keyword]])), // `items` may be a list
+      ...ONE_KEYWORDS.map((keyword) => node[keyword]),
     ];
     let total = 1;
     for (const child of children) {
       total = Math.min(total + sizeOf(child), cap);
       if (total >= cap) break;
     }
-    return total;
+    return total >= cap ? cap : Math.min(total + itemsSize(node), cap);
+  }
+
+  /**
+   * What the sampler visits for the array part of `node`: as many copies of the item schema as `minItems` (1 when it is not given,
+   * never more than `maxItems`), counted the way the sampler reads the two (a string is coerced, 1e999 is Infinity), or, for a tuple,
+   * every element once and one node for each place beyond it. `contains` is sampled like `items`.
+   */
+  function itemsSize(node: Schema): number {
+    const items = node.prefixItems || node.items || node.contains;
+    if (!items) return 0;
+    const length = Math.min(node.maxItems != null ? Number(node.maxItems) : Infinity, Number(node.minItems || 1));
+    if (Number.isNaN(length)) return 0; // the sampler's loop does not run for NaN
+    const places = Math.ceil(length);
+    if (Array.isArray(items)) {
+      let tuple = 0;
+      for (const item of items) {
+        tuple = Math.min(tuple + Math.max(1, sizeOf(item)), cap);
+        if (tuple >= cap) return cap;
+      }
+      return Math.min(tuple + Math.max(0, places - items.length), cap);
+    }
+    return places > 0 ? Math.min(places * Math.max(1, sizeOf(items)), cap) : 0;
   }
 
   function sizeOfRef(ref: string): number {
@@ -112,8 +136,8 @@ function preferZero(node: Schema): Schema {
 }
 
 /**
- * A JSON value that fits `schema` (a fully inlined draft-07-style schema: `properties`, `items`, local `definitions` / `$defs`
- * references). Errors: `VALIDATION_ERROR` for something that is not a schema object, `EXAMPLE_TOO_LARGE` for a schema that would
+ * A JSON value that fits `schema` (a draft-07-style schema: `properties`, `items`, and local `$ref`s into its own `definitions` / `$defs`).
+ * Errors: `VALIDATION_ERROR` for something that is not a schema object, `EXAMPLE_TOO_LARGE` for a schema that would
  * expand beyond the budget, `EXAMPLE_FAILED` for one the sampler cannot follow (a `$ref` that goes nowhere, a remote one, ...).
  */
 export function exampleFromSchema(schema: Record<string, unknown>): Result<unknown> {

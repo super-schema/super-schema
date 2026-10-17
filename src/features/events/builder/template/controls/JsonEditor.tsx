@@ -29,7 +29,8 @@ export interface JsonEditorProps {
    * A JSON Schema to check the text against (language "json", while the text can be edited): violations get warning markers and hover and
    * completion help, they are never errors, never reach `onErrorChange` and never stop the text from being used. `null` or `undefined`:
    * no schema, and the editor is exactly what it is without this prop (the schema library is not even loaded).
-   * It must be FULLY INLINED, draft-07 style: the library checks with draft-04 rules and ignores a `$ref` it cannot resolve (see
+   * Its `$ref`s must resolve inside the schema (`#`, `#/definitions/X`, `#/$defs/X`), draft-07 style: the library checks with draft-04
+   * rules and silently accepts a `$ref` it cannot resolve, so that part of the schema is simply not checked (see
    * `codemirror-setup.ts`). It is compared by content, so a schema rebuilt on every render does nothing; a large one is still worth a
    * `useMemo`, because the comparison costs a pass over it whenever the object is a new one.
    */

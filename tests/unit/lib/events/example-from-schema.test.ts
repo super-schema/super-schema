@@ -156,7 +156,47 @@ describe("exampleFromSchema", () => {
     expect(value).toMatchObject({ id: "string" });
   });
 
-  it("refuses, quickly, a schema whose definitions multiply into an enormous example", () => {
+  it("refuses, quickly, an array that must hold an enormous number of items (minItems), however it is spelled", () => {
+    const refused = (schema: Schema) => {
+      const started = Date.now();
+      const result = exampleFromSchema(schema);
+      expect(Date.now() - started, JSON.stringify(schema)).toBeLessThan(2_000);
+      expect(failure(result), JSON.stringify(schema)).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+    };
+    refused({ type: "array", items: { type: "string" }, minItems: 1_000_000_000 });
+    refused({ type: "array", items: { type: "string" }, minItems: "1000000000" }); // the sampler coerces a string
+    refused(JSON.parse('{ "type": "array", "items": { "type": "string" }, "minItems": 1e999 }') as Schema); // 1e999 is Infinity: the loop would never end
+    refused({ type: "object", properties: { tags: { type: "array", items: { type: "string" }, minItems: 1_000_000_000 } } });
+    refused({ type: "array", prefixItems: [{ type: "string" }], minItems: 1_000_000_000 }); // a tuple is padded up to minItems
+    refused({ type: "array", contains: { type: "string" }, minItems: 1_000_000_000 }); // `contains` is sampled like `items`
+    refused({ $ref: "#/definitions/List", definitions: { List: { type: "array", items: { type: "integer" }, minItems: 1_000_000_000 } } });
+  });
+
+  it("refuses minItems that multiply through nesting: 1000 x 1000 nested arrays, 100 x 100 x 100 of an object", () => {
+    const started = Date.now();
+    expect(failure(exampleFromSchema({
+      type: "array", minItems: 1000, items: { type: "array", minItems: 1000, items: { type: "string" } },
+    }))).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+    expect(failure(exampleFromSchema({
+      type: "object",
+      properties: {
+        grid: { type: "array", minItems: 100, items: { type: "array", minItems: 100, items: { type: "array", minItems: 100, items: { type: "object", properties: { v: { type: "string" } } } } } },
+      },
+    }))).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("still builds the array a schema asks for when it is within the budget: minItems copies, never more than maxItems", () => {
+    expect(example({ type: "array", items: { type: "string" }, minItems: 3 })).toEqual(["string", "string", "string"]);
+    expect(example({ type: "array", items: { type: "string" } })).toEqual(["string"]); // 1 by default
+    expect(example({ type: "array", items: { type: "string" }, minItems: 1_000_000_000, maxItems: 2 })).toEqual(["string", "string"]);
+    expect(example({ type: "array", prefixItems: [{ type: "integer" }, { type: "string" }], minItems: 4 })).toEqual([0, "string", null, null]);
+    expect((example({ type: "array", items: { type: "string" }, minItems: 20_000 }) as unknown[]).length).toBe(20_000);
+    // 100 x 100 is 10,000 values: allowed
+    expect((example({ type: "array", minItems: 100, items: { type: "array", minItems: 100, items: { type: "string" } } }) as unknown[][]).flat()).toHaveLength(10_000);
+  });
+
+  it("refuses a schema whose definitions multiply into an enormous example", () => {
     // 40 definitions, each with two properties that both refer to the next one: 2^40 values if every reference were followed.
     const definitions: Record<string, Schema> = {};
     for (let i = 0; i < 40; i++) {

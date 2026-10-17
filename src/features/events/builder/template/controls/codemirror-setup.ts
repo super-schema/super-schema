@@ -129,8 +129,10 @@ export function lintJson(text: string): Diagnostic[] {
 // What the library does, as verified against 0.8.1, and so what a caller has to hand it:
 //  - It validates with JSON Schema DRAFT-04 rules (json-schema-library's `Draft04`). `if`/`then`/`else`, `contains`, `propertyNames`
 //    and a numeric `exclusiveMinimum` are ignored: they never produce a warning, a document that breaks them looks fine.
-//  - A `$ref` it cannot resolve is accepted silently, with no warning and no error. So every schema must be handed over fully
-//    INLINED (no `$ref`, nothing left in `$defs`); the callers do that, this file does not and cannot check it.
+//  - A LOCAL `$ref` that resolves inside the schema (`#`, `#/definitions/X`, `#/$defs/X`, recursive ones included) is followed and
+//    checked like inline schema. A `$ref` it cannot resolve (a missing target, an absolute URL) is accepted silently, with no warning
+//    and no error: that part of the schema is simply not checked. So callers must hand over a schema whose `$ref`s resolve inside it;
+//    this file does not and cannot check that.
 //  - Importing it starts a ~600 KB highlighter (shiki) for its markdown hovers. That is why nothing here imports it statically.
 //  - `jsonSchema()` would add a parse-error linter of its own next to ours; only the single pieces are used.
 //  - With the `@lezer/json` of this repo (its tree has a node for each ":") the library's table of JSON pointers puts the value of
@@ -312,7 +314,7 @@ export interface EditorHandle {
   /** Apply new options; nothing when they are the same as the current ones. */
   reconfigure: (options: EditorOptions) => void;
   /**
-   * Check the JSON text against `schema` (fully inlined, see above), or stop checking with `null`. Resolves once it is applied, or once
+   * Check the JSON text against `schema` (its `$ref`s must resolve inside it, see above), or stop checking with `null`. Resolves once it is applied, or once
    * it will never be: a newer call overtook it, the editor was destroyed, or the schema library could not be loaded (the editor then
    * simply has no schema support; a later call tries to load it again). It never rejects. Schemas are compared by content, so the same
    * schema as an equal new object does nothing. Only JSON editors that can be edited are meant to be given one.

@@ -74,8 +74,9 @@ export interface ControlProps {
   /** The surrounding builder's references and entities. */
   context?: TemplateFormContext;
   /**
-   * For a "json" field: a fully inlined JSON Schema its text is checked against (violations are warnings, the value is written all
-   * the same). `null` or `undefined`: no schema, the editor behaves as it always did. See `JsonEditor`.
+   * For a "json" field: a JSON Schema its text is checked against (violations are warnings, the value is written all the same). Its
+   * `$ref`s must resolve inside the schema (`#`, `#/definitions/X`, `#/$defs/X`); an unresolvable one is silently accepted, so that part
+   * of the schema is simply not checked. `null` or `undefined`: no schema, the editor behaves as it always did. See `JsonEditor`.
    */
   schema?: Record<string, unknown> | null;
   /** Renders fields inside this control (objects, list items, a tag's details). */

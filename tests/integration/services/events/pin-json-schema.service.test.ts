@@ -1,6 +1,7 @@
 import "dotenv/config"; // first: @/lib/db (pulled in by the services) reads DB_PROVIDER at import time
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { PrismaClient } from "@/generated/prisma/client";
+import { resolveLocalRef } from "@/lib/event-specs/json-pointer";
 import { exampleFromSchema } from "@/lib/events/example-from-schema";
 import type { ArtifactRenderer, RenderedArtifact } from "@/services/events/artifact-renderer";
 import { MAX_PIN_SCHEMA_BYTES, PIN_SCHEMA_RENDER_FAILED, renderPinJsonSchema } from "@/services/events/pin-json-schema.service";
@@ -50,6 +51,24 @@ async function version(ctx: ServiceContext, entityId: string, resolvedSource: st
   });
 }
 const asPrisma = (p: object) => p as unknown as PrismaClient;
+
+/** Every string `$ref` anywhere in `node` (a schema is JSON: nothing but `$ref` keywords carries a string under that key). */
+function refsOf(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(refsOf);
+  if (typeof node !== "object" || node === null) return [];
+  return Object.entries(node).flatMap(([key, value]) => (key === "$ref" && typeof value === "string" ? [value] : refsOf(value)));
+}
+/** The `$ref`s of `schema` that do not lead to anything inside it: `#`, `#/definitions/X` and `#/$defs/X` resolve, everything else dangles. */
+function danglingRefs(schema: unknown): string[] {
+  return refsOf(schema).filter((ref) => {
+    if (!ref.startsWith("#")) return true; // a file or URL: the editor could not follow it
+    try {
+      return !resolveLocalRef(schema, decodeURIComponent(ref)).found;
+    } catch {
+      return true; // a malformed escape
+    }
+  });
+}
 /** A Proxy over a Prisma object whose listed members are replaced; everything else is the real thing. */
 function replacing<T extends object>(target: T, overrides: Record<string, unknown>): T {
   return new Proxy(target, { get: (t, p) => (typeof p === "string" && p in overrides ? overrides[p] : Reflect.get(t, p)) });
@@ -75,6 +94,19 @@ describe("renderPinJsonSchema: what it renders", () => {
       definitions: { Status: { type: "string", enum: ["NEW", "PAID"] } },
     });
     expect(JSON.stringify(schema)).not.toContain("$defs");
+    expect(refsOf(schema)).toEqual(["#/definitions/Status"]);
+    expect(danglingRefs(schema)).toEqual([]);
+  });
+
+  it("the check for dangling references sees one that leads nowhere, so a renderer change that leaves one fails the real-render test", () => {
+    const schema = {
+      type: "object",
+      properties: { a: { $ref: "#/definitions/A" }, b: { $ref: "#/definitions/Gone" }, c: { $ref: "#" }, d: { $ref: "other.json" }, e: { $ref: "#/$defs/E" }, f: { $ref: "#/%E0%A4%A" } },
+      definitions: { A: { type: "string" } },
+      $defs: { E: { type: "string" } },
+    };
+    expect(refsOf(schema)).toHaveLength(6);
+    expect(danglingRefs(schema)).toEqual(["#/definitions/Gone", "other.json", "#/%E0%A4%A"]);
   });
 
   it("renders an unpinned pin as the entity's current draft, the way the Code panel previews it", async () => {
@@ -109,6 +141,9 @@ describe("renderPinJsonSchema: what it renders", () => {
         properties: { id: { type: "string" }, status: { $ref: "#/definitions/Status" }, ship: { $ref: "#/definitions/Address" } },
         definitions: { Status: { enum: ["NEW", "PAID"] }, Address: { properties: { zip: { type: "string" } } } },
       });
+      // The editor follows a `$ref` it can resolve and silently skips one it cannot: every reference must lead somewhere inside the schema.
+      expect(refsOf(schema).length).toBeGreaterThanOrEqual(2);
+      expect(danglingRefs(schema)).toEqual([]);
       expect(unwrap(exampleFromSchema(schema))).toEqual({ id: "string", qty: 0, status: "NEW", ship: { zip: "string" }, tags: ["string"] });
     }
   }, 90_000);
