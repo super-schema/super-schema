@@ -1,5 +1,7 @@
 # AsyncAPI Importer and Local JSON Validation Implementation Plan
 
+**Status: implemented and merged to `main`, 2026-10-17.** The built result differs from this plan in places (the Advanced section has no raw-JSON field, so JSON validation covers the example payload/headers and the 24 raw-JSON binding fields; many CPU-bounding rounds were added to the importer; the parser itself stays unbounded in time). `docs/events/REVIEW.md` is the map of what was built and what is known to be open.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** (A) Let a user create an Event by pasting or uploading an AsyncAPI 3.0 document ("Import existing…" in New Event). (B) Validate the raw-JSON fields of the event builder locally with `codemirror-json-schema`: message examples against their payload/headers entity schema (plus "Generate from payload"), and the raw-JSON binding fields against the AsyncAPI binding schemas.
