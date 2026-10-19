@@ -20,7 +20,7 @@ export function isOpaqueErrorCode(code: string | undefined): boolean {
 }
 
 /** How a sentence ends: a message that does so is followed by its fix after a single space, any other gets a full stop first. */
-const ENDS_A_SENTENCE = /[.!?:]$/;
+export const ENDS_A_SENTENCE = /[.!?:]$/;
 
 /**
  * The one line a form shows for a failed action result: the service's message plus its suggested fix as two sentences (`. ` between

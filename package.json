@@ -10,6 +10,7 @@
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:serial": "playwright test --project=serial-after --no-deps",
     "db:generate": "prisma generate",
     "predev": "npm run db:generate && tsx scripts/db.ts ensure",
     "prebuild": "npm run db:generate && tsx scripts/db.ts ensure",

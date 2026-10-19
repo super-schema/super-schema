@@ -19,7 +19,7 @@ import { importAsyncApiAction, previewAsyncApiImportAction } from "@/app/(dashbo
 import { normalizeCatalogName } from "@/lib/events/inputs";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import type { AsyncApiImportPreview } from "@/services/events/asyncapi-import.service";
-import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
+import { actionErrorText, ENDS_A_SENTENCE, GENERIC_ACTION_ERROR } from "@/types/action-result";
 import {
   DOCUMENT_TOO_LARGE, EVENT_NAME_REQUIRED, FILE_EMPTY, FILE_UNREADABLE, importedToast, MAX_DOCUMENT_BYTES, type ImportStep,
 } from "./import-labels";
@@ -78,7 +78,7 @@ const plainFailure = (text: string): ImportFailure => ({ code: null, text, probl
 /** The service's refusal of a name, as sentences: "<message>. <fix>" (the shared join); a message with no fix ends in a full stop too. */
 function nameErrorText(message: string, fix: string | undefined): string {
   if (fix) return actionErrorText({ error: message, suggestedFix: fix });
-  return /[.!?:]$/.test(message.trimEnd()) ? message : `${message}.`;
+  return ENDS_A_SENTENCE.test(message.trimEnd()) ? message : `${message}.`;
 }
 
 /** Whether the text is over the dialog's limit, measured in UTF-8 bytes as the request carries it (a `.length` would undercount accented and CJK text). */
