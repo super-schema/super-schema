@@ -14,6 +14,15 @@ import {
 } from "@/types/schemas/field.schema";
 import type { Prisma } from "@/generated/prisma/client";
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
+import { reservedFieldNameMessage } from "@/lib/reserved-field-names";
+
+/** A field name the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`) is refused: the field would make every event that pins its entity unpublishable. */
+function reservedNameError(name: string) {
+  const message = reservedFieldNameMessage(name);
+  return message === null
+    ? null
+    : err({ code: "VALIDATION_ERROR", message, suggestedFix: "Choose another field name." });
+}
 
 export async function createField(
   entityId: string,
@@ -28,6 +37,8 @@ export async function createField(
       suggestedFix: "Check the field input and try again.",
     });
   }
+  const reserved = reservedNameError(parsed.data.name);
+  if (reserved) return reserved;
 
   if (parsed.data.decorators) {
     const decResult = DecoratorSchema.safeParse(parsed.data.decorators);
@@ -146,6 +157,12 @@ export async function updateField(
       message: `Field with ID "${id}" not found`,
       suggestedFix: "Verify the field ID and try again.",
     });
+  }
+
+  // Only a RENAME is refused: a field that already has such a name (created before the rule) stays editable.
+  if (parsed.data.name !== undefined && parsed.data.name !== existing.name) {
+    const reserved = reservedNameError(parsed.data.name);
+    if (reserved) return reserved;
   }
 
   const field = await withAudit({

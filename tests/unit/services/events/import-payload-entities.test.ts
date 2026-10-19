@@ -122,3 +122,40 @@ describe("one Avro schema reused by two messages", () => {
     expect(resolved.data.warnings.filter((w) => w.code === "ENTITY_RENAMED")).toHaveLength(2);
   });
 });
+
+// ── a field named like a key the AsyncAPI parser cannot read (PARSER_UNSAFE_KEYS): an Avro / Protobuf field name is a VALUE in the
+// document, so it passes the importer's source check and would become an entity field (and a payload property that crashes the parser) ──
+
+describe("resolveEntityNames: reserved field names", () => {
+  it("renames hasOwnProperty to hasOwnProperty_1 and warns, naming the field, its new name and the entity", async () => {
+    const { names, warnings } = await namesOf("id", "hasOwnProperty", "total");
+    expect(names).toEqual(["id", "hasOwnProperty_1", "total"]);
+    expect(warnings).toEqual([
+      {
+        pointer: "/components/messages/m/payload", code: "SANITIZED_VALUE",
+        message: 'The field "hasOwnProperty" was renamed to "hasOwnProperty_1": the name is reserved. It belongs to the entity "Order".',
+      },
+    ]);
+  });
+
+  it("goes on to _2 when _1 is taken, trims a padded name, and leaves the look-alikes alone", async () => {
+    expect((await namesOf("hasOwnProperty_1", "hasOwnProperty")).names).toEqual(["hasOwnProperty_1", "hasOwnProperty_2"]);
+    expect((await namesOf(" hasOwnProperty ")).names).toEqual(["hasOwnProperty_1"]);
+    const alike = await namesOf("hasownproperty", "HasOwnProperty3", "hasOwnProperty2");
+    expect(alike.names).toEqual(["hasownproperty", "HasOwnProperty3", "hasOwnProperty2"]);
+    expect(alike.warnings).toEqual([]);
+  });
+
+  it("reports at most 50 such renames and one summary, and every field is renamed", async () => {
+    const entityFields = Array.from({ length: 1 }, () => "hasOwnProperty");
+    const plans: PlannedPayload[] = Array.from({ length: 53 }, (_, i) => ({
+      pinKey: `m${i}:payload`, sourcePointer: `/components/messages/m${i}/payload`, format: "json-schema",
+      entities: [{ requestedName: `Order${i}`, sourceName: `Order${i}`, description: "", fields: entityFields.map(field) }],
+    }));
+    const resolved = await resolveEntityNames(plans, keep);
+    if (!resolved.success) throw new Error(resolved.error.message);
+    expect(resolved.data.payloads.every((p) => p.entities[0].input.fields[0].name === "hasOwnProperty_1")).toBe(true);
+    expect(resolved.data.warnings).toHaveLength(51);
+    expect(resolved.data.warnings.at(-1)).toEqual({ pointer: "", code: "SANITIZED_VALUE", message: "3 more fields were renamed because their names are reserved; they are not listed" });
+  });
+});

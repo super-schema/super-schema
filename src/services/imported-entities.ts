@@ -6,6 +6,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import type { LevelScope } from "@/lib/levels";
+import { renameReservedFields, reservedFieldRenamedMessage } from "@/lib/reserved-field-names";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 
 export interface ImportedEntityInput {
@@ -28,6 +29,12 @@ export interface CreateImportedEntitiesArgs {
   /** True when `name` is free in the entity's line; when it is not, the callee has recorded why (through `skip`) and the entity is left out. */
   isNameFree: (name: string) => Promise<boolean>;
   skip: (message: string) => void;
+  /**
+   * Hears about what was changed without refusing anything: a field whose name the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`) is
+   * renamed (`hasOwnProperty` -> `hasOwnProperty_1`) and each rename is reported here. Optional; a caller that has no list of notes still
+   * gets the rename.
+   */
+  note?: (message: string) => void;
   /** Entities created so far, by the name the import gave them (an `extends` resolves through it); every created entity is added. */
   refs: Map<string, { id: string; productId: string }>;
 }
@@ -83,7 +90,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
         ...(parentEntityId ? { parentEntityId } : {}),
         ...(Object.keys(entityMetadata).length > 0 ? { metadata: entityMetadata } : {}),
         fields: {
-          create: entity.fields.map((field, index) => mapFieldCreateInput(field, index)),
+          create: renameReservedFields(entity.fields, (from, to) => args.note?.(reservedFieldRenamedMessage(from, to, name))).map((field, index) => mapFieldCreateInput(field, index)),
         },
       },
     });

@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { inActiveTenant, isInActiveTenant, notFoundFailure, targetInActiveTenant, unexpectedFailure } from "@/lib/action-context";
@@ -201,6 +202,10 @@ export async function createEntityWithFieldsAction(
   if (name.length > 128) {
     return { error: "Entity name must be 128 characters or less" };
   }
+
+  // A field named like a key the AsyncAPI parser cannot read is refused by name, before anything is created.
+  const reservedField = firstReservedFieldNameMessage(fields);
+  if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
 
   try {
     // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
@@ -1411,6 +1416,8 @@ export async function createDomainAssetsFromImportAction(
         sourceFormat: importedFormat,
         isNameFree: (name) => isNameFree("entity", name, productScope.data),
         skip: (message) => skipped.push(message),
+        // a renamed reserved field name is reported next to the skips: the import dialog shows every one as a warning
+        note: (message) => skipped.push(message),
         refs: entityRefs,
       });
       for (const created of createdEntities) {

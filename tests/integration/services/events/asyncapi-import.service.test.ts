@@ -279,6 +279,21 @@ describe("importAsyncApi: the happy path", () => {
     expect(referenceOf(`${order}2`, "next")).toBe(`${order}2`); // a self reference follows the new name too
     expect(rows.get(order)?.fields.map((f) => f.name)).toEqual(["id"]); // the entity that was there is untouched
   }, 120_000);
+
+  it("renames an Avro field named hasOwnProperty (a VALUE in the file, so the source check lets it in) and says so", async () => {
+    const { ctx, s, productId } = await setup();
+    const record = `Probe${s}`;
+    const avro = { type: "record", name: record, fields: [{ name: "id", type: "string" }, { name: "hasOwnProperty", type: "string" }] };
+    const content = smallDocument("Probe", { [`probe${s}`]: { payload: { schemaFormat: "application/vnd.apache.avro;version=1.9.0", schema: avro } } });
+
+    const { preview } = unwrap(await importAsyncApi(productId, { content }, ctx));
+
+    const entity = (await entitiesOf(productId)).find((e) => e.name === record);
+    expect(entity?.fields.map((f) => f.name)).toEqual(["id", "hasOwnProperty_1"]);
+    expect(preview.warnings.filter((w) => w.code === "SANITIZED_VALUE").map((w) => w.message)).toEqual([
+      `The field "hasOwnProperty" was renamed to "hasOwnProperty_1": the name is reserved. It belongs to the entity "${record}".`,
+    ]);
+  }, 120_000);
 });
 
 describe("importAsyncApi: built-in traits", () => {

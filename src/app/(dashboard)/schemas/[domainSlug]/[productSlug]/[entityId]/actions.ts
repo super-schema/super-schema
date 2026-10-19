@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
+import { reservedFieldNameMessage } from "@/lib/reserved-field-names";
 import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.schema";
 import { updateEntity } from "@/services/entity.service";
 import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
@@ -81,6 +82,14 @@ function trimmedFieldName(value: unknown): { name: string } | { error: string; c
   return { name: value.trim() };
 }
 
+/** A name for a field that does not exist yet (or is being renamed): `trimmedFieldName`, and not a name the AsyncAPI parser cannot read. */
+function newFieldName(value: unknown): { name: string } | { error: string; code: "VALIDATION_ERROR" } {
+  const fieldName = trimmedFieldName(value);
+  if ("error" in fieldName) return fieldName;
+  const reserved = reservedFieldNameMessage(fieldName.name);
+  return reserved === null ? fieldName : { error: reserved, code: "VALIDATION_ERROR" };
+}
+
 export async function addFieldAction(
   entityId: string,
   name: string,
@@ -100,7 +109,7 @@ export async function addFieldAction(
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
-  const fieldName = trimmedFieldName(name);
+  const fieldName = newFieldName(name);
   if ("error" in fieldName) return fieldName;
   if (typeof type !== "string") return { error: "Field type is required", code: "VALIDATION_ERROR" };
 
@@ -250,6 +259,13 @@ export async function updateFieldAction(
     if (!loaded) return { ...notFoundFailure("Field") };
     const { entity: owner, ...existing } = loaded;
     if (!(await isInActiveTenant(owner.tenantId))) return { ...notFoundFailure("Field") };
+
+    // A RENAME to a name the AsyncAPI parser cannot read is refused. A name that does not change is not looked at: the field studio sends
+    // the name with every other edit, and a field that already has such a name (created before the rule) must stay editable.
+    if (typeof rest.name === "string" && rest.name !== existing.name) {
+      const reserved = reservedFieldNameMessage(rest.name);
+      if (reserved !== null) return { error: reserved, code: "VALIDATION_ERROR" };
+    }
 
     // Regenerate slug when name changes (the slug is server-derived: a client-supplied `slug` was rejected above)
     if (typeof rest.name === "string" && rest.name && rest.name !== existing.name) {
@@ -780,6 +796,13 @@ export async function applyTypeSpecAction(
     });
 
     const existingByName = new Map(existingFields.map((f) => [f.name, f]));
+
+    // The model's NEW fields become field rows: one named like a key the AsyncAPI parser cannot read is refused before anything is
+    // written (a field that already exists is left as it is, so a source with an old such field can still be saved).
+    for (const pf of parsedFields) {
+      const reserved = existingByName.has(pf.name) ? null : reservedFieldNameMessage(pf.name);
+      if (reserved !== null) return { added: 0, updated: 0, removed: [], error: reserved };
+    }
 
     let addedCount = 0;
     let updatedCount = 0;
