@@ -239,7 +239,7 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const finalEventName = await allocator.data.allocate(requestedEventName, "event");
   if (!finalEventName.success) return finalEventName;
   const eventWarnings: ImportWarning[] = finalEventName.data === requestedEventName ? [] : [{
-    pointer: "", code: "ENTITY_RENAMED", message: `The name "${requestedEventName}" is already used in this product, so the event is named "${finalEventName.data}"`,
+    pointer: "", code: "ENTITY_RENAMED", message: `The name "${requestedEventName}" is already used in this product (or is reserved), so the event is named "${finalEventName.data}".`,
   }];
 
   const usedBuiltIns = [...new Set(document.traits.filter(isLibraryTrait).flatMap((t) => builtIns.data.nameOf.get(t.libraryTraitId) ?? []))];

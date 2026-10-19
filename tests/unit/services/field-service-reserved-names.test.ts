@@ -40,7 +40,7 @@ describe("createField", () => {
   it.each(["hasOwnProperty", "  hasOwnProperty  "])("refuses the name %j with VALIDATION_ERROR and the reserved-name message, and writes nothing", async (name) => {
     const result = await createField("ent-1", { name, type: "string" }, ctx);
     expect(result).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR", message: MESSAGE } });
-    if (!result.success) expect(result.error.suggestedFix).toBeDefined();
+    if (!result.success) expect(result.error.suggestedFix).toBeUndefined(); // the message already says what to do: nothing for a client to repeat
     nothingWritten();
   });
 

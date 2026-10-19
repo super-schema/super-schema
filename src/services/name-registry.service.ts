@@ -2,6 +2,7 @@ import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { dbErrorResult } from "@/lib/db-error";
 import { ok, err, type Result } from "@/types/result";
 import { levelOf, levelLabel } from "@/lib/levels";
+import { reservedNameMessage } from "@/lib/reserved-field-names";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -94,7 +95,19 @@ async function loadNamedAssets(db: Db, where: RegistryWhere): Promise<NamedAsset
   return perKind.flat();
 }
 
+/**
+ * A name that is a parser-unsafe key (`PARSER_UNSAFE_KEYS`, wording in `reservedNameMessage`) is not available to any kind: it would become a
+ * definition or component key of an AsyncAPI document, which the parser cannot read. Every create and rename of an entity, enum, scalar,
+ * union, API, trait and event goes through here (`writeWithUniqueName`). A rename that keeps the name an asset ALREADY has (created before the
+ * rule) is not refused, so the asset stays editable.
+ */
+function reservedNameError(reserved: string): Result<void> {
+  return err({ code: "VALIDATION_ERROR", message: reserved });
+}
+
 export async function assertNameAvailable(db: Db, candidate: Candidate): Promise<Result<void>> {
+  const reserved = reservedNameMessage(candidate.name);
+  if (reserved !== null && !candidate.exclude) return reservedNameError(reserved);
   let sameName: NamedAsset[];
   try {
     sameName = await loadNamedAssets(db, {
@@ -104,6 +117,11 @@ export async function assertNameAvailable(db: Db, candidate: Candidate): Promise
   } catch (e) {
     // The driver text stays in the server log; the Result (also shown by REST routes and forms) gets the generic message.
     return dbErrorResult("assertNameAvailable", e);
+  }
+  if (reserved !== null) {
+    const { exclude } = candidate;
+    const unchanged = sameName.some((a) => a.kind === exclude?.kind && a.id === exclude.id && a.name.trim() === candidate.name.trim());
+    if (!unchanged) return reservedNameError(reserved);
   }
   const hit = findLineConflict(candidate, sameName);
   if (!hit) return ok(undefined);

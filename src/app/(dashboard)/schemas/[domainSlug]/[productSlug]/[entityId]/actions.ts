@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
-import { reservedFieldNameMessage } from "@/lib/reserved-field-names";
+import { firstReservedFieldNameMessage, reservedFieldNameMessage, reservedNameMessage } from "@/lib/reserved-field-names";
 import { TypeSpecDecoratorSchema } from "@/types/schemas/typespec-decorator.schema";
 import { updateEntity } from "@/services/entity.service";
 import type { UpdateEntityInput } from "@/types/schemas/entity.schema";
@@ -1886,6 +1886,21 @@ async function compileAndApplyTypeSpecSource(
         { severity: "error", code: "no-model", message: "No model found — define at least one model for this entity." },
       ],
     };
+  }
+
+  // The first model becomes the entity's field rows (`applyTypeSpecAction` refuses a NEW field named like a key the AsyncAPI parser cannot
+  // read). The other models of the source (the nested types the entity refers to) have no rows, so there is no "existing" field to spare:
+  // one of them with such a field is refused. INLINE anonymous models are not listed in the parsed document, so their property names are
+  // not visible here; the emit guard catches those.
+  for (const other of result.document.models.slice(1)) {
+    const reserved = reservedNameMessage(other.name) ?? firstReservedFieldNameMessage(other.fields);
+    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: reserved };
+  }
+  // The names of the enums, scalars and unions the source declares become definition keys of a payload too.
+  const { enums = [], scalars = [], unions = [] } = result.document;
+  for (const declared of [...enums, ...scalars, ...unions]) {
+    const reserved = reservedNameMessage(declared.name);
+    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: reserved };
   }
 
   const existingFields = await prisma.field.findMany({
