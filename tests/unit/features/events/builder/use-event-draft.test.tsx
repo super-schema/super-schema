@@ -166,7 +166,7 @@ describe("useEventDraft: save", () => {
     await act(async () => { saved = await result.current.save(); });
     expect(saved).toBe(false);
     expect(result.current.serverProblems).toEqual(problems);
-    expect(result.current.error).toBe("2 problem(s) in the event document Fix the highlighted fields and save again.");
+    expect(result.current.error).toBe("2 problem(s) in the event document. Fix the highlighted fields and save again.");
     expect(result.current.doc.info.title).toBe("Orders v2");
     expect(result.current.dirty).toBe(true);
     expect(result.current.saving).toBe(false);

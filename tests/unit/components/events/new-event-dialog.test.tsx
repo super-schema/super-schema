@@ -168,7 +168,7 @@ describe("NewEventDialog: errors", () => {
     type(nameInput(), "a b");
     fireEvent.click(submitButton());
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe('Event name "a b" is invalid Use 1–128 letters, digits, \'.\', \'_\' or \'-\'.');
+    expect(alert.textContent).toBe('Event name "a b" is invalid. Use 1–128 letters, digits, \'.\', \'_\' or \'-\'.');
     expect(alert.getAttribute("data-testid")).toBe("new-event-error");
     expect(onCreated).not.toHaveBeenCalled();
     expect(h.invalidate).not.toHaveBeenCalled();

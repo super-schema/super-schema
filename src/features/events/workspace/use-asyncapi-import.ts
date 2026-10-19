@@ -75,10 +75,10 @@ export function failureOf(result: { error: string; code?: string; details?: obje
 
 const plainFailure = (text: string): ImportFailure => ({ code: null, text, problems: [], leftovers: [] });
 
-/** The service's refusal of a name, as sentences: "<message>. <fix>" (no second full stop when the message already ends one). */
+/** The service's refusal of a name, as sentences: "<message>. <fix>" (the shared join); a message with no fix ends in a full stop too. */
 function nameErrorText(message: string, fix: string | undefined): string {
-  const first = /[.!?]$/.test(message) ? message : `${message}.`;
-  return fix ? `${first} ${fix}` : first;
+  if (fix) return actionErrorText({ error: message, suggestedFix: fix });
+  return /[.!?:]$/.test(message.trimEnd()) ? message : `${message}.`;
 }
 
 /** Whether the text is over the dialog's limit, measured in UTF-8 bytes as the request carries it (a `.length` would undercount accented and CJK text). */

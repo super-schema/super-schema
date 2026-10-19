@@ -114,7 +114,7 @@ describe("PublishVersionButton", () => {
       await screen.findByTestId("publish-blockers");
       expect(listed()).toEqual(["A", "B"]);
       // The one-line error stays (message + the service's fix); the list is added under it.
-      expect(screen.getByRole("alert").textContent).toBe("A; A; B Resolve every blocker, then publish again.");
+      expect(screen.getByRole("alert").textContent).toBe("A; A; B. Resolve every blocker, then publish again.");
       expect(screen.getByTestId("dialog").getAttribute("data-publishing")).toBe("false");
       expect(h.success).not.toHaveBeenCalled();
     });

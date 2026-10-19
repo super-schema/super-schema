@@ -366,7 +366,7 @@ describe("ImportAsyncApiDialog: the preview request", () => {
     fireEvent.click(previewButton());
     const alert = await screen.findByTestId("import-error");
     expect(alert.getAttribute("role")).toBe("alert");
-    expect(screen.getByTestId("import-error-text").textContent).toBe(`${message} Fix it.`);
+    expect(screen.getByTestId("import-error-text").textContent).toBe(`${message}. Fix it.`); // none of these messages ends a sentence
     if (headline) expect(screen.getByTestId("import-error-headline").textContent).toBe(headline);
     else expect(screen.queryByTestId("import-error-headline")).toBeNull();
     expect(stepText()).toBe("Step 1 of 3: Document");
@@ -700,7 +700,7 @@ describe("import-labels: warning and error wording", () => {
       error: "bad", code: "VALIDATION_ERROR", suggestedFix: "Fix it.",
       details: { problems: [{ pointer: "/a", message: "m1" }, { message: "m2" }, { pointer: "/c" }, "junk", null, { pointer: 5, message: "m3" }], leftovers: [{ kind: "entity", name: "E" }, { kind: "event" }, { kind: "other" }, 7] },
     });
-    expect(failure.text).toBe("bad Fix it.");
+    expect(failure.text).toBe("bad. Fix it.");
     expect(failure.problems).toEqual([{ pointer: "/a", message: "m1" }, { pointer: "", message: "m2" }, { pointer: "", message: "m3" }]);
     expect(failure.leftovers).toEqual([{ kind: "entity", name: "E" }, { kind: "event", name: null }]);
     expect(failureOf({ error: "x", details: { problems: "nope", leftovers: {} } })).toMatchObject({ problems: [], leftovers: [] });

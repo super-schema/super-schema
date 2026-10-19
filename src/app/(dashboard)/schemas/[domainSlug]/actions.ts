@@ -21,7 +21,7 @@ import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
-import { isOpaqueErrorCode } from "@/types/action-result";
+import { actionErrorText, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok } from "@/types/result";
 import type { Result, ServiceError } from "@/types/result";
 
@@ -395,7 +395,7 @@ export async function deleteModelFieldAction(fieldId: string) {
 // ---------------------------------------------------------------------------
 
 /** What the delete toast shows for a blocked entity: the service message plus its one-line remedy. */
-const inUseText = (e: ServiceError) => (e.suggestedFix ? `${e.message}${/[.!?]$/.test(e.message) ? "" : "."} ${e.suggestedFix}` : e.message);
+const inUseText = (e: ServiceError) => actionErrorText({ error: e.message, suggestedFix: e.suggestedFix });
 
 export async function deleteEntityAction(entityId: string) {
   const session = await auth();
