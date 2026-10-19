@@ -3,7 +3,8 @@
 // built from the keywords the sampler understands: `$ref` (cycles, aliases and targets with an `example` / `const` / `allOf` included),
 // `if` / `then` / `else`, `allOf` / `oneOf` / `anyOf` (also two of them, or one with an `if` / `then`, on the same node), `items` (a schema
 // or a tuple with falsy places), boolean schemas, `properties` (some with long names), `additionalProperties`, `readOnly`, `example` /
-// `enum` / `const` / `default`, and nodes carrying dozens of `x-` keys. For every one that `exampleFromSchema` ACCEPTS, its example is
+// `enum` / `const` / `default`, `required` lists (a random subset of the property names in a random order, plus names that are no
+// property) and `maxProperties`, and nodes carrying dozens of `x-` keys. For every one that `exampleFromSchema` ACCEPTS, its example is
 // compared with what the sampler gives for the very same schema with its `$ref`s resolved the sampler's own way. For every one it
 // REFUSES, the reason must be one of the few named constructs it cannot reproduce. A third population is made only of realistic
 // combinations (an envelope by `allOf`, its variants by `oneOf`, ...): none of those may be refused.
@@ -24,14 +25,33 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Random schemas. `heavy` allows long lists and wide fan-out (some of them over the budget). */
+/**
+ * Random schemas. `heavy` allows long lists and wide fan-out (some of them over the budget). `side` is a second stream, used for the
+ * `required` lists and `maxProperties` only, so that adding them did not change which schemas the first stream builds.
+ */
 class Generator {
   /** The lengths of the lists around the schema being built, multiplied: bounds what the sampler makes of it. */
   private multiplier = 1;
-  constructor(private readonly rand: () => number, private readonly heavy: boolean, private definitions = 0) {}
+  constructor(private readonly rand: () => number, private readonly heavy: boolean, private readonly side: () => number, private definitions = 0) {}
   private int(n: number): number { return Math.floor(this.rand() * n); }
   private chance(p: number): boolean { return this.rand() < p; }
   private pick<T>(list: readonly T[]): T { return list[this.int(list.length)]; }
+  private sideInt(n: number): number { return Math.floor(this.side() * n); }
+  private sideChance(p: number): boolean { return this.side() < p; }
+  /**
+   * A `required` list the way schemas have them: some of the property names (in any order, one now and then twice) and a few that are
+   * no property (`extra1` and `property1` are the names the sampler gives the entries of an `additionalProperties`).
+   */
+  private requiredList(properties: Schema): string[] {
+    const names = Object.keys(properties).filter(() => this.sideChance(0.5));
+    for (let i = names.length - 1; i > 0; i--) {
+      const j = this.sideInt(i + 1);
+      [names[i], names[j]] = [names[j], names[i]];
+    }
+    if (names.length > 0 && this.sideChance(0.1)) names.push(names[0]);
+    for (let i = 0, n = this.sideInt(3); i < n; i++) names.push(["ghost", "k99", "extra1", "property1"][this.sideInt(4)]);
+    return names;
+  }
   private count(): number {
     return this.heavy ? this.pick([1, 2, 3, 8, 40, 160, 500].filter((n) => n * this.multiplier <= 2_000)) : this.int(4);
   }
@@ -90,6 +110,8 @@ class Generator {
     if (this.chance(0.25)) node.additionalProperties = this.chance(0.2) ? { ...this.schema(depth - 1), "x-additionalPropertiesName": this.chance(0.3) ? "e".repeat(1 + this.int(200)) : "extra" } : this.schema(depth - 1);
     if (this.chance(0.15)) node.maxProperties = this.int(4);
     if (this.chance(0.3)) node.required = ["k0"];
+    if (this.sideChance(0.5)) node.required = this.requiredList(node.properties as Schema);
+    if (this.sideChance(0.3)) node.maxProperties = this.sideInt(5);
     return this.noisy(node);
   }
 
@@ -192,7 +214,10 @@ class Generator {
   }
 
   private plainObject(): Schema {
-    return { type: "object", properties: this.plainProperties(), ...(this.chance(0.3) ? { required: ["k0"] } : {}) };
+    const node: Schema = { type: "object", properties: this.plainProperties(), ...(this.chance(0.3) ? { required: ["k0"] } : {}) };
+    if (this.sideChance(0.5)) node.required = this.requiredList(node.properties as Schema);
+    if (this.sideChance(0.2)) node.maxProperties = this.sideInt(5);
+    return node;
   }
 
   /**
@@ -202,7 +227,11 @@ class Generator {
    */
   private realisticNode(depth: number): Schema {
     const part = (): unknown => (this.chance(0.5) ? this.ref() : this.plainObject());
-    const more = (): Schema => ({ properties: this.plainProperties(), ...(this.chance(0.5) ? { required: ["k0"] } : {}) });
+    const more = (): Schema => {
+      const node: Schema = { properties: this.plainProperties(), ...(this.chance(0.5) ? { required: ["k0"] } : {}) };
+      if (this.sideChance(0.5)) node.required = this.requiredList(node.properties as Schema);
+      return node;
+    };
     const variants = (): unknown[] => Array.from({ length: 1 + this.int(3) }, part);
     switch (this.int(8)) {
       case 0: return { type: "object", allOf: [part(), this.plainObject()], oneOf: variants() };
@@ -260,8 +289,9 @@ afterAll(() => {
 /** Runs `count` schemas of one population: same example wherever it accepts; which reasons it refuses for; how many it refused for size. */
 function compareAll(rand: () => number, heavy: boolean, depthOf: (i: number) => number, root: (g: Generator, depth: number) => Schema): { compared: number; tooLarge: number; refused: Map<string, number>; first: Map<string, string> } {
   const seen = { compared: 0, tooLarge: 0, refused: new Map<string, number>(), first: new Map<string, string>() };
+  const side = mulberry32(SEED + 55_555); // the `required` lists and `maxProperties`: fixed too
   for (let i = 0; i < SCHEMAS; i++) {
-    const schema = root(new Generator(rand, heavy), depthOf(i));
+    const schema = root(new Generator(rand, heavy, side), depthOf(i));
     const label = `#${i} ${JSON.stringify(schema)}`;
     const mine = exampleFromSchema(schema);
     if (mine.success) {

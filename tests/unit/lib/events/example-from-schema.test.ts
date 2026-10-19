@@ -580,6 +580,80 @@ describe("exampleFromSchema: work and names are charged to the budget before the
   });
 });
 
+// The sampler builds a lookup from `required` for EVERY object that has `properties` (and walks the list again for `maxProperties`), and the
+// copy shares one list across every use, so a long list reused through many references was real work nobody paid for (measured on the
+// sampler: 24,999 names x 300 / 1,000 / 3,000 uses 0.45 / 1.4 / 4.3 s, 100,000 names x 1,000 uses 6.7 s and +221 MB). Each use is charged
+// ceil(names / 64) units (twice with `maxProperties`) before the sampler runs.
+describe("exampleFromSchema: the sampler's walk of a `required` list is charged to the budget, per use", () => {
+  beforeEach(() => {
+    vi.mocked(sample).mockClear();
+  });
+
+  /** Refused with EXAMPLE_TOO_LARGE inside 200 ms, the sampler never called. */
+  function refusedFast(schema: Schema, label: string): void {
+    const started = performance.now();
+    const result = exampleFromSchema(schema);
+    expect(performance.now() - started, label).toBeLessThan(200);
+    expect(failure(result), label).toMatchObject({ code: "EXAMPLE_TOO_LARGE" });
+    expect(sample, label).not.toHaveBeenCalled();
+  }
+  const names = (count: number): string[] => Array.from({ length: count }, (_, i) => `r${i}`);
+  /** An object of one property per use of the definition `A`. */
+  const uses = (count: number): Record<string, Schema> => Object.fromEntries(Array.from({ length: count }, (_, i) => [`u${i}`, { $ref: "#/definitions/A" }]));
+  /** `uses` references to a definition that has `properties` and a `required` list of `count` names. */
+  const reused = (useCount: number, count: number, definition: Schema = {}): Schema => ({
+    type: "object",
+    properties: uses(useCount),
+    definitions: { A: { type: "object", properties: { a: { type: "string" } }, required: names(count), ...definition } },
+  });
+
+  it("24,999 names reused through 3,000 references: refused at once, not walked 3,000 times (the sampler took 4.3 s)", () => {
+    refusedFast(reused(3_000, 24_999), "24,999 names x 3,000 uses");
+  });
+
+  it("24,999 names reused through 300 references (0.45 s of the sampler)", () => {
+    refusedFast(reused(300, 24_999), "24,999 names x 300 uses");
+  });
+
+  it("100,000 names reused through 1,000 references (6.7 s and 221 MB of the sampler)", () => {
+    refusedFast(reused(1_000, 100_000), "100,000 names x 1,000 uses");
+  });
+
+  it("the list is charged wherever the sampler reads it, also on a node of an `allOf`", () => {
+    refusedFast(reused(1_000, 0, { allOf: [{ type: "object", properties: { b: { type: "string" } }, required: names(24_999) }] }), "allOf entry");
+  });
+
+  it("`maxProperties` makes the sampler walk the list a second time, so it is charged twice", () => {
+    // 200 uses x 75 units (4,800 names) = 15,000 and the 600 of the schema itself: within the budget once, over it twice
+    const fits = exampleFromSchema(reused(200, 4_800));
+    expect(fits.success).toBe(true);
+    expect(sample).toHaveBeenCalledTimes(1);
+    vi.mocked(sample).mockClear();
+    refusedFast(reused(200, 4_800, { maxProperties: 5 }), "4,800 names x 200 uses with maxProperties");
+  });
+
+  it("still generates what real schemas look like: 50 names x 3,000 uses, 1,000 names x 100 uses, 5,000 names on one object", () => {
+    for (const [useCount, count] of [[3_000, 50], [100, 1_000]] as const) {
+      const value = example(reused(useCount, count)) as Record<string, unknown>;
+      expect(Object.keys(value), `${count} names x ${useCount} uses`).toHaveLength(useCount);
+      expect(value.u0).toEqual({ a: "string" });
+    }
+    const single = example({ type: "object", properties: { a: { type: "string" }, b: { type: "integer" } }, required: names(5_000) });
+    expect(single).toEqual({ a: "string", b: 0 });
+    expect(example({ type: "object", properties: { a: { type: "string" }, b: { type: "integer" } }, required: ["b"], maxProperties: 1 })).toEqual({ b: 0 });
+  });
+
+  it("charges nothing where the sampler reads nothing: a list on a node with no `properties`, or one that is not a list", () => {
+    const value = example({
+      type: "object",
+      properties: uses(3_000),
+      definitions: { A: { type: "object", required: names(24_999) } },
+    }) as Record<string, unknown>;
+    expect(Object.keys(value)).toHaveLength(3_000);
+    expect(Object.keys(example(reused(3_000, 0, { required: "not a list" })) as object)).toHaveLength(3_000);
+  });
+});
+
 // The combinations the sampler handles on ONE node, as real schemas write them: each must give exactly what the sampler gives for the schema as written.
 describe("exampleFromSchema: allOf with oneOf / anyOf / if-then on one node, and references that bring their own example", () => {
   beforeEach(() => {

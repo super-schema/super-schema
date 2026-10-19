@@ -9,7 +9,7 @@
 // "Bounded": this runs in the BROWSER on a schema a tenant user wrote, and the sampler cannot be interrupted. A gate that counted the
 // schema as WRITTEN kept disagreeing with the sampler about what it would build (the sampler re-merges `if` / `then` until none is left,
 // follows a `$ref` that is a list or has no `#`, iterates `properties` that is a list, ...), so the sampler is never given that schema.
-// Every schema the sampler sees has been inlined and counted first, and every step has its own cost bound (one gap, below):
+// Every schema the sampler sees has been inlined and counted first, and every step has its own cost bound:
 //   1. `oversizedKeyword`: a sanity limit on the literals of the schema as written, one walk over the schema (the size of the input). A
 //      `minLength` or `minItems` over MAX_SIZE_KEYWORD is refused whatever it does (the sampler builds that many characters or items); so
 //      is a `minProperties`, which the sampler never reads, but nobody asks for 100,000 properties of an example;
@@ -20,6 +20,9 @@
 //      or a list is refused, and a cycle is cut where the sampler cuts it. Every unit of work it does for one use of a schema is charged
 //      to MAX_EXPANDED_NODES BEFORE it is done (`spend`, `announce`; the keys of a node are never walked, only the readable ones looked
 //      at, `project`), with no memo, so its cost is bounded by that budget whatever the number of uses times the width of what is used.
+//      The sampler's own walk of a `required` list is weighed the same way: it builds a lookup from the list for every object that has
+//      `properties` (and walks it again for `maxProperties`), and the copy shares the one list across all of its uses, so each use of
+//      such a node is charged ceil(names / 64) units (twice with `maxProperties`), where the list is read (`requiredWeight`).
 //      The only work it does that the budget does not pay for is once per object of the schema, not per use: finding how many entries
 //      each map has (`widthOf`), and the walk of step 1 and of `preferZero`, which are the size of the input;
 //   3. `outputWeight`: what the sampler would build from the copy (`minItems` copies of an item, two samples of `additionalProperties`, a
@@ -27,13 +30,6 @@
 //      walks the copy, which has at most that many nodes, and stops at the budget;
 //   4. the sampler runs on the copy, which holds no `$ref` of the user's and no `if` / `then` for it to disagree about (the one reference
 //      left is a fixed one to the sampler's own "no value", see `cut`), and the example may not be longer than MAX_EXAMPLE_CHARS.
-//
-// KNOWN GAP (parked, hostile-only): the sampler's own walk of a `required` list (it builds a lookup from it for every object that has
-// `properties`, and walks it again for `maxProperties`) is NOT weighted, and the copy shares the list by reference across every use. A
-// list of 24,999 names reused through 300 / 1,000 / 3,000 references costs the sampler 0.45 / 1.4 / 4.3 s (100,000 names x 1,000 uses:
-// 6.7 s). A normal schema is nowhere near it (50 names x 3,000 uses: 49 ms; 1,000 names: 143 ms). It takes a deliberately hostile schema
-// written inside the tenant, the code before this change had the same cost, and the one who pays is the person who clicks Generate.
-// Weighting `required.length / 64` units per node that has `properties` (or copying only the names that exist in `properties`) closes it.
 import { sample } from "openapi-sampler";
 import { resolveLocalRef } from "@/lib/event-specs/json-pointer";
 import { SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } from "@/lib/event-specs/json-schema-keywords";
@@ -72,6 +68,8 @@ const SIZE_KEYWORDS: ReadonlySet<string> = new Set(["minLength", "minItems", "mi
 const MAX_EXAMPLE_CHARS = 1024 * 1024;
 /** How many characters of a long string, `default`, `const` or `example` the output estimate counts as one schema node (so 25,000 nodes is about 1.6 million characters at most). */
 const MAX_NODE_CHARS = 64;
+/** How many names of a `required` list the sampler's walk of it counts as one unit of work (`requiredWeight`). */
+const REQUIRED_NAMES_PER_UNIT = 64;
 
 const isSchema = (v: unknown): v is Schema => typeof v === "object" && v !== null && !Array.isArray(v);
 const truthy = (v: unknown): boolean => Boolean(v);
@@ -214,8 +212,8 @@ interface Walk {
 /**
  * Charges `units` of work to the budget BEFORE it is done, and stops the whole expansion once the budget is gone. Everything `normalise`
  * does for one use of a schema is charged this way: a schema position (a node, a boolean, a falsy tuple item: one unit), a key a merge
- * copies, a reference followed (one unit per MAX_NODE_CHARS of its text beyond the first). So its cost is bounded by MAX_EXPANDED_NODES
- * whatever the number of uses times the width of what is used.
+ * copies, a reference followed (one unit per MAX_NODE_CHARS of its text beyond the first), the sampler's walk of a `required` list
+ * (`requiredWeight`). So its cost is bounded by MAX_EXPANDED_NODES whatever the number of uses times the width of what is used.
  */
 function spend(w: Walk, units: number): void {
   w.nodes += units;
@@ -238,6 +236,18 @@ function widthOf(w: Walk, object: object): number {
     w.widths.set(object, width);
   }
   return width;
+}
+
+/**
+ * What the sampler's walk of the `required` list of `node` costs for ONE use of it, in units: it builds a lookup from the list (one step
+ * per name) and, when the node has a `maxProperties`, walks the list a second time. The copy shares the list by reference across every
+ * use, so this is charged per use (`plainCopy`), before the sampler runs; reading the length of a list is free. A list the sampler
+ * ignores (`required` that is not a list) costs nothing.
+ */
+function requiredWeight(node: Schema): number {
+  const required = node.required;
+  if (!Array.isArray(required)) return 0;
+  return Math.ceil(required.length / REQUIRED_NAMES_PER_UNIT) * (node.maxProperties !== undefined ? 2 : 1);
 }
 
 /**
@@ -440,6 +450,7 @@ function plainCopy(w: Walk, node: Schema, ctx: Ctx, how: How, level: number, rel
   const properties = node.properties;
   if (typeof properties === "object" && asObject) {
     if (properties === null || Array.isArray(properties)) throw unsupported("`properties` must be an object");
+    spend(w, requiredWeight(node)); // the sampler reads `required` of every object that has `properties`, once per use
     const map: Schema = {};
     announce(w, widthOf(w, properties)); // each property is charged as it is visited
     for (const [name, child] of Object.entries(properties)) setOwn(map, name, normaliseNode(w, child, inner, {}, level + 1));
