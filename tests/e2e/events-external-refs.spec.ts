@@ -26,6 +26,14 @@ import { createNavFixtures, createProductInDomain, deleteNavFixtures, disconnect
 // First visits compile routes in dev, and the preview renders the payload with the real TypeSpec CLI.
 test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
+/**
+ * What a publish may take, from the click that opens its dialog to the dialog closing. The dialog first renders a preview of the publish
+ * with the real TypeSpec CLI, so `confirm-publish` is not there for as long as that takes: well over the 30 s of an action when other
+ * specs load the machine (it failed a whole-suite run that way, and the tests that depend on it did not run). `playwright.config.ts`
+ * runs this file after the other specs, alone, but a publish is still the slowest thing here and is waited for, not failed.
+ */
+const PUBLISH_TIMEOUT = 90_000;
+
 /** Text a user must never see: driver / Prisma / SQL internals. */
 const RAW_DB_TEXT = /prisma|violates|duplicate key|\bP20\d\d\b|ECONNREFUSED|invalid input syntax|relation ".*" does not exist|unique constraint/i;
 
@@ -237,25 +245,26 @@ async function addExternalRef(page: Page, section: "channels" | "messages", item
 async function publishFixtureEntity(page: Page, f: NavFixtures): Promise<void> {
   await page.goto(`${productUrlA(f)}/${f.productEntity.slug}`);
   await centerPanel(page).getByTestId(ID.entityPublish).click();
-  await page.getByTestId(ID.confirmPublish).click();
+  await page.getByTestId(ID.confirmPublish).click({ timeout: PUBLISH_TIMEOUT }); // waits for the preview
   // The dialog closes once the publish went through.
-  await expect(page.getByTestId(ID.confirmPublish)).toHaveCount(0, { timeout: 60_000 });
+  await expect(page.getByTestId(ID.confirmPublish)).toHaveCount(0, { timeout: PUBLISH_TIMEOUT });
 }
 
 /** Publish the event on the current page with the Publish button (WP-P2). `major` raises the suggested bump to a major. */
 async function publishEvent(page: Page, opts: { major?: boolean } = {}): Promise<void> {
   await centerPanel(page).getByTestId(ID.publish).click();
-  if (opts.major) await page.getByTestId(ID.bumpMajor).click();
-  await page.getByTestId(ID.confirmPublish).click();
-  await expect(page.getByTestId(ID.confirmPublish)).toHaveCount(0, { timeout: 60_000 });
+  // Both buttons are in the dialog, which shows them once the preview of the publish has rendered.
+  if (opts.major) await page.getByTestId(ID.bumpMajor).click({ timeout: PUBLISH_TIMEOUT });
+  await page.getByTestId(ID.confirmPublish).click({ timeout: PUBLISH_TIMEOUT });
+  await expect(page.getByTestId(ID.confirmPublish)).toHaveCount(0, { timeout: PUBLISH_TIMEOUT });
 }
 
 test.describe("external event references end to end", () => {
-  // The tests share the state `flow` carries: a failure in the first one makes the rest meaningless.
-  test.describe.configure({ mode: "serial" });
+  // The tests share the state `flow` carries: a failure in the first one makes the rest meaningless. Each one publishes, builds and saves
+  // an event through the real TypeSpec CLI, so each gets 5 minutes (a publish alone may take PUBLISH_TIMEOUT).
+  test.describe.configure({ mode: "serial", timeout: 300_000 });
 
   test("A publishes the event 'orders' with the message OrderCreated", async ({ authedPage: page }) => {
-    test.setTimeout(300_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
     const pageErrors: string[] = [];
@@ -284,14 +293,13 @@ test.describe("external event references end to end", () => {
 
     await test.step("publish it with the Publish button: v1.0", async () => {
       await publishEvent(page);
-      await expect(main.getByTestId(ID.versionBadge)).toHaveText("v1.0", { timeout: 60_000 });
+      await expect(main.getByTestId(ID.versionBadge)).toHaveText("v1.0", { timeout: PUBLISH_TIMEOUT });
     });
 
     expect(pageErrors, "uncaught browser exceptions").toEqual([]);
   });
 
   test("B adds a message and a channel from 'orders', uses both in operations, saves with no problem and sees them in the Code panel", async ({ authedPage: page }) => {
-    test.setTimeout(300_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
     const pageErrors: string[] = [];
@@ -351,7 +359,6 @@ test.describe("external event references end to end", () => {
   });
 
   test("A edits and publishes 2.0; B shows 'v1.0 → v2.0 available' on both references and can update them", async ({ authedPage: page }) => {
-    test.setTimeout(300_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
 
@@ -361,7 +368,7 @@ test.describe("external event references end to end", () => {
       await main.getByTestId(ID.messageTitle).fill(`${flow.sourceMessageTitle} (revised)`);
       await saveDraft(page);
       await publishEvent(page, { major: true });
-      await expect(main.getByTestId(ID.versionBadge)).toHaveText("v2.0", { timeout: 60_000 });
+      await expect(main.getByTestId(ID.versionBadge)).toHaveText("v2.0", { timeout: PUBLISH_TIMEOUT });
     });
 
     await test.step("B: both references say a newer, major version is available; B's document did not change by itself", async () => {
@@ -387,7 +394,6 @@ test.describe("external event references end to end", () => {
   });
 
   test("A's delete is refused while billing references it; B's delete of its own event is allowed", async ({ authedPage: page }) => {
-    test.setTimeout(240_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
 
