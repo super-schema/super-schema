@@ -195,6 +195,29 @@ describe("renderPinJsonSchema: a pattern that could freeze the editor never reac
     expect(danglingRefs(schema)).toEqual([]);
   });
 
+  it("also removes it from where only a `$ref` can reach it: the editor's validator follows a pointer into a `default`, `const`, `enum`, `example` or `examples` too", async () => {
+    const ctx = await testContext(prisma);
+    const sc = await scope(ctx);
+    const order = await sc.entity("Order");
+    const v = await version(ctx, order.id, "model Order {\n  id: string;\n}\n");
+    const hidden = { type: "string", pattern: CATASTROPHIC };
+    const rendered = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        a: { default: hidden }, b: { const: hidden }, c: { enum: [hidden] }, d: { example: hidden }, e: { examples: [hidden] },
+        ref: { $ref: "#/properties/a/default" },
+      },
+    };
+    const { renderer } = stubRenderer(renderOf(rendered));
+
+    const { schema } = unwrap(await renderPinJsonSchema(ctx, { tenantId: TENANT, pin: { entityId: order.id, entityVersionId: v.id } }, { renderer }));
+
+    expect(JSON.stringify(schema)).not.toContain(CATASTROPHIC);
+    expect((schema.properties as Record<string, Record<string, unknown>>).a.default).toEqual({ type: "string" });
+    expect(danglingRefs(schema)).toEqual([]);
+  });
+
   it("does the same for a real entity version rendered by the TypeSpec CLI: `@pattern` is on the entity, the browser gets only the safe one", async () => {
     const ctx = await testContext(prisma);
     const sc = await scope(ctx);

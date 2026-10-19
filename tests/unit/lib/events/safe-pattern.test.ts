@@ -2,7 +2,8 @@
 // (`isLinearSafePattern` compiles a pattern it accepts structurally, it never matches one).
 import { describe, expect, it } from "vitest";
 import type { JsonObject } from "@/lib/event-specs/types";
-import { isLinearSafePattern, MAX_SAFE_PATTERN_LENGTH, sanitizeSchemaPatterns } from "@/lib/events/safe-pattern";
+import { resolveLocalRef } from "@/lib/event-specs/json-pointer";
+import { isLinearSafePattern, isLinearSafePatternKey, MAX_SAFE_PATTERN_LENGTH, sanitizeSchemaPatterns } from "@/lib/events/safe-pattern";
 
 describe("isLinearSafePattern: what is handed to the browser", () => {
   it.each([
@@ -172,6 +173,17 @@ describe("sanitizeSchemaPatterns", () => {
     expect(out).toEqual({ type: "object", patternProperties: { "^x-[a-z]+$": { type: "string" }, "^id_[0-9]{4}$": { type: "integer" } } });
   });
 
+  it("a `patternProperties` key must compile WITHOUT the `u` flag too, because the validator compiles it that way (a `pattern` is compiled with it)", () => {
+    const NEEDS_U = "^\\u{41}+$"; // `A+` with the flag, "nothing to repeat" without it
+    expect(isLinearSafePattern(NEEDS_U)).toBe(true);
+    expect(isLinearSafePatternKey(NEEDS_U)).toBe(false);
+    expect(isLinearSafePatternKey(GOOD)).toBe(true);
+    expect(isLinearSafePatternKey(BAD)).toBe(false);
+    expect(isLinearSafePatternKey("^\\p{L}+$")).toBe(true); // `p{L}` as literal braces without the flag: still fine
+    const out = sanitizeSchemaPatterns({ type: "object", pattern: NEEDS_U, patternProperties: { [NEEDS_U]: { type: "string" }, [GOOD]: { type: "string" } } });
+    expect(out).toEqual({ type: "object", pattern: NEEDS_U, patternProperties: { [GOOD]: { type: "string" } } });
+  });
+
   it("does not mistake a NAME for a keyword: a property, definition or dependency called `pattern` or `patternProperties` stays", () => {
     const schema: JsonObject = {
       type: "object",
@@ -189,12 +201,87 @@ describe("sanitizeSchemaPatterns", () => {
     });
   });
 
-  it("copies the data keywords as they are (an enum member or a default may hold a key called `pattern`)", () => {
+  it("judges the data keywords too: an object inside a `default`, `const`, `enum`, `example` or `examples` loses an unsafe `pattern`, a safe one stays", () => {
     const schema: JsonObject = {
       type: "object",
-      properties: { a: { enum: [{ pattern: "abc" }], default: { pattern: "abc" } }, b: { const: { pattern: BAD } }, c: { examples: [{ pattern: "x" }], example: { pattern: "y" } } },
+      properties: {
+        a: { enum: [{ pattern: BAD }, { pattern: GOOD }], default: { pattern: BAD, patternProperties: { [BAD]: {} } } },
+        b: { const: { pattern: BAD, nested: [{ pattern: "(a*)*b" }] } },
+        c: { examples: [{ pattern: BAD }], example: { pattern: BAD } },
+      },
     };
-    expect(sanitizeSchemaPatterns(schema)).toEqual(schema);
+    expect(sanitizeSchemaPatterns(schema)).toEqual({
+      type: "object",
+      properties: {
+        a: { enum: [{}, { pattern: GOOD }], default: { patternProperties: {} } },
+        b: { const: { nested: [{}] } },
+        c: { examples: [{}], example: {} },
+      },
+    });
+  });
+
+  it("closes every `$ref` route into a schema that is not at a schema position: default, const, enum[0], example, examples[0], properties", () => {
+    // the editor's validator follows a `$ref` to ANY JSON pointer, so each of these used to carry `^(a+)+$` into it
+    const unsafe: JsonObject = { type: "string", pattern: BAD, patternProperties: { [BAD]: { type: "string" } } };
+    const routes: Array<[string, JsonObject]> = [
+      ["default", { default: unsafe }],
+      ["const", { const: unsafe }],
+      ["enum/0", { enum: [unsafe] }],
+      ["example", { example: unsafe }],
+      ["examples/0", { examples: [unsafe] }],
+      ["x-hidden", { "x-hidden": unsafe }], // an extension the emitter's `@extension(key, value)` can write, under any key
+    ];
+    for (const [pointer, keyword] of routes) {
+      const out = sanitizeSchemaPatterns({ properties: { x: keyword, y: { $ref: `#/properties/x/${pointer}` } } });
+      const target = resolveLocalRef(out, `#/properties/x/${pointer}`);
+      expect(target, pointer).toEqual({ found: true, value: { type: "string", patternProperties: {} } });
+      expect(JSON.stringify(out), pointer).not.toContain(BAD);
+    }
+    // a `$ref` to a property (a schema position, the route that was always closed) and to the map of properties itself
+    const viaProperty = sanitizeSchemaPatterns({ properties: { x: unsafe, y: { $ref: "#/properties/x" } } });
+    expect(resolveLocalRef(viaProperty, "#/properties/x")).toEqual({ found: true, value: { type: "string", patternProperties: {} } });
+    expect(JSON.stringify(viaProperty)).not.toContain(BAD);
+  });
+
+  it("closes the route through the map of names itself: `$ref: \"#/properties\"` reads every property name as a keyword", () => {
+    const out = sanitizeSchemaPatterns({
+      $ref: "#/properties",
+      properties: {
+        pattern: BAD, // a text under a name called `pattern` is no schema: the validator would run it
+        patternProperties: { [BAD]: { type: "string" }, [`x-${BAD}`]: 1, "x-note": "kept", type: "object", properties: { pattern: { type: "string" } } },
+        other: { type: "string" },
+      },
+    });
+    expect(out).toEqual({
+      $ref: "#/properties",
+      properties: { patternProperties: { "x-note": "kept", type: "object", properties: { pattern: { type: "string" } } }, other: { type: "string" } },
+    });
+    // a list under that name is judged too (its text is what `new RegExp(["^(a+)+$"], "u")` would compile), but a dependency list stays
+    expect(sanitizeSchemaPatterns({ dependencies: { pattern: [BAD] }, properties: { pattern: [BAD], other: { type: "string" } } })).toEqual({ dependencies: {}, properties: { other: { type: "string" } } });
+    expect(sanitizeSchemaPatterns({ dependencies: { pattern: ["a", "b-c"] }, properties: { pattern: GOOD } })).toEqual({ dependencies: { pattern: ["a", "b-c"] }, properties: { pattern: GOOD } });
+  });
+
+  it("does not throw for data nested 50,000 levels deep (the engine's structuredClone does at about 4,000), and still returns a copy", () => {
+    let data: JsonObject = { pattern: BAD };
+    let list: JsonObject[] = [{ pattern: BAD }];
+    for (let i = 0; i < 50_000; i++) {
+      data = { next: data };
+      list = [{ items: list }] as unknown as JsonObject[];
+    }
+    const schema: JsonObject = { type: "object", properties: { a: { default: data, examples: list } } };
+    const out = sanitizeSchemaPatterns(schema);
+    const copyOfA = (out.properties as JsonObject).a as JsonObject;
+    expect(copyOfA.default === data).toBe(false); // (`not.toBe` would deep-compare 50,000 levels when it is not the same object)
+    let node = copyOfA.default as JsonObject;
+    for (let i = 0; i < 50_000; i++) node = node.next as JsonObject;
+    expect(node).toEqual({}); // the unsafe pattern at the bottom is gone
+    // the input was not touched: the bottom of the original still has it
+    let original = data;
+    for (let i = 0; i < 50_000; i++) original = original.next as JsonObject;
+    expect(original).toEqual({ pattern: BAD });
+    let bottom: unknown = copyOfA.examples;
+    for (let i = 0; i < 50_000; i++) bottom = ((bottom as JsonObject[])[0] as JsonObject).items;
+    expect(bottom).toEqual([{}]);
   });
 
   it("also cleans a schema under an unknown or `x-` keyword: a `$ref` may point anywhere", () => {

@@ -153,13 +153,36 @@ export function isLinearSafePattern(pattern: string): boolean {
   }
 }
 
-/** The keywords whose value is data, not a schema: copied as they are (`oversizedKeyword` of the example generator reads the same list). */
-const DATA_KEYWORDS: ReadonlySet<string> = new Set(["const", "enum", "default", "example", "examples"]);
+/**
+ * `patternProperties` keys are compiled by the editor's validator WITHOUT the `u` flag (`json-schema-library` `keyword.ts` and `step.ts`:
+ * `new RegExp(key)`), unlike a `pattern`, so such a key must be safe and compile both ways (`^\u{41}+$` is `A+` with the flag and
+ * "nothing to repeat" without it).
+ */
+export function isLinearSafePatternKey(key: string): boolean {
+  if (!isLinearSafePattern(key)) return false;
+  try {
+    new RegExp(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Text that is no pattern at all, only letters, digits and `$ _ . -`: a keyword or an `x-` key, which as a regex has no quantifier and no group. */
+const LITERAL_KEY = /^[A-Za-z0-9$_.-]{1,200}$/;
 /** The keywords whose object has NAMES as keys (a property may be called `pattern`), `dependencies` besides the ones the other walkers share. */
 const NAME_MAP_KEYWORDS: ReadonlySet<string> = new Set([...SCHEMA_MAP_KEYWORDS, "dependencies"]);
 
-/** How an object is read: a schema-like `node` (its `pattern` is judged), a map of `names` to nodes, `patterns` (like names, but the names are regexes), or a list. */
-type Role = "node" | "names" | "patterns" | "list";
+/**
+ * How an object is read:
+ * - `node`: a schema, or anything a `$ref` could make one (every object is read like this unless it is one of the others); its `pattern` is judged;
+ * - `names`: the value of `properties`, `definitions`, `$defs`, `dependentSchemas`, `dependencies`: its keys are names, its values nodes;
+ * - `patterns`: the value of `patternProperties`: its keys are regexes, kept only when `isLinearSafePatternKey`;
+ * - `loose`: a node under a property called `patternProperties` (an entry of a `names` map): if a `$ref` makes the whole map a schema, the
+ *   validator reads that node as a map of regexes, so only keys that are safe regexes or plain words stay;
+ * - `list`: a list, its items are nodes.
+ */
+type Role = "node" | "loose" | "names" | "patterns" | "list";
 interface Task {
   role: Role;
   source: JsonObject | JsonValue[];
@@ -168,24 +191,36 @@ interface Task {
 
 /**
  * A COPY of `schema` in which every `pattern` that is not a string passing `isLinearSafePattern` is removed, and so is every
- * `patternProperties` entry whose key does not pass (with the schema under it). It looks at every object of the schema except the data
- * keywords (`const`, `enum`, `default`, `example`, `examples`, copied as they are) and the names of a map (`properties`, `definitions`,
- * `$defs`, `dependencies`, ... may hold a property called `pattern`), so a pattern under an unknown or `x-` keyword that a `$ref`
- * points at is removed too. Iterative, one visit per object (a shared sub-object is copied once and shared again; a cycle is cut by
- * the same memo), so it costs the size of the schema. The input is never touched.
+ * `patternProperties` entry whose key does not pass `isLinearSafePatternKey` (with the schema under it).
+ *
+ * EVERY object at any depth is judged, the data keywords (`const`, `enum`, `default`, `example`, `examples`) and any unknown or `x-`
+ * keyword included: the editor's validator resolves a `$ref` against ANY JSON pointer, so `{ "$ref": "#/properties/x/default" }` reads
+ * the default of a property as a schema and would run a `pattern` that sits there. (The price: an object inside an enum or a default
+ * that has a key called `pattern` with an unsafe text loses that key, in the editor's copy only.) The one thing that is not a keyword is
+ * the key of a `names` map: a property may be called `pattern` and holds a schema, which stays; but a text (unsafe: removed) or a list
+ * of anything but plain words under such a name is no schema, and the validator would read it as a `pattern` if a `$ref` made the map a
+ * schema, so it is judged.
+ *
+ * Iterative (nothing here recurses and nothing is cloned by the engine: `structuredClone` throws on deeply nested data), one visit per
+ * object and role (a shared sub-object is copied once and shared again, a cycle is cut by the same memo), so it costs the size of the
+ * schema and does not throw for any JSON, however deep. The input is never touched.
  */
 export function sanitizeSchemaPatterns(schema: JsonObject): JsonObject {
-  const memo: Record<Role, Map<object, JsonObject | JsonValue[]>> = { node: new Map(), names: new Map(), patterns: new Map(), list: new Map() };
-  const verdicts = new Map<string, boolean>();
-  const safe = (pattern: string): boolean => {
-    if (pattern.length > MAX_SAFE_PATTERN_LENGTH) return false;
-    let verdict = verdicts.get(pattern);
+  const memo: Record<Role, Map<object, JsonObject | JsonValue[]>> = { node: new Map(), loose: new Map(), names: new Map(), patterns: new Map(), list: new Map() };
+  const verdicts = { pattern: new Map<string, boolean>(), key: new Map<string, boolean>() };
+  /** The verdict on a pattern (`pattern`) or on a `patternProperties` key (`key`), once per distinct text; a text over the limit is never read twice. */
+  const judged = (which: "pattern" | "key", text: string): boolean => {
+    if (text.length > MAX_SAFE_PATTERN_LENGTH) return false;
+    let verdict = verdicts[which].get(text);
     if (verdict === undefined) {
-      verdict = isLinearSafePattern(pattern);
-      verdicts.set(pattern, verdict);
+      verdict = which === "pattern" ? isLinearSafePattern(text) : isLinearSafePatternKey(text);
+      verdicts[which].set(text, verdict);
     }
     return verdict;
   };
+  /** Whether the value of a name called `pattern` in a `names` map may stay: a schema (object, boolean ...) may, a safe text may, a list of plain words (a dependency) may. */
+  const keepsNamedPattern = (value: JsonValue): boolean =>
+    typeof value === "string" ? judged("pattern", value) : Array.isArray(value) ? value.every((item) => typeof item === "string" && LITERAL_KEY.test(item)) : true;
   const stack: Task[] = [];
 
   /** The copy of `value`: a primitive as it is; an object or list as an empty shell that the loop below fills. */
@@ -209,13 +244,15 @@ export function sanitizeSchemaPatterns(schema: JsonObject): JsonObject {
     }
     const into = target as JsonObject;
     for (const [key, value] of Object.entries(source)) {
-      if (role === "names") setOwn(into, key, enter("node", value));
-      else if (role === "patterns") {
-        if (safe(key)) setOwn(into, key, enter("node", value));
+      if (role === "names") {
+        if (key !== "pattern" || keepsNamedPattern(value)) setOwn(into, key, enter(key === "patternProperties" ? "loose" : "node", value));
+      } else if (role === "patterns") {
+        if (judged("key", key)) setOwn(into, key, enter("node", value));
+      } else if (role === "loose" && !judged("key", key) && !LITERAL_KEY.test(key)) {
+        continue;
       } else if (key === "pattern") {
-        if (typeof value === "string" && safe(value)) setOwn(into, key, value);
-      } else if (DATA_KEYWORDS.has(key)) setOwn(into, key, structuredClone(value));
-      else setOwn(into, key, enter(key === "patternProperties" ? "patterns" : NAME_MAP_KEYWORDS.has(key) ? "names" : "node", value));
+        if (typeof value === "string" && judged("pattern", value)) setOwn(into, key, value);
+      } else setOwn(into, key, enter(key === "patternProperties" ? "patterns" : NAME_MAP_KEYWORDS.has(key) ? "names" : "node", value));
     }
   }
   return root;
