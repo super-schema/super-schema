@@ -26,6 +26,9 @@ export const SCHEMA_MAP_KEYWORDS: ReadonlySet<string> = new Set([
 
 export const SCHEMA_ARRAY_KEYWORDS: ReadonlySet<string> = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
 
+/** The keywords whose value is data a consumer copies as it is (a sample is taken from them), not a schema. */
+export const DATA_KEYWORDS: ReadonlySet<string> = new Set(["const", "enum", "default", "example", "examples"]);
+
 export const SINGLE_SCHEMA_KEYWORDS: ReadonlySet<string> = new Set([
   "additionalProperties",
   "additionalItems",

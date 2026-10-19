@@ -61,8 +61,21 @@ class Generator {
   }
   /** `x-` keys the sampler never reads: a node can carry dozens of them. */
   private noisy(node: Schema): Schema {
-    if (!this.chance(0.08)) return node;
-    for (let i = 0, n = 1 + this.int(60); i < n; i++) node[`x-${i}`] = this.chance(0.3) ? { $ref: "#/nowhere", enum: [i] } : i;
+    if (this.chance(0.08)) {
+      for (let i = 0, n = 1 + this.int(60); i < n; i++) node[`x-${i}`] = this.chance(0.3) ? { $ref: "#/nowhere", enum: [i] } : i;
+    }
+    return this.tainted(node);
+  }
+  /** Only the random populations (`root`) carry these: the realistic one must never be refused. */
+  private taints = false;
+  /**
+   * Now and then a scalar keyword in a form a schema should not have (a string, a list, an object, a boolean, null): `exampleFromSchema`
+   * refuses it and names the keyword (or, for `required`, which the sampler only tests for being a list, carries on as the sampler does).
+   */
+  private tainted(node: Schema): Schema {
+    if (!this.taints || !this.sideChance(0.006)) return node;
+    const key = ["minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties", "format", "type", "required"][this.sideInt(9)];
+    node[key] = ["3", [1, 2], { a: 1 }, true, null, "NaN"][this.sideInt(6)];
     return node;
   }
 
@@ -195,6 +208,7 @@ class Generator {
   }
 
   root(depth: number): Schema {
+    this.taints = true;
     this.definitions = this.int(4);
     const definitions: Schema = {};
     // a definition may sit inside a list, so its own lists are kept short
@@ -273,7 +287,7 @@ function direct(schema: Schema): { value: unknown } | null {
 const SEED = Number(process.env.DIFFERENTIAL_SEED ?? 0);
 const SCHEMAS = Number(process.env.DIFFERENTIAL_SCHEMAS ?? 2_000);
 /** The constructs `exampleFromSchema` refuses by name (see `requireHost` and the malformed shapes), and nothing else. */
-const NAMED_REFUSAL = /cannot be reproduced|must be (an object|a list|text|schemas)/;
+const NAMED_REFUSAL = /cannot be reproduced|must be (an object|a list|text|schemas|a number)/;
 
 /** The refusal rate of each reason, for the log. */
 const category = (message: string): string => message.replace(/^An example could not be generated: /, "").replace(/`[^`]*` brought in by.*/, "readOnly / writeOnly brought in below an entry").slice(0, 90);

@@ -654,6 +654,98 @@ describe("exampleFromSchema: the sampler's walk of a `required` list is charged 
   });
 });
 
+// The sampler turns a scalar keyword into a number or a key again for EVERY use of a node (`Math.min(maxItems, minItems || 1)`, `res.length >
+// maxLength`, `stringFormats[format]`, `requiredPropertiesMap[name]`), and the copy used to share the value by reference: an array of
+// 200,000 zeros, or a numeric string of 400,000 characters, under a 512 KB schema cost 2.8 s (and up to 15 s on a slower machine) over
+// 5,000 uses. The copy now takes each of them in one closed form (a finite number, short text, a list of text) and refuses any other.
+describe("exampleFromSchema: a scalar keyword is copied in a closed form, so no use of a node is coerced again", () => {
+  beforeEach(() => {
+    vi.mocked(sample).mockClear();
+  });
+  const OPTIONS = { skipReadOnly: true, quiet: true, maxSampleDepth: 10 };
+
+  /** Refused, whatever the code, inside 200 ms, the sampler never called. */
+  function refusedFast(schema: Schema, label: string): Result<unknown> {
+    const started = performance.now();
+    const result = exampleFromSchema(schema);
+    expect(performance.now() - started, label).toBeLessThan(200);
+    expect(result.success, label).toBe(false);
+    expect(sample, label).not.toHaveBeenCalled();
+    return result;
+  }
+  const uses = (count: number): Record<string, Schema> => Object.fromEntries(Array.from({ length: count }, (_, i) => [`u${i}`, { $ref: "#/definitions/A" }]));
+  /** `count` references to a definition that carries `scalar`. */
+  const shared = (count: number, scalar: Schema): Schema => ({ type: "object", properties: uses(count), definitions: { A: { type: "object", properties: { a: { type: "string" } }, ...scalar } } });
+  const zeros = (count: number): number[] => new Array<number>(count).fill(0);
+  /** A numeric string that is small as a number (`Number` gives 1) and costs 400,000 characters to read each time. */
+  const padded = "0".repeat(399_999) + "1";
+
+  it.each(["required", "type", "format", "minLength", "minItems", "maxItems", "maxLength", "minProperties", "maxProperties"])(
+    "refuses a 200,000-element array as `%s`, through 5,000 uses",
+    (key) => {
+      refusedFast(shared(5_000, { [key]: zeros(200_000) }), `${key} = 200,000 zeros x 5,000 uses`);
+    },
+  );
+
+  it.each(["minLength", "minItems", "maxItems", "maxLength", "minProperties", "maxProperties"])("refuses a numeric text of 400,000 characters as `%s`, through 3,000 uses", (key) => {
+    refusedFast(shared(3_000, { [key]: padded }), `${key} = a numeric text of 400,000 characters x 3,000 uses`);
+  });
+
+  it.each(["format", "type"])("refuses a text of 400,000 characters as `%s`, through 3,000 uses", (key) => {
+    refusedFast(shared(3_000, { [key]: "x".repeat(400_000) }), `${key} = 400,000 characters x 3,000 uses`);
+  });
+
+  it("refuses a `required` list with anything but text in it, a `type` list of more than 16 entries, and a `type` on a node that has an `example`", () => {
+    refusedFast(shared(5_000, { required: ["a", "b", 3] }), "a number among the names");
+    refusedFast(shared(1_000, { required: Array.from({ length: 50_000 }, () => [1, 2]) }), "50,000 lists as names");
+    refusedFast(shared(5_000, { type: Array.from({ length: 17 }, () => "string") }), "17 types");
+    refusedFast(shared(5_000, { example: "x", type: zeros(200_000) }), "a huge `type` beside an `example`");
+  });
+
+  it("names the keyword of a malformed scalar: a string, array, object, boolean, null or a number that is not finite", () => {
+    for (const key of ["minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties"]) {
+      for (const value of ["3", "NaN", [3], { n: 3 }, true, null, Infinity, -Infinity]) {
+        const result = refusedFast({ type: "object", properties: { a: { [key]: value, type: "string" } } }, `${key} = ${JSON.stringify(value)}`);
+        // a size keyword that is Infinity is refused by the size check, which says so, the others by the copy, which names the keyword
+        if (!result.success && !(typeof value === "number" && value > 100_000 && key.startsWith("min"))) expect(result.error.message, `${key} = ${String(value)}`).toContain(`\`${key}\` must be a number`);
+      }
+    }
+    expect(failure(exampleFromSchema({ type: "string", format: 5 }))).toMatchObject({ code: "EXAMPLE_FAILED", message: expect.stringContaining("`format` must be text") });
+    expect(failure(exampleFromSchema({ type: "string", format: "x".repeat(257) }))).toMatchObject({ code: "EXAMPLE_FAILED", message: expect.stringContaining("`format` must be text") });
+    expect(failure(exampleFromSchema({ type: { not: "text" } }))).toMatchObject({ code: "EXAMPLE_FAILED", message: expect.stringContaining("`type` must be text") });
+    expect(failure(exampleFromSchema({ type: ["string", 5] }))).toMatchObject({ code: "EXAMPLE_FAILED", message: expect.stringContaining("`type` must be text") });
+    expect(failure(exampleFromSchema({ type: "object", properties: { a: { type: "string" } }, required: ["a", null] }))).toMatchObject({ code: "EXAMPLE_FAILED", message: expect.stringContaining("`required` must be a list of text") });
+  });
+
+  it("still generates the same example as the sampler for the ordinary forms: numbers, a type list, a list of names, a format", () => {
+    const sameAsSampler = (schema: Schema): unknown => {
+      const mine = example(schema);
+      expect(mine).toEqual(JSON.parse(JSON.stringify(sample(schema as never, OPTIONS, schema))));
+      return mine;
+    };
+    const ordinary = sameAsSampler({
+      type: "object",
+      required: ["a", "b"],
+      maxProperties: 5,
+      properties: {
+        a: { type: ["string", "null"], minLength: 3, maxLength: 10 },
+        b: { type: "string", format: "date-time" },
+        c: { type: "array", items: { type: "integer" }, minItems: 2, maxItems: 4 },
+        d: { type: "integer", minimum: 5 },
+        e: { type: "string", format: "uuid" },
+        f: { type: "object", minProperties: 0, properties: { x: { type: "boolean" } } },
+      },
+    }) as Record<string, unknown>;
+    expect(ordinary).toMatchObject({ a: "string", b: "2019-08-24T14:15:22Z", c: [0, 0], d: 5 });
+    expect(Object.keys(ordinary)).toHaveLength(5); // `maxProperties` cuts the sixth, after the required ones
+    // a draft-03 `required: true` on a property is read by the sampler as "has `required`" only
+    sameAsSampler({ type: "object", properties: { a: { type: "string", required: true }, b: { required: false } } });
+    // a copied schema that uses the shared list and the shared type list a thousand times
+    const value = example(shared(1_000, { required: ["a"], type: ["object", "null"], maxProperties: 3 })) as Record<string, unknown>;
+    expect(Object.keys(value)).toHaveLength(1_000);
+  });
+});
+
 // The combinations the sampler handles on ONE node, as real schemas write them: each must give exactly what the sampler gives for the schema as written.
 describe("exampleFromSchema: allOf with oneOf / anyOf / if-then on one node, and references that bring their own example", () => {
   beforeEach(() => {
