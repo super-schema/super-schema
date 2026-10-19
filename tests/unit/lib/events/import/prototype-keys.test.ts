@@ -1,6 +1,6 @@
 // tests/unit/lib/events/import/prototype-keys.test.ts
 // A key that is the name of an `Object.prototype` property must never reach the AsyncAPI parser unless the parser copes with it. The probe
-// behind `PARSER_UNSAFE_KEYS` (source.ts) ran every one of these names as a key in 34 places of a valid document; only `hasOwnProperty`
+// behind `PARSER_UNSAFE_KEYS` (own-property.ts) ran every one of these names as a key in 34 places of a valid document; only `hasOwnProperty`
 // crashed ("target.hasOwnProperty is not a function"). This sweep keeps the list honest: a parser upgrade that starts to crash on another
 // name fails here, and so does a name that is refused although the parser would have read it.
 import { describe, expect, it } from "vitest";

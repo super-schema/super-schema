@@ -220,6 +220,8 @@ describe("AdvancedSection: the name is a visible, required field", () => {
     expect(text("scheme-key-error")).toContain("no spaces");
     type(box("scheme-key"), "constructor");
     expect(text("scheme-key-error")).toContain("is reserved");
+    type(box("scheme-key"), "hasOwnProperty");
+    expect(text("scheme-key-error")).toBe('"hasOwnProperty" is reserved. Choose another name.');
     type(box("scheme-key"), "x".repeat(65));
     expect(text("scheme-key-error")).toContain("at most 64");
     fireEvent.blur(box("scheme-key"));

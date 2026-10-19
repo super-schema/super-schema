@@ -18,7 +18,7 @@ import type { Parser } from "@asyncapi/parser";
 import type { LevelScope } from "@/lib/levels";
 import { resolveScope } from "@/lib/asset-scope";
 import { checkImportSize } from "@/lib/compiler/import-limits";
-import { mapParserDiagnostic, createAsyncApiParser } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { createAsyncApiParser, isParserCrashDiagnostic, mapParserDiagnostic } from "@/lib/event-specs/validation/asyncapi-parser-validator";
 import { normalizeDiagnostics } from "@/lib/event-specs/diagnostics";
 import { BUNDLED_TRAITS, bundledMarker } from "@/lib/events/bundled-traits";
 import { slugKey } from "@/lib/events/document/keys";
@@ -102,7 +102,7 @@ async function validateWithParser(raw: RawAsyncApi3): Promise<Result<ImportWarni
   sharedParser ??= createAsyncApiParser();
   const found = await sharedParser.validate(raw);
   // A crash inside the validator comes back as a diagnostic carrying the exception text and its stack: log it, never show it.
-  const crash = found.find((d) => String(d.code) === "uncaught-error");
+  const crash = found.find(isParserCrashDiagnostic);
   if (crash) return internalFailure("asyncapi-import validate", crash.message);
   const diagnostics = normalizeDiagnostics(found.map(mapParserDiagnostic));
   const errors = diagnostics.filter((d) => d.severity === "error");
