@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { unexpectedFailure } from "@/lib/action-context";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
@@ -45,6 +46,10 @@ export async function createTenantEntityAction(data: {
   if (reservedMsg) {
     return { error: reservedMsg };
   }
+
+  // A field named like a key the AsyncAPI parser cannot read is refused by name, before anything is created.
+  const reservedField = firstReservedFieldNameMessage(data.fields);
+  if (reservedField !== null) return { error: reservedField };
 
   const slug = generateSlug(name);
 

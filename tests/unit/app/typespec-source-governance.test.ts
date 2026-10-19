@@ -122,6 +122,26 @@ describe("TypeSpec Source tab save applies the model's x-tags to metadata.tags (
   }, 60_000);
 });
 
+describe("TypeSpec Source tab save refuses a field the AsyncAPI parser cannot read (PARSER_UNSAFE_KEYS)", () => {
+  const MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another field name.';
+
+  it("a new field named hasOwnProperty: the save is refused with the reserved-name message and nothing is written, not even the source", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  hasOwnProperty: string;\n}\n");
+    expect(res).toMatchObject({ success: false, error: MESSAGE });
+    expect(mockPrisma.field.create).not.toHaveBeenCalled();
+    expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("a field that was there before (an entity created before the rule) does not stop the source from being saved", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    mockPrisma.field.findMany.mockResolvedValue([{ id: "f-1", entityId: "ent-1", name: "hasOwnProperty", sortOrder: 0, fieldNumber: 1, type: "string", nullable: true, isKey: false, description: "", classification: null, decorators: {} }]);
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  hasOwnProperty?: string;\n  id: string;\n}\n");
+    expect(res.success).toBe(true);
+  }, 60_000);
+});
+
 describe("getTypeSpecSourceAction upgrades a stored legacy @tag source", () => {
   it("returns the stored source rewritten into the valid governance decorators", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({
