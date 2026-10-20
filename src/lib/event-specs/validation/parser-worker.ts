@@ -27,6 +27,8 @@ process.on("disconnect", () => process.exit(0));
 process.on("message", async (message: ToWorker) => {
   if (!message || message.type !== "job") return;
   const { id, job } = message;
+  // First, before any work: the parent only retries a job on another worker when this worker never said it had it.
+  send({ type: "accepted", id });
   try {
     const body = JSON.stringify(await handleJob(job));
     const limit = maxMessageBytes();
@@ -39,4 +41,4 @@ process.on("message", async (message: ToWorker) => {
 
 // Build the parser first, then say so: the parent starts the clock of a job when it is sent, not while the worker is still starting.
 warmUp();
-send({ type: "ready", pid: process.pid });
+send({ type: "ready" });

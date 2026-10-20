@@ -21,9 +21,11 @@
 // `x-ext` objects of 1,999 keys, about 3.7 s; a file that is mostly syntax errors costs the `yaml` package 5 - 9 s at 1 MiB (linear; the cost is
 // its own error objects, one stack trace each: `]` x 1 MiB 6.3 s, `a: ]` x 262,000 9.0 s). Lowering the caps barely helps (500 entries: still
 // 5.3 s). So these two steps do NOT run in the server's process: they run in a child process that is killed at a hard time limit
-// (`src/lib/event-specs/validation/parser-runner.ts`): the read of the file after 4 s and the parser after 15 s, whatever the shape of the file; a
-// file over either limit (or one whose parser report is over 8 MiB, as the 119,941 diagnostics of the 60-channel file are) is refused with a
-// plain `VALIDATION_ERROR` and nothing is created, and the server's event loop is never blocked by
+// (`src/lib/event-specs/validation/parser-runner.ts`): the read of the file after 4 s and the parser after 15 s, whatever the shape of the file.
+// What the user is told, exactly (`asyncapi-import.service.ts`): a file over either time limit, a busy pool, or a parser report of more than 8 MiB
+// (about 25,000 diagnostics; the 119,941 of the 60-channel file are) is a plain `VALIDATION_ERROR`; a read whose answer is over 8 MiB (a small
+// file that YAML aliases expand that far) is `TOO_LARGE`; a worker that crashed, never started or is missing is the generic `INTERNAL_ERROR` (the
+// cause is in the server log). In every case nothing is created, and the server's event loop is never blocked by
 // them. What still runs in the server, uninterruptible, is the rest of the pipeline (the importers, the payload extraction, the mapper, the
 // entry-count and expansion checks above): its cost is bounded only by the numbers measured above, and a file built to hit all of them at once
 // could still hold the event loop for seconds. (Setting `Error.stackTraceLimit = 0` around the YAML read would cut that read below 2 s; it was

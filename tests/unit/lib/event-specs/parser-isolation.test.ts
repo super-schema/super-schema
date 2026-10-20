@@ -96,7 +96,7 @@ describe("a document that blocks the parser for seconds", () => {
     const validator = new AsyncApiParserValidator();
     expect((await validator.validate(smallDocument())).success).toBe(true); // a warm worker: the probe measures the hostile job only
     const hostile = hostileParametersDocument(); // built before the probe starts
-    const pid = parserPoolStatus().workers[0].pid as number;
+    const pid = parserPoolStatus().workers[0]?.pid; // (there is no worker when the job runs in process)
 
     const probe = lagProbe();
     const started = Date.now();
@@ -104,6 +104,8 @@ describe("a document that blocks the parser for seconds", () => {
     const took = Date.now() - started;
     const lag = probe.stop();
 
+    // the loop first: that is what a runner that does not isolate fails (the job of the same document held it for 8 - 13 s)
+    expect(lag).toBeLessThan(200);
     expect(res).toEqual({
       success: true,
       data: [{
@@ -113,8 +115,7 @@ describe("a document that blocks the parser for seconds", () => {
     });
     expect(took).toBeGreaterThanOrEqual(1_900);
     expect(took).toBeLessThan(8_000); // loose for a loaded machine: unblocked, the parser alone needs 8 - 13 s
-    expect(lag).toBeLessThan(200); // in process the same document held the loop for 9 - 13 s
-    expect(await waitUntilGone(pid)).toBe(true); // the worker that held it is dead
+    expect(await waitUntilGone(pid as number)).toBe(true); // the worker that held it is dead
 
     const next = await validator.validate(smallDocument("Next"));
     expect(next.success && next.data.filter((d) => d.severity === "error")).toEqual([]);
@@ -128,10 +129,10 @@ describe("a document that blocks the parser for seconds", () => {
     const res = await runParserJob({ kind: "parseSource", text: flood }, { timeoutMs: 1_500 });
     const took = Date.now() - started;
     const lag = probe.stop();
+    expect(lag).toBeLessThan(200); // first: the loop is what a runner that does not isolate fails
     expect(res).toMatchObject({ success: false, error: { code: "PARSER_TIMEOUT", details: { timeoutMs: 1_500 } } });
     expect(took).toBeGreaterThanOrEqual(1_400);
     expect(took).toBeLessThan(7_000); // loose for a loaded machine: the limit is 1.5 s, the unbounded read 5 - 9 s
-    expect(lag).toBeLessThan(200);
     // and the pool is fine afterwards
     expect(await runParserJob({ kind: "parseSource", text: "asyncapi: 3.0.0\ninfo:\n  title: t\n  version: '1'\n" })).toMatchObject({ success: true, data: { success: true } });
   }, 60_000);
@@ -161,11 +162,12 @@ describe("what the validator makes of the runner's other failures (a fake worker
     writeFileSync(fake, `
 process.on("disconnect", () => process.exit(0));
 process.on("message", (message) => {
+  process.send({ type: "accepted", id: message.id });
   if (process.env.FAKE_MODE === "hang") for (;;) {}
   if (process.env.FAKE_MODE === "crash") process.exit(1);
   setTimeout(() => process.send({ type: "result", id: message.id, body: JSON.stringify({ parser: [], extra: [] }) }), Number(process.env.FAKE_HOLD_MS || 0));
 });
-process.send({ type: "ready", pid: process.pid });
+process.send({ type: "ready" });
 `);
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));

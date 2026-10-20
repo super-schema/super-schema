@@ -38,9 +38,9 @@ const { runParserJob, parserPoolStatus } = require("./runner.cjs");
 }, 30_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-function startParent(mode: "hold" | "natural"): { proc: ChildProcess; firstLine: Promise<{ ok: boolean; pids: number[] }>; exited: Promise<{ code: number | null; signal: string | null }> } {
+function startParent(mode: "hold" | "natural", extraEnv: Record<string, string> = {}): { proc: ChildProcess; firstLine: Promise<{ ok: boolean; pids: number[] }>; exited: Promise<{ code: number | null; signal: string | null }> } {
   const proc = spawn(process.execPath, [path.join(dir, "parent.cjs")], {
-    env: { ...process.env, ASYNCAPI_PARSER_WORKER: REAL_WORKER, PARENT_MODE: mode },
+    env: { ...process.env, ASYNCAPI_PARSER_WORKER: REAL_WORKER, PARENT_MODE: mode, ...extraEnv },
     stdio: ["ignore", "pipe", "inherit"],
   });
   const firstLine = new Promise<{ ok: boolean; pids: number[] }>((resolve, reject) => {
@@ -77,6 +77,21 @@ describe("no orphan, no process kept alive", () => {
     expect(ok).toBe(true);
     expect(pids).toHaveLength(1);
     expect(() => process.kill(pids[0], 0)).not.toThrow(); // the worker is running
+
+    proc.kill("SIGKILL");
+    await exited;
+
+    expect(await waitUntilGone(pids[0], 2_000)).toBe(true);
+  }, 30_000);
+
+  it("a worker that something keeps alive still exits within 2 s of its parent's SIGKILL: its own disconnect handler ends it", async () => {
+    // Without that handler a worker with nothing else to do would exit when the channel closes, and this test could not tell; here an interval
+    // (preloaded into every process through NODE_OPTIONS, which the worker inherits) keeps its event loop running, so only the handler can end it.
+    writeFileSync(path.join(dir, "keepalive.cjs"), "setInterval(() => {}, 1000);\n");
+    const { proc, firstLine, exited } = startParent("hold", { NODE_OPTIONS: `--require=${path.join(dir, "keepalive.cjs")}` });
+    const { ok, pids } = await firstLine;
+    expect(ok).toBe(true);
+    expect(pids).toHaveLength(1);
 
     proc.kill("SIGKILL");
     await exited;

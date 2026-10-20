@@ -34,7 +34,7 @@ function mapSeverity(severity: number): EventSpecSeverity {
 }
 
 /** What of a parser diagnostic is read here: the parser's own `Diagnostic` has all of it, and so has `RawParserDiagnostic`, the worker's reduction of it. */
-export interface ParserDiagnosticLike { code: string | number; message: string; path?: ReadonlyArray<string | number>; severity: number }
+interface ParserDiagnosticLike { code: string | number; message: string; path?: ReadonlyArray<string | number>; severity: number }
 
 /** Parser diagnostic → `Diagnostic`; the RFC 6901 pointer is built from the diagnostic's `path`. */
 export function mapParserDiagnostic(d: ParserDiagnosticLike): Diagnostic {
