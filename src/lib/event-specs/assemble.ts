@@ -15,7 +15,7 @@ import { jsonPointer, localRef } from "./json-pointer";
 import { contentTypeFor, formatSuffix, normalizeProfile, schemaFormatFor } from "./schema-format";
 import { qualifyNames, type NameCandidate } from "./qualify";
 import { headersSchema, kafkaKeyProfile, placeKafkaKey, selectArtifact } from "./message-schemas";
-import { isReservedKey, setOwn } from "./own-property";
+import { RESERVED_KEYS, setOwn } from "./own-property";
 
 /**
  * Spec §7.2 steps 3–5: assemble an AsyncAPI 3.0.0 document from a
@@ -123,7 +123,10 @@ export function assembleAsyncApi3(spec: ResolvedEventSpec): AssemblyResult {
    * still written as an own entry, so references resolve and no confusing "unresolved ref" follows it).
    */
   const rejectReservedKey = (kind: string, key: string, pointer: string): void => {
-    if (!isReservedKey(key)) return;
+    // Only the `Object.prototype` collisions (`RESERVED_KEYS`). `hasOwnProperty` is written fine and is reported, once and wherever it sits
+    // in the document, by the validator's guard (`PARSER_UNSAFE_KEY`). `__proto__` is in both lists, so in data from before the rule a
+    // `__proto__` key gets BOTH a `RESERVED_KEY` here and a `PARSER_UNSAFE_KEY` from the guard, at the same pointer.
+    if (!RESERVED_KEYS.has(key)) return;
     diagnostics.push(
       diagnostic("error", "RESERVED_KEY", `${kind} "${key}" is reserved and cannot be used as a document key — rename it`, pointer),
     );

@@ -6,6 +6,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import type { LevelScope } from "@/lib/levels";
+import { renameReservedFields, renameReservedNames, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 
 export interface ImportedEntityInput {
@@ -28,12 +29,44 @@ export interface CreateImportedEntitiesArgs {
   /** True when `name` is free in the entity's line; when it is not, the callee has recorded why (through `skip`) and the entity is left out. */
   isNameFree: (name: string) => Promise<boolean>;
   skip: (message: string) => void;
+  /**
+   * Hears about what was changed without refusing anything: a field or an entity whose name the AsyncAPI parser cannot read
+   * (`PARSER_UNSAFE_KEYS`) is renamed (`hasOwnProperty` -> `hasOwnProperty_1`) and each rename is reported here. Optional; a caller that has
+   * no list of notes still gets the rename.
+   */
+  note?: (message: string) => void;
   /** Entities created so far, by the name the import gave them (an `extends` resolves through it); every created entity is added. */
   refs: Map<string, { id: string; productId: string }>;
 }
 
 /** Every imported asset costs a few registry / pre-check queries inside the transaction, so a large import can outlast Prisma's 5 s interactive-transaction default. */
 export const IMPORT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
+
+type ImportedField = ImportedEntityInput["fields"][number];
+
+/** `field` with the entity names it refers to (`referencedEntityName`, `arrayElementType`) replaced by their new names. */
+function followRenames(field: ImportedField, renames: ReadonlyMap<string, string>): ImportedField {
+  const decorators = field.decorators;
+  if (!decorators) return field;
+  const reference = typeof decorators.referencedEntityName === "string" ? renames.get(decorators.referencedEntityName.trim()) : undefined;
+  const element = typeof decorators.arrayElementType === "string" ? renames.get(decorators.arrayElementType.trim()) : undefined;
+  if (reference === undefined && element === undefined) return field;
+  return { ...field, decorators: { ...decorators, ...(reference === undefined ? {} : { referencedEntityName: reference }), ...(element === undefined ? {} : { arrayElementType: element }) } };
+}
+
+/**
+ * The batch with every entity whose name the AsyncAPI parser cannot read renamed (`hasOwnProperty` -> `hasOwnProperty_1`), and everything of
+ * the batch that refers to it by name (`extends`, a reference field, an array of it) following. `originals` maps each new name back to the
+ * name the import gave it.
+ */
+function renameReservedEntities(entities: ImportedEntityInput[], note?: (message: string) => void): { entities: ImportedEntityInput[]; originals: Map<string, string> } {
+  const { items, renames } = renameReservedNames(entities, (from, to) => note?.(reservedNameRenamedMessage("entity", from, to)));
+  if (renames.size === 0) return { entities: items, originals: new Map() };
+  return {
+    entities: items.map((entity) => ({ ...entity, fields: entity.fields.map((field) => followRenames(field, renames)) })),
+    originals: new Map([...renames].map(([from, to]) => [to, from])),
+  };
+}
 
 /**
  * Creates the entities inside the caller's transaction (which holds the tenant's name lock). Every known conflict is checked before
@@ -46,7 +79,8 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
   const created: Array<{ id: string; name: string }> = [];
   // Names are trimmed before BOTH the registry check and the write: the registry compares trimmed names, so an
   // untrimmed stored name ("Foo ") would slip past a later "Foo" and break line uniqueness.
-  for (const entity of args.entities) {
+  const { entities, originals } = renameReservedEntities(args.entities, args.note);
+  for (const entity of entities) {
     const name = entity.name.trim();
     if (!(await args.isNameFree(name))) continue;
 
@@ -83,12 +117,15 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
         ...(parentEntityId ? { parentEntityId } : {}),
         ...(Object.keys(entityMetadata).length > 0 ? { metadata: entityMetadata } : {}),
         fields: {
-          create: entity.fields.map((field, index) => mapFieldCreateInput(field, index)),
+          create: renameReservedFields(entity.fields, (from, to) => args.note?.(reservedFieldRenamedMessage(from, to, name))).map((field, index) => mapFieldCreateInput(field, index)),
         },
       },
     });
 
     refs.set(entity.name, { id: row.id, productId });
+    // whatever else in the import still calls it by the name the file gave it (a service of the same import) finds it too
+    const original = originals.get(name);
+    if (original !== undefined) refs.set(original, { id: row.id, productId });
     created.push({ id: row.id, name });
   }
   return created;

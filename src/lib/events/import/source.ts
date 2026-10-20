@@ -17,18 +17,6 @@ export { MAX_ALIAS_COUNT, MAX_NESTING_DEPTH };
 /** Longest piece of a parser's own error text echoed in a message. */
 const MAX_ERROR_TEXT_LENGTH = 200;
 
-/**
- * Keys, besides the reserved ones (`isReservedKey`: `__proto__`, `constructor`, `prototype`), that an imported document may not contain
- * because the AsyncAPI parser CRASHES on them. Found by running every name of `Object.getOwnPropertyNames(Object.prototype)` as a key in
- * 34 places of a valid document (payload properties, components, channel / message / server / operation / parameter keys, bindings,
- * `x-` maps, tags, headers, variables ...) through `createAsyncApiParser().validate`: only `hasOwnProperty` crashes (in every place a key
- * can be: "target.hasOwnProperty is not a function", and the user would see the generic internal error for a valid document). The others
- * (`valueOf`, `toString`, `toLocaleString`, `isPrototypeOf`, `propertyIsEnumerable`, `__defineGetter__`, `__defineSetter__`,
- * `__lookupGetter__`, `__lookupSetter__`) are read fine and stay importable. A parser upgrade can change the list: run that probe again.
- */
-const PARSER_UNSAFE_KEYS: ReadonlySet<string> = new Set(["hasOwnProperty"]);
-const isForbiddenKey = (key: string): boolean => isReservedKey(key) || PARSER_UNSAFE_KEYS.has(key);
-
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const fail = (code: string, message: string, extra?: { details?: object; suggestedFix?: string }) => err({ code, message, ...extra });
 
@@ -89,7 +77,9 @@ function scan(root: unknown, forbiddenKeys: boolean): { message: string; details
           details: { pointer: boundPointer(pointer), length: key.length, limit: MAX_KEY_LENGTH },
         };
       }
-      if (forbiddenKeys && isForbiddenKey(key)) {
+      // `isReservedKey`: the names that collide with `Object.prototype` and the ones the AsyncAPI parser crashes on (`PARSER_UNSAFE_KEYS`, `own-property.ts`);
+      // the user would see the generic internal error for a valid document otherwise. The other names of `Object.prototype` (`valueOf`, `toString`, ...) stay importable.
+      if (forbiddenKeys && isReservedKey(key)) {
         const pointer = pointerOf(frame, key);
         return { message: `The key "${boundText(key)}" at "${boundText(pointer, 120)}" is not allowed in an imported document (it collides with the name of a built-in JavaScript property and cannot be imported); rename it and import again`, details: { pointer: boundPointer(pointer), key: boundText(key) } };
       }

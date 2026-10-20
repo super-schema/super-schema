@@ -192,6 +192,28 @@ describe("schema import actions", () => {
     );
   });
 
+  it("renames an imported field the AsyncAPI parser cannot read (hasOwnProperty) and reports it with the other import notes", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "user-1", email: "user@example.com" } });
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
+
+    const field = (name: string) => ({ name, type: "string", nullable: true, isKey: false, description: "", classification: null, precision: null, scale: null });
+    const result = await createDomainAssetsFromImportAction({
+      domainId: "domain-1",
+      models: [],
+      entities: [{ name: "Customer", description: "", fields: [field("id"), field("hasOwnProperty"), field("hasownproperty-x")] }],
+      sharedEnums: [],
+      customScalars: [],
+      unionTypes: [],
+      services: [],
+      decoratorDefinitions: [],
+    });
+
+    expect(result.entitiesCreated).toBe(1);
+    expect(result.errors).toEqual(['The field "hasOwnProperty" was renamed to "hasOwnProperty_1": the name is reserved. It belongs to the entity "Customer".']);
+    const written = mockTx.entity.create.mock.calls[0][0].data.fields.create as Array<{ name: string }>;
+    expect(written.map((f) => f.name)).toEqual(["id", "hasOwnProperty_1", "hasownproperty-x"]);
+  });
+
   it("resolves an entity-scoped service against an entity that already existed before this import", async () => {
     mockAuth.mockResolvedValue({
       user: { id: "user-1", email: "user@example.com" },
@@ -597,7 +619,8 @@ describe("schema import actions", () => {
         unionTypes: [{ name: "Either", memberTypes: ["A"] }],
       });
 
-      expect(result).toEqual(rolledBack(['Enum "Skipped" already exists — skipped', GENERIC_ACTION_ERROR]));
+      // the cause comes first, then what the import had said before it aborted
+      expect(result).toEqual(rolledBack([GENERIC_ACTION_ERROR, 'Enum "Skipped" already exists — skipped']));
       expect(mockTx.unionType.create).not.toHaveBeenCalled();
     });
 

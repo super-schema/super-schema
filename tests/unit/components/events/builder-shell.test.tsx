@@ -860,6 +860,14 @@ describe("KeyInput", () => {
     expect(error()).toBe("A key can be at most 64 characters.");
     type(input(), "constructor");
     expect(error()).toBe('"constructor" is reserved. Choose another key.');
+    // the AsyncAPI parser cannot read a key of this name (PARSER_UNSAFE_KEYS): refused at the field, case-sensitively
+    type(input(), "hasOwnProperty");
+    expect(error()).toBe('"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another key.');
+    // `__proto__` is on the parser's list too (new wording); `constructor` is only a JS-prototype name (the old wording, above)
+    type(input(), "__proto__");
+    expect(error()).toBe('"__proto__" is a reserved name: AsyncAPI documents cannot contain it. Choose another key.');
+    type(input(), "hasownproperty");
+    expect(error()).toBeUndefined();
     type(input(), "x".repeat(64));
     expect(error()).toBeUndefined();
     fireEvent.blur(input());

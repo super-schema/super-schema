@@ -9,7 +9,7 @@
 // "Bounded": this runs in the BROWSER on a schema a tenant user wrote, and the sampler cannot be interrupted. A gate that counted the
 // schema as WRITTEN kept disagreeing with the sampler about what it would build (the sampler re-merges `if` / `then` until none is left,
 // follows a `$ref` that is a list or has no `#`, iterates `properties` that is a list, ...), so the sampler is never given that schema.
-// Every schema the sampler sees has been inlined and counted first, and every step has its own cost bound (one gap, below):
+// Every schema the sampler sees has been inlined and counted first, and every step has its own cost bound:
 //   1. `oversizedKeyword`: a sanity limit on the literals of the schema as written, one walk over the schema (the size of the input). A
 //      `minLength` or `minItems` over MAX_SIZE_KEYWORD is refused whatever it does (the sampler builds that many characters or items); so
 //      is a `minProperties`, which the sampler never reads, but nobody asks for 100,000 properties of an example;
@@ -20,23 +20,28 @@
 //      or a list is refused, and a cycle is cut where the sampler cuts it. Every unit of work it does for one use of a schema is charged
 //      to MAX_EXPANDED_NODES BEFORE it is done (`spend`, `announce`; the keys of a node are never walked, only the readable ones looked
 //      at, `project`), with no memo, so its cost is bounded by that budget whatever the number of uses times the width of what is used.
+//      The sampler's own walk of a `required` list is weighed the same way: it builds a lookup from the list for every object that has
+//      `properties` (and walks it again for `maxProperties`), and the copy shares the one list across all of its uses, so each use of
+//      such a node is charged ceil(names / 64) units (twice with `maxProperties`), where the list is read (`requiredWeight`).
+//      The scalar keywords are not charged, they are closed: the sampler turns a value into a number or a key again for EVERY use (an
+//      array of 200,000 zeros as a `minItems`, over 5,000 uses, was 2.8 s), so the copy takes the six size keywords only as finite numbers,
+//      `format` only as short text, `type` only as short text or a short list of text and `required` only as a list of text, and refuses
+//      the schema, naming the keyword, for any other form (`copyScalars`): no use of a node costs more than the units it is charged.
+//      What the sampler does ABOVE a node is bounded by a cap instead of a charge: it merges what comes up from below (`mergeDeep`, a
+//      `for ... in` over the top-level keys of the value) at every enclosing `allOf` / `oneOf` / `anyOf`, so a 40,000-key `default` that is
+//      charged once was copied again at each level (250 levels: 1.7 - 3.1 s). At most MAX_MERGE_NESTING (32) of them may be inside each
+//      other (`nested`), so a value is copied at most 32 more times than it was charged for, whatever its size or the number of levels.
 //      The only work it does that the budget does not pay for is once per object of the schema, not per use: finding how many entries
-//      each map has (`widthOf`), and the walk of step 1 and of `preferZero`, which are the size of the input;
+//      each map has (`widthOf`), checking that a `required` list holds only text (`namesOf`), and the walk of step 1 and of
+//      `preferZero`, which are the size of the input;
 //   3. `outputWeight`: what the sampler would build from the copy (`minItems` copies of an item, two samples of `additionalProperties`, a
 //      long string, default or property name as many nodes as it has characters / MAX_NODE_CHARS) must stay within MAX_EXPANDED_NODES; it
 //      walks the copy, which has at most that many nodes, and stops at the budget;
 //   4. the sampler runs on the copy, which holds no `$ref` of the user's and no `if` / `then` for it to disagree about (the one reference
 //      left is a fixed one to the sampler's own "no value", see `cut`), and the example may not be longer than MAX_EXAMPLE_CHARS.
-//
-// KNOWN GAP (parked, hostile-only): the sampler's own walk of a `required` list (it builds a lookup from it for every object that has
-// `properties`, and walks it again for `maxProperties`) is NOT weighted, and the copy shares the list by reference across every use. A
-// list of 24,999 names reused through 300 / 1,000 / 3,000 references costs the sampler 0.45 / 1.4 / 4.3 s (100,000 names x 1,000 uses:
-// 6.7 s). A normal schema is nowhere near it (50 names x 3,000 uses: 49 ms; 1,000 names: 143 ms). It takes a deliberately hostile schema
-// written inside the tenant, the code before this change had the same cost, and the one who pays is the person who clicks Generate.
-// Weighting `required.length / 64` units per node that has `properties` (or copying only the names that exist in `properties`) closes it.
 import { sample } from "openapi-sampler";
 import { resolveLocalRef } from "@/lib/event-specs/json-pointer";
-import { SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } from "@/lib/event-specs/json-schema-keywords";
+import { DATA_KEYWORDS, SCHEMA_ARRAY_KEYWORDS, SCHEMA_MAP_KEYWORDS, SINGLE_SCHEMA_KEYWORDS } from "@/lib/event-specs/json-schema-keywords";
 import { setOwn } from "@/lib/event-specs/own-property";
 import { ok, err, type Result } from "@/types/result";
 
@@ -59,6 +64,15 @@ const MAX_EXPANDED_NODES = 25_000;
  */
 const MAX_NESTING = 256;
 /**
+ * The most `allOf` / `oneOf` / `anyOf` the copy may have inside each other (on the way down from the root, a `$ref` between them counted).
+ * The sampler merges what comes up from below at EVERY such level (`mergeDeep` and a `for ... in` over the top-level keys of the value),
+ * so a value charged once, a 40,000-key `default` for one, is copied again at each of them: 250 levels of it took 1.7 - 3.1 s and 84 MB,
+ * and nothing charged those copies. Real schemas nest a handful (an envelope, its variants, a mixin); at the cap a value is copied 32
+ * more times than it was charged for (32 levels over 40,000 keys: 0.25 - 0.4 s, and the example limit of 1 MiB lets about two such values
+ * through, so under a second).
+ */
+const MAX_MERGE_NESTING = 32;
+/**
  * The most any ONE of `SIZE_KEYWORDS` may say, wherever it sits in the schema (also under `if` / `then` / `else`, `allOf` / `anyOf` /
  * `oneOf`, `not`, `items`, `additionalProperties`, `patternProperties`, `$defs` / `definitions`). A real schema asks for a handful (a
  * `minItems` of 1,000 and a `minLength` of 255 are far beyond what one example needs); a hostile one asks for 100 million. `minLength`
@@ -72,12 +86,11 @@ const SIZE_KEYWORDS: ReadonlySet<string> = new Set(["minLength", "minItems", "mi
 const MAX_EXAMPLE_CHARS = 1024 * 1024;
 /** How many characters of a long string, `default`, `const` or `example` the output estimate counts as one schema node (so 25,000 nodes is about 1.6 million characters at most). */
 const MAX_NODE_CHARS = 64;
+/** How many names of a `required` list the sampler's walk of it counts as one unit of work (`requiredWeight`). */
+const REQUIRED_NAMES_PER_UNIT = 64;
 
 const isSchema = (v: unknown): v is Schema => typeof v === "object" && v !== null && !Array.isArray(v);
 const truthy = (v: unknown): boolean => Boolean(v);
-
-/** Keywords whose value is data the sampler copies as it is (or never reads): `oversizedKeyword` does not look inside them. */
-const DATA_KEYWORDS: ReadonlySet<string> = new Set(["const", "enum", "default", "example", "examples"]);
 
 /**
  * The first size keyword (`SIZE_KEYWORDS`) anywhere in `root` whose value is over MAX_SIZE_KEYWORD, or null. The value is read the way the
@@ -150,12 +163,24 @@ function inferExample(node: Schema): unknown {
 
 /**
  * Keys the sampler reads of a node besides the schemas it descends into; every other key is left out of the copy (it is never read).
- * `examples` and `enum` are cut to their first entry (only that and their being empty are read).
+ * `examples` and `enum` are cut to their first entry (only that and their being empty are read). `copyScalars` decides in what form each
+ * of these reaches the copy.
  */
 const COPIED_KEYS = [
   "type", "format", "readOnly", "writeOnly", "const", "default", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
   "minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties", "required",
 ] as const;
+/**
+ * The keywords the sampler (and `outputWeight`) read AS NUMBERS: `Math.min(maxItems, minItems || 1)`, `res.length > maxLength`,
+ * `substring(0, maxLength)`, `Object.keys(res).length > maxProperties`. A value that is not a number is coerced again for EVERY use of
+ * the node (an array of 200,000 zeros, or a numeric string of 400,000 characters, is parsed each time: 2.8 s over 5,000 uses), so the copy
+ * takes a finite number or the schema is refused. `minProperties` is not read at all, only its presence (`inferType`).
+ */
+const NUMBER_KEYS = ["minLength", "maxLength", "minItems", "maxItems", "minProperties", "maxProperties"] as const;
+/** The longest `format` or `type` text: it is a key into the sampler's tables, so it is read once per use. */
+const MAX_TEXT = 256;
+/** The most texts a `type` list may hold (the sampler only reads the first). */
+const MAX_TYPES = 16;
 /** Keys the sampler only tests the presence of (`inferType`): the copy keeps an empty placeholder, so the schemas under them are not carried along. */
 const PRESENCE_KEYS = ["additionalItems", "patternProperties", "dependencies"] as const;
 /** The three places a list of items can be, in the order the sampler prefers them (`prefixItems || items || contains`). */
@@ -209,13 +234,17 @@ interface Walk {
   nodes: number;
   /** How many entries each object has, found once per object: what a walk over one of its maps costs is known before the walk. */
   widths: WeakMap<object, number>;
+  /** The `required` lists already found to hold nothing but text (`namesOf`), so a list used a thousand times is read once. */
+  texts: WeakSet<object>;
+  /** How many `allOf` / `oneOf` / `anyOf` are being copied on the way down to the node in hand (see MAX_MERGE_NESTING). */
+  merging: number;
 }
 
 /**
  * Charges `units` of work to the budget BEFORE it is done, and stops the whole expansion once the budget is gone. Everything `normalise`
  * does for one use of a schema is charged this way: a schema position (a node, a boolean, a falsy tuple item: one unit), a key a merge
- * copies, a reference followed (one unit per MAX_NODE_CHARS of its text beyond the first). So its cost is bounded by MAX_EXPANDED_NODES
- * whatever the number of uses times the width of what is used.
+ * copies, a reference followed (one unit per MAX_NODE_CHARS of its text beyond the first), the sampler's walk of a `required` list
+ * (`requiredWeight`). So its cost is bounded by MAX_EXPANDED_NODES whatever the number of uses times the width of what is used.
  */
 function spend(w: Walk, units: number): void {
   w.nodes += units;
@@ -238,6 +267,18 @@ function widthOf(w: Walk, object: object): number {
     w.widths.set(object, width);
   }
   return width;
+}
+
+/**
+ * What the sampler's walk of the `required` list of `node` costs for ONE use of it, in units: it builds a lookup from the list (one step
+ * per name) and, when the node has a `maxProperties`, walks the list a second time. The copy shares the list by reference across every
+ * use, so this is charged per use (`plainCopy`), before the sampler runs; reading the length of a list is free. A list the sampler
+ * ignores (`required` that is not a list) costs nothing.
+ */
+function requiredWeight(node: Schema): number {
+  const required = node.required;
+  if (!Array.isArray(required)) return 0;
+  return Math.ceil(required.length / REQUIRED_NAMES_PER_UNIT) * (node.maxProperties !== undefined ? 2 : 1);
 }
 
 /**
@@ -341,6 +382,21 @@ function normaliseNode(w: Walk, node: unknown, ctx: Ctx, how: How, level: number
   }
 }
 
+/**
+ * Runs the copy of an `allOf` / `oneOf` / `anyOf` (everything under it, its entries included) one level deeper, and refuses the schema
+ * once that makes more than MAX_MERGE_NESTING levels of them inside each other: the counter goes down again when the level is done, so
+ * only levels on the way down from the root count, never siblings.
+ */
+function nested<T>(w: Walk, copy: () => T): T {
+  w.merging += 1;
+  try {
+    if (w.merging > MAX_MERGE_NESTING) throw tooLarge(`it nests allOf, oneOf and anyOf more than ${MAX_MERGE_NESTING} levels deep`);
+    return copy();
+  } finally {
+    w.merging -= 1;
+  }
+}
+
 function normaliseBody(w: Walk, node: Schema, ctx: Ctx, how: How, level: number, release: () => void): Schema {
   // 1. a `$ref`: the node is replaced by what it points at (its other keys are not read)
   if (truthy(node.$ref)) {
@@ -375,7 +431,7 @@ function normaliseBody(w: Walk, node: Schema, ctx: Ctx, how: How, level: number,
   if (node.example !== undefined) {
     release();
     const out: Schema = { example: node.example };
-    for (const key of ["type", "readOnly", "writeOnly"]) if (node[key] !== undefined) setOwn(out, key, node[key]);
+    for (const key of ["type", "readOnly", "writeOnly"]) if (node[key] !== undefined) setOwn(out, key, key === "type" ? closedType(node[key]) : node[key]);
     return out;
   }
   for (const key of ["enum", "examples", "allOf", "oneOf", "anyOf"]) {
@@ -386,35 +442,39 @@ function normaliseBody(w: Walk, node: Schema, ctx: Ctx, how: How, level: number,
   if (node.allOf !== undefined) {
     release();
     if (inferExample(node) !== undefined) return inferredOnly(node);
-    const rest = normaliseNode(w, project(node, ["allOf"]), undefined, { fresh: true, injected: how.injected, assigned: how.assigned }, level + 1);
-    requireHost(rest, "allOf");
-    const entryCtx: Ctx = { depth: ctx ? ctx.depth : undefined };
-    const entries: Schema[] = [];
-    announce(w, (node.allOf as unknown[]).length);
-    for (const entry of node.allOf as unknown[]) {
-      entries.push(normaliseNode(w, entry, entryCtx, { fresh: true, injected: true, pin: "allOf" }, level + 1));
-    }
-    return setOwn({ ...rest }, "allOf", entries);
+    return nested(w, () => {
+      const rest = normaliseNode(w, project(node, ["allOf"]), undefined, { fresh: true, injected: how.injected, assigned: how.assigned }, level + 1);
+      requireHost(rest, "allOf");
+      const entryCtx: Ctx = { depth: ctx ? ctx.depth : undefined };
+      const entries: Schema[] = [];
+      announce(w, (node.allOf as unknown[]).length);
+      for (const entry of node.allOf as unknown[]) {
+        entries.push(normaliseNode(w, entry, entryCtx, { fresh: true, injected: true, pin: "allOf" }, level + 1));
+      }
+      return setOwn({ ...rest }, "allOf", entries);
+    });
   }
   // 4. `oneOf`, else `anyOf`: the node without them, merged with their FIRST entry (the rest of the entries are never read)
   const keyword = truthy(node.oneOf) && (node.oneOf as unknown[]).length > 0 ? "oneOf" : truthy(node.anyOf) && (node.anyOf as unknown[]).length > 0 ? "anyOf" : null;
   if (keyword !== null) {
     release();
     if (inferExample(node) !== undefined) return inferredOnly(node);
-    const local = normaliseNode(w, project(node, ["oneOf", "anyOf"]), ctx, { fresh: true, injected: how.injected }, level + 1);
-    requireHost(local, keyword);
-    const first = normaliseNode(w, (node[keyword] as unknown[])[0], ctx, { fresh: true, pin: "selected", assigned: true }, level + 1);
-    // The sampler gives the first entry `readOnly` / `writeOnly` of the node it is handed (before an `if` / `then` of it is merged), unless
-    // the entry says its own. For a node that is itself such an entry, what it is handed already carries its parent's, and the sampler
-    // passes that on by itself, as long as the copy says what the original said: not once an `if` / `then` has changed it.
-    for (const key of ["readOnly", "writeOnly"]) {
-      if (how.assigned) {
-        if (Object.hasOwn(local, key) !== Object.hasOwn(node, key) || local[key] !== node[key]) {
-          throw unsupported(`\`${key}\` brought in by an \`if\` / \`then\` on a \`${keyword}\` entry that is itself a \`oneOf\` / \`anyOf\` entry cannot be reproduced`);
-        }
-      } else if (!Object.hasOwn(first, key)) setOwn(first, key, node[key]);
-    }
-    return setOwn({ ...local }, keyword, [first]);
+    return nested(w, () => {
+      const local = normaliseNode(w, project(node, ["oneOf", "anyOf"]), ctx, { fresh: true, injected: how.injected }, level + 1);
+      requireHost(local, keyword);
+      const first = normaliseNode(w, (node[keyword] as unknown[])[0], ctx, { fresh: true, pin: "selected", assigned: true }, level + 1);
+      // The sampler gives the first entry `readOnly` / `writeOnly` of the node it is handed (before an `if` / `then` of it is merged), unless
+      // the entry says its own. For a node that is itself such an entry, what it is handed already carries its parent's, and the sampler
+      // passes that on by itself, as long as the copy says what the original said: not once an `if` / `then` has changed it.
+      for (const key of ["readOnly", "writeOnly"]) {
+        if (how.assigned) {
+          if (Object.hasOwn(local, key) !== Object.hasOwn(node, key) || local[key] !== node[key]) {
+            throw unsupported(`\`${key}\` brought in by an \`if\` / \`then\` on a \`${keyword}\` entry that is itself a \`oneOf\` / \`anyOf\` entry cannot be reproduced`);
+          }
+        } else if (!Object.hasOwn(first, key)) setOwn(first, key, node[key]);
+      }
+      return setOwn({ ...local }, keyword, [first]);
+    });
   }
   // 5. `if` and `then`: merged into the node, which then goes through all of this again
   if (truthy(node.if) && truthy(node.then)) {
@@ -424,10 +484,60 @@ function normaliseBody(w: Walk, node: Schema, ctx: Ctx, how: How, level: number,
   return plainCopy(w, node, ctx, how, level, release);
 }
 
+/**
+ * A `type` the copy may carry: text, or a short list of text (the sampler keys its tables by the first of them). Anything else is refused
+ * here, once per use but in constant time, so that no large value is ever handed on to be turned into text for every use.
+ */
+function closedType(type: unknown): unknown {
+  const text = (value: unknown): boolean => typeof value === "string" && value.length <= MAX_TEXT;
+  if (text(type) || (Array.isArray(type) && type.length <= MAX_TYPES && type.every(text))) return type;
+  throw unsupported(`\`type\` must be text, or a list of at most ${MAX_TYPES} texts`);
+}
+
+/**
+ * A `required` list that holds nothing but text. Each name is a key of the sampler's lookup, and a number or a list would be turned into
+ * text again for every use. Checked once per list (the copy shares it across every use), which is once per object of the schema: the size
+ * of the input, like `widthOf`.
+ */
+function namesOf(w: Walk, list: unknown[]): unknown[] {
+  if (!w.texts.has(list)) {
+    if (!list.every((name) => typeof name === "string")) throw unsupported("`required` must be a list of text");
+    w.texts.add(list);
+  }
+  return list;
+}
+
+/**
+ * The scalar keywords of a node the sampler reads, each in the one form that costs the same however often the node is used: the six size
+ * keywords (`NUMBER_KEYS`) as finite numbers, `format` as text of at most MAX_TEXT characters, `type` (`closedType`), `required` as a list
+ * of text (a `required` that is not a list is only tested for presence by the sampler: `true` stands for it), and the keywords the sampler
+ * only tests for truth, compares strictly, reads behind `Number.isFinite` (which never coerces) or hands back as data are copied as
+ * they are. A value of any other form is refused, naming the keyword: no value is ever coerced per use, so no use costs more than a unit.
+ */
+function copyScalars(w: Walk, node: Schema): Schema {
+  const out: Schema = {};
+  for (const key of COPIED_KEYS) {
+    if (!Object.hasOwn(node, key)) continue;
+    const value = node[key];
+    if (value !== undefined) {
+      if ((NUMBER_KEYS as readonly string[]).includes(key)) {
+        if (typeof value !== "number" || !Number.isFinite(value)) throw unsupported(`\`${key}\` must be a number`);
+      } else if (key === "format") {
+        if (typeof value !== "string" || value.length > MAX_TEXT) throw unsupported(`\`format\` must be text of at most ${MAX_TEXT} characters`);
+      } else if (key === "type") closedType(value);
+      else if (key === "required") {
+        setOwn(out, key, Array.isArray(value) ? namesOf(w, value) : true);
+        continue;
+      }
+    }
+    setOwn(out, key, value);
+  }
+  return out;
+}
+
 /** A node the sampler builds from its own keywords and the schemas under `properties`, `additionalProperties` and the items. */
 function plainCopy(w: Walk, node: Schema, ctx: Ctx, how: How, level: number, release: () => void): Schema {
-  const out: Schema = {};
-  for (const key of COPIED_KEYS) if (Object.hasOwn(node, key)) setOwn(out, key, node[key]);
+  const out = copyScalars(w, node);
   for (const key of ["examples", "enum"]) if (Array.isArray(node[key])) setOwn(out, key, (node[key] as unknown[]).slice(0, 1));
   for (const key of PRESENCE_KEYS) if (node[key] !== undefined) setOwn(out, key, {});
   const inner = below(ctx);
@@ -440,6 +550,7 @@ function plainCopy(w: Walk, node: Schema, ctx: Ctx, how: How, level: number, rel
   const properties = node.properties;
   if (typeof properties === "object" && asObject) {
     if (properties === null || Array.isArray(properties)) throw unsupported("`properties` must be an object");
+    spend(w, requiredWeight(node)); // the sampler reads `required` of every object that has `properties`, once per use
     const map: Schema = {};
     announce(w, widthOf(w, properties)); // each property is charged as it is visited
     for (const [name, child] of Object.entries(properties)) setOwn(map, name, normaliseNode(w, child, inner, {}, level + 1));
@@ -482,7 +593,7 @@ function plainCopy(w: Walk, node: Schema, ctx: Ctx, how: How, level: number, rel
 
 /** The inlined copy of `root`. Throws a `Refusal` for a schema it cannot copy faithfully or within MAX_EXPANDED_NODES. */
 function normalise(root: Schema): Schema {
-  return normaliseNode({ root, following: new Set(), onStack: new Set(), nodes: 0, widths: new WeakMap() }, root, undefined, {}, 0);
+  return normaliseNode({ root, following: new Set(), onStack: new Set(), nodes: 0, widths: new WeakMap(), texts: new WeakSet(), merging: 0 }, root, undefined, {}, 0);
 }
 
 // ── outputWeight: what the sampler would build from the copy ────────────────────────────────────────────────────────────────
@@ -563,8 +674,11 @@ function outputWeight(root: Schema): number {
 
 const NUMERIC = new Set(["integer", "number"]);
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-/** Where the sampler would otherwise take the value from (it never invents one when the schema gives one). */
-const HAS_SAMPLE = ["const", "enum", "default", "example", "examples"] as const;
+/** Whether the node gives a sample of its own (a data keyword): the sampler never invents a value when the schema gives one. */
+function hasSample(node: Schema): boolean {
+  for (const keyword of DATA_KEYWORDS) if (keyword in node) return true;
+  return false;
+}
 
 /** Whether 0 satisfies the bounds of a numeric schema (draft-04 boolean and draft-06+ numeric exclusive bounds both). */
 function allowsZero(node: Schema): boolean {
@@ -595,7 +709,7 @@ function preferZero(node: Schema): Schema {
   }
   const type = Array.isArray(out.type) ? out.type[0] : out.type;
   const bounded = [out.minimum, out.maximum, out.exclusiveMinimum, out.exclusiveMaximum].some(finite);
-  if (typeof type === "string" && NUMERIC.has(type) && bounded && allowsZero(out) && !HAS_SAMPLE.some((k) => k in out)) out.default = 0;
+  if (typeof type === "string" && NUMERIC.has(type) && bounded && allowsZero(out) && !hasSample(out)) out.default = 0;
   return out;
 }
 

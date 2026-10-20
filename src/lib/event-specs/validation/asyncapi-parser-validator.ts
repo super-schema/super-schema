@@ -4,7 +4,8 @@ import { ProtoBuffSchemaParser } from "@asyncapi/protobuf-schema-parser";
 import { ok, type Result } from "@/types/result";
 import type { Diagnostic, DiagnosticSeverity as EventSpecSeverity } from "../types";
 import { diagnostic, normalizeDiagnostics } from "../diagnostics";
-import { jsonPointer } from "../json-pointer";
+import { escapePointerSegment, jsonPointer } from "../json-pointer";
+import { isParserUnsafeKey } from "../own-property";
 import { validatorFailure, type EventSpecValidator } from "../validator";
 
 /**
@@ -65,27 +66,157 @@ export function mapParserDiagnostic(d: ParserDiagnostic): Diagnostic {
   return diagnostic(mapSeverity(d.severity), String(d.code), d.message, jsonPointer(...(d.path ?? [])));
 }
 
-/** Every non-local `$ref` in the document (any `$ref` key counts, as in the structural validator). */
-function findRemoteRefs(node: unknown, path: Array<string | number>, out: Diagnostic[]): void {
-  if (Array.isArray(node)) {
-    node.forEach((item, i) => findRemoteRefs(item, [...path, i], out));
-    return;
+/** What a user is told when the parser itself fails on a document: the exception (its stack, server paths) goes to the log, never to the browser. */
+const PARSER_CRASHED_MESSAGE =
+  "The AsyncAPI parser could not process this document. Nothing is wrong that you can fix here: try again, and contact an administrator if it keeps happening.";
+
+/**
+ * What a crash TEXT looks like: a real V8 stack-frame line (`\n    at Foo.bar (/srv/app/file.js:35:33)` or `\n    at /srv/app/file.js:35:33`), or an absolute
+ * path to a file with its position (`/Users/x/app/file.js:35:33`, `C:\\app\\file.js:35`). Plain words such as `node_modules`, `home` or `Users` in a
+ * pointer or a name (`#/channels/home/messages/nope`, `#/components/schemas/node_modules`) are NOT a crash: the parser's own diagnostics
+ * about them are ordinary ones and must reach the user as they are.
+ */
+const STACK_FRAME = /\n\s+at (?:\S+ \(.+:\d+:\d+\)|.+:\d+:\d+)/;
+const FILE_POSITION = /(?:^|[\s(])(?:\/(?:[^\s/:()]+\/)*[^\s/:()]+|[A-Za-z]:\\(?:[^\s\\:()]+\\)*[^\s\\:()]+)\.[A-Za-z][A-Za-z0-9]{0,7}:\d+(?::\d+)?/;
+
+/**
+ * True for a parser diagnostic that reports a CRASH of the parser: its code is `uncaught-error` (the parser catches its own exceptions and
+ * returns them so, with the exception's name, message and stack and absolute server paths), or its message holds a real stack-frame line, or an
+ * absolute path with a file position (see `STACK_FRAME`, `FILE_POSITION`). Such a text is never shown to a user. Takes the parser's own
+ * diagnostics as well as ours.
+ */
+export function isParserCrashDiagnostic(d: { code: string | number; message: string }): boolean {
+  return String(d.code) === "uncaught-error" || STACK_FRAME.test(d.message) || FILE_POSITION.test(d.message);
+}
+
+/**
+ * The diagnostics with every parser crash replaced by ONE generic error (`ASYNCAPI_PARSER_CRASHED`, no pointer). The full text of each
+ * crash is logged server-side (once each), so an administrator can find the cause; nothing returned from here holds a stack or a path.
+ */
+export function sanitizeParserDiagnostics(list: Diagnostic[]): Diagnostic[] {
+  const kept: Diagnostic[] = [];
+  const crashes = new Set<string>();
+  for (const d of list) {
+    if (isParserCrashDiagnostic(d)) crashes.add(d.message);
+    else kept.push(d);
   }
-  if (typeof node !== "object" || node === null) return;
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "$ref" && typeof value === "string") {
-      if (!value.startsWith("#")) {
-        out.push(
-          diagnostic(
-            "error",
-            "REMOTE_REF",
-            `Only local references are allowed, got "${value}"`,
-            jsonPointer(...path),
-          ),
-        );
+  if (crashes.size === 0) return list;
+  for (const text of crashes) console.error("[asyncapi-parser] the parser crashed on an emitted document:", text);
+  kept.push(diagnostic("error", "ASYNCAPI_PARSER_CRASHED", PARSER_CRASHED_MESSAGE, ""));
+  return kept;
+}
+
+/** RFC 6901 pointer of `segments`, built without spreading them (a document can be deeper than a call may have arguments). */
+const pointerOfSegments = (segments: ReadonlyArray<string | number>): string => segments.map((segment) => `/${escapePointerSegment(String(segment))}`).join("");
+
+/** The most `PARSER_UNSAFE_KEY` errors one document reports (a document that has one such key usually has many copies of it). */
+const MAX_UNSAFE_KEY_DIAGNOSTICS = 20;
+/** The guard looks at no more than this many keys and array items; a larger document is left to the parser. */
+const MAX_GUARD_VALUES = 2_000_000;
+
+const UNSAFE_KEY_REASON = "is a built-in JavaScript name that AsyncAPI tools cannot read, so this document cannot be published with it.";
+
+/**
+ * What to tell the user about the unsafe `key` found in the object at `parents`:
+ * - a key in a `properties` map of a message PAYLOAD (`/components/messages/<message>/payload/schema/…/properties/<key>`) is a FIELD of an
+ *   entity: name it, the message, and where to fix it;
+ * - a key in the `definitions` / `$defs` map of a payload schema, or a component schema name (`/components/schemas/<key>`), is the NAME of an
+ *   entity (or model) the payload refers to;
+ * - any other key is named as it is (the diagnostic's pointer says where).
+ */
+function unsafeKeyMessage(parents: ReadonlyArray<string | number>, key: string): string {
+  const inPayload = parents[0] === "components" && parents[1] === "messages" && parents[3] === "payload";
+  const last = parents[parents.length - 1];
+  if (inPayload && last === "properties") return `The field "${key}" in the payload of the message "${parents[2]}" ${UNSAFE_KEY_REASON} Rename the field in its entity.`;
+  const isComponentSchema = parents.length === 2 && parents[0] === "components" && parents[1] === "schemas";
+  if ((inPayload && (last === "definitions" || last === "$defs")) || isComponentSchema) return `The name "${key}" ${UNSAFE_KEY_REASON} Rename the entity (or model).`;
+  return `The key "${key}" ${UNSAFE_KEY_REASON} Rename it.`;
+}
+
+/**
+ * The choke point for keys the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`): every own key of every object of the finished
+ * document, objects inside arrays included, is checked, wherever it sits (a channel, a message, a JSON Schema property that came from an
+ * entity field, a binding, an `x-` extension, a server variable ...). Each one is a `PARSER_UNSAFE_KEY` error at the key's own pointer, so
+ * the document is refused with a clear message instead of reaching the parser, which would crash on it.
+ *
+ * Iterative (a document can be deep and large), bounded (`MAX_GUARD_VALUES`, `MAX_UNSAFE_KEY_DIAGNOSTICS`), never throws, never follows a
+ * `$ref`, and reads own enumerable KEYS only (`Object.keys`), so a VALUE equal to "hasOwnProperty" is not a finding.
+ */
+export function findParserUnsafeKeys(document: unknown): Diagnostic[] {
+  type Frame = { value: object; parent: Frame | null; key: string | number };
+  const found: Diagnostic[] = [];
+  if (typeof document !== "object" || document === null) return found;
+  const stack: Frame[] = [{ value: document, parent: null, key: "" }];
+  const keysAbove = (frame: Frame): Array<string | number> => {
+    const parts: Array<string | number> = [];
+    for (let f: Frame | null = frame; f !== null && f.parent !== null; f = f.parent) parts.push(f.key);
+    return parts.reverse();
+  };
+  let values = 0;
+  try {
+    while (stack.length > 0 && found.length < MAX_UNSAFE_KEY_DIAGNOSTICS) {
+      const frame = stack.pop() as Frame;
+      const node = frame.value;
+      if (Array.isArray(node)) {
+        values += node.length;
+        if (values > MAX_GUARD_VALUES) break;
+        // document order: the stack is last in, first out, so the children go on in reverse
+        for (let i = node.length - 1; i >= 0; i -= 1) {
+          const item: unknown = node[i];
+          if (typeof item === "object" && item !== null) stack.push({ value: item, parent: frame, key: i });
+        }
+        continue;
       }
-    } else {
-      findRemoteRefs(value, [...path, key], out);
+      const keys = Object.keys(node);
+      values += keys.length;
+      if (values > MAX_GUARD_VALUES) break;
+      if (keys.some(isParserUnsafeKey)) {
+        const parents = keysAbove(frame);
+        for (const key of keys) {
+          if (found.length >= MAX_UNSAFE_KEY_DIAGNOSTICS) break;
+          if (isParserUnsafeKey(key)) found.push(diagnostic("error", "PARSER_UNSAFE_KEY", unsafeKeyMessage(parents, key), pointerOfSegments([...parents, key])));
+        }
+      }
+      for (let i = keys.length - 1; i >= 0; i -= 1) {
+        const child = (node as Record<string, unknown>)[keys[i]];
+        if (typeof child === "object" && child !== null) stack.push({ value: child, parent: frame, key: keys[i] });
+      }
+    }
+  } catch {
+    // Not reachable for a document `JSON.stringify` can write; what was found stands, and the parser is the next line of defence.
+  }
+  return found;
+}
+
+/**
+ * Every non-local `$ref` in the document (any `$ref` key counts, as in the structural validator). Iterative (a document can be deeper than
+ * the call stack allows: `validate` must never throw) and bounded like the unsafe-key guard (`MAX_GUARD_VALUES`).
+ */
+function findRemoteRefs(root: unknown, out: Diagnostic[]): void {
+  type Frame = { value: unknown; parent: Frame | null; key: string | number };
+  const stack: Frame[] = [{ value: root, parent: null, key: "" }];
+  const pathOf = (frame: Frame | null): Array<string | number> => {
+    const parts: Array<string | number> = [];
+    for (let f = frame; f !== null && f.parent !== null; f = f.parent) parts.push(f.key);
+    return parts.reverse();
+  };
+  let values = 0;
+  while (stack.length > 0) {
+    const frame = stack.pop() as Frame;
+    const node = frame.value;
+    if (typeof node !== "object" || node === null) continue;
+    const entries: Array<[string | number, unknown]> = Array.isArray(node) ? node.map((item, i): [number, unknown] => [i, item]) : Object.entries(node);
+    values += entries.length;
+    if (values > MAX_GUARD_VALUES) return;
+    // document order: the stack is last in, first out, so the children go on in reverse
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const [key, value] = entries[i];
+      if (key === "$ref" && typeof value === "string") continue;
+      stack.push({ value, parent: frame, key });
+    }
+    const ref = Array.isArray(node) ? undefined : (node as Record<string, unknown>)["$ref"];
+    if (typeof ref === "string" && !ref.startsWith("#")) {
+      out.push(diagnostic("error", "REMOTE_REF", `Only local references are allowed, got "${ref}"`, pointerOfSegments(pathOf(frame))));
     }
   }
 }
@@ -197,8 +328,11 @@ export class AsyncApiParserValidator implements EventSpecValidator {
    */
   async validate(document: object): Promise<Result<Diagnostic[]>> {
     const remote: Diagnostic[] = [];
-    findRemoteRefs(document, [], remote);
+    findRemoteRefs(document, remote);
     if (remote.length > 0) return ok(normalizeDiagnostics(remote));
+    // A key the parser cannot read (`hasOwnProperty`) would crash it: refuse the document here, with the key and its pointer.
+    const unsafe = findParserUnsafeKeys(document);
+    if (unsafe.length > 0) return ok(normalizeDiagnostics(unsafe));
 
     try {
       this.parser ??= createAsyncApiParser();
@@ -207,7 +341,9 @@ export class AsyncApiParserValidator implements EventSpecValidator {
       findUnvalidatedSchemas(document, [], notValidated);
       const keyProblems: Diagnostic[] = [];
       await validateKafkaKeys(document, [], keyProblems);
-      return ok(normalizeDiagnostics([...output.diagnostics.map(mapParserDiagnostic), ...notValidated, ...keyProblems]));
+      // A crash inside the parser comes back as a diagnostic with the exception's stack and server paths: logged, then replaced.
+      const parsed = sanitizeParserDiagnostics(output.diagnostics.map(mapParserDiagnostic));
+      return ok(normalizeDiagnostics([...parsed, ...notValidated, ...keyProblems]));
     } catch (e) {
       // The parser's exception text (Spectral / Ajv / avsc internals, document fragments) is logged, never returned.
       return validatorFailure("ASYNCAPI_PARSER_FAILED", "@asyncapi/parser", e);

@@ -15,6 +15,7 @@ import { pickRootEntity } from "@/lib/importers/multi-asset";
 import { parseProtobufDocument } from "@/lib/importers/protobuf.importer";
 import type { MultiEntityImportResult, ParsedField } from "@/lib/importers/types";
 import { validateScope, type LevelScope } from "@/lib/levels";
+import { renameReservedFields, reservedFieldRenamedMessage, reservedNameMessage } from "@/lib/reserved-field-names";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { deleteEntity } from "@/services/entity.service";
 import { MAX_FIELD_RENAME_WARNINGS, MAX_NAME_ATTEMPTS, MAX_NOTES_PER_PAYLOAD, MAX_REQUESTED_NAME, boundText } from "@/services/events/import-limits";
@@ -134,7 +135,8 @@ export interface NameAllocator {
 /**
  * Hands out names that are free in the product's uniqueness line (`assertNameAvailable`: entities, enums, scalars, unions, APIs, traits
  * and events share it, case-insensitively), unique among themselves, and for entities also free as a URL slug of the product and not a
- * reserved route. Reads only; the write that follows re-checks under the tenant's lock.
+ * reserved route. A name the AsyncAPI parser cannot read (`reservedNameMessage`: `hasOwnProperty`) is skipped like a taken one, for entities and
+ * events alike. Reads only; the write that follows re-checks under the tenant's lock.
  */
 export async function createNameAllocator(db: PrismaClient, scope: LevelScope): Promise<Result<NameAllocator>> {
   let slugs: Set<string>;
@@ -151,7 +153,7 @@ export async function createNameAllocator(db: PrismaClient, scope: LevelScope): 
         const suffix = n === 1 ? "" : String(n);
         const candidate = `${requested.slice(0, 128 - suffix.length)}${suffix}`;
         const slug = generateSlug(candidate);
-        const unclaimed = !names.has(candidate.toLowerCase()) && (kind === "event" || (slug !== "" && !slugs.has(slug) && reservedEntitySlugMessage(candidate) === null));
+        const unclaimed = !names.has(candidate.toLowerCase()) && reservedNameMessage(candidate) === null && (kind === "event" || (slug !== "" && !slugs.has(slug) && reservedEntitySlugMessage(candidate) === null));
         if (!unclaimed) continue;
         const registry = await assertNameAvailable(db, { name: candidate, ...scope });
         if (!registry.success) {
@@ -189,9 +191,15 @@ export interface ResolvedPayload {
 /**
  * Field names whose URL slugs (`generateSlug`) are all different: `fields` has a unique (entity, slug) and a unique (entity, name), and
  * importers can return `a b` / `a-b`, or names with no Latin letters at all (their slug is empty). The first field of a slug keeps its
- * name; a later one with the same slug gets a number (`a-b2`). `onRename` hears about each one.
+ * name; a later one with the same slug gets a number (`a-b2`). `onRename` hears about each one. A reserved name is renamed first
+ * (`onReservedRename`).
  */
-function uniqueFieldNames(fields: CreateFieldInput[], onRename: (from: string, to: string) => void): CreateFieldInput[] {
+function uniqueFieldNames(
+  allFields: CreateFieldInput[], onRename: (from: string, to: string) => void, onReservedRename: (from: string, to: string) => void,
+): CreateFieldInput[] {
+  // A name the AsyncAPI parser cannot read (`hasOwnProperty`, see `PARSER_UNSAFE_KEYS`) becomes `hasOwnProperty_1`: an Avro or Protobuf field
+  // name is a VALUE in the document, so it passes the importer's source check, and it would become a payload property that crashes the parser.
+  const fields = renameReservedFields(allFields, onReservedRename);
   const slugs = new Set<string>();
   const nextNumber = new Map<string, number>(); // per colliding slug: where to go on, so 2,000 fields of empty slug stay linear
   return fields.map((field) => {
@@ -233,11 +241,12 @@ export async function resolveEntityNames(plans: readonly PlannedPayload[], alloc
     if (allocated.data !== entity.requestedName) {
       warnings.push({
         pointer: plan.sourcePointer, code: "ENTITY_RENAMED",
-        message: `The name "${entity.requestedName}" is already used in this product (or is reserved), so the entity is named "${allocated.data}"`,
+        message: `The name "${entity.requestedName}" is already used in this product (or is reserved), so the entity is named "${allocated.data}".`,
       });
     }
   }
   let renamedFields = 0;
+  let renamedReserved = 0;
   const payloads = plans.map((plan): ResolvedPayload => {
     const renames = new Map(plan.entities.map((entity) => [entity.sourceName, finalNames.get(entity) as string]));
     return {
@@ -253,8 +262,13 @@ export async function resolveEntityNames(plans: readonly PlannedPayload[], alloc
           if (renamedFields <= MAX_FIELD_RENAME_WARNINGS) {
             warnings.push({
               pointer: plan.sourcePointer, code: "SANITIZED_VALUE",
-              message: `Entity "${boundText(name, 100)}": the field "${boundText(from, 100)}" has the same URL slug as an earlier field, so it is named "${boundText(to, 110)}"`,
+              message: `Entity "${boundText(name, 100)}": the field "${boundText(from, 100)}" has the same URL slug as an earlier field, so it is named "${boundText(to, 110)}".`,
             });
+          }
+        }, (from, to) => {
+          renamedReserved += 1;
+          if (renamedReserved <= MAX_FIELD_RENAME_WARNINGS) {
+            warnings.push({ pointer: plan.sourcePointer, code: "SANITIZED_VALUE", message: reservedFieldRenamedMessage(boundText(from, 100), boundText(to, 110), boundText(name, 100)) });
           }
         });
         return {
@@ -265,7 +279,11 @@ export async function resolveEntityNames(plans: readonly PlannedPayload[], alloc
     };
   });
   if (renamedFields > MAX_FIELD_RENAME_WARNINGS) {
-    warnings.push({ pointer: "", code: "SANITIZED_VALUE", message: renamedFields - MAX_FIELD_RENAME_WARNINGS === 1 ? "1 more field was renamed because its URL slug collided; it is not listed" : `${renamedFields - MAX_FIELD_RENAME_WARNINGS} more fields were renamed because their URL slugs collided; they are not listed` });
+    warnings.push({ pointer: "", code: "SANITIZED_VALUE", message: renamedFields - MAX_FIELD_RENAME_WARNINGS === 1 ? "1 more field was renamed because its URL slug collided; it is not listed." : `${renamedFields - MAX_FIELD_RENAME_WARNINGS} more fields were renamed because their URL slugs collided; they are not listed.` });
+  }
+  if (renamedReserved > MAX_FIELD_RENAME_WARNINGS) {
+    const more = renamedReserved - MAX_FIELD_RENAME_WARNINGS;
+    warnings.push({ pointer: "", code: "SANITIZED_VALUE", message: more === 1 ? "1 more field was renamed because its name is reserved; it is not listed." : `${more} more fields were renamed because their names are reserved; they are not listed.` });
   }
   return ok({ payloads, warnings });
 }

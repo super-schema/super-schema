@@ -4,6 +4,7 @@ import { err, ok, type Result } from "@/types/result";
 import type { EntityPin } from "@/lib/events/types";
 import type { EventSpecInfo, JsonObject, JsonSchemaDialect, OperationAction, PayloadFormat, TraitKind } from "@/lib/event-specs/types";
 import { isReservedKey } from "@/lib/event-specs/own-property";
+import { reservedKeyMessage } from "@/lib/reserved-field-names";
 import {
   DOCUMENT_VERSION, KEY_MAX_LENGTH, KEY_PATTERN,
   type DocChannel, type DocComponents, type DocExternalRef, type DocMessage, type DocOperation, type DocServer, type DocTrait,
@@ -113,8 +114,10 @@ function createReaders(bad: Bad) {
     const raw = src.key;
     if (typeof raw !== "string" || raw.trim() === "") { bad(at, "key is required"); return { key: "", keyOk: false }; }
     const key = raw.trim();
+    const unsafe = reservedKeyMessage(key); // on the parser's list: the one wording every layer uses
     if (key.length > KEY_MAX_LENGTH) bad(at, `Key must be at most ${KEY_MAX_LENGTH} characters`);
     else if (!KEY_PATTERN.test(key)) bad(at, `Key "${key}" may only contain letters, digits, ".", "_" and "-"`);
+    else if (unsafe !== null) bad(at, unsafe);
     else if (isReservedKey(key)) bad(at, `Key "${key}" is reserved — choose another key`);
     else return { key, keyOk: true };
     return { key, keyOk: false };

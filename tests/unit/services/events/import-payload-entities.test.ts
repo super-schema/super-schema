@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ok, type Result } from "@/types/result";
 import type { ParsedField } from "@/lib/importers/types";
 import type { ExtractedPayload } from "@/lib/events/import";
-import { planPayloadEntities, resolveEntityNames, type NameAllocator, type PlannedPayload } from "@/services/events/import-payload-entities";
+import { createNameAllocator, planPayloadEntities, resolveEntityNames, type NameAllocator, type PlannedPayload } from "@/services/events/import-payload-entities";
+import { emptyRegistryDelegates } from "../../../helpers/registry-mocks";
 
 // The module's service imports reach `@/lib/db`; nothing here touches a database.
 vi.mock("@/lib/db", () => ({ prisma: { tag: "prisma" } }));
@@ -33,8 +34,8 @@ describe("resolveEntityNames: field slug collisions", () => {
     const { names, warnings } = await namesOf("a b", "a-b", "a_b");
     expect(names).toEqual(["a b", "a-b2", "a_b3"]);
     expect(warnings.map((w) => [w.code, w.pointer, w.message])).toEqual([
-      ["SANITIZED_VALUE", "/components/messages/m/payload", 'Entity "Order": the field "a-b" has the same URL slug as an earlier field, so it is named "a-b2"'],
-      ["SANITIZED_VALUE", "/components/messages/m/payload", 'Entity "Order": the field "a_b" has the same URL slug as an earlier field, so it is named "a_b3"'],
+      ["SANITIZED_VALUE", "/components/messages/m/payload", 'Entity "Order": the field "a-b" has the same URL slug as an earlier field, so it is named "a-b2".'],
+      ["SANITIZED_VALUE", "/components/messages/m/payload", 'Entity "Order": the field "a_b" has the same URL slug as an earlier field, so it is named "a_b3".'],
     ]);
   });
 
@@ -59,7 +60,7 @@ describe("resolveEntityNames: field slug collisions", () => {
     const fields = Array.from({ length: 52 }, (_, i) => String.fromCodePoint(0x4e00 + i)); // 51 renames: 50 listed, 1 left over
     const { warnings } = await namesOf(...fields);
     expect(warnings).toHaveLength(51);
-    expect(warnings.at(-1)).toEqual({ pointer: "", code: "SANITIZED_VALUE", message: "1 more field was renamed because its URL slug collided; it is not listed" });
+    expect(warnings.at(-1)).toEqual({ pointer: "", code: "SANITIZED_VALUE", message: "1 more field was renamed because its URL slug collided; it is not listed." });
   });
 
   it("2,000 fields of empty slug stay fast (linear, not quadratic) and unique, and only 50 are reported plus one summary", async () => {
@@ -70,7 +71,7 @@ describe("resolveEntityNames: field slug collisions", () => {
     expect(new Set(names).size).toBe(2000);
     expect(names[0]).toBe(fields[0]);
     expect(warnings.filter((w) => w.message.startsWith('Entity "Order"'))).toHaveLength(50);
-    expect(warnings.at(-1)).toEqual({ pointer: "", code: "SANITIZED_VALUE", message: "1949 more fields were renamed because their URL slugs collided; they are not listed" });
+    expect(warnings.at(-1)).toEqual({ pointer: "", code: "SANITIZED_VALUE", message: "1949 more fields were renamed because their URL slugs collided; they are not listed." });
     expect(warnings).toHaveLength(51);
   });
 });
@@ -120,5 +121,75 @@ describe("one Avro schema reused by two messages", () => {
     expect([referenceOf(second.entities[0], "to"), referenceOf(second.entities[0], "next")]).toEqual(["Address2", "Order2"]);
     expect(JSON.stringify(plans)).toBe(before); // nothing the plans share was written to
     expect(resolved.data.warnings.filter((w) => w.code === "ENTITY_RENAMED")).toHaveLength(2);
+  });
+});
+
+// ── a field named like a key the AsyncAPI parser cannot read (PARSER_UNSAFE_KEYS): an Avro / Protobuf field name is a VALUE in the
+// document, so it passes the importer's source check and would become an entity field (and a payload property that crashes the parser) ──
+
+describe("resolveEntityNames: reserved field names", () => {
+  it("renames hasOwnProperty to hasOwnProperty_1 and warns, naming the field, its new name and the entity", async () => {
+    const { names, warnings } = await namesOf("id", "hasOwnProperty", "total");
+    expect(names).toEqual(["id", "hasOwnProperty_1", "total"]);
+    expect(warnings).toEqual([
+      {
+        pointer: "/components/messages/m/payload", code: "SANITIZED_VALUE",
+        message: 'The field "hasOwnProperty" was renamed to "hasOwnProperty_1": the name is reserved. It belongs to the entity "Order".',
+      },
+    ]);
+  });
+
+  it("goes on to _2 when _1 is taken, trims a padded name, and leaves the look-alikes alone", async () => {
+    expect((await namesOf("hasOwnProperty_1", "hasOwnProperty")).names).toEqual(["hasOwnProperty_1", "hasOwnProperty_2"]);
+    expect((await namesOf(" hasOwnProperty ")).names).toEqual(["hasOwnProperty_1"]);
+    const alike = await namesOf("hasownproperty", "HasOwnProperty3", "hasOwnProperty2");
+    expect(alike.names).toEqual(["hasownproperty", "HasOwnProperty3", "hasOwnProperty2"]);
+    expect(alike.warnings).toEqual([]);
+  });
+
+  it("reports at most 50 such renames and one summary, and every field is renamed", async () => {
+    const entityFields = Array.from({ length: 1 }, () => "hasOwnProperty");
+    const plans: PlannedPayload[] = Array.from({ length: 53 }, (_, i) => ({
+      pinKey: `m${i}:payload`, sourcePointer: `/components/messages/m${i}/payload`, format: "json-schema",
+      entities: [{ requestedName: `Order${i}`, sourceName: `Order${i}`, description: "", fields: entityFields.map(field) }],
+    }));
+    const resolved = await resolveEntityNames(plans, keep);
+    if (!resolved.success) throw new Error(resolved.error.message);
+    expect(resolved.data.payloads.every((p) => p.entities[0].input.fields[0].name === "hasOwnProperty_1")).toBe(true);
+    expect(resolved.data.warnings).toHaveLength(51);
+    expect(resolved.data.warnings.at(-1)).toEqual({ pointer: "", code: "SANITIZED_VALUE", message: "3 more fields were renamed because their names are reserved; they are not listed." });
+  });
+});
+
+// ── an entity (or event) NAME that is a parser-unsafe key: the name allocator never hands it out ──
+
+describe("createNameAllocator: reserved names", () => {
+  const db = () => emptyRegistryDelegates() as never;
+  const scope = { tenantId: "t", domainId: "d", productId: "p" };
+
+  it("skips a requested name that is reserved, like a name that is taken: hasOwnProperty2 stands in for hasOwnProperty, for entities and for events", async () => {
+    for (const kind of ["entity", "event"] as const) {
+      const fresh = await createNameAllocator(db(), scope);
+      if (!fresh.success) throw new Error(fresh.error.message);
+      expect(await fresh.data.allocate("hasOwnProperty", kind), kind).toEqual({ success: true, data: "hasOwnProperty2" });
+    }
+    const allocator = await createNameAllocator(db(), scope);
+    if (!allocator.success) throw new Error(allocator.error.message);
+    expect(await allocator.data.allocate("hasownproperty", "entity")).toEqual({ success: true, data: "hasownproperty" });
+  });
+
+  it("resolveEntityNames reports the rename (ENTITY_RENAMED says the name is used or reserved) and the entity gets the allocated name", async () => {
+    const allocator = await createNameAllocator(db(), scope);
+    if (!allocator.success) throw new Error(allocator.error.message);
+    const reserved: PlannedPayload = {
+      pinKey: "m:payload", sourcePointer: "/components/messages/m/payload", format: "avro",
+      entities: [{ requestedName: "hasOwnProperty", sourceName: "hasOwnProperty", description: "", fields: [field("id")] }],
+    };
+    const resolved = await resolveEntityNames([reserved], allocator.data);
+    if (!resolved.success) throw new Error(resolved.error.message);
+    expect(resolved.data.payloads[0].entities[0]).toMatchObject({ requestedName: "hasOwnProperty", name: "hasOwnProperty2", renamed: true });
+    expect(resolved.data.warnings.map((w) => [w.code, w.message])).toEqual([
+      ["ENTITY_RENAMED", 'The name "hasOwnProperty" is already used in this product (or is reserved), so the entity is named "hasOwnProperty2".'],
+    ]);
   });
 });

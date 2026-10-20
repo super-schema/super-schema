@@ -6,6 +6,7 @@
 import { cloneElement, Fragment, isValidElement, useState, type ComponentProps, type KeyboardEvent, type ReactElement, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { isReservedKey } from "@/lib/event-specs/own-property";
+import { reservedKeyMessage } from "@/lib/reserved-field-names";
 import { KEY_MAX_LENGTH, KEY_PATTERN } from "@/lib/events/document/types";
 import { KNOWN_PROTOCOLS } from "@/lib/events/inputs";
 
@@ -42,6 +43,8 @@ function keyProblem(text: string, committed: string, taken: string[]): string | 
   if (text === "") return "A key is required.";
   if (text.length > KEY_MAX_LENGTH) return `A key can be at most ${KEY_MAX_LENGTH} characters.`;
   if (!KEY_PATTERN.test(text)) return 'Use only letters, digits, ".", "_" and "-" (no spaces).';
+  const unsafe = reservedKeyMessage(text);
+  if (unsafe !== null) return unsafe;
   if (isReservedKey(text)) return `"${text}" is reserved. Choose another key.`;
   if (text !== committed && taken.includes(text)) return `The key "${text}" is already used.`;
   return null;

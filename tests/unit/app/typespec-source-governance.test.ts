@@ -122,6 +122,80 @@ describe("TypeSpec Source tab save applies the model's x-tags to metadata.tags (
   }, 60_000);
 });
 
+describe("TypeSpec Source tab save refuses a field the AsyncAPI parser cannot read (PARSER_UNSAFE_KEYS)", () => {
+  const MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another field name.';
+
+  it("a new field named hasOwnProperty: the save is refused with the reserved-name message and nothing is written, not even the source", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  hasOwnProperty: string;\n}\n");
+    expect(res).toMatchObject({ success: false, error: MESSAGE });
+    expect(mockPrisma.field.create).not.toHaveBeenCalled();
+    expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("a field that was there before (an entity created before the rule) does not stop the source from being saved", async () => {
+    mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    mockPrisma.field.findMany.mockResolvedValue([{ id: "f-1", entityId: "ent-1", name: "hasOwnProperty", sortOrder: 0, fieldNumber: 1, type: "string", nullable: true, isKey: false, description: "", classification: null, decorators: {} }]);
+    const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  hasOwnProperty?: string;\n  id: string;\n}\n");
+    expect(res.success).toBe(true);
+  }, 60_000);
+
+  describe("every model of the source is looked at, not only the first", () => {
+    const entityRow = () => mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1" });
+    const nothingWritten = () => {
+      expect(mockPrisma.field.create).not.toHaveBeenCalled();
+      expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    };
+
+    it("a field of a SECOND model (a nested type the entity refers to) is refused, and nothing is written", async () => {
+      entityRow();
+      const source = "model Customer {\n  id: string;\n  address: Address;\n}\nmodel Address {\n  hasOwnProperty: string;\n}\n";
+      const res = await compileAndApplyTypeSpecSourceAction("ent-1", source);
+      // the message says WHICH model holds the field
+      expect(res).toMatchObject({ success: false, error: `Model "Address": ${MESSAGE}` });
+      nothingWritten();
+    });
+
+    it("a field that comes in through a spread (...Base) is a field of the model that spreads it, and the message names that model", async () => {
+      entityRow();
+      const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  ...Base;\n}\nmodel Base {\n  hasOwnProperty: string;\n}\n");
+      expect(res).toMatchObject({ success: false, error: `Model "Customer": ${MESSAGE}` });
+      nothingWritten();
+    });
+
+    it("a second model, an enum, a scalar or a union NAMED hasOwnProperty is refused as a reserved NAME, and nothing is written", async () => {
+      const NAME_MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another name.';
+      for (const [kind, declared] of [
+        ["Model", "model hasOwnProperty {\n  street: string;\n}\n"],
+        ["Enum", "enum hasOwnProperty {\n  A,\n  B,\n}\n"],
+        ["Scalar", "scalar hasOwnProperty extends string;\n"],
+        ["Union", "union hasOwnProperty {\n  string,\n  int32,\n}\n"],
+      ]) {
+        entityRow();
+        const res = await compileAndApplyTypeSpecSourceAction("ent-1", `model Customer {\n  id: string;\n}\n${declared}`);
+        expect(res, declared).toMatchObject({ success: false, error: `${kind} "hasOwnProperty": ${NAME_MESSAGE}` });
+      }
+      nothingWritten();
+    });
+
+    it("the look-alikes in a second model are fine", async () => {
+      entityRow();
+      const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  address: Address;\n}\nmodel Address {\n  hasownproperty: string;\n  HasOwnProperty: string;\n}\n");
+      expect(res.success).toBe(true);
+    });
+
+    // KNOWN GAP, pinned so a change in what the parsed document exposes is noticed: an INLINE model (`address: { ... }`) has no name, so
+    // `ParsedTypeSpecDocument.models` does not list it and its property names are not visible here. The emit guard is the safety net.
+    it("an inline anonymous model's fields are NOT exposed by the parsed document: the save goes through (the emit guard catches them later)", async () => {
+      entityRow();
+      const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  address: { hasOwnProperty: string };\n}\n");
+      expect(res.success).toBe(true);
+    });
+  });
+});
+
 describe("getTypeSpecSourceAction upgrades a stored legacy @tag source", () => {
   it("returns the stored source rewritten into the valid governance decorators", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({

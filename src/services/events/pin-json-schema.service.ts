@@ -4,7 +4,9 @@
 //
 // Rendered exactly as the message's payload is for the Code panel: a pinned version renders that immutable version, an unpinned pin
 // the entity's current draft. The renderer's JSON Schema (2020-12, its bundle inlined into local `$defs`) is down-converted to
-// draft-07, the dialect the editor's validator reads.
+// draft-07, the dialect the editor's validator reads. Every `pattern` (and `patternProperties` key) that is not linear by construction is
+// removed from that copy first: the validator runs it in the browser, where a backtracking regex cannot be interrupted (`safe-pattern.ts`).
+// The entity and the emitted AsyncAPI keep the pattern; the editor only loses an advisory warning.
 //
 // The pin comes from the client, so ownership is checked first: the entity (and, for a version, that version OF that entity) must
 // belong to the caller's tenant. Anything else — another tenant's entity, an unknown id, a version of some other entity — is the one
@@ -12,6 +14,7 @@
 import { downConvertToDraft07 } from "@/lib/event-specs/json-schema-downconvert";
 import type { JsonObject } from "@/lib/event-specs/types";
 import { isJsonObject } from "@/lib/events/inputs";
+import { sanitizeSchemaPatterns } from "@/lib/events/safe-pattern";
 import type { EntityPin } from "@/lib/events/types";
 import { ok, err, type Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -84,7 +87,8 @@ export async function renderPinJsonSchema(
   let schema: JsonObject;
   let size: number;
   try {
-    schema = downConvertToDraft07(artifact.schema).schema;
+    // sanitising can only shrink the schema, so the cap below is on what is really sent
+    schema = sanitizeSchemaPatterns(downConvertToDraft07(artifact.schema).schema);
     size = Buffer.byteLength(JSON.stringify(schema), "utf8");
   } catch (e: unknown) {
     return renderFailed("the schema could not be converted", e instanceof Error ? e.message : String(e));

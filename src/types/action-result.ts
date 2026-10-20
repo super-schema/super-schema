@@ -19,11 +19,19 @@ export function isOpaqueErrorCode(code: string | undefined): boolean {
   return code !== undefined && OPAQUE_ERROR_CODES.includes(code);
 }
 
+/** How a sentence ends: a message that does so is followed by its fix after a single space, any other gets a full stop first. */
+export const ENDS_A_SENTENCE = /[.!?:]$/;
+
 /**
- * The one line a form shows for a failed action result: the service's message plus its suggested fix,
- * except for `DB_ERROR` / `INTERNAL_ERROR`, which become the generic message (no fix either).
+ * The one line a form shows for a failed action result: the service's message plus its suggested fix as two sentences (`. ` between
+ * them, or a single space when the message, trailing spaces aside, already ends with `.`, `!`, `?` or `:`: services write
+ * "Event name "x" is invalid" and the fix "Use 1–128 letters.", and a plain space would run them together), except for `DB_ERROR` /
+ * `INTERNAL_ERROR`, which become the generic message (no fix either).
  */
 export function actionErrorText(failure: { error: string; code?: string; suggestedFix?: string }): string {
   if (isOpaqueErrorCode(failure.code)) return GENERIC_ACTION_ERROR;
-  return failure.suggestedFix ? `${failure.error} ${failure.suggestedFix}` : failure.error;
+  if (!failure.suggestedFix) return failure.error;
+  const message = failure.error.trimEnd();
+  if (message === "") return failure.suggestedFix;
+  return `${message}${ENDS_A_SENTENCE.test(message) ? "" : "."} ${failure.suggestedFix}`;
 }

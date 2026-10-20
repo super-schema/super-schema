@@ -42,6 +42,7 @@ import {
 } from "./TypeSpecImportReviewScreen";
 import { toast } from "sonner";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import { isReservedRenameNote } from "@/lib/reserved-field-names";
 
 type ImportTab = "single" | "bulk" | "paste" | "build";
 type ImportPhase = "input" | "review" | "bulk-review" | "typespec-review";
@@ -469,7 +470,7 @@ export function ImportDialog({
       });
 
       const blockingErrors = result.errors.filter(
-        (e) => !e.includes("already exists")
+        (e) => !e.includes("already exists") && !isReservedRenameNote(e)
       );
       if (result.entitiesCreated === 0 && blockingErrors.length > 0) {
         toast.error(blockingErrors[0]);
@@ -533,7 +534,7 @@ export function ImportDialog({
         result.servicesCreated +
         result.decoratorsCreated;
       const blockingErrors = result.errors.filter(
-        (err) => !err.includes("already exists")
+        (err) => !err.includes("already exists") && !isReservedRenameNote(err)
       );
 
       if (createdCount === 0 && blockingErrors.length > 0) {

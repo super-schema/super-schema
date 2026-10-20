@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { firstReservedFieldNameMessage, renameReservedFields, renameReservedNames, reservedFieldNameMessage, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { inActiveTenant, isInActiveTenant, notFoundFailure, targetInActiveTenant, unexpectedFailure } from "@/lib/action-context";
@@ -21,7 +22,7 @@ import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
 import { createImportedEntities, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
-import { isOpaqueErrorCode } from "@/types/action-result";
+import { actionErrorText, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok } from "@/types/result";
 import type { Result, ServiceError } from "@/types/result";
 
@@ -202,6 +203,10 @@ export async function createEntityWithFieldsAction(
     return { error: "Entity name must be 128 characters or less" };
   }
 
+  // A field named like a key the AsyncAPI parser cannot read is refused by name, before anything is created.
+  const reservedField = firstReservedFieldNameMessage(fields);
+  if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
+
   try {
     // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
     if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") };
@@ -297,6 +302,9 @@ export async function addModelFieldAction(
   if (!input.success) return failure(input.error);
   const name = trimmedName(input.data.name, "Field");
   if (!name.success) return failure(name.error);
+  // A field named like a key the AsyncAPI parser cannot read is refused (a model spread into an entity carries its fields into the payload).
+  const reservedField = reservedFieldNameMessage(name.data);
+  if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
 
   try {
     // Ownership of the PARENT: the model's domain must belong to the active tenant; anything else reads as missing.
@@ -357,9 +365,15 @@ export async function updateModelFieldAction(
     // Ownership: the field's model's domain must belong to the caller's active tenant; anything else reads as missing.
     const row = await prisma.modelFieldDefinition.findUnique({
       where: { id: id.data },
-      select: { model: { select: { domain: { select: { tenantId: true } } } } },
+      select: { name: true, model: { select: { domain: { select: { tenantId: true } } } } },
     });
     if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return { ...notFoundFailure("Field") };
+
+    // A RENAME to a name the AsyncAPI parser cannot read is refused; a name that does not change is not looked at (an old field stays editable).
+    if (typeof picked.data.name === "string" && picked.data.name !== row.name) {
+      const reservedField = reservedFieldNameMessage(picked.data.name);
+      if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
+    }
 
     await prisma.modelFieldDefinition.update({ where: { id: id.data }, data: picked.data as Prisma.ModelFieldDefinitionUpdateInput });
     revalidatePath("/schemas");
@@ -395,7 +409,7 @@ export async function deleteModelFieldAction(fieldId: string) {
 // ---------------------------------------------------------------------------
 
 /** What the delete toast shows for a blocked entity: the service message plus its one-line remedy. */
-const inUseText = (e: ServiceError) => (e.suggestedFix ? `${e.message}${/[.!?]$/.test(e.message) ? "" : "."} ${e.suggestedFix}` : e.message);
+const inUseText = (e: ServiceError) => actionErrorText({ error: e.message, suggestedFix: e.suggestedFix });
 
 export async function deleteEntityAction(entityId: string) {
   const session = await auth();
@@ -1301,7 +1315,11 @@ export async function createDomainAssetsFromImportAction(
         return false;
       };
 
-      for (const model of sortByInheritance(payload.models)) {
+      // A model, or a model field, named like a key the AsyncAPI parser cannot read is renamed (`_1`) and reported, like the entities below;
+      // a model that extends a renamed one follows it.
+      const note = (message: string) => skipped.push(message);
+      const reservedFreeModels = renameReservedNames(payload.models, (from, to) => note(reservedNameRenamedMessage("model", from, to))).items;
+      for (const model of sortByInheritance(reservedFreeModels)) {
         const name = model.name.trim();
         const existing = await tx.modelDefinition.findFirst({
           where: { name, domainId: payload.domainId },
@@ -1311,6 +1329,7 @@ export async function createDomainAssetsFromImportAction(
           skipped.push(`Model "${model.name}" already exists — skipped`);
           continue;
         }
+        const modelFields = renameReservedFields(model.fields, (from, to) => note(reservedFieldRenamedMessage(from, to, name, "model")));
         const created = await tx.modelDefinition.create({
           data: {
             name,
@@ -1320,7 +1339,7 @@ export async function createDomainAssetsFromImportAction(
             sourceNamespace: payload.namespace ?? null,
             extendsModelName: model.extends ?? null,
             fields: {
-              create: model.fields.map((field, index) => mapModelFieldCreateInput(field, index)),
+              create: modelFields.map((field, index) => mapModelFieldCreateInput(field, index)),
             },
           },
         });
@@ -1411,6 +1430,8 @@ export async function createDomainAssetsFromImportAction(
         sourceFormat: importedFormat,
         isNameFree: (name) => isNameFree("entity", name, productScope.data),
         skip: (message) => skipped.push(message),
+        // a renamed reserved field name is reported next to the skips: the import dialog shows every one as a warning
+        note: (message) => skipped.push(message),
         refs: entityRefs,
       });
       for (const created of createdEntities) {
@@ -1504,7 +1525,9 @@ export async function createDomainAssetsFromImportAction(
         : e instanceof ServiceErrorRejection
           ? e.message
           : unexpectedFailure("createDomainAssetsFromImportAction", e).error;
-    return emptyImportResult([...skipped, message]);
+    // The cause comes FIRST: it is what a caller that shows one message shows, and the notes made before it (a rename, a skip) say nothing
+    // about why everything was rolled back.
+    return emptyImportResult([message, ...skipped]);
   }
 }
 

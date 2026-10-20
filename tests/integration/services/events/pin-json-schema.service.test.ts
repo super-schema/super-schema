@@ -149,6 +149,98 @@ describe("renderPinJsonSchema: what it renders", () => {
   }, 90_000);
 });
 
+// The editor runs a schema's `pattern` in the BROWSER (`new RegExp(pattern, "u")`), where a backtracking one cannot be interrupted. Only a pattern
+// that is linear by construction (`isLinearSafePattern`) is sent; the others are removed from this copy, which loses an advisory warning only.
+// No test here (or anywhere) ever MATCHES a catastrophic pattern: they only read what the service hands back.
+describe("renderPinJsonSchema: a pattern that could freeze the editor never reaches it", () => {
+  const CATASTROPHIC = "^(a+)+$";
+  const SAFE = "^[a-z]{3}$";
+
+  it("removes `^(a+)+$` from a pinned version's schema (wherever it sits, `$defs` included) and keeps `^[a-z]{3}$`", async () => {
+    const ctx = await testContext(prisma);
+    const sc = await scope(ctx);
+    const order = await sc.entity("Order");
+    const v = await version(ctx, order.id, "model Order {\n  id: string;\n}\n");
+    const rendered = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        code: { type: "string", pattern: CATASTROPHIC },
+        slug: { type: "string", pattern: SAFE },
+        status: { $ref: "#/$defs/Status" },
+        tags: { type: "array", items: { type: "string", pattern: "^(a|aa)+$" } },
+        pattern: { type: "string", description: "a property that is called like the keyword" },
+      },
+      patternProperties: { "^(x+)+y$": { type: "string" }, "^x-[a-z]+$": { type: "string" } },
+      $defs: { Status: { type: "string", pattern: "(a*)*b" } },
+    };
+    const { renderer } = stubRenderer(renderOf(rendered));
+
+    const { schema } = unwrap(await renderPinJsonSchema(ctx, { tenantId: TENANT, pin: { entityId: order.id, entityVersionId: v.id } }, { renderer }));
+
+    expect(JSON.stringify(schema)).not.toMatch(/\(a\+\)\+|\(a\|aa\)|\(a\*\)\*|\(x\+\)\+/);
+    expect(schema).toEqual({
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: {
+        code: { type: "string" },
+        slug: { type: "string", pattern: SAFE },
+        status: { $ref: "#/definitions/Status" },
+        tags: { type: "array", items: { type: "string" } },
+        pattern: { type: "string", description: "a property that is called like the keyword" },
+      },
+      patternProperties: { "^x-[a-z]+$": { type: "string" } },
+      definitions: { Status: { type: "string" } },
+    });
+    expect(danglingRefs(schema)).toEqual([]);
+  });
+
+  it("also removes it from where only a `$ref` can reach it: the editor's validator follows a pointer into a `default`, `const`, `enum`, `example` or `examples` too", async () => {
+    const ctx = await testContext(prisma);
+    const sc = await scope(ctx);
+    const order = await sc.entity("Order");
+    const v = await version(ctx, order.id, "model Order {\n  id: string;\n}\n");
+    const hidden = { type: "string", pattern: CATASTROPHIC };
+    const rendered = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: {
+        a: { default: hidden }, b: { const: hidden }, c: { enum: [hidden] }, d: { example: hidden }, e: { examples: [hidden] },
+        ref: { $ref: "#/properties/a/default" },
+      },
+    };
+    const { renderer } = stubRenderer(renderOf(rendered));
+
+    const { schema } = unwrap(await renderPinJsonSchema(ctx, { tenantId: TENANT, pin: { entityId: order.id, entityVersionId: v.id } }, { renderer }));
+
+    expect(JSON.stringify(schema)).not.toContain(CATASTROPHIC);
+    expect((schema.properties as Record<string, Record<string, unknown>>).a.default).toEqual({ type: "string" });
+    expect(danglingRefs(schema)).toEqual([]);
+  });
+
+  it("does the same for a real entity version rendered by the TypeSpec CLI: `@pattern` is on the entity, the browser gets only the safe one", async () => {
+    const ctx = await testContext(prisma);
+    const sc = await scope(ctx);
+    const source = `model Account {\n  @pattern("${CATASTROPHIC}")\n  code: string;\n  @pattern("${SAFE}")\n  slug: string;\n}\n`;
+    const account = await prisma.entity.create({
+      data: {
+        name: "Account", slug: `account-${sc.s}`, tenantId: TENANT, domainId: sc.domain.id, productId: sc.product.id, ownerId: ctx.userId, typespecSource: source,
+        fields: { create: [{ name: "code", slug: "code", type: "string", nullable: false, sortOrder: 0, fieldNumber: 1, decorators: {} }] },
+      },
+    });
+    const pinned = await version(ctx, account.id, source);
+
+    for (const pin of [{ entityId: account.id, entityVersionId: pinned.id }, { entityId: account.id, entityVersionId: null }]) {
+      const { schema } = unwrap(await renderPinJsonSchema(ctx, { tenantId: TENANT, pin }));
+      const properties = schema.properties as Record<string, Record<string, unknown>>;
+      expect(properties.code).toMatchObject({ type: "string" });
+      expect(properties.code).not.toHaveProperty("pattern");
+      expect(properties.slug).toMatchObject({ type: "string", pattern: SAFE });
+      expect(JSON.stringify(schema)).not.toContain(CATASTROPHIC);
+    }
+  }, 90_000);
+});
+
 describe("renderPinJsonSchema: a very wide entity", () => {
   it("renders a payload of 1,000 properties well inside the size cap, and an example can still be generated from it", async () => {
     const ctx = await testContext(prisma);
