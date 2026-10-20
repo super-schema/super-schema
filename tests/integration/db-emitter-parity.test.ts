@@ -4,6 +4,7 @@ import type {
   PrismaFieldInput,
 } from "@/lib/compiler/compiler.service";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { execDdl, withHint } from "../helpers/sibling-patch";
 
 // Regression coverage for the migrated database DDL emitters. The custom
 // Super Schema emitters (src/emitters/{spanner,postgresql,bigquery}) were
@@ -65,11 +66,11 @@ describe.each([["spanner"], ["postgresql"], ["bigquery"]])(
       const columnLines = result.output.split("\n").filter((line) => line.startsWith("  ") && !line.trimStart().startsWith("--") && !line.trimStart().startsWith("PRIMARY KEY"));
       expect(columnLines).toHaveLength(fields.length);
       for (const line of columnLines) {
-        expect(line, `${targetKey}: a column line must end with its comma before any comment`).toMatch(
+        expect(line, withHint(`${targetKey}: a column line must end with its comma before any comment`)).toMatch(
           targetKey === "bigquery" ? /^ {2}\w+ [^-]*OPTIONS\(description='[^']*'\),$/ : /^ {2}\w+ [A-Z0-9_(), ]+, -- [^,]*$/
         );
       }
-      for (const field of fields) expect(result.output, `${targetKey}: the description of ${field.name}`).toContain(field.description);
+      for (const field of fields) expect(result.output, withHint(`${targetKey}: the description of ${field.name}`)).toContain(field.description);
     }, 60000);
   }
 );
@@ -88,7 +89,7 @@ it("postgresql DDL is accepted by a real PostgreSQL engine (PGlite) and creates 
 
   const db = new PGlite();
   try {
-    await db.exec(result.output);
+    await execDdl(db, result.output);
     const columns = await db.query<{ column_name: string }>(
       "select column_name from information_schema.columns where table_schema = 'payments' and table_name = 'transaction' order by ordinal_position"
     );

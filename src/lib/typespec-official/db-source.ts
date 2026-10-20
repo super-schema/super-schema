@@ -19,7 +19,8 @@
  * leading digit) is a WARNING — the DDL looks fine and does not run.
  *
  * What the DDL cannot say about a column (a decimal's precision and scale, a url stored as text, ...) is a NOTE in the table's
- * comment, after the entity's description (see db-column-types.ts): the comment is the mechanism, not a warning.
+ * comment: the entity's description on the first line, then `Notes:` and one `- <note>` line per column (see db-column-types.ts).
+ * The comment is the mechanism, not a warning.
  *
  * Pure function — no side effects, no I/O.
  */
@@ -31,6 +32,7 @@ import type {
 import { escapeString, propertyName, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { isReservedWord, POSTGRES_SYSTEM_COLUMNS } from "./sql-reserved-words";
 import { mapType, stringMaxLength, tableComment, tableNotes, type DbDialect } from "./db-column-types";
+
 const TARGET_TO_DIALECT: Record<string, DbDialect> = {
   spanner: "spanner",
   postgresql: "postgres",
@@ -56,7 +58,7 @@ interface DialectConfig {
 // A field's description is its column's `@doc`; the entity's description is the table's. The emitters (built with the
 // sibling write.ts patch, docs/events/REVIEW.md gap 15) write a column's as `col TYPE, -- text` (Spanner, PostgreSQL: the
 // comma comes first, so the comment cannot swallow it) or `OPTIONS(description='...')` (BigQuery, which escapes `\` and
-// `'` itself), and the table's as a comment line before CREATE TABLE.
+// `'` itself), and the table's as comment lines before CREATE TABLE (one `-- ` line per line of its doc).
 // Models in a `@schema` namespace are tables, so no `@table` is needed (the packages have none). They have no
 // decimal-precision decorator either: a decimal column is emitted as NUMERIC without precision and scale.
 const DIALECTS: Record<DbDialect, DialectConfig> = {
@@ -96,20 +98,35 @@ function pascal(name: string): string | null {
 }
 
 /**
- * Collapse line breaks (the DDL puts a description in a one-line comment or a one-line quoted string). Besides CR, LF and
- * CRLF this takes the other characters that tools split a line on (VT, FF, NEL, LS, PS: Python's `splitlines()` ends a
- * `--` comment at U+2028, and what follows would run as SQL).
+ * Collapse line breaks (the DDL puts a description in a one-line comment or a one-line quoted string). CR and LF end a
+ * `--` comment in every dialect; probed on PGlite (a real PostgreSQL), VT, FF, NEL, LS and PS do NOT end one there. Taking
+ * them out as well is defence in depth: a naive line splitter ends a line at them (Python's `splitlines()` does at all five,
+ * and what follows a split comment would run as SQL).
  */
 const oneLine = (text: string): string => text.replace(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/g, " ");
 
-/** A description as the DDL carries it: one line, ends trimmed; null when nothing is left (an empty comment is noise). */
+/**
+ * Characters taken out of a description: NUL and the other C0 controls except tab (line breaks are flattened before this runs),
+ * DEL, and the bidirectional controls U+202A-202E and U+2066-2069, which make a DDL file read differently from what it
+ * says. PostgreSQL cannot even take a NUL in a statement.
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g;
+
+/**
+ * A description as the DDL carries it: one line, no control characters, ends trimmed; null when nothing is left (an empty
+ * comment is noise: a description that was only whitespace or only control characters gets no comment).
+ */
 function descriptionText(description: string | undefined): string | null {
-  const text = oneLine(description ?? "").trim();
+  const text = oneLine(description ?? "").replace(CONTROL_CHARACTERS, "").trim();
   return text === "" ? null : text;
 }
 
-/** The `@doc("…")` decorator for text: one line, then escaped for a TypeSpec string (`\`, `"`, `${`, tab, …). */
-const docDecorator = (text: string): string => `@doc("${escapeString(oneLine(text))}")`;
+/**
+ * The `@doc("…")` decorator for text, escaped for a TypeSpec string (`\`, `"`, `${`, tab, line break …). The text is already
+ * clean: a description from {@link descriptionText}, or the table comment's lines joined by `\n` (a TypeSpec string
+ * delivers that `\n` to the emitter as a real line break, which the emitters write as one `-- ` line each).
+ */
+const docDecorator = (text: string): string => `@doc("${escapeString(text)}")`;
 
 const NO_NAME = "it has no letters or digits that the database dialects accept. Rename it.";
 
@@ -132,6 +149,17 @@ const IDENTIFIER_LIMITS: Record<DbDialect, { table: number; schema: number; colu
 
 /** BigQuery rejects a column description over this many characters (`OPTIONS(description=...)`). */
 const BIGQUERY_MAX_DESCRIPTION = 1024;
+
+/**
+ * The largest `n` a dialect accepts in the column type the emitter prints for a string with a maximum length (a `@maxLength`
+ * is written as `STRING(n)` in Spanner and BigQuery, `VARCHAR(n)` in PostgreSQL). Spanner takes STRING(1..2,621,440) (or MAX);
+ * PostgreSQL's VARCHAR(n) is capped at 10,485,760 (PGlite: "length for type varchar cannot exceed 10485760"). BigQuery's
+ * emitter prints `STRING(n)` and the engine takes any positive n, so it has no entry and no warning.
+ */
+const STRING_LENGTH_LIMITS: Partial<Record<DbDialect, { type: string; max: number }>> = {
+  spanner: { type: "STRING", max: 2_621_440 },
+  postgres: { type: "VARCHAR", max: 10_485_760 },
+};
 
 const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 
@@ -179,6 +207,11 @@ function fieldWarnings(dialect: DbDialect, field: SuperSchemaField, column: stri
   }
   if (dialect === "bigquery" && columnDocText !== null && columnDocText.length > BIGQUERY_MAX_DESCRIPTION) {
     warnings.push(`The description of the field "${field.name}" is longer than BigQuery's limit of ${BIGQUERY_MAX_DESCRIPTION.toLocaleString("en-US")} characters, so BigQuery will reject the DDL as is. Shorten it.`);
+  }
+  const length = stringMaxLength(field);
+  const lengthLimit = STRING_LENGTH_LIMITS[dialect];
+  if (length !== undefined && lengthLimit && length > lengthLimit.max) {
+    warnings.push(`The column "${column}" has maxLength ${length.toLocaleString("en-US")}, above the maximum of ${lengthLimit.max.toLocaleString("en-US")} for ${lengthLimit.type}(n) in ${DIALECTS[dialect].displayName}, so the DDL will be rejected.`);
   }
   return warnings;
 }
@@ -254,7 +287,7 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
 
   // The table's comment: the entity's description, then the notes for every column the DDL cannot state as declared.
   const notes = tableNotes(dialect, cfg.displayName, columns.map(({ field, ident }) => ({ field, column: emittedName(ident) })));
-  const tableText = tableComment(dialect, descriptionText(model.entity.description), notes);
+  const tableText = tableComment(descriptionText(model.entity.description), notes);
   if (tableText !== null) {
     lines.push(docDecorator(tableText));
   }

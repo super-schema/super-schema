@@ -9,9 +9,9 @@
  * offset of an `offsetDateTime`, a `uint64` that does not fit a signed 64-bit integer) the table gets a NOTE in its comment:
  * the DDL looks complete and is not, and the comment is the only place to say so ({@link tableNotes}, {@link tableComment}).
  *
- * The notes contain constants, numbers, type names and column names only. A column name is the emitted one (a sanitised
- * identifier); the field's own name follows in parentheses when it differs AND is a plain identifier (`order_total
- * (orderTotal)`), never free text.
+ * The notes contain constants, numbers, the builder's own type names and column names only. A column name is the emitted one
+ * (a sanitised identifier); the field's own name follows in parentheses when it differs AND is a plain identifier
+ * (`order_total (orderTotal)`). Nothing the user typed freely (a description, an unknown element type) is ever in a note.
  *
  * Pure functions, no I/O.
  */
@@ -63,16 +63,27 @@ export const TYPE_MAP: Partial<Record<LogicalType, TspScalar>> = {
   unixTimestamp32: "int32",
 };
 
-/** The scalar a logical type (or an array's element type) is written as; what has none (enum, map, object, reference, unset) is a string. */
+/** The scalar a logical type (or an array's element type) is written as; what has none (enum, map, object, reference, unset, unknown) is a string. */
 export function scalarOf(type: string | undefined): TspScalar {
-  return (type ? TYPE_MAP[type as LogicalType] : undefined) ?? "string";
+  // own keys only: an element type from the client may be `constructor` or `__proto__`
+  return (type !== undefined && Object.hasOwn(TYPE_MAP, type) ? TYPE_MAP[type as LogicalType] : undefined) ?? "string";
 }
 
-/** The element type of an array field, or undefined for any other field or an array whose element type was never set. */
+/**
+ * The logical types a note may name: the builder's own table plus the four it stores as text. Anything else (a stale
+ * type, an array element type the client typed freely) is never printed: a note holds no text we did not write.
+ */
+const NAMEABLE_TYPES: ReadonlySet<string> = new Set([...Object.keys(TYPE_MAP), "enum", "map", "object", "reference"]);
+
+/**
+ * The element type of an array field, or undefined for any other field or an array whose element type was never set. It is
+ * unvalidated client data (`decorators.arrayElementType`): only a non-empty string counts, a number or an object is "never set".
+ */
 function elementType(field: SuperSchemaField): string | undefined {
-  return field.type === "array" ? (field.complexType?.arrayElementType as string | undefined) : undefined;
+  if (field.type !== "array") return undefined;
+  const raw: unknown = field.complexType?.arrayElementType;
+  return typeof raw === "string" && raw !== "" ? raw : undefined;
 }
-
 /** The TypeSpec type of a field's property: its scalar, or `scalar[]` for an array. */
 export function mapType(field: SuperSchemaField): string {
   return field.type === "array" ? `${scalarOf(elementType(field))}[]` : scalarOf(field.type);
@@ -137,9 +148,12 @@ export function emittedColumnType(dialect: DbDialect, field: SuperSchemaField): 
 // Table notes
 // ---------------------------------------------------------------------------
 
-/** The notes (and the description they follow) are cut at this many characters, ending `...and N more.` */
-const NOTES_LIMIT: Record<DbDialect, number> = { spanner: 2000, postgres: 2000, bigquery: 4000 };
-const NOTES_HEAD = "Notes: ";
+/**
+ * The notes block of a table comment is cut at this many characters, for every dialect (a `-- ` comment line has no engine
+ * limit in any of them), ending `- ...and N more.`.
+ */
+export const NOTES_LIMIT = 2000;
+const NOTES_HEAD = "Notes:";
 
 /** The declared types the builder writes as a decimal: the emitters print all of them as NUMERIC, without precision or scale. */
 const DECIMAL_TYPES: ReadonlySet<string> = new Set(["numeric", "decimal", "decimal128"]);
@@ -165,8 +179,8 @@ function declaredDecimal(type: string, precision: number | undefined, scale: num
 const numberOrUndefined = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
 
 /**
- * The note for one column, or null when the DDL type says what the field declares. No `.` at the end: notes are joined by
- * `; ` and the block ends with the period.
+ * The note for one column, or null when the DDL type says what the field declares. No `.` at the end: a note is one line of
+ * the table comment (`- <note>`).
  * - a decimal with a declared precision or scale: NUMERIC has none (PostgreSQL) or a fixed one (38 and 9 in Spanner and BigQuery);
  * - a type the DDL has no column for (url, plainTime, duration, enum, reference, map, object, an array of those, an array
  *   with no element type): stored as text; a `url`'s declared maximum length is lost with it;
@@ -174,6 +188,9 @@ const numberOrUndefined = (value: unknown): number | undefined => (typeof value 
  * - an unsigned integer whose DDL type tops out lower (uint64 everywhere; uint32 and uint16 on PostgreSQL).
  * Not noted: a narrower integer in a wider column, a float32 in FLOAT64, an `integer` (arbitrary precision) in a 64-bit
  * integer, a decimal that declared no precision: the DDL type holds everything the field can and nobody is misled.
+ *
+ * A note holds only words, numbers and identifiers we wrote: a type is named when it is one of the builder's own
+ * ({@link NAMEABLE_TYPES}), otherwise it is `array` (an element type we do not know) or `unknown`.
  */
 export function columnNote(dialect: DbDialect, displayName: string, column: string, field: SuperSchemaField): string | null {
   const array = field.type === "array";
@@ -181,8 +198,9 @@ export function columnNote(dialect: DbDialect, displayName: string, column: stri
   const label = column !== field.name && isPlainIdentifier(field.name) ? `${column} (${field.name})` : column;
   const printed = emittedColumnType(dialect, field);
   const scalar = scalarOf(element);
-  const brackets = array && element !== undefined ? "[]" : "";
-  const declaredName = element ?? "array"; // an array with no element type has nothing more to name
+  const nameable = element !== undefined && NAMEABLE_TYPES.has(element) ? element : undefined;
+  const brackets = array && nameable !== undefined ? "[]" : "";
+  const declaredName = nameable ?? (array ? "array" : "unknown"); // an array with no (known) element type has nothing more to name
 
   if (element !== undefined && DECIMAL_TYPES.has(element)) {
     const precision = numberOrUndefined(array ? field.complexType?.arrayElementPrecision : field.precision);
@@ -222,25 +240,26 @@ export function tableNotes(dialect: DbDialect, displayName: string, columns: Rea
 }
 
 /**
- * `<description> Notes: <note>; <note>.`, or the notes alone when there is no description; the description alone when there
- * are no notes (null when there is neither). The notes block is cut at the dialect's limit, ending `...and N more.` with
- * the count of notes left out.
+ * `<description>`, then `Notes:` and one `- <note>` line per note: the lines of the table comment, joined by real line
+ * breaks (the emitters split the table's doc on `\n` and write each line as `-- <line>`). With no description the comment
+ * starts at `Notes:`; with no notes it is the description alone (null when there is neither). The description is one line
+ * already ({@link descriptionText} in db-source.ts) and a note holds no line break.
+ *
+ * The notes block (from `Notes:` on) is cut at {@link NOTES_LIMIT} characters, on a whole-note boundary, with a last line
+ * `- ...and N more.` counting the notes left out. The description is never cut.
  */
-export function tableComment(dialect: DbDialect, description: string | null, notes: readonly string[]): string | null {
+export function tableComment(description: string | null, notes: readonly string[]): string | null {
   if (notes.length === 0) return description;
-  const limit = NOTES_LIMIT[dialect];
-  const render = (kept: number): string => {
-    const shown = kept === notes.length ? [...notes] : [...notes.slice(0, kept), `...and ${notes.length - kept} more`];
-    return `${NOTES_HEAD}${shown.join("; ")}.`;
-  };
-  // the most notes that fit together with the tail they need; the rendered length is tracked as notes are added (one pass)
+  // the block's length as notes are added: `Notes:`, then `\n- <note>` for each; a cut block ends with `\n- ...and N more.`
   let kept = 0;
-  let joined = 0;
+  let length = NOTES_HEAD.length;
   for (let count = 1; count <= notes.length; count++) {
-    joined += notes[count - 1].length + (count > 1 ? 2 : 0);
-    const tail = count === notes.length ? 0 : 2 + `...and ${notes.length - count} more`.length;
-    if (NOTES_HEAD.length + joined + tail + 1 <= limit) kept = count;
+    length += 3 + notes[count - 1].length;
+    const tail = count === notes.length ? 0 : 3 + `...and ${notes.length - count} more.`.length;
+    if (length + tail <= NOTES_LIMIT) kept = count;
   }
-  const block = render(kept);
-  return description === null ? block : `${description} ${block}`;
+  const lines = [NOTES_HEAD, ...notes.slice(0, kept).map((note) => `- ${note}`)];
+  if (kept < notes.length) lines.push(`- ...and ${notes.length - kept} more.`);
+  const block = lines.join("\n");
+  return description === null ? block : `${description}\n${block}`;
 }

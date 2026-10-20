@@ -10,9 +10,13 @@
 import { describe, it, expect } from "vitest";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { execDdl, withHint } from "../helpers/sibling-patch";
 
 const TARGETS = [["spanner"], ["postgresql"], ["bigquery"]] as const;
 type Target = (typeof TARGETS)[number][0];
+
+/** Characters by code point (this file keeps invisible and control characters out of its source). */
+const chars = (...codes: number[]): string => String.fromCharCode(...codes);
 
 function entity(overrides: Partial<PrismaEntityInput> = {}): PrismaEntityInput {
   return { id: "e1", name: "Transaction", description: "", status: "active", version: 1, domainId: "d1", metadata: {}, domain: { id: "d1", name: "payments", slug: "payments" }, ...overrides };
@@ -41,11 +45,11 @@ function columnLines(output: string): string[] {
 function columnComment(target: Target, line: string, name: string): string | null {
   if (target === "bigquery") {
     const match = line.match(new RegExp(`^  ${name} [A-Z0-9_()<>]+(?: NOT NULL)?(?: OPTIONS\\(description='(.*)'\\))?,$`));
-    expect(match, `not a BigQuery column line for ${name}: ${JSON.stringify(line)}`).not.toBeNull();
+    expect(match, withHint(`not a BigQuery column line for ${name}: ${JSON.stringify(line)}`)).not.toBeNull();
     return match?.[1] === undefined ? null : match[1];
   }
   const match = line.match(new RegExp(`^  ${name} [A-Z0-9_()<>\\[\\] ]+?(?: NOT NULL)?,(?: -- (.*))?$`));
-  expect(match, `not a column line for ${name} (the comma must come before any comment): ${JSON.stringify(line)}`).not.toBeNull();
+  expect(match, withHint(`not a column line for ${name} (the comma must come before any comment): ${JSON.stringify(line)}`)).not.toBeNull();
   return match?.[1] === undefined ? null : match[1];
 }
 
@@ -60,6 +64,9 @@ const TEXT_CASES: Array<[label: string, typed: string, carried: string | null]> 
   ["CRLF, CR, LF, LS and PS", "l1\r\nl2\rl3\nl4\u2028l5\u2029l6", "l1 l2 l3 l4 l5 l6"],
   ["leading and trailing line breaks", "\n\r  padded  \u2028", "padded"],
   ["only whitespace", "  \t \r\n ", null],
+  // NUL, the other C0 controls (not tab), DEL and the bidirectional controls are taken out; a tab stays
+  ["control characters", `a${chars(0)}b${chars(1, 8)}c${chars(0x1f, 0x7f)}d${chars(0x202a, 0x202e, 0x2066, 0x2069)}e\tf`, "abcde\tf"],
+  ["only control characters", chars(0, 1, 0x7f, 0x202e, 0x2066), null],
   ["a very long text", `${"long ".repeat(1000)}end`, `${"long ".repeat(1000)}end`],
 ];
 
@@ -77,7 +84,7 @@ describe.each(TARGETS)("%s: a column description is a comment the DDL keeps whol
     TEXT_CASES.forEach(([label, , carried], i) => {
       const got = columnComment(target, lines[i + 1], `col_${i}`);
       const expected = carried === null ? null : target === "bigquery" ? bigquerySqlString(carried) : carried;
-      expect(got, `${target}: ${label}`).toBe(expected);
+      expect(got, withHint(`${target}: ${label}`)).toBe(expected);
     });
   }, 60_000);
 
@@ -93,7 +100,7 @@ describe.each(TARGETS)("%s: a column description is a comment the DDL keeps whol
     const start = lines.findIndex((line) => line.startsWith("CREATE TABLE "));
     const table = lines.slice(start);
     if (target === "postgresql") {
-      expect(table).toEqual([
+      expect(table, withHint("postgresql table text")).toEqual([
         "CREATE TABLE payments.transaction (",
         "  transaction_id TEXT NOT NULL, -- the key; see -- below",
         "  middle TEXT,",
@@ -103,7 +110,7 @@ describe.each(TARGETS)("%s: a column description is a comment the DDL keeps whol
         "",
       ]);
     } else if (target === "spanner") {
-      expect(table).toEqual([
+      expect(table, withHint("spanner table text")).toEqual([
         "CREATE TABLE transaction (",
         "  transaction_id STRING(MAX) NOT NULL, -- the key; see -- below",
         "  middle STRING(MAX),",
@@ -112,7 +119,7 @@ describe.each(TARGETS)("%s: a column description is a comment the DDL keeps whol
         "",
       ]);
     } else {
-      expect(table).toEqual([
+      expect(table, withHint("bigquery table text")).toEqual([
         "CREATE TABLE payments.transaction (",
         "  transaction_id STRING NOT NULL OPTIONS(description='the key; see -- below'),",
         "  middle STRING,",
@@ -144,7 +151,7 @@ describe("postgresql: the DDL with every adversarial column comment runs on a re
 
     const db = new PGlite();
     try {
-      await db.exec(result.output);
+      await execDdl(db, result.output);
       const created = await db.query<{ column_name: string }>(
         "select column_name from information_schema.columns where table_schema = 'payments' and table_name = 'transaction' order by ordinal_position",
       );

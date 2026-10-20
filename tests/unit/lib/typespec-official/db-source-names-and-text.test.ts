@@ -249,6 +249,19 @@ describe("names the dialect cannot hold, or holds as something else", () => {
     expect(withColumn("note", "postgresql", { description: long }).warnings).toEqual([]);
   });
 
+  it("a string maxLength above what the dialect's column type takes is a warning: Spanner STRING(n) 2,621,440, PostgreSQL VARCHAR(n) 10,485,760, none for BigQuery", () => {
+    const limited = (max: number) => ({ decorators: { typespec: { validation: { maxLength: max } } } }) as Partial<SuperSchemaField>;
+
+    expect(withColumn("note", "spanner", limited(2_621_440)).warnings).toEqual([]);
+    expect(withColumn("note", "spanner", limited(2_621_441)).warnings).toEqual(['The column "note" has maxLength 2,621,441, above the maximum of 2,621,440 for STRING(n) in Cloud Spanner, so the DDL will be rejected.']);
+    expect(withColumn("note", "postgresql", limited(10_485_760)).warnings).toEqual([]);
+    expect(withColumn("note", "postgresql", limited(10_485_761)).warnings).toEqual(['The column "note" has maxLength 10,485,761, above the maximum of 10,485,760 for VARCHAR(n) in PostgreSQL, so the DDL will be rejected.']);
+    // the BigQuery emitter prints STRING(n) and the engine takes any positive n
+    expect(withColumn("note", "bigquery", limited(1_000_000_000)).warnings).toEqual([]);
+    // a maxLength that is not passed on (a url's, an array's) prints no length, so there is nothing to reject
+    expect(withColumn("note", "postgresql", { type: "url", ...limited(99_999_999) }).warnings).toEqual([]);
+  });
+
   it("a field whose letters were dropped (accents, non-Latin) says so: café -> caf, prénom -> pr_nom", () => {
     expect(withColumn("café", "postgresql").warnings).toEqual(['The field "café" is written as the column "caf": letters outside a-z were dropped.']);
     expect(withColumn("prénom", "bigquery").warnings).toEqual(['The field "prénom" is written as the column "pr_nom": letters outside a-z were dropped.']);

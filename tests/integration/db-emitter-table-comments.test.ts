@@ -1,8 +1,9 @@
 /**
- * Table comments through the REAL Spanner, PostgreSQL and BigQuery emitters: the entity's description, then `Notes:` for
- * every column whose declared type the DDL cannot state (decimal precision and scale, a url or duration stored as text, ...).
- * All three emitters write the table's `@doc` as one `-- ` comment line before CREATE TABLE (the BigQuery emitter has no
- * table `OPTIONS(description=...)`), so the line is asserted whole. PostgreSQL runs on PGlite, a real engine.
+ * Table comments through the REAL Spanner, PostgreSQL and BigQuery emitters: the entity's description on the first line, then
+ * `Notes:` and one `- <note>` line per column whose declared type the DDL cannot state (decimal precision and scale, a url or
+ * duration stored as text, ...). All three emitters split the table's `@doc` on `\n` and write each line as `-- <line>` before
+ * CREATE TABLE (the BigQuery emitter has no table `OPTIONS(description=...)`), so every line is asserted whole and every line
+ * starts with `-- `. PostgreSQL runs on PGlite, a real engine.
  */
 import { describe, it, expect } from "vitest";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
@@ -10,14 +11,17 @@ import { emitOfficialTypeSpecTargetFromData, runTypeSpecEmitterWithWarnings } fr
 import { buildDbTypeSpecTarget } from "@/lib/typespec-official/db-source";
 import { emittedColumnType } from "@/lib/typespec-official/db-column-types";
 import type { LogicalType, SuperSchemaField, SuperSchemaModel } from "@/types/super-schema-model";
+import { execDdl } from "../helpers/sibling-patch";
 
 const TARGETS = [["spanner"], ["postgresql"], ["bigquery"]] as const;
 type Target = (typeof TARGETS)[number][0];
 const PACKAGE: Record<Target, string> = { spanner: "@typespec/spanner", postgresql: "@typespec/postgres", bigquery: "@typespec/bigquery" };
 const DIALECT: Record<Target, "spanner" | "postgres" | "bigquery"> = { spanner: "spanner", postgresql: "postgres", bigquery: "bigquery" };
-const LIMIT: Record<Target, number> = { spanner: 2000, postgresql: 2000, bigquery: 4000 };
 const WHERE: Record<Target, string> = { spanner: "Cloud Spanner", postgresql: "PostgreSQL", bigquery: "BigQuery" };
 const TEXT: Record<Target, string> = { spanner: "STRING(MAX)", postgresql: "TEXT", bigquery: "STRING" };
+
+/** The one limit of the notes block (from the `Notes:` line on, without the `-- ` prefixes), the same for every dialect. */
+const NOTES_LIMIT = 2000;
 
 function entity(overrides: Partial<PrismaEntityInput> = {}): PrismaEntityInput {
   return { id: "e1", name: "Transaction", description: "", status: "active", version: 1, domainId: "d1", metadata: {}, domain: { id: "d1", name: "payments", slug: "payments" }, ...overrides };
@@ -39,6 +43,9 @@ function tableCommentLines(output: string): string[] {
   return comment;
 }
 
+/** The notes block of a table comment as text: the lines from `Notes:` on, `-- ` removed, joined by line breaks. */
+const notesBlock = (comment: string[]): string => comment.slice(comment.indexOf("-- Notes:")).map((line) => line.slice(3)).join("\n");
+
 const realistic = [
   KEY,
   field("amount", { type: "decimal", precision: 19, scale: 4, nullable: false, sortOrder: 1, description: "Amount in the account currency" }),
@@ -47,31 +54,29 @@ const realistic = [
   field("holdTime", { type: "duration", sortOrder: 4, description: "How long the funds are held" }),
 ];
 
-describe.each(TARGETS)("%s: the table comment carries the notes", (target) => {
+describe.each(TARGETS)("%s: the table comment carries the notes, one line each", (target) => {
   const decimalNote =
     target === "postgresql"
       ? "amount: declared decimal(19,4); the DDL type is NUMERIC and does not enforce precision or scale"
       : `amount: declared decimal(19,4); the DDL type is NUMERIC, which ${WHERE[target]} fixes at precision 38 and scale 9`;
+  const notes = [decimalNote, `receipt_url (receiptUrl): declared url; stored as ${TEXT[target]}`, `hold_time (holdTime): declared duration; stored as ${TEXT[target]}`];
 
-  it("a realistic entity: description first, then a note for the decimal, the url and the duration, none for the string that keeps its length", async () => {
+  it("a realistic entity: the description, `Notes:`, then a line for the decimal, the url and the duration, none for the string that keeps its length", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(entity({ description: "A payment transaction" }), realistic, target);
 
     expect(result.errors).toEqual([]);
     expect(result.validationStatus).toBe("VALID");
-    expect(tableCommentLines(result.output)).toEqual([
-      `-- A payment transaction Notes: ${decimalNote}; receipt_url (receiptUrl): declared url; stored as ${TEXT[target]}; hold_time (holdTime): declared duration; stored as ${TEXT[target]}.`,
-    ]);
+    expect(tableCommentLines(result.output)).toEqual(["-- A payment transaction", "-- Notes:", ...notes.map((note) => `-- - ${note}`)]);
     // the string's length reaches the DDL type, so it is not a note
     expect(result.output).toContain(target === "postgresql" ? "currency_code VARCHAR(50) NOT NULL" : "currency_code STRING(50) NOT NULL");
     expect(result.output).not.toContain("currency_code: declared");
   }, 60_000);
 
-  it("without a description the table comment is the notes alone", async () => {
+  it("without a description the first comment line is `Notes:`", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(entity(), realistic, target);
 
     expect(result.errors).toEqual([]);
-    expect(tableCommentLines(result.output)[0]).toMatch(/^-- Notes: amount: declared decimal\(19,4\);/);
-    expect(tableCommentLines(result.output)).toHaveLength(1);
+    expect(tableCommentLines(result.output)).toEqual(["-- Notes:", ...notes.map((note) => `-- - ${note}`)]);
   }, 60_000);
 
   it("a model of plain types with no description has no table comment at all (the line above CREATE TABLE is blank)", async () => {
@@ -103,51 +108,50 @@ describe.each(TARGETS)("%s: the table comment carries the notes", (target) => {
     expect(result.warnings.some((w) => w.startsWith('The column "order" is a reserved word'))).toBe(true);
     expect(result.warnings).toContain('The field "café" is written as the column "caf": letters outside a-z were dropped.');
     expect(result.warnings.filter((w) => w.includes("Notes"))).toEqual([]);
-    const [comment] = tableCommentLines(result.output);
-    expect(comment).toContain(`order (Order): declared duration; stored as ${TEXT[target]}`);
-    expect(comment).toContain(`caf: declared url; stored as ${TEXT[target]}`);
-    expect(comment).toContain("order_total (orderTotal): declared decimal(12,2);");
+    const comment = tableCommentLines(result.output);
+    expect(comment).toContain(`-- - order (Order): declared duration; stored as ${TEXT[target]}`);
+    expect(comment).toContain(`-- - caf: declared url; stored as ${TEXT[target]}`);
+    expect(comment.some((line) => line.startsWith("-- - order_total (orderTotal): declared decimal(12,2);"))).toBe(true);
     expect(result.output).toMatch(/^ {2}caf /m);
     expect(result.output).toMatch(/^ {2}order_total /m);
   }, 60_000);
 
-  it("300 lossy columns: the notes are cut under the limit, end `...and N more.`, and the DDL still has every column", async () => {
+  it("300 lossy columns: the notes block stops at a whole note under the limit, ends `- ...and N more.`, and the DDL still has every column", async () => {
     const columns = Array.from({ length: 300 }, (_, i) => field(`c_${i}`, { type: "url", sortOrder: i + 1 }));
     const result = await emitOfficialTypeSpecTargetFromData(entity({ description: "Wide table" }), [KEY, ...columns], target);
 
     expect(result.errors).toEqual([]);
     expect(result.validationStatus).toBe("VALID");
     const comment = tableCommentLines(result.output);
-    expect(comment).toHaveLength(1);
-    const block = comment[0].slice("-- Wide table ".length);
-    expect(block.length).toBeLessThanOrEqual(LIMIT[target]);
-    const cut = block.match(/; \.\.\.and (\d+) more\.$/);
-    expect(cut, block.slice(-80)).not.toBeNull();
-    const shown = block.match(/c_\d+: declared url/g)?.length ?? 0;
-    expect(shown + Number(cut?.[1])).toBe(300);
-    expect(shown).toBeGreaterThan(0);
+    expect(comment.slice(0, 2)).toEqual(["-- Wide table", "-- Notes:"]);
+    for (const line of comment) expect(line.startsWith("-- ")).toBe(true);
+    expect(notesBlock(comment).length).toBeLessThanOrEqual(NOTES_LIMIT);
+    const last = comment[comment.length - 1].match(/^-- - \.\.\.and (\d+) more\.$/);
+    expect(last, comment[comment.length - 1]).not.toBeNull();
+    const shown = comment.filter((line) => /^-- - c_\d+: declared url; stored as /.test(line));
+    expect(shown.length + Number(last?.[1])).toBe(300);
+    expect(shown.length).toBeGreaterThan(0);
     // every column is still a column line, each with its comma before anything else
     const columnLines = result.output.split("\n").filter((line) => /^ {2}c_\d+ /.test(line));
     expect(columnLines).toHaveLength(300);
     for (const line of columnLines) expect(line).toMatch(/^ {2}c_\d+ [A-Z()]+,$/);
   }, 60_000);
 
-  it("an adversarial entity description with notes is one comment line: quotes, ${x}, backslash, --, */ and line breaks cannot leave it", async () => {
-    const description = "Quote \" and ' ${x} back\\slash -- dash */ end\nsecond line\r\nthird\u2028fourth \\";
+  it("an adversarial entity description is ONE comment line (quotes, ${x}, backslash, --, */ and line breaks cannot leave it), then the notes", async () => {
+    const description = `Quote " and ' \${x} back\\slash -- dash */ end\nsecond line\r\nthird${String.fromCharCode(0x2028)}fourth \\`;
     const result = await emitOfficialTypeSpecTargetFromData(entity({ description }), realistic, target);
 
     expect(result.errors).toEqual([]);
     expect(result.validationStatus).toBe("VALID");
     const comment = tableCommentLines(result.output);
-    expect(comment).toHaveLength(1);
-    expect(comment[0]).toContain("-- Quote \" and ' ${x} back\\slash -- dash */ end second line third fourth \\ Notes: amount: declared decimal(19,4);");
+    expect(comment).toEqual(["-- Quote \" and ' ${x} back\\slash -- dash */ end second line third fourth \\", "-- Notes:", ...notes.map((note) => `-- - ${note}`)]);
     // the line after the comment is the statement itself
     const lines = result.output.split("\n");
-    expect(lines[lines.indexOf(comment[0]) + 1]).toMatch(/^CREATE TABLE /);
+    expect(lines[lines.indexOf(comment[comment.length - 1]) + 1]).toMatch(/^CREATE TABLE /);
   }, 60_000);
 });
 
-describe("postgresql: the DDL with a table comment of notes runs on a real engine (PGlite)", () => {
+describe("postgresql: the DDL with a multi-line table comment runs on a real engine (PGlite)", () => {
   it("creates the table with an adversarial description and the notes, and with 300 lossy columns", async () => {
     const { PGlite } = await import("@electric-sql/pglite");
     const hostile = "it's \"x\" ${y} \\ -- ; */ /* \nnext";
@@ -155,10 +159,11 @@ describe("postgresql: the DDL with a table comment of notes runs on a real engin
     for (const [name, fields, description] of [["realistic", realistic, hostile], ["wide", [KEY, ...wide], "Wide"]] as const) {
       const result = await emitOfficialTypeSpecTargetFromData(entity({ description }), [...fields], "postgresql");
       expect(result.errors, name).toEqual([]);
+      expect(tableCommentLines(result.output).length, name).toBeGreaterThan(2);
 
       const db = new PGlite();
       try {
-        await db.exec(result.output);
+        await execDdl(db, result.output);
         const count = await db.query<{ n: number }>("select count(*)::int as n from information_schema.columns where table_schema = 'payments' and table_name = 'transaction'");
         expect(count.rows[0].n, name).toBe(fields.length);
       } finally {
@@ -166,6 +171,46 @@ describe("postgresql: the DDL with a table comment of notes runs on a real engin
       }
     }
   }, 120_000);
+});
+
+describe("a string maxLength above what the dialect accepts is a warning, and the DDL says what it says", () => {
+  const withLength = (max: number) => [KEY, field("note", { sortOrder: 1, decorators: { typespec: { validation: { maxLength: max } } } })];
+
+  it("spanner: STRING(2,621,440) is accepted, STRING(2,621,441) warns", async () => {
+    const atLimit = await emitOfficialTypeSpecTargetFromData(entity(), withLength(2_621_440), "spanner");
+    const above = await emitOfficialTypeSpecTargetFromData(entity(), withLength(2_621_441), "spanner");
+
+    expect(atLimit.validationStatus).toBe("VALID");
+    expect(atLimit.output).toContain("note STRING(2621440),");
+    expect(above.validationStatus).toBe("WARNING");
+    expect(above.warnings).toEqual(['The column "note" has maxLength 2,621,441, above the maximum of 2,621,440 for STRING(n) in Cloud Spanner, so the DDL will be rejected.']);
+    expect(above.output).toContain("note STRING(2621441),");
+  }, 60_000);
+
+  it("postgresql: PGlite accepts VARCHAR(10485760) and rejects VARCHAR(10485761), and only the second warns", async () => {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const atLimit = await emitOfficialTypeSpecTargetFromData(entity(), withLength(10_485_760), "postgresql");
+    const above = await emitOfficialTypeSpecTargetFromData(entity(), withLength(10_485_761), "postgresql");
+
+    expect(atLimit.validationStatus).toBe("VALID");
+    expect(above.validationStatus).toBe("WARNING");
+    expect(above.warnings).toEqual(['The column "note" has maxLength 10,485,761, above the maximum of 10,485,760 for VARCHAR(n) in PostgreSQL, so the DDL will be rejected.']);
+    const db = new PGlite();
+    try {
+      await execDdl(db, atLimit.output);
+      await expect(db.exec(above.output)).rejects.toThrow(/cannot exceed 10485760/);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it("bigquery: the emitter prints STRING(n) for any n and the engine takes any positive length, so there is no warning", async () => {
+    const result = await emitOfficialTypeSpecTargetFromData(entity(), withLength(100_000_000), "bigquery");
+
+    expect(result.validationStatus).toBe("VALID");
+    expect(result.warnings).toEqual([]);
+    expect(result.output).toContain("note STRING(100000000),");
+  }, 60_000);
 });
 
 describe.each(TARGETS)("%s: the printed column type the notes rely on is the one the emitter really prints", (target) => {
