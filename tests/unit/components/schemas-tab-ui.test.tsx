@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { SchemasTab } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemasTab";
 
+// The toasts are what the user sees: record them.
+const { toastMock } = vi.hoisted(() => ({ toastMock: { success: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: toastMock }));
+
 // Mock the actions
 vi.mock(
   "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions",
@@ -25,7 +29,7 @@ vi.mock("@/lib/schema-targets/catalog", () => ({
   }),
 }));
 
-const { getSchemaVersionsAction: getSchemaVersionsActionMock } = await import(
+const { getSchemaVersionsAction: getSchemaVersionsActionMock, generateSchemaAction: generateSchemaActionMock } = await import(
   "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions"
 );
 
@@ -133,5 +137,71 @@ describe("SchemasTab UI", () => {
     expect(screen.getAllByText("INT64").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Range risk").length).toBeGreaterThan(0);
     expect(screen.getByText(/0 … 1\.8 × 10¹⁹/)).toBeDefined();
+  });
+});
+
+describe("SchemasTab: the toast after Generate", () => {
+  const schemaVersion = { version: 1, status: "draft", output: "CREATE TABLE customer (...)", generatedAt: "2026-04-07T10:00:00.000Z", entityVersion: 1 };
+
+  /** Render the tab, press Generate for the first target (BigQuery) and wait until the action has answered. */
+  async function generateWith(answer: Record<string, unknown>) {
+    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, schemaVersions: {} });
+    (generateSchemaActionMock as ReturnType<typeof vi.fn>).mockResolvedValue(answer);
+    render(<SchemasTab {...baseProps} />);
+    const button = await screen.findByText("Generate");
+    button.click();
+    await waitFor(() => expect(generateSchemaActionMock).toHaveBeenCalledWith("entity-1", "bigquery"));
+    await waitFor(() => expect(toastMock.success.mock.calls.length + toastMock.warning.mock.calls.length + toastMock.error.mock.calls.length).toBeGreaterThan(0));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("a target generated with a warning shows ONE warning toast with the first message, and no success toast", async () => {
+    const warning = 'The column "order" is a reserved word in BigQuery and the generated DDL does not quote it, so it will not run as is. Rename the field, or quote the name in the DDL by hand.';
+    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings: [warning], errors: [] });
+
+    expect(toastMock.warning).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith(
+      'Generated with 1 warning: The column "order" is a reserved word in BigQuery and the generated DDL does not quote it, so it will not run as is. Rename the field, or quote the name in the DDL by hand.'
+    );
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("with several warnings the toast counts them and points at the preview for the rest", async () => {
+    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings: ["first thing.", "second thing.", "third thing."], errors: [] });
+
+    expect(toastMock.warning).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated with 3 warnings: first thing (and 2 more in the preview).");
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("no warnings: the usual success toast, no warning toast", async () => {
+    await generateWith({ success: true, schemaVersion, validationStatus: "VALID", warnings: [], errors: [] });
+
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
+    expect(toastMock.success).toHaveBeenCalledWith("BigQuery schema generated (Draft)");
+    expect(toastMock.warning).not.toHaveBeenCalled();
+  });
+
+  it("an answer without a warnings list is the usual success toast too", async () => {
+    await generateWith({ success: true, schemaVersion });
+
+    expect(toastMock.success).toHaveBeenCalledWith("BigQuery schema generated (Draft)");
+    expect(toastMock.warning).not.toHaveBeenCalled();
+  });
+
+  it("an error stays an error toast", async () => {
+    await generateWith({ error: "@typespec/bigquery/missing-primary-key: Table 'Customer' must have at least one @primaryKey property." });
+
+    expect(toastMock.error).toHaveBeenCalledWith("@typespec/bigquery/missing-primary-key: Table 'Customer' must have at least one @primaryKey property.");
+    expect(toastMock.warning).not.toHaveBeenCalled();
+    expect(toastMock.success).not.toHaveBeenCalled();
   });
 });

@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { getSchemaVersionsAction, generateSchemaAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
 import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "../actions";
 import { SchemaCodePreview } from "./SchemaCodePreview";
+import { generationWarningNotice } from "./generate-warnings";
 import { StagedEmitDialog } from "@/features/emission/StagedEmitDialog/StagedEmitDialog";
 import { getTargetTypeOptions, type TargetTypeOption } from "@/lib/type-mapping/target-type-catalog";
 import {
@@ -429,7 +430,11 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     try {
       const result = await generateSchemaAction(entityId, targetKey);
       if (result.error) { toast.error(result.error); return; }
-      toast.success(`${getTargetMeta(targetKey).displayName} schema generated (Draft)`);
+      // A target generated WITH warnings (status WARNING) says so in one toast instead of the plain success one;
+      // the preview panel lists all of them.
+      const warningNotice = generationWarningNotice(result.warnings);
+      if (warningNotice) toast.warning(warningNotice);
+      else toast.success(`${getTargetMeta(targetKey).displayName} schema generated (Draft)`);
       await loadVersions();
     } catch { toast.error("Generation failed"); }
     finally { setIsGenerating(false); }

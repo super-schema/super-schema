@@ -1264,6 +1264,20 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
   }
 }
 
+/** At most this many warnings, each cut to this many characters, go to the client (a target result can carry many). */
+const MAX_WARNINGS_TO_CLIENT = 20;
+const MAX_WARNING_LENGTH = 300;
+
+/** A target result's warnings (strings; objects with a `message` from the older native path) as bounded, non-empty strings. */
+function warningMessages(warnings: readonly unknown[]): string[] {
+  return warnings
+    .map((warning) => (typeof warning === "string" ? warning : String((warning as { message?: unknown } | null)?.message ?? "")))
+    .map((text) => text.trim())
+    .filter((text) => text.length > 0)
+    .slice(0, MAX_WARNINGS_TO_CLIENT)
+    .map((text) => (text.length > MAX_WARNING_LENGTH ? `${text.slice(0, MAX_WARNING_LENGTH - 1).trimEnd()}…` : text));
+}
+
 /**
  * Generate a schema for ONE target, store as draft version in entity metadata.
  */
@@ -1396,7 +1410,7 @@ export async function generateSchemaAction(entityId: string, target: string) {
       success: true,
       schemaVersion: newVersion,
       validationStatus: targetOutput.validationStatus,
-      warnings: targetOutput.warnings,
+      warnings: warningMessages(targetOutput.warnings),
       errors: targetOutput.errors,
     };
   } catch (e: unknown) {
