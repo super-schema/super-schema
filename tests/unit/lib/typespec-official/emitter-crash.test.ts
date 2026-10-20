@@ -16,7 +16,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
-import { GENERIC_EMITTER_FAILURE } from "@/lib/typespec-official/emitter-diagnostics";
+import { GENERIC_EMITTER_FAILURE, MAX_LOGGED_EMITTER_OUTPUT } from "@/lib/typespec-official/emitter-diagnostics";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -41,6 +41,20 @@ describe("an emitter that crashes", () => {
     expect(log).toHaveBeenCalledTimes(1);
     expect(String(log.mock.calls[0][0])).toContain("[typespec-emitter]");
     expect(String(log.mock.calls[0][1])).toContain('Emitter "boom" crashed!');
+  });
+
+  it("a huge crash output (execFile allows 10 MB) is logged cut to 20,000 characters, not whole", async () => {
+    execFileMock.mockRejectedValue(Object.assign(new Error("Command failed"), { stdout: `${EMITTER_CRASH_RAW}${"x".repeat(10 * 1024 * 1024)}`, stderr: "" }));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await emitOfficialTypeSpecTargetFromData(entity, fields, "bigquery");
+
+    expect(result.errors).toEqual([{ message: GENERIC_EMITTER_FAILURE }]);
+    expect(log).toHaveBeenCalledTimes(1);
+    const logged = String(log.mock.calls[0][1]);
+    expect(logged.startsWith("TypeSpec compiler v1.10.0")).toBe(true);
+    expect(logged).toMatch(/\.\.\. \[\d+ more characters cut\]$/);
+    expect(logged.length).toBeLessThan(MAX_LOGGED_EMITTER_OUTPUT + 100);
   });
 
   it("a compile with an error diagnostic is NOT logged as a crash (the diagnostic is the message)", async () => {

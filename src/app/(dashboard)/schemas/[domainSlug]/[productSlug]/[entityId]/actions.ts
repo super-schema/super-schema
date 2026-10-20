@@ -1258,6 +1258,8 @@ export async function saveSchemaFieldTypeOverrideAction(input: {
     return {
       success: true,
       schemaVersion: generation.schemaVersion,
+      // the regeneration's warnings (already plain, bounded strings), so the caller can show them
+      warnings: generation.warnings,
     };
   } catch (e: unknown) {
     return { ...unexpectedFailure("saveSchemaFieldTypeOverrideAction", e) };

@@ -13,8 +13,18 @@ vi.mock(
   () => ({
     getSchemaVersionsAction: vi.fn(),
     generateSchemaAction: vi.fn(),
+    saveSchemaFieldTypeOverrideAction: vi.fn(),
   })
 );
+
+// Stage Emit: the real dialog is a checklist; a stub that emits three targets at once keeps the test about the toast.
+vi.mock("@/features/emission/StagedEmitDialog/StagedEmitDialog", async () => {
+  const React = await import("react");
+  return {
+    StagedEmitDialog: ({ open, onEmitSelected }: { open: boolean; onEmitSelected: (targets: string[]) => void }) =>
+      open ? React.createElement("button", { type: "button", onClick: () => onEmitSelected(["bigquery", "avro", "spanner"]) }, "Emit all three") : null,
+  };
+});
 
 // Mock schema target catalog
 vi.mock("@/lib/schema-targets/catalog", () => ({
@@ -29,7 +39,11 @@ vi.mock("@/lib/schema-targets/catalog", () => ({
   }),
 }));
 
-const { getSchemaVersionsAction: getSchemaVersionsActionMock, generateSchemaAction: generateSchemaActionMock } = await import(
+const {
+  getSchemaVersionsAction: getSchemaVersionsActionMock,
+  generateSchemaAction: generateSchemaActionMock,
+  saveSchemaFieldTypeOverrideAction: saveOverrideActionMock,
+} = await import(
   "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions"
 );
 
@@ -140,18 +154,26 @@ describe("SchemasTab UI", () => {
   });
 });
 
-describe("SchemasTab: the toast after Generate", () => {
-  const schemaVersion = { version: 1, status: "draft", output: "CREATE TABLE customer (...)", generatedAt: "2026-04-07T10:00:00.000Z", entityVersion: 1 };
+// ---------------------------------------------------------------------------
+// The toast after generating: the warnings must reach the user (nothing else shows them: the SchemaVersion stores none)
+// ---------------------------------------------------------------------------
 
-  /** Render the tab, press Generate for the first target (BigQuery) and wait until the action has answered. */
+const schemaVersion = { version: 1, status: "draft", output: "CREATE TABLE customer (...)", generatedAt: "2026-04-07T10:00:00.000Z", entityVersion: 1 };
+const ORDER_WARNING = 'The column "order" is a reserved word in BigQuery and the generated DDL does not quote it, so it will not run as is. Rename the field, or quote the name in the DDL by hand.';
+const WARNING_OPTIONS = { duration: 10_000, classNames: { description: "whitespace-pre-line" } };
+
+const asMock = (fn: unknown) => fn as ReturnType<typeof vi.fn>;
+const toastsShown = () => toastMock.success.mock.calls.length + toastMock.warning.mock.calls.length + toastMock.error.mock.calls.length;
+
+describe("SchemasTab: the toast after Generate", () => {
+  /** Render the tab, press Generate for the first target (BigQuery) and wait until a toast was shown. */
   async function generateWith(answer: Record<string, unknown>) {
-    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, schemaVersions: {} });
-    (generateSchemaActionMock as ReturnType<typeof vi.fn>).mockResolvedValue(answer);
+    asMock(getSchemaVersionsActionMock).mockResolvedValue({ success: true, schemaVersions: {} });
+    asMock(generateSchemaActionMock).mockResolvedValue(answer);
     render(<SchemasTab {...baseProps} />);
-    const button = await screen.findByText("Generate");
-    button.click();
+    (await screen.findByText("Generate")).click();
     await waitFor(() => expect(generateSchemaActionMock).toHaveBeenCalledWith("entity-1", "bigquery"));
-    await waitFor(() => expect(toastMock.success.mock.calls.length + toastMock.warning.mock.calls.length + toastMock.error.mock.calls.length).toBeGreaterThan(0));
+    await waitFor(() => expect(toastsShown()).toBeGreaterThan(0));
   }
 
   beforeEach(() => {
@@ -162,24 +184,40 @@ describe("SchemasTab: the toast after Generate", () => {
     cleanup();
   });
 
-  it("a target generated with a warning shows ONE warning toast with the first message, and no success toast", async () => {
-    const warning = 'The column "order" is a reserved word in BigQuery and the generated DDL does not quote it, so it will not run as is. Rename the field, or quote the name in the DDL by hand.';
-    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings: [warning], errors: [] });
+  it("a target generated with a warning shows ONE warning toast: the count as the title, the warning itself as the description", async () => {
+    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings: [ORDER_WARNING], errors: [] });
 
     expect(toastMock.warning).toHaveBeenCalledTimes(1);
-    expect(toastMock.warning).toHaveBeenCalledWith(
-      'Generated with 1 warning: The column "order" is a reserved word in BigQuery and the generated DDL does not quote it, so it will not run as is. Rename the field, or quote the name in the DDL by hand.'
-    );
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated with 1 warning.", { description: ORDER_WARNING, ...WARNING_OPTIONS });
     expect(toastMock.success).not.toHaveBeenCalled();
     expect(toastMock.error).not.toHaveBeenCalled();
   });
 
-  it("with several warnings the toast counts them and points at the preview for the rest", async () => {
-    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings: ["first thing.", "second thing.", "third thing."], errors: [] });
+  it("two warnings are BOTH named (the second used to be lost) and nothing points at a preview", async () => {
+    const group = ORDER_WARNING.replace('"order"', '"group"');
+    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings: [ORDER_WARNING, group], errors: [] });
 
     expect(toastMock.warning).toHaveBeenCalledTimes(1);
-    expect(toastMock.warning).toHaveBeenCalledWith("Generated with 3 warnings: first thing (and 2 more in the preview).");
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated with 2 warnings.", { description: `${ORDER_WARNING}\n${group}`, ...WARNING_OPTIONS });
+    expect(JSON.stringify(toastMock.warning.mock.calls)).not.toMatch(/preview/i);
     expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("more than five warnings: five are listed, then '...and N-5 more.'", async () => {
+    const warnings = Array.from({ length: 8 }, (_, i) => `warning ${i + 1}`);
+    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings, errors: [] });
+
+    expect(toastMock.warning).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated with 8 warnings.", {
+      description: "warning 1\nwarning 2\nwarning 3\nwarning 4\nwarning 5\n...and 3 more.",
+      ...WARNING_OPTIONS,
+    });
+  });
+
+  it("a long warning is cut to 200 characters in the list", async () => {
+    await generateWith({ success: true, schemaVersion, validationStatus: "WARNING", warnings: ["y".repeat(500)], errors: [] });
+
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated with 1 warning.", { description: `${"y".repeat(199)}…`, ...WARNING_OPTIONS });
   });
 
   it("no warnings: the usual success toast, no warning toast", async () => {
@@ -205,3 +243,107 @@ describe("SchemasTab: the toast after Generate", () => {
     expect(toastMock.success).not.toHaveBeenCalled();
   });
 });
+
+describe("SchemasTab: Stage Emit shows one toast for the whole run", () => {
+  /** Open Stage Emit, emit bigquery + avro + spanner (the stub dialog) with the given answer per target. */
+  async function stageEmit(answers: Record<string, Record<string, unknown>>) {
+    asMock(getSchemaVersionsActionMock).mockResolvedValue({ success: true, schemaVersions: {} });
+    asMock(generateSchemaActionMock).mockImplementation(async (_entityId: string, target: string) => answers[target]);
+    render(<SchemasTab {...baseProps} />);
+    (await screen.findByText("Stage Emit")).click();
+    (await screen.findByText("Emit all three")).click();
+    await waitFor(() => expect(generateSchemaActionMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(toastsShown()).toBeGreaterThan(0));
+  }
+  const clean = { success: true, schemaVersion, validationStatus: "VALID", warnings: [], errors: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("a warning on one of three targets: ONE warning toast titled with the schema and warning counts, the warning prefixed with its target", async () => {
+    await stageEmit({ bigquery: { ...clean, validationStatus: "WARNING", warnings: [ORDER_WARNING] }, avro: clean, spanner: clean });
+
+    expect(toastMock.warning).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated 3 schemas with 1 warning.", { description: `BigQuery: ${ORDER_WARNING}`, ...WARNING_OPTIONS });
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("warnings on several targets are listed with their targets, five at most, then '...and N-5 more.'", async () => {
+    const four = Array.from({ length: 4 }, (_, i) => `bq ${i + 1}`);
+    await stageEmit({ bigquery: { ...clean, warnings: four }, avro: clean, spanner: { ...clean, warnings: ["sp 1", "sp 2", "sp 3"] } });
+
+    expect(toastMock.warning).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated 3 schemas with 7 warnings.", {
+      description: "BigQuery: bq 1\nBigQuery: bq 2\nBigQuery: bq 3\nBigQuery: bq 4\nSpanner: sp 1\n...and 2 more.",
+      ...WARNING_OPTIONS,
+    });
+  });
+
+  it("no warnings anywhere: the usual success text", async () => {
+    await stageEmit({ bigquery: clean, avro: clean, spanner: clean });
+
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
+    expect(toastMock.success).toHaveBeenCalledWith("Generated 3 schemas (Draft)");
+    expect(toastMock.warning).not.toHaveBeenCalled();
+  });
+
+  it("a failed target stays its own error toast; the schemas that were generated are counted", async () => {
+    await stageEmit({ bigquery: { error: "no key" }, avro: clean, spanner: { ...clean, warnings: ["sp 1"] } });
+
+    expect(toastMock.error).toHaveBeenCalledWith("BigQuery: no key");
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated 2 schemas with 1 warning.", { description: "Spanner: sp 1", ...WARNING_OPTIONS });
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+});
+
+describe("SchemasTab: applying a type override regenerates the schema and shows its warnings the same way", () => {
+  /** Open Manual Override, open the first field's type picker, choose its first option. */
+  async function applyOverride(answer: Record<string, unknown>) {
+    asMock(getSchemaVersionsActionMock).mockResolvedValue({ success: true, schemaVersions: {} });
+    asMock(saveOverrideActionMock).mockResolvedValue(answer);
+    render(<SchemasTab {...baseProps} />);
+    (await screen.findAllByText("Manual Override"))[0].click();
+    await waitFor(() => expect(document.querySelectorAll('button[aria-haspopup="listbox"]').length).toBeGreaterThan(0));
+    (document.querySelectorAll('button[aria-haspopup="listbox"]')[0] as HTMLButtonElement).click();
+    (await screen.findAllByRole("option"))[0].click();
+    await waitFor(() => expect(saveOverrideActionMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toastsShown()).toBeGreaterThan(0));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("a regeneration with warnings shows the warning toast instead of 'Override applied'", async () => {
+    await applyOverride({ success: true, schemaVersion, warnings: [ORDER_WARNING, "second"] });
+
+    expect(toastMock.warning).toHaveBeenCalledTimes(1);
+    expect(toastMock.warning).toHaveBeenCalledWith("Generated with 2 warnings.", { description: `${ORDER_WARNING}\nsecond`, ...WARNING_OPTIONS });
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("no warnings: the usual 'Override applied' toast", async () => {
+    await applyOverride({ success: true, schemaVersion, warnings: [] });
+
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
+    expect(toastMock.success).toHaveBeenCalledWith("Override applied — schema regenerated");
+    expect(toastMock.warning).not.toHaveBeenCalled();
+  });
+
+  it("an error stays an error toast", async () => {
+    await applyOverride({ error: "Invalid BigQuery DDL target type" });
+
+    expect(toastMock.error).toHaveBeenCalledWith("Invalid BigQuery DDL target type");
+    expect(toastMock.warning).not.toHaveBeenCalled();
+  });
+});
+

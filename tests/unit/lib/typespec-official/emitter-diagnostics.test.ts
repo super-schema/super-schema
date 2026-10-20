@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { EMITTER_CRASH_RAW } from "../../../helpers/emitter-crash";
-import { describeEmitterFailure, errorDiagnostics, warningDiagnostics, FILE_PATH, GENERIC_EMITTER_FAILURE } from "@/lib/typespec-official/emitter-diagnostics";
+import { describeEmitterFailure, errorDiagnostics, warningDiagnostics, replaceFilePaths, boundedForLog, MAX_LOGGED_EMITTER_OUTPUT, GENERIC_EMITTER_FAILURE } from "@/lib/typespec-official/emitter-diagnostics";
 
 const WORKSPACE = "../../../../../../../var/folders/3y/4_9l52615m14r9g_pp2b1rhw0000gp/T/superschema-tsp-REjWB5";
 
@@ -69,9 +69,30 @@ describe("errorDiagnostics / warningDiagnostics", () => {
   });
 });
 
-describe("FILE_PATH", () => {
-  it("is the one workspace-path pattern (event-snapshot keeps an older copy of it)", () => {
-    expect("see /var/folders/3y/abc/T/superschema-tsp-x1/out and ../../tmp/a/b".replace(FILE_PATH, "<path>")).toBe("see <path> and <path>");
-    expect("@typespec/bigquery/missing-primary-key".replace(FILE_PATH, "<path>")).toBe("@typespec/bigquery/missing-primary-key");
+describe("replaceFilePaths", () => {
+  it("replaces workspace paths and leaves package-scoped codes alone", () => {
+    expect(replaceFilePaths("see /var/folders/3y/abc/T/superschema-tsp-x1/out and ../../tmp/a/b")).toBe("see <path> and <path>");
+    expect(replaceFilePaths("@typespec/bigquery/missing-primary-key")).toBe("@typespec/bigquery/missing-primary-key");
+    expect(replaceFilePaths("/a/b/c", "…")).toBe("…");
+  });
+
+  it("is stateless: the same text gives the same answer however often it is called (no shared /g lastIndex)", () => {
+    const text = "x /var/folders/3y/abc/T/superschema-tsp-x1/out y";
+    const answers = Array.from({ length: 4 }, () => replaceFilePaths(text));
+
+    expect(new Set(answers)).toEqual(new Set(["x <path> y"]));
+  });
+});
+
+describe("boundedForLog", () => {
+  it("passes a short text through and cuts a long one to 20,000 characters, counting the rest", () => {
+    expect(boundedForLog("short")).toBe("short");
+    expect(boundedForLog("z".repeat(MAX_LOGGED_EMITTER_OUTPUT))).toHaveLength(MAX_LOGGED_EMITTER_OUTPUT);
+
+    const bounded = boundedForLog("z".repeat(10 * 1024 * 1024));
+    expect(bounded.startsWith("z".repeat(MAX_LOGGED_EMITTER_OUTPUT))).toBe(true);
+    expect(bounded.endsWith(`... [${10 * 1024 * 1024 - MAX_LOGGED_EMITTER_OUTPUT} more characters cut]`)).toBe(true);
+    expect(bounded.length).toBeLessThan(MAX_LOGGED_EMITTER_OUTPUT + 100);
+    expect(MAX_LOGGED_EMITTER_OUTPUT).toBe(20_000);
   });
 });

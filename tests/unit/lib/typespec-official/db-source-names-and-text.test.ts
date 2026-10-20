@@ -150,13 +150,21 @@ describe("reserved words and other names SQL needs quoted: warnings, never silen
     expect(withColumn("qualify", "spanner").warnings).toEqual([]);
   });
 
-  it("checks the table, and the schema where the DDL names it", () => {
-    const table = buildDbTypeSpecTarget(model({ fields: [KEY], entity: { name: "Order" } }), "postgresql");
-    expect(table.warnings).toEqual(['The table "order" is a reserved word in PostgreSQL and the generated DDL does not quote it, so it will not run as is. Rename the entity, or quote the name in the DDL by hand.']);
+  it("checks the table for Spanner and BigQuery, and the schema where the DDL names it", () => {
+    const sentence = (kind: string, name: string, where: string, remedy: string) =>
+      `The ${kind} "${name}" is a reserved word in ${where} and the generated DDL does not quote it, so it will not run as is. ${remedy}, or quote the name in the DDL by hand.`;
+    expect(buildDbTypeSpecTarget(model({ fields: [KEY], entity: { name: "Order" } }), "spanner").warnings).toEqual([sentence("table", "order", "Cloud Spanner", "Rename the entity")]);
+    expect(buildDbTypeSpecTarget(model({ fields: [KEY], entity: { name: "Order" } }), "bigquery").warnings).toEqual([sentence("table", "order", "BigQuery", "Rename the entity")]);
     const schema = buildDbTypeSpecTarget(model({ fields: [KEY], domain: "group" }), "bigquery");
-    expect(schema.warnings).toEqual(['The schema "group" is a reserved word in BigQuery and the generated DDL does not quote it, so it will not run as is. Rename the domain, or quote the name in the DDL by hand.']);
+    expect(schema.warnings).toEqual([sentence("schema", "group", "BigQuery", "Rename the domain")]);
     // Spanner's DDL carries no schema name, so a domain called `group` is harmless there
     expect(buildDbTypeSpecTarget(model({ fields: [KEY], domain: "group" }), "spanner").warnings).toEqual([]);
+  });
+
+  it("does not warn about a reserved TABLE name on PostgreSQL: its emitter always writes schema.table, and that runs", () => {
+    expect(buildDbTypeSpecTarget(model({ fields: [KEY], entity: { name: "Order" } }), "postgresql").warnings).toEqual([]);
+    // the schema name is another matter: `CREATE SCHEMA group` does not run
+    expect(buildDbTypeSpecTarget(model({ fields: [KEY], domain: "group" }), "postgresql").warnings).toHaveLength(1);
   });
 
   it("warns about a table or column that starts with a digit (the emitters drop the leading underscore)", () => {
@@ -174,5 +182,70 @@ describe("reserved words and other names SQL needs quoted: warnings, never silen
     }
     expect(isReservedWord("postgres", "ORDER")).toBe(true);
     expect(isReservedWord("postgres", "name")).toBe(false);
+  });
+});
+
+describe("names the dialect cannot hold, or holds as something else", () => {
+  const withColumn = (name: string, target: string, over: Partial<SuperSchemaField> = {}) =>
+    buildDbTypeSpecTarget(model({ fields: [KEY, field({ name, type: "string", sortOrder: 1, ...over })] }), target);
+
+  it("a PostgreSQL system column name (xmin, xmax, cmin, cmax, ctid, tableoid) is a warning there, and only there", () => {
+    for (const name of ["xmin", "xmax", "cmin", "cmax", "ctid", "tableoid", "XMIN"]) {
+      expect(withColumn(name, "postgresql").warnings).toEqual([`The column "${name.toLowerCase()}" has the name of a PostgreSQL system column, so the table cannot be created. Rename the field.`]);
+    }
+    expect(withColumn("xmin", "spanner").warnings).toEqual([]);
+    expect(withColumn("xmin", "bigquery").warnings).toEqual([]);
+    expect(withColumn("xmin_value", "postgresql").warnings).toEqual([]);
+  });
+
+  it("a column name over the dialect's limit (PostgreSQL 63 bytes, Spanner 128, BigQuery 300) is a warning, at the limit it is not", () => {
+    expect(withColumn("c".repeat(63), "postgresql").warnings).toEqual([]);
+    expect(withColumn("c".repeat(64), "postgresql").warnings).toEqual([`The column "${"c".repeat(64)}" is longer than PostgreSQL's limit of 63 bytes and will be truncated or rejected.`]);
+    expect(withColumn("c".repeat(128), "spanner").warnings).toEqual([]);
+    expect(withColumn("c".repeat(129), "spanner").warnings).toEqual([`The column "${"c".repeat(129)}" is longer than Cloud Spanner's limit of 128 characters and will be truncated or rejected.`]);
+    expect(withColumn("c".repeat(300), "bigquery").warnings).toEqual([]);
+    expect(withColumn("c".repeat(301), "bigquery").warnings).toEqual([`The column "${"c".repeat(301)}" is longer than BigQuery's limit of 300 characters and will be truncated or rejected.`]);
+    // 100 characters are fine on Spanner and BigQuery, too long on PostgreSQL
+    expect(withColumn("c".repeat(100), "spanner").warnings).toEqual([]);
+    expect(withColumn("c".repeat(100), "postgresql").warnings).toHaveLength(1);
+  });
+
+  it("a table name over the limit is a warning too", () => {
+    const target = buildDbTypeSpecTarget(model({ fields: [KEY], entity: { name: "T".repeat(70) } }), "postgresql");
+    expect(target.warnings).toEqual([`The table "${"t".repeat(70)}" is longer than PostgreSQL's limit of 63 bytes and will be truncated or rejected.`]);
+  });
+
+  it("two PostgreSQL columns that share their first 63 bytes are named as one column PostgreSQL would see", () => {
+    const stem = "s".repeat(63);
+    const target = buildDbTypeSpecTarget(model({ fields: [KEY, field({ name: `${stem}a`, type: "string", sortOrder: 1 }), field({ name: `${stem}b`, type: "string", sortOrder: 2 })] }), "postgresql");
+
+    expect(target.errors).toEqual([]);
+    expect(target.warnings).toContain(`The columns "${stem}a" and "${stem}b" share their first 63 bytes, which PostgreSQL truncates names to, so they would become one column. Rename one of them.`);
+    // the same two names on BigQuery are two columns
+    expect(buildDbTypeSpecTarget(model({ fields: [KEY, field({ name: `${stem}a`, type: "string", sortOrder: 1 }), field({ name: `${stem}b`, type: "string", sortOrder: 2 })] }), "bigquery").warnings).toEqual([]);
+  });
+
+  it("a BigQuery column description over 1,024 characters is a warning (BigQuery rejects it; nothing is cut)", () => {
+    const long = "d".repeat(1025);
+    const target = withColumn("note", "bigquery", { description: long });
+
+    expect(target.warnings).toEqual(['The description of the field "note" is longer than BigQuery\'s limit of 1,024 characters, so BigQuery will reject the DDL as is. Shorten it.']);
+    expect(target.source).toContain(`@doc("${long}")`);
+    expect(withColumn("note", "bigquery", { description: "d".repeat(1024) }).warnings).toEqual([]);
+    // Spanner and PostgreSQL write no column description at all
+    expect(withColumn("note", "spanner", { description: long }).warnings).toEqual([]);
+    expect(withColumn("note", "postgresql", { description: long }).warnings).toEqual([]);
+  });
+
+  it("a field whose letters were dropped (accents, non-Latin) says so: café -> caf, prénom -> pr_nom", () => {
+    expect(withColumn("café", "postgresql").warnings).toEqual(['The field "café" is written as the column "caf": letters outside a-z were dropped.']);
+    expect(withColumn("prénom", "bigquery").warnings).toEqual(['The field "prénom" is written as the column "pr_nom": letters outside a-z were dropped.']);
+    expect(withColumn("客户ID", "spanner").warnings).toEqual(['The field "客户ID" is written as the column "id": letters outside a-z were dropped.']);
+  });
+
+  it("plain case and separator normalisation is NOT warned about (aB, a-b, a.b, a b, HTTPServer)", () => {
+    for (const name of ["aB", "a-b", "a.b", "a b", "HTTPServer", "order_Id"]) {
+      for (const target of ALL) expect(withColumn(name, target).warnings, `${name} on ${target}`).toEqual([]);
+    }
   });
 });
