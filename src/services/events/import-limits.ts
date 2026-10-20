@@ -5,9 +5,8 @@
 // bounds on what the import then DOES with the parsed document, all checked BEFORE the slow steps and the first write, so a document over
 // any of them creates no event and no entity and says which limit it hit.
 //
-// Nothing in the importers or the AsyncAPI parser can be interrupted (they are long synchronous stretches of CPU, so a timer cannot fire in
-// the middle of them): the only protection is to bound what they are given, and the bounds below do NOT make the cost small, only
-// bounded per piece. Measured on the real code:
+// The importers and the mapper are synchronous stretches of CPU that nothing can interrupt, so the only protection there is to bound what they
+// are given, and the bounds below do NOT make the cost small, only bounded per piece. Measured on the real code:
 // - the JSON Schema and Avro importers are linear (a 256 KiB schema: 8 ms);
 // - the Protobuf importer is quadratic in the fields of ONE message (densest case, enum-typed fields: 128 KiB 6.1 s, 64 KiB about 1 - 1.5 s,
 //   32 KiB 0.3 s, 16 KiB 0.1 s);
@@ -17,13 +16,18 @@
 // - it ALSO grows roughly with the square of the number of keys of any one object, whatever the bytes (15,000 keys 3.6 s, 30,000 13.5 s,
 //   109,623 keys in 1 MiB 95 s), and the mapper's de-duplication of a list is quadratic too (one `enum` of 115,136 strings: 11.5 s), hence
 //   the caps on the entries of an object and of a list (`checkEntryCounts`).
-// KNOWN LIMITATION: those caps bound ONE object, not the file, which can hold about sixty of them. Measured at the file cap: 60 channels of
-// 1,999 `parameters` entries each, about 9.4 s in the parser (119,941 diagnostics); 70 `x-ext` objects of 1,999 keys, about 3.7 s. The
-// server's event loop is blocked meanwhile. Lowering the cap barely helps (500 entries: still 5.3 s). The real bound is to run the parser in a
-// worker thread with a hard timeout, which is a follow-up, not part of this feature.
-// The YAML read has a residual of its own: a file that is mostly syntax errors costs 5 - 9 s at 1 MiB (linear, and the cost is the `yaml`
-// package creating its own error objects, one stack trace each), next to the ~10 s `parser.validate` case above. Setting
-// `Error.stackTraceLimit = 0` around the parse would cut it below 2 s and was deliberately NOT done (it is a process-wide switch).
+// KNOWN LIMITATION (the parser and the YAML read are handled; the rest is not): those caps bound ONE object, not the file, which can hold about
+// sixty of them. Measured at the file cap: 60 channels of 1,999 `parameters` entries each, about 9.4 s in the parser (119,941 diagnostics); 70
+// `x-ext` objects of 1,999 keys, about 3.7 s; a file that is mostly syntax errors costs the `yaml` package 5 - 9 s at 1 MiB (linear; the cost is
+// its own error objects, one stack trace each: `]` x 1 MiB 6.3 s, `a: ]` x 262,000 9.0 s). Lowering the caps barely helps (500 entries: still
+// 5.3 s). So these two steps do NOT run in the server's process: they run in a child process that is killed at a hard time limit
+// (`src/lib/event-specs/validation/parser-runner.ts`): the read of the file after 4 s and the parser after 15 s, whatever the shape of the file; a
+// file over either limit (or one whose parser report is over 8 MiB, as the 119,941 diagnostics of the 60-channel file are) is refused with a
+// plain `VALIDATION_ERROR` and nothing is created, and the server's event loop is never blocked by
+// them. What still runs in the server, uninterruptible, is the rest of the pipeline (the importers, the payload extraction, the mapper, the
+// entry-count and expansion checks above): its cost is bounded only by the numbers measured above, and a file built to hit all of them at once
+// could still hold the event loop for seconds. (Setting `Error.stackTraceLimit = 0` around the YAML read would cut that read below 2 s; it was
+// deliberately NOT done: it is a process-wide switch, and the read now has its own time limit.)
 // A `$ref` that many messages share is inlined once per message, so reuse is counted per use. Fields are rows inside one transaction that
 // holds the tenant's name lock (it blocks every name-writing operation of the tenant).
 import { boundText as boundForDisplay } from "@/lib/events/import/bound";
