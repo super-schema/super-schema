@@ -18,19 +18,19 @@
  * emitters would write unquoted although SQL needs quotes (a reserved word, a
  * leading digit) is a WARNING — the DDL looks fine and does not run.
  *
+ * What the DDL cannot say about a column (a decimal's precision and scale, a url stored as text, ...) is a NOTE in the table's
+ * comment, after the entity's description (see db-column-types.ts): the comment is the mechanism, not a warning.
+ *
  * Pure function — no side effects, no I/O.
  */
 
 import type {
   SuperSchemaModel,
   SuperSchemaField,
-  LogicalType,
 } from "@/types/super-schema-model";
 import { escapeString, propertyName, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
-import { isReservedWord, POSTGRES_SYSTEM_COLUMNS, type ReservedWordDialect } from "./sql-reserved-words";
-
-type DbDialect = ReservedWordDialect;
-
+import { isReservedWord, POSTGRES_SYSTEM_COLUMNS } from "./sql-reserved-words";
+import { mapType, stringMaxLength, tableComment, tableNotes, type DbDialect } from "./db-column-types";
 const TARGET_TO_DIALECT: Record<string, DbDialect> = {
   spanner: "spanner",
   postgresql: "postgres",
@@ -63,41 +63,6 @@ const DIALECTS: Record<DbDialect, DialectConfig> = {
   spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", displayName: "Cloud Spanner", writesSchemaName: false },
   postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", displayName: "PostgreSQL", writesSchemaName: true },
   bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", displayName: "BigQuery", writesSchemaName: true },
-};
-
-/**
- * Logical IR type → TypeSpec built-in scalar the emitters understand. `url`, `plainTime` and `duration` have no column
- * type in any of the three emitters (they skip the field with an `unsupported-type` warning and write the table without
- * it), so they are stored as their text form. Every other logical type is a scalar below, or `array` / `enum` / `map` /
- * `object` / `reference`, which {@link mapType} handles.
- */
-const TYPE_MAP: Partial<Record<LogicalType, string>> = {
-  string: "string",
-  url: "string",
-  integer: "int64",
-  int8: "int8",
-  int16: "int16",
-  int32: "int32",
-  int64: "int64",
-  safeint: "safeint",
-  uint8: "uint8",
-  uint16: "uint16",
-  uint32: "uint32",
-  uint64: "uint64",
-  numeric: "decimal",
-  float: "float64",
-  float32: "float32",
-  float64: "float64",
-  decimal: "decimal",
-  decimal128: "decimal128",
-  boolean: "boolean",
-  bytes: "bytes",
-  plainDate: "plainDate",
-  plainTime: "string",
-  utcDateTime: "utcDateTime",
-  offsetDateTime: "offsetDateTime",
-  duration: "string",
-  unixTimestamp32: "int32",
 };
 
 /** A name made of the characters an unquoted SQL identifier has; a leading digit gets a `_`. May be empty of letters and digits. */
@@ -145,19 +110,6 @@ function descriptionText(description: string | undefined): string | null {
 
 /** The `@doc("…")` decorator for text: one line, then escaped for a TypeSpec string (`\`, `"`, `${`, tab, …). */
 const docDecorator = (text: string): string => `@doc("${escapeString(oneLine(text))}")`;
-
-function mapType(field: SuperSchemaField): string {
-  if (field.type === "array") {
-    const el = field.complexType?.arrayElementType as LogicalType | undefined;
-    const elTsp = (el && TYPE_MAP[el]) || "string";
-    return `${elTsp}[]`;
-  }
-  // v1: FK/enum/map/object fall back to string; complex modeling is a follow-up.
-  if (field.type === "reference" || field.type === "enum" || field.type === "map" || field.type === "object") {
-    return "string";
-  }
-  return TYPE_MAP[field.type] ?? "string";
-}
 
 const NO_NAME = "it has no letters or digits that the database dialects accept. Rename it.";
 
@@ -300,7 +252,9 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
   lines.push(`@schema("${escapeString(schemaName)}")`);
   lines.push(`namespace ${ns};`, "");
 
-  const tableText = descriptionText(model.entity.description);
+  // The table's comment: the entity's description, then the notes for every column the DDL cannot state as declared.
+  const notes = tableNotes(dialect, cfg.displayName, columns.map(({ field, ident }) => ({ field, column: emittedName(ident) })));
+  const tableText = tableComment(dialect, descriptionText(model.entity.description), notes);
   if (tableText !== null) {
     lines.push(docDecorator(tableText));
   }
@@ -332,8 +286,8 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
       decs.push(multiKey ? `@primaryKey(${keyFields.indexOf(f) + 1})` : "@primaryKey");
     }
 
-    const maxLen = f.decorators?.typespec?.validation?.maxLength;
-    if (f.type === "string" && typeof maxLen === "number" && maxLen > 0) {
+    const maxLen = stringMaxLength(f);
+    if (maxLen !== undefined) {
       decs.push(`@maxLength(${maxLen})`);
     }
 
