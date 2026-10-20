@@ -128,6 +128,37 @@ describe("workers that cannot start (a failure of the pool, not of one worker)",
     expect(starts()).toBe(7);
   });
 
+  it.each([2, 4])("a pool of %i: once the pause is over ONE probe worker is started, not the pool; a failed probe begins the pause again, a good one lets the pool fill", async (workers) => {
+    useFakeWorker(workers);
+    vi.stubEnv("ASYNCAPI_PARSER_BREAKER_MS", "400");
+    vi.stubEnv("FAKE_WORKER_MODE", "crash-on-start");
+    const starts = trackStarts();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const openings = () => logged.mock.calls.filter((call) => String(call[0]).includes("in a row did not start")).length;
+
+    for (let i = 0; i < 3; i += 1) expect((await failureOf({ do: "echo" })).code).toBe("PARSER_CRASHED"); // one start each: the queue is one job
+    expect(starts()).toBe(3);
+    expect(openings()).toBe(1);
+
+    // the pause is over; a burst of 6 jobs gets ONE start (the probe), it fails, and the pause begins again (one more line)
+    await sleep(500);
+    const burst = await Promise.all(Array.from({ length: 6 }, () => run({ do: "echo" })));
+    expect(burst.map(codeOf)).toEqual(Array(6).fill("PARSER_CRASHED"));
+    expect(starts()).toBe(4);
+    expect(openings()).toBe(2);
+    expect((await failureOf({ do: "echo" })).code).toBe("PARSER_CRASHED");
+    expect(starts()).toBe(4); // refused without a start
+
+    // the pause is over again and the worker is fine: the probe says ready and the pool fills as usual
+    await sleep(500);
+    vi.stubEnv("FAKE_WORKER_MODE", "");
+    const jobs = Array.from({ length: 8 }, () => answer({ do: "sleep", ms: 500 }));
+    expect(await waitUntil(() => parserPoolStatus().workers.length === workers)).toBe(true);
+    expect((await Promise.all(jobs)).length).toBe(8);
+    expect(starts()).toBe(4 + workers);
+    expect(openings()).toBe(2);
+  }, 20_000);
+
   it("a worker file that is missing is still PARSER_UNAVAILABLE, not a start failure", async () => {
     vi.stubEnv("ASYNCAPI_PARSER_WORKER", path.join(dir, "gone.cjs"));
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -238,7 +269,7 @@ describe("a worker that is stale (not in production)", () => {
    * A project directory in the shape of the real one: `worker-dist/asyncapi-parser-worker.cjs` with its `.meta.json` (one source), the source, and
    * a `scripts/build-parser-worker.mjs` that writes the worker again and notes it. The bundle is a minute old, the source two.
    */
-  function project(options: { meta?: boolean } = {}) {
+  function project(options: { meta?: boolean; buildFailsWith?: string } = {}) {
     const root = mkdtempSync(path.join(dir, "project-"));
     for (const sub of ["worker-dist", "src", "scripts"]) mkdirSync(path.join(root, sub));
     const worker = path.join(root, "worker-dist", "asyncapi-parser-worker.cjs");
@@ -254,6 +285,7 @@ describe("a worker that is stale (not in production)", () => {
         'import fs from "node:fs"; import path from "node:path"; import { fileURLToPath } from "node:url";',
         'const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");',
         'fs.appendFileSync(path.join(root, "builds.log"), "built\\n");',
+        ...(options.buildFailsWith === undefined ? [] : [`process.stderr.write(${JSON.stringify(options.buildFailsWith)}); process.exit(1);`]),
         'fs.writeFileSync(path.join(root, "worker-dist", "asyncapi-parser-worker.cjs"), fs.readFileSync(path.join(root, "fake-source.cjs")));',
         "",
       ].join("\n"),
@@ -343,6 +375,56 @@ describe("a worker that is stale (not in production)", () => {
     expect(build).toHaveBeenCalledTimes(1);
     expect(logged).toHaveBeenCalledWith(expect.stringContaining("building it again failed"), expect.any(Error));
   });
+
+  it.each([
+    ["a long one (a diagnostic, then esbuild's own stack)", `src/a.ts:229:0: ERROR: Unexpected "}"\n${"    at fakeStackFrame (/srv/esbuild/main.js:1:1)\n".repeat(80)}`, true],
+    ["a short one", `src/a.ts:12:3: ERROR: Expected ";"\n`, false],
+  ])("a build that fails with %s: the log has the START of what it printed, cut after 600 characters", async (_label, printed, cut) => {
+    const p = project({ buildFailsWith: printed });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const first = await answer({ do: "echo" });
+    p.edit();
+    await sleep(1_100);
+    expect((await answer({ do: "echo" })).pid).toBe(first.pid); // the old worker stays
+    const call = logged.mock.calls.find((c) => String(c[0]).includes("building it again failed"));
+    const message = (call?.[1] as Error).message;
+    expect(message).toContain(printed.split("\n")[0]); // the diagnostic is what is read first
+    expect(message.startsWith("the build script ended with code 1: ")).toBe(true);
+    expect(message.endsWith(" ...")).toBe(cut);
+    expect(message.length).toBeLessThanOrEqual("the build script ended with code 1: ".length + 604);
+  });
+
+  it("a source dated in the future: after a build that does not cure it the runner waits out the backoff (one build per window, one line per window)", async () => {
+    const root = mkdtempSync(path.join(dir, "future-"));
+    const source = path.join(root, "future.txt");
+    const worker = path.join(root, "w.cjs");
+    writeFileSync(source, "s");
+    writeFileSync(worker, FAKE_WORKER);
+    const at = (file: string, secondsFromNow: number) => utimesSync(file, new Date(Date.now() + secondsFromNow * 1000), new Date(Date.now() + secondsFromNow * 1000));
+    at(worker, -60);
+    at(source, 3_600); // an hour ahead: a build cannot make the bundle newer than it
+    const build = vi.fn(() => at(worker, 0));
+    setWorkerRebuildForTests({ inputs: () => ({ root, inputs: ["future.txt"] }), build });
+    vi.stubEnv("ASYNCAPI_PARSER_WORKER", worker);
+    vi.stubEnv("ASYNCAPI_PARSER_WORKERS", "1");
+    vi.stubEnv("ASYNCAPI_PARSER_REBUILD_BACKOFF_MS", "2500");
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const futureLines = () => warned.mock.calls.filter((call) => String(call[0]).includes("an input file is dated in the future; not rebuilding for 2.5 s")).length;
+
+    await answer({ do: "echo" });
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(futureLines()).toBe(1);
+
+    await sleep(1_100); // the disk is looked at again, inside the backoff: no build, no line
+    await answer({ do: "echo" });
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(futureLines()).toBe(1);
+
+    await sleep(1_400); // the backoff is over: one more build, one more line
+    await answer({ do: "echo" });
+    expect(build).toHaveBeenCalledTimes(2);
+    expect(futureLines()).toBe(2);
+  }, 20_000);
 
   it("an injected list of sources and an injected build: one newer source, one build, one replacement", async () => {
     const root = mkdtempSync(path.join(dir, "injected-"));

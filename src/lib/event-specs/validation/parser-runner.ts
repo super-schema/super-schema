@@ -38,7 +38,8 @@
 // Start failures: a worker that is lost before it said `ready` (a worker file for a newer Node, a corrupt file, an out-of-memory kill at start in a
 // small container) is a failure of the POOL, not of one worker: every job that waits is answered `PARSER_CRASHED` at once, and after 3 such
 // failures in a row no worker is started for 5 s (`ASYNCAPI_PARSER_BREAKER_MS`, for tests): jobs get `PARSER_CRASHED` without a start. One line
-// is logged when that begins. The first `ready` clears the count. Without this, every dying worker was replaced at once, for ever.
+// is logged when that begins. The first `ready` clears the count; until then, once the pause is over, ONE probe worker is started (not as many as the
+// pool allows): if it fails the pause begins again. Without this, every dying worker was replaced at once, for ever.
 //
 // No leaks: a worker exits by itself when its channel to the server closes (a server killed with SIGKILL leaves no orphan, once the worker's
 // current job is over: a worker busy in a long synchronous parse when its parent is killed lingers until that job ends, at most the cost of the
@@ -54,15 +55,17 @@
 // one of its sources would leave the old code running. The build writes `asyncapi-parser-worker.meta.json` next to the bundle (the repo-relative
 // sources it was made from, `node_modules` left out). When `NODE_ENV` is not "production", a job that is about to be handed to a worker (or to start
 // one) checks, at most once a second, whether one of those sources is newer than the bundle (or gone); if so it runs the build script
-// synchronously (about 0.4 s; once per change: a build that fails is logged and not tried again for 5 s), and every idle or starting worker made
+// synchronously (about 0.4 s; once per change: a build that fails, or after which a source is STILL newer than the bundle (dated in the future, by clock
+// skew or a bind mount), is logged and not tried again for 5 s, `ASYNCAPI_PARSER_REBUILD_BACKOFF_MS` for tests), and every idle or starting worker made
 // from the old bundle is replaced by the next start; a busy worker finishes its job first and is replaced when it is idle. In production NOTHING is
 // built at run time: the file is what it is, and a missing `.meta.json` just skips the check. A change in `node_modules` needs
-// `npm run build:parser-worker`.
+// `npm run build:parser-worker`. In vitest's watch mode every test file runs in its own process, so each of them builds once after an edit (one
+// build per fork, not per job): acceptable.
 //
 // What `parseSource` and `validate` give back has been through JSON: a number YAML reads as `.inf`, `.nan`, `-0` or `1e400` comes back as `null` or
 // `0`, and a YAML `!!binary` or `!!set` as a plain JSON object, so such a file is not read exactly as in-process. A parsed document whose JSON is
 // over 8 MiB (YAML aliases can expand a 1 MiB file that far) is refused (`PARSER_MESSAGE_TOO_LARGE`; the importer says `TOO_LARGE`), and so is a
-// parser report of more than about 25,000 diagnostics ("too many problems").
+// parser report of tens of thousands of diagnostics ("too many problems": about 45,000 at 180 bytes each, measured).
 //
 // Sizing: every worker may use up to 768 MiB of heap and about 160 - 250 MiB of memory when it is idle, and the pool has 2 workers by default:
 // check the limits of the container the server runs in, and lower `ASYNCAPI_PARSER_WORKERS` (down to 1) where memory is tight.
@@ -106,7 +109,7 @@ const WORKER_MAX_OLD_SPACE_MB = 768;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 /** How often the sources of the worker are looked at for a change, and how long a failed rebuild is left alone. */
 const STALE_CHECK_MS = 1_000;
-const REBUILD_BACKOFF_MS = 5_000;
+const DEFAULT_REBUILD_BACKOFF_MS = 5_000;
 
 const FIX = 'build it with "npm run build:parser-worker"';
 
@@ -288,7 +291,9 @@ const defaultRebuild: WorkerRebuild = {
     const script = path.join(/* turbopackIgnore: true */ root, "scripts", "build-parser-worker.mjs");
     const run = spawnSync(process.execPath, [script], { cwd: root, env: childEnv(), encoding: "utf8", timeout: 60_000 });
     if (run.error) throw run.error;
-    if (run.status !== 0) throw new Error(`the build script ended with code ${run.status}: ${(run.stderr ?? "").slice(-600)}`);
+    // the START of what it printed: esbuild's diagnostic (`source.ts:229:0: ERROR: Unexpected "}"`) comes first, its own stack after it
+    const printed = run.stderr ?? "";
+    if (run.status !== 0) throw new Error(`the build script ended with code ${run.status}: ${printed.length > 600 ? `${printed.slice(0, 600)} ...` : printed}`);
   },
 };
 /** Replaces how a stale worker is found and rebuilt (`null`: the real one). For tests. */
@@ -330,8 +335,15 @@ function currentBundleMtime(state: PoolState, file: string): number | null {
       rebuild.build(known.root);
       mtime = statSync(file).mtimeMs;
       console.warn(`[asyncapi-parser] ${changed} changed since the parser worker was built: it was built again, and the workers made from the old file are replaced`);
+      // The bundle is dated at the start of the build: a source dated ahead of that (clock skew, a bind mount) would be "changed" again at once, for ever.
+      const stillNewer = changedSource(known, mtime);
+      if (stillNewer !== null) {
+        const backoff = positiveNumber("ASYNCAPI_PARSER_REBUILD_BACKOFF_MS") ?? DEFAULT_REBUILD_BACKOFF_MS;
+        state.rebuildBackoffUntil = Date.now() + backoff;
+        console.warn(`[asyncapi-parser] an input file is dated in the future; not rebuilding for ${secondsText(backoff)} s (${stillNewer})`);
+      }
     } catch (cause) {
-      state.rebuildBackoffUntil = Date.now() + REBUILD_BACKOFF_MS;
+      state.rebuildBackoffUntil = Date.now() + (positiveNumber("ASYNCAPI_PARSER_REBUILD_BACKOFF_MS") ?? DEFAULT_REBUILD_BACKOFF_MS);
       console.error(`[asyncapi-parser] ${changed} changed since the parser worker was built, and building it again failed (the old worker stays; ${FIX}):`, cause);
     }
   }
@@ -513,7 +525,9 @@ function pump(state: PoolState): void {
     if (state.slots.size === 0) rejectQueued(state, "workers did not start (a pause before the next try)");
     return;
   }
-  while (state.queue.length > starting && state.slots.size < poolSize()) {
+  // after 3 start failures, once the pause is over, ONE probe worker is started until one of them says ready (a success clears the count)
+  const mayStart = state.startFailures >= BREAKER_AFTER ? 1 : Number.POSITIVE_INFINITY;
+  while (state.queue.length > starting && state.slots.size < poolSize() && starting < mayStart) {
     const before = state.slots.size;
     spawnSlot(state, located.file, mtime);
     if (state.slots.size === before) return; // the spawn failed and rejected the queue
