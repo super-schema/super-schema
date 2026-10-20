@@ -8,36 +8,12 @@ import {
   shutdownParserPool,
   type RunParserJobOptions,
 } from "@/lib/event-specs/validation/parser-runner";
+import { FAKE_WORKER } from "./fixtures/fake-parser-worker";
 
 /**
  * The runner (`parser-runner.ts`) against a tiny FAKE worker (no parser in it): what a job costs, what a timeout does to the child, what a
  * crash, a bad message or a missing worker file do, the queue, the pool size. The real worker is exercised in `parser-isolation.test.ts`.
  */
-
-const FAKE_WORKER = `
-const fs = require("node:fs");
-const mode = process.env.FAKE_WORKER_MODE || "";
-if (process.env.FAKE_WORKER_LOG) fs.appendFileSync(process.env.FAKE_WORKER_LOG, process.pid + "\\n");
-process.on("disconnect", () => process.exit(0));
-if (mode === "crash-on-start") process.exit(3);
-const send = (message) => process.send(message);
-process.on("message", (message) => {
-  const cmd = JSON.parse(message.job.text);
-  const reply = () => send({ type: "result", id: message.id, body: JSON.stringify({ success: true, data: { pid: process.pid, tag: cmd.tag === undefined ? null : cmd.tag } }) });
-  switch (cmd.do) {
-    case "echo": return reply();
-    case "sleep": return void setTimeout(reply, cmd.ms);
-    case "hang": for (;;) { /* a synchronous loop: nothing in this process can stop it */ }
-    case "crash": process.exit(1); break;
-    case "garbage": return send({ type: "nonsense" });
-    case "wrong-id": return send({ type: "result", id: message.id + 1000, body: "{}" });
-    case "bad-body": return send({ type: "result", id: message.id, body: "not json" });
-    case "throw": return send({ type: "failed", id: message.id, reason: "exception", text: "boom at /srv/secret/path.js:1:1" });
-    case "too-large": return send({ type: "failed", id: message.id, reason: "too-large", text: "big" });
-  }
-});
-if (mode !== "never-ready") setTimeout(() => send({ type: "ready", pid: process.pid }), Number(process.env.FAKE_WORKER_READY_MS || 0));
-`;
 
 let dir: string;
 let fakeWorker: string;
@@ -150,13 +126,18 @@ describe("the time limit", () => {
 });
 
 describe("a worker that is lost", () => {
-  it("crashing in the middle of a job is PARSER_CRASHED (a generic message, the cause in the log) and the worker is replaced", async () => {
+  it("crashing in the middle of a job is PARSER_CRASHED (a generic message, the cause in the log) and the worker is replaced; a job the worker had taken is not tried again", async () => {
     useFakeWorker();
+    const startsLog = path.join(dir, "starts-crash.log");
+    writeFileSync(startsLog, "");
+    vi.stubEnv("FAKE_WORKER_LOG", startsLog);
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { pid } = await answer({ do: "echo" });
 
     const error = await failureOf({ do: "crash" });
+    await sleep(300);
 
+    expect(readFileSync(startsLog, "utf8").split("\n").filter(Boolean)).toHaveLength(1); // no replacement was started for a retry: the worker had the job
     expect(error.code).toBe("PARSER_CRASHED");
     expect(JSON.stringify(error)).not.toMatch(/code 1|signal|\/srv|pid/);
     expect(logged).toHaveBeenCalledWith(expect.stringMatching(/was lost while it ran a parseSource job: it ended \(code 1/));
@@ -289,7 +270,7 @@ describe("the pool", () => {
     expect(took).toBeLessThan(700); // one worker would need 800
   });
 
-  it("never starts more workers than ASYNCAPI_PARSER_WORKERS, clamped to 1 - 4 (default 2)", async () => {
+  it("never starts more workers than ASYNCAPI_PARSER_WORKERS, clamped to 1 - 4 (default 2, also for anything that is not a number)", async () => {
     const peak = async (setting: string | undefined) => {
       vi.stubEnv("ASYNCAPI_PARSER_WORKER", fakeWorker);
       vi.stubEnv("ASYNCAPI_PARSER_WORKERS", setting as string);
@@ -301,10 +282,13 @@ describe("the pool", () => {
       return workers;
     };
     expect(await peak("9")).toBe(4);
-    expect(await peak("0")).toBe(2);
+    expect(await peak("0")).toBe(1); // a number is clamped to 1 - 4
+    expect(await peak("-3")).toBe(1);
     expect(await peak("1")).toBe(1);
-    expect(await peak("not a number")).toBe(2);
-  });
+    expect(await peak("2.9")).toBe(2);
+    expect(await peak("not a number")).toBe(2); // anything else is the default
+    expect(await peak("")).toBe(2);
+  }, 30_000);
 
   it("shutdownParserPool kills every worker and answers what is waiting", async () => {
     useFakeWorker(1);

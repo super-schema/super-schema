@@ -63,6 +63,7 @@ describe("a file the parser cannot digest in time", () => {
     const took = Date.now() - started;
     const lag = probe.stop();
 
+    expect(lag).toBeLessThan(200); // first: this is what a runner that does not isolate fails
     expect(failure(previewed)).toEqual({
       code: "VALIDATION_ERROR",
       message: tooComplexLead(2_000),
@@ -71,7 +72,6 @@ describe("a file the parser cannot digest in time", () => {
     expect(failure(previewed)?.message).toBe("This document is too complex to validate here: the check took longer than 2 seconds and was stopped.");
     expect(took).toBeGreaterThanOrEqual(1_900);
     expect(took).toBeLessThan(8_000); // loose for a loaded machine: the limit is 2 s, the unbounded parser 8 - 13 s
-    expect(lag).toBeLessThan(200);
 
     const imported = await importAsyncApi(productId, { content }, ctx);
     expect(failure(imported)).toMatchObject({ code: "VALIDATION_ERROR", message: tooComplexLead(2_000) });
@@ -96,13 +96,13 @@ describe("a file the parser cannot digest in time", () => {
     const took = Date.now() - started;
     const lag = probe.stop();
 
+    expect(lag).toBeLessThan(200); // first: this is what a runner that does not isolate fails
     expect(failure(previewed)).toEqual({
       code: "VALIDATION_ERROR",
       message: "This file takes too long to read (it may contain a very large number of syntax errors). Check that it is valid YAML or JSON and import it again.",
     });
     expect(took).toBeGreaterThanOrEqual(1_400);
     expect(took).toBeLessThan(7_000); // loose for a loaded machine: the limit is 1.5 s, the unbounded read 5 - 9 s
-    expect(lag).toBeLessThan(200);
     expect(failure(await importAsyncApi(productId, { content }, ctx))).toMatchObject({ code: "VALIDATION_ERROR" });
     expect(await inventory(productId)).toEqual(before);
     expect(failure(await previewAsyncApiImport(productId, { content: ordinary }, ctx))).toBeNull(); // and the next file reads fine
@@ -118,11 +118,12 @@ describe("the runner's other failures, as the importer reports them (a fake work
     writeFileSync(fake, `
 process.on("disconnect", () => process.exit(0));
 process.on("message", (message) => {
+  process.send({ type: "accepted", id: message.id });
   if (process.env.FAKE_MODE === "crash") process.exit(1);
   // answers every job as "the file is not YAML", after a short hold
   setTimeout(() => process.send({ type: "result", id: message.id, body: JSON.stringify({ success: false, error: { code: "PARSE_ERROR", message: "held" } }) }), 40);
 });
-process.send({ type: "ready", pid: process.pid });
+process.send({ type: "ready" });
 `);
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));

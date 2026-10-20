@@ -34,16 +34,19 @@ export type JobResult = JobResults[ParserJobKind];
 /** Parent to worker. */
 export type ToWorker = { type: "job"; id: number; job: WireJob };
 /**
- * Worker to parent. `result.body` is the JSON of the answer (the worker serialises it once to measure it). `failed`: the job threw
- * (`exception`, `text` is for the server log only) or its answer is over the message limit (`too-large`).
+ * Worker to parent. `accepted`: the worker has the job (sent before any work on it starts), so a worker that dies WITHOUT having said it
+ * is known not to have seen the job, which may then be given to another worker. `result.body` is the JSON of the answer (the worker serialises
+ * it once to measure it). `failed`: the job threw (`exception`, `text` is for the server log only) or its answer is over the message limit
+ * (`too-large`).
  */
 export type FromWorker =
-  | { type: "ready"; pid: number }
+  | { type: "ready" }
+  | { type: "accepted"; id: number }
   | { type: "result"; id: number; body: string }
   | { type: "failed"; id: number; reason: "exception" | "too-large"; text: string };
 
 /** The most one message may carry, each way (bytes of its JSON). A document the parser may read is far smaller (the importer caps the file at 1 MiB). */
-export const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
+const MAX_MESSAGE_BYTES = 8 * 1024 * 1024;
 /** `MAX_MESSAGE_BYTES`, or the value of `ASYNCAPI_PARSER_MAX_MESSAGE_BYTES` (a positive number; for tests). Read when called: both sides see the same environment. */
 export function maxMessageBytes(): number {
   const raw = Number(process.env.ASYNCAPI_PARSER_MAX_MESSAGE_BYTES);

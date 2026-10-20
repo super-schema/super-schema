@@ -57,6 +57,7 @@ function talkToWorker(file, cwd, jobs) {
     child.on("exit", (code) => { if (answers.length < jobs.length) { clearTimeout(timer); reject(new Error(`the worker ended (code ${code}) before it answered every job`)); } });
     child.on("message", (message) => {
       if (message.type === "ready") return child.send({ type: "job", id: 0, job: jobs[0] });
+      if (message.type === "accepted") return; // "I have the job", before the answer
       answers.push(message);
       if (answers.length === jobs.length) {
         clearTimeout(timer);
