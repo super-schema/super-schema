@@ -68,6 +68,13 @@ describe.each([["spanner"], ["postgresql"], ["bigquery"]])(
   }
 );
 
+it("bigquery writes an apostrophe in a column description as an escaped quote (the description is a single-quoted SQL string)", async () => {
+  const quoted = [{ ...fields[0], description: "Customer's id" }, ...fields.slice(1)];
+  const result = await emitOfficialTypeSpecTargetFromData(entity, quoted, "bigquery");
+  expect(result.validationStatus, JSON.stringify(result.errors)).toBe("VALID");
+  expect(result.output).toContain("OPTIONS(description='Customer\\'s id')");
+}, 60000);
+
 it("postgresql DDL is accepted by a real PostgreSQL engine (PGlite) and creates every column", async () => {
   const { PGlite } = await import("@electric-sql/pglite");
   const result = await emitOfficialTypeSpecTargetFromData(entity, fields, "postgresql");

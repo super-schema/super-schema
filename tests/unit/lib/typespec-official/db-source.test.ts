@@ -95,6 +95,12 @@ describe("buildDbTypeSpecSource: documentation", () => {
     expect(source).toContain('@primaryKey @doc("Primary key") transactionId: string;');
     expect(source).toContain('@doc("Amount in minor units") amount: decimal;');
   });
+
+  it("escapes a quote and a backslash in a bigquery column description for the single-quoted SQL string the emitter writes it into", () => {
+    const tricky = [field({ name: "id", type: "string", isKey: true, sortOrder: 0, description: "Customer's id, C:\\dir" })];
+    // SQL text `Customer\'s id, C:\\dir`, then written as a TypeSpec string literal (every backslash doubled again)
+    expect(buildDbTypeSpecSource(model({ fields: tricky }), "bigquery")).toContain('@doc("Customer\\\\\'s id, C:\\\\\\\\dir")');
+  });
 });
 
 describe("buildDbTypeSpecSource: retention and keys", () => {

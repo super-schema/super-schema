@@ -40,21 +40,27 @@ interface DialectConfig {
   /** Its TypeSpec namespace (`using`): it carries the decorators the emitter reads. */
   namespace: string;
   /**
-   * Put the field description on its column as `@doc`. The Spanner and PostgreSQL emitters write a column's `@doc` as
-   * ` -- <text>` and append the column's comma AFTER it, so the comma becomes part of the comment and the statement
-   * is not valid DDL (reproduced with a described field; sibling repo `packages/{spanner,postgres}/src/write.ts`
-   * `writeTable`/`writeColumn`). Set these two to true again once the emitters write the comma first. BigQuery writes
-   * `OPTIONS(description='...')`, which is fine. The table's own `@doc` is a comment line of its own and is always kept.
+   * How a field description is put on its column (`@doc`), or null for no column docs. The emitters write it into the
+   * DDL themselves, and two of them do it in a way that makes the DDL invalid (reproduced; sibling repo
+   * `packages/{spanner,postgres,bigquery}/src/write.ts`):
+   * - Spanner and PostgreSQL write ` -- <text>` and append the column's comma AFTER it, so the comma becomes part of
+   *   the comment: no column docs for those two (null). Switch them on once the emitters write the comma first.
+   * - BigQuery writes `OPTIONS(description='<text>')` without escaping, so an apostrophe ends the string early: the
+   *   text is escaped for a single-quoted GoogleSQL string here. Drop the function once the emitter escapes it itself.
+   * The table's own `@doc` is a comment line of its own in every dialect and is always kept.
    */
-  columnDocs: boolean;
+  columnDoc: ((description: string) => string) | null;
 }
+
+/** Text for a single-quoted SQL string literal: the backslash and the quote are backslash-escaped. */
+const escapeSqlString = (text: string): string => text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 
 // Models in a `@schema` namespace are tables, so no `@table` is needed (the packages have none). They have no
 // decimal-precision decorator either: a decimal column is emitted as NUMERIC without precision and scale.
 const DIALECTS: Record<DbDialect, DialectConfig> = {
-  spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", columnDocs: false },
-  postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", columnDocs: false },
-  bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", columnDocs: true },
+  spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", columnDoc: null },
+  postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", columnDoc: null },
+  bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", columnDoc: escapeSqlString },
 };
 
 /** Logical IR type → TypeSpec built-in scalar the emitters understand. */
@@ -183,8 +189,8 @@ export function buildDbTypeSpecSource(model: SuperSchemaModel, targetKey: string
     }
 
     const desc = f.decorators?.semantics?.description || f.description;
-    if (desc && cfg.columnDocs) {
-      decs.push(`@doc("${escapeStr(desc)}")`);
+    if (desc && cfg.columnDoc) {
+      decs.push(`@doc("${escapeStr(cfg.columnDoc(desc))}")`);
     }
 
     // Primary keys are never nullable.
