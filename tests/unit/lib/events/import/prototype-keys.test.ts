@@ -4,7 +4,7 @@
 // crashed ("target.hasOwnProperty is not a function"). This sweep keeps the list honest: a parser upgrade that starts to crash on another
 // name fails here, and so does a name that is refused although the parser would have read it.
 import { describe, expect, it } from "vitest";
-import { createAsyncApiParser } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { createAsyncApiParser } from "@/lib/event-specs/validation/parser-core";
 import { parseAsyncApiSource } from "@/lib/events/import/source";
 
 const NAMES = Object.getOwnPropertyNames(Object.prototype);

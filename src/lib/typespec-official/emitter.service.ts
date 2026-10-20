@@ -15,7 +15,8 @@ import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
-import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
+import { buildDbTypeSpecTarget, isDbTypeSpecTarget } from "./db-source";
+import { boundedForLog, describeEmitterFailure, errorDiagnostics, warningDiagnostics } from "./emitter-diagnostics";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { ok, err, type Result } from "@/types/result";
@@ -114,7 +115,7 @@ export async function emitOfficialTypeSpecTargetFromData(
     return { output: "", validationStatus: "INVALID", warnings: built.warnings, errors: built.errors.map((message) => ({ message })) };
   }
   const options = buildEmitterOptions(target.key, model);
-  const result = await runTypeSpecEmitter(target.packageName ?? "", built.source, options);
+  const result = await runTypeSpecEmitter(target.packageName ?? "", built.source, options, isDbTypeSpecTarget(target.key));
   if (built.warnings.length === 0) return result;
   return {
     ...result,
@@ -164,7 +165,7 @@ const plainSource = (source: string): TargetSource => ({ source, warnings: [], e
 
 function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): TargetSource {
   if (isDbTypeSpecTarget(targetKey)) {
-    return plainSource(buildDbTypeSpecSource(model, targetKey));
+    return buildDbTypeSpecTarget(model, targetKey);
   }
 
   // Emission source = the generator's text WITHOUT the governance overlay (Story 16.6): field classification
@@ -351,6 +352,23 @@ export async function runTypeSpecEmitterFiles(
   emitterOptions: Record<string, unknown>,
   runOptions: { timeoutMs?: number } = {}
 ): Promise<Result<EmittedFile[]>> {
+  const run = await runTypeSpecEmitterWithWarnings(packageName, source, emitterOptions, runOptions);
+  return run.success ? ok(run.data.files) : err(run.error);
+}
+
+/** What a successful emitter run produced: its files and the warning diagnostics the compile printed (`<code>: <message>`). */
+export interface EmitterRun {
+  files: EmittedFile[];
+  warnings: string[];
+}
+
+/** {@link runTypeSpecEmitterFiles}, plus the compile's warning diagnostics (which the CLI prints on success and which would be lost otherwise). */
+export async function runTypeSpecEmitterWithWarnings(
+  packageName: string,
+  source: string,
+  emitterOptions: Record<string, unknown>,
+  runOptions: { timeoutMs?: number } = {}
+): Promise<Result<EmitterRun>> {
   const imports = checkTypeSpecImports(source);
   if (!imports.success) return imports;
   const uninstalled = await findUninstalledLibrary(imports.data.imports.map((i) => i.specifier));
@@ -394,7 +412,7 @@ export async function runTypeSpecEmitterFiles(
       "utf8"
     );
 
-    await execFileAsync(getTspBinaryPath(), ["compile", mainFile, "--config", configFile, "--pretty", "false"], {
+    const { stdout, stderr } = await execFileAsync(getTspBinaryPath(), ["compile", mainFile, "--config", configFile, "--pretty", "false"], {
       cwd: workspace,
       maxBuffer: 10 * 1024 * 1024,
       timeout: timeoutMs,
@@ -405,7 +423,7 @@ export async function runTypeSpecEmitterFiles(
     if (files.length === 0) {
       return err({ code: "EMITTER_NO_OUTPUT", message: `Emitter "${packageName}" completed but did not write any files.` });
     }
-    return ok(files);
+    return ok({ files, warnings: warningDiagnostics(`${stdout}\n${stderr}`) });
   } catch (error) {
     if (typeof error === "object" && error !== null && (error as { killed?: boolean }).killed === true) {
       return err({ code: "EMITTER_TIMEOUT", message: `Emitter "${packageName}" did not finish within ${timeoutMs} ms and was killed.` });
@@ -424,14 +442,35 @@ export async function runTypeSpecEmitterFiles(
   }
 }
 
+/**
+ * One emitter run as a Schemas-tab target result. `surfaceWarnings`: the compile's warning diagnostics become the result's
+ * warnings (status WARNING) — the DB DDL targets need it: their emitters report a column they had to skip as a warning
+ * (`unsupported-type`) and still write a table without it, which must not pass as a plain VALID.
+ */
 async function runTypeSpecEmitter(
   packageName: string,
   source: string,
-  emitterOptions: Record<string, unknown>
+  emitterOptions: Record<string, unknown>,
+  surfaceWarnings = false
 ): Promise<OfficialTypeSpecTargetResult> {
-  const files = await runTypeSpecEmitterFiles(packageName, source, emitterOptions);
-  if (!files.success) return invalidResult(files.error.message);
-  return targetResultFromFiles(packageName, files.data);
+  const run = await runTypeSpecEmitterWithWarnings(packageName, source, emitterOptions);
+  if (!run.success) {
+    // Every code but EMITTER_FAILED is a message written here. EMITTER_FAILED carries the compiler's raw output (banner,
+    // temp paths, progress lines, an emitter crash's stack): its error diagnostics are the message; a failure without any
+    // is the generic text, the raw output goes to the server log only.
+    if (run.error.code !== "EMITTER_FAILED") return invalidResult(run.error.message);
+    if (errorDiagnostics(run.error.message).length === 0) {
+      console.error(`[typespec-emitter] ${packageName} failed without an error diagnostic:`, boundedForLog(run.error.message));
+    }
+    return invalidResult(describeEmitterFailure(run.error.message));
+  }
+  const result = targetResultFromFiles(packageName, run.data.files);
+  if (!surfaceWarnings || run.data.warnings.length === 0 || result.validationStatus === "INVALID") return result;
+  return {
+    ...result,
+    warnings: [...result.warnings, ...run.data.warnings],
+    validationStatus: result.validationStatus === "VALID" ? "WARNING" : result.validationStatus,
+  };
 }
 
 /** What an emitter run wrote, as a target result: VALID only when the output is usable (see {@link unusableOutputReason}). */
@@ -471,6 +510,10 @@ export function unusableOutputReason(packageName: string, output: string): strin
 
 async function collectTextFiles(rootDir: string): Promise<EmittedFile[]> {
   const files: EmittedFile[] = [];
+
+  // An emitter that has nothing to write never creates its output directory: that is "no files" (EMITTER_NO_OUTPUT),
+  // not a scandir failure that would leak the temp workspace path.
+  if (!(await fs.stat(rootDir).then((s) => s.isDirectory(), () => false))) return files;
 
   async function walk(currentDir: string) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });

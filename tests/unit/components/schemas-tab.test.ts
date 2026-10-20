@@ -79,22 +79,20 @@ vi.mock("@/services/rbac.service", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Mock: emission service
+// Mock: the official TypeSpec emitter service
 // ---------------------------------------------------------------------------
+// Every Schemas-tab target (bigquery, avro, ...) routes through `emitOfficialTypeSpecTargetForEntity` (runtime
+// "typespec-cli"); `emitEntity` is only the path of a "native" target, and none is left. This is a unit test of the
+// version lifecycle, so the emitter is canned: the real `tsp` shell-out is covered by db-emitter-parity and
+// e2e-critical-flows (Flow 2), which an entity without a primary key (these fixtures) cannot be emitted through anyway.
 
-vi.mock("@/lib/emission/emission.service", () => ({
-  emitEntity: vi.fn().mockResolvedValue({
-    typespec: "model TestEntity { ... }",
-    targets: {
-      bigquery: {
-        output: "CREATE TABLE `dataset.TestEntity` (\n  id STRING NOT NULL\n);",
-        validationStatus: "valid",
-        warnings: [],
-        errors: [],
-      },
-    },
-    summary: { totalTargets: 1, validCount: 1, invalidCount: 0, warningCount: 0 },
-  }),
+vi.mock("@/lib/typespec-official/emitter.service", () => ({
+  emitOfficialTypeSpecTargetForEntity: vi.fn(async () => ({
+    output: "CREATE TABLE `dataset.TestEntity` (\n  id STRING NOT NULL\n);",
+    validationStatus: "VALID",
+    warnings: [],
+    errors: [],
+  })),
 }));
 
 // ---------------------------------------------------------------------------
@@ -193,6 +191,85 @@ describe("SchemasTab Workflow", () => {
       expect(result.schemaVersion!.fieldTypeMappings).toEqual([
         { fieldName: "amount", sourceType: "decimal", targetType: "NUMERIC(10,2)" },
       ]);
+    });
+
+    it("returns the emitter's reason and stores no version when a target cannot be generated", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue({
+        id: "ent-1",
+        tenantId: "tenant-1",
+        name: "TestEntity",
+        version: 1,
+        metadata: {},
+        fields: [],
+      });
+      const reason = "@typespec/bigquery/missing-primary-key: Table 'TestEntity' must have at least one @primaryKey property.";
+      vi.mocked((await import("@/lib/typespec-official/emitter.service")).emitOfficialTypeSpecTargetForEntity).mockResolvedValueOnce({
+        output: "",
+        validationStatus: "INVALID",
+        warnings: [],
+        errors: [{ message: reason }],
+      });
+
+      const result = await generateSchemaAction("ent-1", "bigquery");
+
+      expect(result).toEqual({ error: reason });
+      expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    });
+
+    describe("a WARNING result (generated, with warnings)", () => {
+      const entityWithNoVersions = {
+        id: "ent-1",
+        tenantId: "tenant-1",
+        name: "TestEntity",
+        version: 1,
+        metadata: {},
+        fields: [],
+      };
+      const emitterAnswers = async (warnings: unknown[]) => {
+        mockPrisma.entity.findUnique.mockResolvedValue(entityWithNoVersions);
+        mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
+        vi.mocked((await import("@/lib/typespec-official/emitter.service")).emitOfficialTypeSpecTargetForEntity).mockResolvedValueOnce({
+          output: "CREATE TABLE `dataset.TestEntity` (\n  `order` STRING NOT NULL\n);",
+          validationStatus: "WARNING",
+          warnings: warnings as string[],
+          errors: [],
+        });
+      };
+
+      it("is a success that stores the draft and returns the status and the warnings unchanged", async () => {
+        const warnings = [
+          'The column "order" is a reserved word in BigQuery and the generated DDL does not quote it, so it will not run as is. Rename the field, or quote the name in the DDL by hand.',
+          "@typespec/bigquery/unsupported-type: Type 'x' is not supported by the BigQuery emitter and will be skipped.",
+        ];
+        await emitterAnswers(warnings);
+
+        const result = await generateSchemaAction("ent-1", "bigquery");
+
+        expect(result.success).toBe(true);
+        expect(result.validationStatus).toBe("WARNING");
+        expect(result.warnings).toEqual(warnings);
+        expect(result.schemaVersion!.status).toBe("draft");
+        expect(mockPrisma.entity.update).toHaveBeenCalledTimes(1);
+      });
+
+      it("passes at most 20 warnings of at most 300 characters each to the client", async () => {
+        await emitterAnswers(Array.from({ length: 25 }, (_, i) => `${i}: ${"w".repeat(400)}`));
+
+        const result = await generateSchemaAction("ent-1", "bigquery");
+
+        expect(result.warnings).toHaveLength(20);
+        expect(result.warnings!.every((warning) => warning.length <= 300)).toBe(true);
+        expect(result.warnings![0].startsWith("0: www")).toBe(true);
+        expect(result.warnings![0].endsWith("…")).toBe(true);
+      });
+
+      it("always hands over plain strings (a warning object is read by its message; empty ones are dropped)", async () => {
+        await emitterAnswers([{ message: "from an object" }, "  ", "plain", {}]);
+
+        const result = await generateSchemaAction("ent-1", "bigquery");
+
+        expect(result.warnings).toEqual(["from an object", "plain"]);
+      });
     });
   });
 
@@ -499,30 +576,11 @@ describe("SchemasTab Workflow", () => {
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
 
       // Generate for a different target (avro) — should start at version 1
-      vi.mocked((await import("@/lib/emission/emission.service")).emitEntity).mockResolvedValueOnce({
-        success: true,
-        typespec: "model TestEntity { ... }",
-        targets: {
-          bigquery: {
-            name: "bigquery",
-            targetFormat: "bigquery-ddl",
-            output: "CREATE TABLE ...",
-            isValid: true,
-            validationStatus: "VALID" as const,
-            warnings: [],
-            errors: [],
-          },
-          avro: {
-            name: "avro",
-            targetFormat: "avro",
-            output: '{"type":"record","name":"TestEntity","fields":[]}',
-            isValid: true,
-            validationStatus: "VALID" as const,
-            warnings: [],
-            errors: [],
-          },
-        },
-        summary: { totalTargets: 2, validCount: 2, invalidCount: 0, warningCount: 0 },
+      vi.mocked((await import("@/lib/typespec-official/emitter.service")).emitOfficialTypeSpecTargetForEntity).mockResolvedValueOnce({
+        output: '{"type":"record","name":"TestEntity","fields":[]}',
+        validationStatus: "VALID",
+        warnings: [],
+        errors: [],
       });
 
       const result = await generateSchemaAction("ent-1", "avro");

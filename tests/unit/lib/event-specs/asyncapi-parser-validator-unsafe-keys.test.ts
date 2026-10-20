@@ -4,12 +4,12 @@ import { PARSER_UNSAFE_KEYS, RESERVED_KEYS, setOwn } from "@/lib/event-specs/own
 import type { Diagnostic, JsonObject } from "@/lib/event-specs/types";
 import {
   AsyncApiParserValidator,
-  createAsyncApiParser,
   findParserUnsafeKeys,
   isParserCrashDiagnostic,
   mapParserDiagnostic,
   sanitizeParserDiagnostics,
 } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { createAsyncApiParser } from "@/lib/event-specs/validation/parser-core";
 import { baseDocument, parserInput } from "./fixtures/unsafe-key-documents";
 
 /**
@@ -42,10 +42,18 @@ const LEAKS = /\n\s+at \S+ \(|node_modules|\/Users\/|\/home\/|[A-Za-z]:\\|uncaug
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
+
+/**
+ * The parser normally runs in a worker process, where a test cannot replace or watch it: a test that does (a spy on `Parser.prototype`) runs
+ * the job in THIS process (`ASYNCAPI_PARSER_IN_PROCESS`, the runner's debugging switch) first.
+ */
+const inProcess = () => vi.stubEnv("ASYNCAPI_PARSER_IN_PROCESS", "1");
 
 describe("AsyncApiParserValidator — parser-unsafe keys", () => {
   it(`refuses a channel named ${UNSAFE} with one clear error at its pointer, and never calls the parser`, async () => {
+    inProcess();
     const parse = vi.spyOn(Parser.prototype, "parse");
     const doc = baseDocument();
     setOwn(doc.channels as JsonObject, UNSAFE, { address: "x.v1" });
@@ -295,6 +303,7 @@ describe("sanitising a crash of the parser", () => {
 
   it("validate() turns a crash of the parser for ANY reason into the generic error (the parser is stubbed to crash)", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    inProcess();
     vi.spyOn(Parser.prototype, "parse").mockResolvedValue({
       document: undefined,
       diagnostics: [{ code: "uncaught-error", message: STACK, path: [], severity: 0, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } }],

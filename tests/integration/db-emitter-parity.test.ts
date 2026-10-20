@@ -55,8 +55,42 @@ describe.each([["spanner"], ["postgresql"], ["bigquery"]])(
         expect(ddl, `${targetKey} DDL missing column ${col}`).toContain(col);
       }
     }, 60000);
+
+    it("never lets a `--` comment swallow a column's separator (every field here has a description)", async () => {
+      const result = await emitOfficialTypeSpecTargetFromData(entity, fields, targetKey);
+      expect(result.validationStatus, JSON.stringify(result.errors)).toBe("VALID");
+
+      // The Spanner and PostgreSQL emitters write `<column> -- <doc>,`: the comma is part of the comment and the
+      // statement is no longer valid. The source builder gives those two no column docs; a comment on its own line is fine.
+      const swallowed = result.output.split("\n").filter((line) => !line.trimStart().startsWith("--") && line.includes(" -- "));
+      expect(swallowed, `${targetKey} DDL has a trailing comment on a column line`).toEqual([]);
+    }, 60000);
   }
 );
+
+it("bigquery writes an apostrophe in a column description as an escaped quote (the description is a single-quoted SQL string)", async () => {
+  const quoted = [{ ...fields[0], description: "Customer's id" }, ...fields.slice(1)];
+  const result = await emitOfficialTypeSpecTargetFromData(entity, quoted, "bigquery");
+  expect(result.validationStatus, JSON.stringify(result.errors)).toBe("VALID");
+  expect(result.output).toContain("OPTIONS(description='Customer\\'s id')");
+}, 60000);
+
+it("postgresql DDL is accepted by a real PostgreSQL engine (PGlite) and creates every column", async () => {
+  const { PGlite } = await import("@electric-sql/pglite");
+  const result = await emitOfficialTypeSpecTargetFromData(entity, fields, "postgresql");
+  expect(result.validationStatus, JSON.stringify(result.errors)).toBe("VALID");
+
+  const db = new PGlite();
+  try {
+    await db.exec(result.output);
+    const columns = await db.query<{ column_name: string }>(
+      "select column_name from information_schema.columns where table_schema = 'payments' and table_name = 'transaction' order by ordinal_position"
+    );
+    expect(columns.rows.map((row) => row.column_name)).toEqual(EXPECTED_COLUMNS);
+  } finally {
+    await db.close();
+  }
+}, 60000);
 
 it("spanner emits ROW DELETION POLICY for age-based retention", async () => {
   const withRetention: PrismaEntityInput = {

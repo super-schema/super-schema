@@ -30,7 +30,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
   {
     key: "bigquery",
     displayName: "BigQuery DDL",
-    description: "Super Schema native emitter for Google BigQuery table DDL.",
+    description: "TypeSpec emitter (@typespec/bigquery) for Google BigQuery table DDL.",
     targetFormat: "bigquery",
     outputLanguage: "sql",
     source: "typespec-official",
@@ -72,7 +72,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
   {
     key: "spanner",
     displayName: "Spanner DDL",
-    description: "Super Schema native emitter for Cloud Spanner DDL.",
+    description: "TypeSpec emitter (@typespec/spanner) for Cloud Spanner DDL.",
     targetFormat: "spanner",
     outputLanguage: "sql",
     source: "typespec-official",
@@ -86,7 +86,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
   {
     key: "postgresql",
     displayName: "PostgreSQL DDL",
-    description: "Super Schema native emitter for PostgreSQL DDL output.",
+    description: "TypeSpec emitter (@typespec/postgres) for PostgreSQL DDL output.",
     targetFormat: "postgresql",
     outputLanguage: "sql",
     source: "typespec-official",

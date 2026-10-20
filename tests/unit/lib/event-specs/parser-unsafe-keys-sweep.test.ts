@@ -6,7 +6,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { PARSER_UNSAFE_KEYS, RESERVED_KEYS } from "@/lib/event-specs/own-property";
-import { AsyncApiParserValidator, createAsyncApiParser, findParserUnsafeKeys } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { AsyncApiParserValidator, findParserUnsafeKeys } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { createAsyncApiParser } from "@/lib/event-specs/validation/parser-core";
 import { KEY_POSITIONS, parserInput } from "./fixtures/unsafe-key-documents";
 
 const NAMES = Object.getOwnPropertyNames(Object.prototype);

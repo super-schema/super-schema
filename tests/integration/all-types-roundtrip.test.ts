@@ -10,6 +10,9 @@
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
 
+// These tests run the real TypeSpec compiler (`tsp`): 5 s is too tight when the whole suite shares the machine.
+vi.setConfig({ testTimeout: 60_000 });
+
 vi.mock("server-only", () => ({}));
 
 import { compileEntity, type PrismaFieldInput, type PrismaEntityInput } from "@/lib/compiler/compiler.service";
