@@ -92,7 +92,7 @@
     "@types/react-dom": "^19",
     "@typespec/bigquery": "file:../typespec/packages/bigquery",
     "@typespec/compiler": "^1.10.0",
-    "@typespec/db": "file:../typespec/packages/db",
+    "@typespec/db": "file:vendor/typespec-db",
     "@typespec/http-client-csharp": "^1.0.0-alpha.20260407.1",
     "@typespec/http-client-java": "^0.6.1",
     "@typespec/http-client-js": "^0.14.1",
