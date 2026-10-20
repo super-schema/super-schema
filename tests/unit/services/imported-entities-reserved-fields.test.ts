@@ -119,6 +119,25 @@ describe("createImportedEntities: a reserved ENTITY name", () => {
     expect(r.refs.get("hasOwnProperty_1")?.id).toBe("id-hasOwnProperty_1");
   });
 
+  it("two entities with the SAME reserved name (the second is a duplicate) get ONE new name, reported once: the first is created, the second is skipped as already there", async () => {
+    const takenNames = new Set<string>();
+    const skipped: string[] = [];
+    const r = await runBatch(
+      [{ name: "hasOwnProperty", fields: [] }, { name: "Child", extends: "hasOwnProperty", fields: [] }, { name: "hasOwnProperty", fields: [] }, { name: "hasOwnProperty_1", fields: [] }],
+      {
+        isNameFree: async (name) => {
+          if (takenNames.has(name)) { skipped.push(`"${name}" is already used`); return false; }
+          takenNames.add(name);
+          return true;
+        },
+      },
+    );
+    expect(r.created.map((c) => c.name)).toEqual(["hasOwnProperty_2", "Child", "hasOwnProperty_1"]);
+    expect(r.notes).toEqual(['The entity "hasOwnProperty" was renamed to "hasOwnProperty_2": the name is reserved.']);
+    expect(skipped).toEqual(['"hasOwnProperty_2" is already used']);
+    expect(r.written[1].parentEntityId).toBe("id-hasOwnProperty_2");
+  });
+
   it("leaves hasownproperty, HasOwnProperty and hasOwnProperty2 alone, and notes nothing", async () => {
     const r = await runBatch([{ name: "hasownproperty", fields: [] }, { name: "HasOwnProperty", fields: [] }, { name: "hasOwnProperty2", fields: [] }]);
     expect(r.written.map((w) => w.name)).toEqual(["hasownproperty", "HasOwnProperty", "hasOwnProperty2"]);

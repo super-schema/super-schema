@@ -221,7 +221,7 @@ describe("AdvancedSection: the name is a visible, required field", () => {
     type(box("scheme-key"), "constructor");
     expect(text("scheme-key-error")).toContain("is reserved");
     type(box("scheme-key"), "hasOwnProperty");
-    expect(text("scheme-key-error")).toBe('"hasOwnProperty" is reserved. Choose another name.');
+    expect(text("scheme-key-error")).toBe('"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another name.');
     type(box("scheme-key"), "x".repeat(65));
     expect(text("scheme-key-error")).toContain("at most 64");
     fireEvent.blur(box("scheme-key"));

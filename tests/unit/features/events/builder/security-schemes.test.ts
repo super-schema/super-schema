@@ -89,11 +89,13 @@ describe("schemeNameProblem", () => {
   });
 
   it("refuses the names that collide with Object.prototype", () => {
-    for (const name of ["__proto__", "constructor", "prototype"]) expect(schemeNameProblem(doc(), name, null)).toBe(`"${name}" is reserved. Choose another name.`);
+    // `constructor` and `prototype` are only JS-prototype names (the plain wording); `__proto__` is also on the parser's list (its wording)
+    for (const name of ["constructor", "prototype"]) expect(schemeNameProblem(doc(), name, null)).toBe(`"${name}" is reserved. Choose another name.`);
+    expect(schemeNameProblem(doc(), "__proto__", null)).toBe('"__proto__" is a reserved name: AsyncAPI documents cannot contain it. Choose another name.');
   });
 
   it("refuses hasOwnProperty, the name the AsyncAPI parser cannot read, and only that exact name", () => {
-    expect(schemeNameProblem(doc(), "hasOwnProperty", null)).toBe('"hasOwnProperty" is reserved. Choose another name.');
+    expect(schemeNameProblem(doc(), "hasOwnProperty", null)).toBe('"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another name.');
     for (const name of ["hasownproperty", "HasOwnProperty", "hasOwnProperty2"]) expect(schemeNameProblem(doc(), name, null), name).toBeNull();
   });
 });

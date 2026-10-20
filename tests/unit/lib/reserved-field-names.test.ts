@@ -3,10 +3,13 @@ import { PARSER_UNSAFE_KEYS } from "@/lib/event-specs/own-property";
 import {
   firstReservedFieldNameMessage,
   renameReservedFields,
+  isReservedRenameNote,
   renameReservedNames,
   reservedFieldNameMessage,
+  reservedKeyMessage,
   reservedFieldRenamedMessage,
   reservedNameMessage,
+  reservedNameRenamedMessage,
 } from "@/lib/reserved-field-names";
 
 const MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another field name.';
@@ -97,6 +100,34 @@ describe("reservedNameMessage (the NAME of an entity, a model, an enum, an event
   it("the field message and the name message say the same thing, only the last words differ", () => {
     for (const name of PARSER_UNSAFE_KEYS) expect(reservedFieldNameMessage(name)?.replace(/field name\.$/, "name.")).toBe(reservedNameMessage(name));
   });
+
+  it("the KEY message says it too, ending 'Choose another key.', for the parser's names only (constructor / prototype keep their own wording elsewhere)", () => {
+    for (const name of PARSER_UNSAFE_KEYS) expect(reservedKeyMessage(name)).toBe(`"${name}" is a reserved name: AsyncAPI documents cannot contain it. Choose another key.`);
+    for (const key of ["constructor", "prototype", "orders", "hasownproperty"]) expect(reservedKeyMessage(key), key).toBeNull();
+  });
+});
+
+describe("isReservedRenameNote", () => {
+  it("recognises every message the rename builders write (so the predicate cannot drift from them), and nothing else", () => {
+    const [UNSAFE] = [...PARSER_UNSAFE_KEYS];
+    const notes = [
+      reservedFieldRenamedMessage(UNSAFE, `${UNSAFE}_1`, "Order"),
+      reservedFieldRenamedMessage(UNSAFE, `${UNSAFE}_2`, "Address", "model"),
+      reservedNameRenamedMessage("entity", UNSAFE, `${UNSAFE}_1`),
+      reservedNameRenamedMessage("model", UNSAFE, `${UNSAFE}_1`),
+      // a name with a quote or a line break in it is still one note
+      reservedNameRenamedMessage("entity", `a"b\nc`, `a"b\nc_1`),
+    ];
+    for (const note of notes) expect(isReservedRenameNote(note), note).toBe(true);
+    for (const other of [
+      'Entity "Order" already exists — skipped',
+      reservedNameMessage(UNSAFE) as string,
+      reservedFieldNameMessage(UNSAFE) as string,
+      'Your session is stale. Sign out and sign in again, then retry the import.',
+      `The field "x" was renamed to "y" because something else`,
+      "",
+    ]) expect(isReservedRenameNote(other), other).toBe(false);
+  });
 });
 
 describe("renameReservedNames", () => {
@@ -122,5 +153,28 @@ describe("renameReservedNames", () => {
     const out = renameReservedNames([{ name: UNSAFE }, { name: "Child", extends: UNSAFE }, { name: "Other", extends: "Base" }]);
     expect(out.items).toEqual([{ name: `${UNSAFE}_1` }, { name: "Child", extends: `${UNSAFE}_1` }, { name: "Other", extends: "Base" }]);
     expect([...out.renames]).toEqual([[UNSAFE, `${UNSAFE}_1`]]);
+  });
+
+  it("items with the SAME reserved name share one new name, which is reported once; an extends follows it (the reviewer's probe)", () => {
+    const heard: Array<[string, string]> = [];
+    const out = renameReservedNames(
+      [{ name: UNSAFE }, { name: "Child", extends: UNSAFE }, { name: UNSAFE }, { name: `${UNSAFE}_1` }],
+      (from, to) => heard.push([from, to]),
+    );
+    // `_1` is taken by the fourth item, so the new name is `_2`: for BOTH copies, and for the child's `extends`
+    expect(out.items).toEqual([{ name: `${UNSAFE}_2` }, { name: "Child", extends: `${UNSAFE}_2` }, { name: `${UNSAFE}_2` }, { name: `${UNSAFE}_1` }]);
+    expect(heard).toEqual([[UNSAFE, `${UNSAFE}_2`]]);
+    expect([...out.renames]).toEqual([[UNSAFE, `${UNSAFE}_2`]]);
+  });
+
+  it("two DIFFERENT reserved names each get their own new name and their own note", () => {
+    const names = [...PARSER_UNSAFE_KEYS];
+    expect(names.length).toBeGreaterThan(1);
+    const heard: Array<[string, string]> = [];
+    const out = renameReservedNames([...names.map((name) => ({ name })), { name: "Child", extends: names[1] }], (from, to) => heard.push([from, to]));
+    expect(out.items.map((i) => i.name)).toEqual([...names.map((name) => `${name}_1`), "Child"]);
+    expect((out.items[names.length] as { extends?: string }).extends).toBe(`${names[1]}_1`);
+    expect(heard).toEqual(names.map((name) => [name, `${name}_1`]));
+    expect([...out.renames]).toEqual(names.map((name) => [name, `${name}_1`]));
   });
 });

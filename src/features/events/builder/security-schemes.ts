@@ -3,6 +3,7 @@
 // (`servers[].security`, `operations[].security`, an operation trait's `spec.security`), so renaming and removing one has to rewrite
 // those references, and an emptied `securitySchemes` / `components` is dropped instead of saved empty. Pure — no React.
 import { isReservedKey } from "@/lib/event-specs/own-property";
+import { reservedNameMessage } from "@/lib/reserved-field-names";
 import {
   KEY_MAX_LENGTH, KEY_PATTERN, type DocComponents, type DocSecurityScheme, type EventDocument,
 } from "@/lib/events/document/types";
@@ -36,6 +37,8 @@ export function schemeNameProblem(doc: EventDocument, name: string, current: str
   if (name === "") return "A name is required.";
   if (name.length > KEY_MAX_LENGTH) return `A name can be at most ${KEY_MAX_LENGTH} characters.`;
   if (!KEY_PATTERN.test(name)) return 'Use only letters, digits, ".", "_" and "-" (no spaces).';
+  const unsafe = reservedNameMessage(name);
+  if (unsafe !== null) return unsafe;
   if (isReservedKey(name)) return `"${name}" is reserved. Choose another name.`;
   if (name !== current && has(doc, name)) return `A security scheme named "${name}" already exists.`;
   return null;

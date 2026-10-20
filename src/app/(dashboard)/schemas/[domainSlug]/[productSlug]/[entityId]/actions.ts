@@ -1892,15 +1892,21 @@ async function compileAndApplyTypeSpecSource(
   // read). The other models of the source (the nested types the entity refers to) have no rows, so there is no "existing" field to spare:
   // one of them with such a field is refused. INLINE anonymous models are not listed in the parsed document, so their property names are
   // not visible here; the emit guard catches those.
+  // The message says WHICH model, enum, scalar or union holds the name (`Model "Address": "x" is a reserved name: ...`).
   for (const other of result.document.models.slice(1)) {
     const reserved = reservedNameMessage(other.name) ?? firstReservedFieldNameMessage(other.fields);
-    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: reserved };
+    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: `Model "${other.name}": ${reserved}` };
   }
   // The names of the enums, scalars and unions the source declares become definition keys of a payload too.
   const { enums = [], scalars = [], unions = [] } = result.document;
-  for (const declared of [...enums, ...scalars, ...unions]) {
-    const reserved = reservedNameMessage(declared.name);
-    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: reserved };
+  const declaredNames = [
+    ...enums.map((d) => ["Enum", d.name]),
+    ...scalars.map((d) => ["Scalar", d.name]),
+    ...unions.map((d) => ["Union", d.name]),
+  ];
+  for (const [kind, name] of declaredNames) {
+    const reserved = reservedNameMessage(name);
+    if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: `${kind} "${name}": ${reserved}` };
   }
 
   const existingFields = await prisma.field.findMany({

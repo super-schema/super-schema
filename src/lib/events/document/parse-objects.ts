@@ -6,6 +6,7 @@
 // its own pointer and returns `undefined`; objects come back with their keys in AUTHORED order, which the assembler emits
 // verbatim; unknown properties are problems except `x-…` extensions, which are kept as written.
 import { isReservedKey } from "@/lib/event-specs/own-property";
+import { reservedKeyMessage } from "@/lib/reserved-field-names";
 import type { AsyncApiContact, AsyncApiLicense, JsonObject, JsonValue, TraitKind } from "@/lib/event-specs/types";
 import type {
   DocChannelParameter, DocCorrelationId, DocExternalDocs, DocMessageExample, DocReplyAddress, DocSecurityScheme, DocServerVariable, DocTag,
@@ -226,7 +227,9 @@ export function createObjectReaders(bad: Bad) {
     for (const [key, raw] of Object.entries(v)) {
       const entryAt = `${at}${ptr(key)}`;
       let keyOk = true;
+      const unsafe = reservedKeyMessage(key); // on the parser's list: the one wording every layer uses
       if (!KEY_PATTERN.test(key)) { bad(entryAt, `Security scheme key "${key}" may only contain letters, digits, ".", "_" and "-"`); keyOk = false; }
+      else if (unsafe !== null) { bad(entryAt, unsafe); keyOk = false; }
       else if (isReservedKey(key)) { bad(entryAt, `Security scheme key "${key}" is reserved — choose another key`); keyOk = false; }
       const scheme = securityScheme(raw, entryAt);
       if (scheme && keyOk) out[key] = scheme;

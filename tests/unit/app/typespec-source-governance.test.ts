@@ -153,28 +153,29 @@ describe("TypeSpec Source tab save refuses a field the AsyncAPI parser cannot re
       entityRow();
       const source = "model Customer {\n  id: string;\n  address: Address;\n}\nmodel Address {\n  hasOwnProperty: string;\n}\n";
       const res = await compileAndApplyTypeSpecSourceAction("ent-1", source);
-      expect(res).toMatchObject({ success: false, error: MESSAGE });
+      // the message says WHICH model holds the field
+      expect(res).toMatchObject({ success: false, error: `Model "Address": ${MESSAGE}` });
       nothingWritten();
     });
 
-    it("a field the first model gets through a spread (...Base) is a new field of it, and is refused too", async () => {
+    it("a field that comes in through a spread (...Base) is a field of the model that spreads it, and the message names that model", async () => {
       entityRow();
       const res = await compileAndApplyTypeSpecSourceAction("ent-1", "model Customer {\n  id: string;\n  ...Base;\n}\nmodel Base {\n  hasOwnProperty: string;\n}\n");
-      expect(res).toMatchObject({ success: false, error: MESSAGE });
+      expect(res).toMatchObject({ success: false, error: `Model "Customer": ${MESSAGE}` });
       nothingWritten();
     });
 
     it("a second model, an enum, a scalar or a union NAMED hasOwnProperty is refused as a reserved NAME, and nothing is written", async () => {
       const NAME_MESSAGE = '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another name.';
-      for (const declared of [
-        "model hasOwnProperty {\n  street: string;\n}\n",
-        "enum hasOwnProperty {\n  A,\n  B,\n}\n",
-        "scalar hasOwnProperty extends string;\n",
-        "union hasOwnProperty {\n  string,\n  int32,\n}\n",
+      for (const [kind, declared] of [
+        ["Model", "model hasOwnProperty {\n  street: string;\n}\n"],
+        ["Enum", "enum hasOwnProperty {\n  A,\n  B,\n}\n"],
+        ["Scalar", "scalar hasOwnProperty extends string;\n"],
+        ["Union", "union hasOwnProperty {\n  string,\n  int32,\n}\n"],
       ]) {
         entityRow();
         const res = await compileAndApplyTypeSpecSourceAction("ent-1", `model Customer {\n  id: string;\n}\n${declared}`);
-        expect(res, declared).toMatchObject({ success: false, error: NAME_MESSAGE });
+        expect(res, declared).toMatchObject({ success: false, error: `${kind} "hasOwnProperty": ${NAME_MESSAGE}` });
       }
       nothingWritten();
     });
