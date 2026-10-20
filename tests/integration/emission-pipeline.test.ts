@@ -12,9 +12,12 @@
  * covered by `tests/unit/lib/emission/emission.service.test.ts`.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
+
+// These tests run the real TypeSpec compiler (`tsp`): 5 s is too tight when the whole suite shares the machine.
+vi.setConfig({ testTimeout: 60_000 });
 
 // ---------------------------------------------------------------------------
 // Realistic test entity: Customer with id, name, email, created_at, balance
