@@ -56,14 +56,20 @@ describe.each([["spanner"], ["postgresql"], ["bigquery"]])(
       }
     }, 60000);
 
-    it("never lets a `--` comment swallow a column's separator (every field here has a description)", async () => {
+    it("writes each field's description as a comment AFTER the column's comma, never before it (every field here has a description)", async () => {
       const result = await emitOfficialTypeSpecTargetFromData(entity, fields, targetKey);
       expect(result.validationStatus, JSON.stringify(result.errors)).toBe("VALID");
 
-      // The Spanner and PostgreSQL emitters write `<column> -- <doc>,`: the comma is part of the comment and the
-      // statement is no longer valid. The source builder gives those two no column docs; a comment on its own line is fine.
-      const swallowed = result.output.split("\n").filter((line) => !line.trimStart().startsWith("--") && line.includes(" -- "));
-      expect(swallowed, `${targetKey} DDL has a trailing comment on a column line`).toEqual([]);
+      // `col TYPE, -- doc` (Spanner, PostgreSQL) and `col TYPE OPTIONS(description='doc'),` (BigQuery): the separator is
+      // never inside a comment. A comment on its own line (the table's) is fine.
+      const columnLines = result.output.split("\n").filter((line) => line.startsWith("  ") && !line.trimStart().startsWith("--") && !line.trimStart().startsWith("PRIMARY KEY"));
+      expect(columnLines).toHaveLength(fields.length);
+      for (const line of columnLines) {
+        expect(line, `${targetKey}: a column line must end with its comma before any comment`).toMatch(
+          targetKey === "bigquery" ? /^ {2}\w+ [^-]*OPTIONS\(description='[^']*'\),$/ : /^ {2}\w+ [A-Z0-9_(), ]+, -- [^,]*$/
+        );
+      }
+      for (const field of fields) expect(result.output, `${targetKey}: the description of ${field.name}`).toContain(field.description);
     }, 60000);
   }
 );
@@ -72,7 +78,7 @@ it("bigquery writes an apostrophe in a column description as an escaped quote (t
   const quoted = [{ ...fields[0], description: "Customer's id" }, ...fields.slice(1)];
   const result = await emitOfficialTypeSpecTargetFromData(entity, quoted, "bigquery");
   expect(result.validationStatus, JSON.stringify(result.errors)).toBe("VALID");
-  expect(result.output).toContain("OPTIONS(description='Customer\\'s id')");
+  expect(result.output, "needs @typespec/bigquery built with the write.ts escaping fix (docs/events/REVIEW.md, gap 15)").toContain("OPTIONS(description='Customer\\'s id')");
 }, 60000);
 
 it("postgresql DDL is accepted by a real PostgreSQL engine (PGlite) and creates every column", async () => {

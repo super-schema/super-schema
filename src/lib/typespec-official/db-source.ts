@@ -51,28 +51,18 @@ interface DialectConfig {
   displayName: string;
   /** Does the dialect's DDL name the schema? (Spanner's emitter writes `CREATE TABLE <table>` only.) */
   writesSchemaName: boolean;
-  /**
-   * How a field description is put on its column (`@doc`), or null for no column docs. The emitters write it into the
-   * DDL themselves, and two of them do it in a way that makes the DDL invalid (reproduced; sibling repo
-   * `packages/{spanner,postgres,bigquery}/src/write.ts`):
-   * - Spanner and PostgreSQL write ` -- <text>` and append the column's comma AFTER it, so the comma becomes part of
-   *   the comment: no column docs for those two (null). Switch them on once the emitters write the comma first.
-   * - BigQuery writes `OPTIONS(description='<text>')` without escaping, so an apostrophe ends the string early: the
-   *   text is escaped for a single-quoted GoogleSQL string here. Drop the function once the emitter escapes it itself.
-   * The table's own `@doc` is a comment line of its own in every dialect and is always kept.
-   */
-  columnDoc: ((description: string) => string) | null;
 }
 
-/** Text for a single-quoted SQL string literal: the backslash and the quote are backslash-escaped. */
-const escapeSqlString = (text: string): string => text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-
+// A field's description is its column's `@doc`; the entity's description is the table's. The emitters (built with the
+// sibling write.ts patch, docs/events/REVIEW.md gap 15) write a column's as `col TYPE, -- text` (Spanner, PostgreSQL: the
+// comma comes first, so the comment cannot swallow it) or `OPTIONS(description='...')` (BigQuery, which escapes `\` and
+// `'` itself), and the table's as a comment line before CREATE TABLE.
 // Models in a `@schema` namespace are tables, so no `@table` is needed (the packages have none). They have no
 // decimal-precision decorator either: a decimal column is emitted as NUMERIC without precision and scale.
 const DIALECTS: Record<DbDialect, DialectConfig> = {
-  spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", displayName: "Cloud Spanner", writesSchemaName: false, columnDoc: null },
-  postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", displayName: "PostgreSQL", writesSchemaName: true, columnDoc: null },
-  bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", displayName: "BigQuery", writesSchemaName: true, columnDoc: escapeSqlString },
+  spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", displayName: "Cloud Spanner", writesSchemaName: false },
+  postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", displayName: "PostgreSQL", writesSchemaName: true },
+  bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", displayName: "BigQuery", writesSchemaName: true },
 };
 
 /**
@@ -140,8 +130,18 @@ function pascal(name: string): string | null {
   return joined || null;
 }
 
-/** Collapse line breaks (the DDL puts a description in a one-line comment or a one-line quoted string). */
-const oneLine = (text: string): string => text.replace(/\r\n|\r|\n/g, " ");
+/**
+ * Collapse line breaks (the DDL puts a description in a one-line comment or a one-line quoted string). Besides CR, LF and
+ * CRLF this takes the other characters that tools split a line on (VT, FF, NEL, LS, PS: Python's `splitlines()` ends a
+ * `--` comment at U+2028, and what follows would run as SQL).
+ */
+const oneLine = (text: string): string => text.replace(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/g, " ");
+
+/** A description as the DDL carries it: one line, ends trimmed; null when nothing is left (an empty comment is noise). */
+function descriptionText(description: string | undefined): string | null {
+  const text = oneLine(description ?? "").trim();
+  return text === "" ? null : text;
+}
 
 /** The `@doc("…")` decorator for text: one line, then escaped for a TypeSpec string (`\`, `"`, `${`, tab, …). */
 const docDecorator = (text: string): string => `@doc("${escapeString(oneLine(text))}")`;
@@ -287,8 +287,8 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
   if (cfg.writesSchemaName) warnings.push(...identifierWarnings(dialect, "schema", schemaName));
   for (const { field, ident } of columns) {
     const column = emittedName(ident);
-    const description = field.decorators?.semantics?.description || field.description;
-    warnings.push(...identifierWarnings(dialect, "column", column), ...fieldWarnings(dialect, field, column, cfg.columnDoc && description ? oneLine(description) : null));
+    const description = descriptionText(field.decorators?.semantics?.description || field.description);
+    warnings.push(...identifierWarnings(dialect, "column", column), ...fieldWarnings(dialect, field, column, description));
   }
   if (dialect === "postgres") warnings.push(...truncationWarnings(columns.map(({ ident }) => emittedName(ident))));
 
@@ -300,8 +300,9 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
   lines.push(`@schema("${escapeString(schemaName)}")`);
   lines.push(`namespace ${ns};`, "");
 
-  if (model.entity.description) {
-    lines.push(docDecorator(model.entity.description));
+  const tableText = descriptionText(model.entity.description);
+  if (tableText !== null) {
+    lines.push(docDecorator(tableText));
   }
   // Spanner age-based retention → real ROW DELETION POLICY (D6 escalation); only @typespec/spanner has the decorator.
   if (dialect === "spanner") {
@@ -336,9 +337,9 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
       decs.push(`@maxLength(${maxLen})`);
     }
 
-    const desc = f.decorators?.semantics?.description || f.description;
-    if (desc && cfg.columnDoc) {
-      decs.push(docDecorator(cfg.columnDoc(oneLine(desc))));
+    const desc = descriptionText(f.decorators?.semantics?.description || f.description);
+    if (desc !== null) {
+      decs.push(docDecorator(desc));
     }
 
     // Primary keys are never nullable.

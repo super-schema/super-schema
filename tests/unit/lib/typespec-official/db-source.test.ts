@@ -82,24 +82,32 @@ describe("buildDbTypeSpecSource: documentation", () => {
     }
   });
 
-  it("puts no @doc on a column for spanner and postgres: their emitters write it as ` -- text` and then the column's comma, which the comment swallows", () => {
-    for (const target of ["spanner", "postgresql"]) {
+  it("puts the field's description on its column as @doc for every dialect (the emitters write the comma before the comment)", () => {
+    for (const { target } of DIALECTS) {
       const source = buildDbTypeSpecSource(model({ fields: described }), target);
-      expect(source).not.toContain("Primary key");
-      expect(source).not.toContain("Amount in minor units");
+      expect(source, target).toContain('@primaryKey @doc("Primary key") transactionId: string;');
+      expect(source, target).toContain('@doc("Amount in minor units") amount: decimal;');
     }
   });
 
-  it("keeps a column's @doc for bigquery (written as OPTIONS(description=...), which is valid DDL)", () => {
-    const source = buildDbTypeSpecSource(model({ fields: described }), "bigquery");
-    expect(source).toContain('@primaryKey @doc("Primary key") transactionId: string;');
-    expect(source).toContain('@doc("Amount in minor units") amount: decimal;');
+  it("puts no @doc on a column whose description is empty or only whitespace and line breaks", () => {
+    const blank = [
+      field({ name: "id", type: "string", isKey: true, sortOrder: 0, description: "" }),
+      field({ name: "spaces", type: "string", sortOrder: 1, description: "  \t \r\n " }),
+    ];
+    for (const { target } of DIALECTS) {
+      const source = buildDbTypeSpecSource(model({ fields: blank }), target);
+      expect(source, target).not.toMatch(/@doc\("\s*"\)/);
+      expect(source.match(/@doc\(/g), target).toHaveLength(1); // the table's own
+    }
   });
 
-  it("escapes a quote and a backslash in a bigquery column description for the single-quoted SQL string the emitter writes it into", () => {
+  it("escapes a quote and a backslash for the TypeSpec string only: the BigQuery emitter escapes them for SQL itself", () => {
     const tricky = [field({ name: "id", type: "string", isKey: true, sortOrder: 0, description: "Customer's id, C:\\dir" })];
-    // SQL text `Customer\'s id, C:\\dir`, then written as a TypeSpec string literal (every backslash doubled again)
-    expect(buildDbTypeSpecSource(model({ fields: tricky }), "bigquery")).toContain('@doc("Customer\\\\\'s id, C:\\\\\\\\dir")');
+    // TypeSpec text `Customer's id, C:\\dir` (every backslash doubled once); no SQL escaping on top for any dialect
+    for (const { target } of DIALECTS) {
+      expect(buildDbTypeSpecSource(model({ fields: tricky }), target), target).toContain('@doc("Customer\'s id, C:\\\\dir")');
+    }
   });
 });
 
