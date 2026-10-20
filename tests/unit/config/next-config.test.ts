@@ -17,3 +17,20 @@ describe("next.config — in-process TypeSpec compiler", () => {
     expect(host).toMatch(/getJsImport:\s*\(path\)\s*=>\s*import\(pathToFileURL\(path\)\.href\)/);
   });
 });
+
+describe("next.config — the AsyncAPI parser worker", () => {
+  it("ships the worker file in the standalone output for every route (the runner forks it by a path no tracer can see through)", () => {
+    expect(nextConfig.outputFileTracingIncludes?.["/**"]).toContain("./worker-dist/asyncapi-parser-worker.cjs");
+  });
+
+  it("keeps the AsyncAPI preview files in the standalone output", () => {
+    expect(nextConfig.outputFileTracingIncludes?.["/api/asyncapi-preview/*"]).toHaveLength(2);
+  });
+
+  it("builds the worker before `next dev` and `next build` (npm run build:parser-worker), so nobody has to remember it", () => {
+    const scripts = (JSON.parse(readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as { scripts: Record<string, string> }).scripts;
+    expect(scripts["build:parser-worker"]).toBe("node scripts/build-parser-worker.mjs");
+    expect(scripts.predev).toContain("npm run build:parser-worker");
+    expect(scripts.prebuild).toContain("npm run build:parser-worker");
+  });
+});

@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { createAsyncApiParser } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { createAsyncApiParser } from "@/lib/event-specs/validation/parser-core";
 import * as importer from "@/lib/events/import";
 import { parseAsyncApiSource } from "@/lib/events/import/source";
 

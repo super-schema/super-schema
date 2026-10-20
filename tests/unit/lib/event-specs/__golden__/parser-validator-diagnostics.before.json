@@ -1,0 +1,1440 @@
+{
+  "fixtures/builtin-traits.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/builtin-traits.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/builtin-traits.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/publishOrderCreated/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/publishOrderCreated/messages/0"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/builtin-traits.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/builtin-traits.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/builtin-traits.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/http-websocket-minimal.json": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/http-websocket-minimal.json#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/http-websocket-minimal.json#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/placeOrder/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/placeOrder/messages/0"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/http-websocket-minimal.json#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/http-websocket-minimal.json#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/http-websocket-minimal.json#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/inline-messages-and-traits.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/inline-messages-and-traits.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/inline-messages-and-traits.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/onUserSignedUp/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/onUserSignedUp/messages/0"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/inline-messages-and-traits.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/inline-messages-and-traits.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/inline-messages-and-traits.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/multi-format-payloads.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/multi-format-payloads.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/multi-format-payloads.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/receiveReadings/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveReadings/messages/0"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveReadings/messages/1"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveReadings/messages/2"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveReadings/messages/3"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveReadings/messages/4"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveReadings/messages/5"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/multi-format-payloads.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/multi-format-payloads.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/multi-format-payloads.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-payload-placeholder.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-payload-placeholder.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-payload-placeholder.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/publishNodeCreated/channel/$ref"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-payload-placeholder.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-payload-placeholder.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-payload-placeholder.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-schemas.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-schemas.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-schemas.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/receiveComments/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveComments/messages/0"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveComments/messages/1"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-schemas.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-schemas.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/recursive-schemas.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/request-reply.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/request-reply.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/request-reply.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/askPrice/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/askPrice/messages/0"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/request-reply.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/request-reply.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/request-reply.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-kafka.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-kafka.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-kafka.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/receiveLightMeasurement/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveLightMeasurement/messages/0"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-kafka.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-kafka.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-kafka.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-mqtt.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-mqtt.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-mqtt.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/receiveLightMeasurement/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveLightMeasurement/messages/0"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-mqtt.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-mqtt.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/streetlights-mqtt.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/unsupported-payloads.yaml": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/unsupported-payloads.yaml#no-title": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"info\" property must have required property \"title\"",
+      "pointer": "/info"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/unsupported-payloads.yaml#dangling-channel-ref": [
+    {
+      "severity": "error",
+      "code": "invalid-ref",
+      "message": "'#/channels/does-not-exist' does not exist",
+      "pointer": "/operations/receiveEvents/channel/$ref"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveEvents/messages/0"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveEvents/messages/1"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi3-operation-messages-from-referred-channel",
+      "message": "Operation message does not belong to the specified channel.",
+      "pointer": "/operations/receiveEvents/messages/2"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/unsupported-payloads.yaml#server-without-host": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"broken\" property must have required property \"host\"",
+      "pointer": "/servers/broken"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/unsupported-payloads.yaml#bad-avro-payload": [
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"payload\" property must match \"then\" schema",
+      "pointer": "/components/messages/zzAvro/payload"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"items\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"size\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property must have required property \"values\"",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be array",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"schema\" property type must be string",
+      "pointer": "/components/messages/zzAvro/payload/schema"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to constant",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "error",
+      "code": "asyncapi-document-resolved",
+      "message": "\"type\" property must be equal to one of the allowed values",
+      "pointer": "/components/messages/zzAvro/payload/schema/type"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "fixtures/unsupported-payloads.yaml#kafka-key-and-2020-12": [
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_INVALID",
+      "message": "Kafka key Avro schema is invalid: unknown type: \"nope\"",
+      "pointer": "/components/messages/zzKey/bindings/kafka/key"
+    },
+    {
+      "severity": "error",
+      "code": "KAFKA_KEY_SCHEMA_FORMAT_UNSUPPORTED",
+      "message": "Kafka key schemaFormat \"application/x-unknown\" is not supported; use Avro or JSON Schema",
+      "pointer": "/components/messages/zzOther/bindings/kafka/key"
+    },
+    {
+      "severity": "warning",
+      "code": "PAYLOAD_NOT_VALIDATED",
+      "message": "Schema format \"application/schema+json;version=2020-12\" has no schema parser in @asyncapi/parser; this JSON Schema 2020-12 schema was NOT validated",
+      "pointer": "/components/messages/zzNew/payload"
+    },
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "__golden__/checkout-service.asyncapi.json": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ],
+  "__golden__/fraud-scorer.asyncapi.json": [
+    {
+      "severity": "info",
+      "code": "asyncapi-latest-version",
+      "message": "The latest version of AsyncAPi is not used. It is recommended update to the \"3.1.0\" version.",
+      "pointer": "/asyncapi"
+    }
+  ]
+}

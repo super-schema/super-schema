@@ -1,7 +1,7 @@
 import "dotenv/config"; // first: @/lib/db (pulled in by the services) reads DB_PROVIDER at import time
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Parser } from "@asyncapi/parser";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -63,6 +63,16 @@ afterAll(async () => {
   for (const cleanup of cleanups) await cleanup().catch(() => undefined);
   await cleanupDomains(prisma, domainIds);
   await prisma.$disconnect();
+});
+
+/**
+ * The AsyncAPI parser and the read of the file run in a worker process (`parser-runner.ts`), where a test cannot replace or count them. The
+ * tests that spy on `Parser.prototype` (to queue a diagnostic, or to count the parser's runs) run the job in THIS process instead, with the
+ * runner's debugging switch; every other test goes through the real worker.
+ */
+const inProcessParser = () => vi.stubEnv("ASYNCAPI_PARSER_IN_PROCESS", "1");
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 const FIXTURES = path.join(process.cwd(), "tests", "fixtures", "asyncapi-import");
@@ -510,6 +520,7 @@ describe("importAsyncApi: names", () => {
 });
 
 describe("importAsyncApi: what the AsyncAPI parser says", () => {
+  beforeEach(inProcessParser); // every test here queues a diagnostic on `Parser.prototype.validate`
   const diagnostic = (code: string, severity: number, message: string, at: string[]) => ({ code, severity, message, path: at, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } });
 
   it("reports its warnings (VALIDATION_WARNING, with the pointer) and drops pure advice such as the latest-version hint", async () => {
@@ -910,7 +921,10 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     document.components.schemas = schemas;
     return JSON.stringify(document);
   };
-  const parserRuns = () => vi.spyOn(Parser.prototype, "validate").mock.calls.length;
+  const parserRuns = () => {
+    inProcessParser(); // the count is of calls to `Parser.prototype.validate`, which only an in-process run makes
+    return vi.spyOn(Parser.prototype, "validate").mock.calls.length;
+  };
 
   it("a 2.5 KB document whose references expand to 15 MB (a doubling chain of 17) is refused before the AsyncAPI parser runs, quickly, and creates nothing", async () => {
     const { ctx, productId } = await setup();
@@ -1047,8 +1061,8 @@ describe("importAsyncApi: an invalid or hostile document creates nothing", () =>
     unwrap(await previewAsyncApiImport(productId, { content: many }, ctx));
 
     // about 1 s here. One object is bounded (a 2,000-key one is about 0.2 s; one of 109,623 keys was 95 s), the FILE is not: it can hold about
-    // sixty such objects (60 channels of 1,999 `parameters` entries took 9.4 s in the parser, 70 objects of 1,999 keys 3.7 s), the event loop
-    // blocked meanwhile. That is the known limitation (a worker thread with a hard timeout is the follow-up), so no test claims otherwise.
+    // sixty such objects (60 channels of 1,999 `parameters` entries took 9.4 s in the parser, 70 objects of 1,999 keys 3.7 s). That is what the
+    // time limit of the parser's worker process is for (`asyncapi-import-isolation.test.ts` runs that file: cut at the limit, the loop free).
     expect(Date.now() - started).toBeLessThan(6_000);
     expect(parserRuns() - before).toBe(2);
   }, 120_000);

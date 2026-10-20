@@ -12,19 +12,22 @@
 // with the AsyncAPI parser; map the document ONCE with stand-in pins (extracting the payloads succeeding does not mean mapping will: a
 // missing title, an operation without a channel and an oversized expansion are only found by mapping); and only then write: entities (one
 // transaction), the event, the document. If either of the last two fails, what was created is deleted again and the error says so.
-// The importers and the parser are synchronous stretches of CPU that nothing can interrupt, so there is no time limit: the limits bound
-// what each is given, not what the whole file can cost (see the known limitation in `import-limits.ts`).
-import type { Parser } from "@asyncapi/parser";
+// Time: the two steps that can cost seconds on a hostile file run in a child process with a hard timeout (`parser-runner.ts`): the read of the
+// file (`parseAsyncApiSource`: 4 s) and the AsyncAPI parser (15 s); a file that exceeds one is refused with a plain message and nothing is
+// created, and the server's event loop is never blocked by them. The importers, the payload extraction and the mapper stay in this process:
+// they are synchronous stretches of CPU that nothing can interrupt, so their cost is bounded only by the limits on what each is given (see
+// the known limitation in `import-limits.ts`).
 import type { LevelScope } from "@/lib/levels";
 import { resolveScope } from "@/lib/asset-scope";
 import { checkImportSize } from "@/lib/compiler/import-limits";
-import { createAsyncApiParser, isParserCrashDiagnostic, mapParserDiagnostic } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { isParserCrashDiagnostic, mapParserDiagnostic } from "@/lib/event-specs/validation/asyncapi-parser-validator";
+import { runParserJob, timeoutOf, tooComplexLead } from "@/lib/event-specs/validation/parser-runner";
 import { normalizeDiagnostics } from "@/lib/event-specs/diagnostics";
 import { BUNDLED_TRAITS, bundledMarker } from "@/lib/events/bundled-traits";
 import { slugKey } from "@/lib/events/document/keys";
 import { isLibraryTrait, type EventDocument } from "@/lib/events/document/types";
 import {
-  builtInKindOfMarker, extractPayloads, mapAsyncApiToEventDocument, parseAsyncApiSource,
+  builtInKindOfMarker, extractPayloads, mapAsyncApiToEventDocument,
   type BuiltInTraitKind, type ImportWarning, type MapContext, type RawAsyncApi3,
 } from "@/lib/events/import";
 import { omittedWarningsMessage } from "@/lib/events/import/bound";
@@ -58,14 +61,37 @@ export interface AsyncApiImportPreview {
   warnings: ImportWarning[];
 }
 
-/** The parser is expensive to build and holds no document state: one per process, like the emit validators. */
-let sharedParser: Parser | undefined;
-
 const invalid = (message: string, suggestedFix?: string) => err({ code: "VALIDATION_ERROR", message, ...(suggestedFix && { suggestedFix }) });
 const internalFailure = (label: string, cause: unknown): Result<never> => {
   console.error(`[${label}] unexpected error`, cause);
   return err({ code: "INTERNAL_ERROR", message: GENERIC_ACTION_ERROR });
 };
+
+/** What a user is told when the runner's limits stop a step; the wording is the user's, plain, with no text from the document. */
+const TOO_SLOW_TO_READ = "This file takes too long to read (it may contain a very large number of syntax errors). Check that it is valid YAML or JSON and import it again.";
+const TOO_COMPLEX_TO_VALIDATE_FIX = "Split it into smaller events, or remove the unusually large parts, and import it again.";
+const VALIDATOR_BUSY = "The validator is busy. Try again in a moment.";
+
+/**
+ * A failure of the runner (`parser-runner.ts`) as the importer reports it, for the step named by `step`: a time limit and a busy pool are
+ * `VALIDATION_ERROR`s the dialog can show (plain text, nothing was created); any other failure (a crashed or missing worker, the parser
+ * throwing) is the generic internal error, its cause already in the server log.
+ */
+function runnerFailure(error: ServiceError, step: "read" | "validate"): Result<never> {
+  switch (error.code) {
+    case "PARSER_TIMEOUT":
+      return step === "read" ? invalid(TOO_SLOW_TO_READ) : invalid(tooComplexLead(timeoutOf(error)), TOO_COMPLEX_TO_VALIDATE_FIX);
+    case "PARSER_BUSY":
+      return invalid(VALIDATOR_BUSY);
+    case "PARSER_MESSAGE_TOO_LARGE":
+      // the file itself is capped at 1 MiB: what is over the message limit is what it EXPANDS to (YAML aliases) or the problems found in it
+      return step === "read"
+        ? err({ code: "TOO_LARGE", message: "The AsyncAPI document is too large to import once it is read in full (YAML aliases expand when the file is read).", suggestedFix: "Write the repeated parts out less, or import a smaller document." })
+        : invalid("This document is too large, or has too many problems, to validate here.", TOO_COMPLEX_TO_VALIDATE_FIX);
+    default:
+      return internalFailure(`asyncapi-import ${step}`, error.code);
+  }
+}
 
 /** The input arrives from the browser untyped: anything but `{ content: string, fileName?: string, eventName?: string }` is refused before a query or a parser runs. */
 function readInput(input: unknown): Result<{ content: string; fileName?: string; eventName?: string }> {
@@ -89,18 +115,19 @@ function readInput(input: unknown): Result<{ content: string; fileName?: string;
  * The AsyncAPI parser's verdict on the document: any error blocks the import (nothing is written at all: the tenant's built-in library traits are installed only after this step); warnings are reported (the first
  * `MAX_PARSER_WARNINGS`, then one summary line); info and hints are style advice and are dropped.
  *
- * NOT time-bounded, and not interruptible: the parser is asynchronous in name only. It runs long synchronous stretches (Spectral), so a
- * timer cannot fire in the middle of them and racing it against one would only guard a promise that never settles. The caller bounds its
- * INPUT before this runs: the file (1 MiB), the entries of any one object (`checkEntryCounts`: its cost also grows with the square of
- * that) and the size of the document once its `$ref`s are replaced by their targets (`checkExpandedSize`: roughly 1 - 2.5 s per MiB
- * depending on the shape, about 5 s at 4 MiB for the densest, so the limit is 2 MiB). That bounds each piece, NOT the file: a document of
- * about 1 MiB that passes every cap can still cost about 10 s here (60 channels of 1,999 `parameters` entries: 9.4 s, 119,941
- * diagnostics; 70 objects of 1,999 keys: 3.7 s) with the event loop blocked meanwhile. A worker thread with a hard timeout is the real
- * bound; it is a known limitation and a follow-up (see `import-limits.ts`).
+ * TIME-BOUNDED: the parser is synchronous Spectral, so it runs in a child process (`runParserJob`, kind `importValidate`) that is killed after
+ * 15 s: the document is then refused with a plain `VALIDATION_ERROR` ("too complex to validate here") and nothing is created. Without that a
+ * document of about 1 MiB that passes every cap blocked the server's event loop for about 10 s (60 channels of 1,999 `parameters` entries:
+ * 9.4 s, 119,941 diagnostics; 70 objects of 1,999 keys: 3.7 s); now the server keeps answering meanwhile. The caller still bounds the INPUT
+ * of the parser (the file: 1 MiB; the entries of any one object, `checkEntryCounts`: its cost also grows with the square of that; the size
+ * of the document once its `$ref`s are replaced by their targets, `checkExpandedSize`: roughly 1 - 2.5 s per MiB depending on the shape, so
+ * the limit is 2 MiB), so that an ordinary document is never near the limit and the pool's workers are not spent on junk. The mapping of the
+ * answer stays here (`mapParserDiagnostic`, the crash check), so what the user sees is what the in-process parser produced.
  */
 async function validateWithParser(raw: RawAsyncApi3): Promise<Result<ImportWarning[]>> {
-  sharedParser ??= createAsyncApiParser();
-  const found = await sharedParser.validate(raw);
+  const job = await runParserJob({ kind: "importValidate", document: raw });
+  if (!job.success) return runnerFailure(job.error, "validate");
+  const found = job.data.diagnostics;
   // A crash inside the validator comes back as a diagnostic carrying the exception text and its stack: log it, never show it.
   const crash = found.find(isParserCrashDiagnostic);
   if (crash) return internalFailure("asyncapi-import validate", crash.message);
@@ -194,11 +221,13 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const scope = resolved.data;
   const sized = checkImportSize(content, "AsyncAPI document");
   if (!sized.success) return sized;
-  // 1b. Read the file (linear: it refuses what is hostile, too deep or repeated; but a flood of syntax errors still costs 5 - 9 s at 1 MiB,
-  // see KNOWN LIMITATION in `import-limits.ts`), then bound what everything slow is given: the entries of
+  // 1b. Read the file (in the parser runner's child process, 4 s at most: it is linear and refuses what is hostile, too deep or repeated, but a
+  // flood of syntax errors still costs 5 - 9 s at 1 MiB, see KNOWN LIMITATION in `import-limits.ts`), then bound what everything slow is given: the entries of
   // one object (the AsyncAPI parser's cost grows with their square) and of one list (the mapper de-duplicates quadratically), and the size
   // of the document once every reference is replaced by its target (a few bytes of references to a shared definition can be megabytes).
-  const parsed = parseAsyncApiSource(content);
+  const fileRead = await runParserJob({ kind: "parseSource", text: content });
+  if (!fileRead.success) return runnerFailure(fileRead.error, "read");
+  const parsed = fileRead.data;
   if (!parsed.success) return parsed;
   const raw = parsed.data;
   const entryCounts = checkEntryCounts(raw);
@@ -217,7 +246,7 @@ async function prepare(productId: string, input: unknown, ctx: ServiceContext, i
   const planLimits = checkPlanLimits(planned.plans);
   if (!planLimits.success) return planLimits;
 
-  // 3. The AsyncAPI parser: an error means nothing is written at all (the built-in traits are installed in step 4). It cannot be interrupted; what it is given was bounded above.
+  // 3. The AsyncAPI parser, in the runner's child process (15 s at most): an error means nothing is written at all (the built-in traits are installed in step 4).
   const validated = await validateWithParser(raw);
   if (!validated.success) return validated;
 
