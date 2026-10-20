@@ -22,7 +22,7 @@ import { toast } from "sonner";
 import { getSchemaVersionsAction, generateSchemaAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
 import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "../actions";
 import { SchemaCodePreview } from "./SchemaCodePreview";
-import { generationWarningNotice } from "./generate-warnings";
+import { generationWarningToast, stagedWarningToast } from "./generate-warnings";
 import { StagedEmitDialog } from "@/features/emission/StagedEmitDialog/StagedEmitDialog";
 import { getTargetTypeOptions, type TargetTypeOption } from "@/lib/type-mapping/target-type-catalog";
 import {
@@ -430,10 +430,10 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     try {
       const result = await generateSchemaAction(entityId, targetKey);
       if (result.error) { toast.error(result.error); return; }
-      // A target generated WITH warnings (status WARNING) says so in one toast instead of the plain success one;
-      // the preview panel lists all of them.
-      const warningNotice = generationWarningNotice(result.warnings);
-      if (warningNotice) toast.warning(warningNotice);
+      // A target generated WITH warnings (status WARNING) says so in one toast instead of the plain success one, and
+      // lists them there: nothing else shows them (the SchemaVersion stores none).
+      const warningToast = generationWarningToast(result.warnings);
+      if (warningToast) toast.warning(warningToast.title, warningToast.options);
       else toast.success(`${getTargetMeta(targetKey).displayName} schema generated (Draft)`);
       await loadVersions();
     } catch { toast.error("Generation failed"); }
@@ -456,14 +456,19 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     setStagedOpen(false);
     setIsGenerating(true);
     let ok = 0;
+    const runs: Array<{ label: string; warnings: string[] | undefined }> = [];
     try {
       for (const targetKey of selectedTargets) {
         const result = await generateSchemaAction(entityId, targetKey);
         if (result.error) { toast.error(`${getTargetMeta(targetKey).displayName}: ${result.error}`); continue; }
         ok += 1;
+        runs.push({ label: getTargetMeta(targetKey).displayName, warnings: result.warnings });
       }
       if (ok > 0) {
-        toast.success(`Generated ${ok} schema${ok === 1 ? "" : "s"} (Draft)`);
+        // One toast for the whole run: the plain success text unless some target had warnings, then they are listed.
+        const warningToast = stagedWarningToast(ok, runs);
+        if (warningToast) toast.warning(warningToast.title, warningToast.options);
+        else toast.success(`Generated ${ok} schema${ok === 1 ? "" : "s"} (Draft)`);
         await loadVersions();
       }
     } catch { toast.error("Staged emission failed"); }
@@ -498,7 +503,10 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
         return;
       }
 
-      toast.success("Override applied — schema regenerated");
+      // The save regenerates the schema: its warnings are the generation's, shown the same way.
+      const warningToast = generationWarningToast(saveResult.warnings);
+      if (warningToast) toast.warning(warningToast.title, warningToast.options);
+      else toast.success("Override applied — schema regenerated");
       await loadVersions();
     } catch {
       toast.error("Failed to apply override");
