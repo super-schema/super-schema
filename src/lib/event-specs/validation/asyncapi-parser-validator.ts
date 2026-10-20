@@ -70,16 +70,23 @@ export function mapParserDiagnostic(d: ParserDiagnostic): Diagnostic {
 const PARSER_CRASHED_MESSAGE =
   "The AsyncAPI parser could not process this document. Nothing is wrong that you can fix here: try again, and contact an administrator if it keeps happening.";
 
-/** A stack line (`\n    at Foo (file:1:2)`), a `node_modules` path, or an absolute server path (`/Users/x/`, `/home/x/`, `C:\`). */
-const CRASH_TEXT = /\n\s+at \S+ \(|node_modules|\/(?:Users|home)\/[^/\s]+\/|\b[A-Za-z]:\\[^\s]/;
+/**
+ * What a crash TEXT looks like: a real V8 stack-frame line (`\n    at Foo.bar (/srv/app/file.js:35:33)` or `\n    at /srv/app/file.js:35:33`), or an absolute
+ * path to a file with its position (`/Users/x/app/file.js:35:33`, `C:\\app\\file.js:35`). Plain words such as `node_modules`, `home` or `Users` in a
+ * pointer or a name (`#/channels/home/messages/nope`, `#/components/schemas/node_modules`) are NOT a crash: the parser's own diagnostics
+ * about them are ordinary ones and must reach the user as they are.
+ */
+const STACK_FRAME = /\n\s+at (?:\S+ \(.+:\d+:\d+\)|.+:\d+:\d+)/;
+const FILE_POSITION = /(?:^|[\s(])(?:\/(?:[^\s/:()]+\/)*[^\s/:()]+|[A-Za-z]:\\(?:[^\s\\:()]+\\)*[^\s\\:()]+)\.[A-Za-z][A-Za-z0-9]{0,7}:\d+(?::\d+)?/;
 
 /**
- * True for a parser diagnostic that reports a CRASH of the parser (it catches its own exceptions and returns them as the `uncaught-error`
- * diagnostic, whose message carries the exception's name, message and stack with absolute server paths), or whose text looks like one.
- * Such a text is never shown to a user. Takes the parser's own diagnostics as well as ours.
+ * True for a parser diagnostic that reports a CRASH of the parser: its code is `uncaught-error` (the parser catches its own exceptions and
+ * returns them so, with the exception's name, message and stack and absolute server paths), or its message holds a real stack-frame line, or an
+ * absolute path with a file position (see `STACK_FRAME`, `FILE_POSITION`). Such a text is never shown to a user. Takes the parser's own
+ * diagnostics as well as ours.
  */
 export function isParserCrashDiagnostic(d: { code: string | number; message: string }): boolean {
-  return String(d.code) === "uncaught-error" || CRASH_TEXT.test(d.message);
+  return String(d.code) === "uncaught-error" || STACK_FRAME.test(d.message) || FILE_POSITION.test(d.message);
 }
 
 /**
@@ -99,6 +106,9 @@ export function sanitizeParserDiagnostics(list: Diagnostic[]): Diagnostic[] {
   return kept;
 }
 
+/** RFC 6901 pointer of `segments`, built without spreading them (a document can be deeper than a call may have arguments). */
+const pointerOfSegments = (segments: ReadonlyArray<string | number>): string => segments.map((segment) => `/${escapePointerSegment(String(segment))}`).join("");
+
 /** The most `PARSER_UNSAFE_KEY` errors one document reports (a document that has one such key usually has many copies of it). */
 const MAX_UNSAFE_KEY_DIAGNOSTICS = 20;
 /** The guard looks at no more than this many keys and array items; a larger document is left to the parser. */
@@ -107,13 +117,19 @@ const MAX_GUARD_VALUES = 2_000_000;
 const UNSAFE_KEY_REASON = "is a built-in JavaScript name that AsyncAPI tools cannot read, so this document cannot be published with it.";
 
 /**
- * What to tell the user about the unsafe `key` found in the object at `parents`. A key in a `properties` map of a message PAYLOAD
- * (`/components/messages/<message>/payload/schema/…/properties/<key>`) is a field of an entity: name it, the message, and where to fix
- * it. Any other key is named as it is (the diagnostic's pointer says where).
+ * What to tell the user about the unsafe `key` found in the object at `parents`:
+ * - a key in a `properties` map of a message PAYLOAD (`/components/messages/<message>/payload/schema/…/properties/<key>`) is a FIELD of an
+ *   entity: name it, the message, and where to fix it;
+ * - a key in the `definitions` / `$defs` map of a payload schema, or a component schema name (`/components/schemas/<key>`), is the NAME of an
+ *   entity (or model) the payload refers to;
+ * - any other key is named as it is (the diagnostic's pointer says where).
  */
 function unsafeKeyMessage(parents: ReadonlyArray<string | number>, key: string): string {
-  const inPayload = parents[0] === "components" && parents[1] === "messages" && parents[3] === "payload" && parents[parents.length - 1] === "properties";
-  if (inPayload) return `The field "${key}" in the payload of the message "${parents[2]}" ${UNSAFE_KEY_REASON} Rename the field in its entity.`;
+  const inPayload = parents[0] === "components" && parents[1] === "messages" && parents[3] === "payload";
+  const last = parents[parents.length - 1];
+  if (inPayload && last === "properties") return `The field "${key}" in the payload of the message "${parents[2]}" ${UNSAFE_KEY_REASON} Rename the field in its entity.`;
+  const isComponentSchema = parents.length === 2 && parents[0] === "components" && parents[1] === "schemas";
+  if ((inPayload && (last === "definitions" || last === "$defs")) || isComponentSchema) return `The name "${key}" ${UNSAFE_KEY_REASON} Rename the entity (or model).`;
   return `The key "${key}" ${UNSAFE_KEY_REASON} Rename it.`;
 }
 
@@ -136,8 +152,6 @@ export function findParserUnsafeKeys(document: unknown): Diagnostic[] {
     for (let f: Frame | null = frame; f !== null && f.parent !== null; f = f.parent) parts.push(f.key);
     return parts.reverse();
   };
-  const pointerOf = (parents: ReadonlyArray<string | number>, key: string): string =>
-    [...parents, key].map((segment) => `/${escapePointerSegment(String(segment))}`).join("");
   let values = 0;
   try {
     while (stack.length > 0 && found.length < MAX_UNSAFE_KEY_DIAGNOSTICS) {
@@ -160,7 +174,7 @@ export function findParserUnsafeKeys(document: unknown): Diagnostic[] {
         const parents = keysAbove(frame);
         for (const key of keys) {
           if (found.length >= MAX_UNSAFE_KEY_DIAGNOSTICS) break;
-          if (isParserUnsafeKey(key)) found.push(diagnostic("error", "PARSER_UNSAFE_KEY", unsafeKeyMessage(parents, key), pointerOf(parents, key)));
+          if (isParserUnsafeKey(key)) found.push(diagnostic("error", "PARSER_UNSAFE_KEY", unsafeKeyMessage(parents, key), pointerOfSegments([...parents, key])));
         }
       }
       for (let i = keys.length - 1; i >= 0; i -= 1) {
@@ -174,27 +188,35 @@ export function findParserUnsafeKeys(document: unknown): Diagnostic[] {
   return found;
 }
 
-/** Every non-local `$ref` in the document (any `$ref` key counts, as in the structural validator). */
-function findRemoteRefs(node: unknown, path: Array<string | number>, out: Diagnostic[]): void {
-  if (Array.isArray(node)) {
-    node.forEach((item, i) => findRemoteRefs(item, [...path, i], out));
-    return;
-  }
-  if (typeof node !== "object" || node === null) return;
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "$ref" && typeof value === "string") {
-      if (!value.startsWith("#")) {
-        out.push(
-          diagnostic(
-            "error",
-            "REMOTE_REF",
-            `Only local references are allowed, got "${value}"`,
-            jsonPointer(...path),
-          ),
-        );
-      }
-    } else {
-      findRemoteRefs(value, [...path, key], out);
+/**
+ * Every non-local `$ref` in the document (any `$ref` key counts, as in the structural validator). Iterative (a document can be deeper than
+ * the call stack allows: `validate` must never throw) and bounded like the unsafe-key guard (`MAX_GUARD_VALUES`).
+ */
+function findRemoteRefs(root: unknown, out: Diagnostic[]): void {
+  type Frame = { value: unknown; parent: Frame | null; key: string | number };
+  const stack: Frame[] = [{ value: root, parent: null, key: "" }];
+  const pathOf = (frame: Frame | null): Array<string | number> => {
+    const parts: Array<string | number> = [];
+    for (let f = frame; f !== null && f.parent !== null; f = f.parent) parts.push(f.key);
+    return parts.reverse();
+  };
+  let values = 0;
+  while (stack.length > 0) {
+    const frame = stack.pop() as Frame;
+    const node = frame.value;
+    if (typeof node !== "object" || node === null) continue;
+    const entries: Array<[string | number, unknown]> = Array.isArray(node) ? node.map((item, i): [number, unknown] => [i, item]) : Object.entries(node);
+    values += entries.length;
+    if (values > MAX_GUARD_VALUES) return;
+    // document order: the stack is last in, first out, so the children go on in reverse
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const [key, value] = entries[i];
+      if (key === "$ref" && typeof value === "string") continue;
+      stack.push({ value, parent: frame, key });
+    }
+    const ref = Array.isArray(node) ? undefined : (node as Record<string, unknown>)["$ref"];
+    if (typeof ref === "string" && !ref.startsWith("#")) {
+      out.push(diagnostic("error", "REMOTE_REF", `Only local references are allowed, got "${ref}"`, pointerOfSegments(pathOf(frame))));
     }
   }
 }
@@ -306,7 +328,7 @@ export class AsyncApiParserValidator implements EventSpecValidator {
    */
   async validate(document: object): Promise<Result<Diagnostic[]>> {
     const remote: Diagnostic[] = [];
-    findRemoteRefs(document, [], remote);
+    findRemoteRefs(document, remote);
     if (remote.length > 0) return ok(normalizeDiagnostics(remote));
     // A key the parser cannot read (`hasOwnProperty`) would crash it: refuse the document here, with the key and its pointer.
     const unsafe = findParserUnsafeKeys(document);

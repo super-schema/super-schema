@@ -294,6 +294,23 @@ describe("importAsyncApi: the happy path", () => {
       `The field "hasOwnProperty" was renamed to "hasOwnProperty_1": the name is reserved. It belongs to the entity "${record}".`,
     ]);
   }, 120_000);
+
+  it("an Avro record NAMED hasOwnProperty, and an event named so, get the allocator's next free name, with ENTITY_RENAMED warnings that say it is reserved", async () => {
+    const { ctx, s, productId } = await setup();
+    const avro = { type: "record", name: "hasOwnProperty", fields: [{ name: "id", type: "string" }] };
+    const content = smallDocument("Probe", { [`probe${s}`]: { payload: { schemaFormat: "application/vnd.apache.avro;version=1.9.0", schema: avro } } });
+
+    const { preview, eventId } = unwrap(await importAsyncApi(productId, { content, eventName: "hasOwnProperty" }, ctx));
+
+    expect(preview.entities).toEqual([{ requestedName: "hasOwnProperty", name: "hasOwnProperty2", renamed: true, fields: 1, format: "avro" }]);
+    expect(preview.eventName).toBe("hasOwnProperty3"); // 2 is the entity's: they share one name line
+    expect(preview.warnings.filter((w) => w.code === "ENTITY_RENAMED").map((w) => w.message).sort()).toEqual([
+      'The name "hasOwnProperty" is already used in this product (or is reserved), so the entity is named "hasOwnProperty2".',
+      'The name "hasOwnProperty" is already used in this product (or is reserved), so the event is named "hasOwnProperty3".',
+    ]);
+    expect((await entitiesOf(productId)).map((e) => e.name)).toEqual(["hasOwnProperty2"]);
+    expect(unwrap(await getEvent(eventId, ctx)).name).toBe("hasOwnProperty3");
+  }, 120_000);
 });
 
 describe("importAsyncApi: built-in traits", () => {
@@ -521,6 +538,24 @@ describe("importAsyncApi: what the AsyncAPI parser says", () => {
     spy.mockRestore();
     expect(failure(result)).toEqual({ code: "INTERNAL_ERROR", message: GENERIC_ACTION_ERROR });
     expect(JSON.stringify(result)).not.toMatch(/Users\/dev|spectral|stack/);
+    expect(await inventory(productId)).toEqual({ entities: 0, events: 0 });
+  }, 120_000);
+
+  it("a dangling $ref whose pointer holds the words home / node_modules is an ordinary validation error, not an internal failure", async () => {
+    const { ctx, productId } = await setup();
+    vi.spyOn(Parser.prototype, "validate").mockResolvedValueOnce([
+      diagnostic("invalid-ref", 0, "'#/channels/home/messages/nope' does not exist.", ["operations", "sendCreated", "messages", "0", "$ref"]),
+      diagnostic("invalid-ref", 0, "'#/components/schemas/node_modules' does not exist.", ["components", "messages", "m", "payload"]),
+    ] as never);
+
+    const result = await importAsyncApi(productId, { content: fixture("request-reply.yaml") }, ctx);
+
+    expect(failure(result)).toMatchObject({ code: "VALIDATION_ERROR" });
+    const problems = (failure(result)?.details as { problems: Array<{ code: string; message: string }> }).problems;
+    expect(problems.map((p) => [p.code, p.message]).sort()).toEqual([
+      ["invalid-ref", "'#/channels/home/messages/nope' does not exist."],
+      ["invalid-ref", "'#/components/schemas/node_modules' does not exist."],
+    ]);
     expect(await inventory(productId)).toEqual({ entities: 0, events: 0 });
   }, 120_000);
 

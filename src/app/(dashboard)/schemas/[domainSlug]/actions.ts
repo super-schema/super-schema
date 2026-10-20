@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
-import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
+import { firstReservedFieldNameMessage, renameReservedFields, renameReservedNames, reservedFieldNameMessage, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { inActiveTenant, isInActiveTenant, notFoundFailure, targetInActiveTenant, unexpectedFailure } from "@/lib/action-context";
@@ -302,6 +302,9 @@ export async function addModelFieldAction(
   if (!input.success) return failure(input.error);
   const name = trimmedName(input.data.name, "Field");
   if (!name.success) return failure(name.error);
+  // A field named like a key the AsyncAPI parser cannot read is refused (a model spread into an entity carries its fields into the payload).
+  const reservedField = reservedFieldNameMessage(name.data);
+  if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
 
   try {
     // Ownership of the PARENT: the model's domain must belong to the active tenant; anything else reads as missing.
@@ -362,9 +365,15 @@ export async function updateModelFieldAction(
     // Ownership: the field's model's domain must belong to the caller's active tenant; anything else reads as missing.
     const row = await prisma.modelFieldDefinition.findUnique({
       where: { id: id.data },
-      select: { model: { select: { domain: { select: { tenantId: true } } } } },
+      select: { name: true, model: { select: { domain: { select: { tenantId: true } } } } },
     });
     if (!row || !(await isInActiveTenant(row.model.domain.tenantId))) return { ...notFoundFailure("Field") };
+
+    // A RENAME to a name the AsyncAPI parser cannot read is refused; a name that does not change is not looked at (an old field stays editable).
+    if (typeof picked.data.name === "string" && picked.data.name !== row.name) {
+      const reservedField = reservedFieldNameMessage(picked.data.name);
+      if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
+    }
 
     await prisma.modelFieldDefinition.update({ where: { id: id.data }, data: picked.data as Prisma.ModelFieldDefinitionUpdateInput });
     revalidatePath("/schemas");
@@ -1306,7 +1315,11 @@ export async function createDomainAssetsFromImportAction(
         return false;
       };
 
-      for (const model of sortByInheritance(payload.models)) {
+      // A model, or a model field, named like a key the AsyncAPI parser cannot read is renamed (`_1`) and reported, like the entities below;
+      // a model that extends a renamed one follows it.
+      const note = (message: string) => skipped.push(message);
+      const reservedFreeModels = renameReservedNames(payload.models, (from, to) => note(reservedNameRenamedMessage("model", from, to))).items;
+      for (const model of sortByInheritance(reservedFreeModels)) {
         const name = model.name.trim();
         const existing = await tx.modelDefinition.findFirst({
           where: { name, domainId: payload.domainId },
@@ -1316,6 +1329,7 @@ export async function createDomainAssetsFromImportAction(
           skipped.push(`Model "${model.name}" already exists — skipped`);
           continue;
         }
+        const modelFields = renameReservedFields(model.fields, (from, to) => note(reservedFieldRenamedMessage(from, to, name, "model")));
         const created = await tx.modelDefinition.create({
           data: {
             name,
@@ -1325,7 +1339,7 @@ export async function createDomainAssetsFromImportAction(
             sourceNamespace: payload.namespace ?? null,
             extendsModelName: model.extends ?? null,
             fields: {
-              create: model.fields.map((field, index) => mapModelFieldCreateInput(field, index)),
+              create: modelFields.map((field, index) => mapModelFieldCreateInput(field, index)),
             },
           },
         });

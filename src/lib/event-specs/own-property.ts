@@ -13,9 +13,9 @@ export const RESERVED_KEYS: ReadonlySet<string> = new Set(["__proto__", "constru
 /**
  * RESERVED NAMES for as long as we use this AsyncAPI parser: the keys `@asyncapi/parser` cannot read. A document with one of them as an
  * object key (a channel, a message, a JSON Schema property, a binding, an `x-` extension, a server variable ...) makes the parser throw,
- * so such a name is refused everywhere a user can type one: the builder's key editors, the document parser, an entity's field names (the
- * field editor, the services, every importer) and, as the last line of defence for data that already has one, the validator every emitted
- * document passes through (`findParserUnsafeKeys`, `PARSER_UNSAFE_KEY`).
+ * so such a name is refused everywhere a user can type one: the builder's key editors, the document parser, the names of entities, models,
+ * enums and events (the name registry), an entity's field names (the field editor, the services, every importer) and, as the last line of
+ * defence for data that already has one, the validator every emitted document passes through (`findParserUnsafeKeys`, `PARSER_UNSAFE_KEY`).
  *
  * Causes (found by running every name of `Object.getOwnPropertyNames(Object.prototype)` through the real parser, see the sweep test):
  * - `hasOwnProperty`: `@stoplight/json-ref-resolver` (inside `@asyncapi/parser`) walks every object of the document with
@@ -27,8 +27,9 @@ export const RESERVED_KEYS: ReadonlySet<string> = new Set(["__proto__", "constru
  *
  * HOW TO LIFT IT: this set is the ONE place. When `@asyncapi/parser` / `@stoplight/json-ref-resolver` no longer crashes on a key named X
  * (or we ship a fixed copy of them), `tests/unit/lib/event-specs/parser-unsafe-keys-sweep.test.ts` goes red: remove X from this set and
- * every refusal listed above disappears with it. The list is empirical; the sweep test pins it. Lower-case `hasownproperty` and
- * `HasOwnProperty` are different names and are read fine.
+ * every refusal listed above disappears with it. THEN update or delete the tests that pin that name: grep the repo for it (the new tests take
+ * the name from this set; the older ones, the importer's and the builder's among them, still spell it out). The list is empirical; the sweep
+ * test pins it. Lower-case `hasownproperty` and `HasOwnProperty` are different names and are read fine.
  */
 export const PARSER_UNSAFE_KEYS: ReadonlySet<string> = new Set(["hasOwnProperty", "__proto__"]);
 

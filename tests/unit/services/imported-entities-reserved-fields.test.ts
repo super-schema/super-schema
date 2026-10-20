@@ -75,3 +75,53 @@ describe("createImportedEntities: a reserved field name", () => {
     expect((await r.written()).map(([n]) => n)).toEqual(["hasOwnProperty_1"]);
   });
 });
+
+describe("createImportedEntities: a reserved ENTITY name", () => {
+  /** Every entity of the batch is written; returns what the loop created and what it told. */
+  async function runBatch(entities: CreateImportedEntitiesArgs["entities"], overrides: Partial<CreateImportedEntitiesArgs> = {}) {
+    const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
+    const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
+    const notes: string[] = [];
+    const asked: string[] = [];
+    const refs = new Map<string, { id: string; productId: string }>();
+    const created = await createImportedEntities(tx, {
+      entities, productScope: { tenantId: "t", domainId: "d", productId: "p" }, productId: "p", ownerId: "u",
+      isNameFree: async (name) => { asked.push(name); return true; }, skip: () => undefined, note: (m) => notes.push(m), refs, ...overrides,
+    });
+    const written = create.mock.calls.map(([arg]) => arg.data as unknown as { name: string; parentEntityId?: string; fields: { create: Array<{ name: string; decorators?: Record<string, unknown> }> } });
+    return { created, notes, asked, written, refs };
+  }
+
+  it("renames it to hasOwnProperty_1, checks THAT name in the registry, and says so", async () => {
+    const r = await runBatch([{ name: "hasOwnProperty", fields: [field("id")] }]);
+    expect(r.created).toEqual([{ id: "id-hasOwnProperty_1", name: "hasOwnProperty_1" }]);
+    expect(r.asked).toEqual(["hasOwnProperty_1"]);
+    expect(r.notes).toEqual(['The entity "hasOwnProperty" was renamed to "hasOwnProperty_1": the name is reserved.']);
+  });
+
+  it("goes on to _2 when _1 is another entity of the batch (compared case-insensitively), and trims a padded name", async () => {
+    const r = await runBatch([{ name: " hasOwnProperty ", fields: [] }, { name: "HASOWNPROPERTY_1", fields: [] }]);
+    expect(r.written.map((w) => w.name)).toEqual(["hasOwnProperty_2", "HASOWNPROPERTY_1"]);
+  });
+
+  it("an entity that extends it, and a field that refers to it, follow the new name; the import's own name still finds the entity in refs", async () => {
+    const r = await runBatch([
+      { name: "hasOwnProperty", fields: [field("id")] },
+      { name: "Child", extends: "hasOwnProperty", fields: [
+        field("parent", { type: "reference", decorators: { referencedEntityName: "hasOwnProperty" } }),
+        field("many", { type: "array", decorators: { arrayElementType: "hasOwnProperty", referencedEntityName: "Other" } }),
+      ] },
+    ]);
+    const child = r.written[1];
+    expect(child.parentEntityId).toBe("id-hasOwnProperty_1");
+    expect(child.fields.create.map((f) => f.decorators)).toEqual([{ referencedEntityName: "hasOwnProperty_1" }, { arrayElementType: "hasOwnProperty_1", referencedEntityName: "Other" }]);
+    expect(r.refs.get("hasOwnProperty")?.id).toBe("id-hasOwnProperty_1");
+    expect(r.refs.get("hasOwnProperty_1")?.id).toBe("id-hasOwnProperty_1");
+  });
+
+  it("leaves hasownproperty, HasOwnProperty and hasOwnProperty2 alone, and notes nothing", async () => {
+    const r = await runBatch([{ name: "hasownproperty", fields: [] }, { name: "HasOwnProperty", fields: [] }, { name: "hasOwnProperty2", fields: [] }]);
+    expect(r.written.map((w) => w.name)).toEqual(["hasownproperty", "HasOwnProperty", "hasOwnProperty2"]);
+    expect(r.notes).toEqual([]);
+  });
+});

@@ -16,12 +16,14 @@ import type { Prisma } from "@/generated/prisma/client";
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
 import { reservedFieldNameMessage } from "@/lib/reserved-field-names";
 
-/** A field name the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`) is refused: the field would make every event that pins its entity unpublishable. */
+/**
+ * A field name the AsyncAPI parser cannot read (`PARSER_UNSAFE_KEYS`) is refused: the field would make every event that pins its entity
+ * unpublishable. The message already says what to do ("Choose another field name."), so there is no separate `suggestedFix` that a client
+ * joining the two would repeat.
+ */
 function reservedNameError(name: string) {
   const message = reservedFieldNameMessage(name);
-  return message === null
-    ? null
-    : err({ code: "VALIDATION_ERROR", message, suggestedFix: "Choose another field name." });
+  return message === null ? null : err({ code: "VALIDATION_ERROR", message });
 }
 
 export async function createField(

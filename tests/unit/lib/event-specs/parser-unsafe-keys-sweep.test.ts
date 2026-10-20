@@ -5,7 +5,7 @@
  * validator's guard must flag the same names, in the same places, and nothing else.
  */
 import { describe, expect, it, vi } from "vitest";
-import { PARSER_UNSAFE_KEYS } from "@/lib/event-specs/own-property";
+import { PARSER_UNSAFE_KEYS, RESERVED_KEYS } from "@/lib/event-specs/own-property";
 import { AsyncApiParserValidator, createAsyncApiParser, findParserUnsafeKeys } from "@/lib/event-specs/validation/asyncapi-parser-validator";
 import { KEY_POSITIONS, parserInput } from "./fixtures/unsafe-key-documents";
 
@@ -13,7 +13,8 @@ const NAMES = Object.getOwnPropertyNames(Object.prototype);
 const UPDATE_THE_LIST =
   "a parser upgrade changed which names crash: update PARSER_UNSAFE_KEYS (src/lib/event-specs/own-property.ts). " +
   "To LIFT a restriction (the parser, or a fixed copy of it, no longer crashes on that name): remove the name from that set; every refusal " +
-  "(entity field names, builder keys, importers, the validator's guard) is driven by it and goes away with it. To ADD one: add it there.";
+  "(entity field names, entity / model / enum / event names, builder keys, importers, the validator's guard) is driven by it and goes away with " +
+  "it. THEN update or delete the tests that pin that name: grep the repo for it. To ADD one: add it there.";
 
 describe("every name of Object.prototype as a key, through the real AsyncAPI parser", () => {
   it("the names that crash the parser are exactly PARSER_UNSAFE_KEYS, in every position", async () => {
@@ -28,7 +29,9 @@ describe("every name of Object.prototype as a key, through the real AsyncAPI par
     }
     expect([...crashesAt.keys()].sort(), UPDATE_THE_LIST).toEqual([...PARSER_UNSAFE_KEYS].sort());
     // `hasOwnProperty` crashes wherever it sits (the resolver walks every object); `__proto__` only inside x- maps, bindings and arrays
-    expect(crashesAt.get("hasOwnProperty"), "hasOwnProperty crashed only in some positions").toEqual(KEY_POSITIONS.map((p) => p.label));
+    for (const name of [...PARSER_UNSAFE_KEYS].filter((key) => !RESERVED_KEYS.has(key))) {
+      expect(crashesAt.get(name), `${name} crashed only in some positions`).toEqual(KEY_POSITIONS.map((p) => p.label));
+    }
   }, 120_000);
 
   it("the guard flags exactly those names, at the key's own pointer, in every position", () => {
@@ -69,11 +72,12 @@ describe("every name of Object.prototype as a key, through the real AsyncAPI par
 });
 
 describe("the parser's crash is real", () => {
-  it("given hasOwnProperty directly, it reports an uncaught error (if the parser is ever fixed this fails and the entry can go)", async () => {
+  it("given a name of the list directly, it reports an uncaught error (if the parser is ever fixed this fails and the entry can go)", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const document = KEY_POSITIONS[0].build("hasOwnProperty");
-    const found = await createAsyncApiParser().validate(parserInput(document));
-    expect(found.some((d) => String(d.code) === "uncaught-error" && /hasOwnProperty/.test(String(d.message)))).toBe(true);
+    for (const name of [...PARSER_UNSAFE_KEYS].filter((key) => !RESERVED_KEYS.has(key))) {
+      const found = await createAsyncApiParser().validate(parserInput(KEY_POSITIONS[0].build(name)));
+      expect(found.some((d) => String(d.code) === "uncaught-error" && String(d.message).includes(name)), name).toBe(true);
+    }
     log.mockRestore();
   }, 120_000);
 });

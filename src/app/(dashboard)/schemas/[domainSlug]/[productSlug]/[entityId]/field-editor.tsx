@@ -278,7 +278,9 @@ export function FieldEditor({
     if (!newFieldName.trim() || isCreating) return;
     setIsCreating(true);
     try {
-      await onAddField(newFieldName.trim(), newFieldType);
+      const result = (await onAddField(newFieldName.trim(), newFieldType)) as { error?: string } | undefined;
+      // A refusal (shown as a toast by the workspace) keeps the dialog open with the typed name, so it can be fixed instead of typed again.
+      if (result?.error) return;
       resetDialog();
     } catch {
       // Allow UI to recover
