@@ -4,7 +4,7 @@
 // The Versions tab's two reads: the list of the event's published versions, and the stored code of one of them. Both are plain
 // "latest answer for these arguments" hooks: the answer is stored together with what it was for, so an answer that arrives after the
 // arguments changed (or after the tab was left) is never shown.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listEventVersionsAction, readEventVersionAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/event-actions";
 import type { EventVersionSummary } from "@/lib/events/types";
 import { actionErrorText, GENERIC_ACTION_ERROR } from "@/types/action-result";
@@ -34,10 +34,14 @@ export function useEventVersions(args: { eventId: string; productId: string; lat
   const key = `${eventId}\u0000${productId}\u0000${latestLabel ?? ""}\u0000${reloads}`;
   const answer = settled?.key === key ? settled : null;
   const current = answer !== null;
+  // What the hook wants NOW: an answer is kept only when it is for this (see `useEventVersionCode` for why it is not tied to the effect run).
+  const wantedKey = useRef(key);
+  useEffect(() => {
+    wantedKey.current = key;
+  });
 
   useEffect(() => {
     if (current) return;
-    let cancelled = false;
     void (async () => {
       let next: Pick<ListSettled, "versions" | "error">;
       try {
@@ -50,11 +54,8 @@ export function useEventVersions(args: { eventId: string; productId: string; lat
         // A rejected server action (network drop, serialization error, unwrapped server throw): never print the cause.
         next = { versions: null, error: GENERIC_ACTION_ERROR };
       }
-      if (!cancelled) setSettled({ key, ...next });
+      if (wantedKey.current === key) setSettled({ key, ...next });
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [current, key, eventId, productId]);
 
   const reload = useCallback(() => setReloads((n) => n + 1), []);
@@ -82,10 +83,18 @@ export function useEventVersionCode(args: { eventId: string; productId: string; 
   const [settled, setSettled] = useState<CodeSettled | null>(null);
   const answer = label !== null && settled?.eventId === eventId && settled.productId === productId && settled.label === label && settled.reloads === reloads ? settled : null;
   const current = answer !== null;
+  // What the hook wants NOW. An answer is kept when it is for this, NOT when the effect run that asked for it is still the current one:
+  // React (development, Strict Mode) runs the effect, cleans it up and runs it again, and a server action called by the second run can
+  // stay queued behind the first, so tying the answer to the run threw away the only answer that ever came back and left "Loading".
+  const wantedNow = `${eventId}\u0000${productId}\u0000${label ?? ""}\u0000${reloads}`;
+  const wantedKey = useRef(wantedNow);
+  useEffect(() => {
+    wantedKey.current = wantedNow;
+  });
 
   useEffect(() => {
     if (label === null || current) return;
-    let cancelled = false;
+    const askedFor = `${eventId}\u0000${productId}\u0000${label}\u0000${reloads}`;
     void (async () => {
       let outcome: CodeSettled["outcome"];
       try {
@@ -94,11 +103,8 @@ export function useEventVersionCode(args: { eventId: string; productId: string; 
       } catch {
         outcome = { message: GENERIC_ACTION_ERROR };
       }
-      if (!cancelled) setSettled({ eventId, productId, label, reloads, outcome });
+      if (wantedKey.current === askedFor) setSettled({ eventId, productId, label, reloads, outcome });
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [current, eventId, productId, label, reloads]);
 
   const retry = useCallback(() => setReloads((n) => n + 1), []);
