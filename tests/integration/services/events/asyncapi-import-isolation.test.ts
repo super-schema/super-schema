@@ -11,6 +11,10 @@ import { hostileParametersText, yamlErrorFlood } from "../../../unit/lib/event-s
 import { lagProbe } from "../../../unit/lib/event-specs/fixtures/lag-probe";
 import { cleanupDomains, connectTestDb, createProductScope, testContext } from "./helpers";
 
+// The parser blocks an in-process event loop for 5-9 s on these documents: anything below a second proves the work is isolated. 200 ms
+// was measured as 214 ms once the whole suite shared the machine, so the bound leaves room for other test files' CPU load.
+const MAX_LOOP_LAG_MS = 1_000;
+
 /**
  * The importer when the parser or the read of the file is cut at its time limit, with the REAL worker: a clean `VALIDATION_ERROR` (plain text,
  * nothing from the document), nothing created, quickly, the event loop free meanwhile, and the next import works. (The ordinary imports are the
@@ -63,7 +67,7 @@ describe("a file the parser cannot digest in time", () => {
     const took = Date.now() - started;
     const lag = probe.stop();
 
-    expect(lag).toBeLessThan(200); // first: this is what a runner that does not isolate fails
+    expect(lag).toBeLessThan(MAX_LOOP_LAG_MS); // first: this is what a runner that does not isolate fails
     expect(failure(previewed)).toEqual({
       code: "VALIDATION_ERROR",
       message: tooComplexLead(2_000),
@@ -96,7 +100,7 @@ describe("a file the parser cannot digest in time", () => {
     const took = Date.now() - started;
     const lag = probe.stop();
 
-    expect(lag).toBeLessThan(200); // first: this is what a runner that does not isolate fails
+    expect(lag).toBeLessThan(MAX_LOOP_LAG_MS); // first: this is what a runner that does not isolate fails
     expect(failure(previewed)).toEqual({
       code: "VALIDATION_ERROR",
       message: "This file takes too long to read (it may contain a very large number of syntax errors). Check that it is valid YAML or JSON and import it again.",
