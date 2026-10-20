@@ -3,9 +3,14 @@
  * packages (@typespec/spanner, @typespec/postgres, @typespec/bigquery) from a
  * SuperSchemaModel.
  *
- * These emitters read the logical shape from TypeSpec models + the @typespec/db
- * (and dialect-specific) decorators, then emit dialect DDL. This builder is the
- * bridge from our IR to that authoring surface.
+ * These emitters read the logical shape from TypeSpec models + THEIR OWN
+ * decorators (`@schema`, `@primaryKey`, ...), then emit dialect DDL. Each package
+ * is self-contained: it declares those decorators itself and its emitter reads
+ * the state of its own decorators only. A decorator of another library (the shared
+ * @typespec/db has the same names) compiles but is invisible to the emitter, which
+ * then writes no file (`@schema` from the wrong library = no schema namespace = no
+ * table). So the source below imports and uses exactly one library: the dialect's.
+ * This builder is the bridge from our IR to that authoring surface.
  *
  * Pure function — no side effects, no I/O.
  */
@@ -30,35 +35,26 @@ export function isDbTypeSpecTarget(targetKey: string): boolean {
 }
 
 interface DialectConfig {
-  imports: string[];
-  usings: string[];
-  /** Decorator to emit for decimal precision, or null if unsupported. */
-  decimalDecorator: string | null;
-  /** Dialect requires an explicit @table decorator (spanner). */
-  emitTableDecorator: boolean;
+  /** The dialect's emitter package: the only library the generated source imports. */
+  library: string;
+  /** Its TypeSpec namespace (`using`): it carries the decorators the emitter reads. */
+  namespace: string;
+  /**
+   * Put the field description on its column as `@doc`. The Spanner and PostgreSQL emitters write a column's `@doc` as
+   * ` -- <text>` and append the column's comma AFTER it, so the comma becomes part of the comment and the statement
+   * is not valid DDL (reproduced with a described field; sibling repo `packages/{spanner,postgres}/src/write.ts`
+   * `writeTable`/`writeColumn`). Set these two to true again once the emitters write the comma first. BigQuery writes
+   * `OPTIONS(description='...')`, which is fine. The table's own `@doc` is a comment line of its own and is always kept.
+   */
+  columnDocs: boolean;
 }
 
+// Models in a `@schema` namespace are tables, so no `@table` is needed (the packages have none). They have no
+// decimal-precision decorator either: a decimal column is emitted as NUMERIC without precision and scale.
 const DIALECTS: Record<DbDialect, DialectConfig> = {
-  spanner: {
-    imports: ['import "@typespec/db";', 'import "@typespec/spanner";'],
-    usings: ["using TypeSpec.DB;", "using TypeSpec.Spanner;"],
-    decimalDecorator: "@decimalPrecision",
-    emitTableDecorator: true,
-  },
-  bigquery: {
-    // Reconciled to @typespec/db — shared decorators, no namespace collision.
-    imports: ['import "@typespec/db";', 'import "@typespec/bigquery";'],
-    usings: ["using TypeSpec.DB;"],
-    decimalDecorator: "@decimalPrecision",
-    emitTableDecorator: false, // models in a @schema namespace are auto-tables
-  },
-  postgres: {
-    // Reconciled to @typespec/db — now supports @decimalPrecision too.
-    imports: ['import "@typespec/db";', 'import "@typespec/postgres";'],
-    usings: ["using TypeSpec.DB;"],
-    decimalDecorator: "@decimalPrecision",
-    emitTableDecorator: false,
-  },
+  spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", columnDocs: false },
+  postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", columnDocs: false },
+  bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", columnDocs: true },
 };
 
 /** Logical IR type → TypeSpec built-in scalar the emitters understand. */
@@ -90,8 +86,6 @@ const TYPE_MAP: Partial<Record<LogicalType, string>> = {
   duration: "duration",
   unixTimestamp32: "int32",
 };
-
-const DECIMAL_TYPES = new Set<LogicalType>(["decimal", "decimal128", "numeric"]);
 
 function sanitizeIdent(name: string): string {
   let s = name.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -147,17 +141,14 @@ export function buildDbTypeSpecSource(model: SuperSchemaModel, targetKey: string
   const multiKey = keyFields.length > 1;
 
   const lines: string[] = [];
-  lines.push(...cfg.imports, "", ...cfg.usings, "");
+  lines.push(`import "${cfg.library}";`, "", `using ${cfg.namespace};`, "");
   lines.push(`@schema("${escapeStr(schemaName)}")`);
   lines.push(`namespace ${ns};`, "");
 
   if (model.entity.description) {
     lines.push(`@doc("${escapeStr(model.entity.description)}")`);
   }
-  if (cfg.emitTableDecorator) {
-    lines.push("@table");
-  }
-  // Spanner age-based retention → real ROW DELETION POLICY (D6 escalation).
+  // Spanner age-based retention → real ROW DELETION POLICY (D6 escalation); only @typespec/spanner has the decorator.
   if (dialect === "spanner") {
     const rp = model.entity.metadata?.retentionPolicy;
     if (
@@ -191,16 +182,8 @@ export function buildDbTypeSpecSource(model: SuperSchemaModel, targetKey: string
       decs.push(`@maxLength(${maxLen})`);
     }
 
-    if (cfg.decimalDecorator && DECIMAL_TYPES.has(f.type) && typeof f.precision === "number") {
-      decs.push(
-        typeof f.scale === "number"
-          ? `${cfg.decimalDecorator}(${f.precision}, ${f.scale})`
-          : `${cfg.decimalDecorator}(${f.precision})`
-      );
-    }
-
     const desc = f.decorators?.semantics?.description || f.description;
-    if (desc) {
+    if (desc && cfg.columnDocs) {
       decs.push(`@doc("${escapeStr(desc)}")`);
     }
 
