@@ -27,6 +27,10 @@
 //      array of 200,000 zeros as a `minItems`, over 5,000 uses, was 2.8 s), so the copy takes the six size keywords only as finite numbers,
 //      `format` only as short text, `type` only as short text or a short list of text and `required` only as a list of text, and refuses
 //      the schema, naming the keyword, for any other form (`copyScalars`): no use of a node costs more than the units it is charged.
+//      What the sampler does ABOVE a node is bounded by a cap instead of a charge: it merges what comes up from below (`mergeDeep`, a
+//      `for ... in` over the top-level keys of the value) at every enclosing `allOf` / `oneOf` / `anyOf`, so a 40,000-key `default` that is
+//      charged once was copied again at each level (250 levels: 1.7 - 3.1 s). At most MAX_MERGE_NESTING (32) of them may be inside each
+//      other (`nested`), so a value is copied at most 32 more times than it was charged for, whatever its size or the number of levels.
 //      The only work it does that the budget does not pay for is once per object of the schema, not per use: finding how many entries
 //      each map has (`widthOf`), checking that a `required` list holds only text (`namesOf`), and the walk of step 1 and of
 //      `preferZero`, which are the size of the input;
@@ -59,6 +63,15 @@ const MAX_EXPANDED_NODES = 25_000;
  * copy gets here, and that is reported as "nested too deeply" as well.
  */
 const MAX_NESTING = 256;
+/**
+ * The most `allOf` / `oneOf` / `anyOf` the copy may have inside each other (on the way down from the root, a `$ref` between them counted).
+ * The sampler merges what comes up from below at EVERY such level (`mergeDeep` and a `for ... in` over the top-level keys of the value),
+ * so a value charged once, a 40,000-key `default` for one, is copied again at each of them: 250 levels of it took 1.7 - 3.1 s and 84 MB,
+ * and nothing charged those copies. Real schemas nest a handful (an envelope, its variants, a mixin); at the cap a value is copied 32
+ * more times than it was charged for (32 levels over 40,000 keys: 0.25 - 0.4 s, and the example limit of 1 MiB lets about two such values
+ * through, so under a second).
+ */
+const MAX_MERGE_NESTING = 32;
 /**
  * The most any ONE of `SIZE_KEYWORDS` may say, wherever it sits in the schema (also under `if` / `then` / `else`, `allOf` / `anyOf` /
  * `oneOf`, `not`, `items`, `additionalProperties`, `patternProperties`, `$defs` / `definitions`). A real schema asks for a handful (a
@@ -223,6 +236,8 @@ interface Walk {
   widths: WeakMap<object, number>;
   /** The `required` lists already found to hold nothing but text (`namesOf`), so a list used a thousand times is read once. */
   texts: WeakSet<object>;
+  /** How many `allOf` / `oneOf` / `anyOf` are being copied on the way down to the node in hand (see MAX_MERGE_NESTING). */
+  merging: number;
 }
 
 /**
@@ -367,6 +382,21 @@ function normaliseNode(w: Walk, node: unknown, ctx: Ctx, how: How, level: number
   }
 }
 
+/**
+ * Runs the copy of an `allOf` / `oneOf` / `anyOf` (everything under it, its entries included) one level deeper, and refuses the schema
+ * once that makes more than MAX_MERGE_NESTING levels of them inside each other: the counter goes down again when the level is done, so
+ * only levels on the way down from the root count, never siblings.
+ */
+function nested<T>(w: Walk, copy: () => T): T {
+  w.merging += 1;
+  try {
+    if (w.merging > MAX_MERGE_NESTING) throw tooLarge(`it nests allOf, oneOf and anyOf more than ${MAX_MERGE_NESTING} levels deep`);
+    return copy();
+  } finally {
+    w.merging -= 1;
+  }
+}
+
 function normaliseBody(w: Walk, node: Schema, ctx: Ctx, how: How, level: number, release: () => void): Schema {
   // 1. a `$ref`: the node is replaced by what it points at (its other keys are not read)
   if (truthy(node.$ref)) {
@@ -412,35 +442,39 @@ function normaliseBody(w: Walk, node: Schema, ctx: Ctx, how: How, level: number,
   if (node.allOf !== undefined) {
     release();
     if (inferExample(node) !== undefined) return inferredOnly(node);
-    const rest = normaliseNode(w, project(node, ["allOf"]), undefined, { fresh: true, injected: how.injected, assigned: how.assigned }, level + 1);
-    requireHost(rest, "allOf");
-    const entryCtx: Ctx = { depth: ctx ? ctx.depth : undefined };
-    const entries: Schema[] = [];
-    announce(w, (node.allOf as unknown[]).length);
-    for (const entry of node.allOf as unknown[]) {
-      entries.push(normaliseNode(w, entry, entryCtx, { fresh: true, injected: true, pin: "allOf" }, level + 1));
-    }
-    return setOwn({ ...rest }, "allOf", entries);
+    return nested(w, () => {
+      const rest = normaliseNode(w, project(node, ["allOf"]), undefined, { fresh: true, injected: how.injected, assigned: how.assigned }, level + 1);
+      requireHost(rest, "allOf");
+      const entryCtx: Ctx = { depth: ctx ? ctx.depth : undefined };
+      const entries: Schema[] = [];
+      announce(w, (node.allOf as unknown[]).length);
+      for (const entry of node.allOf as unknown[]) {
+        entries.push(normaliseNode(w, entry, entryCtx, { fresh: true, injected: true, pin: "allOf" }, level + 1));
+      }
+      return setOwn({ ...rest }, "allOf", entries);
+    });
   }
   // 4. `oneOf`, else `anyOf`: the node without them, merged with their FIRST entry (the rest of the entries are never read)
   const keyword = truthy(node.oneOf) && (node.oneOf as unknown[]).length > 0 ? "oneOf" : truthy(node.anyOf) && (node.anyOf as unknown[]).length > 0 ? "anyOf" : null;
   if (keyword !== null) {
     release();
     if (inferExample(node) !== undefined) return inferredOnly(node);
-    const local = normaliseNode(w, project(node, ["oneOf", "anyOf"]), ctx, { fresh: true, injected: how.injected }, level + 1);
-    requireHost(local, keyword);
-    const first = normaliseNode(w, (node[keyword] as unknown[])[0], ctx, { fresh: true, pin: "selected", assigned: true }, level + 1);
-    // The sampler gives the first entry `readOnly` / `writeOnly` of the node it is handed (before an `if` / `then` of it is merged), unless
-    // the entry says its own. For a node that is itself such an entry, what it is handed already carries its parent's, and the sampler
-    // passes that on by itself, as long as the copy says what the original said: not once an `if` / `then` has changed it.
-    for (const key of ["readOnly", "writeOnly"]) {
-      if (how.assigned) {
-        if (Object.hasOwn(local, key) !== Object.hasOwn(node, key) || local[key] !== node[key]) {
-          throw unsupported(`\`${key}\` brought in by an \`if\` / \`then\` on a \`${keyword}\` entry that is itself a \`oneOf\` / \`anyOf\` entry cannot be reproduced`);
-        }
-      } else if (!Object.hasOwn(first, key)) setOwn(first, key, node[key]);
-    }
-    return setOwn({ ...local }, keyword, [first]);
+    return nested(w, () => {
+      const local = normaliseNode(w, project(node, ["oneOf", "anyOf"]), ctx, { fresh: true, injected: how.injected }, level + 1);
+      requireHost(local, keyword);
+      const first = normaliseNode(w, (node[keyword] as unknown[])[0], ctx, { fresh: true, pin: "selected", assigned: true }, level + 1);
+      // The sampler gives the first entry `readOnly` / `writeOnly` of the node it is handed (before an `if` / `then` of it is merged), unless
+      // the entry says its own. For a node that is itself such an entry, what it is handed already carries its parent's, and the sampler
+      // passes that on by itself, as long as the copy says what the original said: not once an `if` / `then` has changed it.
+      for (const key of ["readOnly", "writeOnly"]) {
+        if (how.assigned) {
+          if (Object.hasOwn(local, key) !== Object.hasOwn(node, key) || local[key] !== node[key]) {
+            throw unsupported(`\`${key}\` brought in by an \`if\` / \`then\` on a \`${keyword}\` entry that is itself a \`oneOf\` / \`anyOf\` entry cannot be reproduced`);
+          }
+        } else if (!Object.hasOwn(first, key)) setOwn(first, key, node[key]);
+      }
+      return setOwn({ ...local }, keyword, [first]);
+    });
   }
   // 5. `if` and `then`: merged into the node, which then goes through all of this again
   if (truthy(node.if) && truthy(node.then)) {
@@ -559,7 +593,7 @@ function plainCopy(w: Walk, node: Schema, ctx: Ctx, how: How, level: number, rel
 
 /** The inlined copy of `root`. Throws a `Refusal` for a schema it cannot copy faithfully or within MAX_EXPANDED_NODES. */
 function normalise(root: Schema): Schema {
-  return normaliseNode({ root, following: new Set(), onStack: new Set(), nodes: 0, widths: new WeakMap(), texts: new WeakSet() }, root, undefined, {}, 0);
+  return normaliseNode({ root, following: new Set(), onStack: new Set(), nodes: 0, widths: new WeakMap(), texts: new WeakSet(), merging: 0 }, root, undefined, {}, 0);
 }
 
 // ── outputWeight: what the sampler would build from the copy ────────────────────────────────────────────────────────────────

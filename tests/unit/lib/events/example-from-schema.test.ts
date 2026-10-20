@@ -746,6 +746,85 @@ describe("exampleFromSchema: a scalar keyword is copied in a closed form, so no 
   });
 });
 
+// The sampler merges what comes up from below at EVERY enclosing allOf / oneOf / anyOf (`mergeDeep`, a `for ... in` over the top-level keys),
+// so a 40,000-key default, charged once (about 6,900 units), was copied again at each level and nothing charged those copies: 250 levels
+// took 1.7 s / 84 MB (oneOf, anyOf) and 3.1 s (allOf). At most 32 of them may be inside each other (MAX_MERGE_NESTING), so a value is copied
+// at most 32 more times than it was charged for.
+describe("exampleFromSchema: combinators inside combinators are capped at 32 levels", () => {
+  beforeEach(() => {
+    vi.mocked(sample).mockClear();
+  });
+  const OPTIONS = { skipReadOnly: true, quiet: true, maxSampleDepth: 10 };
+  type Combinator = "oneOf" | "anyOf" | "allOf";
+
+  /** `depth` nodes each holding the one below in its `keyword`, around `leaf` (an `allOf` host is an object, as the sampler merges objects only). */
+  function chain(keyword: Combinator, depth: number, leaf: Schema): Schema {
+    let node = leaf;
+    for (let i = 0; i < depth; i++) node = keyword === "allOf" ? { type: "object", allOf: [node] } : { [keyword]: [node] };
+    return node;
+  }
+  const keys = (count: number): Record<string, number> => Object.fromEntries(Array.from({ length: count }, (_, i) => [`k${i}`, i]));
+  /** Refused with EXAMPLE_TOO_LARGE inside 200 ms, the sampler never called. */
+  function refusedFast(schema: Schema, label: string): void {
+    const started = performance.now();
+    const result = exampleFromSchema(schema);
+    expect(performance.now() - started, label).toBeLessThan(200);
+    expect(failure(result), label).toMatchObject({ code: "EXAMPLE_TOO_LARGE", message: expect.stringContaining("allOf, oneOf and anyOf more than 32 levels") });
+    expect(sample, label).not.toHaveBeenCalled();
+  }
+  const sameAsSampler = (schema: Schema): unknown => {
+    const mine = example(schema);
+    expect(mine).toEqual(JSON.parse(JSON.stringify(sample(schema as never, OPTIONS, schema))));
+    return mine;
+  };
+
+  it.each<[string, Schema]>([
+    ["oneOf x250 over a 40,000-key default", chain("oneOf", 250, { type: "object", default: keys(40_000) })],
+    ["anyOf x250 over a 40,000-key default", chain("anyOf", 250, { type: "object", default: keys(40_000) })],
+    ["allOf x250 over a 40,000-key default", chain("allOf", 250, { type: "object", default: keys(40_000) })],
+    ["oneOf x250 over a 40,000-key const", chain("oneOf", 250, { const: keys(40_000) })],
+    ["allOf x250 over a 40,000-key const", chain("allOf", 250, { const: keys(40_000) })],
+    ["oneOf x250 over a 40,000-key example", chain("oneOf", 250, { example: keys(40_000) })],
+    ["oneOf x250 over a 40,000-key enum[0]", chain("oneOf", 250, { enum: [keys(40_000)] })],
+    ["oneOf x250 over a 150,000-element array default", chain("oneOf", 250, { default: new Array<number>(150_000).fill(0) })],
+    [
+      "oneOf x100 reused through three $refs (20,000 keys)",
+      { type: "object", properties: { u0: { $ref: "#/definitions/A" }, u1: { $ref: "#/definitions/A" }, u2: { $ref: "#/definitions/A" } }, definitions: { A: chain("oneOf", 100, { type: "object", default: keys(20_000) }) } },
+    ],
+  ])("refuses %s at once, the sampler never called", (label, schema) => {
+    refusedFast(schema, label);
+  });
+
+  it.each<Combinator>(["oneOf", "anyOf", "allOf"])("generates what the sampler gives for a legitimate chain: 30 levels of %s over a 1,000-key default", (keyword) => {
+    const started = performance.now();
+    const value = sameAsSampler(chain(keyword, 30, { type: "object", default: keys(1_000) })) as Record<string, unknown>;
+    expect(Object.keys(value)).toHaveLength(1_000);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it.each<Combinator>(["oneOf", "anyOf", "allOf"])("allows exactly 32 nested levels of %s and refuses 33", (keyword) => {
+    expect(sameAsSampler(chain(keyword, 32, { type: "object", default: { a: 1 } }))).toEqual({ a: 1 });
+    expect(sample).toHaveBeenCalled();
+    vi.mocked(sample).mockClear();
+    refusedFast(chain(keyword, 33, { type: "object", default: { a: 1 } }), `33 levels of ${keyword}`);
+  });
+
+  it("counts levels on the way down, not siblings or what came earlier: 40 properties of 20 levels each, and 100 entries of an allOf, generate", () => {
+    const properties: Record<string, Schema> = {};
+    for (let i = 0; i < 40; i++) properties[`p${i}`] = chain(i % 2 === 0 ? "oneOf" : "anyOf", 20, { type: "string" });
+    expect(Object.keys(example({ type: "object", properties }) as object)).toHaveLength(40);
+    const entries = Array.from({ length: 100 }, (_, i) => ({ type: "object", properties: { [`e${i}`]: { type: "string" } }, oneOf: [{ type: "object", properties: { [`o${i}`]: { type: "integer" } } }] }));
+    expect(Object.keys(sameAsSampler({ type: "object", allOf: entries }) as object)).toHaveLength(200);
+  });
+
+  it("counts a combinator that is reached through a reference, and the three kinds together", () => {
+    const definitions: Record<string, Schema> = { D0: { type: "string" } };
+    for (let i = 1; i <= 33; i++) definitions[`D${i}`] = { type: "object", [["oneOf", "anyOf", "allOf"][i % 3]]: [{ $ref: `#/definitions/D${i - 1}` }] };
+    refusedFast({ $ref: "#/definitions/D33", definitions }, "33 combinators of three kinds, each through a $ref");
+    expect(exampleFromSchema({ $ref: "#/definitions/D32", definitions }).success).toBe(true);
+  });
+});
+
 // The combinations the sampler handles on ONE node, as real schemas write them: each must give exactly what the sampler gives for the schema as written.
 describe("exampleFromSchema: allOf with oneOf / anyOf / if-then on one node, and references that bring their own example", () => {
   beforeEach(() => {

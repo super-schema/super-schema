@@ -69,6 +69,26 @@ class Generator {
   /** Only the random populations (`root`) carry these: the realistic one must never be refused. */
   private taints = false;
   /**
+   * Now and then (the side stream only) a chain of up to 6 `allOf` / `oneOf` / `anyOf` inside each other around a leaf, an object or a
+   * value of its own: the sampler merges what comes up from below at each of them, which the copy must reproduce, within MAX_MERGE_NESTING.
+   */
+  private combinatorChain(): Schema {
+    const leaves: Schema[] = [
+      { type: "string" }, { type: "object", properties: { a: { type: "integer" }, b: { type: "string" } } }, { type: "object", default: { x: 1, y: [1, 2] } },
+      { const: { k: "v", n: { m: 1 } } }, { enum: [{ e: 1 }] }, { type: "array", items: { type: "integer" }, minItems: 2 }, { example: { z: [{ q: 1 }] } },
+    ];
+    let node: Schema = structuredClone(leaves[this.sideInt(leaves.length)]);
+    for (let i = 0, levels = 1 + this.sideInt(6); i < levels; i++) {
+      switch (this.sideInt(4)) {
+        case 0: node = { oneOf: [node] }; break;
+        case 1: node = { anyOf: [node, { type: "string" }] }; break;
+        case 2: node = { type: "object", allOf: [node, { type: "object", properties: { extra: { type: "string" } } }] }; break;
+        default: node = { type: "object", properties: { own: { type: "string" } }, oneOf: [node, { type: "integer" }] };
+      }
+    }
+    return node;
+  }
+  /**
    * Now and then a scalar keyword in a form a schema should not have (a string, a list, an object, a boolean, null): `exampleFromSchema`
    * refuses it and names the keyword (or, for `required`, which the sampler only tests for being a list, carries on as the sampler does).
    */
@@ -178,6 +198,7 @@ class Generator {
 
   schema(depth: number): Schema {
     if (depth <= 0) return this.definitions > 0 && this.chance(0.3) ? this.ref() : this.leaf();
+    if (this.taints && this.sideChance(0.04)) return this.combinatorChain();
     switch (this.int(16)) {
       case 0: case 1: return this.leaf();
       case 2: case 3: return this.object(depth);
