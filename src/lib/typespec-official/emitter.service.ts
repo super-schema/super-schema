@@ -16,6 +16,7 @@ import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "./db-source";
+import { describeEmitterFailure } from "./emitter-diagnostics";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { ok, err, type Result } from "@/types/result";
@@ -430,7 +431,11 @@ async function runTypeSpecEmitter(
   emitterOptions: Record<string, unknown>
 ): Promise<OfficialTypeSpecTargetResult> {
   const files = await runTypeSpecEmitterFiles(packageName, source, emitterOptions);
-  if (!files.success) return invalidResult(files.error.message);
+  if (!files.success) {
+    // EMITTER_FAILED carries the compiler's raw output (banner, temp paths, progress lines): show its diagnostics only.
+    // Every other code is a message written here.
+    return invalidResult(files.error.code === "EMITTER_FAILED" ? describeEmitterFailure(files.error.message) : files.error.message);
+  }
   return targetResultFromFiles(packageName, files.data);
 }
 
@@ -471,6 +476,10 @@ export function unusableOutputReason(packageName: string, output: string): strin
 
 async function collectTextFiles(rootDir: string): Promise<EmittedFile[]> {
   const files: EmittedFile[] = [];
+
+  // An emitter that has nothing to write never creates its output directory: that is "no files" (EMITTER_NO_OUTPUT),
+  // not a scandir failure that would leak the temp workspace path.
+  if (!(await fs.stat(rootDir).then((s) => s.isDirectory(), () => false))) return files;
 
   async function walk(currentDir: string) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
