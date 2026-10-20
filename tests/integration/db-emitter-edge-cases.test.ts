@@ -177,13 +177,81 @@ describe.each(TARGETS)("%s: SQL reserved words", (target) => {
     expect(result.warnings).toEqual([]);
   }, 60_000);
 
-  it("a reserved entity name warns about the table", async () => {
+  it("a reserved entity name warns about the table, except on PostgreSQL where the table is always written schema.table", async () => {
     const result = await emitOfficialTypeSpecTargetFromData(entity({ name: "Order" }), [KEY], target);
 
+    if (target === "postgresql") {
+      expect(result.validationStatus).toBe("VALID");
+      expect(result.warnings).toEqual([]);
+      return;
+    }
     expect(result.validationStatus).toBe("WARNING");
     expect(result.warnings).toEqual([`The table "order" is a reserved word in ${dialect} and the generated DDL does not quote it, so it will not run as is. Rename the entity, or quote the name in the DDL by hand.`]);
   }, 60_000);
 });
+
+it("a reserved TABLE name needs no warning on PostgreSQL: PGlite runs `CREATE TABLE payments.order (...)` as the emitter writes it", async () => {
+  const { PGlite } = await import("@electric-sql/pglite");
+  const result = await emitOfficialTypeSpecTargetFromData(entity({ name: "Order" }), [KEY], "postgresql");
+  expect(result.output).toContain("CREATE TABLE payments.order (");
+  const db = new PGlite();
+  try {
+    await expect(db.exec(result.output)).resolves.toBeDefined();
+  } finally {
+    await db.close();
+  }
+}, 60_000);
+
+describe("PostgreSQL: names the engine refuses (the warnings are true)", () => {
+  it("a column called xmin (a system column) is a warning, and PGlite refuses to create the table", async () => {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const result = await emitOfficialTypeSpecTargetFromData(entity(), [KEY, field("xmin")], "postgresql");
+    expect(result.validationStatus).toBe("WARNING");
+    expect(result.warnings).toEqual(['The column "xmin" has the name of a PostgreSQL system column, so the table cannot be created. Rename the field.']);
+
+    const db = new PGlite();
+    try {
+      await expect(db.exec(result.output)).rejects.toThrow(/system column/i);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it("two columns that share their first 63 bytes are a warning, and PGlite sees one column twice", async () => {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const stem = "s".repeat(63);
+    const result = await emitOfficialTypeSpecTargetFromData(entity(), [KEY, field(`${stem}a`), field(`${stem}b`, { sortOrder: 2 })], "postgresql");
+    expect(result.validationStatus).toBe("WARNING");
+    expect(result.warnings.some((w) => w.includes("share their first 63 bytes"))).toBe(true);
+
+    const db = new PGlite();
+    try {
+      await expect(db.exec(result.output)).rejects.toThrow(/more than once/i);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+});
+
+describe.each(TARGETS)("%s: a field whose letters were dropped", (target) => {
+  it("café is written as the column caf, VALID in the emitter and WARNING for the user", async () => {
+    const result = await emitOfficialTypeSpecTargetFromData(entity(), [KEY, field("café")], target);
+
+    expect(result.errors).toEqual([]);
+    expect(result.validationStatus).toBe("WARNING");
+    expect(result.warnings).toEqual(['The field "café" is written as the column "caf": letters outside a-z were dropped.']);
+    expect(result.output).toMatch(/^\s+caf /m);
+  }, 60_000);
+});
+
+it("bigquery: a column description over 1,024 characters is a warning and is written in full", async () => {
+  const long = "d".repeat(1025);
+  const result = await emitOfficialTypeSpecTargetFromData(entity(), [{ ...KEY, description: long }], "bigquery");
+
+  expect(result.validationStatus).toBe("WARNING");
+  expect(result.warnings).toEqual(['The description of the field "transactionId" is longer than BigQuery\'s limit of 1,024 characters, so BigQuery will reject the DDL as is. Shorten it.']);
+  expect(result.output).toContain(`description='${long}'`);
+}, 60_000);
 
 it("the reserved-word warning is true: a real PostgreSQL engine (PGlite) rejects the DDL with a column called order, and runs it with order_id", async () => {
   const { PGlite } = await import("@electric-sql/pglite");

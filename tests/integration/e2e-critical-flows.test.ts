@@ -266,7 +266,7 @@ describe("E2E Critical Flows", () => {
       expect(result.schemaVersion!.output).toContain("CREATE TABLE");
       expect(result.schemaVersion!.output).toContain("order_id STRING NOT NULL");
       expect(result.schemaVersion!.version).toBe(1);
-    });
+    }, 60_000);
   });
 
   // -------------------------------------------------------------------------

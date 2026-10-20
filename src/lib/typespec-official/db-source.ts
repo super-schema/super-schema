@@ -27,7 +27,7 @@ import type {
   LogicalType,
 } from "@/types/super-schema-model";
 import { escapeString, propertyName, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
-import { isReservedWord, type ReservedWordDialect } from "./sql-reserved-words";
+import { isReservedWord, POSTGRES_SYSTEM_COLUMNS, type ReservedWordDialect } from "./sql-reserved-words";
 
 type DbDialect = ReservedWordDialect;
 
@@ -167,15 +167,73 @@ function quotedList(names: string[]): string {
   return quoted.length === 1 ? quoted[0] : `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
 }
 
-/** Warnings for an identifier the emitters write unquoted but SQL would need quoted. */
+/**
+ * What a dialect limits in an identifier (the DDL carries the name as written: the emitters never shorten it). PostgreSQL
+ * counts bytes and truncates silently, which turns two long names with the same start into one column; Spanner and
+ * BigQuery count characters and reject. Our names are ASCII (`sqlWord`), so bytes and characters agree.
+ */
+const IDENTIFIER_LIMITS: Record<DbDialect, { table: number; schema: number; column: number; unit: string }> = {
+  spanner: { table: 128, schema: 128, column: 128, unit: "characters" },
+  postgres: { table: 63, schema: 63, column: 63, unit: "bytes" },
+  bigquery: { table: 1024, schema: 1024, column: 300, unit: "characters" },
+};
+
+/** BigQuery rejects a column description over this many characters (`OPTIONS(description=...)`). */
+const BIGQUERY_MAX_DESCRIPTION = 1024;
+
+const byteLength = (text: string): number => new TextEncoder().encode(text).length;
+
+/** Warnings for an identifier the emitters write unquoted but SQL would need quoted, or that the dialect cannot hold. */
 function identifierWarnings(dialect: DbDialect, kind: "table" | "schema" | "column", name: string): string[] {
   const where = DIALECTS[dialect].displayName;
   const remedy = `Rename the ${kind === "table" ? "entity" : kind === "schema" ? "domain" : "field"}, or quote the name in the DDL by hand.`;
   const notRunnable = "the generated DDL does not quote it, so it will not run as is";
   const warnings: string[] = [];
-  if (isReservedWord(dialect, name)) warnings.push(`The ${kind} "${name}" is a reserved word in ${where} and ${notRunnable}. ${remedy}`);
+  // PostgreSQL's emitter always writes `schema.table`, and a reserved word is fine after the dot (checked on PGlite:
+  // `payments.order` runs). Whether BigQuery's `dataset.order` is fine too is NOT verified, so it keeps the warning.
+  const qualifiedByPostgres = dialect === "postgres" && kind === "table";
+  if (!qualifiedByPostgres && isReservedWord(dialect, name)) warnings.push(`The ${kind} "${name}" is a reserved word in ${where} and ${notRunnable}. ${remedy}`);
   if (/^[0-9]/.test(name)) warnings.push(`The ${kind} "${name}" starts with a digit, which ${where} does not allow in an unquoted name, and ${notRunnable}. ${remedy}`);
+  if (dialect === "postgres" && kind === "column" && POSTGRES_SYSTEM_COLUMNS.has(name.toLowerCase())) {
+    warnings.push(`The column "${name}" has the name of a PostgreSQL system column, so the table cannot be created. Rename the field.`);
+  }
+  const limit = IDENTIFIER_LIMITS[dialect];
+  const size = dialect === "postgres" ? byteLength(name) : name.length;
+  if (size > limit[kind]) warnings.push(`The ${kind} "${name}" is longer than ${where}'s limit of ${limit[kind]} ${limit.unit} and will be truncated or rejected.`);
   return warnings;
+}
+
+/** PostgreSQL cuts an identifier to 63 bytes: columns that differ only after that become one column. */
+function truncationWarnings(columnNames: readonly string[]): string[] {
+  const limit = IDENTIFIER_LIMITS.postgres.column;
+  const groups = new Map<string, string[]>();
+  for (const name of columnNames) {
+    if (byteLength(name) <= limit) continue;
+    const key = name.slice(0, limit);
+    groups.set(key, [...(groups.get(key) ?? []), name]);
+  }
+  return [...groups.values()]
+    .filter((names) => names.length > 1)
+    .map((names) => `The columns ${quotedList(names)} share their first ${limit} bytes, which PostgreSQL truncates names to, so they would become one column. Rename ${names.length > 2 ? "all but one of them" : "one of them"}.`);
+}
+
+/** Warnings about a field that the column name or the column description cannot carry faithfully. */
+function fieldWarnings(dialect: DbDialect, field: SuperSchemaField, column: string, columnDocText: string | null): string[] {
+  const warnings: string[] = [];
+  // `aB` -> `a_b` is plain case/underscore normalisation and not worth a word; a LETTER or digit that is not a-z/0-9
+  // (an accent, a non-Latin character) is dropped by the identifier rules, so the column no longer spells the field.
+  if (Array.from(field.name).some((char) => char.charCodeAt(0) > 127 && /[\p{L}\p{N}]/u.test(char))) {
+    warnings.push(`The field "${field.name}" is written as the column "${column}": letters outside a-z were dropped.`);
+  }
+  if (dialect === "bigquery" && columnDocText !== null && columnDocText.length > BIGQUERY_MAX_DESCRIPTION) {
+    warnings.push(`The description of the field "${field.name}" is longer than BigQuery's limit of ${BIGQUERY_MAX_DESCRIPTION.toLocaleString("en-US")} characters, so BigQuery will reject the DDL as is. Shorten it.`);
+  }
+  return warnings;
+}
+
+/** The column name the DDL will contain for a field called `fieldName` (what the builder's collision check compares). */
+export function emittedColumnName(fieldName: string): string {
+  return emittedName(sqlWord(fieldName));
 }
 
 /** The generated source for a DB target, the warnings about it, and the errors that stop it from being generated. */
@@ -227,7 +285,12 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
   warnings.push(...identifierWarnings(dialect, "table", emittedName(modelName)));
   // the schema name goes into the DDL as written (the emitters apply the naming convention to tables and columns only)
   if (cfg.writesSchemaName) warnings.push(...identifierWarnings(dialect, "schema", schemaName));
-  for (const { ident } of columns) warnings.push(...identifierWarnings(dialect, "column", emittedName(ident)));
+  for (const { field, ident } of columns) {
+    const column = emittedName(ident);
+    const description = field.decorators?.semantics?.description || field.description;
+    warnings.push(...identifierWarnings(dialect, "column", column), ...fieldWarnings(dialect, field, column, cfg.columnDoc && description ? oneLine(description) : null));
+  }
+  if (dialect === "postgres") warnings.push(...truncationWarnings(columns.map(({ ident }) => emittedName(ident))));
 
   const keyFields = sorted.filter((f) => f.isKey);
   const multiKey = keyFields.length > 1;

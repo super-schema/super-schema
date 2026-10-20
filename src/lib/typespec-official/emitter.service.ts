@@ -16,7 +16,7 @@ import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecTarget, isDbTypeSpecTarget } from "./db-source";
-import { describeEmitterFailure, errorDiagnostics, warningDiagnostics } from "./emitter-diagnostics";
+import { boundedForLog, describeEmitterFailure, errorDiagnostics, warningDiagnostics } from "./emitter-diagnostics";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
 import { ok, err, type Result } from "@/types/result";
@@ -460,7 +460,7 @@ async function runTypeSpecEmitter(
     // is the generic text, the raw output goes to the server log only.
     if (run.error.code !== "EMITTER_FAILED") return invalidResult(run.error.message);
     if (errorDiagnostics(run.error.message).length === 0) {
-      console.error(`[typespec-emitter] ${packageName} failed without an error diagnostic:`, run.error.message);
+      console.error(`[typespec-emitter] ${packageName} failed without an error diagnostic:`, boundedForLog(run.error.message));
     }
     return invalidResult(describeEmitterFailure(run.error.message));
   }

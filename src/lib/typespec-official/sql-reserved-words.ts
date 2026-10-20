@@ -38,6 +38,9 @@ export const BIGQUERY_RESERVED_WORDS: ReadonlySet<string> = new Set([
 /** Cloud Spanner (GoogleSQL dialect): the same reserved-keyword family; BigQuery's QUALIFY is not in Spanner's list. */
 export const SPANNER_RESERVED_WORDS: ReadonlySet<string> = new Set([...BIGQUERY_RESERVED_WORDS].filter((word) => word !== "qualify"));
 
+/** PostgreSQL's system columns: every table has them, so a user column of the same name cannot be created (even quoted). */
+export const POSTGRES_SYSTEM_COLUMNS: ReadonlySet<string> = new Set(["xmin", "xmax", "cmin", "cmax", "ctid", "tableoid"]);
+
 export type ReservedWordDialect = "spanner" | "postgres" | "bigquery";
 
 const RESERVED_WORDS: Record<ReservedWordDialect, ReadonlySet<string>> = {

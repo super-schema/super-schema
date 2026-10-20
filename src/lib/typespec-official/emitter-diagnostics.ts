@@ -13,9 +13,26 @@ export const GENERIC_EMITTER_FAILURE = "The TypeSpec emitter failed.";
 
 /**
  * Absolute multi-segment filesystem paths (temp workspaces), `../` chains up to them, and the workspace directory name.
- * `src/services/events/event-snapshot.ts` keeps its own copy of the first and last alternatives; it can import this one.
+ * Not exported: a `/g` RegExp keeps `lastIndex` between `.test()` calls, so every user goes through
+ * {@link replaceFilePaths}. `src/services/events/event-snapshot.ts` keeps its own copy of the first and last alternatives;
+ * it can use this function instead.
  */
-export const FILE_PATH = /(?:\.\.\/)+(?:[\w.@+~-]+\/)*[\w.@+~-]+|(?<![\w#:.@-])\/(?:[\w.@+~-]+\/){2,}[\w.@+~-]*|superschema-tsp-[\w-]+/g;
+const FILE_PATH = /(?:\.\.\/)+(?:[\w.@+~-]+\/)*[\w.@+~-]+|(?<![\w#:.@-])\/(?:[\w.@+~-]+\/){2,}[\w.@+~-]*|superschema-tsp-[\w-]+/g;
+
+/** `text` with every temp-workspace path replaced (by `<path>`). Stateless: safe to call from anywhere. */
+export function replaceFilePaths(text: string, replacement = "<path>"): string {
+  return text.replace(FILE_PATH, replacement);
+}
+
+/** The most raw emitter output the server log gets (a compile can print megabytes: `execFile` allows 10 MB). */
+export const MAX_LOGGED_EMITTER_OUTPUT = 20_000;
+
+/** `text` as it goes to the server log: at most {@link MAX_LOGGED_EMITTER_OUTPUT} characters, the cut counted. */
+export function boundedForLog(text: string): string {
+  return text.length <= MAX_LOGGED_EMITTER_OUTPUT
+    ? text
+    : `${text.slice(0, MAX_LOGGED_EMITTER_OUTPUT)}\n... [${text.length - MAX_LOGGED_EMITTER_OUTPUT} more characters cut]`;
+}
 
 /** `<path>/main.tsp:8:7 - error <code>: <message>`, or a location-less `error <code>: <message>`. */
 const ERROR_DIAGNOSTIC = /^(?:.*?\.tsp:\d+:\d+ - )?error (\S+: .+)$/gm;
@@ -24,7 +41,7 @@ const WARNING_DIAGNOSTIC = /^(?:.*?\.tsp:\d+:\d+ - )?warning (\S+: .+)$/gm;
 
 const MAX_DIAGNOSTICS = 5;
 
-const scrubPaths = (text: string): string => text.replace(FILE_PATH, "<path>");
+const scrubPaths = (text: string): string => replaceFilePaths(text);
 
 function diagnosticsOf(raw: string, pattern: RegExp): string[] {
   return [...raw.matchAll(pattern)].map((match) => scrubPaths(match[1]).trim());
