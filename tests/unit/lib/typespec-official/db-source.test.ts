@@ -5,7 +5,7 @@ import { buildDbTypeSpecSource, isDbTypeSpecTarget } from "@/lib/typespec-offici
 /**
  * The DB DDL emitter packages (@typespec/spanner|postgres|bigquery) are self-contained: each declares its OWN
  * `@schema` / `@primaryKey` / ... and its emitter reads the state of ITS decorators only. A decorator from another
- * library (the shared @typespec/db) compiles fine but is invisible to the emitter, which then writes no file. The
+ * library (a shared one with the same names, such as the former @typespec/db) compiles fine but is invisible to the emitter, which then writes no file. The
  * generated source must therefore use only the decorators of the dialect package it emits through.
  */
 
