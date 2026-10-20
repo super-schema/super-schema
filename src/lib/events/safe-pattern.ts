@@ -195,11 +195,19 @@ interface Task {
  *
  * EVERY object at any depth is judged, the data keywords (`const`, `enum`, `default`, `example`, `examples`) and any unknown or `x-`
  * keyword included: the editor's validator resolves a `$ref` against ANY JSON pointer, so `{ "$ref": "#/properties/x/default" }` reads
- * the default of a property as a schema and would run a `pattern` that sits there. (The price: an object inside an enum or a default
- * that has a key called `pattern` with an unsafe text loses that key, in the editor's copy only.) The one thing that is not a keyword is
- * the key of a `names` map: a property may be called `pattern` and holds a schema, which stays; but a text (unsafe: removed) or a list
- * of anything but plain words under such a name is no schema, and the validator would read it as a `pattern` if a `$ref` made the map a
- * schema, so it is judged.
+ * the default of a property as a schema and would run a `pattern` that sits there. The one thing that is not a keyword is the key of a
+ * `names` map: a property may be called `pattern` and holds a schema, which stays; but a text (unsafe: removed) or a list of anything
+ * but plain words under such a name is no schema, and the validator would read it as a `pattern` if a `$ref` made the map a schema, so
+ * it is judged.
+ *
+ * What an ordinary schema loses: nothing. A property legitimately named `pattern`, with its own safe `pattern`, comes out unchanged, as
+ * does every keyword. The removals this costs, in the editor's copy only (the entity and the emitted document keep everything), are:
+ * - a key called `pattern` inside a DATA object (an object in a `const`, `default`, `enum`, `example` or `examples`) whose value is an
+ *   unsafe text or not a text. "Generate from payload" then leaves that key out of the example it builds from that default, and for a
+ *   `const` object with such a key the editor flags the real value as not equal to the constant. It takes an entity that models a regex
+ *   as a field and writes an unanchored or backtracking regex into its `const`, `default` or `examples`;
+ * - under a property NAMED `patternProperties`, a key of its schema that is not a safe regex and is outside `[A-Za-z0-9$_.-]` (a keyword
+ *   or an `x-` key is always inside it).
  *
  * Iterative (nothing here recurses and nothing is cloned by the engine: `structuredClone` throws on deeply nested data), one visit per
  * object and role (a shared sub-object is copied once and shared again, a cycle is cut by the same memo), so it costs the size of the

@@ -184,6 +184,33 @@ describe("sanitizeSchemaPatterns", () => {
     expect(out).toEqual({ type: "object", pattern: NEEDS_U, patternProperties: { [GOOD]: { type: "string" } } });
   });
 
+  it("leaves an ordinary schema as it is: a property legitimately named `pattern` with its own safe `pattern`, and one named `patternProperties` with ordinary keywords", () => {
+    const schema: JsonObject = {
+      type: "object",
+      properties: {
+        pattern: { type: "string", pattern: GOOD, description: "a regex field" },
+        patternProperties: { type: "object", description: "x", "x-note": 1, properties: { pattern: { type: "string", pattern: GOOD } }, required: ["pattern"] },
+      },
+      patternProperties: { "^x-[a-z]+$": { type: "string", pattern: GOOD } },
+      definitions: { pattern: { type: "string", pattern: GOOD } },
+    };
+    expect(sanitizeSchemaPatterns(schema)).toEqual(schema);
+  });
+
+  it("the accepted removals, exactly: an unsafe or non-text `pattern` key inside a data object, and a non-word non-regex key under a property named `patternProperties`", () => {
+    const out = sanitizeSchemaPatterns({
+      type: "object",
+      properties: {
+        a: { default: { pattern: "abc" }, const: { pattern: 5 }, examples: [{ pattern: GOOD, other: 1 }] },
+        patternProperties: { type: "object", "has space": 1, "x-ok": 1 },
+      },
+    });
+    expect(out).toEqual({
+      type: "object",
+      properties: { a: { default: {}, const: {}, examples: [{ pattern: GOOD, other: 1 }] }, patternProperties: { type: "object", "x-ok": 1 } },
+    });
+  });
+
   it("does not mistake a NAME for a keyword: a property, definition or dependency called `pattern` or `patternProperties` stays", () => {
     const schema: JsonObject = {
       type: "object",
