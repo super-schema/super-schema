@@ -13,6 +13,10 @@ import { goldenCases } from "./fixtures/dirty-documents";
 import { hostileParametersDocument, smallDocument, yamlErrorFlood } from "./fixtures/hostile-documents";
 import { lagProbe } from "./fixtures/lag-probe";
 
+// The parser blocks an in-process event loop for 5-9 s on these documents: anything below a second proves the work is isolated. 200 ms
+// was measured as 214 ms once the whole suite shared the machine, so the bound leaves room for other test files' CPU load.
+const MAX_LOOP_LAG_MS = 1_000;
+
 /**
  * The parser and the read of a file in a child process, through the REAL worker (`worker-dist/asyncapi-parser-worker.cjs`, built by the global
  * setup): ordinary documents give exactly the diagnostics they gave when the parser ran in the server; a document that costs the parser
@@ -105,7 +109,7 @@ describe("a document that blocks the parser for seconds", () => {
     const lag = probe.stop();
 
     // the loop first: that is what a runner that does not isolate fails (the job of the same document held it for 8 - 13 s)
-    expect(lag).toBeLessThan(200);
+    expect(lag).toBeLessThan(MAX_LOOP_LAG_MS);
     expect(res).toEqual({
       success: true,
       data: [{
@@ -129,7 +133,7 @@ describe("a document that blocks the parser for seconds", () => {
     const res = await runParserJob({ kind: "parseSource", text: flood }, { timeoutMs: 1_500 });
     const took = Date.now() - started;
     const lag = probe.stop();
-    expect(lag).toBeLessThan(200); // first: the loop is what a runner that does not isolate fails
+    expect(lag).toBeLessThan(MAX_LOOP_LAG_MS); // first: the loop is what a runner that does not isolate fails
     expect(res).toMatchObject({ success: false, error: { code: "PARSER_TIMEOUT", details: { timeoutMs: 1_500 } } });
     expect(took).toBeGreaterThanOrEqual(1_400);
     expect(took).toBeLessThan(7_000); // loose for a loaded machine: the limit is 1.5 s, the unbounded read 5 - 9 s

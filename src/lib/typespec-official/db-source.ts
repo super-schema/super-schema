@@ -18,18 +18,20 @@
  * emitters would write unquoted although SQL needs quotes (a reserved word, a
  * leading digit) is a WARNING — the DDL looks fine and does not run.
  *
+ * What the DDL cannot say about a column (a decimal's precision and scale, a url stored as text, ...) is a NOTE in the table's
+ * comment: the entity's description on the first line, then `Notes:` and one `- <note>` line per column (see db-column-types.ts).
+ * The comment is the mechanism, not a warning.
+ *
  * Pure function — no side effects, no I/O.
  */
 
 import type {
   SuperSchemaModel,
   SuperSchemaField,
-  LogicalType,
 } from "@/types/super-schema-model";
 import { escapeString, propertyName, sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
-import { isReservedWord, POSTGRES_SYSTEM_COLUMNS, type ReservedWordDialect } from "./sql-reserved-words";
-
-type DbDialect = ReservedWordDialect;
+import { isReservedWord, POSTGRES_SYSTEM_COLUMNS } from "./sql-reserved-words";
+import { mapType, stringMaxLength, tableComment, tableNotes, type DbDialect } from "./db-column-types";
 
 const TARGET_TO_DIALECT: Record<string, DbDialect> = {
   spanner: "spanner",
@@ -51,63 +53,18 @@ interface DialectConfig {
   displayName: string;
   /** Does the dialect's DDL name the schema? (Spanner's emitter writes `CREATE TABLE <table>` only.) */
   writesSchemaName: boolean;
-  /**
-   * How a field description is put on its column (`@doc`), or null for no column docs. The emitters write it into the
-   * DDL themselves, and two of them do it in a way that makes the DDL invalid (reproduced; sibling repo
-   * `packages/{spanner,postgres,bigquery}/src/write.ts`):
-   * - Spanner and PostgreSQL write ` -- <text>` and append the column's comma AFTER it, so the comma becomes part of
-   *   the comment: no column docs for those two (null). Switch them on once the emitters write the comma first.
-   * - BigQuery writes `OPTIONS(description='<text>')` without escaping, so an apostrophe ends the string early: the
-   *   text is escaped for a single-quoted GoogleSQL string here. Drop the function once the emitter escapes it itself.
-   * The table's own `@doc` is a comment line of its own in every dialect and is always kept.
-   */
-  columnDoc: ((description: string) => string) | null;
 }
 
-/** Text for a single-quoted SQL string literal: the backslash and the quote are backslash-escaped. */
-const escapeSqlString = (text: string): string => text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-
+// A field's description is its column's `@doc`; the entity's description is the table's. The emitters (built with the
+// sibling write.ts patch, docs/events/REVIEW.md gap 15) write a column's as `col TYPE, -- text` (Spanner, PostgreSQL: the
+// comma comes first, so the comment cannot swallow it) or `OPTIONS(description='...')` (BigQuery, which escapes `\` and
+// `'` itself), and the table's as comment lines before CREATE TABLE (one `-- ` line per line of its doc).
 // Models in a `@schema` namespace are tables, so no `@table` is needed (the packages have none). They have no
 // decimal-precision decorator either: a decimal column is emitted as NUMERIC without precision and scale.
 const DIALECTS: Record<DbDialect, DialectConfig> = {
-  spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", displayName: "Cloud Spanner", writesSchemaName: false, columnDoc: null },
-  postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", displayName: "PostgreSQL", writesSchemaName: true, columnDoc: null },
-  bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", displayName: "BigQuery", writesSchemaName: true, columnDoc: escapeSqlString },
-};
-
-/**
- * Logical IR type → TypeSpec built-in scalar the emitters understand. `url`, `plainTime` and `duration` have no column
- * type in any of the three emitters (they skip the field with an `unsupported-type` warning and write the table without
- * it), so they are stored as their text form. Every other logical type is a scalar below, or `array` / `enum` / `map` /
- * `object` / `reference`, which {@link mapType} handles.
- */
-const TYPE_MAP: Partial<Record<LogicalType, string>> = {
-  string: "string",
-  url: "string",
-  integer: "int64",
-  int8: "int8",
-  int16: "int16",
-  int32: "int32",
-  int64: "int64",
-  safeint: "safeint",
-  uint8: "uint8",
-  uint16: "uint16",
-  uint32: "uint32",
-  uint64: "uint64",
-  numeric: "decimal",
-  float: "float64",
-  float32: "float32",
-  float64: "float64",
-  decimal: "decimal",
-  decimal128: "decimal128",
-  boolean: "boolean",
-  bytes: "bytes",
-  plainDate: "plainDate",
-  plainTime: "string",
-  utcDateTime: "utcDateTime",
-  offsetDateTime: "offsetDateTime",
-  duration: "string",
-  unixTimestamp32: "int32",
+  spanner: { library: "@typespec/spanner", namespace: "TypeSpec.Spanner", displayName: "Cloud Spanner", writesSchemaName: false },
+  postgres: { library: "@typespec/postgres", namespace: "TypeSpec.Postgres", displayName: "PostgreSQL", writesSchemaName: true },
+  bigquery: { library: "@typespec/bigquery", namespace: "TypeSpec.BigQuery", displayName: "BigQuery", writesSchemaName: true },
 };
 
 /** A name made of the characters an unquoted SQL identifier has; a leading digit gets a `_`. May be empty of letters and digits. */
@@ -140,24 +97,36 @@ function pascal(name: string): string | null {
   return joined || null;
 }
 
-/** Collapse line breaks (the DDL puts a description in a one-line comment or a one-line quoted string). */
-const oneLine = (text: string): string => text.replace(/\r\n|\r|\n/g, " ");
+/**
+ * Collapse line breaks (the DDL puts a description in a one-line comment or a one-line quoted string). CR and LF end a
+ * `--` comment in every dialect; probed on PGlite (a real PostgreSQL), VT, FF, NEL, LS and PS do NOT end one there. Taking
+ * them out as well is defence in depth: a naive line splitter ends a line at them (Python's `splitlines()` does at all five,
+ * and what follows a split comment would run as SQL).
+ */
+const oneLine = (text: string): string => text.replace(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/g, " ");
 
-/** The `@doc("…")` decorator for text: one line, then escaped for a TypeSpec string (`\`, `"`, `${`, tab, …). */
-const docDecorator = (text: string): string => `@doc("${escapeString(oneLine(text))}")`;
+/**
+ * Characters taken out of a description: NUL and the other C0 controls except tab (line breaks are flattened before this runs),
+ * DEL, and the bidirectional controls U+202A-202E and U+2066-2069, which make a DDL file read differently from what it
+ * says. PostgreSQL cannot even take a NUL in a statement.
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g;
 
-function mapType(field: SuperSchemaField): string {
-  if (field.type === "array") {
-    const el = field.complexType?.arrayElementType as LogicalType | undefined;
-    const elTsp = (el && TYPE_MAP[el]) || "string";
-    return `${elTsp}[]`;
-  }
-  // v1: FK/enum/map/object fall back to string; complex modeling is a follow-up.
-  if (field.type === "reference" || field.type === "enum" || field.type === "map" || field.type === "object") {
-    return "string";
-  }
-  return TYPE_MAP[field.type] ?? "string";
+/**
+ * A description as the DDL carries it: one line, no control characters, ends trimmed; null when nothing is left (an empty
+ * comment is noise: a description that was only whitespace or only control characters gets no comment).
+ */
+function descriptionText(description: string | undefined): string | null {
+  const text = oneLine(description ?? "").replace(CONTROL_CHARACTERS, "").trim();
+  return text === "" ? null : text;
 }
+
+/**
+ * The `@doc("…")` decorator for text, escaped for a TypeSpec string (`\`, `"`, `${`, tab, line break …). The text is already
+ * clean: a description from {@link descriptionText}, or the table comment's lines joined by `\n` (a TypeSpec string
+ * delivers that `\n` to the emitter as a real line break, which the emitters write as one `-- ` line each).
+ */
+const docDecorator = (text: string): string => `@doc("${escapeString(text)}")`;
 
 const NO_NAME = "it has no letters or digits that the database dialects accept. Rename it.";
 
@@ -180,6 +149,17 @@ const IDENTIFIER_LIMITS: Record<DbDialect, { table: number; schema: number; colu
 
 /** BigQuery rejects a column description over this many characters (`OPTIONS(description=...)`). */
 const BIGQUERY_MAX_DESCRIPTION = 1024;
+
+/**
+ * The largest `n` a dialect accepts in the column type the emitter prints for a string with a maximum length (a `@maxLength`
+ * is written as `STRING(n)` in Spanner and BigQuery, `VARCHAR(n)` in PostgreSQL). Spanner takes STRING(1..2,621,440) (or MAX);
+ * PostgreSQL's VARCHAR(n) is capped at 10,485,760 (PGlite: "length for type varchar cannot exceed 10485760"). BigQuery's
+ * emitter prints `STRING(n)` and the engine takes any positive n, so it has no entry and no warning.
+ */
+const STRING_LENGTH_LIMITS: Partial<Record<DbDialect, { type: string; max: number }>> = {
+  spanner: { type: "STRING", max: 2_621_440 },
+  postgres: { type: "VARCHAR", max: 10_485_760 },
+};
 
 const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 
@@ -227,6 +207,11 @@ function fieldWarnings(dialect: DbDialect, field: SuperSchemaField, column: stri
   }
   if (dialect === "bigquery" && columnDocText !== null && columnDocText.length > BIGQUERY_MAX_DESCRIPTION) {
     warnings.push(`The description of the field "${field.name}" is longer than BigQuery's limit of ${BIGQUERY_MAX_DESCRIPTION.toLocaleString("en-US")} characters, so BigQuery will reject the DDL as is. Shorten it.`);
+  }
+  const length = stringMaxLength(field);
+  const lengthLimit = STRING_LENGTH_LIMITS[dialect];
+  if (length !== undefined && lengthLimit && length > lengthLimit.max) {
+    warnings.push(`The column "${column}" has maxLength ${length.toLocaleString("en-US")}, above the maximum of ${lengthLimit.max.toLocaleString("en-US")} for ${lengthLimit.type}(n) in ${DIALECTS[dialect].displayName}, so the DDL will be rejected.`);
   }
   return warnings;
 }
@@ -287,8 +272,8 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
   if (cfg.writesSchemaName) warnings.push(...identifierWarnings(dialect, "schema", schemaName));
   for (const { field, ident } of columns) {
     const column = emittedName(ident);
-    const description = field.decorators?.semantics?.description || field.description;
-    warnings.push(...identifierWarnings(dialect, "column", column), ...fieldWarnings(dialect, field, column, cfg.columnDoc && description ? oneLine(description) : null));
+    const description = descriptionText(field.decorators?.semantics?.description || field.description);
+    warnings.push(...identifierWarnings(dialect, "column", column), ...fieldWarnings(dialect, field, column, description));
   }
   if (dialect === "postgres") warnings.push(...truncationWarnings(columns.map(({ ident }) => emittedName(ident))));
 
@@ -300,8 +285,11 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
   lines.push(`@schema("${escapeString(schemaName)}")`);
   lines.push(`namespace ${ns};`, "");
 
-  if (model.entity.description) {
-    lines.push(docDecorator(model.entity.description));
+  // The table's comment: the entity's description, then the notes for every column the DDL cannot state as declared.
+  const notes = tableNotes(dialect, cfg.displayName, columns.map(({ field, ident }) => ({ field, column: emittedName(ident) })));
+  const tableText = tableComment(descriptionText(model.entity.description), notes);
+  if (tableText !== null) {
+    lines.push(docDecorator(tableText));
   }
   // Spanner age-based retention → real ROW DELETION POLICY (D6 escalation); only @typespec/spanner has the decorator.
   if (dialect === "spanner") {
@@ -331,14 +319,14 @@ export function buildDbTypeSpecTarget(model: SuperSchemaModel, targetKey: string
       decs.push(multiKey ? `@primaryKey(${keyFields.indexOf(f) + 1})` : "@primaryKey");
     }
 
-    const maxLen = f.decorators?.typespec?.validation?.maxLength;
-    if (f.type === "string" && typeof maxLen === "number" && maxLen > 0) {
+    const maxLen = stringMaxLength(f);
+    if (maxLen !== undefined) {
       decs.push(`@maxLength(${maxLen})`);
     }
 
-    const desc = f.decorators?.semantics?.description || f.description;
-    if (desc && cfg.columnDoc) {
-      decs.push(docDecorator(cfg.columnDoc(oneLine(desc))));
+    const desc = descriptionText(f.decorators?.semantics?.description || f.description);
+    if (desc !== null) {
+      decs.push(docDecorator(desc));
     }
 
     // Primary keys are never nullable.

@@ -42,11 +42,23 @@ describe("description text", () => {
     expect(entityDoc('say "hi"')).toContain('@doc("say \\"hi\\"")');
   });
 
-  it("composes the BigQuery SQL escaping with the TypeSpec escaping exactly once (no double escape)", () => {
+  it("escapes a column description for a TypeSpec string exactly once, on every dialect (the BigQuery emitter does the SQL escaping)", () => {
     const f = field({ name: "id", type: "string", isKey: true, description: "it's ${x} C:\\dir\\ \"q\"\tz" });
-    // SQL text:       it\'s ${x} C:\\dir\\ "q"<TAB>z
-    // TypeSpec text:  it\\'s \${x} C:\\\\dir\\\\ \"q\"\tz
-    expect(buildDbTypeSpecSource(model({ fields: [f] }), "bigquery")).toContain('@doc("it\\\\\'s \\${x} C:\\\\\\\\dir\\\\\\\\ \\"q\\"\\tz")');
+    // TypeSpec text:  it's \${x} C:\\dir\\ \"q\"\tz
+    for (const target of ALL) {
+      expect(buildDbTypeSpecSource(model({ fields: [f] }), target), target).toContain('@doc("it\'s \\${x} C:\\\\dir\\\\ \\"q\\"\\tz")');
+    }
+  });
+
+  it("also turns VT, FF, NEL, LS and PS into a space: tools that split on them would end a `--` comment early", () => {
+    for (const target of ALL) {
+      expect(entityDoc("a\vb\fc\u0085d\u2028e\u2029f", target), target).toContain('@doc("a b c d e f")');
+    }
+  });
+
+  it("trims the ends, and gives a description that is only whitespace no @doc at all", () => {
+    expect(entityDoc("  padded \n")).toContain('@doc("padded")\nmodel');
+    expect(entityDoc(" \t\r\n ")).not.toContain("@doc");
   });
 });
 
@@ -232,9 +244,22 @@ describe("names the dialect cannot hold, or holds as something else", () => {
     expect(target.warnings).toEqual(['The description of the field "note" is longer than BigQuery\'s limit of 1,024 characters, so BigQuery will reject the DDL as is. Shorten it.']);
     expect(target.source).toContain(`@doc("${long}")`);
     expect(withColumn("note", "bigquery", { description: "d".repeat(1024) }).warnings).toEqual([]);
-    // Spanner and PostgreSQL write no column description at all
+    // only BigQuery has a limit on a column description; Spanner and PostgreSQL carry it as a comment of any length
     expect(withColumn("note", "spanner", { description: long }).warnings).toEqual([]);
     expect(withColumn("note", "postgresql", { description: long }).warnings).toEqual([]);
+  });
+
+  it("a string maxLength above what the dialect's column type takes is a warning: Spanner STRING(n) 2,621,440, PostgreSQL VARCHAR(n) 10,485,760, none for BigQuery", () => {
+    const limited = (max: number) => ({ decorators: { typespec: { validation: { maxLength: max } } } }) as Partial<SuperSchemaField>;
+
+    expect(withColumn("note", "spanner", limited(2_621_440)).warnings).toEqual([]);
+    expect(withColumn("note", "spanner", limited(2_621_441)).warnings).toEqual(['The column "note" has maxLength 2,621,441, above the maximum of 2,621,440 for STRING(n) in Cloud Spanner, so the DDL will be rejected.']);
+    expect(withColumn("note", "postgresql", limited(10_485_760)).warnings).toEqual([]);
+    expect(withColumn("note", "postgresql", limited(10_485_761)).warnings).toEqual(['The column "note" has maxLength 10,485,761, above the maximum of 10,485,760 for VARCHAR(n) in PostgreSQL, so the DDL will be rejected.']);
+    // the BigQuery emitter prints STRING(n) and the engine takes any positive n
+    expect(withColumn("note", "bigquery", limited(1_000_000_000)).warnings).toEqual([]);
+    // a maxLength that is not passed on (a url's, an array's) prints no length, so there is nothing to reject
+    expect(withColumn("note", "postgresql", { type: "url", ...limited(99_999_999) }).warnings).toEqual([]);
   });
 
   it("a field whose letters were dropped (accents, non-Latin) says so: café -> caf, prénom -> pr_nom", () => {

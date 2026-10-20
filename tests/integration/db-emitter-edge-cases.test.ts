@@ -57,7 +57,7 @@ describe("bigquery: a field description is a single-quoted SQL string", () => {
 
     expect(result.errors).toEqual([]);
     expect(result.validationStatus).toBe("VALID");
-    expect(result.output).toContain(literal);
+    expect(result.output, "needs @typespec/bigquery built with the write.ts escaping fix (docs/events/REVIEW.md, gap 15)").toContain(literal);
   }, 60_000);
 });
 
