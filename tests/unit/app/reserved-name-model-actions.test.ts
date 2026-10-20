@@ -5,35 +5,40 @@ import { PARSER_UNSAFE_KEYS } from "@/lib/event-specs/own-property";
 // its fields into the entity's payload: a field named like a parser-unsafe key (`PARSER_UNSAFE_KEYS`) is refused when a person adds or renames
 // one, and an import renames it (and the model, if it is the model that has the name) and says so.
 
-const { mockAuth, mockPrisma, mockTx, mockAssertNameAvailable } = vi.hoisted(() => ({
-  mockAuth: vi.fn(),
-  mockPrisma: {
-    user: { findUnique: vi.fn() },
-    domain: { findUnique: vi.fn() },
-    modelDefinition: { findUnique: vi.fn() },
-    modelFieldDefinition: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
-    $transaction: vi.fn(),
-  },
-  mockTx: {
-    modelDefinition: { create: vi.fn(), findFirst: vi.fn() },
-    decoratorDefinition: { create: vi.fn(), findFirst: vi.fn() },
-    entity: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
-    product: { findUnique: vi.fn(), create: vi.fn() },
-    domain: { findUnique: vi.fn() },
-    serviceDefinition: { create: vi.fn() },
-    sharedEnum: { create: vi.fn() },
-    customScalar: { create: vi.fn() },
-    unionType: { create: vi.fn() },
-    $executeRaw: vi.fn(),
-  },
-  mockAssertNameAvailable: vi.fn(),
-}));
+// The name registry is the REAL one here (over the fake transaction's registry delegates): a reserved enum / scalar / union name in an import
+// is refused by it, an entity or model name is renamed before it gets there.
+const { mockAuth, mockPrisma, mockTx } = await vi.hoisted(async () => {
+  const { emptyRegistryDelegates } = await import("../../helpers/registry-mocks");
+  const registry = emptyRegistryDelegates();
+  return {
+    mockAuth: vi.fn(),
+    mockPrisma: {
+      user: { findUnique: vi.fn() },
+      domain: { findUnique: vi.fn() },
+      modelDefinition: { findUnique: vi.fn() },
+      modelFieldDefinition: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
+      $transaction: vi.fn(),
+    },
+    mockTx: {
+      ...registry,
+      modelDefinition: { create: vi.fn(), findFirst: vi.fn() },
+      decoratorDefinition: { create: vi.fn(), findFirst: vi.fn() },
+      entity: { ...registry.entity, create: vi.fn(), findFirst: vi.fn() },
+      product: { findUnique: vi.fn(), create: vi.fn() },
+      domain: { findUnique: vi.fn() },
+      serviceDefinition: { ...registry.serviceDefinition, create: vi.fn() },
+      sharedEnum: { ...registry.sharedEnum, create: vi.fn() },
+      customScalar: { ...registry.customScalar, create: vi.fn() },
+      unionType: { ...registry.unionType, create: vi.fn() },
+      $executeRaw: vi.fn(),
+    },
+  };
+});
 
 vi.mock("@/lib/auth", () => ({ auth: mockAuth }));
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
-vi.mock("@/services/name-registry.service", () => ({ assertNameAvailable: mockAssertNameAvailable }));
 
 import { addModelFieldAction, createDomainAssetsFromImportAction, updateModelFieldAction } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 
@@ -56,9 +61,7 @@ beforeEach(() => {
   mockTx.domain.findUnique.mockResolvedValue({ id: "domain-1", tenantId: "tenant-1" });
   mockTx.product.findUnique.mockResolvedValue({ id: "prd-default", domainId: "domain-1", domain: { tenantId: "tenant-1" } });
   mockTx.product.create.mockResolvedValue({ id: "prd-default" });
-  mockTx.entity.findMany.mockResolvedValue([]);
   mockTx.entity.findFirst.mockResolvedValue(null);
-  mockAssertNameAvailable.mockResolvedValue({ success: true, data: undefined });
 });
 
 describe("addModelFieldAction", () => {
@@ -121,5 +124,36 @@ describe("the bulk import's models loop", () => {
     const result = await importModels([{ name: UNSAFE.toLowerCase(), fields: [field(`${UNSAFE}2`)] }]);
     expect(result.errors).toEqual([]);
     expect(mockTx.modelDefinition.create.mock.calls[0][0].data.name).toBe(UNSAFE.toLowerCase());
+  });
+});
+
+describe("the bulk import's entities, enums, scalars and unions (real name registry)", () => {
+  const NAME_MESSAGE = `"${UNSAFE}" is a reserved name: AsyncAPI documents cannot contain it. Choose another name.`;
+  const payload = (over: Record<string, unknown>) => ({
+    domainId: "domain-1", models: [], entities: [], sharedEnums: [], customScalars: [], unionTypes: [], services: [], decoratorDefinitions: [], ...over,
+  });
+  beforeEach(() => {
+    mockTx.entity.create.mockImplementation(async ({ data }) => ({ id: `entity-${data.name}` }));
+    mockTx.sharedEnum.create.mockResolvedValue({ id: "enum-1" });
+    mockTx.customScalar.create.mockResolvedValue({ id: "scalar-1" });
+    mockTx.unionType.create.mockResolvedValue({ id: "union-1" });
+  });
+
+  it("an entity named so is created under its renamed name (the registry is asked about THAT name), and the entity is reported", async () => {
+    const result = await createDomainAssetsFromImportAction(payload({ entities: [{ name: UNSAFE, description: "", fields: [field("id")] }] }));
+    expect(result.entitiesCreated).toBe(1);
+    expect(result.errors).toEqual([`The entity "${UNSAFE}" was renamed to "${UNSAFE}_1": the name is reserved.`]);
+    expect(mockTx.entity.create.mock.calls[0][0].data.name).toBe(`${UNSAFE}_1`);
+  });
+
+  it.each([
+    ["an enum", { sharedEnums: [{ name: UNSAFE, values: ["A"] }] }, "sharedEnum"],
+    ["a scalar", { customScalars: [{ name: UNSAFE, baseType: "string" }] }, "customScalar"],
+    ["a union", { unionTypes: [{ name: UNSAFE, memberTypes: ["string", "int32"] }] }, "unionType"],
+  ] as const)("%s named so is refused by the registry: the import stops with the message and nothing is created", async (_what, assets, delegate) => {
+    const result = await createDomainAssetsFromImportAction(payload({ ...assets, entities: [{ name: "Fine", description: "", fields: [] }] }));
+    expect(result.errors).toContain(NAME_MESSAGE);
+    expect(result).toMatchObject({ entitiesCreated: 0, enumsCreated: 0, scalarsCreated: 0, unionsCreated: 0 });
+    expect(mockTx[delegate].create).not.toHaveBeenCalled();
   });
 });
