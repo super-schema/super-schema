@@ -11,11 +11,20 @@ const nextConfig: NextConfig = {
   // D14: the AsyncAPI preview iframe reads these files at runtime (standalone output must ship them).
   // The key is a glob over the route path. Verified with a standalone build: under Turbopack the literal
   // dynamic-segment key "/api/asyncapi-preview/[asset]" matches nothing, so neither file ships.
+  //
+  // The AsyncAPI parser worker: `src/lib/event-specs/validation/parser-runner.ts` starts `worker-dist/asyncapi-parser-worker.cjs` as a child
+  // process (`child_process.fork`), a path no tracer can see through. It is ONE self-contained file (esbuild inlines the parser and
+  // everything it needs: `scripts/build-parser-worker.mjs`, run by `npm run build:parser-worker`, which `prebuild` runs), so it is all the
+  // standalone output needs: no package of `node_modules` has to be shipped for it. Every route may reach the parser (an event page
+  // validates, publishes, imports), so the key is a glob over ALL routes (a literal route key would match nothing under Turbopack, see
+  // above; `/**` ships the file with `next build --webpack` and with the default Turbopack build, both checked).
+  // `scripts/verify-parser-worker.mjs` runs the worker from a copy of `.next/standalone` that has no `node_modules`.
   outputFileTracingIncludes: {
     "/api/asyncapi-preview/*": [
       "./node_modules/@asyncapi/react-component/browser/standalone/index.js",
       "./node_modules/@asyncapi/react-component/styles/default.min.css",
     ],
+    "/**": ["./worker-dist/asyncapi-parser-worker.cjs"],
   },
   turbopack: {
     root: __dirname,
