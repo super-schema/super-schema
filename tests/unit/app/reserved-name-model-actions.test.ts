@@ -146,6 +146,15 @@ describe("the bulk import's entities, enums, scalars and unions (real name regis
     expect(mockTx.entity.create.mock.calls[0][0].data.name).toBe(`${UNSAFE}_1`);
   });
 
+  it("an import that ABORTS puts the abort reason first, ahead of the rename notes it had made (a reserved model plus a reserved enum)", async () => {
+    const result = await createDomainAssetsFromImportAction(payload({
+      models: [{ name: UNSAFE, description: "", fields: [field("id")] }],
+      sharedEnums: [{ name: UNSAFE, values: ["A"] }],
+    }));
+    expect(result.errors).toEqual([NAME_MESSAGE, `The model "${UNSAFE}" was renamed to "${UNSAFE}_1": the name is reserved.`]);
+    expect(result).toMatchObject({ modelsCreated: 0, enumsCreated: 0 });
+  });
+
   it.each([
     ["an enum", { sharedEnums: [{ name: UNSAFE, values: ["A"] }] }, "sharedEnum"],
     ["a scalar", { customScalars: [{ name: UNSAFE, baseType: "string" }] }, "customScalar"],

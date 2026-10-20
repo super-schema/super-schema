@@ -88,7 +88,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
 
   // Save status
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  // What the server said when the save failed (a refused name, for one), shown next to "Error saving".
+  // What the server said when the save failed (a refused name, for one), shown under the header row; the status span keeps "Error saving".
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingRef = useRef(false);
@@ -278,7 +278,7 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
       case "error":
         return (
           <span className="flex items-center gap-1 text-caption text-destructive">
-            <AlertCircle className="w-3 h-3" /> Error saving{saveError ? `: ${saveError}` : ""}
+            <AlertCircle className="w-3 h-3" /> Error saving
           </span>
         );
       default:
@@ -338,6 +338,13 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
           <SaveIndicator />
         </div>
       </div>
+
+      {/* What the server said when the save failed (a refused name, for one): a sentence of its own, under the header row, that wraps. */}
+      {saveStatus === "error" && saveError && (
+        <p role="alert" className="mb-space-6 max-w-prose whitespace-normal break-words text-body-small text-destructive">
+          {saveError}
+        </p>
+      )}
 
       {/* 8 Collapsible Panels */}
       <Accordion

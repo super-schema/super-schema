@@ -10,8 +10,8 @@
 import { isParserUnsafeKey } from "@/lib/event-specs/own-property";
 import { generateSlug } from "@/lib/slug";
 
-/** The one sentence, so the wording lives once: `subject` is "field name" or "name". */
-function reservedWording(name: string, subject: "field name" | "name"): string | null {
+/** The one sentence, so the wording lives once: `subject` is "field name", "name" or "key". */
+function reservedWording(name: string, subject: "field name" | "name" | "key"): string | null {
   if (typeof name !== "string") return null;
   const trimmed = name.trim();
   return isParserUnsafeKey(trimmed) ? `"${trimmed}" is a reserved name: AsyncAPI documents cannot contain it. Choose another ${subject}.` : null;
@@ -30,6 +30,15 @@ export function reservedNameMessage(name: string): string | null {
   return reservedWording(name, "name");
 }
 
+/**
+ * The same for a document KEY (a channel, message, server, operation, trait or security-scheme key): why `key` cannot be one when it is on the
+ * parser's list, or null. The `Object.prototype` collisions that are not on that list (`constructor`, `prototype`) keep their own, older wording
+ * where they are refused (`isReservedKey`).
+ */
+export function reservedKeyMessage(key: string): string | null {
+  return reservedWording(key, "key");
+}
+
 /** The message for the first field of `fields` whose name is reserved, or null. Not a list, or an entry that is not an object: null. */
 export function firstReservedFieldNameMessage(fields: ReadonlyArray<{ name: string }>): string | null {
   if (!Array.isArray(fields)) return null;
@@ -40,14 +49,27 @@ export function firstReservedFieldNameMessage(fields: ReadonlyArray<{ name: stri
   return null;
 }
 
+/** The sentence both rename notes are made of: `The <field|entity|model> "<from>" was renamed to "<to>": the name is reserved.` */
+const renameNote = (noun: string, from: string, to: string): string => `The ${noun} "${from}" was renamed to "${to}": the name is reserved.`;
+const RENAME_NOTE = /^The (?:field|entity|model) "[^]*" was renamed to "[^]*": the name is reserved\./;
+
 /** What an importer reports for a field it had to rename. `ownerName` says where (an entity, or a model with `kind: "model"`). */
 export function reservedFieldRenamedMessage(from: string, to: string, ownerName: string, kind: "entity" | "model" = "entity"): string {
-  return `The field "${from}" was renamed to "${to}": the name is reserved. It belongs to the ${kind} "${ownerName}".`;
+  return `${renameNote("field", from, to)} It belongs to the ${kind} "${ownerName}".`;
 }
 
 /** What an importer reports for an entity or a model it had to rename. */
 export function reservedNameRenamedMessage(kind: "entity" | "model", from: string, to: string): string {
-  return `The ${kind} "${from}" was renamed to "${to}": the name is reserved.`;
+  return renameNote(kind, from, to);
+}
+
+/**
+ * True for a message `reservedFieldRenamedMessage` / `reservedNameRenamedMessage` wrote: a NOTE about something an import changed (it
+ * is delivered with the import's other messages), never an error that stopped it. Callers that pick "the first blocking error" out of an
+ * import's messages must skip these.
+ */
+export function isReservedRenameNote(message: string): boolean {
+  return RENAME_NOTE.test(message);
 }
 
 /**
@@ -90,6 +112,8 @@ export function renameReservedNames<T extends { name: string; extends?: string }
   for (const item of items) {
     if (reservedNameMessage(item.name) === null) continue;
     const from = item.name.trim();
+    // Items that carry the SAME reserved name (a duplicate the import will skip later) share one new name, and it is reported once.
+    if (renames.has(from)) continue;
     let n = 1;
     let to = `${from}_${n}`;
     while (reservedNameMessage(to) !== null || taken.has(to.toLowerCase())) {

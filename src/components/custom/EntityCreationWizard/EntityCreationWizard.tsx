@@ -22,6 +22,7 @@ import {
 } from "@/components/custom/ImportDialog/TypeSpecImportReviewScreen";
 import { toast } from "sonner";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
+import { isReservedRenameNote } from "@/lib/reserved-field-names";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { levelLabel } from "@/lib/levels";
 
@@ -321,7 +322,7 @@ export function EntityCreationWizard({
         result.servicesCreated +
         result.decoratorsCreated;
       const blockingErrors = result.errors.filter(
-        (err) => !err.includes("already exists")
+        (err) => !err.includes("already exists") && !isReservedRenameNote(err)
       );
 
       if (createdCount === 0 && blockingErrors.length > 0) {

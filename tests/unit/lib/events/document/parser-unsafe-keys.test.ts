@@ -31,13 +31,24 @@ describe("parseEventDocument", () => {
   ])("a saved document whose %s key is hasOwnProperty comes back as a problem at the key, not a crash", (_what, pointer, change) => {
     const d = withTraits();
     change(d);
-    expect(reserved(d, pointer)).toEqual({ pointer, message: 'Key "hasOwnProperty" is reserved — choose another key' });
+    expect(reserved(d, pointer)).toEqual({ pointer, message: '"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another key.' });
   });
 
   it("a security scheme named hasOwnProperty is refused at its pointer", () => {
     const d = slice1Minimal();
     d.components = { securitySchemes: JSON.parse('{"hasOwnProperty":{"type":"plain"}}') as never };
-    expect(reserved(d, "/components/securitySchemes/hasOwnProperty")?.message).toBe('Security scheme key "hasOwnProperty" is reserved — choose another key');
+    expect(reserved(d, "/components/securitySchemes/hasOwnProperty")?.message).toBe('"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another key.');
+  });
+
+  it("a JS-prototype name that is NOT on the parser's list keeps the plain wording; one that is on both lists (__proto__) gets the parser's", () => {
+    const messageFor = (key: string) => {
+      const d = slice1Minimal();
+      d.operations[0].key = key;
+      return reserved(d, "/operations/0/key")?.message;
+    };
+    expect(messageFor("constructor")).toBe('Key "constructor" is reserved — choose another key');
+    expect(messageFor("prototype")).toBe('Key "prototype" is reserved — choose another key');
+    expect(messageFor("__proto__")).toBe('"__proto__" is a reserved name: AsyncAPI documents cannot contain it. Choose another key.');
   });
 
   it("the look-alikes are fine, and a padded key is checked trimmed", () => {
@@ -48,7 +59,7 @@ describe("parseEventDocument", () => {
     }
     const d = slice1Minimal();
     d.operations[0].key = "  hasOwnProperty ";
-    expect(reserved(d, "/operations/0/key")?.message).toBe('Key "hasOwnProperty" is reserved — choose another key');
+    expect(reserved(d, "/operations/0/key")?.message).toBe('"hasOwnProperty" is a reserved name: AsyncAPI documents cannot contain it. Choose another key.');
   });
 });
 

@@ -619,7 +619,8 @@ describe("schema import actions", () => {
         unionTypes: [{ name: "Either", memberTypes: ["A"] }],
       });
 
-      expect(result).toEqual(rolledBack(['Enum "Skipped" already exists — skipped', GENERIC_ACTION_ERROR]));
+      // the cause comes first, then what the import had said before it aborted
+      expect(result).toEqual(rolledBack([GENERIC_ACTION_ERROR, 'Enum "Skipped" already exists — skipped']));
       expect(mockTx.unionType.create).not.toHaveBeenCalled();
     });
 

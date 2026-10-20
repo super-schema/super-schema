@@ -1525,7 +1525,9 @@ export async function createDomainAssetsFromImportAction(
         : e instanceof ServiceErrorRejection
           ? e.message
           : unexpectedFailure("createDomainAssetsFromImportAction", e).error;
-    return emptyImportResult([...skipped, message]);
+    // The cause comes FIRST: it is what a caller that shows one message shows, and the notes made before it (a rename, a skip) say nothing
+    // about why everything was rolled back.
+    return emptyImportResult([message, ...skipped]);
   }
 }
 
