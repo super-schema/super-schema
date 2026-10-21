@@ -17,6 +17,7 @@ import {
   classificationFromEnterpriseMember,
   parseExtensionArguments,
   parseStringTuple,
+  setOwn,
   unescapeTypeSpecString,
 } from "./governance-decorators";
 
@@ -626,7 +627,7 @@ function collectModelExtensions(lines: string[], idx: number): Record<string, un
   }
   if (found.length === 0) return undefined;
   const out: Record<string, unknown> = {};
-  for (const { key, value } of found) out[key] = value;
+  for (const { key, value } of found) setOwn(out, key, value);
   return out;
 }
 

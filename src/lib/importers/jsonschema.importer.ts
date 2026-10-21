@@ -38,6 +38,7 @@
 import { parse as parseYaml } from "yaml";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
+import { setOwn } from "@/lib/compiler/governance-decorators";
 import { pickRootEntity } from "./multi-asset";
 import type {
   ParsedEntity,
@@ -99,7 +100,7 @@ function captureExtensions(node: JsonSchemaNode): Record<string, unknown> | unde
   let captured: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(node)) {
     if (KNOWN_SCHEMA_KEYWORDS.has(key)) continue;
-    (captured ??= {})[key] = value;
+    setOwn((captured ??= {}), key, value);
   }
   return captured;
 }

@@ -28,6 +28,16 @@ describe("JSON Schema importer: generic extension capture", () => {
     expect(entity?.fields.find((f) => f.name === "name")?.extensions).toBeUndefined();
   });
 
+  it("keeps a __proto__ key as an own extension, not a prototype", () => {
+    const result = parseJsonSchemaDocument(
+      '{"title":"T","type":"object","properties":{"a":{"type":"string"}},"__proto__":{"isAdmin":true}}'
+    );
+    const ext = data(result).entities[0].extensions as Record<string, unknown>;
+    expect(Object.keys(ext)).toEqual(["__proto__"]);
+    expect(Object.getPrototypeOf(ext)).toBe(Object.prototype);
+    expect(ext.isAdmin).toBeUndefined();
+  });
+
   it("preserves numbers, booleans, null and objects", () => {
     const result = parseJsonSchemaDocument(
       JSON.stringify({

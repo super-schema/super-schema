@@ -150,9 +150,18 @@ export function typeSpecValueLiteral(value: unknown): string {
 
 class LiteralSyntaxError extends Error {}
 
+/** Maximum `#[` / `#{` nesting the reader accepts; deeper input is unparseable, not a stack overflow. */
+export const MAX_LITERAL_DEPTH = 64;
+
+/** Set an own data property (a plain `obj[key] = v` on `__proto__` would invoke the prototype setter). */
+export function setOwn(obj: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 /** Recursive-descent reader for the grammar {@link typeSpecValueLiteral} writes. Throws LiteralSyntaxError. */
 class LiteralReader {
   pos = 0;
+  private depth = 0;
   constructor(private readonly s: string) {}
 
   ws(): void {
@@ -206,6 +215,15 @@ class LiteralReader {
   }
 
   value(): unknown {
+    if (++this.depth > MAX_LITERAL_DEPTH) throw new LiteralSyntaxError("literal nested too deeply");
+    try {
+      return this.valueInner();
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private valueInner(): unknown {
     this.ws();
     const c = this.s[this.pos];
     if (c === '"') return this.string();
@@ -229,7 +247,7 @@ class LiteralReader {
         while (!this.eat("}")) {
           const k = this.key();
           this.expect(":");
-          out[k] = this.value();
+          setOwn(out, k, this.value());
           if (!this.eat(",")) {
             this.expect("}");
             break;

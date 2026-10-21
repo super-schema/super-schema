@@ -38,6 +38,8 @@ import * as gov from "@superschema/typespec-enterprise";
 import {
   CLASSIFICATION_EXTENSION_KEY,
   TAGS_EXTENSION_KEY,
+  MAX_LITERAL_DEPTH,
+  setOwn,
   classificationFromEnterpriseMember,
 } from "./governance-decorators";
 import type {
@@ -231,7 +233,8 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
  * Read from the AST (not the checked value) like the rest of this file, so it works without decorator
  * implementations. Unknown nodes yield the flattened reference/literal text, or null.
  */
-function valueNodeToJs(node: unknown): unknown {
+function valueNodeToJs(node: unknown, depth = 0): unknown {
+  if (depth > MAX_LITERAL_DEPTH) return null;
   const n = node as
     | {
         value?: unknown;
@@ -246,11 +249,11 @@ function valueNodeToJs(node: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const p of n.properties) {
       const key = p.id?.sv;
-      if (key !== undefined) out[key] = valueNodeToJs(p.value);
+      if (key !== undefined) setOwn(out, key, valueNodeToJs(p.value, depth + 1));
     }
     return out;
   }
-  if (Array.isArray(n.values)) return n.values.map(valueNodeToJs);
+  if (Array.isArray(n.values)) return n.values.map((v) => valueNodeToJs(v, depth + 1));
   if (typeof n.value === "string" || typeof n.value === "number" || typeof n.value === "boolean") return n.value;
   const ref = exprToArgValue(n);
   // `null` parses as a reference to the keyword identifier, so it arrives as the text "null".

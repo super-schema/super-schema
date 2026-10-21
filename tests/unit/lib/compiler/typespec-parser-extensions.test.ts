@@ -142,3 +142,50 @@ describe("compile (AST) path", () => {
     expect(doc.models[0].fields[0].decorators.extensions).toEqual({ k: "v" });
   });
 });
+
+describe("hostile input", () => {
+  it("does not overflow the stack on 10000 nested openers; yields no extension", () => {
+    const src = wrap(`@TypeSpec.JsonSchema.extension("k", ${"#[".repeat(10000)}`);
+    expect(() => parseTypeSpecDocument(src)).not.toThrow();
+    expect(fieldExt(src)).toBeUndefined();
+    const full = wrap(`@TypeSpec.JsonSchema.extension("k", ${"#[".repeat(10000)}${"]".repeat(10000)})`);
+    expect(() => parseTypeSpecDocument(full)).not.toThrow();
+    expect(fieldExt(full)).toBeUndefined();
+  });
+
+  it("still parses nesting just under the limit", () => {
+    const n = 60;
+    const lit = "#[".repeat(n) + "1" + "]".repeat(n);
+    let expected: unknown = 1;
+    for (let i = 0; i < n; i++) expected = [expected];
+    expect(fieldExt(wrap(`@TypeSpec.OpenAPI.extension("k", ${lit})`))).toEqual({ k: expected });
+  });
+
+  const hostile = "#{__proto__: #{isAdmin: true}, constructor: 1}";
+  const checkOwn = (r: unknown) => {
+    const o = r as Record<string, unknown>;
+    expect(Object.keys(o)).toEqual(["__proto__", "constructor"]);
+    expect(Object.getPrototypeOf(o)).toBe(Object.prototype);
+    expect(o.isAdmin).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(o, "__proto__")!.value).toEqual({ isAdmin: true });
+  };
+
+  it("literal parser keeps __proto__ / constructor as own keys", () => {
+    checkOwn(parseTypeSpecValueLiteral(hostile));
+  });
+
+  it("regex path (field and model) keeps them as own keys", () => {
+    const f = fieldExt(wrap(`@TypeSpec.OpenAPI.extension("x", ${hostile})`))!;
+    checkOwn(f.x);
+    const m = parseTypeSpecDocument(
+      `@TypeSpec.OpenAPI.extension("__proto__", ${hostile})\nmodel M {\n  f?: string;\n}\n`
+    ).models[0];
+    expect(Object.keys(m.extensions!)).toEqual(["__proto__"]);
+    expect(Object.getPrototypeOf(m.extensions)).toBe(Object.prototype);
+  });
+
+  it("compile path keeps them as own keys", async () => {
+    const doc = await compiler.compileTypeSpecDocument(`model M {\n  @extension("x", ${hostile})\n  f?: string;\n}\n`);
+    checkOwn(doc.models[0].fields[0].decorators.extensions!.x);
+  });
+});
