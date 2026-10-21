@@ -83,6 +83,27 @@ interface JsonSchemaNode {
   [key: string]: unknown;
 }
 
+/**
+ * Keywords the importer reads (the `JsonSchemaNode` fields) plus `x-tags` / `x-classification`, which have their
+ * own round-trips. Every other key is kept verbatim as an extension.
+ */
+const KNOWN_SCHEMA_KEYWORDS = new Set([
+  "$schema", "$id", "$ref", "title", "description", "type", "format", "properties", "required", "items",
+  "enum", "const", "deprecated", "default", "oneOf", "anyOf", "allOf", "minLength", "maxLength", "pattern",
+  "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems", "$defs", "definitions",
+  "x-tags", "x-classification",
+]);
+
+/** Every key of `node` the importer does not read, verbatim (parsed JSON values); `undefined` when none. */
+function captureExtensions(node: JsonSchemaNode): Record<string, unknown> | undefined {
+  let captured: Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(node)) {
+    if (KNOWN_SCHEMA_KEYWORDS.has(key)) continue;
+    (captured ??= {})[key] = value;
+  }
+  return captured;
+}
+
 // ---------------------------------------------------------------------------
 // JSON Schema string `format` → logical type (high-confidence refinements)
 // ---------------------------------------------------------------------------
@@ -468,6 +489,11 @@ function indexDefinitions(schema: JsonSchemaNode, rootEntityName: string | undef
   return definitions;
 }
 
+function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, unknown> } {
+  const extensions = captureExtensions(node);
+  return extensions ? { extensions } : {};
+}
+
 function buildFields(objectNode: JsonSchemaNode, ctx: ResolveContext): ParsedField[] {
   const properties = (objectNode.properties ?? {}) as Record<string, unknown>;
   const requiredSet = new Set(Array.isArray(objectNode.required) ? objectNode.required : []);
@@ -500,6 +526,9 @@ function buildFields(objectNode: JsonSchemaNode, ctx: ResolveContext): ParsedFie
       minValueExclusive,
       maxValueExclusive,
     };
+
+    const extensions = captureExtensions(node);
+    if (extensions) field.extensions = extensions;
 
     if (resolved.referencedEntityName) field.referencedEntityName = resolved.referencedEntityName;
     if (resolved.enumName) field.enumName = resolved.enumName;
@@ -601,6 +630,7 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
       name: rootEntityName,
       description: typeof schema.description === "string" ? schema.description : undefined,
       fields: buildFields(schema, ctx),
+      ...entityExtensions(schema),
       sourceFormat: "json-schema",
       originalContent: content,
     });
@@ -613,6 +643,7 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
         name: def.assetName,
         description: typeof def.node.description === "string" ? def.node.description : undefined,
         fields: buildFields(def.node, ctx),
+        ...entityExtensions(def.node),
         sourceFormat: "json-schema",
         originalContent: content,
       });

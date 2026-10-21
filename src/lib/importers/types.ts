@@ -71,7 +71,7 @@ export interface ParsedField {
   minValueExclusive?: number;
   maxValueExclusive?: number;
   /** Extension key-value pairs (@extension) */
-  extensions?: Record<string, string>;
+  extensions?: Record<string, unknown>;
   /** Whether @secret was applied */
   secret?: boolean;
   /** Discriminator field name */
@@ -110,6 +110,10 @@ export interface ParsedEntity {
   description?: string;
   /** Parsed fields */
   fields: ParsedField[];
+  /** Vendor / unknown keys kept verbatim (parsed JSON values, never stringified) */
+  extensions?: Record<string, unknown>;
+  /** Parent entity name (inheritance), mirrors TypeSpecImportModel.extends */
+  extends?: string;
   /** Source format identifier */
   sourceFormat: ImportFormat;
   /** Original schema content (stored for drift detection) */
