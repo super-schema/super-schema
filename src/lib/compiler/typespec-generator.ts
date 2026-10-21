@@ -25,6 +25,9 @@ import {
   classificationDecorator,
   tagsDecorator,
   type GovernanceLibrary,
+  JSON_SCHEMA_LIBRARY_IMPORT,
+  genericExtensionDecorators,
+  genericExtensionEntries,
 } from "./governance-decorators";
 import {
   enumMemberName,
@@ -354,14 +357,33 @@ function declaresOrReferencesEnterprise(model: SuperSchemaModel): boolean {
  * a blank line. Imports must precede every other statement, so they open the file.
  */
 function governanceImportLines(model: SuperSchemaModel, governance: Governance): string[] {
-  if (!governance.enabled) return [];
   const used = new Set<GovernanceLibrary>();
-  if (model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) used.add("openapi");
-  for (const field of model.fields) {
-    if (field.classification) used.add(classificationDecorator(field.classification, governance.enterpriseShadowed).library);
+  if (governance.enabled) {
+    if (model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) used.add("openapi");
+    for (const field of model.fields) {
+      if (field.classification) used.add(classificationDecorator(field.classification, governance.enterpriseShadowed).library);
+    }
   }
+  // Generic extension passthrough is not a governance feature: it needs both libraries whatever the flag.
+  const hasGeneric = hasGenericExtensions(model);
+  if (hasGeneric) used.add("openapi");
   const ordered = (["enterprise", "openapi"] as const).filter((lib) => used.has(lib));
-  return ordered.length > 0 ? [...ordered.map((lib) => LIBRARY_IMPORTS[lib]), ""] : [];
+  const lines = ordered.map((lib) => LIBRARY_IMPORTS[lib]);
+  if (hasGeneric) lines.push(JSON_SCHEMA_LIBRARY_IMPORT);
+  return lines.length > 0 ? [...lines, ""] : [];
+}
+
+/** Model-level generic extensions: a flat record under `metadata.custom.extensions`. */
+function modelExtensions(model: SuperSchemaModel): Record<string, unknown> | undefined {
+  const ext = model.entity.metadata?.custom?.extensions;
+  return ext && typeof ext === "object" && !Array.isArray(ext) ? (ext as Record<string, unknown>) : undefined;
+}
+
+function hasGenericExtensions(model: SuperSchemaModel): boolean {
+  return (
+    genericExtensionEntries(modelExtensions(model)).length > 0 ||
+    model.fields.some((f) => genericExtensionEntries(f.decorators.typespec?.extensions?.openapi).length > 0)
+  );
 }
 
 function generateModelDecorators(model: SuperSchemaModel, governance: Governance): string[] {
@@ -383,6 +405,9 @@ function generateModelDecorators(model: SuperSchemaModel, governance: Governance
   if (governance.enabled && model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) {
     lines.push(tagsDecorator(model.entity.metadata.tags));
   }
+
+  // Generic vendor extensions (flat record in metadata.custom.extensions).
+  lines.push(...genericExtensionDecorators(modelExtensions(model)));
 
   return lines;
 }
@@ -839,6 +864,9 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
   if (governance.enabled && field.classification) {
     decorators.push(classificationDecorator(field.classification, governance.enterpriseShadowed).line);
   }
+
+  // Generic vendor extensions (unknown JSON Schema keys etc.) — a JsonSchema + OpenAPI pair per key.
+  decorators.push(...genericExtensionDecorators(field.decorators.typespec?.extensions?.openapi));
 
   return decorators;
 }

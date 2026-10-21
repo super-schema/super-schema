@@ -123,6 +123,58 @@ export function tagsDecorator(tags: string[]): string {
   return `@TypeSpec.OpenAPI.extension("${TAGS_EXTENSION_KEY}", #[${values}])`;
 }
 
+const TYPESPEC_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * A JSON value as a TypeSpec value literal: string `"..."`, array `#[a, b]` (same convention as
+ * {@link tagsDecorator}), plain object `#{key: value}` (keys that are not identifiers are backtick-quoted),
+ * number / boolean bare, `null` as `null`. Nested values recurse. Anything else (undefined, functions)
+ * renders as `null`; an `undefined` object member is omitted.
+ */
+export function typeSpecValueLiteral(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string") return `"${escapeTypeSpecString(value)}"`;
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "null";
+  if (typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `#[${value.map(typeSpecValueLiteral).join(", ")}]`;
+  if (typeof value === "object") {
+    const members = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${TYPESPEC_IDENTIFIER.test(k) ? k : `\`${k}\``}: ${typeSpecValueLiteral(v)}`);
+    return `#{${members.join(", ")}}`;
+  }
+  return "null";
+}
+
+/** Keys with their own dedicated decorator path; never emitted as generic extensions. */
+const RESERVED_EXTENSION_KEYS: readonly string[] = [TAGS_EXTENSION_KEY, CLASSIFICATION_EXTENSION_KEY];
+
+/** Extensions that pass through generically (everything but the keys with their own path). */
+export function genericExtensionEntries(extensions: Record<string, unknown> | undefined): [string, unknown][] {
+  if (!extensions || typeof extensions !== "object") return [];
+  return Object.entries(extensions).filter(([k, v]) => v !== undefined && !RESERVED_EXTENSION_KEYS.includes(k));
+}
+
+/**
+ * Decorator lines for generic vendor extensions: per key one `@TypeSpec.JsonSchema.extension` and one
+ * `@TypeSpec.OpenAPI.extension` (fully qualified, never a bare `@extension`), so both official emitters
+ * re-emit it. Skips `x-tags` / `x-classification` and any key in `exclude`.
+ */
+export function genericExtensionDecorators(
+  extensions: Record<string, unknown> | undefined,
+  exclude: readonly string[] = []
+): string[] {
+  const lines: string[] = [];
+  for (const [key, value] of genericExtensionEntries(extensions)) {
+    if (exclude.includes(key)) continue;
+    const args = `"${escapeTypeSpecString(key)}", ${typeSpecValueLiteral(value)}`;
+    lines.push(`@TypeSpec.JsonSchema.extension(${args})`, `@TypeSpec.OpenAPI.extension(${args})`);
+  }
+  return lines;
+}
+
+export const JSON_SCHEMA_LIBRARY_IMPORT = 'import "@typespec/json-schema";';
+
 /**
  * Enterprise member → app level. Accepts the bare member (`PII`, what the governance accessor returns) or a
  * reference to it (`DataClassification.PII`, `Enterprise.DataClassification.PII`).
