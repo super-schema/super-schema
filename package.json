@@ -26,6 +26,7 @@
     "gen:asyncapi-templates": "tsx scripts/generate-asyncapi-templates.ts"
   },
   "dependencies": {
+    "@apidevtools/json-schema-ref-parser": "^16.0.5",
     "@asyncapi/avro-schema-parser": "^3.1.0",
     "@asyncapi/converter": "^2.0.2",
     "@asyncapi/parser": "^3.6.4",
