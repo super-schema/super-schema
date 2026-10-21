@@ -45,6 +45,10 @@ const count = (s: string, needle: string) => s.split(needle).length - 1;
 describe("typeSpecValueLiteral", () => {
   it("renders the literal grammar", () => {
     expect(typeSpecValueLiteral("a\"b")).toBe('"a\\"b"');
+    expect(typeSpecValueLiteral("${x}")).toBe('"\\${x}"');
+    expect(typeSpecValueLiteral("a\\b")).toBe('"a\\\\b"');
+    expect(typeSpecValueLiteral("a\tb")).toBe('"a\\tb"');
+    expect(typeSpecValueLiteral("cost $5")).toBe('"cost $5"');
     expect(typeSpecValueLiteral(3)).toBe("3");
     expect(typeSpecValueLiteral(true)).toBe("true");
     expect(typeSpecValueLiteral(null)).toBe("null");
@@ -99,7 +103,7 @@ describe("generic extension decorators", () => {
   it("compiles with zero errors under the real compiler (object-valued, field + model)", async () => {
     const src = generateTypeSpec(
       build({
-        fieldExt: { "x-visibility": { extent: "EXTERNAL", tags: ["a", "b"], "odd-key": 1.5, nothing: null } },
+        fieldExt: { "x-visibility": { extent: "EXTERNAL", tags: ["a", "b"], "odd-key": 1.5, nothing: null, tpl: 'a ${x} b\\c "q"\t' } },
         modelExt: { "x-owner": { team: "a", ok: true } },
       })
     );

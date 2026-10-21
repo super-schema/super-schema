@@ -67,7 +67,9 @@ export function escapeTypeSpecString(str: string): string {
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
     .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r");
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")
+    .replace(/\$\{/g, "\\${"); // `${` opens a string template
 }
 
 /** Reverse of {@link escapeTypeSpecString}. */
