@@ -88,6 +88,8 @@ export interface ParsedField {
   enumName?: string;
   /** Enum symbols of an `enum` field */
   enumValues?: string[];
+  /** Union this `union` field (or the element of an array of unions) uses — an imported `ParsedUnion` name */
+  unionName?: string;
   /** Format-binding facts kept under `decorators.governance` (same keys the TypeSpec governance path stores) */
   governance?: ParsedFieldGovernance;
 }
@@ -152,6 +154,13 @@ export interface ParsedScalar {
   description?: string;
 }
 
+/** A named union defined by the imported document (persisted as a UnionType); same shape as the TypeSpec importer's. */
+export interface ParsedUnion {
+  name: string;
+  memberTypes: string[];
+  description?: string;
+}
+
 export interface MultiEntityImportResult {
   sourceFormat: ImportFormat;
   /** Entities in document order. */
@@ -164,6 +173,8 @@ export interface MultiEntityImportResult {
   rootEntityName?: string;
   enums: ParsedEnum[];
   scalars: ParsedScalar[];
+  /** Unions (JSON Schema `oneOf` / `anyOf` of named refs). Absent for formats that have none. */
+  unions?: ParsedUnion[];
   /** Package / namespace declared by the document, if any */
   namespace?: string;
   warnings: string[];

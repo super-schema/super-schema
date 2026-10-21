@@ -100,7 +100,7 @@ export function toAssetImportResult(doc: MultiEntityImportResult): TypeSpecImpor
     models,
     sharedEnums: doc.enums.map((e) => ({ ...e })),
     customScalars: doc.scalars.map((s) => ({ ...s })),
-    unions: [],
+    unions: (doc.unions ?? []).map((u) => ({ ...u, memberTypes: [...u.memberTypes] })),
     aliases: [],
     decoratorDefinitions: [],
     services: [],

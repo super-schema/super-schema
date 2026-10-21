@@ -47,6 +47,7 @@ import type {
   ParsedFieldConstraint,
   ImportConfidence,
   MultiEntityImportResult,
+  ParsedUnion,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -213,6 +214,7 @@ interface ResolvedType {
   referencedEntityName?: string;
   enumName?: string;
   enumValues?: string[];
+  unionName?: string;
   /** Constraints implied by the resolution itself (a numeric `const` / `enum` becomes a min/max range). */
   impliedConstraints?: ParsedFieldConstraint[];
 }
@@ -221,8 +223,8 @@ interface ResolvedType {
 interface DefinitionEntry {
   key: string;
   node: JsonSchemaNode;
-  kind: "entity" | "enum" | "inline";
-  /** Asset name (entities / enums) — the key, made unique against the root entity. */
+  kind: "entity" | "enum" | "union" | "inline";
+  /** Asset name (entities / enums / unions) — the key, made unique against the root entity. */
   assetName: string;
 }
 
@@ -234,7 +236,19 @@ interface ResolveContext {
   depth: number;
   /** Guards nested combinators (`oneOf` inside `oneOf` …) — a hostile document can nest them without limit. */
   nesting: number;
+  /** Every asset name in use (entities, enums, unions): generated union names are made unique against it. */
+  taken: Set<string>;
+  /** Unions created while resolving fields (shared `$defs` unions are added by the document loop). */
+  unions: ParsedUnion[];
+  warnings: string[];
+  /** One union per combinator node, however many times the node is resolved. */
+  unionByNode: WeakMap<object, string>;
+  /** `<Entity>_<field>` the node being resolved belongs to — the stem of a generated union name. */
+  unionStem?: string;
 }
+
+/** A union with more members than this is not a real schema; the excess is dropped (and reported). */
+export const MAX_UNION_MEMBERS = 200;
 
 const MAX_REF_DEPTH = 16;
 /** Combinator nesting past this is not a real schema; resolve it as an unknown at low confidence. */
@@ -337,6 +351,15 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
       enumValues: [...new Set(values)],
     };
   }
+  if (def?.kind === "union") {
+    return {
+      type: "union",
+      confidence: "medium",
+      nullable: false,
+      originalType: ref,
+      unionName: def.assetName,
+    };
+  }
   if (def?.kind === "inline" && ctx.depth < MAX_REF_DEPTH) {
     return resolveSchemaType(def.node, { ...ctx, depth: ctx.depth + 1 });
   }
@@ -349,6 +372,85 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
     nullable: false,
     originalType: ref,
     referencedEntityName: refToEntityName(ref),
+  };
+}
+
+/** Name of the named asset a `$ref` member of a union points at; `undefined` when it names no entity / enum. */
+function unionMemberName(ref: string, ctx: ResolveContext): string | undefined {
+  if (ref === "#" || ref === "") return ctx.rootEntityName;
+  const def = ctx.definitions.get(ref);
+  if (def) return def.kind === "entity" || def.kind === "enum" ? def.assetName : undefined;
+  const name = refToEntityName(ref);
+  return name === "" || name === "#" ? undefined : name;
+}
+
+/** A null member of a combinator: `{ type: "null" }` (nothing else). */
+function isNullMember(m: unknown): boolean {
+  return isSchemaObject(m) && typeof m.$ref !== "string" && normalizeType(m.type).base === "null";
+}
+
+/**
+ * The member names of a `oneOf` / `anyOf` whose every non-null member is a `$ref` to a named entity / enum
+ * (in-document, or external and unresolved), deduplicated in order. `undefined` when any member is something else
+ * (a primitive, an inline object, a boolean schema, a ref to an inline definition) or fewer than two names remain —
+ * the caller keeps its first-member fallback then, never a partial union.
+ */
+function namedRefMembers(raw: unknown[], ctx: ResolveContext): { names: string[]; hasNull: boolean } | undefined {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  let hasNull = false;
+  for (const m of raw) {
+    if (isNullMember(m)) {
+      hasNull = true;
+      continue;
+    }
+    if (!isSchemaObject(m) || typeof m.$ref !== "string") return undefined;
+    const name = unionMemberName(m.$ref, ctx);
+    if (name === undefined) return undefined;
+    if (!seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  }
+  return names.length >= 2 ? { names, hasNull } : undefined;
+}
+
+/** Cap the member list, reporting what was dropped. */
+function boundMembers(names: string[], label: string, warnings: string[]): string[] {
+  if (names.length <= MAX_UNION_MEMBERS) return names;
+  warnings.push(`Union "${label}" has ${names.length} members; only the first ${MAX_UNION_MEMBERS} are kept (${names.length - MAX_UNION_MEMBERS} dropped).`);
+  return names.slice(0, MAX_UNION_MEMBERS);
+}
+
+/** A name not in `taken` (suffixing `_2`, `_3`, …); marks it taken. */
+function uniqueName(base: string, taken: Set<string>): string {
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base}_${n}`;
+  taken.add(name);
+  return name;
+}
+
+/** A property-level `oneOf` / `anyOf` of named refs → a generated union (once per node), or `undefined`. */
+function resolveNamedRefUnion(
+  node: JsonSchemaNode,
+  keyword: string,
+  raw: unknown[],
+  ctx: ResolveContext
+): ResolvedType | undefined {
+  const found = namedRefMembers(raw, ctx);
+  if (!found) return undefined;
+  let name = ctx.unionByNode.get(node);
+  if (name === undefined) {
+    name = uniqueName(`${ctx.unionStem ?? "Anonymous"}_Union`, ctx.taken);
+    ctx.unionByNode.set(node, name);
+    ctx.unions.push({ name, memberTypes: boundMembers(found.names, name, ctx.warnings) });
+  }
+  return {
+    type: "union",
+    confidence: "medium",
+    nullable: found.hasNull,
+    originalType: `${keyword}(${found.names.length})`,
+    unionName: name,
   };
 }
 
@@ -381,6 +483,8 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
     if (ctx.nesting >= MAX_SCHEMA_NESTING) {
       return { type: "string", confidence: "low", nullable: false, originalType: `${keyword}(nested too deeply)` };
     }
+    const union = resolveNamedRefUnion(node, keyword, rawCombinator as unknown[], ctx);
+    if (union) return union;
     const nonNull = combinator.filter(
       (m) => !(m && normalizeType(m.type).base === undefined && normalizeType(m.type).nullableFromType) && normalizeType(m.type).base !== "null"
     );
@@ -680,9 +784,13 @@ function resolveExtends(
 }
 
 /** Index root-level `$defs` and `definitions` by the local pointer `$ref` uses. */
-function indexDefinitions(schema: JsonSchemaNode, rootEntityName: string | undefined): Map<string, DefinitionEntry> {
+function indexDefinitions(
+  schema: JsonSchemaNode,
+  rootEntityName: string | undefined
+): { definitions: Map<string, DefinitionEntry>; taken: Set<string> } {
   const definitions = new Map<string, DefinitionEntry>();
   const taken = new Set(rootEntityName ? [rootEntityName] : []);
+  const unionCandidates: DefinitionEntry[] = [];
 
   for (const keyword of ["$defs", "definitions"] as const) {
     const defs = schema[keyword];
@@ -704,10 +812,31 @@ function indexDefinitions(schema: JsonSchemaNode, rootEntityName: string | undef
         for (let n = 2; taken.has(assetName); n++) assetName = `${key}_${n}`;
         taken.add(assetName);
       }
-      definitions.set(`#/${keyword}/${key}`, { key, node, kind, assetName });
+      const entry: DefinitionEntry = { key, node, kind, assetName };
+      definitions.set(`#/${keyword}/${key}`, entry);
+      if (kind === "inline" && !node.$ref && !node.const && !node.enum && !node.allOf) unionCandidates.push(entry);
     }
   }
-  return definitions;
+
+  // A `$defs` entry that is a oneOf / anyOf of named refs is a shared union. Decided after every entity / enum is
+  // indexed (a member must point at one, or outside the document); unions never nest, so no cycle is possible.
+  const probe: ResolveContext = {
+    definitions,
+    rootEntityName,
+    depth: 0,
+    nesting: 0,
+    taken,
+    unions: [],
+    warnings: [],
+    unionByNode: new WeakMap(),
+  };
+  for (const entry of unionCandidates) {
+    const raw = entry.node.oneOf ?? entry.node.anyOf;
+    if (!Array.isArray(raw) || !namedRefMembers(raw, probe)) continue;
+    entry.kind = "union";
+    entry.assetName = uniqueName(entry.key, taken);
+  }
+  return { definitions, taken };
 }
 
 function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, unknown> } {
@@ -715,11 +844,12 @@ function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, u
   return extensions ? { extensions } : {};
 }
 
-function buildFields(members: ObjectMembers, ctx: ResolveContext): ParsedField[] {
+function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName: string): ParsedField[] {
   const requiredSet = members.required;
 
   return [...members.properties].map(([name, propNode]) => {
     const node = (propNode && typeof propNode === "object" ? propNode : {}) as JsonSchemaNode;
+    const ctx: ResolveContext = { ...baseCtx, unionStem: `${ownerName}_${name}` };
     const resolved = resolveSchemaType(node, ctx);
     const isRequired = requiredSet.has(name);
     // nullable = optional (not in required) OR explicitly `type: [..., "null"]`.
@@ -771,6 +901,7 @@ function buildFields(members: ObjectMembers, ctx: ResolveContext): ParsedField[]
     if (resolved.referencedEntityName) field.referencedEntityName = resolved.referencedEntityName;
     if (resolved.enumName) field.enumName = resolved.enumName;
     if (resolved.enumValues) field.enumValues = resolved.enumValues;
+    if (resolved.unionName) field.unionName = resolved.unionName;
 
     // Array element type (+ reference / enum target of the element).
     const items = sources.find((s) => s.items)?.items;
@@ -780,7 +911,8 @@ function buildFields(members: ObjectMembers, ctx: ResolveContext): ParsedField[]
       if (item.referencedEntityName) field.referencedEntityName = item.referencedEntityName;
       if (item.enumName) field.enumName = item.enumName;
       if (item.enumValues) field.enumValues = item.enumValues;
-      if (item.type === "reference" || item.type === "enum") field.confidence = item.confidence;
+      if (item.unionName) field.unionName = item.unionName;
+      if (item.type === "reference" || item.type === "enum" || item.type === "union") field.confidence = item.confidence;
     }
 
     return field;
@@ -862,17 +994,27 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
   const rootMembers = collectObjectMembers(schema);
   const rootIsEntity = rootMembers.properties.size > 0 || (rootBase === "object" && rootMembers.baseRefs.length > 0);
   const rootEntityName = rootIsEntity ? deriveEntityName(schema) : undefined;
-  const definitions = indexDefinitions(schema, rootEntityName);
-  const ctx: ResolveContext = { definitions, rootEntityName, depth: 0, nesting: 0 };
-
+  const { definitions, taken } = indexDefinitions(schema, rootEntityName);
   const warnings: string[] = [];
+  const unions: ParsedUnion[] = [];
+  const ctx: ResolveContext = {
+    definitions,
+    rootEntityName,
+    depth: 0,
+    nesting: 0,
+    taken,
+    unions,
+    warnings,
+    unionByNode: new WeakMap(),
+  };
+
   const entities: ParsedEntity[] = [];
   if (rootIsEntity && rootEntityName) {
     const rootExtends = resolveExtends(rootEntityName, rootMembers, ctx, warnings);
     entities.push({
       name: rootEntityName,
       description: typeof schema.description === "string" ? schema.description : undefined,
-      fields: buildFields(rootMembers, ctx),
+      fields: buildFields(rootMembers, ctx, rootEntityName),
       ...(rootExtends ? { extends: rootExtends } : {}),
       ...entityExtensions(schema),
       sourceFormat: "json-schema",
@@ -881,6 +1023,7 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
   }
 
   const enums: ParsedEnum[] = [];
+  const sharedUnions: ParsedUnion[] = [];
   for (const def of definitions.values()) {
     if (def.kind === "entity") {
       const members = collectObjectMembers(def.node);
@@ -888,7 +1031,7 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
       entities.push({
         name: def.assetName,
         description: typeof def.node.description === "string" ? def.node.description : undefined,
-        fields: buildFields(members, ctx),
+        fields: buildFields(members, ctx, def.assetName),
         ...(defExtends ? { extends: defExtends } : {}),
         ...entityExtensions(def.node),
         sourceFormat: "json-schema",
@@ -902,6 +1045,14 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
       };
       if (typeof def.node.description === "string") parsedEnum.description = def.node.description;
       enums.push(parsedEnum);
+    } else if (def.kind === "union") {
+      const raw = (def.node.oneOf ?? def.node.anyOf) as unknown[];
+      const found = namedRefMembers(raw, ctx);
+      if (found) {
+        const shared: ParsedUnion = { name: def.assetName, memberTypes: boundMembers(found.names, def.assetName, warnings) };
+        if (typeof def.node.description === "string") shared.description = def.node.description;
+        sharedUnions.push(shared);
+      }
     }
   }
 
@@ -927,6 +1078,7 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
     ...(rootIsEntity && rootEntityName ? { rootEntityName } : {}),
     enums,
     scalars: [],
+    unions: [...sharedUnions, ...unions],
     warnings,
   });
 }

@@ -565,7 +565,7 @@ describe("generateTypeSpec — new constructs", () => {
     expect(output).toContain("scalar Email extends string;");
   });
 
-  it("generates union definitions (inline for short)", () => {
+  it("generates union definitions (block form, even for short ones: `union X = A | B;` is not TypeSpec)", () => {
     const model = makeBaseModel({
       unionTypes: [
         { name: "Pet", memberTypes: ["Cat", "Dog"] },
@@ -573,7 +573,7 @@ describe("generateTypeSpec — new constructs", () => {
     });
 
     const output = generateTypeSpec(model);
-    expect(output).toContain("union Pet = Cat | Dog;");
+    expect(output).toContain("union Pet {\n  Cat,\n  Dog,\n}");
   });
 
   it("generates union definitions (block for many members)", () => {

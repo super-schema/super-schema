@@ -126,7 +126,8 @@ function compileField(field: PrismaFieldInput): SuperSchemaField {
 // Type resolution
 // ---------------------------------------------------------------------------
 
-const VALID_LOGICAL_TYPES = new Set(ALL_DATA_TYPES);
+// `union` is not a pickable data type (it needs a declared union to point at), but an imported field may carry it.
+const VALID_LOGICAL_TYPES = new Set<string>([...ALL_DATA_TYPES, "union"]);
 
 function resolveLogicalType(typeId: string): LogicalType {
   if (VALID_LOGICAL_TYPES.has(typeId)) {
@@ -191,6 +192,7 @@ function extractComplexTypeInfo(
         // Target entity when the array holds references (items: { $ref }).
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
         enumValues: stringArray(decorators.enumValues),
+        unionName: (decorators.unionName as string) ?? undefined,
       };
     case "map":
       return {
@@ -211,6 +213,8 @@ function extractComplexTypeInfo(
         referencedEntityId: (decorators.referencedEntityId as string) ?? undefined,
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
       };
+    case "union":
+      return { unionName: (decorators.unionName as string) ?? undefined };
     default:
       return null;
   }

@@ -623,17 +623,12 @@ function generateUnionDefinition(union: SuperSchemaUnionType): string[] {
     lines.push(`@doc("${escapeString(union.description)}")`);
   }
 
-  if (union.memberTypes.length <= 3) {
-    // Inline form for short unions
-    lines.push(`union ${sanitizeIdentifier(union.name)} = ${union.memberTypes.join(" | ")};`);
-  } else {
-    // Block form for longer unions
-    lines.push(`union ${sanitizeIdentifier(union.name)} {`);
-    for (const member of union.memberTypes) {
-      lines.push(`  ${member},`);
-    }
-    lines.push("}");
+  // Always the block form: `union Name = A | B;` is not TypeSpec (the compiler expects `{`), only an alias takes `=`.
+  lines.push(`union ${sanitizeIdentifier(union.name)} {`);
+  for (const member of union.memberTypes) {
+    lines.push(`  ${member},`);
   }
+  lines.push("}");
 
   return lines;
 }
@@ -899,6 +894,10 @@ function resolveCollectionMemberType(
   if (memberType === "enum") {
     return extractEnumValues(field).length > 0 ? ctx.enumNameOf(field) : "string";
   }
+  if (memberType === "union") {
+    const unionName = field.complexType?.unionName;
+    return unionName ? sanitizeIdentifier(unionName) : "string";
+  }
   if (STRUCTURED_MEMBER_TYPES[memberType]) {
     return STRUCTURED_MEMBER_TYPES[memberType];
   }
@@ -936,6 +935,10 @@ function resolveTypeSpecType(
         return sanitizeIdentifier(refName);
       }
       return "string";
+    }
+    case "union": {
+      const unionName = field.complexType?.unionName;
+      return unionName ? sanitizeIdentifier(unionName) : "string";
     }
     case "decimal":
     case "decimal128": {

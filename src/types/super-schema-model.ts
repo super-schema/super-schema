@@ -41,7 +41,8 @@ export type LogicalType =
   | "array"
   | "map"
   | "object"
-  | "reference";
+  | "reference"
+  | "union";
 
 // ---------------------------------------------------------------------------
 // Decorator categories (8 categories + 7 typespec panels)
@@ -214,6 +215,8 @@ export interface ComplexTypeInfo {
   // Reference
   referencedEntityId?: string;
   referencedEntityName?: string;
+  // Union (a field typed by a named union, or an array of one)
+  unionName?: string;
 }
 
 export interface NestedFieldInfo {
