@@ -74,7 +74,7 @@ export function escapeTypeSpecString(str: string): string {
 
 /** Reverse of {@link escapeTypeSpecString}. */
 export function unescapeTypeSpecString(str: string): string {
-  return str.replace(/\\(.)/g, (_, ch: string) => (ch === "n" ? "\n" : ch === "r" ? "\r" : ch));
+  return str.replace(/\\(.)/g, (_, ch: string) => (ch === "n" ? "\n" : ch === "r" ? "\r" : ch === "t" ? "\t" : ch));
 }
 
 /**

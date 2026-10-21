@@ -6,7 +6,13 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
-import { typeSpecValueLiteral } from "@/lib/compiler/governance-decorators";
+import {
+  typeSpecValueLiteral,
+  escapeTypeSpecString,
+  unescapeTypeSpecString,
+  tagsDecorator,
+  parseStringTuple,
+} from "@/lib/compiler/governance-decorators";
 
 vi.mock("server-only", () => ({}));
 
@@ -56,6 +62,18 @@ describe("typeSpecValueLiteral", () => {
     expect(typeSpecValueLiteral({ extent: "EXTERNAL", "has-dash": { n: 1 } })).toBe(
       '#{extent: "EXTERNAL", `has-dash`: #{n: 1}}'
     );
+  });
+});
+
+describe("escape round trip", () => {
+  const nasty = 'a\tb \\ "q" ${x} $5\nz\r';
+  it("unescape inverts escape", () => {
+    expect(unescapeTypeSpecString(escapeTypeSpecString(nasty))).toBe(nasty);
+  });
+  it("tags with a tab round-trip through tagsDecorator / parseStringTuple", () => {
+    const tags = ["a\tb", "plain", nasty];
+    const tuple = tagsDecorator(tags).match(/(#\[.*\])\)$/)![1];
+    expect(parseStringTuple(tuple)).toEqual(tags);
   });
 });
 
