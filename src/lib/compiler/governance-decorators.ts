@@ -134,21 +134,39 @@ const TYPESPEC_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * renders as `null`; an `undefined` object member is omitted.
  */
 export function typeSpecValueLiteral(value: unknown): string {
+  return tryTypeSpecValueLiteral(value) ?? "null";
+}
+
+/**
+ * {@link typeSpecValueLiteral} that returns `undefined` when the value nests deeper than
+ * {@link MAX_LITERAL_DEPTH} (counted like the reader: a scalar leaf is one level), so callers can omit it.
+ */
+export function tryTypeSpecValueLiteral(value: unknown): string | undefined {
+  try {
+    return renderLiteral(value, 1);
+  } catch (e) {
+    if (e instanceof LiteralSyntaxError) return undefined;
+    throw e;
+  }
+}
+
+function renderLiteral(value: unknown, depth: number): string {
+  if (depth > MAX_LITERAL_DEPTH) throw new LiteralSyntaxError("literal nested too deeply");
   if (value === null) return "null";
   if (typeof value === "string") return `"${escapeTypeSpecString(value)}"`;
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "null";
   if (typeof value === "boolean") return String(value);
-  if (Array.isArray(value)) return `#[${value.map(typeSpecValueLiteral).join(", ")}]`;
+  if (Array.isArray(value)) return `#[${value.map((v) => renderLiteral(v, depth + 1)).join(", ")}]`;
   if (typeof value === "object") {
     const members = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${TYPESPEC_IDENTIFIER.test(k) ? k : `\`${k}\``}: ${typeSpecValueLiteral(v)}`);
+      .map(([k, v]) => `${TYPESPEC_IDENTIFIER.test(k) ? k : `\`${k}\``}: ${renderLiteral(v, depth + 1)}`);
     return `#{${members.join(", ")}}`;
   }
   return "null";
 }
 
-class LiteralSyntaxError extends Error {}
+export class LiteralSyntaxError extends Error {}
 
 /** Maximum `#[` / `#{` nesting the reader accepts; deeper input is unparseable, not a stack overflow. */
 export const MAX_LITERAL_DEPTH = 64;
@@ -329,7 +347,9 @@ export function genericExtensionDecorators(
   const lines: string[] = [];
   for (const [key, value] of genericExtensionEntries(extensions)) {
     if (exclude.includes(key)) continue;
-    const args = `"${escapeTypeSpecString(key)}", ${typeSpecValueLiteral(value)}`;
+    const literal = tryTypeSpecValueLiteral(value);
+    if (literal === undefined) continue; // nested past MAX_LITERAL_DEPTH: omit the key rather than truncate
+    const args = `"${escapeTypeSpecString(key)}", ${literal}`;
     lines.push(`@TypeSpec.JsonSchema.extension(${args})`, `@TypeSpec.OpenAPI.extension(${args})`);
   }
   return lines;

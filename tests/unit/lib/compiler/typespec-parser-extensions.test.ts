@@ -161,6 +161,48 @@ describe("hostile input", () => {
     expect(fieldExt(wrap(`@TypeSpec.OpenAPI.extension("k", ${lit})`))).toEqual({ k: expected });
   });
 
+  const nest = (n: number) => "#[".repeat(n) + "1" + "]".repeat(n);
+  const nested = (n: number) => {
+    let v: unknown = 1;
+    for (let i = 0; i < n; i++) v = [v];
+    return v;
+  };
+
+  it("regex path boundary: 63 nested arrays parse, 64 are dropped", () => {
+    expect(fieldExt(wrap(`@TypeSpec.OpenAPI.extension("k", ${nest(63)})`))).toEqual({ k: nested(63) });
+    expect(fieldExt(wrap(`@TypeSpec.OpenAPI.extension("k", ${nest(64)})`))).toBeUndefined();
+  });
+
+  it("compile path boundary: 63 nested survives intact, 70 drops only that key and does not throw", async () => {
+    const src = (n: number) =>
+      `model M {\n  @extension("deep", ${nest(n)})\n  @extension("ok", #{a: 1})\n  f?: string;\n}\n`;
+    const under = await compiler.compileTypeSpecDocument(src(63));
+    expect(under.models[0].fields[0].decorators.extensions).toEqual({ deep: nested(63), ok: { a: 1 } });
+    const over = await compiler.compileTypeSpecDocument(src(70));
+    expect(over.models[0].fields[0].decorators.extensions).toEqual({ ok: { a: 1 } });
+    const exact = await compiler.compileTypeSpecDocument(src(64));
+    expect(exact.models[0].fields[0].decorators.extensions).toEqual({ ok: { a: 1 } });
+  });
+
+  it("generator omits an over-deep extension key (no throw, no truncation) and keeps the others", () => {
+    const deep = nested(100);
+    const model = compileEntity(
+      {
+        id: "e1", name: "Thing", description: "", status: "DRAFT", version: 1, domainId: null,
+        metadata: { custom: { extensions: { "x-deep": deep, "x-keep": 1 } } },
+        domain: null,
+      },
+      [fld("id", 0, { isKey: true, nullable: false }), fld("name", 1)]
+    );
+    const f = model.fields.find((x) => x.name === "name")!;
+    f.decorators.typespec = { ...(f.decorators.typespec ?? {}), extensions: { openapi: { "x-deep": deep, "x-f": "ok" } } };
+    let src = "";
+    expect(() => (src = generateTypeSpec(model))).not.toThrow();
+    expect(src).not.toContain("x-deep");
+    expect(src).toContain('extension("x-keep", 1)');
+    expect(src).toContain('extension("x-f", "ok")');
+  });
+
   const hostile = "#{__proto__: #{isAdmin: true}, constructor: 1}";
   const checkOwn = (r: unknown) => {
     const o = r as Record<string, unknown>;

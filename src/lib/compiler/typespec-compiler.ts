@@ -39,6 +39,7 @@ import {
   CLASSIFICATION_EXTENSION_KEY,
   TAGS_EXTENSION_KEY,
   MAX_LITERAL_DEPTH,
+  LiteralSyntaxError,
   setOwn,
   classificationFromEnterpriseMember,
 } from "./governance-decorators";
@@ -221,7 +222,13 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
         if (s0 === TAGS_EXTENSION_KEY) break;
         // @extension / @TypeSpec.JsonSchema.extension / @TypeSpec.OpenAPI.extension ("x-key", value): the
         // value keeps its JSON shape; the emitted JsonSchema + OpenAPI pair for one key collapses to one entry.
-        if (s0) d.extensions = { ...(d.extensions ?? {}), [s0]: valueNodeToJs(rawArgs[1]) };
+        if (s0) {
+          try {
+            d.extensions = { ...(d.extensions ?? {}), [s0]: valueNodeToJs(rawArgs[1]) };
+          } catch (e) {
+            if (!(e instanceof LiteralSyntaxError)) throw e; // over-deep value: drop this key
+          }
+        }
         break;
     }
   }
@@ -231,10 +238,12 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
 /**
  * A decorator-argument value node (`"s"`, `1`, `true`, `null`, `#[...]`, `#{...}`) → plain JS, recursively.
  * Read from the AST (not the checked value) like the rest of this file, so it works without decorator
- * implementations. Unknown nodes yield the flattened reference/literal text, or null.
+ * implementations. Unknown nodes yield the flattened reference/literal text, or null. Throws
+ * LiteralSyntaxError past MAX_LITERAL_DEPTH values of nesting (same count as the text reader); the extension
+ * collector drops that key.
  */
-function valueNodeToJs(node: unknown, depth = 0): unknown {
-  if (depth > MAX_LITERAL_DEPTH) return null;
+function valueNodeToJs(node: unknown, depth = 1): unknown {
+  if (depth > MAX_LITERAL_DEPTH) throw new LiteralSyntaxError("literal nested too deeply");
   const n = node as
     | {
         value?: unknown;
