@@ -1087,6 +1087,8 @@ export interface BulkImportPayload {
     name: string;
     description?: string;
     extends?: string;
+    /** Vendor extensions of the model (unknown JSON Schema keys etc.). */
+    extensions?: Record<string, unknown>;
     fields: CreateFieldInput[];
   }>;
   entities: Array<{
@@ -1095,6 +1097,8 @@ export interface BulkImportPayload {
     extends?: string;
     /** Model tags from the import (TypeSpec `x-tags`), stored as the entity's metadata.tags. */
     tags?: string[];
+    /** Vendor extensions of the model, stored flat as the entity's metadata.custom.extensions (validated at create). */
+    extensions?: Record<string, unknown>;
     fields: CreateFieldInput[];
   }>;
   sharedEnums: Array<{ name: string; values: string[]; description?: string }>;

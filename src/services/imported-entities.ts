@@ -7,6 +7,8 @@ import type { CreateFieldInput } from "@/app/(dashboard)/schemas/[domainSlug]/ac
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import type { LevelScope } from "@/lib/levels";
 import { renameReservedFields, renameReservedNames, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
+import { isPlainObject } from "@/lib/editable-fields";
+import { genericExtensionEntries, setOwn } from "@/lib/compiler/governance-decorators";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 
 export interface ImportedEntityInput {
@@ -15,6 +17,8 @@ export interface ImportedEntityInput {
   extends?: string;
   /** Model tags from the import (TypeSpec `x-tags`), stored as the entity's metadata.tags. */
   tags?: string[];
+  /** Vendor extensions of the model (unknown JSON Schema keys etc.), stored flat at metadata.custom.extensions. */
+  extensions?: Record<string, unknown>;
   fields: CreateFieldInput[];
 }
 
@@ -43,6 +47,17 @@ export interface CreateImportedEntitiesArgs {
 export const IMPORT_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
 
 type ImportedField = ImportedEntityInput["fields"][number];
+
+/**
+ * The entity-level extensions worth persisting: the payload arrives untyped from the browser, so only a plain object counts (arrays,
+ * primitives and null are ignored). `x-tags` / `x-classification` have their own path and stay out; a `__proto__` key is kept as an own data key.
+ */
+function sanitizeExtensions(raw: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(raw)) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of genericExtensionEntries(raw as Record<string, unknown>)) setOwn(out, key, value);
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /** `field` with the entity names it refers to (`referencedEntityName`, `arrayElementType`) replaced by their new names. */
 function followRenames(field: ImportedField, renames: ReadonlyMap<string, string>): ImportedField {
@@ -103,9 +118,11 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
     const parentEntityId = entity.extends ? refs.get(entity.extends)?.id : undefined;
     // metadata.sourceFormat records the format the entity was imported in: a message's "Auto" representation follows it
     // (Avro-imported stays Avro). Model tags travel next to it. Nothing is written when neither is known.
+    const extensions = sanitizeExtensions(entity.extensions);
     const entityMetadata = {
       ...(entity.tags && entity.tags.length > 0 ? { tags: entity.tags } : {}),
       ...(sourceFormat ? { sourceFormat } : {}),
+      ...(extensions ? { custom: { extensions } } : {}),
     };
     const row = await tx.entity.create({
       data: {

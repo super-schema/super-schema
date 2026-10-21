@@ -408,6 +408,7 @@ export function mapDocumentToImportResult(
       sourceFormat: "typespec" as const,
       originalContent: content,
       extends: model.extends,
+      ...(model.extensions && Object.keys(model.extensions).length > 0 ? { extensions: model.extensions } : {}),
       ...(model.tags && model.tags.length > 0 ? { tags: model.tags } : {}),
       referencedModelNames,
       referencedByModelNames,

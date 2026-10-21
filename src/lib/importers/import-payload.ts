@@ -46,6 +46,7 @@ function toModelInput(model: ParsedEntity & { extends?: string }) {
     name: model.name,
     description: model.description,
     extends: model.extends,
+    ...(model.extensions && Object.keys(model.extensions).length > 0 ? { extensions: model.extensions } : {}),
     fields: model.fields.map(parsedFieldToCreateFieldInput),
   };
 }
