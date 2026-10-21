@@ -22,6 +22,8 @@ export interface Limits {
   overallTimeoutMs: number;
   maxConcurrent: number;
   maxRedirects: number;
+  /** Max distinct hostnames that may be DNS-looked-up per resolution. */
+  maxDnsHosts: number;
 }
 
 export const DEFAULT_LIMITS: Limits = {
@@ -32,6 +34,7 @@ export const DEFAULT_LIMITS: Limits = {
   overallTimeoutMs: 60_000,
   maxConcurrent: 4,
   maxRedirects: 3,
+  maxDnsHosts: 20,
 };
 
 /** An error whose message is already safe to show to the user. */
