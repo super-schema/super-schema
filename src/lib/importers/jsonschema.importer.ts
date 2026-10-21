@@ -106,6 +106,56 @@ function captureExtensions(node: JsonSchemaNode): Record<string, unknown> | unde
 }
 
 // ---------------------------------------------------------------------------
+// allOf: flatten members (JSON Schema 2020-12 §10.2.1 — every member applies)
+// ---------------------------------------------------------------------------
+
+function isSchemaObject(value: unknown): value is JsonSchemaNode {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Every object member of `node.allOf`, in document order, with nested `allOf`s flattened. Non-object members
+ * (null, booleans, arrays, numbers) are skipped. Recursion stops at MAX_SCHEMA_NESTING (`truncated`) so a hostile
+ * document cannot nest `allOf` without limit.
+ */
+function flattenAllOf(node: JsonSchemaNode): { members: JsonSchemaNode[]; truncated: boolean } {
+  const members: JsonSchemaNode[] = [];
+  let truncated = false;
+  const walk = (current: JsonSchemaNode, depth: number): void => {
+    if (!Array.isArray(current.allOf)) return;
+    if (depth >= MAX_SCHEMA_NESTING) {
+      truncated = true;
+      return;
+    }
+    for (const member of current.allOf) {
+      if (!isSchemaObject(member)) continue;
+      members.push(member);
+      walk(member, depth + 1);
+    }
+  };
+  walk(node, 0);
+  return { members, truncated };
+}
+
+/** `node` plus its flattened `allOf` members; just `[node]` when it has none (or a oneOf/anyOf, which wins). */
+function schemaSources(node: JsonSchemaNode): JsonSchemaNode[] {
+  if (!Array.isArray(node.allOf) || node.oneOf || node.anyOf) return [node];
+  return [node, ...flattenAllOf(node).members];
+}
+
+/** Whether a schema fixes the TYPE of a value (as opposed to only constraining / annotating it). */
+function definesType(node: JsonSchemaNode): boolean {
+  if (typeof node.$ref === "string" || node.const !== undefined || Array.isArray(node.enum)) return true;
+  if (node.oneOf || node.anyOf || node.properties || node.items) return true;
+  const { base } = normalizeType(node.type);
+  return base !== undefined && base !== "null";
+}
+
+function withoutAllOf(node: JsonSchemaNode): JsonSchemaNode {
+  return { ...node, allOf: undefined };
+}
+
+// ---------------------------------------------------------------------------
 // JSON Schema string `format` → logical type (high-confidence refinements)
 // ---------------------------------------------------------------------------
 
@@ -317,14 +367,17 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
     return resolveLiteralValues(node.enum, `enum(${node.enum.map((v) => JSON.stringify(v)).join(",")})`);
   }
 
+  // allOf → intersection of every member (resolveAllOf); oneOf / anyOf below
+  if (Array.isArray(node.allOf) && !node.oneOf && !node.anyOf) return resolveAllOf(node, ctx);
+
   // Combinators → take the first non-null member, medium/low confidence
-  const rawCombinator = node.oneOf ?? node.anyOf ?? node.allOf;
+  const rawCombinator = node.oneOf ?? node.anyOf;
   // `oneOf: [null]` / boolean schemas carry no type: only object members are read.
   const combinator = Array.isArray(rawCombinator)
     ? rawCombinator.filter((m): m is JsonSchemaNode => typeof m === "object" && m !== null && !Array.isArray(m))
     : [];
   if (combinator.length > 0) {
-    const keyword = node.oneOf ? "oneOf" : node.anyOf ? "anyOf" : "allOf";
+    const keyword = node.oneOf ? "oneOf" : "anyOf";
     if (ctx.nesting >= MAX_SCHEMA_NESTING) {
       return { type: "string", confidence: "low", nullable: false, originalType: `${keyword}(nested too deeply)` };
     }
@@ -399,6 +452,63 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
   }
 }
 
+/**
+ * `allOf` on a property / value: the value must satisfy EVERY member, so the members merge instead of competing.
+ * - the TYPE comes from the members that define one (a `$ref` member wins over an inline one; the first otherwise);
+ *   members that define conflicting types keep the first at low confidence (the IR cannot hold an unsatisfiable type);
+ * - constraint-only members (`minLength`, `maxLength`, …) contribute no type — their constraints are unioned by
+ *   `buildFields` (see `schemaSources`), as are the annotation-only members' description / extensions.
+ */
+function resolveAllOf(node: JsonSchemaNode, ctx: ResolveContext): ResolvedType {
+  if (ctx.nesting >= MAX_SCHEMA_NESTING) {
+    return { type: "string", confidence: "low", nullable: false, originalType: "allOf(nested too deeply)" };
+  }
+  const { members, truncated } = flattenAllOf(node);
+  const sources = [node, ...members];
+  const hasNull = sources.some((m) => {
+    const t = normalizeType(m.type);
+    return t.base === "null" || t.nullableFromType;
+  });
+  const defining = sources.filter(definesType);
+  const label = `allOf(${members.length})`;
+  const child = { ...ctx, nesting: ctx.nesting + 1 };
+
+  if (defining.length === 0) {
+    // Constraint-only members: infer the base type from the keywords they carry.
+    const keys = sources.flatMap((m) => Object.keys(m));
+    const inferred = keys.some((k) => k === "minLength" || k === "maxLength" || k === "pattern" || k === "format")
+      ? "string"
+      : keys.some((k) => k.includes("imum") || k === "multipleOf")
+        ? "number"
+        : undefined;
+    const base = resolveSchemaType(inferred ? { type: inferred } : {}, child);
+    return { ...base, nullable: hasNull, originalType: label, confidence: truncated || !inferred ? "low" : "medium" };
+  }
+
+  const primaryNode = defining.find((m) => typeof m.$ref === "string") ?? defining[0];
+  const primary = resolveSchemaType(withoutAllOf(primaryNode), child);
+  let conflict = truncated;
+  for (const other of defining) {
+    if (other === primaryNode) continue;
+    const resolved = resolveSchemaType(withoutAllOf(other), child);
+    // `$ref` + an inline `{ type: "object" }` is the usual "reference, refined" shape, not a conflict.
+    if (primary.type === "reference" && resolved.type === "object") continue;
+    if (
+      resolved.type !== primary.type ||
+      resolved.referencedEntityName !== primary.referencedEntityName ||
+      resolved.enumName !== primary.enumName
+    ) {
+      conflict = true;
+    }
+  }
+  return {
+    ...primary,
+    confidence: conflict ? "low" : primary.confidence,
+    nullable: hasNull || primary.nullable,
+    originalType: label,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Extract validation constraints into ParsedField shape
 // ---------------------------------------------------------------------------
@@ -452,11 +562,85 @@ function deriveEntityName(schema: JsonSchemaNode): string {
 function isObjectSchema(node: JsonSchemaNode): boolean {
   const { base } = normalizeType(node.type);
   if (base === "object") return true;
-  return base === undefined && !!node.properties && typeof node.properties === "object";
+  if (base !== undefined) return false;
+  if (!!node.properties && typeof node.properties === "object") return true;
+  // No `type`, but an `allOf` member contributes properties: an entity assembled from members.
+  return collectObjectMembers(node).properties.size > 0;
 }
 
-function hasProperties(node: JsonSchemaNode): boolean {
-  return !!node.properties && typeof node.properties === "object" && Object.keys(node.properties).length > 0;
+interface ObjectMembers {
+  /** Property name → schema, merged across the node and every `allOf` member (first definition wins). */
+  properties: Map<string, unknown>;
+  required: Set<string>;
+  /** `$ref` members of the `allOf` (deduplicated, document order): the base(s) this object extends. */
+  baseRefs: string[];
+  warnings: string[];
+}
+
+/**
+ * The object shape of `node` once its `allOf` members are merged (spec Addendum A, rules 1, 4, 5): `properties` and
+ * `required` unioned over the node and every inline member, `$ref` members surfaced as bases. A property defined by
+ * two members with different schemas keeps the first and warns. Never throws on malformed members.
+ */
+function collectObjectMembers(node: JsonSchemaNode): ObjectMembers {
+  const result: ObjectMembers = { properties: new Map(), required: new Set(), baseRefs: [], warnings: [] };
+  const sources = schemaSources(node);
+  for (const source of sources) {
+    if (source !== node && typeof source.$ref === "string" && !result.baseRefs.includes(source.$ref)) {
+      result.baseRefs.push(source.$ref);
+    }
+    if (isSchemaObject(source.properties)) {
+      for (const [name, schema] of Object.entries(source.properties)) {
+        if (!result.properties.has(name)) {
+          result.properties.set(name, schema);
+        } else if (JSON.stringify(result.properties.get(name)) !== JSON.stringify(schema)) {
+          result.warnings.push(
+            `Property \`${name}\` is defined by more than one allOf member with different schemas; the first definition is kept.`
+          );
+        }
+      }
+    }
+    if (Array.isArray(source.required)) {
+      for (const name of source.required) if (typeof name === "string") result.required.add(name);
+    }
+  }
+  return result;
+}
+
+/** The entity a base `$ref` names: in this document → its asset name; otherwise the name derived from the ref. */
+function resolveBase(ref: string, ctx: ResolveContext): { name: string; defined: boolean } | undefined {
+  if (ref === "#" || ref === "") return ctx.rootEntityName ? { name: ctx.rootEntityName, defined: true } : undefined;
+  const def = ctx.definitions.get(ref);
+  if (def) return def.kind === "entity" ? { name: def.assetName, defined: true } : undefined;
+  const name = refToEntityName(ref);
+  return name ? { name, defined: false } : undefined;
+}
+
+/** `extends` + warnings for an entity whose `allOf` lists base `$ref`s (spec Addendum A, rules 4-5). */
+function resolveExtends(
+  entityName: string,
+  members: ObjectMembers,
+  ctx: ResolveContext,
+  warnings: string[]
+): string | undefined {
+  warnings.push(...members.warnings.map((w) => `Entity "${entityName}": ${w}`));
+  const bases = members.baseRefs
+    .map((ref) => ({ ref, base: resolveBase(ref, ctx) }))
+    .filter((b): b is { ref: string; base: { name: string; defined: boolean } } => {
+      if (!b.base) warnings.push(`Entity "${entityName}": allOf member \`${b.ref}\` is not an object entity and is ignored as a base.`);
+      return b.base !== undefined;
+    });
+  const [first, ...rest] = bases;
+  for (const extra of rest) {
+    warnings.push(
+      `Entity "${entityName}": allOf lists more than one base; only the first is used as \`extends\`; \`${extra.base.name}\` is not merged.`
+    );
+  }
+  if (!first || first.base.name === entityName) return undefined;
+  if (!first.base.defined) {
+    warnings.push(`Entity "${entityName}": base entity \`${first.base.name}\` is referenced but not defined in this document.`);
+  }
+  return first.base.name;
 }
 
 /** Index root-level `$defs` and `definitions` by the local pointer `$ref` uses. */
@@ -495,18 +679,29 @@ function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, u
   return extensions ? { extensions } : {};
 }
 
-function buildFields(objectNode: JsonSchemaNode, ctx: ResolveContext): ParsedField[] {
-  const properties = (objectNode.properties ?? {}) as Record<string, unknown>;
-  const requiredSet = new Set(Array.isArray(objectNode.required) ? objectNode.required : []);
+function buildFields(members: ObjectMembers, ctx: ResolveContext): ParsedField[] {
+  const requiredSet = members.required;
 
-  return Object.entries(properties).map(([name, propNode]) => {
+  return [...members.properties].map(([name, propNode]) => {
     const node = (propNode && typeof propNode === "object" ? propNode : {}) as JsonSchemaNode;
     const resolved = resolveSchemaType(node, ctx);
     const isRequired = requiredSet.has(name);
     // nullable = optional (not in required) OR explicitly `type: [..., "null"]`.
     const nullable = resolved.nullable || !isRequired;
 
-    const { constraints, minValueExclusive, maxValueExclusive } = extractConstraints(node);
+    // A property written as `allOf` merges its members: constraints union (first wins per kind), annotations fold on.
+    const sources = schemaSources(node);
+    const constraints: ParsedFieldConstraint[] = [];
+    let minValueExclusive: number | undefined;
+    let maxValueExclusive: number | undefined;
+    for (const source of sources) {
+      const extracted = extractConstraints(source);
+      for (const c of extracted.constraints) {
+        if (!constraints.some((existing) => existing.type === c.type)) constraints.push(c);
+      }
+      minValueExclusive ??= extracted.minValueExclusive;
+      maxValueExclusive ??= extracted.maxValueExclusive;
+    }
     // A numeric const / enum implies a range; an explicit keyword on the property wins.
     for (const implied of resolved.impliedConstraints ?? []) {
       if (!constraints.some((c) => c.type === implied.type)) constraints.push(implied);
@@ -516,19 +711,25 @@ function buildFields(objectNode: JsonSchemaNode, ctx: ResolveContext): ParsedFie
       name,
       type: resolved.type,
       nullable,
-      description: typeof node.description === "string" ? node.description : undefined,
+      description: sources.find((s) => typeof s.description === "string")?.description,
       confidence: resolved.confidence,
       originalType: resolved.originalType,
       // Heuristic: a required property literally named "id" is the key.
       isKey: isRequired && name === "id",
       format: resolved.format,
-      deprecated: node.deprecated === true || undefined,
+      deprecated: sources.some((s) => s.deprecated === true) || undefined,
       constraints: constraints.length > 0 ? constraints : undefined,
       minValueExclusive,
       maxValueExclusive,
     };
 
-    const extensions = captureExtensions(node);
+    let extensions: Record<string, unknown> | undefined;
+    for (const source of sources) {
+      for (const [key, value] of Object.entries(captureExtensions(source) ?? {})) {
+        if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) continue;
+        setOwn((extensions ??= {}), key, value);
+      }
+    }
     if (extensions) field.extensions = extensions;
 
     if (resolved.referencedEntityName) field.referencedEntityName = resolved.referencedEntityName;
@@ -536,8 +737,9 @@ function buildFields(objectNode: JsonSchemaNode, ctx: ResolveContext): ParsedFie
     if (resolved.enumValues) field.enumValues = resolved.enumValues;
 
     // Array element type (+ reference / enum target of the element).
-    if (resolved.type === "array" && node.items && !Array.isArray(node.items)) {
-      const item = resolveSchemaType(node.items as JsonSchemaNode, ctx);
+    const items = sources.find((s) => s.items)?.items;
+    if (resolved.type === "array" && items && !Array.isArray(items)) {
+      const item = resolveSchemaType(items as JsonSchemaNode, ctx);
       field.arrayElementType = item.type;
       if (item.referencedEntityName) field.referencedEntityName = item.referencedEntityName;
       if (item.enumName) field.enumName = item.enumName;
@@ -620,17 +822,22 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
     });
   }
 
-  const rootIsEntity = hasProperties(schema);
+  // A root assembled from `allOf` members is an entity too (properties from members, or a typed object with a base).
+  const rootMembers = collectObjectMembers(schema);
+  const rootIsEntity = rootMembers.properties.size > 0 || (rootBase === "object" && rootMembers.baseRefs.length > 0);
   const rootEntityName = rootIsEntity ? deriveEntityName(schema) : undefined;
   const definitions = indexDefinitions(schema, rootEntityName);
   const ctx: ResolveContext = { definitions, rootEntityName, depth: 0, nesting: 0 };
 
+  const warnings: string[] = [];
   const entities: ParsedEntity[] = [];
   if (rootIsEntity && rootEntityName) {
+    const rootExtends = resolveExtends(rootEntityName, rootMembers, ctx, warnings);
     entities.push({
       name: rootEntityName,
       description: typeof schema.description === "string" ? schema.description : undefined,
-      fields: buildFields(schema, ctx),
+      fields: buildFields(rootMembers, ctx),
+      ...(rootExtends ? { extends: rootExtends } : {}),
       ...entityExtensions(schema),
       sourceFormat: "json-schema",
       originalContent: content,
@@ -640,10 +847,13 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
   const enums: ParsedEnum[] = [];
   for (const def of definitions.values()) {
     if (def.kind === "entity") {
+      const members = collectObjectMembers(def.node);
+      const defExtends = resolveExtends(def.assetName, members, ctx, warnings);
       entities.push({
         name: def.assetName,
         description: typeof def.node.description === "string" ? def.node.description : undefined,
-        fields: buildFields(def.node, ctx),
+        fields: buildFields(members, ctx),
+        ...(defExtends ? { extends: defExtends } : {}),
         ...entityExtensions(def.node),
         sourceFormat: "json-schema",
         originalContent: content,
@@ -667,7 +877,6 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
     });
   }
 
-  const warnings: string[] = [];
   for (const def of definitions.values()) {
     if (def.kind !== "inline" && def.assetName !== def.key) {
       warnings.push(`Definition "${def.key}" clashes with the root entity name — imported as "${def.assetName}".`);
