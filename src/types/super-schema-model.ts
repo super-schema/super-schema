@@ -217,6 +217,7 @@ export interface ComplexTypeInfo {
   referencedEntityName?: string;
   // Union (a field typed by a named union, or an array of one)
   unionName?: string;
+  unionMembers?: string[];
 }
 
 export interface NestedFieldInfo {

@@ -91,6 +91,7 @@ export function buildDecoratorsFromParsedField(
   if (field.enumName) decorators.enumName = field.enumName;
   // Union a `union` field (or an array of unions) refers to by name (read by compiler.service → generator).
   if (field.unionName) decorators.unionName = field.unionName;
+  if (field.unionMembers?.length) decorators.unionMembers = field.unionMembers;
   // Symbols of an enum array element / map value (read by compiler.service → generator).
   if (field.type !== "enum" && field.enumValues?.length) decorators.enumValues = field.enumValues;
 

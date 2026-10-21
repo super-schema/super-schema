@@ -179,6 +179,15 @@ function extractDecoratorSet(raw: Record<string, unknown>): DecoratorSet {
 // Complex type info extraction
 // ---------------------------------------------------------------------------
 
+/** `unionName` / `unionMembers` of a union-typed field (or an array of unions), type-checked: they come from stored JSON. */
+function unionInfo(decorators: Record<string, unknown>): Pick<ComplexTypeInfo, "unionName" | "unionMembers"> {
+  const members = stringArray(decorators.unionMembers);
+  return {
+    unionName: typeof decorators.unionName === "string" ? decorators.unionName : undefined,
+    unionMembers: members && members.length > 0 ? members : undefined,
+  };
+}
+
 function extractComplexTypeInfo(
   type: string,
   decorators: Record<string, unknown>
@@ -192,7 +201,7 @@ function extractComplexTypeInfo(
         // Target entity when the array holds references (items: { $ref }).
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
         enumValues: stringArray(decorators.enumValues),
-        unionName: (decorators.unionName as string) ?? undefined,
+        ...unionInfo(decorators),
       };
     case "map":
       return {
@@ -214,7 +223,7 @@ function extractComplexTypeInfo(
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
       };
     case "union":
-      return { unionName: (decorators.unionName as string) ?? undefined };
+      return unionInfo(decorators);
     default:
       return null;
   }

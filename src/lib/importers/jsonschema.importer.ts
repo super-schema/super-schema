@@ -39,6 +39,7 @@ import { parse as parseYaml } from "yaml";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
+import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { pickRootEntity } from "./multi-asset";
 import type {
   ParsedEntity,
@@ -215,6 +216,7 @@ interface ResolvedType {
   enumName?: string;
   enumValues?: string[];
   unionName?: string;
+  unionMembers?: string[];
   /** Constraints implied by the resolution itself (a numeric `const` / `enum` becomes a min/max range). */
   impliedConstraints?: ParsedFieldConstraint[];
 }
@@ -243,6 +245,8 @@ interface ResolveContext {
   warnings: string[];
   /** One union per combinator node, however many times the node is resolved. */
   unionByNode: WeakMap<object, string>;
+  /** Members of each shared `$defs` union by asset name (a field referencing it carries them too). */
+  sharedUnionMembers: Map<string, string[]>;
   /** `<Entity>_<field>` the node being resolved belongs to — the stem of a generated union name. */
   unionStem?: string;
 }
@@ -358,6 +362,7 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
       nullable: false,
       originalType: ref,
       unionName: def.assetName,
+      ...(ctx.sharedUnionMembers.get(def.assetName) ? { unionMembers: ctx.sharedUnionMembers.get(def.assetName) } : {}),
     };
   }
   if (def?.kind === "inline" && ctx.depth < MAX_REF_DEPTH) {
@@ -377,11 +382,13 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
 
 /** Name of the named asset a `$ref` member of a union points at; `undefined` when it names no entity / enum. */
 function unionMemberName(ref: string, ctx: ResolveContext): string | undefined {
-  if (ref === "#" || ref === "") return ctx.rootEntityName;
+  if (ref === "#" || ref === "") return ctx.rootEntityName === undefined ? undefined : sanitizeIdentifier(ctx.rootEntityName);
   const def = ctx.definitions.get(ref);
-  if (def) return def.kind === "entity" || def.kind === "enum" ? def.assetName : undefined;
+  // Members are spelled the way the generator spells the models / enums they name (sanitizeIdentifier), so the
+  // emitted `union` / `A | B` expression refers to declarations that exist.
+  if (def) return def.kind === "entity" || def.kind === "enum" ? sanitizeIdentifier(def.assetName) : undefined;
   const name = refToEntityName(ref);
-  return name === "" || name === "#" ? undefined : name;
+  return name === "" || name === "#" ? undefined : sanitizeIdentifier(name);
 }
 
 /** A null member of a combinator: `{ type: "null" }` (nothing else). */
@@ -422,11 +429,14 @@ function boundMembers(names: string[], label: string, warnings: string[]): strin
   return names.slice(0, MAX_UNION_MEMBERS);
 }
 
-/** A name not in `taken` (suffixing `_2`, `_3`, …); marks it taken. */
+/**
+ * A name not in `taken` (suffixing `_2`, `_3`, …); marks it taken. `taken` holds the SANITIZED spelling (what the
+ * generator emits), so `page-size` and `page_size` cannot both claim one TypeSpec name.
+ */
 function uniqueName(base: string, taken: Set<string>): string {
   let name = base;
-  for (let n = 2; taken.has(name); n++) name = `${base}_${n}`;
-  taken.add(name);
+  for (let n = 2; taken.has(sanitizeIdentifier(name)); n++) name = `${base}_${n}`;
+  taken.add(sanitizeIdentifier(name));
   return name;
 }
 
@@ -441,16 +451,18 @@ function resolveNamedRefUnion(
   if (!found) return undefined;
   let name = ctx.unionByNode.get(node);
   if (name === undefined) {
-    name = uniqueName(`${ctx.unionStem ?? "Anonymous"}_Union`, ctx.taken);
+    name = uniqueName(`${sanitizeIdentifier(ctx.unionStem ?? "Anonymous")}_Union`, ctx.taken);
     ctx.unionByNode.set(node, name);
     ctx.unions.push({ name, memberTypes: boundMembers(found.names, name, ctx.warnings) });
   }
+  const memberTypes = ctx.unions.find((u) => u.name === name)?.memberTypes;
   return {
     type: "union",
     confidence: "medium",
     nullable: found.hasNull,
     originalType: `${keyword}(${found.names.length})`,
     unionName: name,
+    ...(memberTypes ? { unionMembers: memberTypes } : {}),
   };
 }
 
@@ -789,7 +801,7 @@ function indexDefinitions(
   rootEntityName: string | undefined
 ): { definitions: Map<string, DefinitionEntry>; taken: Set<string> } {
   const definitions = new Map<string, DefinitionEntry>();
-  const taken = new Set(rootEntityName ? [rootEntityName] : []);
+  const taken = new Set(rootEntityName ? [sanitizeIdentifier(rootEntityName)] : []);
   const unionCandidates: DefinitionEntry[] = [];
 
   for (const keyword of ["$defs", "definitions"] as const) {
@@ -809,8 +821,7 @@ function indexDefinitions(
 
       let assetName = key;
       if (kind !== "inline") {
-        for (let n = 2; taken.has(assetName); n++) assetName = `${key}_${n}`;
-        taken.add(assetName);
+        assetName = uniqueName(key, taken);
       }
       const entry: DefinitionEntry = { key, node, kind, assetName };
       definitions.set(`#/${keyword}/${key}`, entry);
@@ -829,12 +840,13 @@ function indexDefinitions(
     unions: [],
     warnings: [],
     unionByNode: new WeakMap(),
+    sharedUnionMembers: new Map(),
   };
   for (const entry of unionCandidates) {
     const raw = entry.node.oneOf ?? entry.node.anyOf;
     if (!Array.isArray(raw) || !namedRefMembers(raw, probe)) continue;
     entry.kind = "union";
-    entry.assetName = uniqueName(entry.key, taken);
+    entry.assetName = uniqueName(sanitizeIdentifier(entry.key), taken);
   }
   return { definitions, taken };
 }
@@ -902,6 +914,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     if (resolved.enumName) field.enumName = resolved.enumName;
     if (resolved.enumValues) field.enumValues = resolved.enumValues;
     if (resolved.unionName) field.unionName = resolved.unionName;
+    if (resolved.unionMembers) field.unionMembers = resolved.unionMembers;
 
     // Array element type (+ reference / enum target of the element).
     const items = sources.find((s) => s.items)?.items;
@@ -912,6 +925,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       if (item.enumName) field.enumName = item.enumName;
       if (item.enumValues) field.enumValues = item.enumValues;
       if (item.unionName) field.unionName = item.unionName;
+      if (item.unionMembers) field.unionMembers = item.unionMembers;
       if (item.type === "reference" || item.type === "enum" || item.type === "union") field.confidence = item.confidence;
     }
 
@@ -1006,7 +1020,14 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
     unions,
     warnings,
     unionByNode: new WeakMap(),
+    sharedUnionMembers: new Map(),
   };
+  // Shared unions first: a field `$ref`-ing one carries its members (see resolveRef).
+  for (const def of definitions.values()) {
+    if (def.kind !== "union") continue;
+    const found = namedRefMembers((def.node.oneOf ?? def.node.anyOf) as unknown[], ctx);
+    if (found) ctx.sharedUnionMembers.set(def.assetName, boundMembers(found.names, def.assetName, warnings));
+  }
 
   const entities: ParsedEntity[] = [];
   if (rootIsEntity && rootEntityName) {
@@ -1046,10 +1067,9 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
       if (typeof def.node.description === "string") parsedEnum.description = def.node.description;
       enums.push(parsedEnum);
     } else if (def.kind === "union") {
-      const raw = (def.node.oneOf ?? def.node.anyOf) as unknown[];
-      const found = namedRefMembers(raw, ctx);
-      if (found) {
-        const shared: ParsedUnion = { name: def.assetName, memberTypes: boundMembers(found.names, def.assetName, warnings) };
+      const memberTypes = ctx.sharedUnionMembers.get(def.assetName);
+      if (memberTypes) {
+        const shared: ParsedUnion = { name: def.assetName, memberTypes };
         if (typeof def.node.description === "string") shared.description = def.node.description;
         sharedUnions.push(shared);
       }

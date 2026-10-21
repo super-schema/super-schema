@@ -426,6 +426,8 @@ interface GenContext {
   declaresInlineEnum(field: SuperSchemaField): boolean;
   /** True for a field-scoped enum with no symbols (never declared; the field fails loudly instead). */
   hasNoEnumValues(field: SuperSchemaField): boolean;
+  /** True when the document declares a union of this (sanitized) name. */
+  declaresUnion(name: string): boolean;
 }
 
 /**
@@ -444,6 +446,8 @@ function createContext(model: SuperSchemaModel): GenContext {
   for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases, model.interfaces]) {
     for (const declared of group ?? []) taken.add(sanitizeIdentifier(declared.name));
   }
+
+  const declaredUnions = new Set((model.unionTypes ?? []).map((u) => sanitizeIdentifier(u.name)));
 
   const names = new Map<SuperSchemaField, string>();
   const reused = new Set<SuperSchemaField>();
@@ -469,6 +473,7 @@ function createContext(model: SuperSchemaModel): GenContext {
     enumNameOf: (field) => names.get(field) ?? `${sanitizeIdentifier(entityName)}_${sanitizeIdentifierSegment(field.name)}`,
     // An enum without symbols is never declared (see generateFieldDefinition for how the field fails loudly).
     declaresInlineEnum: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) > 0,
+    declaresUnion: (name) => declaredUnions.has(sanitizeIdentifier(name)),
     hasNoEnumValues: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) === 0,
   };
 }
@@ -895,13 +900,25 @@ function resolveCollectionMemberType(
     return extractEnumValues(field).length > 0 ? ctx.enumNameOf(field) : "string";
   }
   if (memberType === "union") {
-    const unionName = field.complexType?.unionName;
-    return unionName ? sanitizeIdentifier(unionName) : "string";
+    return `(${resolveUnionType(field, ctx)})`.replace(/^\(([\w]+)\)$/, "$1");
   }
   if (STRUCTURED_MEMBER_TYPES[memberType]) {
     return STRUCTURED_MEMBER_TYPES[memberType];
   }
   return getTypeInfo(memberType)?.typespecScalar ?? memberType;
+}
+
+/**
+ * A union-typed field: the declared union by name when the document declares it; otherwise the TypeSpec union
+ * expression `A | B` from the members the field carries (the union row may be deselected, deleted, or never reach this
+ * entity's source); `string` only when neither exists.
+ */
+function resolveUnionType(field: SuperSchemaField, ctx: GenContext): string {
+  const unionName = field.complexType?.unionName;
+  if (unionName && ctx.declaresUnion(unionName)) return sanitizeIdentifier(unionName);
+  const members = field.complexType?.unionMembers;
+  if (members && members.length > 0) return members.map((m) => sanitizeIdentifier(m)).join(" | ");
+  return "string";
 }
 
 function resolveTypeSpecType(
@@ -937,8 +954,7 @@ function resolveTypeSpecType(
       return "string";
     }
     case "union": {
-      const unionName = field.complexType?.unionName;
-      return unionName ? sanitizeIdentifier(unionName) : "string";
+      return resolveUnionType(field, ctx);
     }
     case "decimal":
     case "decimal128": {

@@ -90,6 +90,8 @@ export interface ParsedField {
   enumValues?: string[];
   /** Union this `union` field (or the element of an array of unions) uses — an imported `ParsedUnion` name */
   unionName?: string;
+  /** Member type names of that union, kept on the field so it stays valid when the union itself is not declared */
+  unionMembers?: string[];
   /** Format-binding facts kept under `decorators.governance` (same keys the TypeSpec governance path stores) */
   governance?: ParsedFieldGovernance;
 }

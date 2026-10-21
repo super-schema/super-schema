@@ -177,3 +177,104 @@ describe("union chain: importer -> multi-asset -> payload -> generator", () => {
     expect(result.diagnostics.filter((x) => x.severity === "error")).toEqual([]);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 1: sanitized names, and a union field that does not depend on a declaration
+// ---------------------------------------------------------------------------
+
+const pf = (name: string, i: number, type: string, decorators: Record<string, unknown>): PrismaFieldInput => ({
+  id: name, name, type, precision: null, scale: null, nullable: false, isKey: false, fieldNumber: null,
+  description: "", classification: null, aliases: [], decorators, sortOrder: i,
+});
+const entityRow = (name: string, metadata: Record<string, unknown> = {}) => ({
+  id: name, name, description: "", status: "DRAFT", version: 1, domainId: null, metadata, domain: null,
+});
+const body = (s: string) => s.split("\n").filter((l) => !/^(import|using) /.test(l)).join("\n");
+
+async function compileErrors(sources: string[]) {
+  const [first, ...rest] = sources;
+  const result = await compiler.compileTypeSpecWithGovernance([first, ...rest.map(body)].join("\n"));
+  return result.diagnostics.filter((x) => x.severity === "error");
+}
+
+describe("union names are spelled the way the generator spells the assets they name", () => {
+  const messy = {
+    title: "Change me title",
+    type: "object",
+    properties: {
+      "page-size": { oneOf: [ref("pet-cat"), ref("Bird.v2")] },
+      page_size: { oneOf: [ref("pet-cat"), ref("Bird.v2")] },
+    },
+    $defs: { "pet-cat": CAT, "Bird.v2": DOG },
+  };
+
+  it("members and union names are sanitized; page-size / page_size cannot collide", () => {
+    const d = data(messy);
+    expect(d.unions!.map((u) => u.name)).toEqual(["Change_me_title_page_size_Union", "Change_me_title_page_size_Union_2"]);
+    expect(d.unions![0].memberTypes).toEqual(["pet_cat", "Bird_v2"]);
+    expect(field(d, "Change me title", "page-size").unionName).toBe("Change_me_title_page_size_Union");
+    expect(field(d, "Change me title", "page_size").unionName).toBe("Change_me_title_page_size_Union_2");
+  });
+
+  it("the emitted TypeSpec compiles and the union members are the emitted model names", async () => {
+    const d = data(messy);
+    const r = toAssetImportResult(d);
+    const payload = buildImportAssetsPayload(r, {
+      domainId: "d", selectedModels: [], selectedEntities: r.models.map((_, i) => i), selectedEnums: [],
+      selectedScalars: [], selectedUnions: [0, 1], selectedServices: [], selectedDecorators: [],
+    });
+    const sources = payload.entities.map((e, idx) => {
+      const model = compileEntity(
+        // only the first entity (the owner) declares the unions, as a document would
+        entityRow(e.name, idx === 0 ? { custom: { unionTypes: payload.unionTypes } } : {}),
+        e.fields.map((f, i) => pf(f.name, i, f.type, f.decorators as Record<string, unknown>))
+      );
+      return generateTypeSpec(model);
+    });
+    const text = sources.join("\n");
+    expect(text).toContain("model pet_cat");
+    expect(text).toContain("model Bird_v2");
+    expect(text).toContain("model Change_me_title");
+    expect(sources[0]).toContain("  pet_cat,\n  Bird_v2,\n");
+    expect(await compileErrors(sources)).toEqual([]);
+  }, 60_000);
+});
+
+describe("a union field on the REAL read-back path (Prisma rows -> compileEntity -> generateTypeSpec -> compiler)", () => {
+  const decorators = { unionName: "Owner_pet_Union", unionMembers: ["Cat", "Dog"] };
+  const members = [
+    generateTypeSpec(compileEntity(entityRow("Cat"), [pf("meow", 0, "string", {})])),
+    generateTypeSpec(compileEntity(entityRow("Dog"), [pf("bark", 0, "string", {})])),
+  ];
+
+  it("(a) the union declared in metadata.custom.unionTypes is referenced by name", async () => {
+    const model = compileEntity(
+      entityRow("Owner", { custom: { unionTypes: [{ name: "Owner_pet_Union", memberTypes: ["Cat", "Dog"] }] } }),
+      [pf("pet", 0, "union", decorators)]
+    );
+    const src = generateTypeSpec(model);
+    expect(src).toContain("pet: Owner_pet_Union;");
+    expect(await compileErrors([src, ...members])).toEqual([]);
+  }, 60_000);
+
+  it("(b) a union that is NOT declared falls back to the inline expression from the field's own members", async () => {
+    const src = generateTypeSpec(compileEntity(entityRow("Owner"), [pf("pet", 0, "union", decorators)]));
+    expect(src).toContain("pet: Cat | Dog;");
+    expect(src).not.toContain("union Owner_pet_Union");
+    expect(await compileErrors([src, ...members])).toEqual([]);
+  }, 60_000);
+
+  it("(b2) an array of an undeclared union is parenthesized", async () => {
+    const src = generateTypeSpec(
+      compileEntity(entityRow("Owner"), [pf("pets", 0, "array", { arrayElementType: "union", ...decorators })])
+    );
+    expect(src).toContain("pets: (Cat | Dog)[];");
+    expect(await compileErrors([src, ...members])).toEqual([]);
+  }, 60_000);
+
+  it("(c) not declared and no members falls back to string and still compiles", async () => {
+    const src = generateTypeSpec(compileEntity(entityRow("Owner"), [pf("pet", 0, "union", { unionName: "Gone" })]));
+    expect(src).toContain("pet: string;");
+    expect(await compileErrors([src])).toEqual([]);
+  }, 60_000);
+});
