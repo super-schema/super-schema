@@ -146,6 +146,62 @@ describe("JSON Schema importer: allOf merge semantics", () => {
     expect(() => parseJsonSchemaDocument(rawProp)).not.toThrow();
   });
 
+  describe("inheritance cycles", () => {
+    const ent = (ref?: string, props: Record<string, unknown> = { p: { type: "string" } }) => ({
+      type: "object",
+      ...(ref ? { allOf: [{ $ref: ref }, { type: "object", properties: props }] } : { properties: props }),
+    });
+    const cycleWarnings = (w: string[]) => w.filter((x) => x.includes("Inheritance cycle"));
+
+    it("a. mutual A<->B: exactly one extends removed, fields kept", () => {
+      const d = data({ title: "Doc", type: "object", properties: { x: {} }, $defs: { A: ent("#/$defs/B"), B: ent("#/$defs/A") } });
+      const a = d.entities.find((e) => e.name === "A")!;
+      const b = d.entities.find((e) => e.name === "B")!;
+      expect(a.extends).toBe("B");
+      expect(b.extends).toBeUndefined();
+      expect(b.fields.map((f) => f.name)).toEqual(["p"]);
+      expect(cycleWarnings(d.warnings)).toEqual(["Inheritance cycle A -> B -> A: `extends` removed from `B`."]);
+    });
+
+    it("b. 3-cycle A->B->C->A removes only the closing C", () => {
+      const d = data({
+        title: "Doc", type: "object", properties: { x: {} },
+        $defs: { A: ent("#/$defs/B"), B: ent("#/$defs/C"), C: ent("#/$defs/A") },
+      });
+      const ext = Object.fromEntries(d.entities.map((e) => [e.name, e.extends]));
+      expect(ext).toMatchObject({ A: "B", B: "C", C: undefined });
+      expect(cycleWarnings(d.warnings)).toHaveLength(1);
+      expect(cycleWarnings(d.warnings)[0]).toContain("removed from `C`");
+    });
+
+    it("c. root extending D where D allOfs # breaks at D", () => {
+      const d = data({
+        title: "Root", type: "object",
+        allOf: [{ $ref: "#/$defs/D" }, { type: "object", properties: { r: { type: "string" } } }],
+        $defs: { D: { type: "object", allOf: [{ $ref: "#" }] } },
+      });
+      expect(d.entities.find((e) => e.name === "Root")?.extends).toBe("D");
+      expect(d.entities.find((e) => e.name === "D")?.extends).toBeUndefined();
+      expect(cycleWarnings(d.warnings)).toHaveLength(1);
+    });
+
+    it("d. chains and diamonds are untouched and silent", () => {
+      const d = data({
+        title: "Doc", type: "object", properties: { x: {} },
+        $defs: { C: ent(), B: ent("#/$defs/C"), A: ent("#/$defs/B"), A2: ent("#/$defs/B") },
+      });
+      const ext = Object.fromEntries(d.entities.map((e) => [e.name, e.extends]));
+      expect(ext).toMatchObject({ A: "B", A2: "B", B: "C" });
+      expect(cycleWarnings(d.warnings)).toEqual([]);
+    });
+
+    it("e. a direct self reference warns", () => {
+      const d = data({ title: "Doc", type: "object", properties: { x: {} }, $defs: { S: ent("#/$defs/S") } });
+      expect(d.entities.find((e) => e.name === "S")?.extends).toBeUndefined();
+      expect(d.warnings.some((w) => w.includes('Entity "S"') && w.includes("itself"))).toBe(true);
+    });
+  });
+
   it("skips malformed members and keeps first on duplicate property names with a warning", () => {
     const d = data({
       title: "T",

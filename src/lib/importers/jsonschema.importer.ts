@@ -616,6 +616,38 @@ function resolveBase(ref: string, ctx: ResolveContext): { name: string; defined:
   return name ? { name, defined: false } : undefined;
 }
 
+/**
+ * Break inheritance cycles in the finished entity list. Each entity has at most one `extends`, so every component
+ * holds at most one cycle; the entity that closes it in document order loses its `extends` (fields untouched).
+ * Iterative and linear: no recursion on document-controlled depth.
+ */
+function breakInheritanceCycles(entities: ParsedEntity[], warnings: string[]): void {
+  const byName = new Map(entities.map((e, i) => [e.name, { entity: e, index: i }]));
+  const done = new Set<string>();
+  for (const start of entities) {
+    const path: string[] = [];
+    const onPath = new Map<string, number>();
+    let current: string | undefined = start.name;
+    while (current !== undefined && !done.has(current) && !onPath.has(current)) {
+      onPath.set(current, path.length);
+      path.push(current);
+      const next: string | undefined = byName.get(current)?.entity.extends;
+      current = next !== undefined && byName.has(next) ? next : undefined;
+    }
+    if (current !== undefined && onPath.has(current)) {
+      const cycle = path.slice(onPath.get(current));
+      const closing = cycle.reduce((a, b) => (byName.get(b)!.index > byName.get(a)!.index ? b : a));
+      const at = cycle.indexOf(closing);
+      const ordered = [...cycle.slice(at + 1), ...cycle.slice(0, at + 1)];
+      warnings.push(
+        `Inheritance cycle ${[...ordered, ordered[0]].join(" -> ")}: \`extends\` removed from \`${closing}\`.`
+      );
+      delete byName.get(closing)!.entity.extends;
+    }
+    for (const name of path) done.add(name);
+  }
+}
+
 /** `extends` + warnings for an entity whose `allOf` lists base `$ref`s (spec Addendum A, rules 4-5). */
 function resolveExtends(
   entityName: string,
@@ -636,7 +668,11 @@ function resolveExtends(
       `Entity "${entityName}": allOf lists more than one base; only the first is used as \`extends\`; \`${extra.base.name}\` is not merged.`
     );
   }
-  if (!first || first.base.name === entityName) return undefined;
+  if (first && first.base.name === entityName) {
+    warnings.push(`Entity "${entityName}": allOf references the entity itself as its base; \`extends\` is ignored.`);
+    return undefined;
+  }
+  if (!first) return undefined;
   if (!first.base.defined) {
     warnings.push(`Entity "${entityName}": base entity \`${first.base.name}\` is referenced but not defined in this document.`);
   }
@@ -868,6 +904,8 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
       enums.push(parsedEnum);
     }
   }
+
+  breakInheritanceCycles(entities, warnings);
 
   if (entities.length === 0) {
     return err({
