@@ -148,6 +148,148 @@ export function typeSpecValueLiteral(value: unknown): string {
   return "null";
 }
 
+class LiteralSyntaxError extends Error {}
+
+/** Recursive-descent reader for the grammar {@link typeSpecValueLiteral} writes. Throws LiteralSyntaxError. */
+class LiteralReader {
+  pos = 0;
+  constructor(private readonly s: string) {}
+
+  ws(): void {
+    while (this.pos < this.s.length && /\s/.test(this.s[this.pos])) this.pos++;
+  }
+
+  atEnd(): boolean {
+    this.ws();
+    return this.pos >= this.s.length;
+  }
+
+  eat(ch: string): boolean {
+    this.ws();
+    if (this.s[this.pos] === ch) {
+      this.pos++;
+      return true;
+    }
+    return false;
+  }
+
+  expect(ch: string): void {
+    if (!this.eat(ch)) throw new LiteralSyntaxError(`expected ${ch} at ${this.pos}`);
+  }
+
+  string(): string {
+    this.ws();
+    if (this.s[this.pos] !== '"') throw new LiteralSyntaxError(`expected string at ${this.pos}`);
+    let i = this.pos + 1;
+    while (i < this.s.length && this.s[i] !== '"') i += this.s[i] === "\\" ? 2 : 1;
+    if (i >= this.s.length) throw new LiteralSyntaxError("unterminated string");
+    const raw = this.s.slice(this.pos + 1, i);
+    this.pos = i + 1;
+    return unescapeTypeSpecString(raw);
+  }
+
+  private key(): string {
+    this.ws();
+    const c = this.s[this.pos];
+    if (c === '"') return this.string();
+    if (c === "`") {
+      const end = this.s.indexOf("`", this.pos + 1);
+      if (end < 0) throw new LiteralSyntaxError("unterminated key");
+      const k = this.s.slice(this.pos + 1, end);
+      this.pos = end + 1;
+      return k;
+    }
+    const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(this.s.slice(this.pos));
+    if (!m) throw new LiteralSyntaxError(`expected key at ${this.pos}`);
+    this.pos += m[0].length;
+    return m[0];
+  }
+
+  value(): unknown {
+    this.ws();
+    const c = this.s[this.pos];
+    if (c === '"') return this.string();
+    if (c === "#") {
+      const open = this.s[this.pos + 1];
+      if (open === "[") {
+        this.pos += 2;
+        const out: unknown[] = [];
+        while (!this.eat("]")) {
+          out.push(this.value());
+          if (!this.eat(",")) {
+            this.expect("]");
+            break;
+          }
+        }
+        return out;
+      }
+      if (open === "{") {
+        this.pos += 2;
+        const out: Record<string, unknown> = {};
+        while (!this.eat("}")) {
+          const k = this.key();
+          this.expect(":");
+          out[k] = this.value();
+          if (!this.eat(",")) {
+            this.expect("}");
+            break;
+          }
+        }
+        return out;
+      }
+      throw new LiteralSyntaxError(`unexpected # at ${this.pos}`);
+    }
+    const rest = this.s.slice(this.pos);
+    const word = /^(?:true|false|null)(?![\w])/.exec(rest);
+    if (word) {
+      this.pos += word[0].length;
+      return word[0] === "null" ? null : word[0] === "true";
+    }
+    const num = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(rest);
+    if (num) {
+      this.pos += num[0].length;
+      return Number(num[0]);
+    }
+    throw new LiteralSyntaxError(`unexpected token at ${this.pos}`);
+  }
+}
+
+/** Strict inverse of {@link typeSpecValueLiteral}: `{ok:false}` when `raw` is not exactly one literal. */
+export function tryParseTypeSpecValueLiteral(raw: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    const r = new LiteralReader(raw);
+    const value = r.value();
+    return r.atEnd() ? { ok: true, value } : { ok: false };
+  } catch (e) {
+    if (e instanceof LiteralSyntaxError) return { ok: false };
+    throw e;
+  }
+}
+
+/** Inverse of {@link typeSpecValueLiteral}. Text that is not a valid literal comes back as the trimmed raw string. */
+export function parseTypeSpecValueLiteral(raw: string): unknown {
+  const r = tryParseTypeSpecValueLiteral(raw);
+  return r.ok ? r.value : raw.trim();
+}
+
+/**
+ * The inside of `@...extension(<key>, <value>)` → `{key, value}`. Splits at the first top-level comma by
+ * reading the key as a string literal and the value as a full literal (so commas, parens and quotes inside
+ * the value are safe). Undefined for anything that is not exactly `"key", literal` (e.g. a partial line).
+ */
+export function parseExtensionArguments(inner: string): { key: string; value: unknown } | undefined {
+  try {
+    const r = new LiteralReader(inner);
+    const key = r.string();
+    r.expect(",");
+    const value = r.value();
+    return r.atEnd() ? { key, value } : undefined;
+  } catch (e) {
+    if (e instanceof LiteralSyntaxError) return undefined;
+    throw e;
+  }
+}
+
 /** Keys with their own dedicated decorator path; never emitted as generic extensions. */
 const RESERVED_EXTENSION_KEYS: readonly string[] = [TAGS_EXTENSION_KEY, CLASSIFICATION_EXTENSION_KEY];
 

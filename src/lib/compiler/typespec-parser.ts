@@ -15,6 +15,7 @@ import {
   CLASSIFICATION_EXTENSION_KEY,
   TAGS_EXTENSION_KEY,
   classificationFromEnterpriseMember,
+  parseExtensionArguments,
   parseStringTuple,
   unescapeTypeSpecString,
 } from "./governance-decorators";
@@ -49,7 +50,7 @@ export interface ParsedTypeSpecDecorators {
   maxItems?: number;
   visibility?: string[];
   discriminator?: string;
-  extensions?: Record<string, string>;
+  extensions?: Record<string, unknown>;
   error?: boolean;
   example?: string;
   encodedName?: { mimeType: string; name: string };
@@ -78,6 +79,8 @@ export interface ParsedTypeSpecModel {
   isError?: boolean;
   friendlyName?: string;
   tags?: string[];
+  /** Generic vendor extensions above the model (x-tags / x-classification excluded), JSON-shaped values. */
+  extensions?: Record<string, unknown>;
 }
 
 export interface ParsedTypeSpecEnum {
@@ -443,6 +446,7 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
       const isError = collectModelIsError(lines, i);
       const friendlyName = collectModelFriendlyName(lines, i);
       const tags = collectModelTags(lines, i);
+      const extensions = collectModelExtensions(lines, i);
       const { body, endIdx } = extractBlock(lines, i);
       const { fields, spreadFrom } = parseModelBody(body);
 
@@ -456,6 +460,7 @@ export function parseTypeSpecDocument(source: string): ParsedTypeSpecDocument {
         isError: isError || undefined,
         friendlyName: friendlyName || undefined,
         tags: tags.length > 0 ? tags : undefined,
+        extensions,
       });
       i = endIdx + 1;
       continue;
@@ -593,6 +598,37 @@ const TAGS_EXTENSION_LINE = new RegExp(
 const CLASSIFICATION_EXTENSION_LINE = new RegExp(
   String.raw`^${EXTENSION_DECORATOR}\("${CLASSIFICATION_EXTENSION_KEY}"\s*,\s*"((?:[^"\\]|\\.)*)"\)$`
 );
+
+/** Bare, JsonSchema- or OpenAPI-qualified `extension` decorator call; group 1 is the argument text. */
+const GENERIC_EXTENSION_LINE = /^@(?:TypeSpec\.)?(?:(?:JsonSchema|OpenAPI)\.)?extension\((.*)\)$/;
+
+/**
+ * A generic vendor-extension decorator line → `{key, value}` (value in its JSON shape). Undefined for other
+ * lines, partial lines, and the keys with a dedicated path (`x-tags`, `x-classification`).
+ */
+function parseGenericExtensionLine(line: string): { key: string; value: unknown } | undefined {
+  const m = line.match(GENERIC_EXTENSION_LINE);
+  if (!m) return undefined;
+  const args = parseExtensionArguments(m[1]);
+  if (!args || args.key === TAGS_EXTENSION_KEY || args.key === CLASSIFICATION_EXTENSION_KEY) return undefined;
+  return args;
+}
+
+/** Model-level generic extensions above the model (JsonSchema + OpenAPI pair collapses per key), or undefined. */
+function collectModelExtensions(lines: string[], idx: number): Record<string, unknown> | undefined {
+  const found: { key: string; value: unknown }[] = [];
+  for (let i = idx - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line === "") continue;
+    if (!line.startsWith("@") && !line.startsWith("#")) break;
+    const ext = parseGenericExtensionLine(line);
+    if (ext) found.unshift(ext);
+  }
+  if (found.length === 0) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const { key, value } of found) out[key] = value;
+  return out;
+}
 
 /** Model tags in source order: the `x-tags` extension (Story 16.6) and legacy model-level `@tag("...")`. */
 function collectModelTags(lines: string[], idx: number): string[] {
@@ -1069,10 +1105,10 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
     return { decorators: { classification: unescapeTypeSpecString(classificationExtMatch[1]) } };
   }
 
-  // @extension("key", "value")
-  const extensionMatch = line.match(/^@extension\("([^"]+)"\s*,\s*"([^"]*)"\)$/);
-  if (extensionMatch) {
-    return { decorators: { extensions: { [extensionMatch[1]]: extensionMatch[2] } } };
+  // @extension("key", value) / @TypeSpec.JsonSchema.extension(...) / @TypeSpec.OpenAPI.extension(...)
+  const ext = parseGenericExtensionLine(line);
+  if (ext) {
+    return { decorators: { extensions: { [ext.key]: ext.value } } };
   }
 
   // @error

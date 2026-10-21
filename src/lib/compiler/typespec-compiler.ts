@@ -166,7 +166,7 @@ function mapPropertyType(type: Type): { type: string; arrayElementType?: string 
 
 function readDecorators(type: Type): ParsedTypeSpecDecorators {
   const d: ParsedTypeSpecDecorators = {};
-  for (const { name, args } of readAstDecorators(type)) {
+  for (const { name, args, rawArgs } of readAstDecorators(type)) {
     const a0 = args[0];
     const s0 = typeof a0 === "string" ? a0 : undefined;
     const n0 = typeof a0 === "number" ? a0 : undefined;
@@ -217,12 +217,44 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
           break;
         }
         if (s0 === TAGS_EXTENSION_KEY) break;
-        // @extension("x-key", value) → { "x-key": "value" }
-        if (s0) d.extensions = { ...(d.extensions ?? {}), [s0]: String(args[1] ?? "") };
+        // @extension / @TypeSpec.JsonSchema.extension / @TypeSpec.OpenAPI.extension ("x-key", value): the
+        // value keeps its JSON shape; the emitted JsonSchema + OpenAPI pair for one key collapses to one entry.
+        if (s0) d.extensions = { ...(d.extensions ?? {}), [s0]: valueNodeToJs(rawArgs[1]) };
         break;
     }
   }
   return d;
+}
+
+/**
+ * A decorator-argument value node (`"s"`, `1`, `true`, `null`, `#[...]`, `#{...}`) → plain JS, recursively.
+ * Read from the AST (not the checked value) like the rest of this file, so it works without decorator
+ * implementations. Unknown nodes yield the flattened reference/literal text, or null.
+ */
+function valueNodeToJs(node: unknown): unknown {
+  const n = node as
+    | {
+        value?: unknown;
+        values?: unknown[];
+        properties?: Array<{ id?: { sv?: string }; value?: unknown }>;
+        target?: { sv?: string; id?: { sv?: string } };
+        sv?: string;
+      }
+    | undefined;
+  if (n === undefined || n === null) return null;
+  if (Array.isArray(n.properties)) {
+    const out: Record<string, unknown> = {};
+    for (const p of n.properties) {
+      const key = p.id?.sv;
+      if (key !== undefined) out[key] = valueNodeToJs(p.value);
+    }
+    return out;
+  }
+  if (Array.isArray(n.values)) return n.values.map(valueNodeToJs);
+  if (typeof n.value === "string" || typeof n.value === "number" || typeof n.value === "boolean") return n.value;
+  const ref = exprToArgValue(n);
+  // `null` parses as a reference to the keyword identifier, so it arrives as the text "null".
+  return ref === undefined || ref === "null" ? null : ref;
 }
 
 /** True when the AST shows an @key decorator on this type. */
@@ -326,6 +358,7 @@ function extractModel(program: Program, model: Model): ParsedTypeSpecModel {
     isError: decorators.error,
     friendlyName: decorators.friendlyName,
     tags: modelTags(model),
+    extensions: decorators.extensions,
     discriminator: decorators.discriminator,
   };
 }
