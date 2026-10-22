@@ -920,6 +920,9 @@ function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, u
 
 const MAX_IGNORED_WARNINGS = 200;
 
+/** Fields whose hoisted keyword appears in several nested members with different values (reported under the same cap). */
+const NESTED_CONFLICTS = new WeakMap<object, string[]>();
+
 /** One warning per distinct (keyword, entity/field) pair, capped; the overflow is counted in a final warning. */
 function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
   const out: string[] = [];
@@ -935,7 +938,15 @@ function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
   };
   for (const entity of entities) {
     add(`Entity \`${entity.name}\``, entity.ignoredKeywords);
-    for (const field of entity.fields) add(`Field \`${entity.name}.${field.name}\``, field.ignoredKeywords);
+    for (const field of entity.fields) {
+      add(`Field \`${entity.name}.${field.name}\``, field.ignoredKeywords);
+      for (const keyword of NESTED_CONFLICTS.get(field) ?? []) {
+        total += 1;
+        if (out.length < MAX_IGNORED_WARNINGS) {
+          out.push(`Field \`${entity.name}.${field.name}\`: keyword \`${keyword}\` appears in several members with different values; kept the first`);
+        }
+      }
+    }
   }
   if (total > out.length) out.push(`…and ${total - out.length} more ignored-keyword warnings`);
   return out;
@@ -1039,11 +1050,22 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     }
     // Unsupported keywords inside an array `items` schema or a oneOf / anyOf member are not mapped either: they are
     // listed (and preserved, first definition wins) on the field that owns them.
+    // NOTE: nested hoisting is deliberate: keywords found in `items` / a oneOf member are lifted onto this field, and
+    // when several members define the same keyword the first definition wins (a differing later value is reported).
     const nested = nestedSchemas(sources);
+    const hoisted = new Set<string>();
     for (const source of nested) {
       for (const key of Object.keys(source)) {
         if (!IGNORED_SCHEMA_KEYWORDS.has(key)) continue;
-        if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) continue;
+        if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) {
+          if (hoisted.has(key) && JSON.stringify(extensions[key]) !== JSON.stringify(source[key])) {
+            const list = NESTED_CONFLICTS.get(field) ?? [];
+            if (!list.includes(key)) list.push(key);
+            NESTED_CONFLICTS.set(field, list);
+          }
+          continue;
+        }
+        hoisted.add(key);
         setOwn((extensions ??= {}), key, source[key]);
       }
     }

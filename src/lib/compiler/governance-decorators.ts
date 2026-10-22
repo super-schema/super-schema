@@ -128,6 +128,36 @@ export function tagsDecorator(tags: string[]): string {
 const TYPESPEC_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
+ * Every keyword and reserved / future keyword of the TypeSpec scanner (`Keywords` + `ReservedKeywords`), plus `null`.
+ * The compiler does not export its list publicly (and importing it would pull the whole compiler into client code),
+ * so it is mirrored here; a contract test reads the installed scanner and fails if this set misses a word.
+ * A bare object key spelled like one of these does not parse, so it is backtick-quoted.
+ */
+export const TYPESPEC_RESERVED_WORDS: ReadonlySet<string> = new Set([
+  "import", "model", "scalar", "namespace", "interface", "union", "if", "else", "projection", "using", "op",
+  "extends", "is", "enum", "alias", "dec", "fn", "valueof", "typeof", "const", "init", "true", "false", "return",
+  "void", "never", "unknown", "extern", "internal", "statemachine", "macro", "package", "metadata", "env", "arg",
+  "declare", "array", "struct", "record", "module", "mod", "sym", "context", "prop", "property", "scenario", "pub",
+  "sub", "typeref", "trait", "this", "self", "super", "keyof", "with", "implements", "impl", "satisfies", "flag",
+  "auto", "partial", "private", "public", "protected", "sealed", "local", "async", "null",
+]);
+
+/** Control characters a backtick identifier cannot carry safely (CR / LF / tab are escaped instead). */
+const UNSAFE_KEY_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u2028\u2029]/;
+
+/** Object key as it is written in a literal: bare identifier, else backtick-quoted with `\`, backtick, LF, CR, tab escaped. */
+function renderKey(key: string): string {
+  if (TYPESPEC_IDENTIFIER.test(key) && !TYPESPEC_RESERVED_WORDS.has(key)) return key;
+  const escaped = key
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+  return `\`${escaped}\``;
+}
+
+/**
  * A JSON value as a TypeSpec value literal: string `"..."`, array `#[a, b]` (same convention as
  * {@link tagsDecorator}), plain object `#{key: value}` (keys that are not identifiers are backtick-quoted),
  * number / boolean bare, `null` as `null`. Nested values recurse. Anything else (undefined, functions)
@@ -159,8 +189,9 @@ function renderLiteral(value: unknown, depth: number): string {
   if (Array.isArray(value)) return `#[${value.map((v) => renderLiteral(v, depth + 1)).join(", ")}]`;
   if (typeof value === "object") {
     const members = Object.entries(value as Record<string, unknown>)
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${TYPESPEC_IDENTIFIER.test(k) ? k : `\`${k}\``}: ${renderLiteral(v, depth + 1)}`);
+      // A key with other control characters cannot be written safely: that one member is omitted (never invalid TypeSpec).
+      .filter(([k, v]) => v !== undefined && !UNSAFE_KEY_CHARS.test(k))
+      .map(([k, v]) => `${renderKey(k)}: ${renderLiteral(v, depth + 1)}`);
     return `#{${members.join(", ")}}`;
   }
   return "null";
@@ -220,9 +251,10 @@ class LiteralReader {
     const c = this.s[this.pos];
     if (c === '"') return this.string();
     if (c === "`") {
-      const end = this.s.indexOf("`", this.pos + 1);
-      if (end < 0) throw new LiteralSyntaxError("unterminated key");
-      const k = this.s.slice(this.pos + 1, end);
+      let end = this.pos + 1;
+      while (end < this.s.length && this.s[end] !== "`") end += this.s[end] === "\\" ? 2 : 1;
+      if (end >= this.s.length) throw new LiteralSyntaxError("unterminated key");
+      const k = unescapeTypeSpecString(this.s.slice(this.pos + 1, end));
       this.pos = end + 1;
       return k;
     }

@@ -79,6 +79,25 @@ describe("JSON Schema importer: ignoredKeywords", () => {
     });
   });
 
+  it("warns when a hoisted keyword differs between oneOf members and keeps the first", () => {
+    const d = data({
+      title: "T",
+      type: "object",
+      properties: { either: { oneOf: [{ type: "string", multipleOf: 2 }, { type: "integer", multipleOf: 3 }] } },
+    });
+    const either = d.entities[0].fields[0];
+    expect(either.extensions).toEqual({ multipleOf: 2 });
+    expect(d.warnings).toContain(
+      "Field `T.either`: keyword `multipleOf` appears in several members with different values; kept the first",
+    );
+    const same = data({
+      title: "T",
+      type: "object",
+      properties: { either: { oneOf: [{ type: "string", multipleOf: 2 }, { type: "integer", multipleOf: 2 }] } },
+    });
+    expect(same.warnings.filter((w) => w.includes("several members"))).toEqual([]);
+  });
+
   it("finds ignored keywords inside array items and oneOf members", () => {
     const d = data({
       title: "T",
