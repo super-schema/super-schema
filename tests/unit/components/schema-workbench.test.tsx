@@ -43,14 +43,13 @@ describe("SchemaWorkbench — imported origin", () => {
   it("loads pasted text and highlights edited lines in red", async () => {
     setup();
     await pasteLoad(AVRO);
-    expect(screen.queryAllByTestId("detail-panel-backdrop")[0]?.querySelector('[data-changed="true"]')).toBeNull();
+    const editor = () => screen.getByTestId("detail-panel-textarea-editor");
+    expect(editor().getAttribute("data-changed-count")).toBe("0");
 
     fireEvent.change(panel(), { target: { value: AVRO.replace("Customer", "Client") } });
-    const changed = screen
-      .getByTestId("detail-panel-backdrop")
-      .querySelectorAll('[data-changed="true"]');
-    expect(changed).toHaveLength(1);
-    expect(changed[0].textContent).toContain("Client");
+    // JSON renders through JsonEditor (CodeMirror; its textarea fallback in jsdom), which marks the changed lines.
+    expect(editor().getAttribute("data-language")).toBe("json");
+    expect(editor().getAttribute("data-changed-count")).toBe("1");
     expect(screen.getByTestId("detail-panel-changes").textContent).toMatch(/1 changed/);
   });
 
@@ -321,7 +320,7 @@ describe("SchemaWorkbench — import affordances", () => {
     await pasteLoad(AVRO);
     const lines = AVRO.split("\n");
     fireEvent.change(panel(), { target: { value: [...lines.slice(0, 2), ...lines.slice(3)].join("\n") } });
-    expect(screen.getAllByTestId("detail-panel-removed-marker").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("detail-panel-textarea-editor").getAttribute("data-removed-count")).toBe("1");
     expect(screen.getByTestId("detail-panel-changes").textContent).toMatch(/removed/);
   });
 });

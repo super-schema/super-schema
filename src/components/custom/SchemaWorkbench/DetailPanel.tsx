@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useRef } from "react";
-import { cn } from "@/lib/utils";
-import { diffLines } from "@/lib/schema-workbench/line-diff";
+import { useDeferredValue, useMemo } from "react";
+import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
+import { diffLines, type LineDiff } from "@/lib/schema-workbench/line-diff";
+import { editorKindFor } from "@/lib/schema-workbench/editor-kind";
+import { HighlightedTextarea } from "./HighlightedTextarea";
 
 interface DetailPanelProps {
   value: string;
@@ -11,23 +13,45 @@ interface DetailPanelProps {
   baseline?: string;
   readOnly?: boolean;
   placeholder?: string;
+  /** Detected (imported) or chosen (form) format; picks the editor language. Null/undefined: sniffed from the text. */
+  format?: string | null;
 }
 
-const TEXT_CLS = "font-mono text-mono-small leading-5 p-space-3 whitespace-pre";
+/** Past either limit the changed-line diff is skipped (the panel stays editable): it would stall typing on a huge schema. */
+export const MAX_DIFF_CHARS = 1_500_000;
+export const MAX_DIFF_LINES = 30_000;
+
+/** The diff of `value` against `baseline`, or "skipped" when the text is too large to diff while typing. */
+export function boundedDiff(baseline: string, value: string): LineDiff | "skipped" {
+  if (baseline.length + value.length > MAX_DIFF_CHARS) return "skipped";
+  let lines = 1;
+  for (let i = value.indexOf("\n"); i !== -1; i = value.indexOf("\n", i + 1)) {
+    if (++lines > MAX_DIFF_LINES) return "skipped";
+  }
+  return diffLines(baseline, value);
+}
 
 /**
- * Editable schema text. With a `baseline` it paints changed lines red behind
- * the (transparent) textarea so imported schemas show what the user touched.
+ * Editable schema text, colour-coded: JSON and YAML in CodeMirror (line numbers, token colours, lint), Protobuf / TypeSpec / SQL in a
+ * textarea over a coloured layer. With a `baseline` the changed lines get a red background so imported schemas show what the user
+ * touched. The diff is computed from a deferred copy of the text, so typing is never blocked by it.
  */
-export function DetailPanel({ value, onChange, baseline, readOnly, placeholder }: DetailPanelProps) {
-  const backdropRef = useRef<HTMLDivElement>(null);
-  const diff = useMemo(
-    () => (baseline !== undefined ? diffLines(baseline, value) : null),
-    [baseline, value]
+export function DetailPanel({ value, onChange, baseline, readOnly, placeholder, format }: DetailPanelProps) {
+  const deferred = useDeferredValue(value);
+  const result = useMemo(
+    () => (baseline !== undefined ? boundedDiff(baseline, deferred) : null),
+    [baseline, deferred]
   );
-  const removedBefore = useMemo(() => new Set(diff?.removedAt ?? []), [diff]);
-  const changed = diff ? diff.lines.filter((l) => l.changed).length : 0;
-  const removed = diff ? diff.removedAt.length : 0;
+  const skipped = result === "skipped";
+  const diff = result === null || skipped ? null : result;
+  const changedLines = useMemo(
+    () => (diff ? diff.lines.flatMap((l, i) => (l.changed ? [i + 1] : [])) : undefined),
+    [diff]
+  );
+  const removedAt = diff?.removedAt;
+  const changed = changedLines?.length ?? 0;
+  const removed = removedAt?.length ?? 0;
+  const kind = editorKindFor(format, value);
 
   return (
     <div className="flex flex-col gap-space-1" data-testid="detail-panel">
@@ -40,6 +64,10 @@ export function DetailPanel({ value, onChange, baseline, readOnly, placeholder }
             {changed} changed
             {removed > 0 ? `, ${removed} removed` : ""} vs. original
           </span>
+        ) : skipped ? (
+          <span data-testid="detail-panel-diff-skipped" className="text-caption text-muted-foreground">
+            Too large to highlight changes
+          </span>
         ) : (
           <span className="text-caption text-muted-foreground">
             {baseline !== undefined ? "Unchanged" : "Live preview"}
@@ -47,53 +75,34 @@ export function DetailPanel({ value, onChange, baseline, readOnly, placeholder }
         )}
       </div>
 
-      <div className="relative rounded-lg border border-border bg-muted/50 overflow-hidden h-[420px]">
-        {diff && (
-          <div
-            ref={backdropRef}
-            aria-hidden
-            data-testid="detail-panel-backdrop"
-            className={`absolute inset-0 overflow-hidden pointer-events-none text-transparent ${TEXT_CLS}`}
-          >
-            {diff.lines.map((line, i) => (
-              <div
-                key={i}
-                data-changed={line.changed ? "true" : "false"}
-                className={cn("relative", line.changed && "bg-destructive/25")}
-              >
-                {line.text || " "}
-                {removedBefore.has(i) && (
-                  <span
-                    data-testid="detail-panel-removed-marker"
-                    className="absolute inset-x-0 top-0 h-0.5 bg-destructive"
-                  />
-                )}
-                {i === diff.lines.length - 1 && removedBefore.has(diff.lines.length) && (
-                  <span
-                    data-testid="detail-panel-removed-marker"
-                    className="absolute inset-x-0 bottom-0 h-0.5 bg-destructive"
-                  />
-                )}
-              </div>
-            ))}
-          </div>
+      <div className="h-[420px]">
+        {kind.kind === "codemirror" ? (
+          <JsonEditor
+            id="detail-panel-textarea"
+            ariaLabel="Detail Panel schema text"
+            value={value}
+            onChange={onChange}
+            language={kind.language}
+            readOnly={readOnly}
+            placeholder={placeholder}
+            changedLines={changedLines}
+            removedAt={removedAt}
+            height="100%"
+          />
+        ) : (
+          <HighlightedTextarea
+            id="detail-panel-textarea"
+            ariaLabel="Detail Panel schema text"
+            value={value}
+            onChange={onChange}
+            highlight={kind.highlight}
+            readOnly={readOnly}
+            placeholder={placeholder}
+            diff={diff}
+            backdropTestId="detail-panel-backdrop"
+            className="h-full"
+          />
         )}
-        <textarea
-          data-testid="detail-panel-textarea"
-          value={value}
-          readOnly={readOnly}
-          placeholder={placeholder}
-          spellCheck={false}
-          wrap="off"
-          onChange={(e) => onChange(e.target.value)}
-          onScroll={(e) => {
-            if (backdropRef.current) {
-              backdropRef.current.scrollTop = e.currentTarget.scrollTop;
-              backdropRef.current.scrollLeft = e.currentTarget.scrollLeft;
-            }
-          }}
-          className={`relative w-full h-full resize-none bg-transparent text-foreground outline-none overflow-auto ${TEXT_CLS}`}
-        />
       </div>
     </div>
   );

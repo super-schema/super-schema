@@ -199,6 +199,50 @@ function highlightYAMLValue(value: string): React.ReactNode {
 }
 
 // ---------------------------------------------------------------------------
+// C-like highlighting (Protobuf, TypeSpec)
+// ---------------------------------------------------------------------------
+
+const CODE_KEYWORDS = new Set([
+  "syntax", "package", "import", "option", "message", "enum", "service", "rpc", "returns",
+  "oneof", "map", "repeated", "optional", "required", "reserved", "extend", "stream",
+  "model", "namespace", "using", "alias", "union", "interface", "scalar", "op", "extends",
+  "is", "const", "never", "void", "unknown", "true", "false",
+]);
+
+const CODE_TYPES = new Set([
+  "string", "bytes", "bool", "int32", "int64", "uint32", "uint64", "sint32", "sint64",
+  "fixed32", "fixed64", "sfixed32", "sfixed64", "float", "double", "int8", "int16",
+  "uint8", "uint16", "float32", "float64", "integer", "numeric", "boolean", "utcDateTime",
+  "offsetDateTime", "duration", "plainDate", "plainTime", "url", "Record", "Array",
+]);
+
+export function highlightCode(line: string): React.ReactNode {
+  const tokens: React.ReactNode[] = [];
+  const regex = /(\/\/.*|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|@\w+|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b|\s+|[^\s\w]+)/g;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = regex.exec(line)) !== null) {
+    const token = match[0];
+    if (token.startsWith("//")) {
+      tokens.push(<span key={key++} className="text-muted-foreground/60 italic">{token}</span>);
+    } else if (token.startsWith('"') || token.startsWith("'")) {
+      tokens.push(<span key={key++} className="text-green-400">{token}</span>);
+    } else if (token.startsWith("@")) {
+      tokens.push(<span key={key++} className="text-purple-400">{token}</span>);
+    } else if (/^\d/.test(token)) {
+      tokens.push(<span key={key++} className="text-amber-400">{token}</span>);
+    } else if (CODE_KEYWORDS.has(token)) {
+      tokens.push(<span key={key++} className="text-blue-400 font-medium">{token}</span>);
+    } else if (CODE_TYPES.has(token)) {
+      tokens.push(<span key={key++} className="text-cyan-400">{token}</span>);
+    } else {
+      tokens.push(<span key={key++}>{token}</span>);
+    }
+  }
+  return <>{tokens}</>;
+}
+
+// ---------------------------------------------------------------------------
 // Language dispatcher
 // ---------------------------------------------------------------------------
 
@@ -210,6 +254,8 @@ export function highlightLine(line: string, language: string): React.ReactNode {
       return highlightJSON(line);
     case "yaml":
       return highlightYAML(line);
+    case "code":
+      return highlightCode(line);
     default:
       return <span>{line}</span>;
   }

@@ -16,14 +16,29 @@ import {
   initialWorkbenchState,
   workbenchReducer,
 } from "@/lib/schema-workbench/workbench-state";
+import { editorKindFor } from "@/lib/schema-workbench/editor-kind";
+import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
 import { DetailPanel } from "./DetailPanel";
+import { HighlightedTextarea } from "./HighlightedTextarea";
 
 type Mode = "drop" | "paste" | "form";
 
 const ACCEPT = ".tsp,.avsc,.avro,.json,.yaml,.yml,.sql,.ddl,.proto";
 const PARSE_DEBOUNCE_MS = 300;
 
-const MODES: { id: Mode; label: string }[] = [
+const PASTE_PLACEHOLDER = `Paste your schema content here...
+
+Example (Avro):
+{
+  "type": "record",
+  "name": "Customer",
+  "fields": [
+    {"name": "id", "type": "long"},
+    {"name": "name", "type": "string"}
+  ]
+}`;
+
+const MODES:{ id: Mode; label: string }[] = [
   { id: "drop", label: "Drop file" },
   { id: "paste", label: "Paste" },
   { id: "form", label: "Build form" },
@@ -240,6 +255,8 @@ export function SchemaWorkbench({
   const activeFormat = VISUAL_FORMATS.find((f) => f.id === formFormat) ?? VISUAL_FORMATS[0];
   const Editor = activeFormat.Editor;
   const shownFormat = state.detectedFormat ?? detectedFormat ?? null;
+  // Paste mode: the format is not known until "Load schema", so the editor follows what the pasted text looks like.
+  const pasteKind = editorKindFor(null, pasteText);
 
   return (
     <div className="flex flex-col gap-space-4" data-testid="schema-workbench">
@@ -405,24 +422,27 @@ export function SchemaWorkbench({
 
           {mode === "paste" && (
             <>
-              <textarea
-                data-testid="workbench-paste-textarea"
-                value={pasteText}
-                onChange={(e) => setPasteText(e.target.value)}
-                spellCheck={false}
-                placeholder={`Paste your schema content here...
-
-Example (Avro):
-{
-  "type": "record",
-  "name": "Customer",
-  "fields": [
-    {"name": "id", "type": "long"},
-    {"name": "name", "type": "string"}
-  ]
-}`}
-                className="w-full h-64 bg-muted rounded-lg p-space-4 text-body-small text-foreground font-mono placeholder:text-muted-foreground/50 outline-none resize-y border border-border/50 focus:border-primary/40 transition-colors"
-              />
+              {pasteKind.kind === "codemirror" ? (
+                <JsonEditor
+                  id="workbench-paste-textarea"
+                  ariaLabel="Paste your schema content"
+                  value={pasteText}
+                  onChange={setPasteText}
+                  language={pasteKind.language}
+                  placeholder={PASTE_PLACEHOLDER}
+                  height={256}
+                />
+              ) : (
+                <HighlightedTextarea
+                  id="workbench-paste-textarea"
+                  ariaLabel="Paste your schema content"
+                  value={pasteText}
+                  onChange={setPasteText}
+                  highlight={pasteKind.highlight}
+                  placeholder={PASTE_PLACEHOLDER}
+                  className="h-64"
+                />
+              )}
               <button
                 type="button"
                 data-testid="workbench-load-button"
@@ -480,6 +500,7 @@ Example (Avro):
             onChange={handlePanelChange}
             baseline={state.origin === "imported" ? state.baselineText : undefined}
             readOnly={state.origin === "none"}
+            format={state.origin === "form" ? state.format : state.origin === "imported" ? state.detectedFormat : null}
             placeholder={
               state.origin === "form"
                 ? "// Add a name and at least one field\n// to see the generated schema."

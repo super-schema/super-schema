@@ -45,6 +45,13 @@ export interface JsonEditorProps {
   /** Space-separated ids of the help text and errors of the field this edits. */
   describedBy?: string;
   placeholder?: string;
+  /**
+   * 1-based line numbers to mark with a subtle red background (a diff highlight). Opt-in: without it nothing is marked. Updating it
+   * never rebuilds the editor. The textarea fallback cannot mark lines; the wrapper reports the count in `data-changed-count`.
+   */
+  changedLines?: readonly number[];
+  /** With `changedLines`: 0-based line indexes before which a line was removed (`lines.length` = after the last), drawn as a red rule. */
+  removedAt?: readonly number[];
 }
 
 type Setup = typeof import("./codemirror-setup");
@@ -69,7 +76,7 @@ export function codeMirrorSupported(): boolean {
 
 export function JsonEditor({
   id, value, onChange, language, readOnly = false, ariaLabel, schema, height, onErrorChange,
-  disabled = false, required = false, invalid = false, describedBy, placeholder,
+  disabled = false, required = false, invalid = false, describedBy, placeholder, changedLines, removedAt,
 }: JsonEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
@@ -155,6 +162,10 @@ export function JsonEditor({
     handleRef.current?.reconfigure(options);
   }, [options, ready]);
 
+  useEffect(() => {
+    handleRef.current?.setLineMarks({ changed: changedLines ?? [], removedAt });
+  }, [changedLines, removedAt, ready]);
+
   // The schema, by content: it is installed (loading the schema library the first time), swapped when its content changes, and removed
   // for none. The handle copes with a load that fails (the editor stays as it is) and with newer calls overtaking older ones.
   useEffect(() => {
@@ -178,6 +189,8 @@ export function JsonEditor({
   return (
     <div
       data-testid={`${id}-editor`} data-editor={ready ? "codemirror" : "textarea"} data-language={language}
+      data-changed-count={changedLines === undefined ? undefined : changedLines.length}
+      data-removed-count={removedAt === undefined ? undefined : removedAt.length}
       className="relative" style={fill ? { height } : undefined}
     >
       {!ready && (

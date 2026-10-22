@@ -10,9 +10,9 @@ import { json, jsonLanguage } from "@codemirror/lang-json";
 import { yaml } from "@codemirror/lang-yaml";
 import { bracketMatching, ensureSyntaxTree, HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { forceLinting, linter, lintGutter, type Diagnostic } from "@codemirror/lint";
-import { Annotation, Compartment, EditorState, type Extension, type Text } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, RangeSetBuilder, StateEffect, StateField, type Extension, type Text } from "@codemirror/state";
 import {
-  drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, hoverTooltip, keymap, lineNumbers, placeholder,
+  Decoration, drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, hoverTooltip, keymap, lineNumbers, placeholder,
 } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
@@ -76,6 +76,10 @@ const baseTheme: Record<string, Record<string, string>> = {
     backgroundColor: "color-mix(in srgb, var(--primary) 30%, transparent)",
   },
   ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--accent) 55%, transparent)" },
+  // Lines the caller marked as changed (`changedLines`): the same red look as the Detail Panel's old diff backdrop.
+  ".cm-line.cm-changed-line, .cm-line.cm-changed-line.cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--destructive) 25%, transparent)" },
+  ".cm-line.cm-removed-before": { boxShadow: "inset 0 2px 0 var(--destructive)" },
+  ".cm-line.cm-removed-after": { boxShadow: "inset 0 -2px 0 var(--destructive)" },
   ".cm-gutters": {
     backgroundColor: "var(--muted)",
     color: "var(--muted-foreground)",
@@ -111,6 +115,57 @@ const baseTheme: Record<string, Record<string, string>> = {
 export const appTheme: Extension = EditorView.theme(baseTheme);
 const fillTheme: Extension = EditorView.theme({ "&": { height: "100%" } });
 const growTheme: Extension = EditorView.theme({ "&": { minHeight: "7.5rem", maxHeight: "24rem" } });
+
+// ---------------------------------------------------------------------------------------------------------------------------
+// Changed lines: an opt-in line decoration, driven by an effect so the editor is never rebuilt for it
+// ---------------------------------------------------------------------------------------------------------------------------
+
+export interface LineMarks {
+  /** 1-based lines to paint with the changed background. */
+  changed: readonly number[];
+  /** 0-based line indexes before which a line was removed (`doc.lines` = after the last line): a red rule on that edge. */
+  removedAt: readonly number[];
+}
+const NO_MARKS: LineMarks = { changed: [], removedAt: [] };
+
+const setLineMarks = StateEffect.define<LineMarks>();
+
+/** The marks to draw (normalised); the decorations are derived from them and the document, so they never go stale. */
+const lineMarksField = StateField.define<LineMarks>({
+  create: () => NO_MARKS,
+  update(value, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setLineMarks)) return effect.value;
+    return value;
+  },
+  provide: (field) =>
+    EditorView.decorations.compute([field, "doc"], (state) => {
+      const { changed, removedAt } = state.field(field);
+      const classes = new Map<number, string[]>(); // 1-based line -> classes
+      const add = (n: number, cls: string) => {
+        if (n >= 1 && n <= state.doc.lines) classes.set(n, [...(classes.get(n) ?? []), cls]);
+      };
+      for (const n of changed) add(n, "cm-changed-line");
+      for (const i of removedAt) {
+        if (i >= state.doc.lines) add(state.doc.lines, "cm-removed-after");
+        else add(i + 1, "cm-removed-before");
+      }
+      const builder = new RangeSetBuilder<Decoration>();
+      for (const n of Array.from(classes.keys()).sort((a, b) => a - b)) {
+        const from = state.doc.line(n).from;
+        builder.add(from, from, Decoration.line({ class: (classes.get(n) ?? []).join(" ") }));
+      }
+      return builder.finish();
+    }),
+});
+
+const uniqueAscending = (values: readonly number[], min: number): number[] =>
+  Array.from(new Set(values.filter((n) => Number.isInteger(n) && n >= min))).sort((a, b) => a - b);
+
+function normalizeMarks(marks: { changed: readonly number[]; removedAt?: readonly number[] }): LineMarks {
+  return { changed: uniqueAscending(marks.changed, 1), removedAt: uniqueAscending(marks.removedAt ?? [], 0) };
+}
+
+const sameList = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((n, i) => n === b[i]);
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // JSON lint
@@ -392,6 +447,8 @@ export interface EditorHandle {
    * schema as an equal new object does nothing. Only JSON editors that can be edited are meant to be given one.
    */
   setSchema: (schema: Record<string, unknown> | null) => Promise<void>;
+  /** Mark 1-based `changed` lines with a background (the diff highlight) and a rule where lines were removed; empty clears. Nothing when same as now. */
+  setLineMarks: (marks: { changed: readonly number[]; removedAt?: readonly number[] }) => void;
   /** Move focus into the editor, optionally selecting a range of the text. */
   focus: (selection?: { from: number; to: number }) => void;
   /** Ask for a re-measure, after the editor was shown or resized from outside. */
@@ -426,6 +483,7 @@ export function createEditor({ parent, doc, options, onChange, onFocusChange }: 
       extensions: [
         configuration.of(buildExtensions(options)),
         schemaSupport.of([]),
+        lineMarksField,
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !update.transactions.some((t) => t.annotation(External) === true)) onChange(update.state.doc.toString());
           if (update.focusChanged) onFocusChange(update.view.hasFocus);
@@ -476,6 +534,13 @@ export function createEditor({ parent, doc, options, onChange, onFocusChange }: 
         return; // the library would not take this schema: an editor without it is better than a broken one
       }
       forceLinting(view); // lint with the new schema now, not after the delay
+    },
+    setLineMarks(marks) {
+      if (destroyed) return;
+      const next = normalizeMarks(marks);
+      const held = view.state.field(lineMarksField);
+      if (sameList(next.changed, held.changed) && sameList(next.removedAt, held.removedAt)) return;
+      view.dispatch({ effects: setLineMarks.of(next) });
     },
     focus(selection) {
       if (selection) {
