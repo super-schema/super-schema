@@ -183,6 +183,9 @@ const GOVERNANCE_SOURCE_OWNED = [
 // The merge
 // ---------------------------------------------------------------------------
 
+/** Names that are builtin types, never a resolved reference target. */
+const BUILTIN_NAMES = new Set(["string", "unknown", "null"]);
+
 const stripNull = (t: string | undefined) => (t === undefined ? t : t.replace(/^\s*null\s*\|\s*|\s*\|\s*null\s*$/g, "").trim());
 
 /**
@@ -190,20 +193,28 @@ const stripNull = (t: string | undefined) => (t === undefined ? t : t.replace(/^
  * that name, never as `reference`. When that name EQUALS the stored target (exact, case-sensitive) the field is unchanged: it is read as
  * `reference` / array of `reference` again so the target survives. A different name is a real edit and is left as written.
  */
-function resolvedTargetAsStored(existing: SyncExistingField | null, source: SyncSourceField): SyncSourceField {
-  if (!existing || !isRec(existing.decorators)) return source;
+function resolvedTargetAsStored(existing: SyncExistingField | null, source: SyncSourceField): { source: SyncSourceField; matched: boolean } {
+  const unchanged = { source, matched: false };
+  if (!existing || !isRec(existing.decorators)) return unchanged;
   const target = existing.decorators.referencedEntityName;
-  if (typeof target !== "string" || target === "") return source;
-  if (existing.type === "reference" && stripNull(source.type) === target) return { ...source, type: "reference" };
-  if (existing.type === "array" && existing.decorators.arrayElementType === "reference" && source.type === "array" && stripNull(source.arrayElementType) === target) {
-    return { ...source, arrayElementType: "reference" };
+  if (typeof target !== "string" || target === "" || BUILTIN_NAMES.has(target)) return unchanged;
+  // The dangling encoding is decided first: a field carrying the `$ref` / `items` extension is read by `mapSourceField`, never by name.
+  const ext = isRec(source.decorators.extensions) ? source.decorators.extensions : {};
+  if (existing.type === "reference" && !isUnknownCarrier(source.type) && !has(ext, "$ref") && stripNull(source.type) === target) {
+    return { source: { ...source, type: "reference" }, matched: true };
   }
-  return source;
+  if (
+    existing.type === "array" && existing.decorators.arrayElementType === "reference" && source.type === "array" &&
+    !isUnknownCarrier(source.arrayElementType) && !has(ext, "items") && stripNull(source.arrayElementType) === target
+  ) {
+    return { source: { ...source, arrayElementType: "reference" }, matched: true };
+  }
+  return unchanged;
 }
 
 /** The field row the source text means, given the stored row (null for a field the source adds). Pure; never mutates its inputs. */
 export function mergeSyncedField(existing: SyncExistingField | null, rawSource: SyncSourceField, opts: MergeOptions = {}): MergedField {
-  const source = resolvedTargetAsStored(existing, rawSource);
+  const { source, matched } = resolvedTargetAsStored(existing, rawSource);
   const out: Rec = isRec(existing?.decorators) ? cloneJson(existing.decorators as Rec) : {};
   const mapped = mapSourceField(source);
   const typeChanged = existing !== null && existing.type !== mapped.type;
@@ -257,7 +268,8 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
     delete out.danglingRef;
     if (hadMarker) {
       // The target was derived from the raw reference the source no longer carries.
-      delete out.referencedEntityName;
+      // (kept when the bare name the user typed IS that target: only the marker goes)
+      if (!matched) delete out.referencedEntityName;
       if (!mapped.arrayElementType) delete out.arrayElementType;
     }
   }

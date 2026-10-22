@@ -197,6 +197,45 @@ describe("preserved keys", () => {
     expect(edit.decorators.referencedEntityName).toBeUndefined();
   });
 
+  it.each([["string", "string.json"], ["unknown", "#/$defs/unknown"], ["null", "null.json"]])(
+    "a dangling field whose target is literally %s keeps its marker on a no-op save (both parsers' carrier types)", (target, ref) => {
+      const direct = row({ type: "reference", decorators: { referencedEntityName: target, danglingRef: { ref, reason: "r" } } });
+      for (const type of ["string", "unknown"]) {
+        const s = src({ type, decorators: { extensions: { $ref: ref } } });
+        const m = mergeSyncedField(direct, s);
+        expect(m.decorators, `${target}/${type}`).toEqual(direct.decorators);
+        expect(m.type).toBe("reference");
+        expect(fieldNeedsUpdate(direct, m, s)).toBe(false);
+      }
+      const arr = row({ type: "array", decorators: { arrayElementType: "reference", referencedEntityName: target, danglingRef: { ref, element: true, reason: "r" } } });
+      for (const el of ["string", "unknown"]) {
+        const s = src({ type: "array", arrayElementType: el, decorators: { extensions: { items: { $ref: ref } } } });
+        const m = mergeSyncedField(arr, s);
+        expect(m.decorators, `${target}/${el}[]`).toEqual(arr.decorators);
+        expect(fieldNeedsUpdate(arr, m, s)).toBe(false);
+      }
+    });
+
+  it("a dangling field resolved by typing its bare name keeps that target as a plain reference; marker cleared (direct and array)", () => {
+    const direct = row({ type: "reference", decorators: { referencedEntityName: "Customer", danglingRef: { ref: "x/Customer.json", reason: "r" } } });
+    const d = mergeSyncedField(direct, src({ type: "Customer" }));
+    expect(d.type).toBe("reference");
+    expect(d.decorators).toEqual({ referencedEntityName: "Customer" });
+    const arr = row({ type: "array", decorators: { arrayElementType: "reference", referencedEntityName: "Customer", danglingRef: { ref: "x/Customer.json", element: true, reason: "r" } } });
+    const a = mergeSyncedField(arr, src({ type: "array", arrayElementType: "Customer" }));
+    expect(a.decorators).toEqual({ arrayElementType: "reference", referencedEntityName: "Customer" });
+  });
+
+  it("a dangling field resolved to a DIFFERENT bare name: the new name, target and marker cleared", () => {
+    const direct = row({ type: "reference", decorators: { referencedEntityName: "Customer", danglingRef: { ref: "x/Customer.json", reason: "r" } } });
+    const d = mergeSyncedField(direct, src({ type: "Order" }));
+    expect(d.type).toBe("Order");
+    expect(d.decorators).toEqual({});
+    const arr = row({ type: "array", decorators: { arrayElementType: "reference", referencedEntityName: "Customer", danglingRef: { ref: "x/Customer.json", element: true, reason: "r" } } });
+    const a = mergeSyncedField(arr, src({ type: "array", arrayElementType: "Order" }));
+    expect(a.decorators).toEqual({ arrayElementType: "Order" });
+  });
+
   it("enum symbols kept in validation.pattern survive while the field stays an enum", () => {
     const existing = row({ type: "enum", decorators: { enumName: "E", typespec: { validation: { pattern: "A|B" } } } });
     const m = mergeSyncedField(existing, src({ type: "enum" }));
