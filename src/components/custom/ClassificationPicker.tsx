@@ -15,9 +15,15 @@ const CLASSIFICATIONS = [
   { value: "PUBLIC", label: "Class 5 — Public", shortLabel: "Public", badgeClass: "badge-public" },
 ] as const;
 
-/** Resolve null/undefined to SENSITIVE (Class 3 default) */
-function resolveClassification(value: string | null | undefined) {
-  return CLASSIFICATIONS.find((c) => c.value === value) ?? CLASSIFICATIONS[2]; // SENSITIVE
+/**
+ * Resolve null/undefined to SENSITIVE (Class 3 default). A level outside the scale (an import keeps the vendor's own level, e.g.
+ * `class4`) resolves to itself with a neutral badge: it must never be shown as another level's label.
+ */
+function resolveClassification(value: string | null | undefined): { value: string; shortLabel: string; badgeClass: string } {
+  const known = CLASSIFICATIONS.find((c) => c.value === value);
+  if (known) return known;
+  if (value) return { value, shortLabel: value, badgeClass: "bg-muted text-muted-foreground" };
+  return CLASSIFICATIONS[2]; // SENSITIVE
 }
 
 interface ClassificationPickerProps {
