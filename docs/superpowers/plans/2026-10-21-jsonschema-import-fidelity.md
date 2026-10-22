@@ -449,19 +449,246 @@ git commit -m "feat(import): capture unknown JSON Schema keys as extensions"
 
 ---
 
-### Task 9: UI — import by URL, dangling-reference indicator, end-to-end test
+## Amendment 2026-10-22 — follow-on tasks from the user's first hands-on test
+
+Research finding that changes Task 9's original target: `ImportDialog`,
+`ImportReviewScreen` and `BulkImportReviewScreen` are NOT mounted anywhere in
+`src/`. The live import flow is `SchemaWorkbench` (paste/upload/build) ->
+`EntityCreationWizard.handleImportSubmit` -> `FieldPreview` (single entity) or
+`TypeSpecImportReviewScreen` (multi-asset via `toAssetImportResult`). All UI
+work below targets those, not the dialog. Reusable pieces: `JsonEditor`
+(CodeMirror 6, `src/features/events/builder/template/controls/JsonEditor.tsx`
+with `codemirror-setup.ts`; props `language`, `readOnly`, `onChange`, `height`;
+no other module may import `@codemirror/*`, a test enforces it) and
+`src/lib/syntax-highlight.tsx` (`highlightLine(line, lang)`).
+
+User decisions: the classification extension key and value mapping live in a
+config module with an env override (no DB migration); a missing target input
+(e.g. primary key) is asked at emit time and the answer is SAVED on the
+entity's fields.
+
+### Task 9: Syntax-highlighted paste box and Detail Panel
 
 **Files:**
-- Modify: `src/components/custom/ImportDialog/ImportDialog.tsx` — add a
-  URL input alongside paste/upload, calling
-  `importJsonSchemaFromUrlAction` (Task 8).
-- Modify: `src/components/custom/ImportDialog/ImportReviewScreen.tsx` (and/or
-  `BulkImportReviewScreen.tsx`) — render `ValidationIndicator` (status
-  `"suggestion"`, tooltip naming the unreached `$ref`) next to any field
-  whose `referencedEntityName` doesn't match an entity in the current
-  import batch or product.
-- Test: `tests/integration/jsonschema-paypal-import.test.ts` (new) — the
-  actual requested acceptance test.
+- Modify: `src/components/custom/SchemaWorkbench/SchemaWorkbench.tsx` (paste
+  mode, ~L398, plain `<textarea data-testid="workbench-paste-textarea">`) and
+  `src/components/custom/SchemaWorkbench/DetailPanel.tsx` (plain transparent
+  `<textarea data-testid="detail-panel-textarea">` with a red line-diff
+  backdrop from `diffLines` when a baseline exists).
+- Modify: `src/features/events/builder/template/controls/codemirror-setup.ts`
+  (+ `JsonEditor.tsx` if needed) — add an opt-in line-decoration extension for
+  the Detail Panel's changed-line highlight. No other file may import
+  `@codemirror/*`.
+- Test: `tests/unit/components/schema-workbench.test.tsx` (extend) and the
+  JsonEditor tests.
+
+**Interfaces:**
+- Consumes: `JsonEditor` props (`language: "json" | "yaml"`, `readOnly`,
+  `onChange`, `height`, optional `schema`).
+- Produces: nothing downstream; keeps the test ids
+  `workbench-paste-textarea` / `detail-panel-textarea` working (jsdom falls
+  back to a textarea carrying the same ids so existing unit/e2e tests keep
+  passing) and keeps the existing edit/diff behavior of the Detail Panel.
+
+- [ ] **Step 1:** failing tests — the paste area and the Detail Panel render
+  through `JsonEditor` (colored tokens in a real browser build; in jsdom the
+  textarea fallback with the same test ids), YAML/JSON language follows the
+  detected format, the Detail Panel still reports edits (`onChange`) and
+  marks changed lines against the baseline.
+- [ ] **Step 2:** implement; keep behavior parity (paste, load, review
+  buttons, baseline diff). Verify in a browser (start the dev server, load a
+  JSON Schema, confirm syntax colors, line numbers and the changed-line
+  highlight) — type checks and unit tests do not prove this one; say plainly
+  if the browser step could not be run.
+- [ ] **Step 3:** run the touched suites; commit.
+
+---
+
+### Task 10: Field-level data security classification as a standard feature (configurable key)
+
+**Files:**
+- Create: `src/lib/importers/classification-config.ts` — typed config:
+  `getClassificationConfig(env = process.env)` returning
+  `{ extensionKey: string; levelField: string; categoryField: string;
+  valueMap: Record<string, string> }`, defaults `extensionKey:
+  "x-securityClassification"`, `levelField: "data_class"`, `categoryField:
+  "data_category"`, empty `valueMap` (identity: the raw `data_class` string is
+  used as the classification level name). Env overrides:
+  `SCHEMA_CLASSIFICATION_EXTENSION_KEY`, `SCHEMA_CLASSIFICATION_LEVEL_FIELD`,
+  `SCHEMA_CLASSIFICATION_CATEGORY_FIELD`, `SCHEMA_CLASSIFICATION_VALUE_MAP`
+  (JSON object string; invalid JSON ignored with a console warning, falling
+  back to defaults). Add the new variables to `.env.example`.
+- Modify: `src/lib/importers/jsonschema.importer.ts` (`buildFields`, and the
+  `$defs`/root property walk), `src/lib/importers/types.ts`,
+  `src/lib/importers/decorator-builder.ts`, and the generator/compiler
+  read-back as needed.
+- Test: `tests/unit/lib/importers/jsonschema-classification.test.ts` (new).
+
+**Interfaces:**
+- Consumes: Task 1's `captureExtensions` (the block is a generic extension and
+  MUST keep round-tripping losslessly through the existing extensions path).
+- Produces: `ParsedField.classification` (the mapped level) and
+  `ParsedField.governance.dataClass` / `dataCategory` (extend
+  `ParsedFieldGovernance`; stored under `decorators.governance` like the
+  existing governance keys) for the review screen (Task 11).
+
+- [ ] **Step 1:** failing tests with the user's block
+  `"x-securityClassification": {"data_class": "class4", "data_category":
+  "Intrinsic"}` on a property: classification becomes `class4` (identity map),
+  `governance.dataCategory === "Intrinsic"`, and the block is STILL present in
+  the field's extensions (lossless). With
+  `SCHEMA_CLASSIFICATION_VALUE_MAP='{"class4":"PII"}'` the level becomes `PII`;
+  with `SCHEMA_CLASSIFICATION_EXTENSION_KEY=x-dataClass` only that key is read;
+  a malformed block (not an object, missing `data_class`, non-string values,
+  `__proto__` keys) never throws and yields no classification; an unknown level
+  string is kept as given (admin-defined levels are free strings) and emitted
+  by the existing `x-classification` path for non-Enterprise levels.
+- [ ] **Step 2:** implement; no per-request mutable state (read config per
+  call); keep hostile-input hygiene (`setOwn`, no `obj[userKey]=v`).
+- [ ] **Step 3:** run `npx vitest run tests/unit/lib/importers/
+  tests/unit/lib/compiler/`; commit.
+
+---
+
+### Task 11: Import review shows everything (considered, preserved, ignored)
+
+**Files:**
+- Modify: `src/components/custom/EntityCreationWizard/FieldPreview.tsx` and
+  `EntityCreationWizard.tsx` (`handleImportSubmit` ~L203; it currently forces
+  `classification: null` (~L272), `nullable: true` (~L379), `isKey: false`
+  (~L380) and drops warnings) and
+  `src/components/custom/ImportDialog/TypeSpecImportReviewScreen.tsx` (hides
+  per-field description, classification, format, constraints, deprecated,
+  extensions, confidence, originalType, referencedEntityName, danglingRef,
+  enumValues, unionName, and model-level extensions).
+- Modify: `src/lib/importers/jsonschema.importer.ts` + `types.ts` — report what
+  the importer did NOT use: add `ParsedField.ignoredKeywords?: string[]` and
+  `ParsedEntity.ignoredKeywords?: string[]` for JSON Schema keywords the
+  importer recognizes but does not map (`not`, `if`/`then`/`else`,
+  `$dynamicRef`, `unevaluatedProperties`, `patternProperties`,
+  `additionalProperties` objects, `contentEncoding`, etc.) with one warning per
+  distinct keyword naming the entity/field (deferred from Task 5).
+- Test: `tests/unit/components/entity-creation-wizard-import.test.tsx`
+  (extend), `tests/unit/components/` for `TypeSpecImportReviewScreen`, and
+  `tests/unit/lib/importers/jsonschema-ignored.test.ts` (new).
+
+**Interfaces:**
+- Consumes: Task 8's `danglingRef`, Task 10's classification/governance,
+  Task 1's extensions, Task 6's union fields, Task 5's extends.
+- Produces: `ParsedField.ignoredKeywords`, `ParsedEntity.ignoredKeywords`; a
+  shared presentational component (new file under
+  `src/components/custom/ImportDialog/`, e.g. `ParsedFieldDetails.tsx`) both
+  screens use.
+
+- [ ] **Step 1:** failing tests: each screen renders, for every field, ALL of
+  name, type, original type, nullable/required, key, description, format,
+  constraints (min/max/pattern/exclusive bounds), deprecated, classification
+  (level + data category), enum values, reference/array/union details, extends,
+  extensions (key + JSON value, collapsed by default but present in the DOM),
+  confidence, dangling-reference badge with reason, ignored keywords; entity
+  level: description, extends, extensions, warnings (all of them, none
+  truncated). Imported `nullable`, `isKey` and `classification` are no longer
+  overwritten with constants by the wizard. Sections are labeled
+  "Used", "Preserved (kept, not interpreted)" and "Ignored (not supported)".
+- [ ] **Step 2:** implement the shared details component and wire both
+  screens; color-code the three groups consistently with the design tokens
+  already used in the app (Tailwind classes with the custom tokens; no new
+  palette).
+- [ ] **Step 3:** run the touched suites; verify visually in a browser (dev
+  server, import the user's `user event` schema) — say plainly if the browser
+  step could not be run; commit.
+
+---
+
+### Task 12: Ask for missing target-specific inputs instead of failing
+
+**Files:**
+- Create: `src/lib/schema-targets/requirements.ts` — pure
+  `getTargetRequirements(targetId, model)` returning
+  `{ missing: Array<{ code: "primary-key"; message: string; candidates:
+  string[] }> }` (candidates = the entity's field names; a likely default is
+  any field named `id` / `<entity>_id` / a required string field), for the
+  targets whose emitters require a primary key: `bigquery`, `postgresql`,
+  `spanner` (verify against the sibling emitter `lib.ts` diagnostics:
+  `missing-primary-key` in all three). Targets with no requirements return an
+  empty list.
+- Modify: `src/lib/typespec-official/emitter-diagnostics.ts` — expose
+  structured diagnostics (`{ code, message }[]`) and map
+  `@typespec/*/missing-primary-key` to the same `primary-key` requirement, so
+  a failure that slipped past the pre-check still becomes a question.
+- Modify: `generateSchemaAction` (`src/app/(dashboard)/schemas/.../[entityId]/actions.ts`
+  ~L1294) to return `{ needsInput: [...] }` before emitting, and a new action
+  `setEntityPrimaryKeyAction(entityId, fieldNames: string[])` that sets
+  `isKey` on exactly those fields (authenticated, scoped to the tenant like
+  the sibling actions).
+- Modify: the Schemas-tab UI that triggers generation (find the component that
+  calls `generateSchemaAction`, e.g. `TechnologyCard.tsx`) — show a small
+  dialog "This target needs a primary key" with a multi-select of the entity's
+  fields (composite keys allowed) and, on confirm, call
+  `setEntityPrimaryKeyAction` then retry generation.
+- Modify: the entity-creation review (`FieldPreview` / review input) to
+  prompt for the entity name when the importer fell back to the default
+  (`ImportedEntity`) — e.g. highlight the name field as "needs a name".
+- Test: `tests/unit/lib/schema-targets/requirements.test.ts` (new),
+  extend the diagnostics tests, and a component test for the dialog.
+
+**Interfaces:**
+- Consumes: `Field.isKey`, `db-source.ts` (which already emits `@primaryKey`
+  from `isKey` and `@primaryKey(n)` for composite keys).
+- Produces: `getTargetRequirements`, structured diagnostics,
+  `setEntityPrimaryKeyAction`.
+
+- [ ] **Step 1:** failing tests: an entity with no key field and target
+  `bigquery` -> requirement `primary-key` with the field names as candidates;
+  with a key -> none; `avro`/`openapi3`/`json-schema`/`protobuf` -> none; the
+  raw emitter error string `@typespec/bigquery/missing-primary-key: Table
+  'ImportedEntity' must have...` parses to the same requirement; the action
+  rejects field names that do not belong to the entity, other tenants'
+  entities, and unauthenticated callers; composite keys set several `isKey`.
+- [ ] **Step 2:** implement the pure functions, the action(s) and the dialog;
+  keep it generic (a requirement list per target so partition/cluster or other
+  required inputs can be added later without UI changes).
+- [ ] **Step 3:** run the touched suites; verify in a browser (generate
+  BigQuery for an entity with no key -> dialog -> pick `tenant` -> generation
+  succeeds) — say plainly if the browser step could not be run; commit.
+
+---
+
+### Task 13: Import by URL in the workbench + dangling-reference indicator
+
+**Files:**
+- Modify: `src/components/custom/SchemaWorkbench/SchemaWorkbench.tsx` — add a
+  "From URL" mode next to paste/upload/build, calling
+  `importJsonSchemaFromUrlAction` (Task 8) and feeding its
+  `TypeSpecImportResult` into the existing review flow
+  (`EntityCreationWizard.handleImportSubmit` -> the multi-asset review).
+- Modify: the review components from Task 11 so dangling refs (`danglingRef`)
+  render with `ValidationIndicator` (status `"suggestion"`, tooltip naming the
+  unreached `$ref` and the resolver's reason) and the entity stays in DRAFT
+  with the pending items listed.
+- Test: extend `tests/unit/components/schema-workbench.test.tsx`.
+
+- [ ] **Step 1:** failing tests: URL mode accepts a URL, shows loading and
+  error states (the action's sanitized error), and on success passes the
+  result to the review; dangling fields show the indicator and reason.
+- [ ] **Step 2:** implement; verify in a browser if possible; commit.
+
+---
+
+### Task 14: End-to-end test with the user's `user event` schema (supersedes the original Task 9 test plan)
+
+**Files:**
+- Test: `tests/integration/jsonschema-user-event-e2e.test.ts` (new) — the
+  acceptance test with the user's schema (fixture inline):
+  `{"type":"object","description":"A user event containing user level customer id information used to link a user across different tenants.","properties":{"component":{"type":"string","description":"Name of the source component logging the user event(s).","minLength":1,"maxLength":100,"pattern":"^([A-Za-z0-9-_])+$","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"tenant":{"type":"string","description":"Name of the adjacency to PayPal.","minLength":1,"maxLength":100,"pattern":"^[a-z0-9_]+$","x-securityClassification":{"data_class":"class4","data_category":"PayPalCompany"}},"created_time":{"description":"Event creation timestamp.","$ref":"common_components/v4/schema/json/openapi-2.0/date_time.json","x-securityClassification":{"data_class":"class4","data_category":"Intrinsic"}},"user_links":{"type":"array","description":"List of list of users and their customer ids along with tenant information.","minItems":1,"maxItems":100,"items":{"$ref":"user_links.json"}}},"required":["user_links","created_time","tenant"]}`.
+- Test (optional, if the Playwright environment can run it):
+  `tests/e2e/jsonschema-user-event.spec.ts` extending the pattern in
+  `tests/e2e/schema-lifecycle.spec.ts`.
+
+(Original Task 9 text follows; superseded where it conflicts with the
+amendment above — `ImportDialog` and the unmounted review screens are not
+used; the PayPal `address.json` check below still applies as a second
+fixture, skipped when `gh auth status --hostname github.paypal.com` fails.)
 
 **Interfaces:**
 - Consumes: everything above.
