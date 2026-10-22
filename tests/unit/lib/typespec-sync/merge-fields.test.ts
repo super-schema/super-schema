@@ -216,6 +216,32 @@ describe("preserved keys", () => {
       }
     });
 
+  it.each(["string", "unknown", "null"])("a RESOLVED reference to an entity named %s round-trips with its target (compiler and regex carrier types, direct and array)", (name) => {
+    const direct = row({ type: "reference", decorators: { referencedEntityName: name, governance: { dataCategory: "c" } } });
+    const arr = row({ type: "array", decorators: { arrayElementType: "reference", referencedEntityName: name } });
+    for (const type of [name]) {
+      const s = src({ type });
+      const m = mergeSyncedField(direct, s);
+      expect(m.type).toBe("reference");
+      expect(m.decorators).toEqual(direct.decorators);
+      expect(fieldNeedsUpdate(direct, m, s)).toBe(false);
+      const sa = src({ type: "array", arrayElementType: type });
+      const ma = mergeSyncedField(arr, sa);
+      expect(ma.decorators).toEqual(arr.decorators);
+      expect(fieldNeedsUpdate(arr, ma, sa)).toBe(false);
+    }
+  });
+
+  it("a dangling field whose target is string, retyped to bare string with NO extension, is a real retype to the scalar: marker and target cleared", () => {
+    const direct = row({ type: "reference", decorators: { referencedEntityName: "string", danglingRef: { ref: "string.json", reason: "r" } } });
+    const m = mergeSyncedField(direct, src({ type: "string" }));
+    expect(m.type).toBe("string");
+    expect(m.decorators).toEqual({});
+    const arr = row({ type: "array", decorators: { arrayElementType: "reference", referencedEntityName: "string", danglingRef: { ref: "string.json", element: true, reason: "r" } } });
+    const a = mergeSyncedField(arr, src({ type: "array", arrayElementType: "string" }));
+    expect(a.decorators).toEqual({ arrayElementType: "string" });
+  });
+
   it("a dangling field resolved by typing its bare name keeps that target as a plain reference; marker cleared (direct and array)", () => {
     const direct = row({ type: "reference", decorators: { referencedEntityName: "Customer", danglingRef: { ref: "x/Customer.json", reason: "r" } } });
     const d = mergeSyncedField(direct, src({ type: "Customer" }));

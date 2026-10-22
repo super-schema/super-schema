@@ -197,15 +197,20 @@ function resolvedTargetAsStored(existing: SyncExistingField | null, source: Sync
   const unchanged = { source, matched: false };
   if (!existing || !isRec(existing.decorators)) return unchanged;
   const target = existing.decorators.referencedEntityName;
-  if (typeof target !== "string" || target === "" || BUILTIN_NAMES.has(target)) return unchanged;
+  if (typeof target !== "string" || target === "") return unchanged;
+  // A DANGLING field is stored as `reference` but its source is `unknown` (read as `string` / `unknown`): a builtin name is never a
+  // resolved target there, and retyping it to the bare builtin without the `$ref` extension is a real retype to that scalar. A RESOLVED
+  // reference to an entity that happens to be named `string` / `unknown` / `null` matches by exact name like any other.
+  const dangling = activeDanglingRef(existing.type, existing.decorators) !== undefined;
+  if (dangling && BUILTIN_NAMES.has(target)) return unchanged;
   // The dangling encoding is decided first: a field carrying the `$ref` / `items` extension is read by `mapSourceField`, never by name.
   const ext = isRec(source.decorators.extensions) ? source.decorators.extensions : {};
-  if (existing.type === "reference" && !isUnknownCarrier(source.type) && !has(ext, "$ref") && stripNull(source.type) === target) {
+  if (existing.type === "reference" && !(dangling && isUnknownCarrier(source.type)) && !has(ext, "$ref") && stripNull(source.type) === target) {
     return { source: { ...source, type: "reference" }, matched: true };
   }
   if (
     existing.type === "array" && existing.decorators.arrayElementType === "reference" && source.type === "array" &&
-    !isUnknownCarrier(source.arrayElementType) && !has(ext, "items") && stripNull(source.arrayElementType) === target
+    !(dangling && isUnknownCarrier(source.arrayElementType)) && !has(ext, "items") && stripNull(source.arrayElementType) === target
   ) {
     return { source: { ...source, arrayElementType: "reference" }, matched: true };
   }
