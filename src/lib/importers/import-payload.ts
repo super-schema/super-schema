@@ -37,6 +37,9 @@ export function parsedFieldToCreateFieldInput(field: ParsedField): CreateFieldIn
     precision: null,
     scale: null,
     decorators: buildDecoratorsFromParsedField(field),
+    // An enum field's symbols travel verbatim as its aliases, which the generator prefers; the `A|B` copy in the pattern slot (kept for
+    // rows written before) cannot carry an empty symbol or one that contains `|`.
+    ...(field.type === "enum" && field.enumValues?.length ? { aliases: [...field.enumValues] } : {}),
     ...(field.fieldNumber != null ? { fieldNumber: field.fieldNumber } : {}),
   };
 }
