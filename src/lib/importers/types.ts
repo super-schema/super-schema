@@ -106,6 +106,10 @@ export interface ParsedFieldGovernance {
   protobufOneofGroup?: string;
   /** Avro `fixed` byte size */
   avroFixedSize?: number;
+  /** Raw data class from the vendor classification block (before the value map; `classification` holds the mapped level) */
+  dataClass?: string;
+  /** Data category from the vendor classification block, kept next to the class */
+  dataCategory?: string;
 }
 
 // ---------------------------------------------------------------------------

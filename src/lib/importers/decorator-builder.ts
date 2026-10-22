@@ -102,6 +102,8 @@ export function buildDecoratorsFromParsedField(
     governance.protobufOneofGroup = field.governance.protobufOneofGroup;
   }
   if (field.governance?.avroFixedSize != null) governance.avroFixedSize = field.governance.avroFixedSize;
+  if (field.governance?.dataClass) governance.dataClass = field.governance.dataClass;
+  if (field.governance?.dataCategory) governance.dataCategory = field.governance.dataCategory;
   if (Object.keys(governance).length > 0) decorators.governance = governance;
 
   // --- semantics ---

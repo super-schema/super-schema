@@ -39,6 +39,7 @@ import { parse as parseYaml } from "yaml";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
+import { getClassificationConfig, type ClassificationConfig } from "./classification-config";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { pickRootEntity } from "./multi-asset";
 import type {
@@ -867,8 +868,52 @@ function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, u
   return extensions ? { extensions } : {};
 }
 
+/** Keys with their own round-trip; the configured classification key can never claim one of them (reserved keys win). */
+const RESERVED_EXTENSION_KEYS = new Set(["x-tags", "x-classification"]);
+
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+/**
+ * Field classification from the vendor block (`x-securityClassification: {data_class, data_category}` by default;
+ * key and member names are configurable). Read from the merged extension view (property node first, then allOf
+ * members), so the property's own block wins. Malformed blocks yield nothing. The block itself stays in `extensions`.
+ * Falls back to a plain string `x-classification` (the app's own export) on the first source that has one.
+ */
+function readClassification(
+  sources: JsonSchemaNode[],
+  extensions: Record<string, unknown> | undefined,
+  config: ClassificationConfig,
+): Pick<ParsedField, "classification" | "governance"> {
+  const block = RESERVED_EXTENSION_KEYS.has(config.extensionKey) || !extensions
+    ? undefined
+    : Object.prototype.hasOwnProperty.call(extensions, config.extensionKey)
+      ? extensions[config.extensionKey]
+      : undefined;
+  if (block && typeof block === "object" && !Array.isArray(block)) {
+    const own = (name: string) => (Object.prototype.hasOwnProperty.call(block, name) ? (block as Record<string, unknown>)[name] : undefined);
+    const dataClass = nonEmptyString(own(config.levelField));
+    if (dataClass) {
+      const mapped = Object.prototype.hasOwnProperty.call(config.valueMap, dataClass) ? config.valueMap[dataClass] : dataClass;
+      const dataCategory = nonEmptyString(own(config.categoryField));
+      return { classification: mapped, governance: { dataClass, ...(dataCategory ? { dataCategory } : {}) } };
+    }
+  }
+  for (const source of sources) {
+    const level = Object.prototype.hasOwnProperty.call(source, "x-classification")
+      ? nonEmptyString(source["x-classification"])
+      : undefined;
+    if (level) return { classification: level };
+  }
+  return {};
+}
+
 function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName: string): ParsedField[] {
   const requiredSet = members.required;
+  const classificationConfig = getClassificationConfig();
 
   return [...members.properties].map(([name, propNode]) => {
     const node = (propNode && typeof propNode === "object" ? propNode : {}) as JsonSchemaNode;
@@ -920,6 +965,10 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       }
     }
     if (extensions) field.extensions = extensions;
+
+    const classified = readClassification(sources, extensions, classificationConfig);
+    if (classified.classification) field.classification = classified.classification;
+    if (classified.governance) field.governance = classified.governance;
 
     if (resolved.referencedEntityName) field.referencedEntityName = resolved.referencedEntityName;
     if (resolved.enumName) field.enumName = resolved.enumName;
