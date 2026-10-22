@@ -82,6 +82,22 @@ export const SET_ENTITY_TAGS_SQL =
   `UPDATE "entities" SET "metadata" = jsonb_set(${METADATA_AS_OBJECT}, '{tags}', $2::jsonb, true) ` +
   `WHERE "id" = $1`;
 
+/**
+ * $1 = entity id, $2 = JSON object text. Sets `metadata.custom.extensions` (the model's generic vendor extensions parsed from the TypeSpec
+ * source) and nothing else: the other keys of `custom` and of `metadata` are kept.
+ */
+export const SET_ENTITY_EXTENSIONS_SQL =
+  `UPDATE "entities" SET "metadata" = jsonb_set(${METADATA_AS_OBJECT}, '{custom}', ` +
+  `(CASE WHEN jsonb_typeof("metadata"->'custom') = 'object' THEN "metadata"->'custom' ELSE '{}'::jsonb END) ` +
+  `|| jsonb_build_object('extensions', $2::jsonb), true) WHERE "id" = $1`;
+
+/** $1 = entity id. Removes `metadata.custom.extensions` (and `custom` itself when that leaves it empty); everything else is kept. */
+export const CLEAR_ENTITY_EXTENSIONS_SQL =
+  `UPDATE "entities" SET "metadata" = CASE ` +
+  `WHEN ("metadata"->'custom') - 'extensions' = '{}'::jsonb THEN "metadata" - 'custom' ` +
+  `ELSE jsonb_set("metadata", '{custom}', ("metadata"->'custom') - 'extensions', true) END ` +
+  `WHERE "id" = $1 AND jsonb_typeof("metadata") = 'object' AND jsonb_typeof("metadata"->'custom') = 'object'`;
+
 /** $1 = entity id. Clears the stale marker (the TypeSpec source save wrote source + fields consistently). */
 export const CLEAR_SOURCE_STALE_SQL =
   `UPDATE "entities" SET "metadata" = "metadata" - 'sourceStale' ` +

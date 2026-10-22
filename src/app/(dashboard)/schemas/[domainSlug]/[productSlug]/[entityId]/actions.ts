@@ -50,7 +50,7 @@ import {
   type GovernanceDiagnostic,
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
-import { classificationFromDecorators } from "@/lib/compiler/governance-decorators";
+import { fieldNeedsUpdate, mergeSyncedField, entityExtensionsChange } from "@/lib/typespec-sync/merge-fields";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import {
@@ -60,6 +60,8 @@ import {
   withSourceStale,
   CLEAR_SOURCE_STALE_SQL,
   SET_ENTITY_TAGS_SQL,
+  SET_ENTITY_EXTENSIONS_SQL,
+  CLEAR_ENTITY_EXTENSIONS_SQL,
   MARK_DRAFT_CHANGED_SQL,
 } from "@/lib/entity-versioning/draft-state";
 
@@ -835,17 +837,12 @@ export async function applyTypeSpecAction(
       const existing = existingByName.get(pf.name);
       const governance = fieldGovernance?.[pf.name];
 
-      // Build decorators JSONB from parsed decorators, merging in real
-      // governance decorator values (classification/PII/retention/Avro-Protobuf
-      // binding/etc.) when compiled through the real-compiler path.
-      const decoratorsJson = buildDecoratorsJson(pf.decorators, pf.arrayElementType);
-      if (governance && Object.values(governance).some((v) => v !== undefined)) {
-        decoratorsJson.governance = governance;
-      }
-      // Governance accessor value (already the app's level) first; else the parsed decorators —
-      // x-classification for a level with no Enterprise member, or the legacy @tag("classification:…").
-      const classification =
-        governance?.classification ?? classificationFromDecorators(pf.decorators) ?? null;
+      // The row the source means: the stored decorators MERGED with what the text can express (never replaced), see
+      // `@/lib/typespec-sync/merge-fields` for which keys the source owns and which are preserved. `fieldGovernance` is only
+      // given on the real-compiler path; a field without governance decorators there is still "known to have none".
+      const merged = mergeSyncedField(existing ?? null, pf, { governance, governanceKnown: fieldGovernance !== undefined });
+      const decoratorsJson = merged.decorators;
+      const classification = merged.classification;
 
       if (!existing) {
         // Create new field
@@ -860,7 +857,7 @@ export async function applyTypeSpecAction(
                 entityId,
                 name: pf.name,
                 slug: generateSlug(pf.name),
-                type: pf.type,
+                type: merged.type,
                 sortOrder: nextSort++,
                 nullable: pf.isOptional,
                 isKey: pf.isKey,
@@ -868,25 +865,13 @@ export async function applyTypeSpecAction(
                 description: (pf.decorators.doc as string) ?? "",
                 classification,
                 decorators: decoratorsJson as Prisma.InputJsonValue,
-                ...(pf.type === "array" && pf.arrayElementType
-                  ? {} // arrayElementType is stored in decorators
-                  : {}),
               },
             }),
         });
         addedCount++;
       } else {
-        // Check if anything changed
-        const existingGovernance = (existing.decorators as Record<string, unknown> | null)?.governance;
-        const needsUpdate =
-          existing.type !== pf.type ||
-          existing.nullable !== pf.isOptional ||
-          existing.isKey !== pf.isKey ||
-          (pf.decorators.doc && existing.description !== pf.decorators.doc) ||
-          (governance !== undefined && JSON.stringify(governance) !== JSON.stringify(existingGovernance)) ||
-          (classification !== null && classification !== existing.classification);
-
-        if (needsUpdate) {
+        // Anything changed? (A re-sync of unchanged source changes nothing.)
+        if (fieldNeedsUpdate(existing, merged, pf)) {
           await withAudit({
             action: "UPDATE",
             entityType: "Field",
@@ -897,11 +882,11 @@ export async function applyTypeSpecAction(
               prisma.field.update({
                 where: { id: existing.id },
                 data: {
-                  type: pf.type,
+                  type: merged.type,
                   nullable: pf.isOptional,
                   isKey: pf.isKey,
-                  description: (pf.decorators.doc as string) ?? existing.description,
-                  classification: classification ?? existing.classification,
+                  description: merged.description,
+                  classification,
                   decorators: decoratorsJson as Prisma.InputJsonValue,
                 },
               }),
@@ -941,74 +926,6 @@ export async function applyTypeSpecAction(
   } catch (e: unknown) {
     return { added: 0, updated: 0, removed: [], error: unexpectedFailure("applyTypeSpecAction", e).error };
   }
-}
-
-/**
- * Build the decorators JSONB from parsed TypeSpec decorators.
- */
-function buildDecoratorsJson(
-  decorators: Record<string, unknown>,
-  arrayElementType?: string
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-
-  // TypeSpec sub-key for identity & semantics
-  const identity: Record<string, unknown> = {};
-  if (decorators.secret) identity.secret = true;
-  if (decorators.format) identity.format = decorators.format;
-  if (Object.keys(identity).length > 0) {
-    if (!result.typespec) result.typespec = {};
-    (result.typespec as Record<string, unknown>).identity = identity;
-  }
-
-  // TypeSpec sub-key for validation
-  const validation: Record<string, unknown> = {};
-  if (decorators.minLength != null) validation.minLength = decorators.minLength;
-  if (decorators.maxLength != null) validation.maxLength = decorators.maxLength;
-  if (decorators.minValue != null) validation.minValue = decorators.minValue;
-  if (decorators.maxValue != null) validation.maxValue = decorators.maxValue;
-  if (decorators.minValueExclusive != null) validation.minValueExclusive = decorators.minValueExclusive;
-  if (decorators.maxValueExclusive != null) validation.maxValueExclusive = decorators.maxValueExclusive;
-  if (decorators.pattern) validation.pattern = decorators.pattern;
-  if (decorators.minItems != null) validation.minItems = decorators.minItems;
-  if (decorators.maxItems != null) validation.maxItems = decorators.maxItems;
-  if (Object.keys(validation).length > 0) {
-    if (!result.typespec) result.typespec = {};
-    (result.typespec as Record<string, unknown>).validation = validation;
-  }
-
-  // TypeSpec sub-key for wire format
-  const wireFormat: Record<string, unknown> = {};
-  if (decorators.encode) wireFormat.encode = decorators.encode;
-  if (decorators.encodeSubType) wireFormat.encodeSubType = decorators.encodeSubType;
-  if (Object.keys(wireFormat).length > 0) {
-    if (!result.typespec) result.typespec = {};
-    (result.typespec as Record<string, unknown>).wireFormat = wireFormat;
-  }
-
-  // TypeSpec sub-key for documentation
-  const documentation: Record<string, unknown> = {};
-  if (decorators.summary) documentation.summary = decorators.summary;
-  if (decorators.deprecated) documentation.deprecated = decorators.deprecated;
-  if (Object.keys(documentation).length > 0) {
-    if (!result.typespec) result.typespec = {};
-    (result.typespec as Record<string, unknown>).documentation = documentation;
-  }
-
-  // TypeSpec sub-key for visibility
-  if (decorators.visibility && Array.isArray(decorators.visibility)) {
-    if (!result.typespec) result.typespec = {};
-    (result.typespec as Record<string, unknown>).visibility = {
-      phases: decorators.visibility,
-    };
-  }
-
-  // Array element type stored at top level of decorators (used by compiler)
-  if (arrayElementType) {
-    result.arrayElementType = arrayElementType;
-  }
-
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -2084,6 +2001,10 @@ async function compileAndApplyTypeSpecSource(
       ? null
       : sourceTagList;
 
+  // The model's generic vendor extensions (`@extension` above the model) are the entity's `metadata.custom.extensions`, written like
+  // the tags: only when they differ, only that one key.
+  const extensionsChange = entityExtensionsChange(entity.metadata, model.extensions);
+
   const applyResult = await applyTypeSpecAction(
     entityId,
     model.fields.map((f) => ({
@@ -2119,6 +2040,11 @@ async function compileAndApplyTypeSpecSource(
         ...(sourceTags
           ? [prisma.$executeRawUnsafe(SET_ENTITY_TAGS_SQL, entityId, JSON.stringify(sourceTags))]
           : []),
+        ...(extensionsChange.kind === "set"
+          ? [prisma.$executeRawUnsafe(SET_ENTITY_EXTENSIONS_SQL, entityId, JSON.stringify(extensionsChange.value))]
+          : extensionsChange.kind === "clear"
+            ? [prisma.$executeRawUnsafe(CLEAR_ENTITY_EXTENSIONS_SQL, entityId)]
+            : []),
         prisma.$executeRawUnsafe(CLEAR_SOURCE_STALE_SQL, entityId),
       ]);
       return updated;
