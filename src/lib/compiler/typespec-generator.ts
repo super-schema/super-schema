@@ -805,18 +805,15 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     if (validation.maxLength != null) {
       decorators.push(`@maxLength(${validation.maxLength})`);
     }
-    if (validation.minValue != null && !impliedByIntegerType(field.type, "min", validation.minValue)) {
-      decorators.push(`@minValue(${validation.minValue})`);
-    }
-    if (validation.maxValue != null && !impliedByIntegerType(field.type, "max", validation.maxValue)) {
-      decorators.push(`@maxValue(${validation.maxValue})`);
-    }
-    if (validation.minValueExclusive != null) {
-      decorators.push(`@minValueExclusive(${validation.minValueExclusive})`);
-    }
-    if (validation.maxValueExclusive != null) {
-      decorators.push(`@maxValueExclusive(${validation.maxValueExclusive})`);
-    }
+    const bound = (kind: BoundKind, value: number | undefined): number | null => (value == null ? null : boundFor(field.type, kind, value));
+    const minValue = bound("min", validation.minValue);
+    if (minValue !== null) decorators.push(`@minValue(${minValue})`);
+    const maxValue = bound("max", validation.maxValue);
+    if (maxValue !== null) decorators.push(`@maxValue(${maxValue})`);
+    const minExclusive = bound("minExclusive", validation.minValueExclusive);
+    if (minExclusive !== null) decorators.push(`@minValueExclusive(${minExclusive})`);
+    const maxExclusive = bound("maxExclusive", validation.maxValueExclusive);
+    if (maxExclusive !== null) decorators.push(`@maxValueExclusive(${maxExclusive})`);
     if (validation.pattern != null && field.type !== "enum") {
       decorators.push(`@pattern("${escapeString(validation.pattern)}")`);
     }
@@ -925,19 +922,29 @@ const INTEGER_RANGES: Readonly<Record<string, readonly [bigint, bigint]>> = {
   safeint: [-(2n ** 53n - 1n), 2n ** 53n - 1n],
 };
 
+type BoundKind = "min" | "max" | "minExclusive" | "maxExclusive";
+
 /**
- * True when a numeric bound lies OUTSIDE the range of a fixed-width integer type, so it says nothing the type does not already say.
- * Such a bound is not just redundant, it breaks the compile (a bound exactly at the limit is kept): JSON has no 64-bit integers, so `"maximum": 9223372036854775807` is
- * read as the double 2^63, written as `@maxValue(9223372036854776000)`, and the compiler rejects that for `int64`. A bound that is
- * tighter than the type, or on a type without a fixed range, is kept.
+ * The numeric bound as the decorator should carry it for a field of `type`, or null when it should not be written.
+ *
+ * On an integer type the compiler rejects a fractional bound (`@maxValue(10.5)` on int32: "not assignable"), so a fractional bound is
+ * moved to the integer that means the same (`<= 10.5` is `<= 10`, `> 10.5` is `> 10`). On a fixed-width integer a bound OUTSIDE the
+ * range says nothing the type does not already say and breaks the compile too: JSON has no 64-bit integers, so
+ * `"maximum": 9223372036854775807` is read as the double 2^63, written `@maxValue(9223372036854776000)`, and rejected for int64. A bound
+ * exactly at the limit, tighter than the type, or on a type without an integer rule is kept as is.
  */
-function impliedByIntegerType(type: string, side: "min" | "max", bound: number): boolean {
+function boundFor(type: string, kind: BoundKind, bound: number): number | null {
   const range = INTEGER_RANGES[type];
-  if (!range || !Number.isFinite(bound)) return false;
+  if (!Number.isFinite(bound) || (!range && type !== "integer")) return bound;
+  const whole = Number.isInteger(bound)
+    ? bound
+    : kind === "max" ? Math.floor(bound) : kind === "min" ? Math.ceil(bound) : kind === "maxExclusive" ? Math.ceil(bound) : Math.floor(bound);
+  if (!range) return whole;
   // Judge the decimal text the decorator will carry (2^63 prints as 9223372036854776000, which is beyond int64), not the double itself.
-  const printed = String(bound);
-  const value = /^-?\d+$/.test(printed) ? BigInt(printed) : BigInt(Math.trunc(bound));
-  return side === "max" ? value > range[1] : value < range[0];
+  const printed = String(whole);
+  const value = /^-?\d+$/.test(printed) ? BigInt(printed) : BigInt(Math.trunc(whole));
+  const upper = kind === "max" || kind === "maxExclusive";
+  return (upper ? value > range[1] : value < range[0]) ? null : whole;
 }
 
 /**
