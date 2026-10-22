@@ -23,6 +23,10 @@ describe("integer bounds through the real compiler", () => {
     ["uint8 exclusive maximum at the limit", "uint8", { maxValueExclusive: 255 }],
     ["int32 fractional maximum just inside the range", "int32", { maxValue: 2147483647.5 }],
     ["int32 fractional minimum just inside the range", "int32", { minValue: -2147483647.5 }],
+    ["int32 exclusive upper bound below the minimum", "int32", { maxValueExclusive: -2147483649 }],
+    ["int32 exclusive lower bound above the maximum", "int32", { minValueExclusive: 2147483648 }],
+    ["int32 inclusive upper bound below the minimum", "int32", { maxValue: -2147483649 }],
+    ["int32 inclusive lower bound above the maximum", "int32", { minValue: 2147483648 }],
     ["int32 fractional bounds in the middle", "int32", { minValue: 0.5, maxValue: 10.5 }],
   ])("%s compiles", async (_name, type, validation) => {
     const result = await emit(field(type, validation));

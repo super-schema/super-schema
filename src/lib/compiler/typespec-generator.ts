@@ -943,8 +943,9 @@ function boundFor(type: string, kind: BoundKind, bound: number): number | null {
   // Judge the decimal text the decorator will carry (2^63 prints as 9223372036854776000, which is beyond int64), not the double itself.
   const printed = String(whole);
   const value = /^-?\d+$/.test(printed) ? BigInt(printed) : BigInt(Math.trunc(whole));
-  const upper = kind === "max" || kind === "maxExclusive";
-  return (upper ? value > range[1] : value < range[0]) ? null : whole;
+  // Outside the range in EITHER direction is dropped: an upper bound below the minimum and a lower bound above the maximum (hostile
+  // input) are just as unassignable to the type as one beyond the far end.
+  return value > range[1] || value < range[0] ? null : whole;
 }
 
 /**
