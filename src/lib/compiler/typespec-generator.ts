@@ -805,10 +805,10 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     if (validation.maxLength != null) {
       decorators.push(`@maxLength(${validation.maxLength})`);
     }
-    if (validation.minValue != null) {
+    if (validation.minValue != null && !impliedByIntegerType(field.type, "min", validation.minValue)) {
       decorators.push(`@minValue(${validation.minValue})`);
     }
-    if (validation.maxValue != null) {
+    if (validation.maxValue != null && !impliedByIntegerType(field.type, "max", validation.maxValue)) {
       decorators.push(`@maxValue(${validation.maxValue})`);
     }
     if (validation.minValueExclusive != null) {
@@ -912,6 +912,28 @@ const STRUCTURED_MEMBER_TYPES: Record<string, string> = {
   map: "Record<unknown>",
   array: "unknown[]",
 };
+
+/** The range of the fixed-width integer scalars (BigInt, so the 64-bit limits are exact). */
+const INTEGER_RANGES: Readonly<Record<string, readonly [bigint, bigint]>> = {
+  int8: [-128n, 127n], int16: [-32768n, 32767n], int32: [-2147483648n, 2147483647n], int64: [-(2n ** 63n), 2n ** 63n - 1n],
+  uint8: [0n, 255n], uint16: [0n, 65535n], uint32: [0n, 4294967295n], uint64: [0n, 2n ** 64n - 1n],
+  safeint: [-(2n ** 53n - 1n), 2n ** 53n - 1n],
+};
+
+/**
+ * True when a numeric bound lies OUTSIDE the range of a fixed-width integer type, so it says nothing the type does not already say.
+ * Such a bound is not just redundant, it breaks the compile (a bound exactly at the limit is kept): JSON has no 64-bit integers, so `"maximum": 9223372036854775807` is
+ * read as the double 2^63, written as `@maxValue(9223372036854776000)`, and the compiler rejects that for `int64`. A bound that is
+ * tighter than the type, or on a type without a fixed range, is kept.
+ */
+function impliedByIntegerType(type: string, side: "min" | "max", bound: number): boolean {
+  const range = INTEGER_RANGES[type];
+  if (!range || !Number.isFinite(bound)) return false;
+  // Judge the decimal text the decorator will carry (2^63 prints as 9223372036854776000, which is beyond int64), not the double itself.
+  const printed = String(bound);
+  const value = /^-?\d+$/.test(printed) ? BigInt(printed) : BigInt(Math.trunc(bound));
+  return side === "max" ? value > range[1] : value < range[0];
+}
 
 /**
  * TypeSpec type of an array element / map value: a reference resolves to the
