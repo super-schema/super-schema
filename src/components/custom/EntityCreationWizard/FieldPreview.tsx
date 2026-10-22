@@ -1,12 +1,18 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Plus, Trash2, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { Fragment, useState, useRef, useMemo } from "react";
+import { Plus, Trash2, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
+import {
+  ParsedEntityDetails,
+  ParsedFieldDetails,
+  ParsedFieldSummaryBadges,
+} from "@/components/custom/ImportDialog/ParsedFieldDetails";
+import type { ParsedEntity, ParsedField } from "@/lib/importers/types";
 
 export interface PreviewField {
   tempId: string;
@@ -23,6 +29,12 @@ export interface PreviewField {
   importedDecorators?: Record<string, unknown>;
   /** Protobuf field number from a schema import. */
   fieldNumber?: number;
+  /** Imported nullability (kept through to creation); absent = the field default (nullable). */
+  nullable?: boolean;
+  /** Imported key flag (kept through to creation). */
+  isKey?: boolean;
+  /** The importer's full view of this field (for the read-only "used / preserved / ignored" details). */
+  parsed?: ParsedField;
 }
 
 interface FieldPreviewProps {
@@ -36,6 +48,12 @@ interface FieldPreviewProps {
   onConfirm: () => void;
   isCreating?: boolean;
   error?: string | null;
+  /** Every warning of the import: all shown, none truncated. */
+  warnings?: string[];
+  /** Entity-level import facts (extends, extensions, ignored keywords). Present only for a schema import. */
+  importedEntity?: Pick<ParsedEntity, "name" | "description" | "extends" | "extensions" | "ignoredKeywords">;
+  /** The importer's fallback entity name: while the name field still holds it, it is highlighted as "needs a name". */
+  fallbackName?: string;
 }
 
 function makeTempId() {
@@ -77,7 +95,23 @@ export function FieldPreview({
   onConfirm,
   isCreating = false,
   error,
+  warnings = [],
+  importedEntity,
+  fallbackName,
 }: FieldPreviewProps) {
+  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+  const needsName = fallbackName !== undefined && entityName.trim() === fallbackName;
+  const entityNames = useMemo(() => new Set([importedEntity?.name ?? entityName]), [importedEntity?.name, entityName]);
+
+  function toggleExpand(tempId: string) {
+    setExpandedFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(tempId)) next.delete(tempId);
+      else next.add(tempId);
+      return next;
+    });
+  }
+
   const [showAddRow, setShowAddRow] = useState(false);
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState("string");
@@ -140,9 +174,16 @@ export function FieldPreview({
           <Input
             value={entityName}
             onChange={(e) => onEntityNameChange(e.target.value)}
-            className="h-9 font-mono"
+            className={`h-9 font-mono ${needsName ? "border-warning ring-1 ring-warning/50" : ""}`}
             placeholder="EntityName"
+            aria-invalid={needsName || undefined}
+            data-needs-name={needsName ? "true" : undefined}
           />
+          {needsName && (
+            <p className="text-caption text-warning mt-1" data-testid="needs-name-hint">
+              Needs a name — the schema gave no title or $id, so this placeholder was used.
+            </p>
+          )}
         </div>
         <div>
           <label className="text-caption text-muted-foreground mb-1 block">Description</label>
@@ -154,6 +195,21 @@ export function FieldPreview({
           />
         </div>
       </div>
+
+      {importedEntity && (
+        <div data-testid="import-entity-details">
+          <ParsedEntityDetails entity={importedEntity} warnings={warnings} />
+        </div>
+      )}
+      {!importedEntity && warnings.length > 0 && (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 space-y-1" data-testid="import-warnings">
+          {warnings.map((warning, index) => (
+            <p key={index} className="text-caption text-muted-foreground">
+              {warning}
+            </p>
+          ))}
+        </div>
+      )}
 
       {/* Fields table */}
       <div className="surface-glass rounded-xl border border-border overflow-hidden">
@@ -170,16 +226,36 @@ export function FieldPreview({
           </thead>
           <tbody>
             {fields.map((field) => (
-              <tr
-                key={field.tempId}
-                className="border-b border-border/50 hover:bg-accent/20 transition-colors group"
-              >
+              <Fragment key={field.tempId}>
+              <tr className="border-b border-border/50 hover:bg-accent/20 transition-colors group">
                 <td className="px-space-3 py-space-2">
-                  <Input
-                    value={field.name}
-                    onChange={(e) => updateField(field.tempId, { name: e.target.value })}
-                    className="h-7 font-mono text-body-small border-transparent hover:border-border focus:border-primary/40"
-                  />
+                  <div className="flex items-center gap-1">
+                    {field.parsed && (
+                      <button
+                        type="button"
+                        onClick={() => toggleExpand(field.tempId)}
+                        aria-expanded={expandedFields.has(field.tempId)}
+                        aria-label={`${expandedFields.has(field.tempId) ? "Hide" : "Show"} import details of ${field.name}`}
+                        className="p-0.5 rounded hover:bg-accent shrink-0"
+                      >
+                        {expandedFields.has(field.tempId) ? (
+                          <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                        )}
+                      </button>
+                    )}
+                    <Input
+                      value={field.name}
+                      onChange={(e) => updateField(field.tempId, { name: e.target.value })}
+                      className="h-7 font-mono text-body-small border-transparent hover:border-border focus:border-primary/40"
+                    />
+                  </div>
+                  {field.parsed && (
+                    <div className="flex flex-wrap gap-1 mt-1 pl-5">
+                      <ParsedFieldSummaryBadges field={field.parsed} entityNames={entityNames} />
+                    </div>
+                  )}
                 </td>
                 <td className="px-space-3 py-space-2">
                   <TypePicker
@@ -216,6 +292,21 @@ export function FieldPreview({
                   </button>
                 </td>
               </tr>
+              {field.parsed && (
+                <tr hidden={!expandedFields.has(field.tempId)} className="border-b border-border/50">
+                  <td colSpan={6} className="px-space-3 pb-space-2">
+                    <p className="text-[10px] text-muted-foreground">
+                      What the import found for this field (as imported; the edits above apply to the field that is created).
+                    </p>
+                    <ParsedFieldDetails
+                      field={field.parsed}
+                      entityNames={entityNames}
+                      collapsed={!expandedFields.has(field.tempId)}
+                    />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
 
             {/* Add row */}

@@ -51,6 +51,9 @@ import type {
   MultiEntityImportResult,
   ParsedUnion,
 } from "./types";
+import { IMPORTED_ENTITY_FALLBACK_NAME } from "./types";
+
+export { IMPORTED_ENTITY_FALLBACK_NAME };
 
 // ---------------------------------------------------------------------------
 // Minimal JSON Schema shape (we only read the keywords we map)
@@ -98,11 +101,41 @@ const KNOWN_SCHEMA_KEYWORDS = new Set([
   "x-tags", "x-classification",
 ]);
 
+/**
+ * Standard JSON Schema (2020-12 / draft-07) keywords the importer recognizes but maps to nothing in the IR. They are
+ * reported as `ignoredKeywords` + a warning (never silently dropped) and are NOT kept as extensions: extensions are
+ * for vendor / unknown keys. Keywords the importer consumes in any path (type, format, enum, const, constraints, ...)
+ * are never in this set.
+ */
+const IGNORED_SCHEMA_KEYWORDS = new Set([
+  "not", "if", "then", "else", "dependentRequired", "dependentSchemas", "dependencies",
+  "$dynamicRef", "$dynamicAnchor", "$recursiveRef", "$recursiveAnchor",
+  "unevaluatedProperties", "unevaluatedItems", "patternProperties", "propertyNames",
+  "additionalProperties", "additionalItems", "contains", "minContains", "maxContains", "prefixItems",
+  "multipleOf", "uniqueItems", "minProperties", "maxProperties",
+  "contentEncoding", "contentMediaType", "contentSchema", "readOnly", "writeOnly",
+  "examples", "example", "$comment", "$anchor", "$vocabulary", "default",
+]);
+
+/** Read by the importer on an entity node (names it) but unused on a field node, where it is reported as ignored. */
+const FIELD_ONLY_IGNORED = new Set(["title", "$schema", "$id", "$defs", "definitions"]);
+
+/** Ignored standard keywords present on `node` (document order, deduplicated); `isField` adds the field-only ones. */
+function ignoredKeywordsOf(nodes: JsonSchemaNode[], isField: boolean): string[] | undefined {
+  const found = new Set<string>();
+  for (const node of nodes) {
+    for (const key of Object.keys(node)) {
+      if (IGNORED_SCHEMA_KEYWORDS.has(key) || (isField && FIELD_ONLY_IGNORED.has(key))) found.add(key);
+    }
+  }
+  return found.size > 0 ? [...found] : undefined;
+}
+
 /** Every key of `node` the importer does not read, verbatim (parsed JSON values); `undefined` when none. */
 function captureExtensions(node: JsonSchemaNode): Record<string, unknown> | undefined {
   let captured: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(node)) {
-    if (KNOWN_SCHEMA_KEYWORDS.has(key)) continue;
+    if (KNOWN_SCHEMA_KEYWORDS.has(key) || IGNORED_SCHEMA_KEYWORDS.has(key)) continue;
     setOwn((captured ??= {}), key, value);
   }
   return captured;
@@ -679,7 +712,7 @@ function deriveEntityName(schema: JsonSchemaNode): string {
     const stripped = last.replace(/\.(json|schema\.json)$/i, "");
     if (stripped) return stripped;
   }
-  return "ImportedEntity";
+  return IMPORTED_ENTITY_FALLBACK_NAME;
 }
 
 
@@ -863,9 +896,32 @@ function indexDefinitions(
   return { definitions, taken };
 }
 
-function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, unknown> } {
+function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, unknown>; ignoredKeywords?: string[] } {
   const extensions = captureExtensions(node);
-  return extensions ? { extensions } : {};
+  const ignoredKeywords = ignoredKeywordsOf(schemaSources(node), false);
+  return { ...(extensions ? { extensions } : {}), ...(ignoredKeywords ? { ignoredKeywords } : {}) };
+}
+
+const MAX_IGNORED_WARNINGS = 200;
+
+/** One warning per distinct (keyword, entity/field) pair, capped; the overflow is counted in a final warning. */
+function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
+  const out: string[] = [];
+  let total = 0;
+  const add = (subject: string, keywords: string[] | undefined): void => {
+    for (const keyword of keywords ?? []) {
+      total += 1;
+      if (out.length < MAX_IGNORED_WARNINGS) {
+        out.push(`${subject}: JSON Schema keyword \`${keyword}\` is not supported and was ignored`);
+      }
+    }
+  };
+  for (const entity of entities) {
+    add(`Entity \`${entity.name}\``, entity.ignoredKeywords);
+    for (const field of entity.fields) add(`Field \`${entity.name}.${field.name}\``, field.ignoredKeywords);
+  }
+  if (total > out.length) out.push(`…and ${total - out.length} more ignored-keyword warnings`);
+  return out;
 }
 
 /** Keys with their own round-trip; the configured classification key can never claim one of them (reserved keys win). */
@@ -965,6 +1021,8 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       }
     }
     if (extensions) field.extensions = extensions;
+    const ignoredKeywords = ignoredKeywordsOf(sources, true);
+    if (ignoredKeywords) field.ignoredKeywords = ignoredKeywords;
 
     const classified = readClassification(sources, extensions, classificationConfig);
     if (classified.classification) field.classification = classified.classification;
@@ -1163,6 +1221,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   }
 
   breakInheritanceCycles(entities, warnings);
+  warnings.push(...ignoredKeywordWarnings(entities));
 
   if (outIndex) {
     for (const [pointer, def] of definitions) outIndex.set(pointer, { kind: def.kind, assetName: def.assetName });

@@ -14,7 +14,8 @@ import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainS
 import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
-import type { ImportFormat } from "@/lib/importers/types";
+import { IMPORTED_ENTITY_FALLBACK_NAME } from "@/lib/importers/types";
+import type { ImportFormat, ParsedEntity } from "@/lib/importers/types";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import {
   TypeSpecImportReviewScreen,
@@ -36,6 +37,10 @@ interface WizardState {
   entityName: string;
   entityDescription: string;
   fields: PreviewField[];
+  /** Warnings of the schema import that produced the preview (none for other creation methods). */
+  importWarnings?: string[];
+  /** Entity-level import facts shown next to the preview. */
+  importedEntity?: ParsedEntity;
 }
 
 const INITIAL_STATE: WizardState = {
@@ -119,13 +124,19 @@ export function EntityCreationWizard({
     setError(null);
   }
 
-  function goToPreview(entityName: string, description: string, fields: PreviewField[]) {
+  function goToPreview(
+    entityName: string,
+    description: string,
+    fields: PreviewField[],
+    imported?: { warnings: string[]; entity: ParsedEntity }
+  ) {
     setState({
       step: "preview-fields",
       method: state.method,
       entityName,
       entityDescription: description,
       fields,
+      ...(imported ? { importWarnings: imported.warnings, importedEntity: imported.entity } : {}),
     });
     setError(null);
   }
@@ -264,12 +275,15 @@ export function EntityCreationWizard({
           return;
         }
 
-        const { parsedEntity } = result.data.result;
+        const { parsedEntity, warnings } = result.data.result;
         const fields: PreviewField[] = parsedEntity.fields.map((f) => ({
           tempId: makeTempId(),
           name: f.name,
           type: f.type,
-          classification: null,
+          nullable: f.nullable,
+          isKey: f.isKey === true,
+          classification: f.classification ?? null,
+          parsed: f,
           description: f.description ?? "",
           confidence: f.confidence === "high" ? 0.95 : f.confidence === "medium" ? 0.7 : 0.4,
           referencedEntityName: f.referencedEntityName,
@@ -278,7 +292,10 @@ export function EntityCreationWizard({
           fieldNumber: f.fieldNumber,
         }));
 
-        goToPreview(parsedEntity.name, parsedEntity.description ?? "", fields);
+        goToPreview(parsedEntity.name, parsedEntity.description ?? "", fields, {
+          warnings: warnings ?? [],
+          entity: parsedEntity,
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to parse schema");
       } finally {
@@ -376,8 +393,8 @@ export function EntityCreationWizard({
       return {
         name: f.name,
         type: f.type,
-        nullable: true,
-        isKey: false,
+        nullable: f.nullable ?? true,
+        isKey: f.isKey ?? false,
         description: f.description,
         classification: f.classification,
         precision: null,
@@ -532,6 +549,9 @@ export function EntityCreationWizard({
             onConfirm={handleCreateEntity}
             isCreating={isCreating}
             error={error}
+            warnings={state.importWarnings}
+            importedEntity={state.importedEntity}
+            fallbackName={state.importedEntity ? IMPORTED_ENTITY_FALLBACK_NAME : undefined}
           />
         )}
 

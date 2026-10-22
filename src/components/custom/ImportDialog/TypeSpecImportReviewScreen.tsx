@@ -17,6 +17,11 @@ import { Button } from "@/components/ui/button";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import type { ImportAssetSelection } from "@/lib/importers/import-payload";
 import type { ImportFormat } from "@/lib/importers/types";
+import {
+  ParsedEntityDetails,
+  ParsedFieldDetails,
+  ParsedFieldSummaryBadges,
+} from "./ParsedFieldDetails";
 
 /**
  * Multi-asset import review, shared by every format that can define several
@@ -98,6 +103,20 @@ export function TypeSpecImportReviewScreen({
     new Set(importResult.decoratorDefinitions.map((_, index) => index))
   );
   const [expandedModels, setExpandedModels] = useState<Set<number>>(new Set());
+  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+  const entityNames = useMemo(
+    () => new Set(importResult.models.map((model) => model.name)),
+    [importResult.models]
+  );
+
+  function toggleFieldExpand(key: string) {
+    setExpandedFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   function toggleSelection(
     index: number,
@@ -287,29 +306,35 @@ export function TypeSpecImportReviewScreen({
                   </label>
                 </div>
 
-                {expandedModels.has(index) && (
-                  <div className="px-10 pb-3 space-y-1">
-                    {model.fields.map((field) => (
-                      <div
-                        key={`${model.name}-${field.name}`}
-                        className="text-caption text-muted-foreground flex flex-wrap items-center gap-2"
-                      >
-                        <span className="font-mono">{field.name}</span>
-                        <span className="text-muted-foreground/50">{field.type}</span>
-                        {field.isKey && (
-                          <Badge variant="outline" className="text-[9px] h-3.5">
-                            key
-                          </Badge>
-                        )}
-                        {!field.nullable && (
-                          <Badge variant="outline" className="text-[9px] h-3.5">
-                            required
-                          </Badge>
-                        )}
+                {/* Always in the DOM (hidden while the model is collapsed): nothing the importer found is withheld. */}
+                <div className="px-10 pb-3 space-y-1" hidden={!expandedModels.has(index)}>
+                  <ParsedEntityDetails entity={model} showUsed={false} />
+                  {model.fields.map((field) => {
+                    const fieldKey = `${model.name}::${field.name}`;
+                    const open = expandedFields.has(fieldKey);
+                    return (
+                      <div key={fieldKey} data-testid={`import-field-${model.name}-${field.name}`}>
+                        <div className="text-caption text-muted-foreground flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleFieldExpand(fieldKey)}
+                            aria-expanded={open}
+                            aria-label={`${open ? "Hide" : "Show"} details of ${model.name}.${field.name}`}
+                            className="p-0.5 rounded hover:bg-accent"
+                          >
+                            {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </button>
+                          <span className="font-mono">{field.name}</span>
+                          <span className="text-muted-foreground/50">{field.type}</span>
+                          <ParsedFieldSummaryBadges field={field} entityNames={entityNames} />
+                        </div>
+                        <div className="ml-6">
+                          <ParsedFieldDetails field={field} entityNames={entityNames} collapsed={!open} />
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                )}
+                    );
+                  })}
+                </div>
               </div>
             ))}
           </div>

@@ -98,7 +98,8 @@ describe("ImportDialog — multi-entity Protobuf import", () => {
     await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());
     expect(screen.getByText("Review Protobuf Import")).toBeDefined();
     for (const name of ["Order", "Order_LineItem", "Card", "Customer", "OrderStatus", "Order_LineItem_Kind"]) {
-      expect(screen.getByText(name)).toBeDefined();
+      // Field details now repeat reference targets (e.g. "References: Order_LineItem"), so a name can appear more than once.
+      expect(screen.getAllByText(name).length).toBeGreaterThan(0);
     }
     expect(screen.getByText(/OrderService/)).toBeDefined();
   });

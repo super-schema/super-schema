@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { EntityCreationWizard } from "@/components/custom/EntityCreationWizard/EntityCreationWizard";
 import { importSchemaAssets } from "@/services/import.service";
 import { detectFormat } from "@/lib/importers/format-detector";
@@ -230,5 +230,69 @@ describe("EntityCreationWizard — visual builder hand-off (Story 15.6)", () => 
 
     await waitFor(() => expect(screen.getByText("Review OpenAPI Import")).toBeDefined());
     expect(mocks.importOpenApiDocumentAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("EntityCreationWizard: single JSON Schema import keeps everything the importer found", () => {
+  const SINGLE = JSON.stringify({
+    type: "object",
+    required: ["id", "ssn"],
+    not: { type: "null" },
+    properties: {
+      id: { type: "string" },
+      ssn: {
+        type: "string",
+        multipleOf: 2,
+        "x-securityClassification": { data_class: "PII", data_category: "identity" },
+      },
+      note: { type: "string", "x-audit": { by: "bob" } },
+    },
+  });
+
+  it("passes the imported nullable / isKey / classification to the created field input", async () => {
+    mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e1" });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(SINGLE);
+    await waitFor(() => expect(screen.getByDisplayValue("ImportedEntity")).toBeDefined());
+
+    fireEvent.change(screen.getByDisplayValue("ImportedEntity"), { target: { value: "Person" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Entity" }));
+
+    await waitFor(() => expect(mocks.createEntityWithFieldsAction).toHaveBeenCalledTimes(1));
+    const [, input] = mocks.createEntityWithFieldsAction.mock.calls[0];
+    const byName = Object.fromEntries(input.fields.map((f: { name: string }) => [f.name, f]));
+    expect(byName.id).toMatchObject({ nullable: false, isKey: true, classification: null });
+    expect(byName.ssn).toMatchObject({ nullable: false, isKey: false, classification: "PII" });
+    expect(byName.note).toMatchObject({ nullable: true, isKey: false });
+  });
+
+  it("shows every warning, the entity's ignored keywords and each field's details in the preview", async () => {
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(SINGLE);
+    await waitFor(() => expect(screen.getByDisplayValue("ImportedEntity")).toBeDefined());
+
+    expect(screen.getByText("Entity `ImportedEntity`: JSON Schema keyword `not` is not supported and was ignored")).toBeDefined();
+    expect(screen.getByText("Field `ImportedEntity.ssn`: JSON Schema keyword `multipleOf` is not supported and was ignored")).toBeDefined();
+    const ssn = within(screen.getByTestId("parsed-field-details-ssn"));
+    expect(ssn.getByText("identity")).toBeDefined();
+    expect(ssn.getByText("multipleOf")).toBeDefined();
+    expect(within(screen.getByTestId("parsed-field-details-note")).getByText("x-audit")).toBeDefined();
+  });
+
+  it("highlights the entity name as needing a name when the importer fell back to its placeholder", async () => {
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(SINGLE);
+    const input = await screen.findByDisplayValue("ImportedEntity");
+    expect(input.getAttribute("data-needs-name")).toBe("true");
+    expect(screen.getByTestId("needs-name-hint")).toBeDefined();
+    fireEvent.change(input, { target: { value: "Person" } });
+    expect(screen.queryByTestId("needs-name-hint")).toBeNull();
+  });
+
+  it("does not flag a schema that names itself", async () => {
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(JSON.stringify({ title: "Person", type: "object", properties: { id: { type: "string" } } }));
+    await screen.findByDisplayValue("Person");
+    expect(screen.queryByTestId("needs-name-hint")).toBeNull();
   });
 });

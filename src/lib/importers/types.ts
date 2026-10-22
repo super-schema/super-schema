@@ -99,7 +99,16 @@ export interface ParsedField {
   danglingRef?: { ref: string; resolvedUri?: string; reason: string };
   /** Format-binding facts kept under `decorators.governance` (same keys the TypeSpec governance path stores) */
   governance?: ParsedFieldGovernance;
+  /**
+   * Standard schema keywords present on this field's source node that the importer recognizes but does NOT map to
+   * anything in the IR (JSON Schema: `not`, `if`, `multipleOf`, ...). Vendor / unknown keys are not listed here —
+   * they are kept in `extensions`.
+   */
+  ignoredKeywords?: string[];
 }
+
+/** Entity name the JSON Schema importer falls back to when the document gives no `title` / `$id` to name it by. */
+export const IMPORTED_ENTITY_FALLBACK_NAME = "ImportedEntity";
 
 export interface ParsedFieldGovernance {
   /** Protobuf `oneof` group this field belongs to */
@@ -127,6 +136,8 @@ export interface ParsedEntity {
   extensions?: Record<string, unknown>;
   /** Parent entity name (inheritance), mirrors TypeSpecImportModel.extends */
   extends?: string;
+  /** Standard schema keywords on the entity's source node that were recognized but not mapped (see `ParsedField.ignoredKeywords`) */
+  ignoredKeywords?: string[];
   /** Source format identifier */
   sourceFormat: ImportFormat;
   /** Original schema content (stored for drift detection) */
