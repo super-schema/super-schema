@@ -227,12 +227,18 @@ function parseDoc(content: string): { ok: true; value: object } | { ok: false; r
 
 /** Mirrors the library's relative-URL resolution closely enough to predict `new URL` failures. */
 function isResolvableRef(ref: string, base: string): boolean {
+  return resolveRef(ref, base) !== null;
+}
+
+/** Resolve `ref` against `base`; null if invalid. `self` = points at the document itself. */
+function resolveRef(ref: string, base: string): { self: boolean } | null {
   try {
     const from = new URL(base.replace(/\\/g, "/"), "https://aaa.nonexistanturl.com");
-    new URL(ref.replace(/\\/g, "/"), from);
-    return true;
+    const to = new URL(ref.replace(/\\/g, "/"), from);
+    const strip = (u: URL) => u.href.split("#")[0];
+    return { self: strip(to) === strip(from) };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -264,13 +270,23 @@ function sanitizeRefs(
     if (k === "$ref" && typeof v === "string") {
       if (v.startsWith("#")) {
         out[k] = v;
-      } else if (isResolvableRef(v, base)) {
-        counter.external++;
-        out[k] = v;
       } else {
-        onInvalid(v);
-        out[k] = "#";
+        const r = resolveRef(v, base);
+        if (r) {
+          // A reference to the document itself (by file name) is already registered: the
+          // library never asks us to read it, so it must not count as an external ref.
+          if (!r.self) counter.external++;
+          out[k] = v;
+        } else {
+          onInvalid(v);
+          out[k] = "#";
+        }
       }
+    } else if ((k === "$id" || k === "id") && typeof v === "string") {
+      // Policy: relative refs resolve ONLY against the document's own fetch URL, never an
+      // embedded $id/id (a hostile $id must not redirect fetches; a malformed one must not
+      // abort the library). Dropped from the copy given to the library only.
+      continue;
     } else {
       out[k] = sanitizeRefs(v, base, onInvalid, counter, memo);
     }
@@ -500,7 +516,7 @@ async function resolveInner(rootUrl: string, rootContent: string, deps: Resolver
   }
   if (!timedOut && counter.external > 0 && readCalls === 0 && unreachable.size === 0) {
     // Loud failure if the library stopped calling our resolver at all (internals/behaviour changed).
-    unreachable.set(rootKey, "ref-parser behavior changed; resolver did not request any referenced document");
+    unreachable.set(rootKey, "external references were found but the ref-parser library never asked the resolver to read any of them (library behavior may have changed)");
   }
 
   // Return copies so late writes (after an overall timeout) cannot mutate what the caller holds.
