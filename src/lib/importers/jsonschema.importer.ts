@@ -652,7 +652,7 @@ function extractConstraints(node: JsonSchemaNode): {
 }
 
 /** "#/$defs/Customer" → "Customer"; "https://x/Order.json" → "Order"; "Card" → "Card". */
-function refToEntityName(ref: string): string {
+export function refToEntityName(ref: string): string {
   const last = ref.split(/[/#]/).filter(Boolean).pop() ?? ref;
   return last.replace(/\.(schema\.json|json)$/i, "");
 }
@@ -737,7 +737,7 @@ function resolveBase(ref: string, ctx: ResolveContext): { name: string; defined:
  * holds at most one cycle; the entity that closes it in document order loses its `extends` (fields untouched).
  * Iterative and linear: no recursion on document-controlled depth.
  */
-function breakInheritanceCycles(entities: ParsedEntity[], warnings: string[]): void {
+export function breakInheritanceCycles(entities: ParsedEntity[], warnings: string[]): void {
   const byName = new Map(entities.map((e, i) => [e.name, { entity: e, index: i }]));
   const done = new Set<string>();
   for (const start of entities) {
@@ -962,8 +962,31 @@ export function stripBom(content: string): string {
  * mapping it, comes back as a `PARSE_ERROR` instead of an unhandled exception in the import action.
  */
 export function parseJsonSchemaDocument(rawContent: string): Result<MultiEntityImportResult> {
+  return parseGuarded(rawContent);
+}
+
+/** A named `$defs` / `definitions` entry of a parsed document, as the importer classified and named it. */
+export interface DefinitionIndexEntry {
+  kind: "entity" | "enum" | "union" | "inline";
+  assetName: string;
+}
+
+/**
+ * `parseJsonSchemaDocument` plus the local-pointer index of the document's definitions (`#/$defs/Foo` -> kind and
+ * final asset name), so a cross-file `$ref` with a fragment can be pointed at the right asset.
+ */
+export function parseJsonSchemaDocumentIndexed(
+  rawContent: string
+): Result<{ doc: MultiEntityImportResult; definitions: Map<string, DefinitionIndexEntry> }> {
+  const definitions = new Map<string, DefinitionIndexEntry>();
+  const parsed = parseGuarded(rawContent, definitions);
+  if (!parsed.success) return parsed;
+  return ok({ doc: parsed.data, definitions });
+}
+
+function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndexEntry>): Result<MultiEntityImportResult> {
   try {
-    return importJsonSchemaDocument(stripBom(rawContent));
+    return importJsonSchemaDocument(stripBom(rawContent), outIndex);
   } catch (error) {
     return err({
       code: "PARSE_ERROR",
@@ -976,7 +999,7 @@ export function parseJsonSchemaDocument(rawContent: string): Result<MultiEntityI
   }
 }
 
-function importJsonSchemaDocument(content: string): Result<MultiEntityImportResult> {
+function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>): Result<MultiEntityImportResult> {
   const schema = parseStructured(content);
   if (schema === null) {
     return err({
@@ -1077,6 +1100,10 @@ function importJsonSchemaDocument(content: string): Result<MultiEntityImportResu
   }
 
   breakInheritanceCycles(entities, warnings);
+
+  if (outIndex) {
+    for (const [pointer, def] of definitions) outIndex.set(pointer, { kind: def.kind, assetName: def.assetName });
+  }
 
   if (entities.length === 0) {
     return err({

@@ -92,6 +92,11 @@ export interface ParsedField {
   unionName?: string;
   /** Member type names of that union, kept on the field so it stays valid when the union itself is not declared */
   unionMembers?: string[];
+  /**
+   * Set when the field points at a `$ref` target that could not be loaded (URL import): the field keeps a low-confidence
+   * reference by best-effort name. `ref` is the raw `$ref`, `resolvedUri` its absolute URI when computable.
+   */
+  danglingRef?: { ref: string; resolvedUri?: string; reason: string };
   /** Format-binding facts kept under `decorators.governance` (same keys the TypeSpec governance path stores) */
   governance?: ParsedFieldGovernance;
 }

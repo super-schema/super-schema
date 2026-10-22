@@ -294,6 +294,58 @@ function sanitizeRefs(
   return out;
 }
 
+/**
+ * Fetch the ROOT document of a URL import through the same guarded paths as the resolver: https only, internal git
+ * hosts via `gh` (coordinates validated by `parseGitFileUrl`), everything else through the SSRF-checked https fetcher,
+ * with the per-file size and per-fetch timeout limits. The root defines the git scope, so no scope check applies.
+ * Never throws: failures come back as `{ ok: false, reason }` with an already-sanitized reason.
+ */
+export async function fetchRootDocument(
+  url: string,
+  deps: ResolverDeps = {},
+): Promise<{ ok: true; content: string } | { ok: false; reason: string }> {
+  try {
+    const limits: Limits = { ...DEFAULT_LIMITS, ...deps.limits };
+    const hosts = deps.internalGitHosts ?? INTERNAL_GIT_HOSTS;
+    const lookup = deps.lookup ?? defaultLookup;
+    if (typeof url !== "string" || !url) return { ok: false, reason: "URL is empty" };
+    const scheme = schemeOf(url);
+    if (scheme === null) return { ok: false, reason: "local file references are not allowed" };
+    if (scheme !== "https") return { ok: false, reason: `scheme "${scheme}" is not allowed (only https)` };
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      return { ok: false, reason: "URL is not valid" };
+    }
+    const isGitHost = hosts.some((h) => h.toLowerCase() === u.hostname.toLowerCase());
+    let body: string;
+    if (isGitHost) {
+      const git = parseGitFileUrl(url, hosts);
+      if (!git.ok) return { ok: false, reason: git.reason };
+      const fetchGitFile = deps.fetchGitFile ?? createGhFetchGitFile(deps.execFile ?? defaultExec, limits, hosts);
+      const c = git.coords;
+      body = await withTimeout(fetchGitFile(c.host, c.owner, c.repo, c.ref, c.path), limits.perFetchTimeoutMs);
+    } else {
+      const check = checkHttpsUrl(url);
+      if (!check.ok) return { ok: false, reason: check.reason };
+      const fetchHttp = deps.fetchHttp ?? createDefaultFetchHttp(limits, lookup);
+      body = await withTimeout(
+        (async () => {
+          await assertPublicHost(u, lookup);
+          return fetchHttp(url);
+        })(),
+        limits.perFetchTimeoutMs,
+      );
+    }
+    if (typeof body !== "string") return { ok: false, reason: "document could not be read" };
+    if (Buffer.byteLength(body) > limits.maxFileBytes) return { ok: false, reason: "file exceeds the size limit" };
+    return { ok: true, content: body };
+  } catch (err) {
+    return { ok: false, reason: sanitizeReason(err) };
+  }
+}
+
 function gitScopeAllows(scopes: readonly string[], c: GitCoords): boolean {
   const host = c.host.toLowerCase();
   const owner = c.owner.toLowerCase();
