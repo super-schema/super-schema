@@ -388,6 +388,29 @@ function isExternalRef(ref: string): boolean {
 
 const DANGLING_REASON = "not defined in this document (kept as a dangling reference)";
 
+/** `$id` -> entry, per index (an index is never mutated after `indexDefinitions` returns). */
+const ID_INDEXES = new WeakMap<Map<string, DefinitionEntry>, Map<string, DefinitionEntry>>();
+
+/**
+ * The definition a `$ref` names: the `#/$defs/Foo` pointer, or the `$id` of an embedded `$defs` resource. A bundled document (this app's
+ * own JSON Schema output) lists every declaration under `$defs` with a `$id` and points at it by that `$id` (`"$ref": "Foo.json"`), which
+ * is how a compound document names an embedded resource; without this it read as a reference to a missing file.
+ */
+function definitionFor(definitions: Map<string, DefinitionEntry>, ref: string): DefinitionEntry | undefined {
+  const byPointer = definitions.get(ref);
+  if (byPointer || ref.startsWith("#")) return byPointer;
+  let byId = ID_INDEXES.get(definitions);
+  if (!byId) {
+    byId = new Map();
+    for (const entry of definitions.values()) {
+      const id = (entry.node as { $id?: unknown }).$id;
+      if (typeof id === "string" && id !== "" && !byId.has(id)) byId.set(id, entry);
+    }
+    ID_INDEXES.set(definitions, byId);
+  }
+  return byId.get(ref);
+}
+
 function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
   if ((ref === "#" || ref === "") && ctx.rootEntityName) {
     return {
@@ -399,7 +422,7 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
     };
   }
 
-  const def = ctx.definitions.get(ref);
+  const def = definitionFor(ctx.definitions, ref);
   if (def?.kind === "entity") {
     return {
       type: "reference",
@@ -449,7 +472,7 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
 /** Name of the named asset a `$ref` member of a union points at; `undefined` when it names no entity / enum. */
 function unionMemberName(ref: string, ctx: ResolveContext): string | undefined {
   if (ref === "#" || ref === "") return ctx.rootEntityName === undefined ? undefined : sanitizeIdentifier(ctx.rootEntityName);
-  const def = ctx.definitions.get(ref);
+  const def = definitionFor(ctx.definitions, ref);
   // Members are spelled the way the generator spells the models / enums they name (sanitizeIdentifier), so the
   // emitted `union` / `A | B` expression refers to declarations that exist.
   if (def) return def.kind === "entity" || def.kind === "enum" ? sanitizeIdentifier(def.assetName) : undefined;
@@ -794,7 +817,7 @@ function collectObjectMembers(node: JsonSchemaNode): ObjectMembers {
 /** The entity a base `$ref` names: in this document → its asset name; otherwise the name derived from the ref. */
 function resolveBase(ref: string, ctx: ResolveContext): { name: string; defined: boolean } | undefined {
   if (ref === "#" || ref === "") return ctx.rootEntityName ? { name: ctx.rootEntityName, defined: true } : undefined;
-  const def = ctx.definitions.get(ref);
+  const def = definitionFor(ctx.definitions, ref);
   if (def) return def.kind === "entity" ? { name: def.assetName, defined: true } : undefined;
   const name = refToEntityName(ref);
   return name ? { name, defined: false } : undefined;
