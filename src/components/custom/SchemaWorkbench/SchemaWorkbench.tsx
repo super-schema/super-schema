@@ -257,6 +257,9 @@ export function SchemaWorkbench({
   // ── Mode switching ──────────────────────────────────────────────────
 
   const startForm = useCallback((format: WorkbenchFormat) => {
+    // starting the form abandons a running URL fetch: a late result must not navigate away from it
+    urlRun.current += 1;
+    setUrlLoading(false);
     if (parseTimer.current) clearTimeout(parseTimer.current);
     expectedEcho.current = undefined;
     setHydrate(undefined);
@@ -316,6 +319,11 @@ export function SchemaWorkbench({
   }
 
   function selectMode(next: Mode) {
+    if (next !== "url") {
+      // any mode change abandons a running URL fetch (a late result is ignored)
+      urlRun.current += 1;
+      setUrlLoading(false);
+    }
     if (next === "form") {
       if (state.origin === "imported" && state.currentText.trim()) {
         setPending({
@@ -330,11 +338,6 @@ export function SchemaWorkbench({
       return;
     }
     setPending(null);
-    if (next !== "url") {
-      // leaving the URL input abandons a running fetch
-      urlRun.current += 1;
-      setUrlLoading(false);
-    }
     setMode(next);
   }
 

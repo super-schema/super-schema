@@ -5,11 +5,17 @@ import { SchemaWorkbench } from "@/components/custom/SchemaWorkbench";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 
 const importAction = vi.hoisted(() => vi.fn());
+const control = vi.hoisted(() => ({ reject: false }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/jsonschema-url-import-actions", () => ({
-  importJsonSchemaFromUrlAction: importAction,
+  // A plain wrapper (not the spy itself): vitest's spy bookkeeping reports a rejecting spy as an unhandled error of the test.
+  importJsonSchemaFromUrlAction: (...args: unknown[]) =>
+    control.reject ? Promise.reject(new Error("boom")) : importAction(...args),
 }));
 
-beforeEach(() => importAction.mockReset());
+beforeEach(() => {
+  importAction.mockReset();
+  control.reject = false;
+});
 afterEach(cleanup);
 
 const GOOD = "https://github.paypal.com/org/repo/blob/main/schemas/order.json";
@@ -132,6 +138,50 @@ describe("SchemaWorkbench - From URL mode", () => {
     expect(err.textContent).toMatch(/failed unexpectedly/);
     expect(err.textContent).not.toMatch(/undefined|Cannot read/);
     await waitFor(() => expect(button().disabled).toBe(false));
+  });
+
+  it("shows the sanitized error when the action rejects (network failure)", async () => {
+    control.reject = true; // the action's promise rejects (as a failed network call does)
+    const { onImportResult } = setup();
+    type(GOOD);
+    fireEvent.click(button());
+    const err = await screen.findByTestId("workbench-url-error");
+    expect(err.getAttribute("role")).toBe("alert");
+    expect(err.textContent).not.toContain("boom");
+    await waitFor(() => expect(button().disabled).toBe(false));
+    expect(onImportResult).not.toHaveBeenCalled();
+  });
+
+  it("ignores a late result after the user clicks Build form", async () => {
+    let resolve!: (v: unknown) => void;
+    importAction.mockReturnValue(new Promise((r) => (resolve = r)));
+    const { onImportResult } = setup();
+    type(GOOD);
+    fireEvent.click(button());
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    await act(async () => resolve({ success: true, data: resultWithDangling() }));
+    expect(onImportResult).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("workbench-url-input")).toBeNull();
+    expect(screen.getByRole("button", { name: "Build form" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("abandons a pending fetch when Build form asks to discard an import, and once that is confirmed", async () => {
+    let resolve!: (v: unknown) => void;
+    importAction.mockReturnValue(new Promise((r) => (resolve = r)));
+    const { onImportResult } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), {
+      target: { value: '{"type":"record","name":"C","fields":[{"name":"id","type":"long"}]}' },
+    });
+    fireEvent.click(screen.getByTestId("workbench-load-button"));
+    await waitFor(() => expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).not.toBe(""));
+    fireEvent.click(screen.getByRole("button", { name: "From URL" }));
+    type(GOOD);
+    fireEvent.click(button());
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard import" }));
+    await act(async () => resolve({ success: true, data: resultWithDangling() }));
+    expect(onImportResult).not.toHaveBeenCalled();
   });
 
   it("ignores a late result after switching mode", async () => {

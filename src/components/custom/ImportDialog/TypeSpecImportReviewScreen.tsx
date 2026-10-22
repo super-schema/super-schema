@@ -21,6 +21,7 @@ import {
   MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE,
   ParsedEntityDetails,
   ParsedFieldDetails,
+  danglingReferenceOf,
   ParsedFieldSummaryBadges,
 } from "./ParsedFieldDetails";
 
@@ -198,7 +199,7 @@ export function TypeSpecImportReviewScreen({
   }
 
   const danglingCount = importResult.models.reduce(
-    (n, model) => n + model.fields.filter((f) => f.danglingRef).length,
+    (n, model) => n + model.fields.filter((f) => danglingReferenceOf(f, entityNames)).length,
     0,
   );
 
@@ -242,7 +243,7 @@ export function TypeSpecImportReviewScreen({
           data-testid="import-dangling-banner"
           className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-caption text-foreground"
         >
-          {danglingCount} reference(s) could not be loaded — they will stay as dangling references. Imported
+          {danglingCount} reference(s) could not be loaded or are not defined in this import — they will stay as dangling references. Imported
           entities are created as drafts.
         </div>
       )}

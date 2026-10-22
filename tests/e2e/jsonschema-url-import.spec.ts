@@ -71,8 +71,8 @@ test.describe("JSON Schema import by URL", () => {
     await fetchButton.click();
     const error = page.getByTestId("workbench-url-error");
     await expect(error).toHaveAttribute("role", "alert");
-    await expect(error).not.toHaveText(/enter the url/i, { timeout: 30_000 });
-    await expect(error).not.toBeEmpty();
+    // The refusal is the server's: the scheme guard's message, not the client-side "enter the URL" one.
+    await expect(error).toContainText(/could not be loaded/i, { timeout: 30_000 });
     await expect(fetchButton).toBeEnabled();
     // Still on the workbench: no review screen, no crash.
     await expect(page.getByTestId("typespec-import-review")).toHaveCount(0);
