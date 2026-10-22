@@ -25,6 +25,9 @@ import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespe
 
 const execFileAsync = promisify(execFile);
 
+/** Same limit as the importer (MAX_IMPORTED_NAME_LENGTH), checked again here for names that were stored before it existed. */
+const MAX_EMITTED_NAME_LENGTH = 128;
+
 export interface OfficialTypeSpecTargetResult {
   output: string;
   validationStatus: ValidationStatus;
@@ -111,6 +114,12 @@ export async function emitOfficialTypeSpecTargetFromData(
   }
 
   const model = compileEntity(entity, fields);
+  // A name that already exists in the database may be too long for the emitters (they write a file per declaration and crash with
+  // ENAMETOOLONG): say so instead.
+  const overlong = [model.entity.name, ...model.fields.map((f) => f.name)].find((name) => name.length > MAX_EMITTED_NAME_LENGTH);
+  if (overlong !== undefined) {
+    return invalidResult(`The name "${overlong.slice(0, 40)}..." is ${overlong.length} characters long; names longer than ${MAX_EMITTED_NAME_LENGTH} characters cannot be generated. Rename it.`);
+  }
   // Names that this target rewrites into the same identifier would give an invalid schema: refuse, naming them.
   const collisions = findNameCollisions(model, target.key);
   if (collisions.length > 0) {

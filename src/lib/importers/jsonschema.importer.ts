@@ -313,6 +313,8 @@ interface ResolveContext {
 /** A union with more members than this is not a real schema; the excess is dropped (and reported). */
 export const MAX_UNION_MEMBERS = 200;
 
+/** Entity and field names above this length are not imported (the emitters write a file per declaration). */
+export const MAX_IMPORTED_NAME_LENGTH = 128;
 
 const MAX_REF_DEPTH = 16;
 /** Combinator nesting past this is not a real schema; resolve it as an unknown at low confidence. */
@@ -1328,6 +1330,23 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     }
   }
 
+  // An entity or field name longer than the limit is refused: the emitters write a file per declaration and crash (ENAMETOOLONG) on a
+  // very long one. In a document with other entities the offender is skipped with a warning; when nothing is left it is an error.
+  const offences: string[] = [];
+  const kept = entities.filter((entity) => {
+    const long = entity.name.length > MAX_IMPORTED_NAME_LENGTH
+      ? `Entity "${entity.name.slice(0, 40)}..." has a name of ${entity.name.length} characters (the limit is ${MAX_IMPORTED_NAME_LENGTH})`
+      : entity.fields.some((f) => f.name.length > MAX_IMPORTED_NAME_LENGTH)
+        ? `Entity "${entity.name}" has the field "${entity.fields.find((f) => f.name.length > MAX_IMPORTED_NAME_LENGTH)!.name.slice(0, 40)}..." with a name longer than ${MAX_IMPORTED_NAME_LENGTH} characters`
+        : undefined;
+    if (long) offences.push(long);
+    return !long;
+  });
+  if (offences.length > 0 && kept.length === 0) {
+    return err({ code: "PARSE_ERROR", message: `${offences[0]}; names longer than ${MAX_IMPORTED_NAME_LENGTH} characters cannot be imported.`, suggestedFix: "Shorten the title / property names." });
+  }
+  for (const offence of offences) warnings.push(`${offence}; it was skipped (names longer than ${MAX_IMPORTED_NAME_LENGTH} characters cannot be imported).`);
+  entities.splice(0, entities.length, ...kept);
   for (const entity of entities) {
     for (const collision of collidingFieldNames(entity.fields.map((f) => f.name))) {
       warnings.push(`Entity "${entity.name}": the fields ${collision.names.map((n) => `"${n}"`).join(" and ")} would both be written as "${collision.becomes}" in ${collision.targets.join(", ")}; those targets will refuse to generate until one is renamed.`);
