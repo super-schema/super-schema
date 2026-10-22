@@ -197,6 +197,11 @@ export function TypeSpecImportReviewScreen({
     });
   }
 
+  const danglingCount = importResult.models.reduce(
+    (n, model) => n + model.fields.filter((f) => f.danglingRef).length,
+    0,
+  );
+
   return (
     <div className="space-y-space-4" data-testid="typespec-import-review">
       <div>
@@ -230,6 +235,17 @@ export function TypeSpecImportReviewScreen({
           ))}
         </select>
       </div>
+
+      {danglingCount > 0 && (
+        <div
+          role="status"
+          data-testid="import-dangling-banner"
+          className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-caption text-foreground"
+        >
+          {danglingCount} reference(s) could not be loaded — they will stay as dangling references. Imported
+          entities are created as drafts.
+        </div>
+      )}
 
       {importResult.warnings.length > 0 && (
         <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 space-y-1">

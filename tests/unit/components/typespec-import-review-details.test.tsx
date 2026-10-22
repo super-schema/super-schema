@@ -125,3 +125,37 @@ describe("TypeSpecImportReviewScreen field details", () => {
     expect(screen.getByLabelText("Order entity")).toBeDefined();
   });
 });
+
+describe("TypeSpecImportReviewScreen dangling banner", () => {
+  function renderWith(mark: string[]) {
+    const parsed = parseJsonSchemaDocument(JSON.stringify(SCHEMA));
+    if (!parsed.success) throw new Error("import failed");
+    const importResult = toAssetImportResult(parsed.data);
+    const fields = importResult.models.find((m) => m.name === "Order")!.fields;
+    for (const f of fields) delete f.danglingRef;
+    for (const name of mark) {
+      fields.find((f) => f.name === name)!.danglingRef = { ref: `./${name}.json`, reason: "could not be fetched (404)" };
+    }
+    importResult.warnings = []; // the count comes from the models, not from the warning text
+    render(
+      <TypeSpecImportReviewScreen
+        importResult={importResult}
+        domains={[{ id: "d1", name: "Payments" }]}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+  }
+
+  it("counts fields with a danglingRef from the models", () => {
+    renderWith(["owner", "payment"]);
+    const banner = screen.getByTestId("import-dangling-banner");
+    expect(banner.textContent).toContain("2 reference(s) could not be loaded");
+    expect(banner.textContent).toContain("they will stay as dangling references");
+  });
+
+  it("shows no banner when nothing is dangling", () => {
+    renderWith([]);
+    expect(screen.queryByTestId("import-dangling-banner")).toBeNull();
+  });
+});

@@ -304,6 +304,17 @@ export function EntityCreationWizard({
     })();
   }
 
+  /** A URL import from the workbench: always the multi-asset review (it shows warnings and dangling markers). */
+  function handleUrlImportResult(result: TypeSpecImportResult) {
+    if (!product) {
+      setError("Importing from a URL creates assets in a product. Start from a domain or product page.");
+      return;
+    }
+    setError(null);
+    setTypeSpecResult(result);
+    setState((prev) => ({ ...prev, step: "typespec-review" }));
+  }
+
   // Multi-asset confirm handler (TypeSpec, Protobuf, Avro, JSON Schema)
   async function handleTypeSpecConfirm(selection: TypeSpecImportSelection) {
     if (!typeSpecResult || !product) return;
@@ -527,6 +538,7 @@ export function EntityCreationWizard({
           <SchemaWorkbench
             onCommit={(content, format, filename) => handleImportSubmit(content, filename, format)}
             onBack={goToSelectMethod}
+            onImportResult={handleUrlImportResult}
             referenceTargets={referenceTargets}
             error={error}
             isLoading={isLoading}

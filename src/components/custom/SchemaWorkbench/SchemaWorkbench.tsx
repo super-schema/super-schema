@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { AlertCircle, AlertTriangle, ArrowLeft, FileCode, Upload } from "lucide-react";
+import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { cn } from "@/lib/utils";
 import { VISUAL_FORMATS } from "@/components/custom/VisualSchemaBuilder/registry";
 import type { ImportFormat } from "@/lib/importers/types";
@@ -21,7 +22,22 @@ import { JsonEditor } from "@/features/events/builder/template/controls/JsonEdit
 import { DetailPanel } from "./DetailPanel";
 import { HighlightedTextarea } from "./HighlightedTextarea";
 
-type Mode = "drop" | "paste" | "form";
+type Mode = "drop" | "paste" | "url" | "form";
+
+const MAX_URL_LENGTH = 2048;
+
+/** Obvious problems only; the server re-validates everything. */
+function urlProblem(url: string): string | null {
+  if (url === "") return "Enter the URL of a JSON Schema file.";
+  if (url.length > MAX_URL_LENGTH) return `The URL is too long (more than ${MAX_URL_LENGTH} characters).`;
+  try {
+    const { protocol } = new URL(url);
+    if (protocol !== "https:" && protocol !== "http:") return "Enter an http(s) URL.";
+  } catch {
+    return "Enter an http(s) URL.";
+  }
+  return null;
+}
 
 const ACCEPT = ".tsp,.avsc,.avro,.json,.yaml,.yml,.sql,.ddl,.proto";
 const PARSE_DEBOUNCE_MS = 300;
@@ -41,6 +57,7 @@ Example (Avro):
 const MODES: { id: Mode; label: string }[] = [
   { id: "drop", label: "Drop file" },
   { id: "paste", label: "Paste" },
+  { id: "url", label: "From URL" },
   { id: "form", label: "Build form" },
 ];
 
@@ -48,6 +65,8 @@ export interface SchemaWorkbenchProps {
   /** Commit the current schema. `format` is set for form-built schemas; undefined → re-detect. */
   onCommit: (content: string, format: ImportFormat | undefined, filename?: string) => void;
   onBack: () => void;
+  /** Receives a URL import (several assets, dangling-reference markers); without it the From URL mode is hidden. */
+  onImportResult?: (result: TypeSpecImportResult) => void;
   referenceTargets?: { id?: string; name: string }[];
   error?: string | null;
   isLoading?: boolean;
@@ -58,6 +77,7 @@ export interface SchemaWorkbenchProps {
 export function SchemaWorkbench({
   onCommit,
   onBack,
+  onImportResult,
   referenceTargets = [],
   error,
   isLoading = false,
@@ -85,9 +105,15 @@ export function SchemaWorkbench({
   const expectedEcho = useRef<{ text: string | null } | undefined>(undefined);
   const parseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nonce = useRef(0);
+  const [urlText, setUrlText] = useState("");
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const [urlLoading, setUrlLoading] = useState(false);
+  // Bumped on mode change / unmount: a late result of an older run is ignored.
+  const urlRun = useRef(0);
 
   useEffect(
     () => () => {
+      urlRun.current += 1;
       if (parseTimer.current) clearTimeout(parseTimer.current);
     },
     []
@@ -149,6 +175,39 @@ export function SchemaWorkbench({
     },
     [pasteText, pasteKindState]
   );
+
+  // ── Import by URL ───────────────────────────────────────────────────
+
+  async function fetchUrl() {
+    const url = urlText.trim();
+    const problem = urlProblem(url);
+    if (problem) {
+      setUrlError(problem);
+      return;
+    }
+    if (!onImportResult) return;
+    const run = ++urlRun.current;
+    setUrlError(null);
+    setUrlLoading(true);
+    try {
+      // Loaded on demand (like the wizard's other actions): keeps the server-action graph out of the initial chunk.
+      const { importJsonSchemaFromUrlAction } = await import(
+        "@/app/(dashboard)/schemas/[domainSlug]/jsonschema-url-import-actions"
+      );
+      const result = await importJsonSchemaFromUrlAction(url);
+      if (run !== urlRun.current) return;
+      if (!result.success) {
+        setUrlError(result.error.message);
+        return;
+      }
+      onImportResult(result.data);
+    } catch {
+      if (run !== urlRun.current) return;
+      setUrlError("The import failed unexpectedly. Try again.");
+    } finally {
+      if (run === urlRun.current) setUrlLoading(false);
+    }
+  }
 
   // ── Form ↔ panel handshake ──────────────────────────────────────────
 
@@ -271,6 +330,11 @@ export function SchemaWorkbench({
       return;
     }
     setPending(null);
+    if (next !== "url") {
+      // leaving the URL input abandons a running fetch
+      urlRun.current += 1;
+      setUrlLoading(false);
+    }
     setMode(next);
   }
 
@@ -317,7 +381,7 @@ export function SchemaWorkbench({
 
       {/* Source switcher */}
       <div className="flex items-center border border-border rounded-lg overflow-hidden self-start">
-        {MODES.map((m) => (
+        {MODES.filter((m) => m.id !== "url" || onImportResult).map((m) => (
           <button
             key={m.id}
             type="button"
@@ -495,6 +559,54 @@ export function SchemaWorkbench({
                 Load schema
               </button>
             </>
+          )}
+
+          {mode === "url" && (
+            <div className="flex flex-col gap-space-2">
+              <input
+                data-testid="workbench-url-input"
+                aria-label="Schema URL"
+                type="text"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                value={urlText}
+                onChange={(e) => setUrlText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !urlLoading) void fetchUrl();
+                }}
+                placeholder="https://github.paypal.com/<org>/<repo>/blob/<ref>/path/schema.json"
+                className="w-full h-9 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <p className="text-caption text-muted-foreground">
+                Only https URLs are fetched; relative $ref paths inside the file are resolved against this URL.
+                References that cannot be loaded stay as dangling references and the entity stays in draft.
+              </p>
+              <button
+                type="button"
+                data-testid="workbench-url-fetch-button"
+                disabled={urlLoading}
+                onClick={() => void fetchUrl()}
+                className="self-start px-4 py-1.5 rounded-lg text-body-small bg-muted hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Fetch and import
+              </button>
+              {urlLoading && (
+                <p data-testid="workbench-url-status" role="status" className="text-caption text-muted-foreground">
+                  Fetching and resolving references…
+                </p>
+              )}
+              {urlError && (
+                <div
+                  data-testid="workbench-url-error"
+                  role="alert"
+                  className="flex items-start gap-space-2 text-body-small text-destructive"
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{urlError}</span>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Kept mounted (just hidden) while another input is shown, so form state survives tab switches. */}
