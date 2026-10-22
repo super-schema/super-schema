@@ -48,6 +48,12 @@ describe("getTargetRequirements: primary key", () => {
     expect(missing[0].suggested).toEqual(expected);
   });
 
+  it("never offers an array, map or object field as a key (no target can key on a collection)", () => {
+    const fields = [f("tags", { type: "array" }), f("attrs", { type: "map" }), f("meta", { type: "object" }), f("owner", { type: "reference" }), f("tenant")];
+    const { missing } = getTargetRequirements("bigquery", { name: "T", fields });
+    expect(missing[0].candidates).toEqual(["owner", "tenant"]);
+  });
+
   it("never marks a suggestion as a key (inputs are not mutated)", () => {
     const fields = [f("id")];
     getTargetRequirements("bigquery", { name: "T", fields });

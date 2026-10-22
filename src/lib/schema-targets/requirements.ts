@@ -23,7 +23,7 @@ export interface RequirementEntityShape {
 export interface MissingRequirement {
   code: "primary-key";
   message: string;
-  /** Every field the user may pick (all fields that are not keys). */
+  /** Every field the user may pick (the non-key fields that are not collections: an array, map or object cannot identify a row). */
   candidates: string[];
   /** A pre-selection for the form (may be empty). */
   suggested: string[];
@@ -37,6 +37,7 @@ type RequirementCheck = (entity: RequirementEntityShape) => MissingRequirement |
 
 const KEY_NAMES = new Set(["id", "uuid", "key"]);
 const KEYLIKE_TYPES = /^(string|int8|int16|int32|int64|uint8|uint16|uint32|uint64|integer|safeint|uuid)$/i;
+const COLLECTION_TYPES = /^(array|map|object)$/i;
 const compact = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** The default selection: `id` / `<entity>_id` / `<entity>Id` / `uuid` / `key`; else the first required string/integer field; else none. */
@@ -56,7 +57,7 @@ export function primaryKeyRequirement(entity: RequirementEntityShape): MissingRe
   return {
     code: "primary-key",
     message: `${entity.name || "This entity"} has no primary key. This target needs at least one field that identifies a row.`,
-    candidates: entity.fields.filter((field) => !field.isKey).map((field) => field.name),
+    candidates: entity.fields.filter((field) => !field.isKey && !COLLECTION_TYPES.test(field.type)).map((field) => field.name),
     suggested: suggestPrimaryKey(entity),
   };
 }

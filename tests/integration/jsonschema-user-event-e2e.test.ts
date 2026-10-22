@@ -206,14 +206,14 @@ describe("user event schema: emission with the real emitters", () => {
     expect(result.output).toContain("common_components/v4/schema/json/openapi-2.0/date_time.json");
   });
 
-  it("asks for a primary key for BigQuery before one is set, with every field as a candidate", () => {
+  it("asks for a primary key for BigQuery before one is set; the array field is no candidate", () => {
     const asked = getTargetRequirements("bigquery", {
       name: "UserEvent",
       fields: prismaFields().map((f) => ({ name: f.name, isKey: f.isKey, nullable: f.nullable, type: f.type })),
     });
     expect(asked.missing).toHaveLength(1);
     expect(asked.missing[0].code).toBe("primary-key");
-    expect(asked.missing[0].candidates).toEqual(["component", "tenant", "created_time", "user_links"]);
+    expect(asked.missing[0].candidates).toEqual(["component", "tenant", "created_time"]);
     expect(asked.missing[0].suggested).toEqual(["tenant"]);
   });
 
