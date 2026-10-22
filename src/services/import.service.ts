@@ -22,6 +22,7 @@ import { parseTypeSpecSchema, type TypeSpecImportResult } from "@/lib/importers/
 import { detectFormat } from "@/lib/importers/format-detector";
 import {
   countImportAssets,
+  lowConfidenceWarning,
   lowConfidenceWarnings,
   toAssetImportResult,
   toSingleEntityImport,
@@ -199,7 +200,9 @@ export function bulkImport(
     for (const field of parsedEntity.fields) {
       if (field.confidence === "low") {
         warnings.push(
-          `${file.filename} — field "${field.name}": low confidence mapping from ${field.originalType} to ${field.type}`
+          field.danglingRef
+            ? `${file.filename} — ${lowConfidenceWarning(field, field.name)}`
+            : `${file.filename} — field "${field.name}": low confidence mapping from ${field.originalType} to ${field.type}`
         );
       }
     }

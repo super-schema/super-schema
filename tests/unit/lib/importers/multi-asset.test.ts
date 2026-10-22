@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { parseProtobufDocument } from "@/lib/importers/protobuf.importer";
+import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
 import { parseAvroDocument } from "@/lib/importers/avro.importer";
-import { countImportAssets, toAssetImportResult } from "@/lib/importers/multi-asset";
+import { countImportAssets, lowConfidenceWarnings, toAssetImportResult } from "@/lib/importers/multi-asset";
 import type { MultiEntityImportResult } from "@/lib/importers/types";
 
 function fixture(name: string): string {
@@ -62,5 +63,29 @@ describe("toAssetImportResult", () => {
 describe("countImportAssets", () => {
   it("counts entities, enums and scalars", () => {
     expect(countImportAssets(protoDoc())).toBe(6);
+  });
+});
+
+describe("lowConfidenceWarnings for unresolved external references", () => {
+  const entityOf = (schema: unknown) => {
+    const r = parseJsonSchemaDocument(JSON.stringify(schema));
+    if (!r.success) throw new Error(r.error.message);
+    return r.data.entities[0];
+  };
+
+  it("names the reference of a direct field and of an array's items, with the file name", () => {
+    const entity = entityOf({
+      type: "object",
+      properties: { created_time: { $ref: "common/date_time.json" }, user_links: { type: "array", items: { $ref: "user_links.json" } } },
+    });
+    expect(lowConfidenceWarnings(entity, false)).toEqual([
+      "Field `created_time`: references `common/date_time.json`, which is not defined in this document (kept as a dangling reference)",
+      "Field `user_links`: items reference `user_links.json`, which is not defined in this document (kept as a dangling reference)",
+    ]);
+  });
+
+  it("keeps the old wording for another low-confidence field", () => {
+    const entity = { name: "E", fields: [{ name: "n", type: "string", originalType: "integer|string", confidence: "low", nullable: true, isKey: false }] };
+    expect(lowConfidenceWarnings(entity as never, true)).toEqual(['Field "E.n": low confidence mapping from integer|string to string']);
   });
 });

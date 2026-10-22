@@ -9,7 +9,7 @@
  * Pure functions — no side effects, no I/O.
  */
 
-import type { ImportResult, MultiEntityImportResult, ParsedEntity } from "./types";
+import type { ImportResult, MultiEntityImportResult, ParsedEntity, ParsedField } from "./types";
 import type { TypeSpecImportModel, TypeSpecImportResult } from "./typespec.importer";
 
 /** Assets a document defines (entities + enums + scalars); >1 means multi-asset review. */
@@ -57,14 +57,23 @@ export function toSingleEntityImport(doc: MultiEntityImportResult): ImportResult
   return { parsedEntity, warnings };
 }
 
+/**
+ * The note for one low-confidence field. A field whose low confidence is an unresolved external reference names the reference
+ * (`danglingRef.ref`) instead of the meaningless "from array to array".
+ */
+export function lowConfidenceWarning(field: ParsedField, displayName: string): string {
+  const dangling = field.danglingRef;
+  if (dangling) {
+    return `Field \`${displayName}\`: ${dangling.element ? "items reference" : "references"} \`${dangling.ref}\`, which is not defined in this document (kept as a dangling reference)`;
+  }
+  return `Field "${displayName}": low confidence mapping from ${field.originalType} to ${field.type}`;
+}
+
 /** Same wording `importSchema` uses for its low-confidence warnings, qualified by entity. */
 export function lowConfidenceWarnings(entity: ParsedEntity, qualify: boolean): string[] {
   return entity.fields
     .filter((field) => field.confidence === "low")
-    .map(
-      (field) =>
-        `Field "${qualify ? `${entity.name}.` : ""}${field.name}": low confidence mapping from ${field.originalType} to ${field.type}`
-    );
+    .map((field) => lowConfidenceWarning(field, `${qualify ? `${entity.name}.` : ""}${field.name}`));
 }
 
 function referencedNames(entity: ParsedEntity, known: Set<string>): string[] {
