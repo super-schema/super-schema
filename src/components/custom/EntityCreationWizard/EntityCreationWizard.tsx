@@ -435,9 +435,12 @@ export function EntityCreationWizard({
       setError(result.error);
     } else {
       invalidateDomainsTree();
-      // Navigate back to the product page
+      // An imported entity opens on its own page (the user reviews what was kept and what is pending there, and generates from
+      // it); a blank or generated one returns to the product page. The entity route takes the id as well as the slug.
       router.push(
-        assetHref({ kind: "product", domainSlug: product.domainSlug, productSlug: product.productSlug })
+        state.importedEntity && result?.entityId
+          ? assetHref({ kind: "entity", slug: result.entityId, domainSlug: product.domainSlug, productSlug: product.productSlug })
+          : assetHref({ kind: "product", domainSlug: product.domainSlug, productSlug: product.productSlug })
       );
       router.refresh();
     }

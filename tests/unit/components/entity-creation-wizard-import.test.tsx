@@ -162,6 +162,17 @@ describe("EntityCreationWizard — multi-entity import", () => {
     });
   });
 
+  it("opens the NEW entity page after a single-entity import creates it (not the product page)", async () => {
+    mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e-new" });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(`syntax = "proto3";\nmessage User { string id = 1; }`);
+    await waitFor(() => expect(screen.getByDisplayValue("User")).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Entity" }));
+
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/schemas/payments/checkout/e-new"));
+  });
+
   it("explains that multi-entity imports go into a product at the Enterprise level", async () => {
     render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
     await pasteAndParse(ORDER_PROTO);
