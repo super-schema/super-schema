@@ -5,6 +5,7 @@
  * and returns a list of actionable alerts. No side effects, no DB access.
  */
 
+import { activeDanglingRef } from "@/lib/field-dangling";
 import type { CompletenessRequirements, CompletenessRequirement } from "@/types/schemas/domain-policy";
 import {
   buildSchemaTargetFieldMappings,
@@ -79,14 +80,16 @@ function isEnabled(r: CompletenessRequirement | undefined): r is CompletenessReq
   return !!r && r.enabled;
 }
 
-/** The raw `$ref` strings of the fields that hold an unresolved external reference (`decorators.danglingRef`), once each, in field order. */
-export function unresolvedReferences(fields: ReadonlyArray<Pick<AlertFieldInput, "decorators">>): string[] {
-  const refs: string[] = [];
+const MAX_REFS_IN_TITLE = 5;
+
+/** The raw `$ref` strings of the fields that are still an unresolved external reference (`decorators.danglingRef`, gated on the type), once each, in field order. */
+export function unresolvedReferences(fields: ReadonlyArray<Pick<AlertFieldInput, "decorators" | "type">>): string[] {
+  const refs = new Set<string>();
   for (const field of fields) {
-    const marker = (field.decorators as { danglingRef?: { ref?: unknown } } | undefined)?.danglingRef;
-    if (typeof marker?.ref === "string" && marker.ref !== "" && !refs.includes(marker.ref)) refs.push(marker.ref);
+    const marker = activeDanglingRef(field.type, field.decorators);
+    if (marker) refs.add(marker.ref);
   }
-  return refs;
+  return [...refs];
 }
 
 export function generateEntityAlerts(
@@ -172,7 +175,7 @@ export function generateEntityAlerts(
       id: "entity-unresolved-references",
       severity: "warning",
       category: "entity",
-      title: `${unresolved.length} unresolved reference${unresolved.length !== 1 ? "s" : ""}: ${unresolved.join(", ")}`,
+      title: `${unresolved.length} unresolved reference${unresolved.length !== 1 ? "s" : ""}: ${unresolved.slice(0, MAX_REFS_IN_TITLE).join(", ")}${unresolved.length > MAX_REFS_IN_TITLE ? ` +${unresolved.length - MAX_REFS_IN_TITLE} more` : ""}`,
       description: "The entity stays DRAFT until they are resolved; the references are kept as written and emitted as untyped values.",
       action: "Review fields",
     });

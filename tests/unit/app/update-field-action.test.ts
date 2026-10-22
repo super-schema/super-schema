@@ -188,3 +188,26 @@ describe("entity field actions: the field write and the draft mark are one atomi
     expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "ent-1");
   });
 });
+
+describe("updateFieldAction clears the dangling-reference marker when the field is resolved", () => {
+  const DANGLING = { ...OWN_FIELD, type: "reference", decorators: { referencedEntityName: "date_time", danglingRef: { ref: "common/date_time.json" }, semantics: { description: "when" } } };
+  const written = () => mockPrisma.field.update.mock.calls[0][0].data as { decorators?: Record<string, unknown> };
+
+  it("a type change away from reference removes the marker and keeps every other decorator", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue(DANGLING);
+    expect(await update("fld-1", { type: "string" })).toEqual({ success: true });
+    expect(written().decorators).toEqual({ referencedEntityName: "date_time", semantics: { description: "when" } });
+  });
+
+  it("a changed reference target removes the marker", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue(DANGLING);
+    await update("fld-1", { decorators: { ...DANGLING.decorators, referencedEntityName: "Customer" } });
+    expect(written().decorators).not.toHaveProperty("danglingRef");
+  });
+
+  it("an edit that keeps the field the same reference (description only) writes no decorators", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue(DANGLING);
+    await update("fld-1", { description: "new" });
+    expect(written()).not.toHaveProperty("decorators");
+  });
+});

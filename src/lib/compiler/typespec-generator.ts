@@ -19,6 +19,7 @@ import type {
   SuperSchemaOperation,
 } from "@/types/super-schema-model";
 import { getTypeInfo } from "@/lib/data-types";
+import { activeDanglingRef } from "@/lib/field-dangling";
 import {
   ENTERPRISE_NAMESPACE,
   LIBRARY_IMPORTS,
@@ -384,7 +385,7 @@ function hasGenericExtensions(model: SuperSchemaModel): boolean {
   return (
     genericExtensionEntries(modelExtensions(model)).length > 0 ||
     model.fields.some((f) => genericExtensionEntries(f.decorators.typespec?.extensions?.openapi).length > 0) ||
-    model.fields.some((f) => f.danglingRef !== undefined)
+    model.fields.some((f) => isDanglingField(f))
   );
 }
 
@@ -701,6 +702,14 @@ function generateOperationDefinition(op: SuperSchemaOperation): string[] {
 // Field definition
 // ---------------------------------------------------------------------------
 
+/**
+ * True when the field is generated as `unknown`: it carries a dangling-reference marker AND its type still agrees with it
+ * (`reference` for a direct reference, `array` for an item reference). A stale marker never produces `unknown`.
+ */
+function isDanglingField(field: SuperSchemaField): boolean {
+  return activeDanglingRef(field.type, { danglingRef: field.danglingRef, arrayElementType: field.complexType?.arrayElementType }) !== undefined;
+}
+
 function generateFieldDefinition(
   field: SuperSchemaField,
   ctx: GenContext,
@@ -765,20 +774,26 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     decorators.push("@secret");
   }
 
+  // A dangling reference is generated as `unknown` / `unknown[]`. The real compiler rejects @format, @encode, @discriminator and the
+  // string / numeric validators on it (decorator-wrong-target / invalid-encode); @key, @doc, @summary, @secret, @visibility, @example,
+  // #deprecated, @encodedName and the extension decorators are fine (checked against the compiler). What is skipped here is not lost:
+  // it stays in the field's decorators in the database and comes back when the reference is resolved.
+  const unknownTyped = isDanglingField(field);
+
   // @discriminator
-  if (field.decorators.typespec?.identity?.discriminator) {
+  if (field.decorators.typespec?.identity?.discriminator && !unknownTyped) {
     decorators.push(`@discriminator("${escapeString(field.name)}")`);
   }
 
   // @format (from typespec identity)
-  if (field.decorators.typespec?.identity?.format) {
+  if (field.decorators.typespec?.identity?.format && !unknownTyped) {
     decorators.push(`@format("${escapeString(field.decorators.typespec.identity.format)}")`);
   }
 
   // Validation decorators
   const validation = field.decorators.typespec?.validation;
   // A dangling reference is generated as `unknown`: only the array bounds of `unknown[]` are valid on it.
-  const onUnknown = field.danglingRef !== undefined;
+  const onUnknown = unknownTyped;
   const onlyItems = onUnknown && field.danglingRef?.element === true;
   if (validation && onUnknown) {
     if (onlyItems && validation.minItems != null) decorators.push(`@minItems(${validation.minItems})`);
@@ -816,7 +831,7 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
   // Wire format decorators
   const wireFormat = field.decorators.typespec?.wireFormat;
   if (wireFormat) {
-    if (wireFormat.encode) {
+    if (wireFormat.encode && !unknownTyped) {
       if (wireFormat.encodeSubType) {
         decorators.push(
           `@encode("${escapeString(wireFormat.encode)}", "${escapeString(wireFormat.encodeSubType)}")`
@@ -878,7 +893,7 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
 
   // A dangling `$ref` keeps its original string: `$ref` for a direct reference, `items: { $ref }` for an array's item type.
   // The extensions are applied after the emitter's own keys, so they replace the `unknown` / `items: {}` they stand for.
-  if (field.danglingRef) {
+  if (field.danglingRef && unknownTyped) {
     const raw = `"${escapeTypeSpecString(field.danglingRef.ref)}"`;
     const args = field.danglingRef.element ? `"items", #{\`$ref\`: ${raw}}` : `"$ref", ${raw}`;
     decorators.push(`@TypeSpec.JsonSchema.extension(${args})`, `@TypeSpec.OpenAPI.extension(${args})`);
@@ -941,7 +956,7 @@ function resolveTypeSpecType(
   field: SuperSchemaField,
   ctx: GenContext
 ): string {
-  if (field.danglingRef) return field.danglingRef.element ? "unknown[]" : "unknown";
+  if (isDanglingField(field)) return field.danglingRef?.element ? "unknown[]" : "unknown";
   const typeInfo = getTypeInfo(field.type);
   const typespecScalar = typeInfo?.typespecScalar ?? field.type;
 

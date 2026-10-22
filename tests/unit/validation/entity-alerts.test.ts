@@ -300,3 +300,18 @@ describe("unresolved references alert", () => {
     expect(one?.title).toBe("1 unresolved reference: a.json");
   });
 });
+
+describe("unresolved references alert: bounded title", () => {
+  it("names at most five distinct references, then +N more", () => {
+    const fields: AlertFieldInput[] = Array.from({ length: 8 }, (_, i) =>
+      makeField({ id: `f${i}`, name: `f${i}`, type: "reference", decorators: { danglingRef: { ref: `r${i}.json` } } }),
+    );
+    const alert = generateEntityAlerts(makeEntity(), fields).find((a) => a.id === "entity-unresolved-references");
+    expect(alert?.title).toBe("8 unresolved references: r0.json, r1.json, r2.json, r3.json, r4.json +3 more");
+  });
+
+  it("ignores a stale marker on a field that is no longer a reference", () => {
+    const stale = makeField({ id: "s", name: "s", type: "string", decorators: { danglingRef: { ref: "x.json" } } });
+    expect(generateEntityAlerts(makeEntity(), [stale]).some((a) => a.id === "entity-unresolved-references")).toBe(false);
+  });
+});

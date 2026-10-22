@@ -6,6 +6,7 @@
  * Accepts plain objects matching Prisma's shape.
  */
 
+import { activeDanglingRef } from "@/lib/field-dangling";
 import type {
   SuperSchemaModel,
   SuperSchemaField,
@@ -118,17 +119,9 @@ function compileField(field: PrismaFieldInput): SuperSchemaField {
     aliases: field.aliases ?? [],
     decorators,
     complexType: complexType ?? undefined,
-    danglingRef: danglingRefOf(rawDecorators.danglingRef),
+    danglingRef: activeDanglingRef(logicalType, rawDecorators),
     sortOrder: field.sortOrder,
   };
-}
-
-/** `decorators.danglingRef` (stored JSON, so type-checked): a non-empty raw reference string. */
-function danglingRefOf(value: unknown): SuperSchemaField["danglingRef"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const { ref, element } = value as { ref?: unknown; element?: unknown };
-  if (typeof ref !== "string" || ref === "") return undefined;
-  return { ref, ...(element === true ? { element: true } : {}) };
 }
 
 // ---------------------------------------------------------------------------

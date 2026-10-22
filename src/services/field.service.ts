@@ -1,3 +1,4 @@
+import { decoratorsAfterFieldEdit } from "@/lib/field-dangling";
 import { prisma } from "@/lib/db";
 import { withAudit } from "@/lib/audit";
 import { generateSlug } from "@/lib/slug";
@@ -176,10 +177,14 @@ export async function updateField(
     fn: async () => {
       const updateData: Record<string, unknown> = {
           ...parsed.data,
-          decorators:
-            parsed.data.decorators !== undefined
-              ? (parsed.data.decorators as unknown as Prisma.InputJsonValue)
-              : undefined,
+          // An edit that resolves an unresolved external reference clears its marker (see field-dangling.ts).
+          decorators: (() => {
+            const next = decoratorsAfterFieldEdit(existing, {
+              type: typeof parsed.data.type === "string" ? parsed.data.type : undefined,
+              decorators: parsed.data.decorators as Record<string, unknown> | undefined,
+            });
+            return next !== undefined ? (next as unknown as Prisma.InputJsonValue) : undefined;
+          })(),
         };
       // Regenerate slug when name changes
       if (parsed.data.name && parsed.data.name !== existing.name) {

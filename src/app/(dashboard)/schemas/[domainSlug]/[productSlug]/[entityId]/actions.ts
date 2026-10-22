@@ -1,5 +1,6 @@
 "use server";
 
+import { activeDanglingRef, decoratorsAfterFieldEdit } from "@/lib/field-dangling";
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
@@ -304,6 +305,9 @@ export async function updateFieldAction(
       }
     }
 
+    // An edit that resolves an unresolved external reference (the type changes away from it, or its target changes) clears the marker.
+    const nextDecorators = decoratorsAfterFieldEdit(existing, { type: typeof rest.type === "string" ? rest.type : undefined, decorators });
+
     await withAudit({
       action: "UPDATE",
       entityType: "Field",
@@ -317,7 +321,7 @@ export async function updateFieldAction(
             where: { id: fieldId },
             data: {
               ...(rest as Prisma.FieldUpdateInput),
-              ...(decorators !== undefined && { decorators: decorators as Prisma.InputJsonValue }),
+              ...(nextDecorators !== undefined && { decorators: nextDecorators as Prisma.InputJsonValue }),
             },
           }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, existing.entityId),
@@ -1288,12 +1292,6 @@ function warningMessages(warnings: readonly unknown[]): string[] {
     .map((text) => (text.length > MAX_WARNING_LENGTH ? `${text.slice(0, MAX_WARNING_LENGTH - 1).trimEnd()}…` : text));
 }
 
-/** True when a field's stored decorators carry an unresolved external `$ref` (`decorators.danglingRef.ref`). */
-function hasDanglingRef(decorators: unknown): boolean {
-  const marker = decorators && typeof decorators === "object" ? (decorators as { danglingRef?: { ref?: unknown } }).danglingRef : undefined;
-  return typeof marker?.ref === "string" && marker.ref !== "";
-}
-
 /** The fields of an entity as the requirement checks read them (declaration order); null when the entity is gone. */
 async function loadRequirementShape(entityId: string): Promise<RequirementEntityShape | null> {
   const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { name: true } });
@@ -1305,7 +1303,7 @@ async function loadRequirementShape(entityId: string): Promise<RequirementEntity
   });
   return {
     name: entity.name,
-    fields: fields.map(({ decorators, ...field }) => ({ ...field, dangling: hasDanglingRef(decorators) })),
+    fields: fields.map(({ decorators, ...field }) => ({ ...field, dangling: activeDanglingRef(field.type, decorators as Record<string, unknown> | null) !== undefined })),
   };
 }
 
@@ -1369,7 +1367,7 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
     // The same rule the dialog's candidate list uses: a collection, JSON, union or unresolved reference cannot identify a row.
     for (const name of fieldNames) {
       const field = existing.find((candidate) => candidate.name === name);
-      const reason = field ? primaryKeyIneligibility({ name, type: field.type, dangling: hasDanglingRef(field.decorators) }) : null;
+      const reason = field ? primaryKeyIneligibility({ name, type: field.type, dangling: activeDanglingRef(field.type, field.decorators as Record<string, unknown> | null) !== undefined }) : null;
       if (reason) return { error: reason, code: "VALIDATION_ERROR" as const };
     }
 
