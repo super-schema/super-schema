@@ -6,8 +6,10 @@ import { cleanup, render, screen, within, fireEvent } from "@testing-library/rea
 import {
   ParsedFieldDetails,
   ParsedEntityDetails,
+  MAX_VALUE_CHARS,
+  MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE,
 } from "@/components/custom/ImportDialog/ParsedFieldDetails";
-import type { ParsedField } from "@/lib/importers/types";
+import type { ParsedEntity, ParsedField, ParsedFieldGovernance } from "@/lib/importers/types";
 
 vi.mock("@/components/custom/ValidationIndicator", () => ({
   ValidationIndicator: ({ status, tooltipContent }: { status: string; tooltipContent: string }) => (
@@ -40,7 +42,15 @@ const FULL: ParsedField = {
   deprecated: true,
   deprecatedMessage: "use total",
   classification: "PII",
-  governance: { dataClass: "PII", dataCategory: "contact" },
+  governance: { dataClass: "PII", dataCategory: "contact", protobufOneofGroup: "contact_oneof", avroFixedSize: 16 },
+  mapKeyType: "string",
+  mapValueType: "int64",
+  summary: "Order total summary",
+  visibility: ["Lifecycle.Read", "Lifecycle.Create"],
+  encode: "base64",
+  encodeSubType: "string",
+  secret: true,
+  discriminator: "kind",
   enumName: "Kind",
   enumValues: ["A", "B"],
   referencedEntityName: "Customer",
@@ -53,7 +63,7 @@ const FULL: ParsedField = {
     "x-owner": "team-a",
   },
   ignoredKeywords: ["not", "multipleOf"],
-  danglingRef: { ref: "./Customer.json", reason: "fetch failed (404)" },
+  danglingRef: { ref: "./Customer.json", resolvedUri: "https://x.test/Customer.json", reason: "fetch failed (404)" },
 };
 
 describe("ParsedFieldDetails", () => {
@@ -78,7 +88,7 @@ describe("ParsedFieldDetails", () => {
     render(<ParsedFieldDetails field={FULL} />);
     expect(screen.getByRole("heading", { name: "Used" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Preserved (kept, not interpreted)" })).toBeDefined();
-    expect(screen.getByRole("heading", { name: "Ignored (not supported)" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Not used by the app (also kept under Preserved)" })).toBeDefined();
   });
 
   it("lists every extension with its JSON value, plus the raw classification block", () => {
@@ -128,15 +138,23 @@ describe("ParsedFieldDetails", () => {
     expect(screen.getByText("No (nullable)")).toBeDefined();
   });
 
-  it("keeps a large extension value in the DOM, collapsed until expanded", () => {
-    const big = { list: Array.from({ length: 60 }, (_, i) => `item-${i}`) };
-    const field: ParsedField = { ...FULL, extensions: { "x-big": big }, ignoredKeywords: undefined };
+  it("renders at most MAX_VALUE_CHARS of a huge extension value until expanded (the rest stays reachable)", () => {
+    const huge = "x".repeat(5 * 1024 * 1024);
+    const field: ParsedField = { ...FULL, extensions: { "x-big": huge }, ignoredKeywords: undefined };
     render(<ParsedFieldDetails field={field} />);
     const value = screen.getByTestId("parsed-extension-value-x-big");
-    expect(value.textContent).toContain("item-59");
+    expect(value.textContent!.length).toBeLessThanOrEqual(MAX_VALUE_CHARS);
     expect(value.getAttribute("data-collapsed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Expand value" }));
+    fireEvent.click(screen.getByRole("button", { name: /more characters — show all/ }));
+    expect(screen.getByTestId("parsed-extension-value-x-big").textContent!.length).toBeGreaterThan(5 * 1024 * 1024);
     expect(screen.getByTestId("parsed-extension-value-x-big").getAttribute("data-collapsed")).toBe("false");
+  });
+
+  it("shows a value under the limit in full without a control", () => {
+    const field: ParsedField = { ...FULL, extensions: { "x-small": { list: ["a", "b"] } } };
+    render(<ParsedFieldDetails field={field} />);
+    expect(screen.getByTestId("parsed-extension-value-x-small").textContent).toContain('"b"');
+    expect(screen.queryByRole("button", { name: /show all/ })).toBeNull();
   });
 
   it("collapsed hides the details but keeps them in the DOM", () => {
@@ -165,7 +183,142 @@ describe("ParsedEntityDetails", () => {
     expect(screen.getByText("An order")).toBeDefined();
     expect(screen.getByText("Base")).toBeDefined();
     expect(screen.getByText("x-links")).toBeDefined();
-    expect(screen.getByText("not")).toBeDefined();
+    expect(within(screen.getByTestId("parsed-entity-ignored")).getByText("not")).toBeDefined();
     for (const w of warnings) expect(screen.getByText(w)).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Exhaustiveness guards: adding a property to ParsedField / ParsedEntity / ParsedFieldGovernance without deciding how
+// the review shows it is a COMPILE error here. Every property marked as shown must render its label for a full object.
+// ---------------------------------------------------------------------------
+
+/** label rendered in the field details, or "internal: <reason>" for properties that are deliberately not shown. */
+const FIELD_DISPLAY: Record<keyof ParsedField, string> = {
+  name: "Name",
+  type: "Type",
+  nullable: "Required",
+  description: "Description",
+  fieldNumber: "Field number",
+  confidence: "Confidence",
+  originalType: "Original type",
+  isKey: "Key",
+  classification: "Classification",
+  format: "Format",
+  deprecated: "Deprecated",
+  deprecatedMessage: "Deprecated",
+  constraints: "Constraint: min length",
+  summary: "Summary",
+  visibility: "Visibility",
+  encode: "Encode",
+  encodeSubType: "Encode sub-type",
+  minValueExclusive: "Exclusive min value",
+  maxValueExclusive: "Exclusive max value",
+  extensions: "x-owner",
+  secret: "Secret",
+  discriminator: "Discriminator",
+  referencedEntityName: "References",
+  arrayElementType: "Array element type",
+  mapKeyType: "Map key type",
+  mapValueType: "Map value type",
+  enumName: "Enum",
+  enumValues: "Enum values",
+  unionName: "Union",
+  unionMembers: "Union members",
+  danglingRef: "Dangling reference",
+  governance: "Data class",
+  ignoredKeywords: "multipleOf",
+};
+
+const GOVERNANCE_DISPLAY: Record<keyof ParsedFieldGovernance, string> = {
+  protobufOneofGroup: "Oneof group",
+  avroFixedSize: "Fixed size",
+  dataClass: "Data class",
+  dataCategory: "Data category",
+};
+
+const ENTITY_DISPLAY: Record<keyof ParsedEntity, string> = {
+  name: "Entity name",
+  description: "Description",
+  fields: "internal: each field is rendered by ParsedFieldDetails",
+  extensions: "x-links",
+  extends: "Extends",
+  ignoredKeywords: "not",
+  sourceFormat: "Source format",
+  originalContent: "internal: raw source text kept only for drift detection",
+};
+
+describe("display exhaustiveness", () => {
+  it("every ParsedField property (all populated in FULL) is rendered under its label", () => {
+    expect(Object.keys(FULL).sort()).toEqual(Object.keys(FIELD_DISPLAY).sort());
+    render(<ParsedFieldDetails field={FULL} />);
+    const root = screen.getByTestId("parsed-field-details-amount");
+    for (const [prop, label] of Object.entries(FIELD_DISPLAY)) {
+      if (label.startsWith("internal")) continue;
+      expect(root.textContent, `${prop} -> ${label}`).toContain(label);
+    }
+    for (const [prop, label] of Object.entries(GOVERNANCE_DISPLAY)) {
+      expect(root.textContent, `governance.${prop} -> ${label}`).toContain(label);
+    }
+    expect(Object.keys(FULL.governance!).sort()).toEqual(Object.keys(GOVERNANCE_DISPLAY).sort());
+    // the values too, not only the labels
+    for (const value of ["Order total summary", "Lifecycle.Read, Lifecycle.Create", "base64", "kind", "contact_oneof", "16"]) {
+      expect(root.textContent).toContain(value);
+    }
+    expect(root.textContent).toContain("resolved to https://x.test/Customer.json");
+    expect(screen.getByTestId("validation-indicator").getAttribute("data-tooltip")).toContain("https://x.test/Customer.json");
+  });
+
+  it("every ParsedEntity property is rendered under its label (or marked internal)", () => {
+    const entity: ParsedEntity = {
+      name: "Order",
+      description: "An order",
+      fields: [],
+      extensions: { "x-links": [1] },
+      extends: "Base",
+      ignoredKeywords: ["not"],
+      sourceFormat: "json-schema",
+      originalContent: "{}",
+    };
+    expect(Object.keys(entity).sort()).toEqual(Object.keys(ENTITY_DISPLAY).sort());
+    render(<ParsedEntityDetails entity={entity} />);
+    const text = screen.getByTestId("parsed-entity-details").textContent!;
+    for (const [prop, label] of Object.entries(ENTITY_DISPLAY)) {
+      if (label.startsWith("internal")) continue;
+      expect(text, `${prop} -> ${label}`).toContain(label);
+    }
+    expect(text).toContain("json-schema");
+  });
+});
+
+describe("large imports stay bounded", () => {
+  it("a model with 300 fields mounts details only for expanded fields", async () => {
+    const { TypeSpecImportReviewScreen } = await import("@/components/custom/ImportDialog/TypeSpecImportReviewScreen");
+    const fields: ParsedField[] = Array.from({ length: 300 }, (_, i) => ({
+      name: `f${i}`, type: "string", nullable: true, confidence: "high", originalType: "string",
+      extensions: { "x-n": i },
+    }));
+    const started = performance.now();
+    render(
+      <TypeSpecImportReviewScreen
+        importResult={{
+          sourceFormat: "json-schema",
+          models: [{
+            name: "Big", fields, sourceFormat: "json-schema", originalContent: "",
+            referencedModelNames: [], referencedByModelNames: [], recommendedAsEntity: true,
+          }],
+          sharedEnums: [], customScalars: [], unions: [], aliases: [], decoratorDefinitions: [], services: [], warnings: [],
+        }}
+        domains={[{ id: "d", name: "D" }]}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE).toBe(50);
+    expect(document.querySelectorAll('[data-testid^="parsed-field-details-"]').length).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Show details of Big.f7", hidden: true }));
+    expect(document.querySelectorAll('[data-testid^="parsed-field-details-"]').length).toBe(1);
+    expect(screen.getByTestId("parsed-field-details-f7").hasAttribute("hidden")).toBe(false);
   });
 });

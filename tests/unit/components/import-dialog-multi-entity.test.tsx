@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { createDomainAssetsFromImportActionMock } = vi.hoisted(() => ({
@@ -97,9 +97,12 @@ describe("ImportDialog — multi-entity Protobuf import", () => {
 
     await waitFor(() => expect(screen.getByTestId("typespec-import-review")).toBeDefined());
     expect(screen.getByText("Review Protobuf Import")).toBeDefined();
-    for (const name of ["Order", "Order_LineItem", "Card", "Customer", "OrderStatus", "Order_LineItem_Kind"]) {
-      // Field details now repeat reference targets (e.g. "References: Order_LineItem"), so a name can appear more than once.
-      expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+    // Field details repeat reference targets, so each asset name is looked up inside its own row.
+    for (const name of ["Order", "Order_LineItem", "Card", "Customer"]) {
+      expect(within(screen.getByTestId(`import-model-${name}`)).getAllByText(name).length).toBeGreaterThan(0);
+    }
+    for (const name of ["OrderStatus", "Order_LineItem_Kind"]) {
+      expect(within(screen.getByTestId(`import-enum-${name}`)).getByText(name)).toBeDefined();
     }
     expect(screen.getByText(/OrderService/)).toBeDefined();
   });

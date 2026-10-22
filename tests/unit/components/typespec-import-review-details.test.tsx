@@ -94,7 +94,8 @@ describe("TypeSpecImportReviewScreen field details", () => {
     expect(ssn.getByText("identity")).toBeDefined();
     expect(ssn.getByText("x-audit")).toBeDefined();
     expect(ssn.getByText("raw classification block")).toBeDefined();
-    expect(ssn.getByText("multipleOf")).toBeDefined();
+    expect(within(ssn.getByTestId("parsed-field-ignored")).getByText("multipleOf")).toBeDefined();
+    expect(within(ssn.getByTestId("parsed-field-preserved")).getByText("multipleOf")).toBeDefined();
 
     const owner = within(screen.getByTestId("import-field-Order-owner"));
     expect(owner.getByTestId("validation-indicator").getAttribute("data-tooltip")).toContain("could not be fetched (404)");
@@ -104,7 +105,8 @@ describe("TypeSpecImportReviewScreen field details", () => {
     renderScreen();
     const entity = within(screen.getAllByTestId("parsed-entity-details")[0]);
     expect(entity.getByText("x-team")).toBeDefined();
-    expect(entity.getByText("not")).toBeDefined();
+    expect(within(entity.getByTestId("parsed-entity-ignored")).getByText("not")).toBeDefined();
+    expect(within(entity.getByTestId("parsed-entity-preserved")).getByText("not")).toBeDefined();
     expect(screen.getAllByText(/extends Card/).length).toBeGreaterThan(0);
     expect(screen.getByText("OPEN, CLOSED", { exact: false })).toBeDefined();
     expect(screen.getAllByText("Card | Bank").length).toBeGreaterThan(0);

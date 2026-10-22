@@ -275,7 +275,9 @@ describe("EntityCreationWizard: single JSON Schema import keeps everything the i
     expect(screen.getByText("Field `ImportedEntity.ssn`: JSON Schema keyword `multipleOf` is not supported and was ignored")).toBeDefined();
     const ssn = within(screen.getByTestId("parsed-field-details-ssn"));
     expect(ssn.getByText("identity")).toBeDefined();
-    expect(ssn.getByText("multipleOf")).toBeDefined();
+    // listed as not used AND kept under Preserved
+    expect(within(ssn.getByTestId("parsed-field-ignored")).getByText("multipleOf")).toBeDefined();
+    expect(within(ssn.getByTestId("parsed-field-preserved")).getByText("multipleOf")).toBeDefined();
     expect(within(screen.getByTestId("parsed-field-details-note")).getByText("x-audit")).toBeDefined();
   });
 

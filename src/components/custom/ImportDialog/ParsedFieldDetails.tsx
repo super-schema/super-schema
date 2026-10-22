@@ -9,7 +9,7 @@
  * "Ignored (not supported)" (standard keywords the importer recognized but cannot map).
  */
 
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ValidationIndicator } from "@/components/custom/ValidationIndicator";
 import { getClassificationConfig } from "@/lib/importers/classification-config";
@@ -18,6 +18,11 @@ import type { ImportConfidence, ParsedEntity, ParsedField } from "@/lib/importer
 // ---------------------------------------------------------------------------
 // Group chrome — success / info / warning tokens, the same ones ConfidenceBadge and ValidationIndicator use.
 // ---------------------------------------------------------------------------
+
+/** Longest slice of a pretty-printed extension value rendered as text before "show all". */
+export const MAX_VALUE_CHARS = 2000;
+/** A model with more fields than this mounts a field's details panel only while that field is expanded. */
+export const MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE = 50;
 
 type GroupKind = "used" | "preserved" | "ignored";
 
@@ -28,7 +33,7 @@ const GROUP_STYLE: Record<GroupKind, { label: string; box: string; title: string
     box: "border-info/30 bg-info/5",
     title: "text-info",
   },
-  ignored: { label: "Ignored (not supported)", box: "border-warning/30 bg-warning/5", title: "text-warning" },
+  ignored: { label: "Not used by the app (also kept under Preserved)", box: "border-warning/30 bg-warning/5", title: "text-warning" },
 };
 
 function Group({ kind, testId, children }: { kind: GroupKind; testId: string; children: React.ReactNode }) {
@@ -77,8 +82,10 @@ function ConfidenceTag({ confidence }: { confidence: ImportConfidence }) {
 export function danglingReferenceOf(
   field: ParsedField,
   entityNames?: ReadonlySet<string>,
-): { ref: string; reason: string } | undefined {
-  if (field.danglingRef) return { ref: field.danglingRef.ref, reason: field.danglingRef.reason };
+): { ref: string; reason: string; resolvedUri?: string } | undefined {
+  if (field.danglingRef) {
+    return { ref: field.danglingRef.ref, reason: field.danglingRef.reason, resolvedUri: field.danglingRef.resolvedUri };
+  }
   const refLike = field.type === "reference" || field.arrayElementType === "reference";
   if (
     refLike &&
@@ -95,12 +102,14 @@ export function danglingReferenceOf(
   return undefined;
 }
 
-function DanglingBadge({ dangling }: { dangling: { ref: string; reason: string } }) {
+function DanglingBadge({ dangling }: { dangling: { ref: string; reason: string; resolvedUri?: string } }) {
+  const where = dangling.resolvedUri ? ` (resolved to ${dangling.resolvedUri})` : "";
   return (
     <span className="inline-flex items-center gap-1 text-warning" data-testid="parsed-field-dangling">
-      <ValidationIndicator status="suggestion" tooltipContent={`${dangling.ref}: ${dangling.reason}`} />
+      <ValidationIndicator status="suggestion" tooltipContent={`${dangling.ref}${where}: ${dangling.reason}`} />
       <span>
-        Dangling reference <span className="font-mono">{dangling.ref}</span> — {dangling.reason}
+        Dangling reference <span className="font-mono">{dangling.ref}</span>
+        {where} — {dangling.reason}
       </span>
     </span>
   );
@@ -109,9 +118,6 @@ function DanglingBadge({ dangling }: { dangling: { ref: string; reason: string }
 // ---------------------------------------------------------------------------
 // Extension values (pretty JSON; long ones collapsed but always in the DOM)
 // ---------------------------------------------------------------------------
-
-const LONG_VALUE_CHARS = 240;
-const LONG_VALUE_LINES = 8;
 
 function prettyJson(value: unknown): string {
   try {
@@ -122,19 +128,18 @@ function prettyJson(value: unknown): string {
 }
 
 function ExtensionValue({ name, value }: { name: string; value: unknown }) {
-  const text = prettyJson(value);
-  const isLong = text.length > LONG_VALUE_CHARS || text.split("\n").length > LONG_VALUE_LINES;
+  const text = useMemo(() => prettyJson(value), [value]);
   const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > MAX_VALUE_CHARS;
+  const shown = isLong && !expanded ? text.slice(0, MAX_VALUE_CHARS) : text;
   return (
     <div>
       <pre
-        className={`text-[11px] font-mono text-foreground whitespace-pre-wrap break-all ${
-          isLong && !expanded ? "max-h-16 overflow-hidden" : ""
-        }`}
+        className="text-[11px] font-mono text-foreground whitespace-pre-wrap break-all"
         data-testid={`parsed-extension-value-${name}`}
         data-collapsed={isLong && !expanded ? "true" : "false"}
       >
-        {text}
+        {shown}
       </pre>
       {isLong && (
         <button
@@ -143,7 +148,7 @@ function ExtensionValue({ name, value }: { name: string; value: unknown }) {
           className="text-[10px] text-info hover:underline"
           aria-expanded={expanded}
         >
-          {expanded ? "Collapse value" : "Expand value"}
+          {expanded ? "Collapse value" : `… ${text.length - MAX_VALUE_CHARS} more characters — show all`}
         </button>
       )}
     </div>
@@ -203,7 +208,7 @@ const CONSTRAINT_LABEL: Record<string, string> = {
 };
 
 /** Compact badges for a collapsed field's summary row: nothing here is the only place a fact appears. */
-export function ParsedFieldSummaryBadges({
+export const ParsedFieldSummaryBadges = memo(function ParsedFieldSummaryBadges({
   field,
   entityNames,
 }: {
@@ -247,7 +252,7 @@ export function ParsedFieldSummaryBadges({
       )}
     </>
   );
-}
+});
 
 interface ParsedFieldDetailsProps {
   field: ParsedField;
@@ -259,7 +264,7 @@ interface ParsedFieldDetailsProps {
   classificationKey?: string;
 }
 
-export function ParsedFieldDetails({ field, entityNames, collapsed = false, classificationKey }: ParsedFieldDetailsProps) {
+export const ParsedFieldDetails = memo(function ParsedFieldDetails({ field, entityNames, collapsed = false, classificationKey }: ParsedFieldDetailsProps) {
   const dangling = danglingReferenceOf(field, entityNames);
   const extensions = field.extensions && Object.keys(field.extensions).length > 0 ? field.extensions : undefined;
   const ignored = field.ignoredKeywords && field.ignoredKeywords.length > 0 ? field.ignoredKeywords : undefined;
@@ -310,6 +315,14 @@ export function ParsedFieldDetails({ field, entityNames, collapsed = false, clas
           {field.unionMembers && field.unionMembers.length > 0 && (
             <Row label="Union members">{field.unionMembers.join(" | ")}</Row>
           )}
+          {field.summary && <Row label="Summary">{field.summary}</Row>}
+          {field.visibility && field.visibility.length > 0 && <Row label="Visibility">{field.visibility.join(", ")}</Row>}
+          {field.encode && <Row label="Encode">{field.encode}</Row>}
+          {field.encodeSubType && <Row label="Encode sub-type">{field.encodeSubType}</Row>}
+          {field.secret && <Row label="Secret">Yes</Row>}
+          {field.discriminator && <Row label="Discriminator">{field.discriminator}</Row>}
+          {field.governance?.protobufOneofGroup && <Row label="Oneof group">{field.governance.protobufOneofGroup}</Row>}
+          {field.governance?.avroFixedSize !== undefined && <Row label="Fixed size">{String(field.governance.avroFixedSize)}</Row>}
           {field.fieldNumber != null && <Row label="Field number">{String(field.fieldNumber)}</Row>}
           <Row label="Confidence">
             <ConfidenceTag confidence={field.confidence} />
@@ -335,14 +348,15 @@ export function ParsedFieldDetails({ field, entityNames, collapsed = false, clas
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Entity
 // ---------------------------------------------------------------------------
 
 interface ParsedEntityDetailsProps {
-  entity: Pick<ParsedEntity, "name" | "description" | "extends" | "extensions" | "ignoredKeywords">;
+  entity: Pick<ParsedEntity, "name" | "description" | "extends" | "extensions" | "ignoredKeywords"> &
+    Partial<Pick<ParsedEntity, "sourceFormat">>;
   /** Every warning of the import — all of them, none truncated. */
   warnings?: string[];
   /** Hide the "Used" group (name / description / extends) when the host screen already shows those prominently. */
@@ -354,6 +368,11 @@ export function ParsedEntityDetails({ entity, warnings = [], showUsed = true }: 
   const ignored = entity.ignoredKeywords && entity.ignoredKeywords.length > 0 ? entity.ignoredKeywords : undefined;
   return (
     <div className="space-y-1.5" data-testid="parsed-entity-details">
+      {entity.sourceFormat && (
+        <p className="text-caption text-muted-foreground" data-testid="parsed-entity-source-format">
+          Source format: <span className="font-mono text-foreground">{entity.sourceFormat}</span>
+        </p>
+      )}
       {showUsed && (
         <Group kind="used" testId="parsed-entity-used">
           <dl className="space-y-0.5">

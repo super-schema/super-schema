@@ -18,6 +18,7 @@ import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import type { ImportAssetSelection } from "@/lib/importers/import-payload";
 import type { ImportFormat } from "@/lib/importers/types";
 import {
+  MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE,
   ParsedEntityDetails,
   ParsedFieldDetails,
   ParsedFieldSummaryBadges,
@@ -238,7 +239,7 @@ export function TypeSpecImportReviewScreen({
           <SectionHeader title="Models" icon={Box} count={importResult.models.length} />
           <div className="space-y-1">
             {importResult.models.map((model, index) => (
-              <div key={model.name} className="rounded-lg border border-border/50">
+              <div key={model.name} className="rounded-lg border border-border/50" data-testid={`import-model-${model.name}`}>
                 <div className="flex items-start gap-2 px-3 py-2">
                   <input
                     aria-label={`${model.name} model`}
@@ -329,7 +330,9 @@ export function TypeSpecImportReviewScreen({
                           <ParsedFieldSummaryBadges field={field} entityNames={entityNames} />
                         </div>
                         <div className="ml-6">
-                          <ParsedFieldDetails field={field} entityNames={entityNames} collapsed={!open} />
+                          {(model.fields.length <= MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE || open) && (
+                            <ParsedFieldDetails field={field} entityNames={entityNames} collapsed={!open} />
+                          )}
                         </div>
                       </div>
                     );
@@ -346,7 +349,7 @@ export function TypeSpecImportReviewScreen({
           <SectionHeader title="Enums" icon={List} count={importResult.sharedEnums.length} />
           <div className="space-y-1">
             {importResult.sharedEnums.map((sharedEnum, index) => (
-              <div key={sharedEnum.name} className="rounded-lg border border-border/50 px-3 py-2">
+              <div key={sharedEnum.name} className="rounded-lg border border-border/50 px-3 py-2" data-testid={`import-enum-${sharedEnum.name}`}>
                 <div className="flex items-center gap-2">
                   <input
                     aria-label={`${sharedEnum.name} enum`}

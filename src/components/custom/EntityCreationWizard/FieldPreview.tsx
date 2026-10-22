@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import {
+  MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE,
   ParsedEntityDetails,
   ParsedFieldDetails,
   ParsedFieldSummaryBadges,
@@ -51,7 +52,7 @@ interface FieldPreviewProps {
   /** Every warning of the import: all shown, none truncated. */
   warnings?: string[];
   /** Entity-level import facts (extends, extensions, ignored keywords). Present only for a schema import. */
-  importedEntity?: Pick<ParsedEntity, "name" | "description" | "extends" | "extensions" | "ignoredKeywords">;
+  importedEntity?: Pick<ParsedEntity, "name" | "description" | "extends" | "extensions" | "ignoredKeywords" | "sourceFormat">;
   /** The importer's fallback entity name: while the name field still holds it, it is highlighted as "needs a name". */
   fallbackName?: string;
 }
@@ -292,7 +293,7 @@ export function FieldPreview({
                   </button>
                 </td>
               </tr>
-              {field.parsed && (
+              {field.parsed && (fields.length <= MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE || expandedFields.has(field.tempId)) && (
                 <tr hidden={!expandedFields.has(field.tempId)} className="border-b border-border/50">
                   <td colSpan={6} className="px-space-3 pb-space-2">
                     <p className="text-[10px] text-muted-foreground">

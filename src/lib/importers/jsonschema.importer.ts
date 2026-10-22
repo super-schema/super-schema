@@ -96,16 +96,16 @@ interface JsonSchemaNode {
  */
 const KNOWN_SCHEMA_KEYWORDS = new Set([
   "$schema", "$id", "$ref", "title", "description", "type", "format", "properties", "required", "items",
-  "enum", "const", "deprecated", "default", "oneOf", "anyOf", "allOf", "minLength", "maxLength", "pattern",
+  "enum", "const", "deprecated", "oneOf", "anyOf", "allOf", "minLength", "maxLength", "pattern",
   "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems", "$defs", "definitions",
   "x-tags", "x-classification",
 ]);
 
 /**
  * Standard JSON Schema (2020-12 / draft-07) keywords the importer recognizes but maps to nothing in the IR. They are
- * reported as `ignoredKeywords` + a warning (never silently dropped) and are NOT kept as extensions: extensions are
- * for vendor / unknown keys. Keywords the importer consumes in any path (type, format, enum, const, constraints, ...)
- * are never in this set.
+ * listed in `ignoredKeywords` (not used by the app) + a warning, AND kept verbatim in `extensions` so a re-export loses
+ * nothing. Keywords the importer consumes in any path (type, format, enum, const, constraints, ...) are never in this
+ * set. (`default` is not consumed anywhere, so it is listed and preserved too.)
  */
 const IGNORED_SCHEMA_KEYWORDS = new Set([
   "not", "if", "then", "else", "dependentRequired", "dependentSchemas", "dependencies",
@@ -117,25 +117,41 @@ const IGNORED_SCHEMA_KEYWORDS = new Set([
   "examples", "example", "$comment", "$anchor", "$vocabulary", "default",
 ]);
 
-/** Read by the importer on an entity node (names it) but unused on a field node, where it is reported as ignored. */
+/** Read by the importer on an entity node (names it) but unused on a field node, where it is listed as ignored and preserved. */
 const FIELD_ONLY_IGNORED = new Set(["title", "$schema", "$id", "$defs", "definitions"]);
 
 /** Ignored standard keywords present on `node` (document order, deduplicated); `isField` adds the field-only ones. */
-function ignoredKeywordsOf(nodes: JsonSchemaNode[], isField: boolean): string[] | undefined {
+function ignoredKeywordsOf(nodes: JsonSchemaNode[], isField: boolean, nested: JsonSchemaNode[] = []): string[] | undefined {
   const found = new Set<string>();
   for (const node of nodes) {
     for (const key of Object.keys(node)) {
       if (IGNORED_SCHEMA_KEYWORDS.has(key) || (isField && FIELD_ONLY_IGNORED.has(key))) found.add(key);
     }
   }
+  for (const node of nested) {
+    for (const key of Object.keys(node)) if (IGNORED_SCHEMA_KEYWORDS.has(key)) found.add(key);
+  }
   return found.size > 0 ? [...found] : undefined;
 }
 
+/** Object schemas directly under `items` / `oneOf` / `anyOf` of the given sources (one level; not recursive). */
+function nestedSchemas(sources: JsonSchemaNode[]): JsonSchemaNode[] {
+  const out: JsonSchemaNode[] = [];
+  for (const source of sources) {
+    if (isSchemaObject(source.items)) out.push(source.items as JsonSchemaNode);
+    for (const list of [source.oneOf, source.anyOf]) {
+      if (!Array.isArray(list)) continue;
+      for (const member of list) if (isSchemaObject(member)) out.push(member);
+    }
+  }
+  return out;
+}
+
 /** Every key of `node` the importer does not read, verbatim (parsed JSON values); `undefined` when none. */
-function captureExtensions(node: JsonSchemaNode): Record<string, unknown> | undefined {
+function captureExtensions(node: JsonSchemaNode, isField = false): Record<string, unknown> | undefined {
   let captured: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(node)) {
-    if (KNOWN_SCHEMA_KEYWORDS.has(key) || IGNORED_SCHEMA_KEYWORDS.has(key)) continue;
+    if (KNOWN_SCHEMA_KEYWORDS.has(key) && !(isField && FIELD_ONLY_IGNORED.has(key))) continue;
     setOwn((captured ??= {}), key, value);
   }
   return captured;
@@ -910,6 +926,7 @@ function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
   let total = 0;
   const add = (subject: string, keywords: string[] | undefined): void => {
     for (const keyword of keywords ?? []) {
+      if (keyword === "title") continue; // a per-field title is noise against the warning cap; still listed + preserved
       total += 1;
       if (out.length < MAX_IGNORED_WARNINGS) {
         out.push(`${subject}: JSON Schema keyword \`${keyword}\` is not supported and was ignored`);
@@ -1015,13 +1032,23 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
 
     let extensions: Record<string, unknown> | undefined;
     for (const source of sources) {
-      for (const [key, value] of Object.entries(captureExtensions(source) ?? {})) {
+      for (const [key, value] of Object.entries(captureExtensions(source, true) ?? {})) {
         if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) continue;
         setOwn((extensions ??= {}), key, value);
       }
     }
+    // Unsupported keywords inside an array `items` schema or a oneOf / anyOf member are not mapped either: they are
+    // listed (and preserved, first definition wins) on the field that owns them.
+    const nested = nestedSchemas(sources);
+    for (const source of nested) {
+      for (const key of Object.keys(source)) {
+        if (!IGNORED_SCHEMA_KEYWORDS.has(key)) continue;
+        if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) continue;
+        setOwn((extensions ??= {}), key, source[key]);
+      }
+    }
     if (extensions) field.extensions = extensions;
-    const ignoredKeywords = ignoredKeywordsOf(sources, true);
+    const ignoredKeywords = ignoredKeywordsOf([...sources], true, nested);
     if (ignoredKeywords) field.ignoredKeywords = ignoredKeywords;
 
     const classified = readClassification(sources, extensions, classificationConfig);

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
+import { parsedFieldToCreateFieldInput } from "@/lib/importers/import-payload";
 
 function data(content: unknown) {
   const result = parseJsonSchemaDocument(typeof content === "string" ? content : JSON.stringify(content));
@@ -50,8 +51,48 @@ describe("JSON Schema importer: ignoredKeywords", () => {
     for (const keyword of Object.keys(STANDARD_UNSUPPORTED)) {
       expect(d.warnings).toContain(`Field \`T.a\`: JSON Schema keyword \`${keyword}\` is not supported and was ignored`);
     }
-    // never also kept as extensions
-    expect(field.extensions).toBeUndefined();
+    // lossless: also kept verbatim as extensions (deep equality), so a re-export loses nothing
+    expect(field.extensions).toEqual(STANDARD_UNSUPPORTED);
+    expect(field.extensions?.not).toEqual({ type: "null" });
+    expect(field.extensions?.examples).toEqual(["a"]);
+  });
+
+  it("keeps additionalProperties: false and not: {...} verbatim in extensions and lists them as ignored", () => {
+    const d = data({
+      title: "T",
+      type: "object",
+      additionalProperties: false,
+      properties: { a: { type: "object", additionalProperties: false, not: { type: "string" } } },
+    });
+    expect(d.entities[0].extensions).toEqual({ additionalProperties: false });
+    expect(d.entities[0].ignoredKeywords).toEqual(["additionalProperties"]);
+    const a = d.entities[0].fields[0];
+    expect(a.extensions).toEqual({ additionalProperties: false, not: { type: "string" } });
+    expect(a.ignoredKeywords).toEqual(["additionalProperties", "not"]);
+  });
+
+  it("an ignored keyword still reaches the persisted decorators (typespec.extensions.openapi) for re-export", () => {
+    const d = data({ title: "T", type: "object", properties: { a: { type: "object", additionalProperties: false } } });
+    const input = parsedFieldToCreateFieldInput(d.entities[0].fields[0]);
+    expect((input.decorators as { typespec: { extensions: { openapi: unknown } } }).typespec.extensions.openapi).toEqual({
+      additionalProperties: false,
+    });
+  });
+
+  it("finds ignored keywords inside array items and oneOf members", () => {
+    const d = data({
+      title: "T",
+      type: "object",
+      properties: {
+        list: { type: "array", items: { type: "string", multipleOf: 3 } },
+        either: { oneOf: [{ type: "string", readOnly: true }, { type: "integer" }] },
+      },
+    });
+    const [list, either] = d.entities[0].fields;
+    expect(list.ignoredKeywords).toEqual(["multipleOf"]);
+    expect(list.extensions).toEqual({ multipleOf: 3 });
+    expect(either.ignoredKeywords).toEqual(["readOnly"]);
+    expect(d.warnings).toContain("Field `T.list`: JSON Schema keyword `multipleOf` is not supported and was ignored");
   });
 
   it("reports unsupported keywords on the entity (root and $defs)", () => {
@@ -101,6 +142,9 @@ describe("JSON Schema importer: ignoredKeywords", () => {
     const d = data({ title: "T", type: "object", properties: { a: { type: "string", title: "A!" } } });
     expect(d.entities[0].ignoredKeywords).toBeUndefined();
     expect(d.entities[0].fields[0].ignoredKeywords).toEqual(["title"]);
+    expect(d.entities[0].fields[0].extensions).toEqual({ title: "A!" });
+    // no warning line for a per-field title (noise against the cap)
+    expect(d.warnings.filter((w) => w.includes("`title`"))).toEqual([]);
   });
 
   it("caps the warnings and adds an overflow warning", () => {
