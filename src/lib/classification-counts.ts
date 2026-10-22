@@ -75,3 +75,9 @@ export function classificationCountsFromGroups(
   }
   return byEntity;
 }
+
+/** The Badge variant of a level of the standard scale that has one; undefined for any other level (shown with the neutral style). */
+export function standardClassificationVariant(level: string): "pii" | "sensitive" | "internal" | "public" | undefined {
+  const lower = level.toLowerCase();
+  return lower === "pii" || lower === "sensitive" || lower === "internal" || lower === "public" ? lower : undefined;
+}

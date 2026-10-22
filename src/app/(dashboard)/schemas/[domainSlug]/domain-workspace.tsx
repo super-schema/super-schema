@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { EntityCard } from "@/components/custom/EntityCard";
 import { DomainDeletionDialog } from "@/components/custom/DomainDeletionDialog";
 import { TypePicker } from "@/components/custom/TypePicker";
+import { standardClassificationVariant } from "@/lib/classification-counts";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
@@ -752,7 +753,7 @@ export function DomainWorkspace({
                           )}
                           {field.classification && (
                             <Badge
-                              variant={field.classification.toLowerCase() as "pii" | "sensitive" | "internal" | "public"}
+                              variant={standardClassificationVariant(field.classification) ?? "secondary"}
                               className="text-[10px] h-4 px-1"
                             >
                               {field.classification}

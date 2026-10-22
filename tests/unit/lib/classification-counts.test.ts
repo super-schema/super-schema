@@ -5,6 +5,7 @@ import {
   emptyClassificationCounts,
   matchesClassificationFilter,
   otherClassificationCounts,
+  standardClassificationVariant,
 } from "@/lib/classification-counts";
 
 describe("classificationCountsFromGroups", () => {
@@ -78,5 +79,14 @@ describe("the field list classification filter", () => {
     expect(matchesClassificationFilter("class4", "class4")).toBe(true);
     expect(matchesClassificationFilter("class4", "CLASS4")).toBe(false);
     expect(matchesClassificationFilter(null, "PII")).toBe(false);
+  });
+});
+
+describe("standardClassificationVariant", () => {
+  it("maps the levels that have a badge variant and leaves every other level to the neutral style", () => {
+    expect(standardClassificationVariant("PII")).toBe("pii");
+    expect(standardClassificationVariant("Internal")).toBe("internal");
+    expect(standardClassificationVariant("class4")).toBeUndefined();
+    expect(standardClassificationVariant("NEVER_STORED")).toBeUndefined();
   });
 });
