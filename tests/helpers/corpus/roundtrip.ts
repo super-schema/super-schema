@@ -73,8 +73,6 @@ const EXPECTED_RULES: Array<{ test: (a: unknown, b: unknown, c: RuleCtx) => bool
     test: (a, b, c) => ((c.prop === "type" && a === "object" && b === "reference") || (c.prop === "arrayElementType" && a === "object" && b === "reference") || (c.prop === "referencedEntityName" && b === "RecordUnknown")) && (c.after?.referencedEntityName === "RecordUnknown") },
   { why: "a numeric bound outside a fixed-width integer's range is not written (commit 0485b17f: the JSON number 9223372036854775807 is read as 2^63, which the compiler rejects for int64)",
     test: (a, b, c) => c.prop === "constraints" && typeof c.before?.type === "string" && (c.before.type === "int64" || c.before.type === "uint64") && Array.isArray(a) && Array.isArray(b) && (a as string[]).filter((x) => !(b as string[]).includes(x)).every((x) => /^m(ax|in)Value=-?\d{19,}/.test(x)) },
-  { open: true, why: "OPEN: a JSON Schema `deprecated: true` without a message is stored as decorators.evolution.deprecated, which the TypeSpec generator never reads (it emits #deprecated only for a documentation message), so the flag is lost on every target",
-    test: (a, b, c) => c.prop === "deprecated" && a === true && b === undefined },
   { open: true, why: "OPEN: an array with no item type (no `items`, a tuple, ...) is generated as string[], so the re-imported field narrows from any item to string",
     test: (a, b, c) => c.prop === "arrayElementType" && a === undefined && b === "string" },
 ];

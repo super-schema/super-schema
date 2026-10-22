@@ -27,7 +27,8 @@ export function renderMatrix(results: CaseResult[], meta: MatrixMeta): string {
   lines.push("", `Cases whose import was refused as the case expects: ${results.filter((r) => r.importRefused).length}. Cases whose rows could not be built unexpectedly: ${buildFailures.length}.`);
 
   const rtCount = (s: string): number => results.filter((r) => r.roundTrip?.status === s).length;
-  lines.push("", "## Round trip (JSON Schema cases)", "", `same: ${rtCount("SAME")}, expected differences: ${rtCount("EXPECTED_DIFF")}, OPEN (design question): ${rtCount("OPEN_DIFF")}, DEFECT: ${rtCount("DEFECT")}, re-import failed: ${rtCount("REIMPORT_FAILED")}, skipped: ${rtCount("SKIPPED")}.`, "");
+  const comparable = ["SAME", "EXPECTED_DIFF", "OPEN_DIFF", "DEFECT"].reduce((n, st) => n + rtCount(st), 0);
+  lines.push("", "## Round trip (JSON Schema cases)", "", `Comparable (re-import produced a schema to compare): ${comparable} = same ${rtCount("SAME")} + expected differences ${rtCount("EXPECTED_DIFF")} + OPEN (design question) ${rtCount("OPEN_DIFF")} + DEFECT ${rtCount("DEFECT")}. Not comparable: re-import failed ${rtCount("REIMPORT_FAILED")}, skipped ${rtCount("SKIPPED")} (the case's json-schema output is a known failure). Skipped cases: ${results.filter((r) => r.roundTrip?.status === "SKIPPED").map((r) => r.id).join(", ") || "none"}.`, "");
   const diffs = results.filter((r) => r.roundTrip && r.roundTrip.differences.length > 0);
   if (diffs.length > 0) {
     lines.push("| case | status | difference |", "|---|---|---|");

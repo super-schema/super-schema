@@ -52,6 +52,12 @@ export function splitStatements(script: string): string[] {
       continue;
     }
     if (ch === "-" && script[i + 1] === "-") { while (i < script.length && script[i] !== "\n") i += 1; current += "\n"; continue; }
+    if (ch === "/" && script[i + 1] === "*") {
+      const end = script.indexOf("*/", i + 2);
+      i = end === -1 ? script.length : end + 1;
+      current += " ";
+      continue;
+    }
     if (ch === "'" || ch === '"' || ch === "`") { quote = ch; current += ch; continue; }
     if (ch === ";") { if (current.trim()) statements.push(current.trim()); current = ""; continue; }
     current += ch;
@@ -121,6 +127,15 @@ export function movePrimaryKeyInside(sql: string): string {
   return `${sql.slice(0, m.index)},\n  ${m[1]}\n)`;
 }
 
+/**
+ * The only statements this tier sends to the BigQuery emulator: CREATE / ALTER DDL. Anything else (DROP, DELETE, INSERT, UPDATE,
+ * MERGE, TRUNCATE, SELECT, scripting, ...) is refused before a request is made, whatever the emitter wrote.
+ */
+export function isAllowedBigQueryStatement(statement: string): boolean {
+  const text = statement.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ").trim();
+  return /^(CREATE|ALTER)\s/i.test(text) && !/^CREATE\s+(OR\s+REPLACE\s+)?(MODEL|EXTERNAL|FUNCTION|PROCEDURE)\b/i.test(text);
+}
+
 export async function validateBigQuery(ddl: string, schemaName: string): Promise<Validation> {
   const tier = "LocalCloud BigQuery emulator (DDL queries)";
   counter += 1;
@@ -132,6 +147,7 @@ export async function validateBigQuery(ddl: string, schemaName: string): Promise
     if (made.status >= 400) return { ok: false, tier, error: `dataset: ${errorText(made.json)}` };
     for (const statement of splitStatements(ddl)) {
       if (/^CREATE SCHEMA/i.test(statement)) continue;
+      if (!isAllowedBigQueryStatement(statement)) return { ok: false, tier, error: `refusing to send a statement that is not CREATE/ALTER DDL to the emulator: ${statement.slice(0, 60)}` };
       const sql = statement.replace(new RegExp(`\\b${schemaName.replace(/[^\w]/g, "\\$&")}\\.`, "g"), `${dataset}.`);
       const run = (query: string) => call("POST", `${base}/queries`, { query, useLegacySql: false, defaultDataset: { projectId: PROJECT, datasetId: dataset } });
       const failed = (r: Awaited<ReturnType<typeof run>>): boolean => r.status >= 400 || Boolean(r.json.errors) || Boolean((r.json.status as { errorResult?: unknown } | undefined)?.errorResult);
@@ -164,27 +180,33 @@ async function dropBigQuery(dataset: string): Promise<void> {
   try { await call("DELETE", `${BIGQUERY}/bigquery/v2/projects/${PROJECT}/datasets/${dataset}?deleteContents=true`); } catch { /* swept later */ }
 }
 
+/** Every item of a paged list (follows `nextPageToken`; bounded). */
+async function listAll(url: string, key: string): Promise<Array<Record<string, unknown>>> {
+  const items: Array<Record<string, unknown>> = [];
+  let token: string | undefined;
+  for (let page = 0; page < 50; page += 1) {
+    const sep = url.includes("?") ? "&" : "?";
+    const r = await call("GET", token ? `${url}${sep}pageToken=${encodeURIComponent(token)}` : url);
+    items.push(...(((r.json[key] as Array<Record<string, unknown>> | undefined) ?? [])));
+    token = typeof r.json.nextPageToken === "string" && r.json.nextPageToken !== "" ? r.json.nextPageToken : undefined;
+    if (!token) break;
+  }
+  return items;
+}
+
 /** Drops anything with this run's prefix that is still there; returns what remains (should be empty). */
 export async function sweep(): Promise<{ spanner: string[]; bigquery: string[] }> {
   const remaining = { spanner: [] as string[], bigquery: [] as string[] };
+  const spannerIds = async (): Promise<string[]> => (await listAll(dbBase, "databases")).map((d) => String(d.name).split("/").pop() ?? "").filter((id) => id.startsWith(SPANNER_PREFIX));
   try {
-    const list = await call("GET", dbBase);
-    for (const d of (list.json.databases as Array<{ name: string }> | undefined) ?? []) {
-      const id = d.name.split("/").pop() ?? "";
-      if (id.startsWith(SPANNER_PREFIX)) { await dropSpanner(id); remaining.spanner.push(id); }
-    }
-    const after = await call("GET", dbBase);
-    remaining.spanner = (((after.json.databases as Array<{ name: string }> | undefined) ?? []).map((d) => d.name.split("/").pop() ?? "")).filter((id) => id.startsWith(SPANNER_PREFIX));
+    for (const id of await spannerIds()) await dropSpanner(id);
+    remaining.spanner = await spannerIds();
   } catch { /* emulator gone */ }
+  const base = `${BIGQUERY}/bigquery/v2/projects/${PROJECT}/datasets`;
+  const bigqueryIds = async (): Promise<string[]> => (await listAll(base, "datasets")).map((d) => String((d.datasetReference as { datasetId: string }).datasetId)).filter((id) => id.startsWith(BIGQUERY_PREFIX));
   try {
-    const base = `${BIGQUERY}/bigquery/v2/projects/${PROJECT}/datasets`;
-    const list = await call("GET", base);
-    for (const d of (list.json.datasets as Array<{ datasetReference: { datasetId: string } }> | undefined) ?? []) {
-      const id = d.datasetReference.datasetId;
-      if (id.startsWith(BIGQUERY_PREFIX)) await dropBigQuery(id);
-    }
-    const after = await call("GET", base);
-    remaining.bigquery = (((after.json.datasets as Array<{ datasetReference: { datasetId: string } }> | undefined) ?? []).map((d) => d.datasetReference.datasetId)).filter((id) => id.startsWith(BIGQUERY_PREFIX));
+    for (const id of await bigqueryIds()) await dropBigQuery(id);
+    remaining.bigquery = await bigqueryIds();
   } catch { /* emulator gone */ }
   return remaining;
 }

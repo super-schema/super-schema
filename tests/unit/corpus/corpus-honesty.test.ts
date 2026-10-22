@@ -1,0 +1,140 @@
+/**
+ * The corpus judges its own results; these tests pin that judging (no real generation): a known-issue rule cannot swallow a different
+ * failure, a rule that no longer reproduces fails a full run, and skipped work is never silently green.
+ */
+import { describe, it, expect, vi } from "vitest";
+import { matchKnownIssue, registryProblems, documentNames, type KnownIssue } from "../../fixtures/corpus/known-issues";
+import { KNOWN_ISSUES } from "../../fixtures/corpus/known-issues";
+import { problemsOf, allowedSkipTiersFromEnv, type CaseResult } from "../../helpers/corpus/orchestrate";
+import { isAllowedBigQueryStatement, splitStatements, BQ_PK_OUTSIDE } from "../../helpers/corpus/emulators";
+import type { CorpusCase } from "../../fixtures/corpus/types";
+import type { BuiltCase } from "../../helpers/corpus/build-rows";
+import type { TargetOutcome } from "../../helpers/corpus/run-case";
+
+vi.mock("server-only", () => ({}));
+
+const baseCase = (extra: Partial<CorpusCase["expectations"]> = {}, source = "{}"): CorpusCase => ({ id: "c1", title: "t", kind: "jsonschema", source, tags: [], expectations: extra });
+const built = (referenced: string[] = []): BuiltCase => ({
+  entity: { id: "e", name: "Evt", description: "", status: "DRAFT", version: 1, domainId: "d", metadata: {} },
+  fields: referenced.map((n, i) => ({ id: `f${i}`, name: `f${i}`, type: "reference", precision: null, scale: null, nullable: false, isKey: false, fieldNumber: null, description: "", classification: null, aliases: [], decorators: { referencedEntityName: n }, sortOrder: i })),
+  importWarnings: [], entityCount: 1,
+});
+const failed = (target: TargetOutcome["target"], reason: string): TargetOutcome => ({ target, kind: "FAIL", reason, warnings: [] });
+
+describe("a known issue does not mask a different failure", () => {
+  it("matches the rule's own diagnostic", () => {
+    const hit = matchKnownIssue(baseCase(), "bigquery", failed("bigquery", `validate: ${BQ_PK_OUTSIDE}: as emitted the emulator's parser says (INVALID_ARGUMENT: PRIMARY KEY must be defined in the table element list as column attribute or constraint)`), built());
+    expect(hit?.id).toBe("bigquery-pk-after-column-list");
+  });
+
+  it("does not match another bigquery failure of the same case", () => {
+    expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", "validate: INVALID_ARGUMENT: Syntax error: Unexpected integer literal"), built())).toBeUndefined();
+    // the right words under a different code are not the rule either
+    expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", "validate: PRIMARY KEY must be defined in the table element list"), built())).toBeUndefined();
+  });
+
+  it("does not match the right diagnostic on a target the rule is not about", () => {
+    expect(matchKnownIssue(baseCase(), "spanner", failed("spanner", `${BQ_PK_OUTSIDE}: PRIMARY KEY must be defined in the table element list`), built())).toBeUndefined();
+  });
+
+  it("multi-model gap: only an identifier the case's own document refers to", () => {
+    const reason = "invalid-ref: Unknown identifier Addr";
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", reason), built(["Addr"]))?.id).toBe("multi-model-emission-gap");
+    // an importer naming bug (the field points at `Addr`, the emitter complains about `addr_x`) is a real failure
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", "invalid-ref: Unknown identifier addr_x"), built(["Addr"]))).toBeUndefined();
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", `${reason}\ninvalid-ref: Unknown identifier Other`), built(["Addr"]))).toBeUndefined();
+    expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", reason), built(["Addr"]))).toBeUndefined();
+  });
+
+  it("the openapi ref rule needs the pointer to come from the case's own source", () => {
+    const reason = "validate: Can't resolve reference: #/$defs/V";
+    expect(matchKnownIssue(baseCase({}, '{"x":{"$ref":"#/$defs/V"}}'), "openapi3", failed("openapi3", reason), built())?.id).toBe("openapi-internal-ref-extension");
+    expect(matchKnownIssue(baseCase({}, '{"x":{"$ref":"#/$defs/Other"}}'), "openapi3", failed("openapi3", reason), built())).toBeUndefined();
+  });
+
+  it("a per-case expectation needs its code AND message; any other failure of that target is real", () => {
+    const c = baseCase({ expectedFailures: [{ target: "avro", code: "crash-code", message: /stack overflow/, reason: "r", issue: "i" }] });
+    expect(matchKnownIssue(c, "avro", failed("avro", "crash-code: a stack overflow in the emitter"), built())?.id).toBe("case-expectation");
+    expect(matchKnownIssue(c, "avro", failed("avro", "crash-code: something else"), built())).toBeUndefined();
+    expect(matchKnownIssue(c, "avro", failed("avro", "other-code: stack overflow"), built())).toBeUndefined();
+    expect(matchKnownIssue(c, "protobuf", failed("protobuf", "crash-code: stack overflow"), built())).toBeUndefined();
+  });
+
+  it("documentNames spells entities the way the generator does", () => {
+    expect([...documentNames(built(["my-entity"]))].sort()).toEqual(["my-entity", "my_entity"]);
+  });
+});
+
+describe("registryProblems: a fixed issue cannot linger", () => {
+  const rule = (id: string): KnownIssue => ({ id, targets: ["avro"], disposition: "sibling", owner: "x", issue: "i", diagnostic: { code: "c", message: /m/ } });
+
+  it("flags a rule that matched no case", () => {
+    const problems = registryProblems([baseCase()], [{ caseId: "c1", target: "avro", kind: "PASS" }], [rule("fixed-one")]);
+    expect(problems).toEqual(["known issue fixed-one no longer reproduces for any case: remove it from known-issues.ts"]);
+  });
+
+  it("is quiet while a rule still explains a failure", () => {
+    expect(registryProblems([baseCase()], [{ caseId: "c1", target: "avro", kind: "FAIL", knownId: "live" }], [rule("live")])).toEqual([]);
+  });
+
+  it("flags a per-case entry whose case now passes, naming case and target", () => {
+    const c = baseCase({ expectedFailures: [{ target: "avro", code: "k", message: /m/, reason: "r", issue: "i" }] });
+    const problems = registryProblems([c], [{ caseId: "c1", target: "avro", kind: "PASS" }], []);
+    expect(problems).toEqual(["known issue k no longer reproduces for c1/avro: remove it from the case's expectedFailures"]);
+    expect(registryProblems([c], [{ caseId: "c1", target: "avro", kind: "FAIL", knownId: "case-expectation" }], [])).toEqual([]);
+  });
+
+  it("a per-case entry that now fails with something else is flagged too (the other failure is its own problem)", () => {
+    const c = baseCase({ expectedFailures: [{ target: "avro", code: "k", message: /m/, reason: "r", issue: "i" }] });
+    expect(registryProblems([c], [{ caseId: "c1", target: "avro", kind: "FAIL" }], [])).toHaveLength(1);
+  });
+
+  it("the real registry has no rule without a diagnostic code and message", () => {
+    for (const k of KNOWN_ISSUES) {
+      expect(k.diagnostic.code.length, k.id).toBeGreaterThan(0);
+      expect(k.diagnostic.message, k.id).toBeInstanceOf(RegExp);
+    }
+  });
+});
+
+describe("skipped work is a problem unless it is allowed", () => {
+  const result = (targets: CaseResult["targets"]): CaseResult => ({ id: "c1", kind: "jsonschema", title: "t", build: { ok: true, entityCount: 1, fieldCount: 1, importWarnings: [] }, targets, expectationProblems: [], ms: 0 });
+
+  it("a SKIPPED outcome (e.g. the budget) fails", () => {
+    const r = result({ avro: { target: "avro", kind: "SKIPPED", reason: "global time budget exhausted", warnings: [] } });
+    expect(problemsOf(r)[0]).toMatch(/avro: SKIPPED \(global time budget exhausted\) and the case does not allow it/);
+    expect(problemsOf(r, { allowedSkips: [{ target: "avro", reason: "n/a" }] })).toEqual([]);
+  });
+
+  it("a validator tier that did not run fails, naming the tier and the opt-out", () => {
+    const r = result({ spanner: { target: "spanner", kind: "PASS", warnings: [], tierSkipped: { tier: "spanner", reason: "spanner emulator not used (unreachable)" } } });
+    expect(problemsOf(r)[0]).toMatch(/validator tier "spanner" did not run.*CORPUS_ALLOW_SKIP_TIERS=spanner/);
+    expect(problemsOf(r, { allowSkipTiers: ["spanner"] })).toEqual([]);
+    expect(problemsOf(r, { allowSkipTiers: ["bigquery"] })).toHaveLength(1);
+  });
+
+  it("reads the opt-out from the environment", () => {
+    expect(allowedSkipTiersFromEnv({ CORPUS_ALLOW_SKIP_TIERS: "spanner, java" })).toEqual(["spanner", "java"]);
+    expect(allowedSkipTiersFromEnv({})).toEqual([]);
+  });
+});
+
+describe("the BigQuery emulator tier sends DDL only", () => {
+  it.each(["CREATE TABLE d.t (a INT64)", "create table if not exists d.t (a INT64)", "ALTER TABLE d.t ADD COLUMN b STRING", "-- c\nCREATE TABLE d.t (a INT64)", "/* c */ CREATE TABLE d.t (a INT64)"])("allows %s", (sql) => {
+    expect(isAllowedBigQueryStatement(sql)).toBe(true);
+  });
+  it.each(["DROP TABLE d.t", "DROP SCHEMA d CASCADE", "DELETE FROM d.t WHERE TRUE", "INSERT INTO d.t VALUES (1)", "UPDATE d.t SET a = 1 WHERE TRUE", "MERGE d.t USING d.u ON TRUE WHEN MATCHED THEN DELETE", "TRUNCATE TABLE d.t", "SELECT 1", "/* CREATE */ DROP TABLE d.t", "CREATE FUNCTION d.f() AS (1)", "CREATE OR REPLACE MODEL d.m OPTIONS()"])("refuses %s", (sql) => {
+    expect(isAllowedBigQueryStatement(sql)).toBe(false);
+  });
+});
+
+describe("splitStatements", () => {
+  it("drops -- and block comments, keeps ; inside quotes", () => {
+    expect(splitStatements("-- head\nCREATE TABLE a (x STRING); /* a; b */ CREATE TABLE b (y STRING OPTIONS(description='p;q'));")).toEqual([
+      "CREATE TABLE a (x STRING)", "CREATE TABLE b (y STRING OPTIONS(description='p;q'))",
+    ]);
+  });
+  it("an unterminated block comment swallows the rest instead of leaking it", () => {
+    expect(splitStatements("CREATE TABLE a (x STRING); /* DROP TABLE a;")).toEqual(["CREATE TABLE a (x STRING)"]);
+  });
+});

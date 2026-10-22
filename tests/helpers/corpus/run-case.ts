@@ -21,6 +21,10 @@ export interface TargetOutcome {
   validator?: string;
   /** Marked as a known (expectedFailures) result: the matrix shows it, the suite stays green. */
   expected?: string;
+  /** The registry rule (or `case-expectation`) that explains this FAIL. */
+  knownId?: string;
+  /** The validator tier that could not run (and why): spanner, bigquery or java. A CORPUS=1 run fails on it unless it is allowed. */
+  tierSkipped?: { tier: "spanner" | "bigquery" | "java"; reason: string };
   keyField?: string;
   /** Wall time of the emit (emitMs) and of the validator (validateMs). */
   emitMs?: number;
@@ -73,14 +77,13 @@ export async function generateTarget(
   const pk = applyPrimaryKey(built, target);
   if (pk.needsInput) return { target, kind: "NEEDS_INPUT", reason: pk.needsInput, warnings: [] };
   const t0 = Date.now();
-  const known = c.expectations.expectedFailures?.find((f) => (f.target === target || f.target === "*") && f.stage !== "validate");
   try {
     const result = await limit(() => withTimeout(emitOfficialTypeSpecTargetFromData(built.entity, pk.fields, target), timeoutMs, `emit ${target}`));
     const emitMs = Date.now() - t0;
     const warnings = result.warnings ?? [];
     if (result.validationStatus === "INVALID" || result.errors.length > 0) {
       const detail = result.errors.map((e) => (e as { message?: string }).message ?? JSON.stringify(e)).join(" | ").slice(0, 600);
-      return { target, kind: "FAIL", reason: detail || "INVALID with no message", warnings, keyField: pk.keyField, ...(known ? { expected: known.reason } : {}) };
+      return { target, kind: "FAIL", reason: detail || "INVALID with no message", warnings, keyField: pk.keyField };
     }
     const degraded = c.expectations.expectedDegraded?.find((d) => d.target === target);
     const isDegraded = warnings.length > 0 || result.validationStatus === "WARNING";
@@ -89,6 +92,6 @@ export async function generateTarget(
       ...(degraded ? { reason: degraded.reason } : isDegraded ? { reason: warnings[0]?.slice(0, 200) } : {}),
     };
   } catch (error) {
-    return { target, kind: "FAIL", reason: `threw: ${error instanceof Error ? error.message : String(error)}`.slice(0, 600), warnings: [], keyField: pk.keyField, ...(known ? { expected: known.reason } : {}) };
+    return { target, kind: "FAIL", reason: `threw: ${error instanceof Error ? error.message : String(error)}`.slice(0, 600), warnings: [], keyField: pk.keyField };
   }
 }

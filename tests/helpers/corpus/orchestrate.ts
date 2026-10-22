@@ -63,15 +63,15 @@ function schemaNameOf(output: string): string {
   return /CREATE SCHEMA IF NOT EXISTS (\S+?);/.exec(output)?.[1] ?? "corpus";
 }
 
-async function validateOutput(target: TargetKey, outcome: TargetOutcome, state: EmulatorState | undefined, emuLimit: ReturnType<typeof createLimiter>): Promise<Validation> {
+async function validateOutput(target: TargetKey, outcome: TargetOutcome, state: EmulatorState | undefined, emuLimit: ReturnType<typeof createLimiter>): Promise<Validation & { tierName?: "spanner" | "bigquery" | "java" }> {
   const output = outcome.output ?? "";
   const offline = await withTimeout(validateOffline(target, output), 90000, `validate ${target}`).catch((e: Error): Validation => ({ ok: false, tier: "validator", error: e.message }));
-  if (offline) return offline;
+  if (offline) return offline.skipped ? { ...offline, tierName: "java" } : offline;
   if (target === "spanner") {
-    if (!state?.spanner) return { ok: true, skipped: true, tier: `spanner emulator not used (${state?.reasons.find((r) => r.startsWith("spanner")) ?? "disabled"})` };
+    if (!state?.spanner) return { ok: true, skipped: true, tierName: "spanner", tier: `spanner emulator not used (${state?.reasons.find((r) => r.startsWith("spanner")) ?? "disabled"})` };
     return emuLimit(() => validateSpanner(output));
   }
-  if (!state?.bigquery) return { ok: true, skipped: true, tier: `bigquery emulator not used (${state?.reasons.find((r) => r.startsWith("bigquery")) ?? "disabled"})` };
+  if (!state?.bigquery) return { ok: true, skipped: true, tierName: "bigquery", tier: `bigquery emulator not used (${state?.reasons.find((r) => r.startsWith("bigquery")) ?? "disabled"})` };
   return emuLimit(() => validateBigQuery(output, schemaNameOf(output)));
 }
 
@@ -114,6 +114,7 @@ export async function runCases(cases: CorpusCase[], options: RunOptions): Promis
         const v = await validateOutput(target, outcome, state, emuLimit);
         outcome.validateMs = Date.now() - v0;
         outcome.validator = v.tier;
+        if (v.skipped && v.tierName) outcome.tierSkipped = { tier: v.tierName, reason: v.tier };
         if (!v.skipped && !v.ok) {
           // The app itself says the DDL will not run as is (reserved word, leading digit, limits...): that is a DEGRADED
           // result the validator CONFIRMS, not a failure. Without such a warning a validator failure is a FAIL.
@@ -124,7 +125,7 @@ export async function runCases(cases: CorpusCase[], options: RunOptions): Promis
       }
       if (outcome.kind === "FAIL") {
         const known = matchKnownIssue(c, target, outcome, b.value);
-        if (known) outcome.expected = `${known.id}: ${known.issue}`;
+        if (known) { outcome.expected = `${known.id}: ${known.issue}`; outcome.knownId = known.id; }
       }
       result.targets[target] = outcome;
     }));
@@ -165,12 +166,31 @@ export async function runCases(cases: CorpusCase[], options: RunOptions): Promis
   return results;
 }
 
-/** Unexpected problems of one result (empty = the case is green). */
-export function problemsOf(result: CaseResult): string[] {
+export interface ProblemOptions {
+  /** Validator tiers that may legitimately be missing in this run (spanner, bigquery, java). Used loudly, never by default. */
+  allowSkipTiers?: readonly string[];
+  /** The case itself, for its allowed skips. */
+  allowedSkips?: ReadonlyArray<{ target: string; reason: string }>;
+}
+
+/** The tiers a run may skip, from `CORPUS_ALLOW_SKIP_TIERS=spanner,bigquery,java`. */
+export function allowedSkipTiersFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.CORPUS_ALLOW_SKIP_TIERS ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+}
+
+/** Unexpected problems of one result (empty = the case is green). Skipped work is a problem unless it is explicitly allowed. */
+export function problemsOf(result: CaseResult, options: ProblemOptions = {}): string[] {
   const problems = [...result.expectationProblems];
   if (!result.build.ok && !result.importRefused) problems.push(`build failed: ${result.build.reason}`);
   for (const [target, o] of Object.entries(result.targets)) {
-    if (o && o.kind === "FAIL" && !o.expected) problems.push(`${target}: ${o.reason}`);
+    if (!o) continue;
+    if (o.kind === "FAIL" && !o.expected) problems.push(`${target}: ${o.reason}`);
+    if (o.kind === "SKIPPED" && !options.allowedSkips?.some((s) => s.target === target)) {
+      problems.push(`${target}: SKIPPED (${o.reason}) and the case does not allow it`);
+    }
+    if (o.tierSkipped && !options.allowSkipTiers?.includes(o.tierSkipped.tier)) {
+      problems.push(`${target}: validator tier "${o.tierSkipped.tier}" did not run (${o.tierSkipped.reason}); start it, or set CORPUS_ALLOW_SKIP_TIERS=${o.tierSkipped.tier} to accept running without it`);
+    }
   }
   if (result.roundTrip?.status === "DEFECT" || result.roundTrip?.status === "REIMPORT_FAILED") {
     problems.push(`round trip ${result.roundTrip.status}: ${result.roundTrip.differences.filter((d) => d.classification === "DEFECT").slice(0, 3).map((d) => d.path).join(", ") || result.roundTrip.note}`);

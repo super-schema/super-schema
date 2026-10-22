@@ -11,8 +11,13 @@ export interface CorpusExpectations {
   importWarnings?: RegExp[];
   /** Targets that generate with a warning on purpose (the matrix shows DEGRADED, and the reason is recorded). */
   expectedDegraded?: { target: TargetKey; reason: string }[];
-  /** Known failures whose root cause is NOT in this repo (sibling emitter, tool limit); `issue` is the evidence. */
-  expectedFailures?: { target: TargetKey | "*"; reason: string; issue: string; stage?: "emit" | "validate" }[];
+  /**
+   * Known failures whose root cause is NOT in this repo (sibling emitter, tool limit). `code` + `message` name the exact diagnostic: a
+   * different failure of the same target is a real failure, and an entry whose failure disappeared fails the corpus run.
+   */
+  expectedFailures?: { target: TargetKey | "*"; code: string; message: RegExp; reason: string; issue: string }[];
+  /** Targets the case may legitimately skip (applicability), with the reason. Any other SKIPPED outcome fails a CORPUS=1 run. */
+  allowedSkips?: { target: TargetKey; reason: string }[];
   /** True when the case has no key and the DB targets are expected to ask for one (NEEDS_INPUT or a simulated answer). */
   requiresPrimaryKey?: boolean;
   /** Environment variables to set while importing (restored afterwards). */

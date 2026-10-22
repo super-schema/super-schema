@@ -27,7 +27,8 @@ describe("corpus smoke", () => {
   for (const c of cases) {
     it(`${c.id}: no unexpected failure`, () => {
       const result = results.find((r) => r.id === c.id)!;
-      expect(problemsOf(result)).toEqual([]);
+      // The smoke subset never uses the emulators on purpose (explicit option); every other tier (javac, PGlite, ...) must run.
+      expect(problemsOf(result, { allowSkipTiers: ["spanner", "bigquery"], allowedSkips: c.expectations.allowedSkips })).toEqual([]);
     });
   }
 });
