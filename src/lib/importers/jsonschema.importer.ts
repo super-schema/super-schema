@@ -219,6 +219,14 @@ interface ResolvedType {
   unionMembers?: string[];
   /** Constraints implied by the resolution itself (a numeric `const` / `enum` becomes a min/max range). */
   impliedConstraints?: ParsedFieldConstraint[];
+  /** True when the low confidence comes ONLY from an unresolved external `$ref` (not an allOf conflict, a combinator, ...). */
+  lowFromUnresolvedRef?: boolean;
+}
+
+/** Fields whose low confidence is solely due to an unresolved external `$ref` (URL import raises it once the ref resolves). */
+const LOW_FROM_UNRESOLVED_REF = new WeakSet<object>();
+export function isLowFromUnresolvedRef(field: object): boolean {
+  return LOW_FROM_UNRESOLVED_REF.has(field);
 }
 
 /** One `$defs` / `definitions` entry, keyed by its local JSON pointer. */
@@ -377,6 +385,7 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
     nullable: false,
     originalType: ref,
     referencedEntityName: refToEntityName(ref),
+    lowFromUnresolvedRef: true,
   };
 }
 
@@ -508,6 +517,7 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
       confidence: members.length === 1 ? first.confidence : "low",
       nullable: hasNull || first.nullable,
       originalType: `${keyword}(${members.length})`,
+      lowFromUnresolvedRef: members.length === 1 && first.lowFromUnresolvedRef === true,
     };
   }
 
@@ -622,6 +632,7 @@ function resolveAllOf(node: JsonSchemaNode, ctx: ResolveContext): ResolvedType {
     confidence: conflict ? "low" : primary.confidence,
     nullable: hasNull || primary.nullable,
     originalType: label,
+    lowFromUnresolvedRef: !conflict && primary.lowFromUnresolvedRef === true,
   };
 }
 
@@ -915,6 +926,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     if (resolved.enumValues) field.enumValues = resolved.enumValues;
     if (resolved.unionName) field.unionName = resolved.unionName;
     if (resolved.unionMembers) field.unionMembers = resolved.unionMembers;
+    if (resolved.lowFromUnresolvedRef) LOW_FROM_UNRESOLVED_REF.add(field);
 
     // Array element type (+ reference / enum target of the element).
     const items = sources.find((s) => s.items)?.items;
@@ -927,6 +939,8 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       if (item.unionName) field.unionName = item.unionName;
       if (item.unionMembers) field.unionMembers = item.unionMembers;
       if (item.type === "reference" || item.type === "enum" || item.type === "union") field.confidence = item.confidence;
+      if (item.lowFromUnresolvedRef) LOW_FROM_UNRESOLVED_REF.add(field);
+      else LOW_FROM_UNRESOLVED_REF.delete(field);
     }
 
     return field;

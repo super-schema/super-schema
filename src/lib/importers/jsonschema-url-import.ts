@@ -7,7 +7,7 @@
  *
  * How cross-file references are named (no basename guessing):
  *  1. Every external `$ref` of every document is replaced, in a COPY of that document, by a unique opaque token
- *     (`XREF<n>Z`). Self references by file name become plain `#...` pointers. The existing single-document importer
+ *     (`XR<per-call random nonce>x<n>x`). Self references by file name become plain `#...` pointers. The existing single-document importer
  *     (`parseJsonSchemaDocument`) then runs unchanged over each copy; it reports each external ref as a low-confidence
  *     reference by name, and that name is the token.
  *  2. Each file's assets are named (title, else `$id` basename, else file basename) and made globally unique
@@ -20,12 +20,14 @@
  *
  * Never throws: every failure is an `err` Result or a warning. Plain objects are never written with user keys.
  */
+import { randomBytes } from "node:crypto";
 import { parse as parseYaml } from "yaml";
 import { err, ok, type Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import {
   breakInheritanceCycles,
+  isLowFromUnresolvedRef,
   parseJsonSchemaDocumentIndexed,
   refToEntityName,
   stripBom,
@@ -48,10 +50,10 @@ export interface UrlImportDeps extends ResolverDeps {
 export const MAX_IMPORT_DOCUMENTS = 200;
 /** Hard cap on distinct external refs tokenized across all documents. */
 const MAX_TOKENS = 5000;
-const TOKEN_RE = /^XREF\d+Z$/;
-const TOKEN_GLOBAL_RE = /XREF\d+Z/g;
-/** Value-position keywords whose content is data, never schema: their `$ref` strings are left alone. */
+/** Keywords whose value is data, never schema: their `$ref` strings are left alone (only when the key is a keyword). */
 const DATA_KEYWORDS = new Set(["enum", "const", "default", "examples", "example"]);
+/** Keywords whose value is a map NAME -> schema: its keys are names (even `default`, `enum`, ...), its values schemas. */
+const SCHEMA_MAP_KEYWORDS = new Set(["properties", "$defs", "definitions", "patternProperties", "dependentSchemas", "dependencies"]);
 const PLACEHOLDER_KEY = "ZzImportPlaceholder";
 
 interface TokenInfo {
@@ -115,6 +117,14 @@ class Tokens {
   private readonly byKey = new Map<string, string>();
   private counter = 0;
   overflowed = false;
+  /** Per-call random nonce: document content cannot guess or collide with a token. */
+  private readonly nonce = randomBytes(8).toString("hex");
+  readonly globalRe = new RegExp(`XR${this.nonce}x\\d+x`, "g");
+  readonly staleBaseRe = new RegExp(`base entity \`(XR${this.nonce}x\\d+x)\` is referenced but not defined`);
+
+  isToken(name: string): boolean {
+    return this.byToken.has(name);
+  }
 
   /** Token for `ref` as written in the document at `docUri`; `null` when it is not an external ref. */
   forRef(ref: string, docUri: string): { token: string } | { self: string } | null {
@@ -127,7 +137,7 @@ class Tokens {
     }
     const fragment = safeDecode(abs.hash);
     const file = hrefOf(abs.href);
-    if (file === hrefOf(docUri)) return { self: fragment === "" || fragment === "#" ? "#" : fragment };
+    if (file === hrefOf(docUri)) return { self: fragment === "" || fragment === "#" ? "#" : unescapePointer(fragment) };
     const key = `${docUri}\u0000${ref}`;
     const existing = this.byKey.get(key);
     if (existing) return { token: existing };
@@ -135,7 +145,7 @@ class Tokens {
       this.overflowed = true;
       return null;
     }
-    const token = `XREF${++this.counter}Z`;
+    const token = `XR${this.nonce}x${++this.counter}x`;
     this.byKey.set(key, token);
     this.byToken.set(token, { token, ref, file, absolute: abs.href, fragment });
     return { token };
@@ -151,25 +161,35 @@ function safeDecode(s: string): string {
 }
 
 /** Deep copy of a document with external `$ref`s tokenized. Recursion depth is bounded by the engine (RangeError is caught by the caller). */
-function rewriteNode(value: unknown, docUri: string, tokens: Tokens, memo: Map<object, unknown>): unknown {
+function rewriteNode(
+  value: unknown,
+  docUri: string,
+  tokens: Tokens,
+  memo: [Map<object, unknown>, Map<object, unknown>],
+  isNameMap = false,
+): unknown {
   if (value === null || typeof value !== "object") return value;
-  if (memo.has(value)) return memo.get(value);
+  const m = memo[isNameMap ? 1 : 0];
+  if (m.has(value)) return m.get(value);
   if (Array.isArray(value)) {
     const out: unknown[] = [];
-    memo.set(value, out);
+    m.set(value, out);
     for (const v of value) out.push(rewriteNode(v, docUri, tokens, memo));
     return out;
   }
   const out: Record<string, unknown> = {};
-  memo.set(value, out);
+  m.set(value, out);
   for (const [k, v] of Object.entries(value)) {
-    if (k === "$ref" && typeof v === "string") {
+    if (isNameMap) {
+      // Keys are NAMES (a property may be called `default` or `$ref`); every value is a schema.
+      setOwn(out, k, rewriteNode(v, docUri, tokens, memo));
+    } else if (k === "$ref" && typeof v === "string") {
       const t = tokens.forRef(v, docUri);
       setOwn(out, k, t === null ? v : "token" in t ? t.token : t.self);
     } else if (DATA_KEYWORDS.has(k)) {
       setOwn(out, k, v);
     } else {
-      setOwn(out, k, rewriteNode(v, docUri, tokens, memo));
+      setOwn(out, k, rewriteNode(v, docUri, tokens, memo, SCHEMA_MAP_KEYWORDS.has(k) && isPlainObject(v)));
     }
   }
   return out;
@@ -188,7 +208,7 @@ function buildFile(
 ): { ok: true; built: BuiltFile } | { ok: false; reason: string } {
   if (!isPlainObject(rawDoc)) return { ok: false, reason: "the document is not a JSON object" };
   try {
-    const rewritten = rewriteNode(rawDoc, docUri, tokens, new Map()) as Record<string, unknown>;
+    const rewritten = rewriteNode(rawDoc, docUri, tokens, [new Map(), new Map()]) as Record<string, unknown>;
     if (typeof rewritten.title !== "string" || !rewritten.title.trim()) {
       if (!hasUsableId(rewritten)) setOwn(rewritten, "title", fileBaseName(docUri));
     }
@@ -256,6 +276,12 @@ function parseNonObjectRoot(rewritten: Record<string, unknown>, docUri: string):
   const rootDef = definitions.get(`#/$defs/${key}`);
   if (!rootDef) return null;
   return toBuilt(doc, definitions, rootDef.assetName, rootDef.kind);
+}
+
+/** RFC 6901 unescape of the key segment: `#/$defs/a~1b` -> `#/$defs/a/b` (the importer indexes raw keys). */
+function unescapePointer(fragment: string): string {
+  const m = /^(#\/(?:\$defs|definitions)\/)(.*)$/.exec(fragment);
+  return m ? `${m[1]}${m[2]!.replace(/~1/g, "/").replace(/~0/g, "~")}` : fragment;
 }
 
 function idBase(id: string): string {
@@ -459,7 +485,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
       }
       found = { kind: idx.rootKind, name: idx.rootName };
     } else {
-      const def = idx.defs.get(info.fragment);
+      const def = idx.defs.get(info.fragment) ?? idx.defs.get(unescapePointer(info.fragment));
       if (!def) return miss(`\`${info.fragment}\` does not name a top-level definition of the referenced document`);
       found = { kind: def.kind, name: def.assetName };
     }
@@ -483,7 +509,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   };
 
   for (const e of entities) {
-    if (e.extends !== undefined && TOKEN_RE.test(e.extends)) {
+    if (e.extends !== undefined && tokens.isToken(e.extends)) {
       const t = targetOf(e.extends);
       if (t && t.ok && t.kind !== "entity") {
         warnings.push(`Entity "${e.name}": base \`${bestEffort(e.extends)}\` is not an object entity and is ignored as a base.`);
@@ -497,13 +523,13 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   for (const u of unions) u.memberTypes = dedupe(u.memberTypes.map(memberName));
 
   function memberName(m: string): string {
-    return TOKEN_RE.test(m) ? sanitizeIdentifier(finalName(m)) : m;
+    return tokens.isToken(m) ? sanitizeIdentifier(finalName(m)) : m;
   }
 
   function rewriteField(f: ParsedField): void {
     if (f.unionMembers) {
       for (const m of f.unionMembers) {
-        if (TOKEN_RE.test(m) && !f.danglingRef) {
+        if (tokens.isToken(m) && !f.danglingRef) {
           const marker = markerFor(m);
           if (marker) f.danglingRef = marker;
         }
@@ -511,12 +537,14 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
       f.unionMembers = dedupe(f.unionMembers.map(memberName));
     }
     const token = f.referencedEntityName;
-    if (token === undefined || !TOKEN_RE.test(token)) return;
+    if (token === undefined || !tokens.isToken(token)) return;
     const info = tokens.byToken.get(token);
     const t = targetOf(token);
     if (!info || !t) return;
     const isArray = f.type === "array" && f.arrayElementType === "reference";
     const isDirect = f.type === "reference";
+    // Raise only when the low confidence came solely from the unresolved ref (not an allOf conflict, a combinator, ...).
+    const lowFromRef = isLowFromUnresolvedRef(f);
     if (f.originalType === token) f.originalType = info.ref;
     if (!t.ok) {
       f.referencedEntityName = refToEntityName(info.ref);
@@ -525,7 +553,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     }
     if (t.kind === "entity") {
       f.referencedEntityName = t.name;
-      if (f.confidence === "low" && (isArray || isDirect)) f.confidence = "high";
+      if (f.confidence === "low" && (isArray || isDirect) && lowFromRef) f.confidence = "high";
       return;
     }
     if (!isArray && !isDirect) {
@@ -539,7 +567,7 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
       f.enumName = t.name;
       f.enumValues = target ? [...target.values] : [];
       delete f.referencedEntityName;
-      if (f.confidence === "low") f.confidence = "high";
+      if (f.confidence === "low" && lowFromRef) f.confidence = "high";
       return;
     }
     const target = unionByName.get(t.name);
@@ -548,17 +576,17 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     f.unionName = t.name;
     if (target) f.unionMembers = [...target.memberTypes];
     delete f.referencedEntityName;
-    if (f.confidence === "low") f.confidence = "medium";
+    if (f.confidence === "low" && lowFromRef) f.confidence = "medium";
   }
 
   // ---- Per-file warnings with tokens replaced ----
   for (const w of fileWarnings) {
-    const stale = /base entity `(XREF\d+Z)` is referenced but not defined/.exec(w);
+    const stale = tokens.staleBaseRe.exec(w);
     if (stale) {
       const t = targetOf(stale[1]!);
       if (t && t.ok) continue; // the base IS defined now
     }
-    warnings.push(w.replace(TOKEN_GLOBAL_RE, (tk) => finalName(tk)));
+    warnings.push(w.replace(tokens.globalRe,(tk) => finalName(tk)));
   }
 
   breakInheritanceCycles(entities, warnings);
