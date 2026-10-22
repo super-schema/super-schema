@@ -20,6 +20,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test, expect, unique } from "./helpers/auth";
+import { expectDetailPanelText, fillWorkbenchPaste } from "./helpers/workbench";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 
 const ALL_TYPES_TSP = readFileSync(
@@ -65,9 +66,9 @@ async function importEntityFromTsp(page: import("@playwright/test").Page, produc
   // Panel textarea is separate from the paste textarea, so target by test id.
   await page.getByRole("button", { name: /import or build schema/i }).first().click();
   await page.getByRole("button", { name: "Paste", exact: true }).click();
-  await page.getByTestId("workbench-paste-textarea").fill(tsp);
+  await fillWorkbenchPaste(page, tsp);
   await page.getByTestId("workbench-load-button").click();
-  await expect(page.getByTestId("detail-panel-textarea")).toHaveValue(tsp);
+  await expectDetailPanelText(page, tsp);
   await page.getByTestId("workbench-review-button").click();
   // TypeSpec imports go to the multi-model review screen.
   await expect(page.getByText(/AllTypes/i).first()).toBeVisible();

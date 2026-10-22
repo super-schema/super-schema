@@ -1,28 +1,47 @@
 // @vitest-environment jsdom
 // The paste box and the Detail Panel render through JsonEditor (JSON / YAML) or a coloured textarea (Protobuf, TypeSpec, SQL).
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-const h = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+const h = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>>, mounts: { json: 0, overlay: 0 } }));
 vi.mock("@/features/events/builder/template/controls/JsonEditor", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/features/events/builder/template/controls/JsonEditor")>();
   return {
     ...actual,
     JsonEditor: (props: Parameters<typeof actual.JsonEditor>[0]) => {
       h.calls.push(props as unknown as Record<string, unknown>);
+      useEffect(() => {
+        if (props.id === "workbench-paste-textarea") h.mounts.json += 1; // the paste box's editor (the Detail Panel has its own)
+      }, []);
       return actual.JsonEditor(props);
+    },
+  };
+});
+vi.mock("@/components/custom/SchemaWorkbench/HighlightedTextarea", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/custom/SchemaWorkbench/HighlightedTextarea")>();
+  return {
+    ...actual,
+    HighlightedTextarea: (props: Parameters<typeof actual.HighlightedTextarea>[0]) => {
+      useEffect(() => {
+        h.mounts.overlay += 1;
+      }, []);
+      return actual.HighlightedTextarea(props);
     },
   };
 });
 
 import { SchemaWorkbench } from "@/components/custom/SchemaWorkbench";
 import { DetailPanel, boundedDiff, MAX_DIFF_CHARS } from "@/components/custom/SchemaWorkbench/DetailPanel";
+import { HighlightedTextarea, MAX_HIGHLIGHT_CHARS, renderStats } from "@/components/custom/SchemaWorkbench/HighlightedTextarea";
 import { diffLines } from "@/lib/schema-workbench/line-diff";
 import { editorKindFor } from "@/lib/schema-workbench/editor-kind";
 
 afterEach(() => {
   cleanup();
   h.calls.length = 0;
+  h.mounts.json = 0;
+  h.mounts.overlay = 0;
 });
 
 const JSON_TEXT = JSON.stringify({ type: "object", properties: { a: { type: "string" } } }, null, 2);
@@ -139,5 +158,85 @@ describe("Detail Panel", () => {
     expect(last("detail-panel-textarea").changedLines).toBeUndefined();
     fireEvent.change(screen.getByTestId("detail-panel-textarea"), { target: { value: "ok" } });
     expect(onChange).toHaveBeenCalledWith("ok");
+  });
+});
+
+describe("paste box keeps its editor while the user types", () => {
+  const area = () => screen.getByTestId("workbench-paste-textarea") as HTMLTextAreaElement;
+
+  it("typing character by character never remounts (the kind is not re-sniffed per keystroke)", () => {
+    render(<SchemaWorkbench onCommit={vi.fn()} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    expect(h.mounts.json).toBe(1);
+    let text = "";
+    for (const ch of 'syntax = "proto3"; message A {}') {
+      text += ch;
+      fireEvent.change(area(), { target: { value: text } });
+    }
+    expect(h.mounts.json).toBe(1);
+    expect(h.mounts.overlay).toBe(0);
+    expect(screen.getByTestId("workbench-paste-textarea-editor")).toBeDefined(); // still the JsonEditor
+  });
+
+  it("a paste into the empty box that changes the kind focuses the new editor, caret at the end", () => {
+    render(<SchemaWorkbench onCommit={vi.fn()} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    fireEvent.change(area(), { target: { value: PROTO } });
+    expect(h.mounts.overlay).toBe(1);
+    expect(screen.queryByTestId("workbench-paste-textarea-editor")).toBeNull();
+    expect(document.activeElement).toBe(area());
+    expect(area().selectionStart).toBe(PROTO.length);
+  });
+
+  it("a paste that keeps the kind does not remount", () => {
+    render(<SchemaWorkbench onCommit={vi.fn()} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    fireEvent.change(area(), { target: { value: JSON_TEXT } });
+    expect(h.mounts.json).toBe(1);
+  });
+
+  it("re-evaluates the kind when focus leaves the box", () => {
+    render(<SchemaWorkbench onCommit={vi.fn()} onBack={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    fireEvent.change(area(), { target: { value: "a" } });
+    fireEvent.change(area(), { target: { value: PROTO } });
+    expect(h.mounts.overlay).toBe(0);
+    fireEvent.blur(area());
+    expect(h.mounts.overlay).toBe(1);
+    expect(screen.queryByTestId("workbench-paste-textarea-editor")).toBeNull();
+  });
+});
+
+describe("HighlightedTextarea cost", () => {
+  it("colours nothing above the cap and says so", () => {
+    const big = "message A {}\n".repeat(Math.ceil(100_000 / 13));
+    expect(big.length).toBeGreaterThan(MAX_HIGHLIGHT_CHARS);
+    const { container } = render(<HighlightedTextarea id="t" ariaLabel="t" value={big} onChange={vi.fn()} highlight="code" />);
+    expect(container.querySelectorAll("span").length).toBe(0);
+    expect(screen.getByTestId("t-colors-off").textContent).toBe("Syntax colors are off for very large inputs");
+  });
+
+  it("colours up to the cap, with no note", () => {
+    const small = "message A {}\n".repeat(10);
+    const { container } = render(<HighlightedTextarea id="t" ariaLabel="t" value={small} onChange={vi.fn()} highlight="code" />);
+    expect(container.querySelectorAll("span").length).toBeGreaterThan(10);
+    expect(screen.queryByTestId("t-colors-off")).toBeNull();
+  });
+
+  it("re-renders O(1) layer lines when one line is edited", () => {
+    const lines = Array.from({ length: 300 }, (_, i) => `message M${i} {}`);
+    const { rerender } = render(<HighlightedTextarea id="t" ariaLabel="t" value={lines.join("\n")} onChange={vi.fn()} highlight="code" />);
+    const before = renderStats.lines;
+    expect(before).toBeGreaterThanOrEqual(300);
+    const edited = [...lines];
+    edited[150] = "message Edited {}";
+    rerender(<HighlightedTextarea id="t" ariaLabel="t" value={edited.join("\n")} onChange={vi.fn()} highlight="code" />);
+    expect(renderStats.lines - before).toBe(1);
+  });
+
+  it("keeps the layer on the live text and clamps diff marks to it", () => {
+    const diff = diffLines("a\nb\nc\nd", "a\nB");
+    render(<HighlightedTextarea id="t" ariaLabel="t" value={"a\nB\nx\ny\nz"} onChange={vi.fn()} highlight="code" diff={diff} backdropTestId="bd" />);
+    expect(screen.getByTestId("bd").children).toHaveLength(5); // the live text's lines, not the diff's
   });
 });

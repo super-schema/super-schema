@@ -16,7 +16,7 @@ import {
   initialWorkbenchState,
   workbenchReducer,
 } from "@/lib/schema-workbench/workbench-state";
-import { editorKindFor } from "@/lib/schema-workbench/editor-kind";
+import { editorKindFor, sameKind, type EditorKind } from "@/lib/schema-workbench/editor-kind";
 import { JsonEditor } from "@/features/events/builder/template/controls/JsonEditor";
 import { DetailPanel } from "./DetailPanel";
 import { HighlightedTextarea } from "./HighlightedTextarea";
@@ -38,7 +38,7 @@ Example (Avro):
   ]
 }`;
 
-const MODES:{ id: Mode; label: string }[] = [
+const MODES: { id: Mode; label: string }[] = [
   { id: "drop", label: "Drop file" },
   { id: "paste", label: "Paste" },
   { id: "form", label: "Build form" },
@@ -67,6 +67,8 @@ export function SchemaWorkbench({
   const [mode, setMode] = useState<Mode>("drop");
   const [formFormat, setFormFormat] = useState<WorkbenchFormat>("json-schema");
   const [pasteText, setPasteText] = useState("");
+  const [pasteKindState, setPasteKindState] = useState<EditorKind>(() => editorKindFor(null, ""));
+  const [refocusPaste, setRefocusPaste] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [importNotice, setImportNotice] = useState<string | null>(null);
@@ -115,6 +117,37 @@ export function SchemaWorkbench({
       reader.readAsText(file);
     },
     [loadImport]
+  );
+
+  // ── Paste box ───────────────────────────────────────────────────────
+
+  const handlePasteChange = useCallback(
+    (next: string) => {
+      const fromEmpty = pasteText === "" && next !== "";
+      setPasteText(next);
+      if (!fromEmpty) {
+        setRefocusPaste(false);
+        return;
+      }
+      // A paste into the empty box: sniff it now. If that swaps the editor, the new one takes the focus.
+      const kind = editorKindFor(null, next);
+      if (!sameKind(kind, pasteKindState)) {
+        setPasteKindState(kind);
+        setRefocusPaste(true);
+      }
+    },
+    [pasteText, pasteKindState]
+  );
+
+  /** Focus left the paste box: now it is safe to follow the text. */
+  const handlePasteBlur = useCallback(
+    (e: React.FocusEvent<HTMLDivElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      setRefocusPaste(false);
+      const kind = editorKindFor(null, pasteText);
+      if (!sameKind(kind, pasteKindState)) setPasteKindState(kind);
+    },
+    [pasteText, pasteKindState]
   );
 
   // ── Form ↔ panel handshake ──────────────────────────────────────────
@@ -183,6 +216,8 @@ export function SchemaWorkbench({
     setNotice(null);
     setImportNotice(null);
     setPasteText("");
+    setPasteKindState(editorKindFor(null, ""));
+    setRefocusPaste(false);
     setPending(null);
     dispatch({ type: "clear" });
   }
@@ -256,7 +291,10 @@ export function SchemaWorkbench({
   const Editor = activeFormat.Editor;
   const shownFormat = state.detectedFormat ?? detectedFormat ?? null;
   // Paste mode: the format is not known until "Load schema", so the editor follows what the pasted text looks like.
-  const pasteKind = editorKindFor(null, pasteText);
+  // The kind is decided once, not per keystroke (a flip swaps the component and loses focus, caret and undo history). It is
+  // re-evaluated when the box goes from empty to filled (a paste; the new editor is then focused), when focus leaves the box,
+  // and on start over.
+  const pasteKind = pasteKindState;
 
   return (
     <div className="flex flex-col gap-space-4" data-testid="schema-workbench">
@@ -422,27 +460,31 @@ export function SchemaWorkbench({
 
           {mode === "paste" && (
             <>
-              {pasteKind.kind === "codemirror" ? (
-                <JsonEditor
-                  id="workbench-paste-textarea"
-                  ariaLabel="Paste your schema content"
-                  value={pasteText}
-                  onChange={setPasteText}
-                  language={pasteKind.language}
-                  placeholder={PASTE_PLACEHOLDER}
-                  height={256}
-                />
-              ) : (
-                <HighlightedTextarea
-                  id="workbench-paste-textarea"
-                  ariaLabel="Paste your schema content"
-                  value={pasteText}
-                  onChange={setPasteText}
-                  highlight={pasteKind.highlight}
-                  placeholder={PASTE_PLACEHOLDER}
-                  className="h-64"
-                />
-              )}
+              <div onBlur={handlePasteBlur}>
+                {pasteKind.kind === "codemirror" ? (
+                  <JsonEditor
+                    id="workbench-paste-textarea"
+                    ariaLabel="Paste your schema content"
+                    value={pasteText}
+                    onChange={handlePasteChange}
+                    language={pasteKind.language}
+                    placeholder={PASTE_PLACEHOLDER}
+                    height={256}
+                    autoFocus={refocusPaste}
+                  />
+                ) : (
+                  <HighlightedTextarea
+                    id="workbench-paste-textarea"
+                    ariaLabel="Paste your schema content"
+                    value={pasteText}
+                    onChange={handlePasteChange}
+                    highlight={pasteKind.highlight}
+                    placeholder={PASTE_PLACEHOLDER}
+                    className="h-64"
+                    autoFocus={refocusPaste}
+                  />
+                )}
+              </div>
               <button
                 type="button"
                 data-testid="workbench-load-button"

@@ -382,6 +382,8 @@ function schemaExtensions({ library, autocompletion }: SchemaSupport, schema: Sc
 function contentAttributes(o: EditorOptions): Record<string, string> {
   const attributes: Record<string, string> = {
     id: o.id,
+    // The editable node by test id too (the host div keeps `data-testid={id}`): e2e specs `fill` this one, a div they cannot fill.
+    "data-testid": `${o.id}-content`,
     "aria-label": o.ariaLabel,
     spellcheck: "false",
     autocorrect: "off",

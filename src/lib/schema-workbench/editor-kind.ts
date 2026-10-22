@@ -7,6 +7,11 @@ export type EditorKind =
   | { kind: "codemirror"; language: "json" | "yaml" }
   | { kind: "overlay"; highlight: "sql" | "code" };
 
+export function sameKind(a: EditorKind, b: EditorKind): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind === "codemirror" ? a.language === (b as typeof a).language : a.highlight === (b as typeof a).highlight;
+}
+
 const SNIFF_CHARS = 2000;
 
 /** First line of `text` that is not blank and not a `#` / `//` / `--` comment (YAML, Protobuf/TypeSpec and SQL comments). */

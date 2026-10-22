@@ -52,6 +52,8 @@ export interface JsonEditorProps {
   changedLines?: readonly number[];
   /** With `changedLines`: 0-based line indexes before which a line was removed (`lines.length` = after the last), drawn as a red rule. */
   removedAt?: readonly number[];
+  /** Take the keyboard focus when mounted, caret at the end (the editor carries the focus on when CodeMirror arrives). Read once. */
+  autoFocus?: boolean;
 }
 
 type Setup = typeof import("./codemirror-setup");
@@ -76,7 +78,7 @@ export function codeMirrorSupported(): boolean {
 
 export function JsonEditor({
   id, value, onChange, language, readOnly = false, ariaLabel, schema, height, onErrorChange,
-  disabled = false, required = false, invalid = false, describedBy, placeholder, changedLines, removedAt,
+  disabled = false, required = false, invalid = false, describedBy, placeholder, changedLines, removedAt, autoFocus = false,
 }: JsonEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
@@ -104,6 +106,15 @@ export function JsonEditor({
   useEffect(() => {
     latest.current = { value, onChange, onErrorChange, options, schema: appliedSchema };
   });
+
+  // Asked to take the focus: the textarea does it now, and the focus moves on to CodeMirror when that has loaded (see below).
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!autoFocus || area === null) return;
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read once, on mount
+  }, []);
 
   // Load CodeMirror, then build the editor on the document as it is by then; destroy it when this goes away.
   useEffect(() => {

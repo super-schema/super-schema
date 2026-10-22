@@ -100,7 +100,7 @@ export function DetailPanel({ value, onChange, baseline, readOnly, placeholder, 
             placeholder={placeholder}
             diff={diff}
             backdropTestId="detail-panel-backdrop"
-            className="h-full"
+            className="flex-1 min-h-0"
           />
         )}
       </div>
