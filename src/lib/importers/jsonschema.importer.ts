@@ -36,6 +36,7 @@
  */
 
 import { parse as parseYaml } from "yaml";
+import { collidingFieldNames } from "@/lib/typespec-official/name-collisions";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
@@ -311,6 +312,7 @@ interface ResolveContext {
 
 /** A union with more members than this is not a real schema; the excess is dropped (and reported). */
 export const MAX_UNION_MEMBERS = 200;
+
 
 const MAX_REF_DEPTH = 16;
 /** Combinator nesting past this is not a real schema; resolve it as an unknown at low confidence. */
@@ -1323,6 +1325,12 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   for (const def of definitions.values()) {
     if (def.kind !== "inline" && def.assetName !== def.key) {
       warnings.push(`Definition "${def.key}" clashes with the root entity name — imported as "${def.assetName}".`);
+    }
+  }
+
+  for (const entity of entities) {
+    for (const collision of collidingFieldNames(entity.fields.map((f) => f.name))) {
+      warnings.push(`Entity "${entity.name}": the fields ${collision.names.map((n) => `"${n}"`).join(" and ")} would both be written as "${collision.becomes}" in ${collision.targets.join(", ")}; those targets will refuse to generate until one is renamed.`);
     }
   }
 

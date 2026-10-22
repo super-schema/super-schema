@@ -16,6 +16,7 @@ import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import { buildDbTypeSpecTarget, isDbTypeSpecTarget } from "./db-source";
+import { describeNameCollision, findNameCollisions } from "./name-collisions";
 import { boundedForLog, describeEmitterFailure, errorDiagnostics, warningDiagnostics } from "./emitter-diagnostics";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
@@ -110,6 +111,11 @@ export async function emitOfficialTypeSpecTargetFromData(
   }
 
   const model = compileEntity(entity, fields);
+  // Names that this target rewrites into the same identifier would give an invalid schema: refuse, naming them.
+  const collisions = findNameCollisions(model, target.key);
+  if (collisions.length > 0) {
+    return { output: "", validationStatus: "INVALID", warnings: [], errors: collisions.map((c) => ({ message: describeNameCollision(c, target.key) })) };
+  }
   const built = buildSourceForTarget(model, target.key);
   built.warnings.push(...danglingReferenceWarnings(model, target.key));
   if (built.errors.length > 0) {
