@@ -1331,21 +1331,51 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   }
 
   // An entity or field name longer than the limit is refused: the emitters write a file per declaration and crash (ENAMETOOLONG) on a
-  // very long one. In a document with other entities the offender is skipped with a warning; when nothing is left it is an error.
-  const offences: string[] = [];
-  const kept = entities.filter((entity) => {
-    const long = entity.name.length > MAX_IMPORTED_NAME_LENGTH
-      ? `Entity "${entity.name.slice(0, 40)}..." has a name of ${entity.name.length} characters (the limit is ${MAX_IMPORTED_NAME_LENGTH})`
-      : entity.fields.some((f) => f.name.length > MAX_IMPORTED_NAME_LENGTH)
-        ? `Entity "${entity.name}" has the field "${entity.fields.find((f) => f.name.length > MAX_IMPORTED_NAME_LENGTH)!.name.slice(0, 40)}..." with a name longer than ${MAX_IMPORTED_NAME_LENGTH} characters`
-        : undefined;
-    if (long) offences.push(long);
-    return !long;
-  });
-  if (offences.length > 0 && kept.length === 0) {
-    return err({ code: "PARSE_ERROR", message: `${offences[0]}; names longer than ${MAX_IMPORTED_NAME_LENGTH} characters cannot be imported.`, suggestedFix: "Shorten the title / property names." });
+  // very long one. An over-long entity name skips that entity; an over-long field name drops that field (an entity left with no field is
+  // skipped). Skipping the ROOT entity is an error (the document would silently import as a different entity); skipping another entity
+  // is a warning, and every field that pointed at it becomes a visible dangling reference.
+  const limit = MAX_IMPORTED_NAME_LENGTH;
+  const clip = (name: string): string => (name.length > 40 ? `${name.slice(0, 40)}...` : name);
+  const skipped = new Map<string, string>();
+  const notes: string[] = [];
+  const kept: ParsedEntity[] = [];
+  for (const entity of entities) {
+    if (entity.name.length > limit) {
+      skipped.set(entity.name, `Entity "${clip(entity.name)}" has a name of ${entity.name.length} characters (the limit is ${limit})`);
+      continue;
+    }
+    const long = entity.fields.filter((f) => f.name.length > limit);
+    if (long.length === 0) { kept.push(entity); continue; }
+    const rest = entity.fields.filter((f) => f.name.length <= limit);
+    for (const f of long) notes.push(`Entity "${entity.name}" has the field "${clip(f.name)}" with a name of ${f.name.length} characters (the limit is ${limit}); the field was dropped.`);
+    if (rest.length === 0) {
+      skipped.set(entity.name, `Entity "${entity.name}" has the field "${clip(long[0].name)}" with a name longer than ${limit} characters and no other field`);
+      continue;
+    }
+    kept.push({ ...entity, fields: rest });
   }
-  for (const offence of offences) warnings.push(`${offence}; it was skipped (names longer than ${MAX_IMPORTED_NAME_LENGTH} characters cannot be imported).`);
+  const refuse = (message: string) => err({ code: "PARSE_ERROR" as const, message: `${message}; names longer than ${limit} characters cannot be imported.`, suggestedFix: "Shorten the title / property names." });
+  if (rootEntityName !== undefined && skipped.has(rootEntityName)) return refuse(skipped.get(rootEntityName)!);
+  if (kept.length === 0 && skipped.size > 0) return refuse([...skipped.values()][0]);
+  for (const reason of skipped.values()) warnings.push(`${reason}; it was skipped (names longer than ${limit} characters cannot be imported).`);
+  warnings.push(...notes);
+  if (skipped.size > 0) {
+    for (const entity of kept) {
+      if (entity.extends && skipped.has(entity.extends)) {
+        warnings.push(`Entity "${entity.name}" extended "${clip(entity.extends)}", which was skipped (name too long); it no longer extends anything.`);
+        entity.extends = undefined;
+      }
+      for (const field of entity.fields) {
+        const names = [field.referencedEntityName, ...(field.unionMembers ?? [])].filter((n): n is string => n !== undefined && skipped.has(n));
+        if (names.length === 0) continue;
+        warnings.push(`Field "${field.name}" of "${entity.name}" refers to "${clip(names[0])}", which was skipped (name too long); it is kept as an unresolved reference.`);
+        if (field.type === "reference" || (field.type === "array" && field.arrayElementType === "reference")) {
+          field.confidence = "low";
+          field.danglingRef = { ref: field.originalType, reason: `refers to "${clip(names[0])}", which was skipped because its name is longer than ${limit} characters`, ...(field.type === "array" ? { element: true as const } : {}) };
+        }
+      }
+    }
+  }
   entities.splice(0, entities.length, ...kept);
   for (const entity of entities) {
     for (const collision of collidingFieldNames(entity.fields.map((f) => f.name))) {
