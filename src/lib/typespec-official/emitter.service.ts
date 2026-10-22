@@ -217,13 +217,13 @@ function buildOpenApi3Source(baseSource: string, model: SuperSchemaModel): strin
   );
 
   const { imports, rest } = splitLeadingImports(withNamespace);
+  // @typespec/rest is deliberately NOT imported: its validator allows one @key per model (`rest/duplicate-key`), so a composite key
+  // made the whole entity ungeneratable, and nothing in the generated source uses a rest decorator.
   return [
     'import "@typespec/http";',
-    'import "@typespec/rest";',
     'import "@typespec/openapi3";',
     ...imports,
     "using TypeSpec.Http;",
-    "using TypeSpec.Rest;",
     "",
     rest,
     "",
