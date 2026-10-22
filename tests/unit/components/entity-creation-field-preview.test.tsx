@@ -121,4 +121,10 @@ describe("FieldPreview", () => {
     expect(screen.getByDisplayValue("customer_id")).toBeDefined();
     expect(screen.getByText("2 fields")).toBeDefined();
   });
+
+  it("labels the entity name and description inputs (reachable by label)", () => {
+    render(<FieldPreviewHarness />);
+    expect((screen.getByLabelText("Entity Name") as HTMLInputElement).value).toBe("Customer");
+    expect(screen.getByLabelText("Description")).toBeDefined();
+  });
 });

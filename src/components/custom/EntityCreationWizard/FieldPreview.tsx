@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useRef, useMemo } from "react";
+import { Fragment, useId, useState, useRef, useMemo } from "react";
 import { Plus, Trash2, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,6 +100,8 @@ export function FieldPreview({
   importedEntity,
   fallbackName,
 }: FieldPreviewProps) {
+  const nameInputId = useId();
+  const descriptionInputId = useId();
   const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
   const needsName = fallbackName !== undefined && entityName.trim() === fallbackName;
   const entityNames = useMemo(() => new Set([importedEntity?.name ?? entityName]), [importedEntity?.name, entityName]);
@@ -171,8 +173,9 @@ export function FieldPreview({
       {/* Entity name + description */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-space-3">
         <div>
-          <label className="text-caption text-muted-foreground mb-1 block">Entity Name</label>
+          <label htmlFor={nameInputId} className="text-caption text-muted-foreground mb-1 block">Entity Name</label>
           <Input
+            id={nameInputId}
             value={entityName}
             onChange={(e) => onEntityNameChange(e.target.value)}
             className={`h-9 font-mono ${needsName ? "border-warning ring-1 ring-warning/50" : ""}`}
@@ -188,8 +191,9 @@ export function FieldPreview({
           )}
         </div>
         <div>
-          <label className="text-caption text-muted-foreground mb-1 block">Description</label>
+          <label htmlFor={descriptionInputId} className="text-caption text-muted-foreground mb-1 block">Description</label>
           <Input
+            id={descriptionInputId}
             value={entityDescription}
             onChange={(e) => onEntityDescriptionChange(e.target.value)}
             className="h-9"
