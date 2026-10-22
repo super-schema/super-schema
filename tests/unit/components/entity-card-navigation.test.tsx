@@ -55,4 +55,16 @@ describe("EntityCard navigation", () => {
     expect(deleteButton.className).not.toContain("opacity-0");
     expect(deleteButton.className).not.toContain("group-hover:opacity-100");
   });
+
+  it("shows a classification level outside the scale under its own name, after the standard ones", () => {
+    render(
+      <EntityCard
+        {...defaultProps}
+        classifications={{ NEVER_STORED: 0, PII: 1, SENSITIVE: 0, INTERNAL: 0, PUBLIC: 0, class4: 3 }}
+      />
+    );
+    expect(screen.getByText("3 class4")).toBeTruthy();
+    expect(screen.getByText("1 PII")).toBeTruthy();
+    expect(screen.queryByText(/Sensitive/)).toBeNull();
+  });
 });

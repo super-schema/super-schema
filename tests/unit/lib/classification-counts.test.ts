@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   classificationCountsFromGroups,
+  classificationFilterOptions,
   emptyClassificationCounts,
+  matchesClassificationFilter,
+  otherClassificationCounts,
 } from "@/lib/classification-counts";
 
 describe("classificationCountsFromGroups", () => {
@@ -25,13 +28,19 @@ describe("classificationCountsFromGroups", () => {
     expect(counts.get("e1")?.SENSITIVE).toBe(3);
   });
 
-  it("ignores classifications that are not part of the scale", () => {
+  it("counts a level outside the scale under its own name (an imported vendor level such as class4)", () => {
     const counts = classificationCountsFromGroups([
-      { entityId: "e1", classification: "TOP_SECRET", _count: 5 },
-      { entityId: "e1", classification: "constructor", _count: 5 },
+      { entityId: "e1", classification: "class4", _count: 3 },
+      { entityId: "e1", classification: "constructor", _count: 2 },
+      { entityId: "e1", classification: "__proto__", _count: 9 },
       { entityId: "e1", classification: "PII", _count: 1 },
+      { entityId: "e1", classification: null, _count: 1 },
     ]);
-    expect(counts.get("e1")).toEqual({ NEVER_STORED: 0, PII: 1, SENSITIVE: 0, INTERNAL: 0, PUBLIC: 0 });
+    const e1 = counts.get("e1")!;
+    expect(e1).toMatchObject({ NEVER_STORED: 0, PII: 1, SENSITIVE: 1, INTERNAL: 0, PUBLIC: 0, class4: 3 });
+    expect(Object.prototype.hasOwnProperty.call(e1, "constructor") && e1.constructor).toBe(2);
+    expect(Object.getPrototypeOf(e1)).toBe(Object.prototype);
+    expect(otherClassificationCounts(e1)).toEqual([["class4", 3], ["constructor", 2]]);
   });
 
   it("seeds zeroed counts for entities with no fields when their ids are given", () => {
@@ -53,5 +62,21 @@ describe("classificationCountsFromGroups", () => {
     counts.get("a")!.PII = 9;
     expect(counts.get("b")?.PII).toBe(0);
     expect(emptyClassificationCounts().PII).toBe(0);
+  });
+});
+
+describe("the field list classification filter", () => {
+  it("lists the standard five, then the other levels actually present", () => {
+    const options = classificationFilterOptions(["class4", "PII", null, "class4", "Class2", "pii"]);
+    expect(options.map((o) => o.value)).toEqual(["NEVER_STORED", "PII", "SENSITIVE", "INTERNAL", "PUBLIC", "Class2", "class4"]);
+    expect(options.find((o) => o.value === "NEVER_STORED")?.label).toBe("Never Stored");
+    expect(classificationFilterOptions([]).map((o) => o.value)).toEqual(["NEVER_STORED", "PII", "SENSITIVE", "INTERNAL", "PUBLIC"]);
+  });
+
+  it("matches a standard level case-insensitively and any other level exactly", () => {
+    expect(matchesClassificationFilter("pii", "PII")).toBe(true);
+    expect(matchesClassificationFilter("class4", "class4")).toBe(true);
+    expect(matchesClassificationFilter("class4", "CLASS4")).toBe(false);
+    expect(matchesClassificationFilter(null, "PII")).toBe(false);
   });
 });

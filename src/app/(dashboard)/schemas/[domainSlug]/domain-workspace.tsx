@@ -86,7 +86,7 @@ interface EntityData {
   version: number;
   fieldCount: number;
   updatedAt: Date;
-  classifications: { NEVER_STORED: number; PII: number; SENSITIVE: number; INTERNAL: number; PUBLIC: number };
+  classifications: { NEVER_STORED: number; PII: number; SENSITIVE: number; INTERNAL: number; PUBLIC: number } & Record<string, number>;
 }
 
 interface DomainWorkspaceProps {

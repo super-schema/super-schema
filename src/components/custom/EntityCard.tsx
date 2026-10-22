@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { otherClassificationCounts } from "@/lib/classification-counts";
 import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatDateOnly } from "@/lib/date-format";
@@ -19,13 +20,14 @@ interface EntityCardProps {
   /** null for tenant-level (Enterprise) entities. */
   productSlug: string | null;
   updatedAt: Date;
+  /** The five standard levels, plus any other level present under its own name. */
   classifications?: {
     NEVER_STORED: number;
     PII: number;
     SENSITIVE: number;
     INTERNAL: number;
     PUBLIC: number;
-  };
+  } & Record<string, number>;
   onDelete?: (id: string, name: string) => void;
 }
 
@@ -111,6 +113,11 @@ export function EntityCard({
                 {classifications.PUBLIC} Public
               </span>
             )}
+            {otherClassificationCounts(classifications).map(([level, count]) => (
+              <span key={level} className="bg-muted text-muted-foreground text-caption px-1.5 py-0.5 rounded">
+                {count} {level}
+              </span>
+            ))}
           </div>
         )}
 

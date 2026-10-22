@@ -26,6 +26,7 @@ import {
   getFieldCompleteness,
 } from "@/lib/validation/field-completeness";
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
+import { classificationFilterOptions, matchesClassificationFilter } from "@/lib/classification-counts";
 import { assetHref } from "@/lib/navigation/asset-href";
 import {
   getFieldNameSuggestions,
@@ -112,6 +113,7 @@ export function FieldEditor({
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [classificationFilter, setClassificationFilter] = useState("");
+  const classificationOptions = useMemo(() => classificationFilterOptions(fields.map((f) => f.classification)), [fields]);
   const [completenessFilter, setCompletenessFilter] = useState("");
 
   const hasActiveFilters = searchQuery || typeFilter || classificationFilter || completenessFilter;
@@ -145,9 +147,7 @@ export function FieldEditor({
     }
 
     if (classificationFilter) {
-      result = result.filter(
-        (f) => f.classification?.toUpperCase() === classificationFilter
-      );
+      result = result.filter((f) => matchesClassificationFilter(f.classification, classificationFilter));
     }
 
     if (completenessFilter) {
@@ -377,10 +377,9 @@ export function FieldEditor({
             className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           >
             <option value="">All classifications</option>
-            <option value="PII">PII</option>
-            <option value="SENSITIVE">Sensitive</option>
-            <option value="INTERNAL">Internal</option>
-            <option value="PUBLIC">Public</option>
+            {classificationOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
           <select
             value={completenessFilter}
