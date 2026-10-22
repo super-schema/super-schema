@@ -14,7 +14,6 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
-  generateSchemaAction,
   publishSchemaAction,
   deploySchemaAction,
   getSchemaTargetFieldMappingsAction,
@@ -22,6 +21,7 @@ import {
 } from "../actions";
 import type { SchemaVersion } from "../actions";
 import { StatusBadge } from "./SchemaVersionList";
+import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import { SchemaVersionList } from "./SchemaVersionList";
 import { SchemaCodePreview } from "./SchemaCodePreview";
 import type { SchemaTargetFieldMappingRow } from "@/lib/schema-targets/field-type-overrides";
@@ -415,6 +415,7 @@ export function TechnologyCard({
 }: TechnologyCardProps) {
   const [expanded, setExpanded] = useState(versions.length > 0);
   const [isGenerating, setIsGenerating] = useState(false);
+  const { generate, dialog } = useGenerateWithInputs(entityId);
   const [viewingVersion, setViewingVersion] = useState<number | null>(null);
   const [actionPending, setActionPending] = useState<string | null>(null);
   const [mappingRows, setMappingRows] = useState<SchemaTargetFieldMappingRow[]>([]);
@@ -477,7 +478,8 @@ export function TechnologyCard({
     }
     setIsGenerating(true);
     try {
-      const result = await generateSchemaAction(entityId, targetInfo.key);
+      const result = await generate(targetInfo.key);
+      if (!result) return; // the user declined to answer what the target needs
       if (result.error) {
         toast.error(result.error);
         return;
@@ -493,7 +495,7 @@ export function TechnologyCard({
     } finally {
       setIsGenerating(false);
     }
-  }, [entityId, targetInfo, fieldsCount, onVersionsChange, loadMappings]);
+  }, [generate, targetInfo, fieldsCount, onVersionsChange, loadMappings]);
 
   const handlePublish = useCallback(
     async (version: number) => {
@@ -656,6 +658,7 @@ export function TechnologyCard({
           )}
         </>
       )}
+      {dialog}
     </div>
   );
 

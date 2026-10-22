@@ -8,6 +8,8 @@
  * {@link GENERIC_EMITTER_FAILURE} and the caller logs the raw text server-side. Pure functions.
  */
 
+import { primaryKeyRequirement, type MissingRequirement, type RequirementEntityShape } from "@/lib/schema-targets/requirements";
+
 /** The text a user sees for a failure that has no error diagnostic (an emitter crash, a missing binary, a full disk, ...). */
 export const GENERIC_EMITTER_FAILURE = "The TypeSpec emitter failed.";
 
@@ -64,4 +66,40 @@ export function describeEmitterFailure(raw: string): string {
   const shown = diagnostics.slice(0, MAX_DIAGNOSTICS);
   const rest = diagnostics.length - shown.length;
   return (rest > 0 ? [...shown, `(and ${rest} more)`] : shown).join("\n");
+}
+
+/** One compile diagnostic as data: its code (`@typespec/bigquery/missing-primary-key`) and the message after it. */
+export interface StructuredDiagnostic {
+  code: string;
+  message: string;
+}
+
+/** `<code>: <message>` (as {@link errorDiagnostics} and the emitter service produce it) split into its two parts; a text with no code is not a diagnostic. */
+function splitDiagnostic(text: string): StructuredDiagnostic | null {
+  const match = /^(\S+): ([\s\S]+)$/.exec(text.trim());
+  return match ? { code: match[1], message: match[2] } : null;
+}
+
+/**
+ * The error diagnostics of a compile (or of `<code>: <message>` lines the emitter service already extracted) as
+ * `{ code, message }[]`. {@link errorDiagnostics} stays the string form for the callers that print it.
+ */
+export function structuredDiagnostics(raw: string): StructuredDiagnostic[] {
+  const lines = errorDiagnostics(raw);
+  const texts = lines.length > 0 ? lines : raw.split("\n");
+  return texts.map(splitDiagnostic).filter((diagnostic): diagnostic is StructuredDiagnostic => diagnostic !== null);
+}
+
+/** `@typespec/bigquery/missing-primary-key`, `@typespec/postgres/...`, `@typespec/spanner/...` (any emitter package). */
+const MISSING_PRIMARY_KEY_CODE = /^@typespec\/[\w-]+\/missing-primary-key$/;
+
+/**
+ * A diagnostic that means "an input is missing" as the same requirement the pre-check produces; null for every other
+ * diagnostic. Lets a failure that slipped past {@link getTargetRequirements} still become a question.
+ */
+export function requirementFromDiagnostic(
+  diagnostic: StructuredDiagnostic,
+  entity: RequirementEntityShape,
+): MissingRequirement | null {
+  return MISSING_PRIMARY_KEY_CODE.test(diagnostic.code) ? primaryKeyRequirement(entity) : null;
 }

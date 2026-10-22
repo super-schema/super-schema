@@ -286,9 +286,16 @@ describe("EntityCreationWizard: single JSON Schema import keeps everything the i
     await pasteAndParse(SINGLE);
     const input = await screen.findByDisplayValue("ImportedEntity");
     expect(input.getAttribute("data-needs-name")).toBe("true");
-    expect(screen.getByTestId("needs-name-hint")).toBeDefined();
+    expect(screen.getByTestId("needs-name-hint").textContent).toContain("Give this entity a name");
+    const create = screen.getByRole("button", { name: "Create Entity" }) as HTMLButtonElement;
+    expect(create.disabled).toBe(true);
+    fireEvent.click(create);
+    expect(mocks.createEntityWithFieldsAction).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "  " } });
+    expect(create.disabled).toBe(true);
     fireEvent.change(input, { target: { value: "Person" } });
     expect(screen.queryByTestId("needs-name-hint")).toBeNull();
+    expect(create.disabled).toBe(false);
   });
 
   it("does not flag a schema that names itself", async () => {

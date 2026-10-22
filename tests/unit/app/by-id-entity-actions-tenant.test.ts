@@ -84,7 +84,7 @@ const entityRow = (tenantId: string, versionStatus = "draft") => ({
 });
 const fieldRow = (tenantId: string) => ({ id: "fld-1", entityId: "ent-1", name: "email", slug: "email", type: "string", entity: { tenantId } });
 const FIELD_ROW_FOR_MAPPING = {
-  id: "fld-1", name: "email", type: "string", precision: null, scale: null, nullable: true, isKey: false, fieldNumber: null, description: "",
+  id: "fld-1", name: "email", type: "string", precision: null, scale: null, nullable: true, isKey: true, fieldNumber: null, description: "",
   classification: null, aliases: [], decorators: {}, sortOrder: 0,
 };
 

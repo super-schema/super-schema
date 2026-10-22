@@ -114,7 +114,10 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
-  mockPrisma.field.findMany.mockResolvedValue([]);
+  // A BigQuery target needs a primary key (an entity without one is asked for it, not emitted): the default entity has one.
+  mockPrisma.field.findMany.mockResolvedValue([
+    { id: "field-id", name: "id", type: "string", precision: null, scale: null, nullable: false, isKey: true, fieldNumber: null, description: "", classification: null, aliases: [], decorators: {}, sortOrder: 0 },
+  ]);
   if (mockPrisma.typeMappingOverride) {
     mockPrisma.typeMappingOverride.findMany.mockResolvedValue([]);
   }
@@ -166,7 +169,7 @@ describe("SchemasTab Workflow", () => {
         precision: 10,
         scale: 2,
         nullable: false,
-        isKey: false,
+        isKey: true,
         fieldNumber: null,
         description: "",
         classification: null,
@@ -202,7 +205,8 @@ describe("SchemasTab Workflow", () => {
         metadata: {},
         fields: [],
       });
-      const reason = "@typespec/bigquery/missing-primary-key: Table 'TestEntity' must have at least one @primaryKey property.";
+      // (a missing-primary-key diagnostic is no longer an error: it becomes a question, see schema-requirements-actions.test.ts)
+      const reason = "@typespec/bigquery/index-not-supported: Indexes are not supported on BigQuery tables.";
       vi.mocked((await import("@/lib/typespec-official/emitter.service")).emitOfficialTypeSpecTargetForEntity).mockResolvedValueOnce({
         output: "",
         validationStatus: "INVALID",

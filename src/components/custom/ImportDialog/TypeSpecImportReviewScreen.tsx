@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import type { ImportAssetSelection } from "@/lib/importers/import-payload";
-import type { ImportFormat } from "@/lib/importers/types";
+import { IMPORTED_ENTITY_FALLBACK_NAME, type ImportFormat } from "@/lib/importers/types";
 import {
   MOUNT_DETAILS_ONLY_WHEN_EXPANDED_ABOVE,
   ParsedEntityDetails,
@@ -176,6 +176,13 @@ export function TypeSpecImportReviewScreen({
       selectedUnions.size,
     ]
   );
+
+  // A model registered as an entity that still carries the importer placeholder name must not be created under it: the confirm
+  // button waits until the model is renamed in the source or unregistered (no inline rename: the payload is index based).
+  const unnamedEntityIndexes = importResult.models
+    .map((model, index) => (model.name === IMPORTED_ENTITY_FALLBACK_NAME && selectedModels.has(index) && selectedEntities.has(index) ? index : -1))
+    .filter((index) => index >= 0);
+  const needsEntityName = unnamedEntityIndexes.length > 0;
 
   function handleConfirm() {
     onConfirm({
@@ -500,9 +507,16 @@ export function TypeSpecImportReviewScreen({
       )}
 
       <div className="flex items-center justify-between pt-space-3 border-t border-border/50">
-        <span className="text-caption text-muted-foreground">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-caption text-muted-foreground">
           {totalSelected} asset record(s) selected
         </span>
+          {needsEntityName && (
+            <span className="text-caption text-warning" data-testid="needs-entity-name">
+              Give this entity a name: &ldquo;{IMPORTED_ENTITY_FALLBACK_NAME}&rdquo; is a placeholder. Add a title to the source, or untick Register as entity.
+            </span>
+          )}
+        </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
@@ -510,7 +524,7 @@ export function TypeSpecImportReviewScreen({
           <Button
             size="sm"
             onClick={handleConfirm}
-            disabled={!selectedDomainId || totalSelected === 0}
+            disabled={!selectedDomainId || totalSelected === 0 || needsEntityName}
             className="gap-1.5"
           >
             <CheckCircle2 className="w-3.5 h-3.5" />

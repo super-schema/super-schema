@@ -5,7 +5,7 @@ import { Loader2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { generateSchemaAction } from "../actions";
+import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import type { TargetInfo } from "./TechnologyCard";
 
 interface SchemaTargetChooserProps {
@@ -27,6 +27,7 @@ export function SchemaTargetChooser({
 }: SchemaTargetChooserProps) {
   const [selectedTargetKey, setSelectedTargetKey] = useState(availableTargets[0]?.key ?? "");
   const [isGenerating, setIsGenerating] = useState(false);
+  const { generate, dialog } = useGenerateWithInputs(entityId);
 
   useEffect(() => {
     if (availableTargets.some((target) => target.key === selectedTargetKey)) {
@@ -50,7 +51,8 @@ export function SchemaTargetChooser({
 
     setIsGenerating(true);
     try {
-      const result = await generateSchemaAction(entityId, selectedTarget.key);
+      const result = await generate(selectedTarget.key);
+      if (!result) return; // the user declined to answer what the target needs
       if (result.error) {
         toast.error(result.error);
         return;
@@ -169,6 +171,7 @@ export function SchemaTargetChooser({
           {unavailableTargets.length} additional TypeSpec generators are cataloged here but stay disabled in the Schemas tab because they emit multi-file code artifacts instead of a single schema file.
         </p>
       )}
+      {dialog}
     </section>
   );
 }

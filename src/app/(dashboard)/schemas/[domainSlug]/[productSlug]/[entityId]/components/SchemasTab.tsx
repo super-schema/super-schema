@@ -19,9 +19,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { getSchemaVersionsAction, generateSchemaAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
+import { getSchemaVersionsAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
 import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "../actions";
 import { SchemaCodePreview } from "./SchemaCodePreview";
+import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import { generationWarningToast, stagedWarningToast } from "./generate-warnings";
 import { StagedEmitDialog } from "@/features/emission/StagedEmitDialog/StagedEmitDialog";
 import { getTargetTypeOptions, type TargetTypeOption } from "@/lib/type-mapping/target-type-catalog";
@@ -385,6 +386,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [contentTab, setContentTab] = useState<ContentTab>("schema");
   const [isGenerating, setIsGenerating] = useState(false);
+  const { generate, dialog } = useGenerateWithInputs(entityId);
   const [isPublishing, setIsPublishing] = useState(false);
   const [stagedOpen, setStagedOpen] = useState(false);
   // Local override state (not yet saved until regeneration)
@@ -428,7 +430,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     if (fields.length === 0) { toast.error("Add fields first"); return; }
     setIsGenerating(true);
     try {
-      const result = await generateSchemaAction(entityId, targetKey);
+      const result = await generate(targetKey);
+      if (!result) return; // the user declined to answer what the target needs
       if (result.error) { toast.error(result.error); return; }
       // A target generated WITH warnings (status WARNING) says so in one toast instead of the plain success one, and
       // lists them there: nothing else shows them (the SchemaVersion stores none).
@@ -459,7 +462,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     const runs: Array<{ label: string; warnings: string[] | undefined }> = [];
     try {
       for (const targetKey of selectedTargets) {
-        const result = await generateSchemaAction(entityId, targetKey);
+        const result = await generate(targetKey);
+        if (!result) continue; // declined: skip this target, carry on with the others
         if (result.error) { toast.error(`${getTargetMeta(targetKey).displayName}: ${result.error}`); continue; }
         ok += 1;
         runs.push({ label: getTargetMeta(targetKey).displayName, warnings: result.warnings });
@@ -726,6 +730,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
         }))}
         onEmitSelected={handleStagedEmit}
       />
+      {dialog}
     </div>
   );
 }

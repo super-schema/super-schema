@@ -28,6 +28,13 @@ import {
 } from "@/lib/schema-targets/field-type-overrides";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import {
+  getTargetRequirements,
+  hasTargetRequirements,
+  type MissingRequirement,
+  type RequirementEntityShape,
+} from "@/lib/schema-targets/requirements";
+import { requirementFromDiagnostic, structuredDiagnostics } from "@/lib/typespec-official/emitter-diagnostics";
+import {
   getDeploymentStatus,
   markAsDeployed,
   updateDriftStatus,
@@ -1280,8 +1287,100 @@ function warningMessages(warnings: readonly unknown[]): string[] {
     .map((text) => (text.length > MAX_WARNING_LENGTH ? `${text.slice(0, MAX_WARNING_LENGTH - 1).trimEnd()}…` : text));
 }
 
+/** The fields of an entity as the requirement checks read them (declaration order); null when the entity is gone. */
+async function loadRequirementShape(entityId: string): Promise<RequirementEntityShape | null> {
+  const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { name: true } });
+  if (!entity) return null;
+  const fields = await prisma.field.findMany({
+    where: { entityId },
+    select: { name: true, isKey: true, nullable: true, type: true },
+    orderBy: { sortOrder: "asc" },
+  });
+  return { name: entity.name, fields };
+}
+
 /**
- * Generate a schema for ONE target, store as draft version in entity metadata.
+ * What `target` still needs from the user before it can be generated for this entity (today: a primary key for BigQuery,
+ * PostgreSQL and Spanner). `{ needsInput: [] }` means generation can go ahead. Never emits anything.
+ */
+export async function getSchemaGenerationRequirementsAction(
+  entityId: string,
+  target: string,
+): Promise<{ needsInput: MissingRequirement[] } | { error: string; code?: string }> {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+  try {
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+    if (!getSchemaTargetDefinition(target)) return { error: `Unknown schema target "${target}"` };
+    if (!hasTargetRequirements(target)) return { needsInput: [] };
+    const shape = await loadRequirementShape(entityId);
+    if (!shape) return { ...notFoundFailure("Entity") };
+    return { needsInput: getTargetRequirements(target, shape).missing };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("getSchemaGenerationRequirementsAction", e) };
+  }
+}
+
+const MAX_PRIMARY_KEY_FIELDS = 16;
+
+/**
+ * Save the user's answer to a "needs a primary key" question: exactly the named fields of this entity get `isKey = true`, every
+ * other field `isKey = false` (one transaction, with the draft mark every field edit makes). The answer applies to every target.
+ */
+export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: string[]) {
+  const session = await auth();
+  if (!session?.user?.id) return { error: "Not authenticated" };
+
+  if (!Array.isArray(fieldNames) || fieldNames.length === 0) {
+    return { error: "Choose at least one field for the primary key", code: "VALIDATION_ERROR" as const };
+  }
+  if (fieldNames.length > MAX_PRIMARY_KEY_FIELDS) {
+    return { error: `A primary key has at most ${MAX_PRIMARY_KEY_FIELDS} fields`, code: "VALIDATION_ERROR" as const };
+  }
+  if (fieldNames.some((name) => typeof name !== "string" || name === "")) {
+    return { error: "Field names must be non-empty text", code: "VALIDATION_ERROR" as const };
+  }
+  if (new Set(fieldNames).size !== fieldNames.length) {
+    return { error: "A field can only be listed once", code: "VALIDATION_ERROR" as const };
+  }
+
+  try {
+    if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
+
+    const existing = await prisma.field.findMany({
+      where: { entityId },
+      select: { id: true, name: true, isKey: true },
+    });
+    const known = new Set(existing.map((field) => field.name));
+    const unknown = fieldNames.filter((name) => !known.has(name));
+    if (unknown.length > 0) {
+      return { error: `Not a field of this entity: ${unknown.slice(0, 3).join(", ")}`, code: "VALIDATION_ERROR" as const };
+    }
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Entity",
+      entityId,
+      userId: session.user.id,
+      beforeState: { primaryKey: existing.filter((field) => field.isKey).map((field) => field.name) } as unknown as object,
+      fn: () =>
+        prisma.$transaction([
+          prisma.field.updateMany({ where: { entityId, name: { in: fieldNames } }, data: { isKey: true } }),
+          prisma.field.updateMany({ where: { entityId, name: { notIn: fieldNames } }, data: { isKey: false } }),
+          prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+        ]),
+    });
+
+    revalidatePath("/schemas");
+    return { success: true as const, primaryKey: [...fieldNames] };
+  } catch (e: unknown) {
+    return { ...unexpectedFailure("setEntityPrimaryKeyAction", e) };
+  }
+}
+
+/**
+ * Generate a schema for ONE target, store as draft version in entity metadata. When the target needs an input the entity does
+ * not carry (a primary key), nothing is emitted and the answer is `{ needsInput: [...] }` for the UI to ask.
  */
 export async function generateSchemaAction(entityId: string, target: string) {
   const session = await auth();
@@ -1294,6 +1393,15 @@ export async function generateSchemaAction(entityId: string, target: string) {
     const targetDefinition = getSchemaTargetDefinition(target);
     if (!targetDefinition) {
       return { error: `Unknown schema target "${target}"` };
+    }
+
+    // Ask for what the target needs BEFORE emitting (the emitter would only fail with a diagnostic).
+    let requirementShape: RequirementEntityShape | null = null;
+    if (hasTargetRequirements(target)) {
+      requirementShape = await loadRequirementShape(entityId);
+      if (!requirementShape) return { ...notFoundFailure("Entity") };
+      const { missing } = getTargetRequirements(target, requirementShape);
+      if (missing.length > 0) return { needsInput: missing };
     }
 
     let targetOutput: {
@@ -1317,6 +1425,15 @@ export async function generateSchemaAction(entityId: string, target: string) {
       );
       const officialResult = await emitOfficialTypeSpecTargetForEntity(entityId, target);
       if (officialResult.validationStatus === "INVALID") {
+        // A diagnostic that means "an input is missing" slipped past the pre-check: still a question, not an error string.
+        const slipped = officialResult.errors.flatMap((error) => structuredDiagnostics(error.message));
+        if (slipped.length > 0) {
+          const shape = requirementShape ?? (await loadRequirementShape(entityId));
+          const asked = shape
+            ? slipped.map((diagnostic) => requirementFromDiagnostic(diagnostic, shape)).filter((r): r is MissingRequirement => r !== null)
+            : [];
+          if (asked.length > 0) return { needsInput: asked };
+        }
         const firstError = officialResult.errors[0]?.message;
         return { error: firstError ?? `Failed to generate ${targetDefinition.displayName}` };
       }

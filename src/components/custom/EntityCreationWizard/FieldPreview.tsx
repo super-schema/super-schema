@@ -182,7 +182,8 @@ export function FieldPreview({
           />
           {needsName && (
             <p className="text-caption text-warning mt-1" data-testid="needs-name-hint">
-              Needs a name — the schema gave no title or $id, so this placeholder was used.
+              Give this entity a name
+              <span className="text-muted-foreground"> — the schema gave no title or $id, so a placeholder was used.</span>
             </p>
           )}
         </div>
@@ -403,7 +404,7 @@ export function FieldPreview({
         <Button
           type="button"
           onClick={onConfirm}
-          disabled={!entityName.trim() || isCreating}
+          disabled={!entityName.trim() || needsName || isCreating}
           className="gap-2"
         >
           <CheckCircle2 className="w-4 h-4" />
