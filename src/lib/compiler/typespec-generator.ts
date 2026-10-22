@@ -869,6 +869,11 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
       decorators.push(`#deprecated "${escapeString(docs.deprecated)}"`);
     }
   }
+  // A deprecated flag without a message (JSON Schema `deprecated: true`, the field panel's checkbox) lives in `evolution`; TypeSpec's
+  // directive needs a message, so the flag is written with a plain one. The official emitters map it to `deprecated: true`.
+  if (!docs?.deprecated && field.decorators.evolution?.deprecated === true) {
+    decorators.push(`#deprecated "deprecated"`);
+  }
 
   // Versioning decorators
   const versioning = field.decorators.typespec?.versioning;
