@@ -12,7 +12,9 @@ import { toAssetImportResult } from "@/lib/importers/multi-asset";
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { danglingReferenceOf } from "@/components/custom/ImportDialog/ParsedFieldDetails";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
-import { getTargetRequirements } from "@/lib/schema-targets/requirements";
+import { activeDanglingRef } from "@/lib/field-dangling";
+import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
+import { getTargetRequirements, primaryKeyIneligibility } from "@/lib/schema-targets/requirements";
 
 vi.mock("server-only", () => ({}));
 
@@ -226,11 +228,20 @@ describe("user event schema: emission with the real emitters", () => {
   it("asks for a primary key for BigQuery before one is set; the array field is no candidate", () => {
     const asked = getTargetRequirements("bigquery", {
       name: "UserEvent",
-      fields: prismaFields().map((f) => ({ name: f.name, isKey: f.isKey, nullable: f.nullable, type: f.type })),
+      // The shape loadRequirementShape builds: `dangling` from the persisted marker.
+      fields: prismaFields().map((f) => ({
+        name: f.name, isKey: f.isKey, nullable: f.nullable, type: f.type,
+        dangling: activeDanglingRef(f.type, f.decorators as Record<string, unknown>) !== undefined,
+      })),
     });
     expect(asked.missing).toHaveLength(1);
     expect(asked.missing[0].code).toBe("primary-key");
-    expect(asked.missing[0].candidates).toEqual(["component", "tenant", "created_time"]);
+    // created_time is an unresolved reference and user_links an array: neither can identify a row.
+    expect(asked.missing[0].candidates).toEqual(["component", "tenant"]);
+    for (const name of ["created_time", "user_links"]) {
+      const f = prismaFields().find((x) => x.name === name)!;
+      expect(primaryKeyIneligibility({ name, type: f.type, dangling: activeDanglingRef(f.type, f.decorators as Record<string, unknown>) !== undefined })).not.toBeNull();
+    }
     expect(asked.missing[0].suggested).toEqual(["tenant"]);
   });
 
@@ -275,5 +286,51 @@ describe("user event schema: emission with the real emitters", () => {
     expect(result.validationStatus).toBe("WARNING");
     expect(result.warnings.join("\n")).toContain("common_components/v4/schema/json/openapi-2.0/date_time.json");
     expect(result.warnings.join("\n")).toContain("user_links.json");
+  });
+
+  // Every decorator the generator can emit that is invalid on `unknown` (format, secret, encode, min/max, pattern, discriminator ...)
+  // on a dangling field, plus a classification: no target may report an error.
+  const loaded = (): PrismaFieldInput[] =>
+    prismaFields(["tenant"]).map((f) =>
+      f.name === "created_time"
+        ? {
+            ...f,
+            decorators: {
+              ...(f.decorators as Record<string, unknown>),
+              typespec: {
+                ...((f.decorators as { typespec?: Record<string, unknown> }).typespec ?? {}),
+                identity: { format: "date-time", secret: true, discriminator: true },
+                validation: { minLength: 1, maxLength: 9, pattern: "^a$", minValue: 1, maxValue: 5 },
+                wireFormat: { encode: "base64", encodedNames: { "application/json": "createdTime" } },
+              },
+            },
+          }
+        : f,
+    );
+
+  it.each(ENABLED)("%s: a dangling field carrying format, secret, encode, min/max, pattern, discriminator and a classification compiles without errors", async (target) => {
+    const result = await emit(entity(), loaded(), target);
+    expect(result.errors).toEqual([]);
+  });
+
+  it("the skipped decorators never reach the source of a dangling field (the rest stays)", () => {
+    const text = generateTypeSpec(compileEntity(entity(), loaded()), { governance: false });
+    const block = text.slice(text.indexOf('@doc("Event creation timestamp.")'), text.indexOf("created_time: unknown;"));
+    for (const bad of ["@format", "@encode(", "@minLength", "@maxLength", "@pattern", "@minValue", "@discriminator"]) expect(block).not.toContain(bad);
+    for (const good of ["@secret", "@encodedName", '@TypeSpec.JsonSchema.extension("$ref"', '"x-securityClassification"']) expect(block).toContain(good);
+  });
+
+  it("a hostile raw reference survives verbatim in the JSON Schema and cannot break out of the string", async () => {
+    const hostile = 'a\nb ${x} */ `t` "); model Evil { evil: string; } //\\ x.json';
+    const fields = prismaFields(["tenant"]).map((f) =>
+      f.name === "created_time"
+        ? { ...f, decorators: { ...(f.decorators as Record<string, unknown>), danglingRef: { ref: hostile, reason: "x" } } }
+        : f,
+    );
+    const result = await emit(entity(), fields, "json-schema");
+    expect(result.errors).toEqual([]);
+    const schema = JSON.parse(result.output) as { $defs: Record<string, { properties: Record<string, { $ref?: string }> }> };
+    expect(Object.keys(schema.$defs)).toEqual(["UserEvent"]);
+    expect(schema.$defs.UserEvent.properties.created_time.$ref).toBe(hostile);
   });
 });
