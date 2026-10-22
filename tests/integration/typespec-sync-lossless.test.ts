@@ -226,14 +226,72 @@ describe("hostile text", () => {
   it("a $ref with quotes, backslashes, ${x} and a newline survives a save verbatim", async () => {
     const hostile = 'a"b\\c${x}\nd';
     const base = rows.map((r) => ({ ...r, decorators: JSON.parse(JSON.stringify(r.decorators)) }));
-    base[2].decorators.danglingRef = { ...base[2].decorators.danglingRef, ref: hostile };
+    const baseCreated = base.find((r) => r.name === "created_time")!;
+    baseCreated.decorators.danglingRef = { ...baseCreated.decorators.danglingRef, ref: hostile };
     const saved = rows;
     rows = base as Row[];
     const text = generateTypeSpec(compileEntity(entityInput(), fieldInputs()));
     rows = saved;
     const res = await save(text);
     expect(res.success).toBe(true);
-    const d = (updates().f2 as { decorators: { danglingRef: { ref: string } } }).decorators;
+    const created = dbRows().find((r) => r.name === "created_time")!;
+    const d = (updates()[created.id] as { decorators: { danglingRef: { ref: string } } }).decorators;
     expect(d.danglingRef.ref).toBe(hostile);
+  }, 60_000);
+});
+
+describe("resolved references are stable across a save", () => {
+  const withResolved = () => {
+    const saved = rows;
+    const extra = [
+      { name: "owner", type: "reference", nullable: false, isKey: false, description: "", classification: null,
+        decorators: { referencedEntityName: "Customer", governance: { dataCategory: "PII-ish" }, typespec: { extensions: { openapi: { "x-keep": { a: 1 } } } } } },
+      { name: "owners", type: "array", nullable: true, isKey: false, description: "", classification: null,
+        decorators: { arrayElementType: "reference", referencedEntityName: "Customer", governance: { dataCategory: "x" } } },
+    ] as unknown as Row[];
+    rows = [...saved, ...extra];
+    const text = generateTypeSpec(compileEntity(entityInput(), fieldInputs()));
+    return { text, restore: () => { rows = saved; } };
+  };
+  // The model the generated source refers to must exist for the real compiler.
+  const declared = (text: string) => `${text}\nmodel Customer {\n  id: string;\n}\n`;
+
+  it("a resolved reference and an array of references round trip with zero writes", async () => {
+    const { text, restore } = withResolved();
+    try {
+      const res = await save(declared(text));
+      expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(res.applied).toEqual({ added: 0, updated: 0, removed: [] });
+      expect(mockPrisma.field.update).not.toHaveBeenCalled();
+    } finally {
+      mockPrisma.field.findMany.mockImplementation(async (arg?: { select?: unknown }) => (arg?.select ? dbRows().map((r) => ({ name: r.name })) : dbRows()));
+    }
+    restore();
+  }, 60_000);
+
+  it("a changed target name updates the field and clears the old target; the rest stays", async () => {
+    const saved = rows;
+    const { text, restore } = withResolved();
+    const extended = rows;
+    mockPrisma.field.findMany.mockImplementation(async (arg?: { select?: unknown }) => {
+      const r = extended.map((x, i) => ({ id: `f${i}`, entityId: "ent-1", slug: x.name, sortOrder: i, fieldNumber: null, isKey: false, description: "", classification: null, ...x, decorators: JSON.parse(JSON.stringify(x.decorators)) }));
+      return arg?.select ? r.map((x) => ({ name: x.name })) : r;
+    });
+    try {
+      const res = await save(`${text}\nmodel Customer {\n  id: string;\n}\nmodel Order {\n  id: string;\n}\n`.replace(/^(\s*)owner(\??): Customer;/m, "$1owner$2: Order;"));
+      expect(res.success).toBe(true);
+      const u = updates();
+      const ownerId = `f${extended.findIndex((r) => r.name === "owner")}`;
+      expect(Object.keys(u)).toEqual([ownerId]);
+      const d = (u[ownerId] as { type: string; decorators: Record<string, unknown> });
+      expect(d.type).toBe("Order");
+      expect(d.decorators.referencedEntityName).toBeUndefined();
+      expect(d.decorators.governance).toEqual({ dataCategory: "PII-ish" });
+      expect(d.decorators.typespec).toEqual({ extensions: { openapi: { "x-keep": { a: 1 } } } });
+    } finally {
+      restore();
+      void saved;
+    }
   }, 60_000);
 });

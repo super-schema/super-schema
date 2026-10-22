@@ -168,6 +168,35 @@ describe("preserved keys", () => {
     expect(mergeSyncedField(arr, src({ type: "array" })).decorators.arrayElementType).toBe("Customer");
   });
 
+  it("a resolved reference read back as the bare model name (the real parser output) keeps type and target", () => {
+    const existing = row({ type: "reference", decorators: { referencedEntityName: "Customer", governance: { dataCategory: "c" } } });
+    for (const type of ["Customer", "Customer | null", "null | Customer"]) {
+      const m = mergeSyncedField(existing, src({ type }));
+      expect(m.type, type).toBe("reference");
+      expect(m.decorators, type).toEqual(existing.decorators);
+      expect(fieldNeedsUpdate(existing, m, src({ type }))).toBe(false);
+    }
+    expect(mergeSyncedField(existing, src({ type: "Customer", isOptional: true })).type).toBe("reference");
+  });
+
+  it("a bare name that differs from the stored target is a real edit: the new name, target cleared", () => {
+    const existing = row({ type: "reference", decorators: { referencedEntityName: "Customer" } });
+    for (const type of ["Order", "customer"]) {
+      const m = mergeSyncedField(existing, src({ type }));
+      expect(m.type).toBe(type);
+      expect(m.decorators.referencedEntityName).toBeUndefined();
+    }
+  });
+
+  it("an array of a resolved reference (Customer[]) keeps array, element reference and target; another element is an edit", () => {
+    const existing = row({ type: "array", decorators: { arrayElementType: "reference", referencedEntityName: "Customer" } });
+    const m = mergeSyncedField(existing, src({ type: "array", arrayElementType: "Customer" }));
+    expect(m.decorators).toEqual(existing.decorators);
+    const edit = mergeSyncedField(existing, src({ type: "array", arrayElementType: "Order" }));
+    expect(edit.decorators.arrayElementType).toBe("Order");
+    expect(edit.decorators.referencedEntityName).toBeUndefined();
+  });
+
   it("enum symbols kept in validation.pattern survive while the field stays an enum", () => {
     const existing = row({ type: "enum", decorators: { enumName: "E", typespec: { validation: { pattern: "A|B" } } } });
     const m = mergeSyncedField(existing, src({ type: "enum" }));

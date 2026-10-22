@@ -183,8 +183,27 @@ const GOVERNANCE_SOURCE_OWNED = [
 // The merge
 // ---------------------------------------------------------------------------
 
+const stripNull = (t: string | undefined) => (t === undefined ? t : t.replace(/^\s*null\s*\|\s*|\s*\|\s*null\s*$/g, "").trim());
+
+/**
+ * A resolved reference is written as the bare model name (`Customer`, `Customer[]`, `Customer | null`) and both parsers read it back as
+ * that name, never as `reference`. When that name EQUALS the stored target (exact, case-sensitive) the field is unchanged: it is read as
+ * `reference` / array of `reference` again so the target survives. A different name is a real edit and is left as written.
+ */
+function resolvedTargetAsStored(existing: SyncExistingField | null, source: SyncSourceField): SyncSourceField {
+  if (!existing || !isRec(existing.decorators)) return source;
+  const target = existing.decorators.referencedEntityName;
+  if (typeof target !== "string" || target === "") return source;
+  if (existing.type === "reference" && stripNull(source.type) === target) return { ...source, type: "reference" };
+  if (existing.type === "array" && existing.decorators.arrayElementType === "reference" && source.type === "array" && stripNull(source.arrayElementType) === target) {
+    return { ...source, arrayElementType: "reference" };
+  }
+  return source;
+}
+
 /** The field row the source text means, given the stored row (null for a field the source adds). Pure; never mutates its inputs. */
-export function mergeSyncedField(existing: SyncExistingField | null, source: SyncSourceField, opts: MergeOptions = {}): MergedField {
+export function mergeSyncedField(existing: SyncExistingField | null, rawSource: SyncSourceField, opts: MergeOptions = {}): MergedField {
+  const source = resolvedTargetAsStored(existing, rawSource);
   const out: Rec = isRec(existing?.decorators) ? cloneJson(existing.decorators as Rec) : {};
   const mapped = mapSourceField(source);
   const typeChanged = existing !== null && existing.type !== mapped.type;
@@ -241,6 +260,10 @@ export function mergeSyncedField(existing: SyncExistingField | null, source: Syn
       delete out.referencedEntityName;
       if (!mapped.arrayElementType) delete out.arrayElementType;
     }
+  }
+  // An array whose element moved off the reference no longer has that target.
+  if (existing?.type === "array" && mapped.type === "array" && (existing.decorators as Rec | null)?.arrayElementType === "reference" && mapped.arrayElementType !== "reference") {
+    delete out.referencedEntityName;
   }
   if (mapped.arrayElementType) out.arrayElementType = mapped.arrayElementType;
   else if (mapped.type !== "array") delete out.arrayElementType;
