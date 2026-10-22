@@ -28,6 +28,7 @@ import {
   JSON_SCHEMA_LIBRARY_IMPORT,
   genericExtensionDecorators,
   genericExtensionEntries,
+  escapeTypeSpecString,
 } from "./governance-decorators";
 import {
   enumMemberName,
@@ -382,7 +383,8 @@ function modelExtensions(model: SuperSchemaModel): Record<string, unknown> | und
 function hasGenericExtensions(model: SuperSchemaModel): boolean {
   return (
     genericExtensionEntries(modelExtensions(model)).length > 0 ||
-    model.fields.some((f) => genericExtensionEntries(f.decorators.typespec?.extensions?.openapi).length > 0)
+    model.fields.some((f) => genericExtensionEntries(f.decorators.typespec?.extensions?.openapi).length > 0) ||
+    model.fields.some((f) => f.danglingRef !== undefined)
   );
 }
 
@@ -775,7 +777,13 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
 
   // Validation decorators
   const validation = field.decorators.typespec?.validation;
-  if (validation) {
+  // A dangling reference is generated as `unknown`: only the array bounds of `unknown[]` are valid on it.
+  const onUnknown = field.danglingRef !== undefined;
+  const onlyItems = onUnknown && field.danglingRef?.element === true;
+  if (validation && onUnknown) {
+    if (onlyItems && validation.minItems != null) decorators.push(`@minItems(${validation.minItems})`);
+    if (onlyItems && validation.maxItems != null) decorators.push(`@maxItems(${validation.maxItems})`);
+  } else if (validation) {
     if (validation.minLength != null) {
       decorators.push(`@minLength(${validation.minLength})`);
     }
@@ -868,6 +876,14 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
   // Generic vendor extensions (unknown JSON Schema keys etc.) — a JsonSchema + OpenAPI pair per key.
   decorators.push(...genericExtensionDecorators(field.decorators.typespec?.extensions?.openapi));
 
+  // A dangling `$ref` keeps its original string: `$ref` for a direct reference, `items: { $ref }` for an array's item type.
+  // The extensions are applied after the emitter's own keys, so they replace the `unknown` / `items: {}` they stand for.
+  if (field.danglingRef) {
+    const raw = `"${escapeTypeSpecString(field.danglingRef.ref)}"`;
+    const args = field.danglingRef.element ? `"items", #{\`$ref\`: ${raw}}` : `"$ref", ${raw}`;
+    decorators.push(`@TypeSpec.JsonSchema.extension(${args})`, `@TypeSpec.OpenAPI.extension(${args})`);
+  }
+
   return decorators;
 }
 
@@ -925,6 +941,7 @@ function resolveTypeSpecType(
   field: SuperSchemaField,
   ctx: GenContext
 ): string {
+  if (field.danglingRef) return field.danglingRef.element ? "unknown[]" : "unknown";
   const typeInfo = getTypeInfo(field.type);
   const typespecScalar = typeInfo?.typespecScalar ?? field.type;
 

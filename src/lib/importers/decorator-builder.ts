@@ -86,6 +86,14 @@ export function buildDecoratorsFromParsedField(
   if (field.arrayElementType) {
     decorators.arrayElementType = field.arrayElementType;
   }
+  // An external `$ref` that is not defined anywhere: the ORIGINAL reference string, so the emitted schema keeps it (read by compiler.service).
+  if (field.danglingRef) {
+    decorators.danglingRef = {
+      ref: field.danglingRef.ref,
+      ...(field.danglingRef.element ? { element: true } : {}),
+      reason: field.danglingRef.reason,
+    };
+  }
   if (field.mapKeyType) decorators.mapKeyType = field.mapKeyType;
   if (field.mapValueType) decorators.mapValueType = field.mapValueType;
   if (field.enumName) decorators.enumName = field.enumName;

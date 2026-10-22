@@ -11,6 +11,7 @@ import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
 import { toAssetImportResult } from "@/lib/importers/multi-asset";
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { danglingReferenceOf } from "@/components/custom/ImportDialog/ParsedFieldDetails";
+import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { getTargetRequirements } from "@/lib/schema-targets/requirements";
 
 vi.mock("server-only", () => ({}));
@@ -152,9 +153,12 @@ describe("user event schema: import", () => {
     expect(created.originalType).toBe("common_components/v4/schema/json/openapi-2.0/date_time.json");
     const links = importedField("user_links");
     expect(links).toMatchObject({ type: "array", confidence: "low", referencedEntityName: "user_links" });
-    // The pasted-text path sets no `danglingRef` marker (only the URL import does); the review derives "dangling" from a low-confidence
-    // reference whose target is no entity of the import.
-    expect(created.danglingRef).toBeUndefined();
+    // The raw $ref string is the persisted marker (also for pasted text); the array's marker is about its ITEMS.
+    expect(created.danglingRef).toMatchObject({ ref: "common_components/v4/schema/json/openapi-2.0/date_time.json" });
+    expect(created.danglingRef.element).toBeUndefined();
+    expect(links.danglingRef).toMatchObject({ ref: "user_links.json", element: true });
+    expect(row("created_time").decorators.danglingRef).toMatchObject({ ref: "common_components/v4/schema/json/openapi-2.0/date_time.json" });
+    expect(row("user_links").decorators.danglingRef).toMatchObject({ ref: "user_links.json", element: true });
     const names = new Set(imported.entities.map((e) => e.name));
     expect(danglingReferenceOf(created, names)).toBeDefined();
     expect(danglingReferenceOf(links, names)).toBeDefined();
@@ -195,15 +199,28 @@ describe("user event schema: emission with the real emitters", () => {
     expect(result.output.match(/x-securityClassification/g)).toHaveLength(2); // both extension spellings collapse into one key
   });
 
-  // OPEN (Task 14 report): a field whose $ref could not be resolved is emitted as a bare type name nothing declares, so the real
-  // compiler rejects the whole entity ("invalid-ref: Unknown identifier date_time") and the array constraints cascade into
-  // "decorator-wrong-target". The user's acceptance bar is that the re-emit of the full entity works, so this stays `fails` until
-  // the product decision on unresolved references is made (stub / unknown / keep the raw $ref).
-  it.fails("re-emits the FULL entity (dangling $refs included) with every constraint and the original $ref strings", async () => {
-    const result = await emit(entity(), prismaFields(), "json-schema");
+  // An unresolved external $ref is kept losslessly: the field is generated as `unknown` carrying the raw reference, so the
+  // entity compiles and the emitted schema still says where the type lives.
+  it.each(["json-schema", "openapi3"])("%s: the FULL entity generates and keeps the raw $ref strings, constraints and classification blocks", async (target) => {
+    const result = await emit(entity(), prismaFields(), target);
     expect(result.errors).toEqual([]);
-    expect(result.output).toContain("minItems");
     expect(result.output).toContain("common_components/v4/schema/json/openapi-2.0/date_time.json");
+    expect(result.output).toContain("user_links.json");
+    expect(result.output).toContain("minItems");
+    expect(result.output).toContain("maxItems");
+    expect(result.output.match(/x-securityClassification/g)).toHaveLength(3);
+  });
+
+  it("json-schema: created_time is { $ref } and user_links is an array with items { $ref } and its bounds", async () => {
+    const result = await emit(entity(), prismaFields(), "json-schema");
+    const schema = (JSON.parse(result.output) as { $defs: { UserEvent: { properties: Record<string, Record<string, unknown>>; required: string[] } } }).$defs.UserEvent;
+    expect(schema.properties.created_time).toMatchObject({
+      $ref: "common_components/v4/schema/json/openapi-2.0/date_time.json",
+      description: "Event creation timestamp.",
+      "x-securityClassification": { data_class: "class4", data_category: "Intrinsic" },
+    });
+    expect(schema.properties.user_links).toMatchObject({ type: "array", minItems: 1, maxItems: 100, items: { $ref: "user_links.json" } });
+    expect([...schema.required].sort()).toEqual(["created_time", "tenant", "user_links"]);
   });
 
   it("asks for a primary key for BigQuery before one is set; the array field is no candidate", () => {
@@ -231,5 +248,32 @@ describe("user event schema: emission with the real emitters", () => {
     expect(result.output).toContain("user_links ARRAY<STRING> NOT NULL");
     expect(result.output).toContain("PRIMARY KEY (tenant) NOT ENFORCED");
     expect(result.output).toContain("created_time: declared reference; stored as STRING");
+  });
+
+  // Every target the Schemas tab offers for a typespec-cli emitter: none may fail on the unresolved references.
+  const ENABLED = getSchemaTargetCatalog().filter((t) => t.runtime === "typespec-cli" && t.enabledInSchemaTab).map((t) => t.key);
+
+  it("has targets to check", () => {
+    expect(ENABLED).toEqual(expect.arrayContaining(["json-schema", "openapi3", "bigquery", "postgresql", "spanner"]));
+  });
+
+  it.each(ENABLED)("%s: generation succeeds for the user event entity (tenant as the key) with zero error diagnostics", async (target) => {
+    const result = await emit(entity(), prismaFields(["tenant"]), target);
+    expect(result.errors).toEqual([]);
+    expect(result.output.length).toBeGreaterThan(0);
+  });
+
+  it.each(["bigquery", "postgresql", "spanner"])("%s: the unresolved references stay STRING-typed columns with a visible note", async (target) => {
+    const result = await emit(entity(), prismaFields(["tenant"]), target);
+    expect(result.output).toMatch(/created_time: declared reference; stored as/);
+    expect(result.output).toMatch(/user_links: declared reference\[\]; stored as/);
+  });
+
+  it.each(["avro", "java-pojo", "protobuf"])("%s: the unresolved references degrade with a visible warning naming the raw reference", async (target) => {
+    const result = await emit(entity(), prismaFields(["tenant"]), target);
+    expect(result.errors).toEqual([]);
+    expect(result.validationStatus).toBe("WARNING");
+    expect(result.warnings.join("\n")).toContain("common_components/v4/schema/json/openapi-2.0/date_time.json");
+    expect(result.warnings.join("\n")).toContain("user_links.json");
   });
 });

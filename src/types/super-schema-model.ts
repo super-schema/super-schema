@@ -246,6 +246,11 @@ export interface SuperSchemaField {
   aliases: string[];
   decorators: DecoratorSet;
   complexType?: ComplexTypeInfo;
+  /**
+   * An external `$ref` that is defined nowhere (a JSON Schema import): the ORIGINAL reference string. The field is generated as
+   * `unknown` (`unknown[]` when `element`) carrying the raw reference as a `$ref` / `items` extension, never as a name nothing declares.
+   */
+  danglingRef?: { ref: string; element?: boolean };
   sortOrder: number;
 }
 

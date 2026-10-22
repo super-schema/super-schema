@@ -96,7 +96,7 @@ export interface ParsedField {
    * Set when the field points at a `$ref` target that could not be loaded (URL import): the field keeps a low-confidence
    * reference by best-effort name. `ref` is the raw `$ref`, `resolvedUri` its absolute URI when computable.
    */
-  danglingRef?: { ref: string; resolvedUri?: string; reason: string };
+  danglingRef?: { ref: string; resolvedUri?: string; reason: string; /** True when the reference is the ITEM type of an array field. */ element?: true };
   /** Format-binding facts kept under `decorators.governance` (same keys the TypeSpec governance path stores) */
   governance?: ParsedFieldGovernance;
   /**

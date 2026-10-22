@@ -111,6 +111,7 @@ export async function emitOfficialTypeSpecTargetFromData(
 
   const model = compileEntity(entity, fields);
   const built = buildSourceForTarget(model, target.key);
+  built.warnings.push(...danglingReferenceWarnings(model, target.key));
   if (built.errors.length > 0) {
     return { output: "", validationStatus: "INVALID", warnings: built.warnings, errors: built.errors.map((message) => ({ message })) };
   }
@@ -161,6 +162,20 @@ interface TargetSource {
   errors: string[];
 }
 
+/** Targets whose output has no way to say "a reference defined elsewhere": they carry the unresolved `$ref` as an untyped value. */
+const UNTYPED_REFERENCE_TARGETS = new Set(["avro", "java-pojo", "protobuf"]);
+
+/** One warning per field that holds an unresolved external `$ref`, for the targets that degrade it (the others keep or note it themselves). */
+function danglingReferenceWarnings(model: SuperSchemaModel, targetKey: string): string[] {
+  if (!UNTYPED_REFERENCE_TARGETS.has(targetKey)) return [];
+  return model.fields
+    .filter((field) => field.danglingRef !== undefined)
+    .map(
+      (field) =>
+        `Field "${field.name}": ${field.danglingRef?.element ? "items reference" : "references"} \`${field.danglingRef?.ref}\`, which is not defined here; this target has no way to keep it, so the field is emitted untyped.`
+    );
+}
+
 const plainSource = (source: string): TargetSource => ({ source, warnings: [], errors: [] });
 
 function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): TargetSource {
@@ -201,14 +216,16 @@ function buildOpenApi3Source(baseSource: string, model: SuperSchemaModel): strin
     `@service(#{ title: "${escapeTypeSpecString(model.entity.name)}" })`
   );
 
+  const { imports, rest } = splitLeadingImports(withNamespace);
   return [
     'import "@typespec/http";',
     'import "@typespec/rest";',
     'import "@typespec/openapi3";',
+    ...imports,
     "using TypeSpec.Http;",
     "using TypeSpec.Rest;",
     "",
-    withNamespace,
+    rest,
     "",
   ].join("\n");
 }
@@ -225,13 +242,23 @@ function buildProtobufSource(baseSource: string, model: SuperSchemaModel): strin
   const withNamespace = ensureNamespace(protobufSource, deriveNamespace(model), "@package");
   const withFieldNumbers = injectProtobufFieldDecorators(withNamespace, model);
 
+  const { imports, rest } = splitLeadingImports(withFieldNumbers);
   return [
     'import "@typespec/protobuf";',
+    ...imports,
     "using TypeSpec.Protobuf;",
     "",
-    withFieldNumbers,
+    rest,
     "",
   ].join("\n");
+}
+
+const LEADING_IMPORTS = /^(?:\s*import\s+"[^"\n]+";[ \t]*\n)+/;
+
+/** The `import "...";` lines a source opens with (they must stay ahead of any `using` / namespace the wrapper adds), and the rest. */
+function splitLeadingImports(source: string): { imports: string[]; rest: string } {
+  const head = LEADING_IMPORTS.exec(source)?.[0] ?? "";
+  return { imports: head.split("\n").map((line) => line.trim()).filter(Boolean), rest: source.slice(head.length) };
 }
 
 function ensureNamespace(
@@ -247,12 +274,15 @@ function ensureNamespace(
     );
   }
 
+  // `import`s must come before every other statement (`import-first`): the namespace goes in after the source's own imports.
+  const imports = LEADING_IMPORTS.exec(source)?.[0] ?? "";
+  const rest = source.slice(imports.length);
   const prefixLines = [];
   if (decoratorLine) {
     prefixLines.push(decoratorLine);
   }
   prefixLines.push(`namespace ${namespaceName};`, "");
-  return `${prefixLines.join("\n")}${source}`;
+  return `${imports}${prefixLines.join("\n")}${rest}`;
 }
 
 function injectProtobufFieldDecorators(

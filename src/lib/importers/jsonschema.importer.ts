@@ -381,6 +381,13 @@ function normalizeType(type: string | string[] | undefined): {
   return { base: type, nullableFromType: false };
 }
 
+/** An external reference (a file or URL), as opposed to a `#/...` pointer, which names an entity that must already exist. */
+function isExternalRef(ref: string): boolean {
+  return ref !== "" && !ref.startsWith("#");
+}
+
+const DANGLING_REASON = "not defined in this document (kept as a dangling reference)";
+
 function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
   if ((ref === "#" || ref === "") && ctx.rootEntityName) {
     return {
@@ -1083,6 +1090,9 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     if (resolved.unionName) field.unionName = resolved.unionName;
     if (resolved.unionMembers) field.unionMembers = resolved.unionMembers;
     if (resolved.lowFromUnresolvedRef) LOW_FROM_UNRESOLVED_REF.add(field);
+    if (resolved.type === "reference" && resolved.lowFromUnresolvedRef && isExternalRef(resolved.originalType)) {
+      field.danglingRef = { ref: resolved.originalType, reason: DANGLING_REASON };
+    }
 
     // Array element type (+ reference / enum target of the element).
     const items = sources.find((s) => s.items)?.items;
@@ -1097,6 +1107,9 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       if (item.type === "reference" || item.type === "enum" || item.type === "union") field.confidence = item.confidence;
       if (item.lowFromUnresolvedRef) LOW_FROM_UNRESOLVED_REF.add(field);
       else LOW_FROM_UNRESOLVED_REF.delete(field);
+      if (item.type === "reference" && item.lowFromUnresolvedRef && isExternalRef(item.originalType)) {
+        field.danglingRef = { ref: item.originalType, reason: DANGLING_REASON, element: true };
+      }
     }
 
     return field;

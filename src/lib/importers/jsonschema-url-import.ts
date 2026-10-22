@@ -543,12 +543,14 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     if (!info || !t) return;
     const isArray = f.type === "array" && f.arrayElementType === "reference";
     const isDirect = f.type === "reference";
+    // The importer marked this token as dangling (it was not defined in the document); the resolution below decides afresh.
+    delete f.danglingRef;
     // Raise only when the low confidence came solely from the unresolved ref (not an allOf conflict, a combinator, ...).
     const lowFromRef = isLowFromUnresolvedRef(f);
     if (f.originalType === token) f.originalType = info.ref;
     if (!t.ok) {
       f.referencedEntityName = refToEntityName(info.ref);
-      f.danglingRef = { ref: info.ref, resolvedUri: t.resolvedUri, reason: t.reason };
+      f.danglingRef = { ref: info.ref, resolvedUri: t.resolvedUri, reason: t.reason, ...(isArray ? { element: true as const } : {}) };
       return;
     }
     if (t.kind === "entity") {
