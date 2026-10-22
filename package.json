@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:corpus": "CORPUS=1 vitest run tests/integration/corpus",
     "test:e2e": "playwright test",
     "test:e2e:serial": "playwright test --project=serial-after --no-deps",
     "db:generate": "prisma generate",
