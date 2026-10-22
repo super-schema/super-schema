@@ -133,12 +133,16 @@ test.describe("JSON Schema import: user event, end to end", () => {
     await page.getByPlaceholder("EntityName").fill("UserEvent");
     await expect(create).toBeEnabled();
     await create.click();
-    await expect(page).toHaveURL(/\/schemas\/[^/]+\/[^/]+$/, { timeout: 20_000 });
-    await page.goto(productUrl);
-    await page.getByText("UserEvent").first().click();
+    // The import opens the NEW entity page (domain/product/entity), not the product page.
+    await expect(page).toHaveURL(/\/schemas\/[^/]+\/[^/]+\/[^/]+$/, { timeout: 20_000 });
     await expect(page.getByRole("heading", { name: /UserEvent/ })).toBeVisible();
+    // The unresolved references are flagged on the entity: Alerts lists them, and the entity stays DRAFT.
+    await page.locator("main").getByText(/^Alerts \(\d+\)$/).first().click();
+    await expect(page.getByText(/2 unresolved references: .*date_time\.json.*user_links\.json/)).toBeVisible();
+    await page.locator("main").getByText("Editor", { exact: true }).first().click();
     // The imported level is shown as itself (class4), not as another level's label.
-    await expect(page.getByText("class4").first()).toBeVisible();
+    await expect(page.locator("main span", { hasText: /^class4$/ }).first()).toBeVisible();
+    await expect(page.locator("main span", { hasText: /^Sensitive$/ })).toHaveCount(0);
 
     // 5. Schemas tab: BigQuery asks for a primary key, `tenant` is pre-selected, saving generates the DDL.
     await page.locator("main").getByText("Schemas", { exact: true }).first().click();
@@ -153,7 +157,34 @@ test.describe("JSON Schema import: user event, end to end", () => {
     await expect(page.getByText(/created_time: declared reference; stored as STRING/)).toBeVisible();
   });
 
-  // OPEN (Task 14 report): the real compiler rejects the entity because the dangling references name models nothing declares
-  // (`invalid-ref: Unknown identifier date_time`), so the JSON Schema target shows a raw compiler error toast.
-  test.fixme("JSON Schema target generates for an entity with dangling references", async () => {});
+  test("JSON Schema target generates for an entity with dangling references and keeps the raw $ref strings", async ({ authedPage: page }) => {
+    const domain = unique("e2e-ue-domain");
+    createdDomains.push(domain);
+    const productUrl = await (async () => {
+      await createDomain(page, domain);
+      return createProduct(page, domain, unique("e2e-ue-product"));
+    })();
+    await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
+    await page.getByRole("button", { name: /import or build schema/i }).first().click();
+    await page.getByRole("button", { name: "Paste", exact: true }).click();
+    await fillWorkbenchPaste(page, USER_EVENT);
+    await page.getByTestId("workbench-load-button").click();
+    await expectDetailPanelText(page, USER_EVENT);
+    await page.getByTestId("workbench-review-button").click();
+    await page.getByPlaceholder("EntityName").fill("UserEvent");
+    await page.getByRole("button", { name: /create entity/i }).click();
+    await expect(page).toHaveURL(/\/schemas\/[^/]+\/[^/]+\/[^/]+$/, { timeout: 20_000 });
+
+    await page.locator("main").getByText("Schemas", { exact: true }).first().click();
+    await page.locator("main").getByText("JSON Schema (TypeSpec)", { exact: true }).first().click();
+    await page.getByRole("button", { name: /^Generate$/ }).click();
+    await expect(page.getByText("JSON Schema (TypeSpec) schema generated")).toBeVisible({ timeout: 30_000 });
+    const preview = page.locator("main");
+    await expect(preview).toContainText("common_components/v4/schema/json/openapi-2.0/date_time.json");
+    await expect(preview).toContainText("user_links.json");
+    await expect(preview).toContainText("x-securityClassification");
+    await expect(preview).toContainText("PayPalCompany");
+    // no raw compiler diagnostic
+    await expect(page.getByText(/invalid-ref|Unknown identifier/)).toHaveCount(0);
+  });
 });
