@@ -29,6 +29,7 @@ import {
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
 import {
   getTargetRequirements,
+  primaryKeyIneligibility,
   hasTargetRequirements,
   type MissingRequirement,
   type RequirementEntityShape,
@@ -1287,16 +1288,25 @@ function warningMessages(warnings: readonly unknown[]): string[] {
     .map((text) => (text.length > MAX_WARNING_LENGTH ? `${text.slice(0, MAX_WARNING_LENGTH - 1).trimEnd()}…` : text));
 }
 
+/** True when a field's stored decorators carry an unresolved external `$ref` (`decorators.danglingRef.ref`). */
+function hasDanglingRef(decorators: unknown): boolean {
+  const marker = decorators && typeof decorators === "object" ? (decorators as { danglingRef?: { ref?: unknown } }).danglingRef : undefined;
+  return typeof marker?.ref === "string" && marker.ref !== "";
+}
+
 /** The fields of an entity as the requirement checks read them (declaration order); null when the entity is gone. */
 async function loadRequirementShape(entityId: string): Promise<RequirementEntityShape | null> {
   const entity = await prisma.entity.findUnique({ where: { id: entityId }, select: { name: true } });
   if (!entity) return null;
   const fields = await prisma.field.findMany({
     where: { entityId },
-    select: { name: true, isKey: true, nullable: true, type: true },
+    select: { name: true, isKey: true, nullable: true, type: true, decorators: true },
     orderBy: { sortOrder: "asc" },
   });
-  return { name: entity.name, fields };
+  return {
+    name: entity.name,
+    fields: fields.map(({ decorators, ...field }) => ({ ...field, dangling: hasDanglingRef(decorators) })),
+  };
 }
 
 /**
@@ -1349,12 +1359,18 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
 
     const existing = await prisma.field.findMany({
       where: { entityId },
-      select: { id: true, name: true, isKey: true },
+      select: { id: true, name: true, isKey: true, type: true, decorators: true },
     });
     const known = new Set(existing.map((field) => field.name));
     const unknown = fieldNames.filter((name) => !known.has(name));
     if (unknown.length > 0) {
       return { error: `Not a field of this entity: ${unknown.slice(0, 3).join(", ")}`, code: "VALIDATION_ERROR" as const };
+    }
+    // The same rule the dialog's candidate list uses: a collection, JSON, union or unresolved reference cannot identify a row.
+    for (const name of fieldNames) {
+      const field = existing.find((candidate) => candidate.name === name);
+      const reason = field ? primaryKeyIneligibility({ name, type: field.type, dangling: hasDanglingRef(field.decorators) }) : null;
+      if (reason) return { error: reason, code: "VALIDATION_ERROR" as const };
     }
 
     await withAudit({

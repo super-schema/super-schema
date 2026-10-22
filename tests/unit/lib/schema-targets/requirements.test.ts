@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
-import { getTargetRequirements, type RequirementField } from "@/lib/schema-targets/requirements";
+import { getTargetRequirements, primaryKeyIneligibility, type RequirementField } from "@/lib/schema-targets/requirements";
 
 const f = (name: string, over: Partial<RequirementField> = {}): RequirementField => ({
   name, isKey: false, nullable: false, type: "string", ...over,
@@ -52,6 +52,14 @@ describe("getTargetRequirements: primary key", () => {
     const fields = [f("tags", { type: "array" }), f("attrs", { type: "map" }), f("meta", { type: "object" }), f("owner", { type: "reference" }), f("tenant")];
     const { missing } = getTargetRequirements("bigquery", { name: "T", fields });
     expect(missing[0].candidates).toEqual(["owner", "tenant"]);
+  });
+
+  it("never offers json, union or an unresolved-reference field either, and gives the reason", () => {
+    const fields = [f("j", { type: "json" }), f("u", { type: "union" }), f("d", { type: "reference", dangling: true }), f("tenant")];
+    expect(getTargetRequirements("spanner", { name: "T", fields }).missing[0].candidates).toEqual(["tenant"]);
+    expect(primaryKeyIneligibility({ name: "j", type: "json" })).toContain('"j"');
+    expect(primaryKeyIneligibility({ name: "d", type: "reference", dangling: true })).toContain("unresolved reference");
+    expect(primaryKeyIneligibility({ name: "tenant", type: "string" })).toBeNull();
   });
 
   it("never marks a suggestion as a key (inputs are not mutated)", () => {

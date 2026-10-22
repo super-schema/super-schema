@@ -13,6 +13,8 @@ export interface RequirementField {
   isKey: boolean;
   nullable: boolean;
   type: string;
+  /** True when the field holds an unresolved external `$ref` (it has no real type to key on). */
+  dangling?: boolean;
 }
 export interface RequirementEntityShape {
   name: string;
@@ -23,7 +25,7 @@ export interface RequirementEntityShape {
 export interface MissingRequirement {
   code: "primary-key";
   message: string;
-  /** Every field the user may pick (the non-key fields that are not collections: an array, map or object cannot identify a row). */
+  /** Every field the user may pick (the non-key fields `primaryKeyIneligibility` accepts). */
   candidates: string[];
   /** A pre-selection for the form (may be empty). */
   suggested: string[];
@@ -37,7 +39,23 @@ type RequirementCheck = (entity: RequirementEntityShape) => MissingRequirement |
 
 const KEY_NAMES = new Set(["id", "uuid", "key"]);
 const KEYLIKE_TYPES = /^(string|int8|int16|int32|int64|uint8|uint16|uint32|uint64|integer|safeint|uuid)$/i;
-const COLLECTION_TYPES = /^(array|map|object)$/i;
+/** Types that cannot identify a row: collections, free-form JSON and unions. */
+const NON_KEY_TYPES = /^(array|map|object|json|union)$/i;
+
+/**
+ * Why `field` cannot be (part of) a primary key, or null when it can. THE one eligibility rule: the dialog's candidate list and
+ * `setEntityPrimaryKeyAction` both use it, so they cannot drift.
+ */
+export function primaryKeyIneligibility(field: Pick<RequirementField, "name" | "type" | "dangling">): string | null {
+  if (field.dangling) {
+    return `Field "${field.name}" is an unresolved reference and cannot be a primary key; resolve the reference first.`;
+  }
+  if (NON_KEY_TYPES.test(field.type)) {
+    return `Field "${field.name}" has type ${field.type} and cannot be a primary key; choose a scalar field.`;
+  }
+  return null;
+}
+
 const compact = (text: string): string => text.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** The default selection: `id` / `<entity>_id` / `<entity>Id` / `uuid` / `key`; else the first required string/integer field; else none. */
@@ -57,7 +75,7 @@ export function primaryKeyRequirement(entity: RequirementEntityShape): MissingRe
   return {
     code: "primary-key",
     message: `${entity.name || "This entity"} has no primary key. This target needs at least one field that identifies a row.`,
-    candidates: entity.fields.filter((field) => !field.isKey && !COLLECTION_TYPES.test(field.type)).map((field) => field.name),
+    candidates: entity.fields.filter((field) => !field.isKey && primaryKeyIneligibility(field) === null).map((field) => field.name),
     suggested: suggestPrimaryKey(entity),
   };
 }

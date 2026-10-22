@@ -100,6 +100,30 @@ describe("setEntityPrimaryKeyAction", () => {
   });
 });
 
+describe("setEntityPrimaryKeyAction: key type eligibility", () => {
+  it.each(["array", "map", "object", "json", "union"])("rejects a %s field, naming the field and its type", async (type) => {
+    p.field.findMany.mockResolvedValue([...FIELDS, { id: "f9", name: "links", isKey: false, type, decorators: {} }]);
+    const result = await actions.setEntityPrimaryKeyAction("ent-1", ["tenant", "links"]);
+    expect(result).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((result as { error: string }).error).toContain('Field "links"');
+    expect((result as { error: string }).error).toContain(`type ${type}`);
+    expect(p.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a field that holds an unresolved reference, whatever its type", async () => {
+    p.field.findMany.mockResolvedValue([...FIELDS, { id: "f9", name: "created_time", isKey: false, type: "reference", decorators: { danglingRef: { ref: "date_time.json" } } }]);
+    const result = await actions.setEntityPrimaryKeyAction("ent-1", ["created_time"]);
+    expect(result).toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(JSON.stringify(result)).toContain("created_time");
+    expect(p.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("still accepts a scalar and a reference to an existing entity", async () => {
+    p.field.findMany.mockResolvedValue([...FIELDS, { id: "f9", name: "owner", isKey: false, type: "reference", decorators: { referencedEntityName: "Customer" } }]);
+    expect(await actions.setEntityPrimaryKeyAction("ent-1", ["tenant", "owner"])).toMatchObject({ success: true });
+  });
+});
+
 describe("generateSchemaAction: needs input", () => {
   it.each(["bigquery", "postgresql", "spanner"])("%s with no key answers needsInput and never calls the emitter", async (target) => {
     const result = await actions.generateSchemaAction("ent-1", target);
