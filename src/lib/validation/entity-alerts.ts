@@ -79,6 +79,16 @@ function isEnabled(r: CompletenessRequirement | undefined): r is CompletenessReq
   return !!r && r.enabled;
 }
 
+/** The raw `$ref` strings of the fields that hold an unresolved external reference (`decorators.danglingRef`), once each, in field order. */
+export function unresolvedReferences(fields: ReadonlyArray<Pick<AlertFieldInput, "decorators">>): string[] {
+  const refs: string[] = [];
+  for (const field of fields) {
+    const marker = (field.decorators as { danglingRef?: { ref?: unknown } } | undefined)?.danglingRef;
+    if (typeof marker?.ref === "string" && marker.ref !== "" && !refs.includes(marker.ref)) refs.push(marker.ref);
+  }
+  return refs;
+}
+
 export function generateEntityAlerts(
   entity: AlertEntityInput,
   fields: AlertFieldInput[],
@@ -152,6 +162,19 @@ export function generateEntityAlerts(
       title: "No retention policy",
       description: "A retention policy is required to define how long data should be kept.",
       action: "Set retention policy",
+    });
+  }
+
+  // Unresolved external references (a JSON Schema import): always reported, they are not a policy setting.
+  const unresolved = unresolvedReferences(fields);
+  if (unresolved.length > 0) {
+    alerts.push({
+      id: "entity-unresolved-references",
+      severity: "warning",
+      category: "entity",
+      title: `${unresolved.length} unresolved reference${unresolved.length !== 1 ? "s" : ""}: ${unresolved.join(", ")}`,
+      description: "The entity stays DRAFT until they are resolved; the references are kept as written and emitted as untyped values.",
+      action: "Review fields",
     });
   }
 

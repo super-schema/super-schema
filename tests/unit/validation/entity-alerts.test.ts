@@ -278,3 +278,25 @@ describe("generateTargetDriftAlerts", () => {
     expect(staleAlert?.category).toBe("target");
   });
 });
+
+describe("unresolved references alert", () => {
+  const dangling = (id: string, ref: string, element = false): AlertFieldInput =>
+    makeField({ id, name: id, decorators: { danglingRef: { ref, ...(element ? { element: true } : {}) } } });
+
+  it("lists each distinct raw reference once and says the entity stays DRAFT", () => {
+    const alerts = generateEntityAlerts(
+      makeEntity(),
+      [makeField(), dangling("created_time", "common/date_time.json"), dangling("user_links", "user_links.json", true), dangling("again", "user_links.json")],
+    );
+    const alert = alerts.find((a) => a.id === "entity-unresolved-references");
+    expect(alert).toMatchObject({ severity: "warning", category: "entity" });
+    expect(alert?.title).toBe("2 unresolved references: common/date_time.json, user_links.json");
+    expect(alert?.description).toContain("DRAFT");
+  });
+
+  it("is absent without a dangling field, and singular for one", () => {
+    expect(generateEntityAlerts(makeEntity(), [makeField()]).some((a) => a.id === "entity-unresolved-references")).toBe(false);
+    const one = generateEntityAlerts(makeEntity(), [dangling("a", "a.json")]).find((a) => a.id === "entity-unresolved-references");
+    expect(one?.title).toBe("1 unresolved reference: a.json");
+  });
+});

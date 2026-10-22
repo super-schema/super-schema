@@ -152,6 +152,9 @@ function handleEntityAction(alert: EntityAlert, onNavigateToTab: (tab: string) =
     case "entity-retention":
       onNavigateToTab("governance");
       break;
+    case "entity-unresolved-references":
+      onNavigateToTab("editor");
+      break;
     case "entity-owner":
     case "entity-description":
     case "entity-tags":
