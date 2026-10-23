@@ -21,6 +21,7 @@ import { execFile } from "node:child_process";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { $RefParser } from "@apidevtools/json-schema-ref-parser";
 import { parse as parseYaml } from "yaml";
+import { setOwn } from "@/lib/compiler/governance-decorators";
 import {
   DEFAULT_LIMITS,
   INTERNAL_GIT_HOSTS,
@@ -249,7 +250,7 @@ function resolveRef(ref: string, base: string): { self: boolean } | null {
  * whole resolve()). Invalid refs are reported through `onInvalid`; `externalCount`
  * counts the remaining external refs.
  */
-function sanitizeRefs(
+export function sanitizeRefs(
   value: unknown,
   base: string,
   onInvalid: (ref: string) => void,
@@ -269,17 +270,17 @@ function sanitizeRefs(
   for (const [k, v] of Object.entries(value)) {
     if (k === "$ref" && typeof v === "string") {
       if (v.startsWith("#")) {
-        out[k] = v;
+        setOwn(out, k, v);
       } else {
         const r = resolveRef(v, base);
         if (r) {
           // A reference to the document itself (by file name) is already registered: the
           // library never asks us to read it, so it must not count as an external ref.
           if (!r.self) counter.external++;
-          out[k] = v;
+          setOwn(out, k, v);
         } else {
           onInvalid(v);
-          out[k] = "#";
+          setOwn(out, k, "#");
         }
       }
     } else if ((k === "$id" || k === "id") && typeof v === "string") {
@@ -288,7 +289,7 @@ function sanitizeRefs(
       // abort the library). Dropped from the copy given to the library only.
       continue;
     } else {
-      out[k] = sanitizeRefs(v, base, onInvalid, counter, memo);
+      setOwn(out, k, sanitizeRefs(v, base, onInvalid, counter, memo));
     }
   }
   return out;

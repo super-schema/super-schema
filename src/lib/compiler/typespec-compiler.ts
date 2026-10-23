@@ -614,7 +614,7 @@ export async function compileTypeSpecWithGovernance(
         deprecation: gov.getDeprecation(program, m),
       };
       if (Object.values(modelInfo).some((v) => v !== undefined)) {
-        modelGovernance[m.name] = modelInfo;
+        setOwn(modelGovernance, m.name, modelInfo);
       }
 
       for (const [, prop] of m.properties) {

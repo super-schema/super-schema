@@ -35,7 +35,8 @@ function inferObjectSchema(obj: Record<string, unknown>): JsonSchema {
   const properties: Record<string, JsonSchema> = {};
   const required: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
-    properties[key] = inferSchema(value);
+    // defineProperty: a `__proto__` key must stay own data, not set the prototype.
+    Object.defineProperty(properties, key, { value: inferSchema(value), enumerable: true, writable: true, configurable: true });
     if (value !== undefined && value !== null) required.push(key);
   }
   return {
