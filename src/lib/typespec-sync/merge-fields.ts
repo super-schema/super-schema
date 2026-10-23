@@ -26,6 +26,7 @@
 import { classificationFromDecorators, setOwn } from "@/lib/compiler/governance-decorators";
 import type { FieldGovernanceInfo } from "@/lib/compiler/typespec-compiler";
 import { activeDanglingRef } from "@/lib/field-dangling";
+import { isConstraintWithheld, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { refToEntityName } from "@/lib/importers/jsonschema.importer";
 
 type Rec = Record<string, unknown>;
@@ -169,6 +170,20 @@ function derivedBuckets(d: Rec): Record<string, Rec> {
   return out;
 }
 
+/**
+ * Whether the generator writes no decorator for this stored owned key on the field `mapped` describes: a dangling reference is generated
+ * as `unknown` (no format / encode / string or numeric validators; an array of them keeps only minItems / maxItems), and a validator the
+ * scalar does not accept or an out-of-range bound is dropped (see `isConstraintWithheld`).
+ */
+function generatorWithholds(bucket: string, key: string, value: unknown, mapped: MappedSource): boolean {
+  if (mapped.dangling) {
+    if (bucket === "identity" || bucket === "wireFormat") return true;
+    if (bucket === "validation") return !(mapped.dangling.element && (key === "minItems" || key === "maxItems"));
+    return false;
+  }
+  return bucket === "validation" && isConstraintWithheld(mapped.type, key as ConstraintKind, value);
+}
+
 /** Keys that only mean something for the type they were written for. */
 const TYPE_BOUND_KEYS = ["referencedEntityName", "danglingRef", "enumName", "enumValues", "unionName", "unionMembers", "mapKeyType", "mapValueType"] as const;
 
@@ -241,6 +256,9 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
     for (const key of OWNED[bucket]) {
       // An enum keeps its symbols in `validation.pattern` (the generator does not emit @pattern for it): the stored value is the truth.
       if (bucket === "validation" && key === "pattern" && oldWasEnum && !typeChanged && !has(derived.validation, "pattern")) continue;
+      // A key the generator withheld on purpose is not in the text, so its absence there is not an edit: keep it (it returns when the
+      // reference is resolved / the type changes to one that takes it).
+      if (!has(derived[bucket], key) && has(next, key) && generatorWithholds(bucket, key, next[key], mapped)) continue;
       delete next[key];
     }
     Object.assign(next, derived[bucket]);

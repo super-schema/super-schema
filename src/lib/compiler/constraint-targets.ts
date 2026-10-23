@@ -25,6 +25,53 @@ function derivesFrom(type: string, root: string): boolean | undefined {
   return false;
 }
 
+/** The range of the fixed-width integer scalars (BigInt, so the 64-bit limits are exact). */
+const INTEGER_RANGES: Readonly<Record<string, readonly [bigint, bigint]>> = {
+  int8: [-128n, 127n], int16: [-32768n, 32767n], int32: [-2147483648n, 2147483647n], int64: [-(2n ** 63n), 2n ** 63n - 1n],
+  uint8: [0n, 255n], uint16: [0n, 65535n], uint32: [0n, 4294967295n], uint64: [0n, 2n ** 64n - 1n],
+  safeint: [-(2n ** 53n - 1n), 2n ** 53n - 1n],
+};
+
+export type BoundKind = "min" | "max" | "minExclusive" | "maxExclusive";
+
+/**
+ * The numeric bound as the decorator should carry it for a field of `type`, or null when it should not be written.
+ *
+ * On an integer type the compiler rejects a fractional bound (`@maxValue(10.5)` on int32: "not assignable"), so a fractional bound is
+ * moved to the integer that means the same (`<= 10.5` is `<= 10`, `> 10.5` is `> 10`). On a fixed-width integer a bound OUTSIDE the
+ * range says nothing the type does not already say and breaks the compile too: JSON has no 64-bit integers, so
+ * `"maximum": 9223372036854775807` is read as the double 2^63, written `@maxValue(9223372036854776000)`, and rejected for int64. A bound
+ * exactly at the limit, tighter than the type, or on a type without an integer rule is kept as is.
+ */
+export function boundFor(type: string, kind: BoundKind, bound: number): number | null {
+  const range = INTEGER_RANGES[type];
+  if (!Number.isFinite(bound) || (!range && type !== "integer")) return bound;
+  const whole = Number.isInteger(bound)
+    ? bound
+    : kind === "max" ? Math.floor(bound) : kind === "min" ? Math.ceil(bound) : kind === "maxExclusive" ? Math.ceil(bound) : Math.floor(bound);
+  if (!range) return whole;
+  // Judge the decimal text the decorator will carry (2^63 prints as 9223372036854776000, which is beyond int64), not the double itself.
+  const printed = String(whole);
+  const value = /^-?\d+$/.test(printed) ? BigInt(printed) : BigInt(Math.trunc(whole));
+  // Outside the range in EITHER direction is dropped: an upper bound below the minimum and a lower bound above the maximum (hostile
+  // input) are just as unassignable to the type as one beyond the far end.
+  return value > range[1] || value < range[0] ? null : whole;
+}
+
+const BOUND_KIND_OF: Readonly<Record<string, BoundKind>> = {
+  minValue: "min", maxValue: "max", minValueExclusive: "minExclusive", maxValueExclusive: "maxExclusive",
+};
+
+/**
+ * True when the generator writes NO decorator for this stored validator on a field of `type` (the validator does not apply to the
+ * type, or the bound is outside the integer range). The value is still stored; the TypeSpec text just cannot show it.
+ */
+export function isConstraintWithheld(type: string, kind: ConstraintKind, value: unknown): boolean {
+  if (!constraintAppliesTo(type, kind)) return true;
+  const boundKind = BOUND_KIND_OF[kind];
+  return boundKind !== undefined && typeof value === "number" && boundFor(type, boundKind, value) === null;
+}
+
 /** True when `kind` is valid on a field of logical `type`. A type the catalog does not know (a custom scalar) is not second-guessed. */
 export function constraintAppliesTo(type: string, kind: ConstraintKind): boolean {
   if (kind === "minItems" || kind === "maxItems") return type === "array";
