@@ -184,6 +184,41 @@ describe("SchemaWorkbench - From URL mode", () => {
     expect(onImportResult).not.toHaveBeenCalled();
   });
 
+  async function loadImportThenStartFetch() {
+    let resolve!: (v: unknown) => void;
+    importAction.mockReturnValue(new Promise((r) => (resolve = r)));
+    const utils = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+    fireEvent.change(screen.getByTestId("workbench-paste-textarea"), {
+      target: { value: '{"type":"record","name":"C","fields":[{"name":"id","type":"long"}]}' },
+    });
+    fireEvent.click(screen.getByTestId("workbench-load-button"));
+    await waitFor(() => expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).not.toBe(""));
+    fireEvent.click(screen.getByRole("button", { name: "From URL" }));
+    type(GOOD);
+    fireEvent.click(button());
+    return { ...utils, resolve };
+  }
+
+  it("ignores a late result after Start over", async () => {
+    const { onImportResult, resolve } = await loadImportThenStartFetch();
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    await act(async () => resolve({ success: true, data: resultWithDangling() }));
+    expect(onImportResult).not.toHaveBeenCalled();
+    expect(button().disabled).toBe(false);
+  });
+
+  it("keeps the fetch alive when the discard confirmation of Build form is cancelled", async () => {
+    const { onImportResult, resolve } = await loadImportThenStartFetch();
+    fireEvent.click(screen.getByRole("button", { name: "Build form" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(button().disabled).toBe(true);
+    const data = resultWithDangling();
+    await act(async () => resolve({ success: true, data }));
+    expect(onImportResult).toHaveBeenCalledTimes(1);
+    expect(onImportResult.mock.calls[0][0]).toBe(data);
+  });
+
   it("ignores a late result after switching mode", async () => {
     let resolve!: (v: unknown) => void;
     importAction.mockReturnValue(new Promise((r) => (resolve = r)));

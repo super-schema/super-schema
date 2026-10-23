@@ -209,6 +209,12 @@ export function SchemaWorkbench({
     }
   }
 
+  /** Ignore the result of a running URL fetch (its late answer must not navigate or touch state). */
+  function abandonUrlFetch() {
+    urlRun.current += 1;
+    setUrlLoading(false);
+  }
+
   // ── Form ↔ panel handshake ──────────────────────────────────────────
 
   const handleFormContent = useCallback((text: string | null) => {
@@ -272,6 +278,7 @@ export function SchemaWorkbench({
   }, []);
 
   function startOver() {
+    abandonUrlFetch();
     if (parseTimer.current) clearTimeout(parseTimer.current);
     expectedEcho.current = undefined;
     setHydrate(undefined);
@@ -319,11 +326,8 @@ export function SchemaWorkbench({
   }
 
   function selectMode(next: Mode) {
-    if (next !== "url") {
-      // any mode change abandons a running URL fetch (a late result is ignored)
-      urlRun.current += 1;
-      setUrlLoading(false);
-    }
+    // A mode change that really happens abandons a running URL fetch (a late result is ignored). A change waiting for the
+    // user's confirmation does not: Cancel keeps the fetch alive; the confirmed path goes through `startForm`, which abandons it.
     if (next === "form") {
       if (state.origin === "imported" && state.currentText.trim()) {
         setPending({
@@ -334,9 +338,13 @@ export function SchemaWorkbench({
         return;
       }
       if (state.origin !== "form") startForm(formFormat);
-      else setMode("form");
+      else {
+        abandonUrlFetch();
+        setMode("form");
+      }
       return;
     }
+    if (next !== "url") abandonUrlFetch();
     setPending(null);
     setMode(next);
   }
