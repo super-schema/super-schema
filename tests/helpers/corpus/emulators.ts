@@ -128,12 +128,27 @@ export function movePrimaryKeyInside(sql: string): string {
 }
 
 /**
- * The only statements this tier sends to the BigQuery emulator: CREATE / ALTER DDL. Anything else (DROP, DELETE, INSERT, UPDATE,
- * MERGE, TRUNCATE, SELECT, scripting, ...) is refused before a request is made, whatever the emitter wrote.
+ * The only statements this tier sends to the BigQuery emulator: a plain `CREATE [OR REPLACE] TABLE [IF NOT EXISTS] name (column list)
+ * [OPTIONS(...)]`, which is all the emitter writes. Anything else is refused before a request is made: other statements (DROP, DELETE,
+ * INSERT, ALTER, SELECT, CREATE VIEW / FUNCTION / PROCEDURE / MODEL / EXTERNAL TABLE, ...) and a CREATE TABLE that is not plain DDL
+ * (`AS SELECT`, `CLONE`, `COPY`, `LIKE`) as judged on the text outside quoted strings, comments and the parenthesised column list.
  */
 export function isAllowedBigQueryStatement(statement: string): boolean {
   const text = statement.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ").trim();
-  return /^(CREATE|ALTER)\s/i.test(text) && !/^CREATE\s+(OR\s+REPLACE\s+)?(MODEL|EXTERNAL|FUNCTION|PROCEDURE)\b/i.test(text);
+  const head = /^CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\w.`-]+/i.exec(text);
+  if (!head) return false;
+  // Outside quotes (' " `) and outside parentheses.
+  let outside = "";
+  let depth = 0;
+  let quote: string | null = null;
+  for (const ch of text.slice(head[0].length)) {
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"' || ch === "`") { quote = ch; continue; }
+    if (ch === "(") { depth += 1; continue; }
+    if (ch === ")") { depth -= 1; continue; }
+    if (depth === 0) outside += ch;
+  }
+  return !/\b(AS|SELECT|CLONE|COPY|LIKE|FUNCTION|PROCEDURE|MODEL|EXTERNAL|VIEW)\b/i.test(outside);
 }
 
 export async function validateBigQuery(ddl: string, schemaName: string): Promise<Validation> {

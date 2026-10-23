@@ -68,7 +68,7 @@ if (!enabled) {
     });
 
     it.skipIf(Boolean(filter))("the expected-failure registry is not stale (every rule and per-case entry still reproduces)", () => {
-      const outcomes = results.flatMap((r) => Object.values(r.targets).map((o) => ({ caseId: r.id, target: o!.target, kind: o!.kind, knownId: o!.knownId })));
+      const outcomes = results.flatMap((r) => Object.values(r.targets).map((o) => ({ caseId: r.id, target: o!.target, kind: o!.kind, knownId: o!.knownId, tierSkipped: o!.tierSkipped?.tier })));
       expect(registryProblems(cases, outcomes)).toEqual([]);
     });
 

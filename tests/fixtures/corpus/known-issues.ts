@@ -127,17 +127,30 @@ export const KNOWN_ISSUES: KnownIssue[] = [
 
 const diagnosticMatches = (reason: string, d: { code: string; message: RegExp }): boolean => reason.includes(d.code) && d.message.test(reason);
 
+/**
+ * The rule that explains a FAIL. A reason that joins several diagnostics (" | ") is judged diagnostic by diagnostic and EVERY one must be
+ * explained by some rule / per-case entry: one unexplained diagnostic means the failure is not masked. The id returned is the first one's.
+ */
 export function matchKnownIssue(
   c: CorpusCase, target: TargetKey, outcome: TargetOutcome, built: BuiltCase, registry: readonly KnownIssue[] = KNOWN_ISSUES,
 ): { id: string; issue: string } | undefined {
-  const reason = outcome.reason ?? "";
-  const explicit = c.expectations.expectedFailures?.find((f) => (f.target === target || f.target === "*") && reason.includes(f.code) && f.message.test(reason));
-  if (explicit) return { id: "case-expectation", issue: `${explicit.reason} (${explicit.issue})` };
-  const rule = registry.find((k) => k.targets.includes(target) && diagnosticMatches(reason, k.diagnostic) && (k.when?.({ c, outcome, built }) ?? true));
-  return rule ? { id: rule.id, issue: rule.issue } : undefined;
+  const diagnostics = (outcome.reason ?? "").split(" | ").map((d) => d.trim()).filter(Boolean);
+  if (diagnostics.length === 0) return undefined;
+  const explain = (diagnostic: string): { id: string; issue: string } | undefined => {
+    const each: TargetOutcome = { ...outcome, reason: diagnostic };
+    const explicit = c.expectations.expectedFailures?.find((f) => (f.target === target || f.target === "*") && diagnostic.includes(f.code) && f.message.test(diagnostic));
+    if (explicit) return { id: "case-expectation", issue: `${explicit.reason} (${explicit.issue})` };
+    const rule = registry.find((k) => k.targets.includes(target) && diagnosticMatches(diagnostic, k.diagnostic) && (k.when?.({ c, outcome: each, built }) ?? true));
+    return rule ? { id: rule.id, issue: rule.issue } : undefined;
+  };
+  const explained = diagnostics.map(explain);
+  return explained.every((e) => e !== undefined) ? explained[0] : undefined;
 }
 
-export interface RegistryOutcome { caseId: string; target: TargetKey; kind: string; knownId?: string }
+export interface RegistryOutcome { caseId: string; target: TargetKey; kind: string; knownId?: string; tierSkipped?: string }
+
+/** The validator tier a target's output is judged by, when that tier is not always available. */
+const TIER_OF_TARGET: Partial<Record<TargetKey, string>> = { bigquery: "bigquery", spanner: "spanner", "java-pojo": "java" };
 
 /**
  * Staleness of the registry for a FULL run (pure): a rule that matched no (case, target), and a per-case expectation whose case no
@@ -145,13 +158,18 @@ export interface RegistryOutcome { caseId: string; target: TargetKey; kind: stri
  */
 export function registryProblems(cases: readonly CorpusCase[], outcomes: readonly RegistryOutcome[], registry: readonly KnownIssue[] = KNOWN_ISSUES): string[] {
   const problems: string[] = [];
+  // A run that was allowed to skip a validator tier cannot reproduce what only that tier finds: those rules / entries are not judged.
+  const skipped = new Set(outcomes.map((o) => o.tierSkipped).filter((t): t is string => t !== undefined));
+  const tierSkipped = (t: TargetKey): boolean => skipped.has(TIER_OF_TARGET[t] ?? "\u0000");
   for (const rule of registry) {
+    if (rule.targets.every(tierSkipped)) continue;
     if (!outcomes.some((o) => o.knownId === rule.id)) {
       problems.push(`known issue ${rule.id} no longer reproduces for any case: remove it from known-issues.ts`);
     }
   }
   for (const c of cases) {
     for (const f of c.expectations.expectedFailures ?? []) {
+      if (f.target !== "*" && tierSkipped(f.target)) continue;
       const targets = f.target === "*" ? [...new Set(outcomes.filter((o) => o.caseId === c.id).map((o) => o.target))] : [f.target];
       const stale = targets.filter((t) => !outcomes.some((o) => o.caseId === c.id && o.target === t && o.kind === "FAIL" && o.knownId === "case-expectation"));
       if (f.target !== "*" && stale.length > 0) problems.push(`known issue ${f.code} no longer reproduces for ${c.id}/${f.target}: remove it from the case's expectedFailures`);

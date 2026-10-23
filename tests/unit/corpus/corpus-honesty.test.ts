@@ -60,6 +60,14 @@ describe("a known issue does not mask a different failure", () => {
     expect(matchKnownIssue(c, "protobuf", failed("protobuf", "crash-code: stack overflow"), built())).toBeUndefined();
   });
 
+  it("a reason that joins several diagnostics is masked only when EVERY one is explained", () => {
+    const joined = "invalid-ref: Unknown identifier Addr | decorator-wrong-target: Cannot apply @minItems";
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", joined), built(["Addr"]))).toBeUndefined();
+    const both = "invalid-ref: Unknown identifier Addr | invalid-ref: Unknown identifier Line";
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", both), built(["Addr", "Line"]))?.id).toBe("multi-model-emission-gap");
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", both), built(["Addr"]))).toBeUndefined();
+  });
+
   it("documentNames spells entities the way the generator does", () => {
     expect([...documentNames(built(["my-entity"]))].sort()).toEqual(["my-entity", "my_entity"]);
   });
@@ -71,6 +79,32 @@ describe("registryProblems: a fixed issue cannot linger", () => {
   it("flags a rule that matched no case", () => {
     const problems = registryProblems([baseCase()], [{ caseId: "c1", target: "avro", kind: "PASS" }], [rule("fixed-one")]);
     expect(problems).toEqual(["known issue fixed-one no longer reproduces for any case: remove it from known-issues.ts"]);
+  });
+
+  it("a skipped validator tier excludes only the rules and entries that need it", () => {
+    const registry: KnownIssue[] = [
+      { ...rule("bq-only"), targets: ["bigquery"] }, { ...rule("java-only"), targets: ["java-pojo"] },
+      { ...rule("mixed"), targets: ["java-pojo", "avro"] }, rule("stale-avro"),
+    ];
+    const outcomes = [
+      { caseId: "c1", target: "bigquery" as const, kind: "PASS", tierSkipped: "bigquery" },
+      { caseId: "c1", target: "avro" as const, kind: "FAIL", knownId: "mixed" },
+    ];
+    // bigquery tier skipped: its rule is not judged; java was not skipped, so java-only IS stale; mixed still reproduces; stale-avro is flagged
+    expect(registryProblems([baseCase()], outcomes, registry).sort()).toEqual([
+      "known issue java-only no longer reproduces for any case: remove it from known-issues.ts",
+      "known issue stale-avro no longer reproduces for any case: remove it from known-issues.ts",
+    ]);
+    // the same outcomes without any skipped tier: the bigquery rule is flagged too (a full run is unchanged)
+    const full = outcomes.map((o) => ({ ...o, tierSkipped: undefined }));
+    expect(registryProblems([baseCase()], full, registry)).toHaveLength(3);
+  });
+
+  it("a skipped tier also excludes a per-case entry on that tier's target", () => {
+    const c = baseCase({ expectedFailures: [{ target: "java-pojo", code: "k", message: /m/, reason: "r", issue: "i" }] });
+    const skipped = [{ caseId: "c1", target: "java-pojo" as const, kind: "PASS", tierSkipped: "java" }];
+    expect(registryProblems([c], skipped, [])).toEqual([]);
+    expect(registryProblems([c], [{ caseId: "c1", target: "java-pojo" as const, kind: "PASS" }], [])).toHaveLength(1);
   });
 
   it("is quiet while a rule still explains a failure", () => {
@@ -119,13 +153,21 @@ describe("skipped work is a problem unless it is allowed", () => {
   });
 });
 
-describe("the BigQuery emulator tier sends DDL only", () => {
-  it.each(["CREATE TABLE d.t (a INT64)", "create table if not exists d.t (a INT64)", "ALTER TABLE d.t ADD COLUMN b STRING", "-- c\nCREATE TABLE d.t (a INT64)", "/* c */ CREATE TABLE d.t (a INT64)"])("allows %s", (sql) => {
-    expect(isAllowedBigQueryStatement(sql)).toBe(true);
-  });
-  it.each(["DROP TABLE d.t", "DROP SCHEMA d CASCADE", "DELETE FROM d.t WHERE TRUE", "INSERT INTO d.t VALUES (1)", "UPDATE d.t SET a = 1 WHERE TRUE", "MERGE d.t USING d.u ON TRUE WHEN MATCHED THEN DELETE", "TRUNCATE TABLE d.t", "SELECT 1", "/* CREATE */ DROP TABLE d.t", "CREATE FUNCTION d.f() AS (1)", "CREATE OR REPLACE MODEL d.m OPTIONS()"])("refuses %s", (sql) => {
-    expect(isAllowedBigQueryStatement(sql)).toBe(false);
-  });
+describe("the BigQuery emulator tier sends plain CREATE TABLE DDL only", () => {
+  it.each([
+    "CREATE TABLE d.t (a INT64)", "create table if not exists d.t (a INT64)", "CREATE OR REPLACE TABLE d.t (a INT64)",
+    "-- c\nCREATE TABLE d.t (a INT64)", "/* c */ CREATE TABLE d.t (a INT64)",
+    "CREATE TABLE d.t (a STRING OPTIONS(description='x AS SELECT; DROP TABLE y')) OPTIONS(description=\"copy of the view\")",
+    "CREATE TABLE d.model (view STRING, copy STRING, `function` INT64)",
+    "CREATE TABLE d.t (a INT64) /* AS SELECT */",
+  ])("allows %s", (sql) => { expect(isAllowedBigQueryStatement(sql)).toBe(true); });
+  it.each([
+    "DROP TABLE d.t", "DROP SCHEMA d CASCADE", "DELETE FROM d.t WHERE TRUE", "INSERT INTO d.t VALUES (1)", "UPDATE d.t SET a = 1 WHERE TRUE",
+    "MERGE d.t USING d.u ON TRUE WHEN MATCHED THEN DELETE", "TRUNCATE TABLE d.t", "SELECT 1", "ALTER TABLE d.t ADD COLUMN b STRING", "/* CREATE TABLE */ DROP TABLE d.t",
+    "CREATE FUNCTION d.f() AS (1)", "CREATE OR REPLACE MODEL d.m OPTIONS()", "CREATE VIEW d.v AS SELECT 1", "CREATE PROCEDURE d.p() BEGIN SELECT 1; END",
+    "CREATE EXTERNAL TABLE d.t OPTIONS(format='CSV')", "CREATE TABLE d.t AS SELECT 1 AS a", "CREATE TABLE d.t (a INT64) AS SELECT 1",
+    "CREATE TABLE d.t CLONE d.u", "CREATE TABLE d.t COPY d.u", "CREATE TABLE d.t LIKE d.u", "CREATE SNAPSHOT TABLE d.t CLONE d.u",
+  ])("refuses %s", (sql) => { expect(isAllowedBigQueryStatement(sql)).toBe(false); });
 });
 
 describe("splitStatements", () => {
