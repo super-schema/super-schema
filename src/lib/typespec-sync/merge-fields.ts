@@ -65,6 +65,11 @@ export interface MergeOptions {
   governance?: FieldGovernanceInfo;
   /** True on the compiler path (it reads governance for every field, `governance` may be undefined for one without any). Defaults to `governance !== undefined`. */
   governanceKnown?: boolean;
+  /**
+   * The enums the source declares (name -> symbols). The compiler reports a field typed with one by the enum's NAME, never as `enum`:
+   * such a field is an enum field (and an array of one an array of `enum`), whose stored symbols stay the truth.
+   */
+  enums?: ReadonlyMap<string, readonly string[]>;
 }
 
 export const GENERIC_DANGLING_REASON = "unresolved reference";
@@ -232,9 +237,27 @@ function resolvedTargetAsStored(existing: SyncExistingField | null, source: Sync
   return unchanged;
 }
 
+/** A field (or array element) typed with an enum the source declares, read as `enum` / array of `enum`. */
+function enumAsDeclared(
+  source: SyncSourceField,
+  enums: ReadonlyMap<string, readonly string[]> | undefined,
+): { source: SyncSourceField; enumName?: string; symbols?: readonly string[]; element?: boolean } {
+  if (!enums || enums.size === 0) return { source };
+  const direct = stripNull(source.type);
+  if (direct !== undefined && enums.has(direct)) {
+    return { source: { ...source, type: "enum" }, enumName: direct, symbols: enums.get(direct) };
+  }
+  const element = stripNull(source.arrayElementType);
+  if (source.type === "array" && element !== undefined && enums.has(element)) {
+    return { source: { ...source, arrayElementType: "enum" }, enumName: element, symbols: enums.get(element), element: true };
+  }
+  return { source };
+}
+
 /** The field row the source text means, given the stored row (null for a field the source adds). Pure; never mutates its inputs. */
 export function mergeSyncedField(existing: SyncExistingField | null, rawSource: SyncSourceField, opts: MergeOptions = {}): MergedField {
-  const { source, matched } = resolvedTargetAsStored(existing, rawSource);
+  const enumTyped = enumAsDeclared(rawSource, opts.enums);
+  const { source, matched } = resolvedTargetAsStored(existing, enumTyped.source);
   const out: Rec = isRec(existing?.decorators) ? cloneJson(existing.decorators as Rec) : {};
   const mapped = mapSourceField(source);
   const typeChanged = existing !== null && existing.type !== mapped.type;
@@ -275,6 +298,20 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
   else delete extBucket.openapi;
   if (Object.keys(extBucket).length > 0) typespec.extensions = extBucket;
   else delete typespec.extensions;
+
+  // A declared enum the stored row did not already hold as one: its symbols come from the source (the stored ones win otherwise).
+  if (enumTyped.enumName !== undefined && enumTyped.symbols) {
+    if (enumTyped.element) {
+      if (!Array.isArray(out.enumValues)) out.enumValues = [...enumTyped.symbols];
+    } else {
+      if (typeof out.enumName !== "string") out.enumName = enumTyped.enumName;
+      const validation: Rec = isRec(typespec.validation) ? (typespec.validation as Rec) : {};
+      if (typeof validation.pattern !== "string" || validation.pattern === "") {
+        validation.pattern = enumTyped.symbols.join("|");
+        typespec.validation = validation;
+      }
+    }
+  }
 
   if (Object.keys(typespec).length > 0) out.typespec = typespec;
   else delete out.typespec;

@@ -268,6 +268,28 @@ describe("preserved keys", () => {
     expect(m.decorators).toEqual(existing.decorators);
   });
 
+  it("a field typed with a declared enum stays an enum with its stored symbols (the compiler names the enum, not `enum`)", () => {
+    const existing = row({ type: "enum", decorators: { enumName: "T_state", typespec: { validation: { pattern: "new|done" } } } });
+    const m = mergeSyncedField(existing, src({ type: "T_state" }), { enums: new Map([["T_state", ["new", "done"]]]) });
+    expect(m.type).toBe("enum");
+    expect(m.decorators).toEqual(existing.decorators);
+  });
+
+  it("a NEW field typed with a declared enum becomes an enum field carrying the source's symbols", () => {
+    const m = mergeSyncedField(null, src({ type: "T_state" }), { enums: new Map([["T_state", ["new", "done"]]]) });
+    expect(m.type).toBe("enum");
+    expect(m.decorators.enumName).toBe("T_state");
+    expect(m.decorators.typespec).toEqual({ validation: { pattern: "new|done" } });
+  });
+
+  it("an array of a declared enum stays an array of enum with its stored symbols", () => {
+    const existing = row({ type: "array", decorators: { arrayElementType: "enum", enumValues: ["a", "b"] } });
+    const m = mergeSyncedField(existing, src({ type: "array", arrayElementType: "T_kind" }), { enums: new Map([["T_kind", ["a", "b"]]]) });
+    expect(m.type).toBe("array");
+    expect(m.decorators.arrayElementType).toBe("enum");
+    expect(m.decorators.enumValues).toEqual(["a", "b"]);
+  });
+
   it("compiled path: source-owned governance keys follow the source, importer-only keys survive", () => {
     const existing = row({ decorators: { governance: { dataClass: "c", pii: true, protobufFieldNumber: 3 } } });
     const none = mergeSyncedField(existing, src(), { governanceKnown: true });

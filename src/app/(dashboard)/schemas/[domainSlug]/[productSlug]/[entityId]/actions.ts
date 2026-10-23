@@ -780,19 +780,35 @@ export interface ApplyTypeSpecResult {
   error?: string;
 }
 
+type TypeSpecParsedField = {
+  name: string;
+  type: string;
+  isOptional: boolean;
+  isKey: boolean;
+  decorators: Record<string, unknown>;
+  arrayElementType?: string;
+};
+
 export async function applyTypeSpecAction(
   entityId: string,
-  parsedFields: Array<{
-    name: string;
-    type: string;
-    isOptional: boolean;
-    isKey: boolean;
-    decorators: Record<string, unknown>;
-    arrayElementType?: string;
-  }>,
+  parsedFields: Array<TypeSpecParsedField>,
   fieldsToRemove?: string[],
   /** Keyed by field name — semantic governance decorator values, from the real-compiler path (compileAndApplyTypeSpecSourceAction). Absent for the regex-parser path. */
   fieldGovernance?: Record<string, FieldGovernanceInfo>
+): Promise<ApplyTypeSpecResult> {
+  return applyTypeSpecFields(entityId, parsedFields, fieldsToRemove, fieldGovernance);
+}
+
+/**
+ * `applyTypeSpecAction` plus what only the source compile knows and a client must not supply: the enums the source declares (the
+ * compiler names an enum-typed field by its enum, which the merge reads back as an enum field).
+ */
+async function applyTypeSpecFields(
+  entityId: string,
+  parsedFields: Array<TypeSpecParsedField>,
+  fieldsToRemove?: string[],
+  fieldGovernance?: Record<string, FieldGovernanceInfo>,
+  enums?: ReadonlyMap<string, readonly string[]>,
 ): Promise<ApplyTypeSpecResult> {
   const session = await auth();
   if (!session?.user?.id) return { added: 0, updated: 0, removed: [], error: "Not authenticated" };
@@ -840,7 +856,7 @@ export async function applyTypeSpecAction(
       // The row the source means: the stored decorators MERGED with what the text can express (never replaced), see
       // `@/lib/typespec-sync/merge-fields` for which keys the source owns and which are preserved. `fieldGovernance` is only
       // given on the real-compiler path; a field without governance decorators there is still "known to have none".
-      const merged = mergeSyncedField(existing ?? null, pf, { governance, governanceKnown: fieldGovernance !== undefined });
+      const merged = mergeSyncedField(existing ?? null, pf, { governance, governanceKnown: fieldGovernance !== undefined, enums });
       const decoratorsJson = merged.decorators;
       const classification = merged.classification;
 
@@ -2005,7 +2021,7 @@ async function compileAndApplyTypeSpecSource(
   // the tags: only when they differ, only that one key.
   const extensionsChange = entityExtensionsChange(entity.metadata, model.extensions);
 
-  const applyResult = await applyTypeSpecAction(
+  const applyResult = await applyTypeSpecFields(
     entityId,
     model.fields.map((f) => ({
       name: f.name,
@@ -2016,7 +2032,8 @@ async function compileAndApplyTypeSpecSource(
       arrayElementType: f.arrayElementType,
     })),
     fieldsToRemove,
-    fieldGovernance
+    fieldGovernance,
+    new Map(enums.map((d) => [d.name, d.values] as const)),
   );
 
   if (applyResult.error) {
