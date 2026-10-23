@@ -245,8 +245,16 @@ export async function readTypeSpecSource(page: Page): Promise<string> {
 /** Replace the TypeSpec source (the tab must be open) and Save: resolves with the toast / diagnostics text. */
 export async function saveTypeSpecSource(page: Page, source: string): Promise<{ ok: boolean; message: string }> {
   const area = page.getByTestId("typespec-source-textarea");
-  await area.fill(source);
-  await page.getByRole("button", { name: /^Save$/ }).click();
+  const save = page.getByRole("button", { name: /^Save$/ });
+  // The tab can reload its source right after it was opened (a refresh of the page behind a just-finished edit) and put the saved text
+  // back over what was typed: Save then stays disabled (not dirty). Type again until the text stays.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await area.fill(source);
+    await page.waitForTimeout(400);
+    if (await save.isEnabled().catch(() => false)) break;
+    await page.waitForTimeout(1_000);
+  }
+  await save.click();
   const ok = page.locator('[data-sonner-toast][data-type="success"]').filter({ hasText: /TypeSpec compiled and applied/ }).first();
   const bad = page.locator('[data-sonner-toast][data-type="error"]').last();
   await expect(ok.or(bad)).toBeVisible({ timeout: 90_000 });
