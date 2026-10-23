@@ -15,6 +15,9 @@ import { defineConfig, devices } from "@playwright/test";
  */
 const RUN_ALONE_AFTER_THE_REST = ["navigation.spec.ts", "events-external-refs.spec.ts"];
 
+/** E2E_BASE_URL points the specs at an already-running server (no build, no webServer): `E2E_BASE_URL=http://localhost:3107`. */
+const EXTERNAL_BASE_URL = process.env.E2E_BASE_URL;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
@@ -23,7 +26,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: EXTERNAL_BASE_URL ?? "http://localhost:3000",
     trace: "on-first-retry",
   },
   projects: [
@@ -41,9 +44,11 @@ export default defineConfig({
       dependencies: ["chromium"],
     },
   ],
-  webServer: {
-    command: "npm run build && npm start",
-    url: "http://localhost:3000",
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: EXTERNAL_BASE_URL
+    ? undefined
+    : {
+        command: "npm run build && npm start",
+        url: "http://localhost:3000",
+        reuseExistingServer: !process.env.CI,
+      },
 });

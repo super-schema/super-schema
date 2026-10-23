@@ -30,7 +30,20 @@ async function settled(page: Page, id: string): Promise<Locator> {
 /** Put `text` in the workbench paste box (the Paste tab must be open). Works for CodeMirror and for the textarea editors. */
 export async function fillWorkbenchPaste(page: Page, text: string): Promise<void> {
   const editable = await settled(page, PASTE_ID);
-  await editable.fill(text);
+  const isTextarea = await editable.evaluate((el) => el.tagName === "TEXTAREA");
+  if (!isTextarea && text.includes("\n")) {
+    // `fill` on CodeMirror's contenteditable flattens newlines into one line; a real user PASTES, so do that (YAML, pretty-printed JSON).
+    await editable.click();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.press("Backspace");
+    await editable.evaluate((el, value) => {
+      const data = new DataTransfer();
+      data.setData("text/plain", value);
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    }, text);
+  } else {
+    await editable.fill(text);
+  }
   // A paste that changes the kind of editor swaps it (and focuses the new one); the text must have arrived either way.
   await expectWorkbenchText(page, PASTE_ID, text);
 }
@@ -41,13 +54,22 @@ export async function expectDetailPanelText(page: Page, text: string): Promise<v
 }
 
 async function expectWorkbenchText(page: Page, id: string, text: string): Promise<void> {
-  const editable = await settled(page, id);
-  const isTextarea = await editable.evaluate((el) => el.tagName === "TEXTAREA");
-  if (isTextarea) {
-    await expect(editable).toHaveValue(text);
-    return;
-  }
-  // CodeMirror renders only the visible lines of a long document: compare a bounded sample (the first lines), whitespace-insensitive.
-  const sample = text.split("\n").slice(0, 5).join("\n").trim();
-  await expect(editable).toContainText(sample); // a string is matched with whitespace normalised on both sides
+  await settled(page, id);
+  // The kind of editor can change under us (a paste of another format swaps CodeMirror for the textarea editor), so what is read is
+  // decided on every poll: the whole value of a textarea, or the first lines of CodeMirror (it renders only the visible lines of a
+  // long document; its text content has no newline between the `.cm-line` blocks, so the lines are read one by one).
+  const sampleLines = text.split("\n").slice(0, 5);
+  const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
+  const wanted = sampleLines.map(collapse).join("\n");
+  await expect
+    .poll(
+      async () => {
+        const editable = page.locator(`#${id}`);
+        const isTextarea = await editable.evaluate((el) => el.tagName === "TEXTAREA").catch(() => false);
+        if (isTextarea) return (await editable.inputValue()) === text ? wanted : (await editable.inputValue()).split("\n").slice(0, 5).map(collapse).join("\n");
+        return (await editable.locator(".cm-line").allInnerTexts().catch(() => [])).slice(0, sampleLines.length).map(collapse).join("\n");
+      },
+      { timeout: 8_000 },
+    )
+    .toBe(wanted);
 }

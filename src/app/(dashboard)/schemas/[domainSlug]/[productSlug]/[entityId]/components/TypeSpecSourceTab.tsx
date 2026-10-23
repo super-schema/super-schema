@@ -127,6 +127,7 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
       </p>
 
       <textarea
+        data-testid="typespec-source-textarea"
         value={source}
         onChange={(e) => setSource(e.target.value)}
         readOnly={readOnly}
