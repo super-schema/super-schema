@@ -59,6 +59,15 @@ function sanitizeExtensions(raw: unknown): Record<string, unknown> | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * `{ metadata: { custom: { extensions } } }` for the single-entity creates (the wizard's field preview), `{}` when there is nothing
+ * worth storing: the same shape and the same sanitising the bulk import writes, so both paths keep an entity's `x-*` keys.
+ */
+export function entityExtensionsMetadata(raw: unknown): { metadata?: { custom: { extensions: Record<string, unknown> } } } {
+  const extensions = sanitizeExtensions(raw);
+  return extensions ? { metadata: { custom: { extensions } } } : {};
+}
+
 /** `field` with the entity names it refers to (`referencedEntityName`, `arrayElementType`) replaced by their new names. */
 function followRenames(field: ImportedField, renames: ReadonlyMap<string, string>): ImportedField {
   const decorators = field.decorators;

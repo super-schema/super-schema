@@ -20,7 +20,7 @@ import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
-import { createImportedEntities, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
+import { createImportedEntities, entityExtensionsMetadata, IMPORT_TRANSACTION_OPTIONS } from "@/services/imported-entities";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { actionErrorText, isOpaqueErrorCode } from "@/types/action-result";
 import { err, ok } from "@/types/result";
@@ -131,6 +131,8 @@ async function createProductEntity(params: {
   name: string;
   description: string;
   fields?: CreateFieldInput[];
+  /** Entity-level vendor extensions of an import (`metadata.custom.extensions`); sanitised here. */
+  extensions?: unknown;
 }): Promise<{ entityId: string } | { error: string }> {
   const { userId, domainId, description, fields } = params;
   const name = params.name.trim();
@@ -165,6 +167,7 @@ async function createProductEntity(params: {
                 ...scope,
                 description,
                 ownerId: userId,
+                ...entityExtensionsMetadata(params.extensions),
                 ...(fields && { fields: { create: fields.map(mapFieldCreateInput) } }),
               },
             }),
@@ -182,7 +185,7 @@ async function createProductEntity(params: {
 
 export async function createEntityWithFieldsAction(
   domainId: string,
-  data: { name: string; description: string; fields: CreateFieldInput[] },
+  data: { name: string; description: string; fields: CreateFieldInput[]; extensions?: Record<string, unknown> },
   productId?: string
 ) {
   const session = await auth();
@@ -193,7 +196,7 @@ export async function createEntityWithFieldsAction(
   // The details arrive from the browser untyped: a payload that is not an object, or whose name is not a string, is a
   // validation failure here instead of a TypeError further down.
   if (!isPlainObject(data)) return { error: "Entity details are required", code: "VALIDATION_ERROR" };
-  const { name, description, fields } = data;
+  const { name, description, fields, extensions } = data;
 
   if (typeof name !== "string" || name.trim().length === 0) {
     return { error: "Entity name is required" };
@@ -220,6 +223,7 @@ export async function createEntityWithFieldsAction(
       name,
       description,
       fields,
+      extensions,
     });
     if ("error" in created) return { error: created.error };
 

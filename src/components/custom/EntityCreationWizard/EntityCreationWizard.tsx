@@ -419,6 +419,10 @@ export function EntityCreationWizard({
       name: state.entityName.trim(),
       description: state.entityDescription,
       fields,
+      // The model's own vendor keys (`x-*` of the schema root) belong to the entity, not to a field.
+      ...(state.importedEntity?.extensions && Object.keys(state.importedEntity.extensions).length > 0
+        ? { extensions: state.importedEntity.extensions }
+        : {}),
     };
 
     // Enterprise entities go straight to their own page; product entities return

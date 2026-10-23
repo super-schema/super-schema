@@ -11,6 +11,7 @@ import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { mapFieldCreateInput } from "@/lib/entity-field-input";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
+import { entityExtensionsMetadata } from "@/services/imported-entities";
 import type { CreateFieldInput } from "../[domainSlug]/actions";
 
 /**
@@ -26,6 +27,8 @@ export async function createTenantEntityAction(data: {
   name: string;
   description: string;
   fields: CreateFieldInput[];
+  /** Entity-level vendor extensions of an import (`metadata.custom.extensions`). */
+  extensions?: Record<string, unknown>;
 }): Promise<{ success: true; entity: { id: string; slug: string } } | { error: string }> {
   const session = await auth();
   if (!session?.user?.id) {
@@ -87,6 +90,7 @@ export async function createTenantEntityAction(data: {
                 ...scope,
                 description: data.description,
                 ownerId: userId,
+                ...entityExtensionsMetadata(data.extensions),
                 ...(data.fields.length > 0 && {
                   fields: { create: data.fields.map(mapFieldCreateInput) },
                 }),

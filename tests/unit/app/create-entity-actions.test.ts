@@ -105,6 +105,29 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
     );
   });
 
+  it("stores the entity-level vendor extensions of a single-entity import at metadata.custom.extensions", async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
+    const result = await createEntityWithFieldsAction("domain-1", {
+      name: "Device",
+      description: "",
+      fields: [],
+      extensions: { "x-team": "iot", "x-lifecycle": { stage: "beta" } },
+    });
+    expect(result).toEqual({ success: true, entityId: "entity-1" });
+    expect(mockTx.entity.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ metadata: { custom: { extensions: { "x-team": "iot", "x-lifecycle": { stage: "beta" } } } } }),
+      })
+    );
+  });
+
+  it("writes no metadata for an entity without extensions (and ignores a malformed extensions payload)", async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
+    await createEntityWithFieldsAction("domain-1", { name: "Plain", description: "", fields: [], extensions: ["x"] as never });
+    const data = mockTx.entity.create.mock.calls.at(-1)?.[0].data;
+    expect(data).not.toHaveProperty("metadata");
+  });
+
   describe("name registry and placement", () => {
     beforeEach(() => {
       mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });

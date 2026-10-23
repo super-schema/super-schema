@@ -173,6 +173,21 @@ describe("EntityCreationWizard — multi-entity import", () => {
     await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/schemas/payments/checkout/e-new"));
   });
 
+  it("carries the entity-level vendor extensions of a single JSON Schema into the create call", async () => {
+    mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e-ext" });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(
+      JSON.stringify({ title: "Device", type: "object", "x-team": "iot", properties: { id: { type: "string" } } })
+    );
+    await waitFor(() => expect(screen.getByDisplayValue("Device")).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Entity" }));
+
+    await waitFor(() => expect(mocks.createEntityWithFieldsAction).toHaveBeenCalledTimes(1));
+    const [, input] = mocks.createEntityWithFieldsAction.mock.calls[0];
+    expect(input.extensions).toEqual({ "x-team": "iot" });
+  });
+
   it("explains that multi-entity imports go into a product at the Enterprise level", async () => {
     render(<EntityCreationWizard target={{ level: "TENANT", tenantId: "tenant-1" }} />);
     await pasteAndParse(ORDER_PROTO);
