@@ -58,6 +58,7 @@ describe("import refuses names above the limit", () => {
     expect(gone.confidence).toBe("low");
     expect(gone.danglingRef?.reason).toMatch(/was skipped because its name is longer than 128/);
     expect(fields.find((f) => f.name === "many")!.danglingRef).toMatchObject({ element: true });
+    expect(fields.find((f) => f.name === "many")!.danglingRef?.ref).toMatch(/^#\//);
     expect(parsed.data.warnings.some((w) => /Field "gone" of "Root" refers to "L+\.\.\.", which was skipped/.test(w))).toBe(true);
   });
 

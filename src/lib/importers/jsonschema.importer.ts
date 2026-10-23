@@ -276,6 +276,8 @@ interface ResolvedType {
 
 /** Fields whose low confidence is solely due to an unresolved external `$ref` (URL import raises it once the ref resolves). */
 const LOW_FROM_UNRESOLVED_REF = new WeakSet<object>();
+/** The item's original $ref of an array-of-reference field (field.originalType is "array" there). */
+const ARRAY_ITEM_REF = new WeakMap<object, string>();
 export function isLowFromUnresolvedRef(field: object): boolean {
   return LOW_FROM_UNRESOLVED_REF.has(field);
 }
@@ -1132,6 +1134,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       if (item.unionName) field.unionName = item.unionName;
       if (item.unionMembers) field.unionMembers = item.unionMembers;
       if (item.type === "reference" || item.type === "enum" || item.type === "union") field.confidence = item.confidence;
+      if (item.type === "reference") ARRAY_ITEM_REF.set(field, item.originalType);
       if (item.lowFromUnresolvedRef) LOW_FROM_UNRESOLVED_REF.add(field);
       else LOW_FROM_UNRESOLVED_REF.delete(field);
       if (item.type === "reference" && item.lowFromUnresolvedRef && isExternalRef(item.originalType)) {
@@ -1371,7 +1374,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
         warnings.push(`Field "${field.name}" of "${entity.name}" refers to "${clip(names[0])}", which was skipped (name too long); it is kept as an unresolved reference.`);
         if (field.type === "reference" || (field.type === "array" && field.arrayElementType === "reference")) {
           field.confidence = "low";
-          field.danglingRef = { ref: field.originalType, reason: `refers to "${clip(names[0])}", which was skipped because its name is longer than ${limit} characters`, ...(field.type === "array" ? { element: true as const } : {}) };
+          field.danglingRef = { ref: (field.type === "array" ? ARRAY_ITEM_REF.get(field) : undefined) ?? field.originalType, reason: `refers to "${clip(names[0])}", which was skipped because its name is longer than ${limit} characters`, ...(field.type === "array" ? { element: true as const } : {}) };
         }
       }
     }
