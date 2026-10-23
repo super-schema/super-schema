@@ -15,8 +15,6 @@
  *   by-design - the app refuses with an actionable message on purpose
  *   emulator  - the LocalCloud emulator is narrower than the real engine (the DDL is valid there)
  */
-import { BQ_PK_OUTSIDE } from "../../helpers/corpus/emulators";
-import { JAVA_ENUM_NO_PACKAGE } from "../../helpers/corpus/validators";
 import type { BuiltCase } from "../../helpers/corpus/build-rows";
 import type { TargetOutcome } from "../../helpers/corpus/run-case";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
@@ -53,36 +51,9 @@ export const unknownIdentifiers = (reason: string): string[] => [...reason.match
 
 export const KNOWN_ISSUES: KnownIssue[] = [
   {
-    id: "bigquery-pk-after-column-list", targets: ["bigquery"], disposition: "sibling", owner: "@typespec/bigquery write.ts:74-77",
-    issue: "Sibling emitter defect, confirmed against BigQuery's documented CREATE TABLE grammar and not confirmable on the emulator. The emitter writes `) PRIMARY KEY (...) NOT ENFORCED` AFTER the closing paren of the column list (Spanner's form); BigQuery's grammar takes the constraint inside the element list. The LocalCloud emulator (ZetaSQL parser) rejects the emitted form (`PRIMARY KEY must be defined in the table element list as column attribute or constraint`); moved inside the list it says `Unsupported table DDL fields: ['primaryKey']` (it cannot create primary-key tables at all); without the clause the DDL is accepted. sqlglot accepts both placements, so it is no evidence either way.",
-    diagnostic: { code: BQ_PK_OUTSIDE, message: /PRIMARY KEY must be defined in the table element list/ },
-  },
-  {
-    id: "bigquery-array-not-null", targets: ["bigquery"], disposition: "sibling", owner: "@typespec/bigquery write.ts (NOT NULL on a required ARRAY column)",
-    issue: "A required array field is written `col ARRAY<T> NOT NULL`. The engine's analyzer says `Columns and fields of ARRAY type do not support the NOT NULL modifier` (the message real BigQuery gives: an ARRAY column is never NULL, only empty), so the DDL cannot run. Judged without the primary-key clause so it is not hidden by bigquery-pk-after-column-list.",
-    diagnostic: { code: "judged without the PRIMARY KEY clause", message: /Columns and fields of ARRAY type do not support the NOT NULL modifier/ },
-  },
-  {
     id: "bigquery-emulator-timestamp-array", targets: ["bigquery"], disposition: "emulator", owner: "LocalCloud BigQuery emulator",
     issue: "`ARRAY<TIMESTAMP>` is rejected by the emulator's own loader (`TIMESTAMP columns are qualified only as top-level non-repeated columns`); real BigQuery supports arrays of timestamps. Not an emitter or app defect.",
-    diagnostic: { code: "judged without the PRIMARY KEY clause", message: /TIMESTAMP columns are qualified only as top-level non-repeated columns/ },
-  },
-  {
-    id: "java-enum-without-package", targets: ["java-pojo"], disposition: "sibling", owner: "@typespec/java-pojo write.ts writeJavaEnum",
-    issue: "writeJavaEnum writes `public enum X {...}` with no `package` line while the POJO is in `package com.superschema.generated;`, so the class cannot see its enum (javac: cannot find symbol). javac compiles once the package line is added to the enum file (the validator proves it).",
-    diagnostic: { code: JAVA_ENUM_NO_PACKAGE, message: /compiles after adding `package [\w.]+;`/ },
-  },
-  {
-    id: "java-javadoc-not-escaped", targets: ["java-pojo"], disposition: "sibling", owner: "@typespec/java-pojo write.ts javadoc()",
-    issue: "A description containing `*/` is written into the Javadoc unescaped, closing the comment early: javac `class, interface, enum, or record expected`. Source text of a schema can therefore inject Java code into the generated file.",
-    diagnostic: { code: "validate:", message: /class, interface, enum, or record expected/ },
-    when: ({ built }) => built.entity.description.includes("*/") || built.fields.some((f) => f.description.includes("*/")),
-  },
-  {
-    id: "avro-recursive-model-crash", targets: ["avro"], disposition: "sibling", owner: "@typespec/avro transform.ts mapType",
-    issue: "A model that refers to itself (`children: Node[]`, `parent: Node`) makes the emitter recurse without a visited set: `RangeError: Maximum call stack size exceeded` at mapType (transform.ts:261-270), reported by the app as `The TypeSpec emitter failed.`. Avro supports recursive records by name.",
-    diagnostic: { code: "The TypeSpec emitter failed", message: /The TypeSpec emitter failed/ },
-    when: ({ built }) => built.fields.some((f) => decoratorsOf(f).referencedEntityName === built.entity.name),
+    diagnostic: { code: "validate:", message: /TIMESTAMP columns are qualified only as top-level non-repeated columns/ },
   },
   {
     id: "multi-model-emission-gap", targets: ["json-schema", "openapi3", "avro", "protobuf", "java-pojo"], disposition: "open", owner: "this repo (documented gap: default-mappings.ts reference -> protobuf lossDescription)",

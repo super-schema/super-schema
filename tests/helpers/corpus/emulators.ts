@@ -117,14 +117,12 @@ async function dropSpanner(name: string): Promise<void> {
   try { await call("DELETE", `${dbBase}/${name}`); } catch { /* the final sweep retries */ }
 }
 
-/** Marker prefix of the one failure that is accepted once the PRIMARY KEY constraint is inside the column list (see known-issues.ts). */
-export const BQ_PK_OUTSIDE = "table-level PRIMARY KEY written after the column list";
+/** Marker of the one failure that is the emulator's own limit (it cannot create primary-key tables); see known-issues.ts. */
+export const BQ_PK_UNSUPPORTED = "emulator cannot create primary-key tables";
 
-/** `CREATE TABLE t (cols,\n)\nPRIMARY KEY (a) NOT ENFORCED` -> `CREATE TABLE t (cols, PRIMARY KEY (a) NOT ENFORCED)`. */
-export function movePrimaryKeyInside(sql: string): string {
-  const m = /,?\s*\)\s*(PRIMARY KEY\s*\([^)]*\)\s*NOT ENFORCED)\s*$/i.exec(sql);
-  if (!m || m.index === undefined) return sql;
-  return `${sql.slice(0, m.index)},\n  ${m[1]}\n)`;
+/** `CREATE TABLE t (cols,\n  PRIMARY KEY (a) NOT ENFORCED\n)` -> the same without the constraint and its comma. */
+export function stripPrimaryKey(sql: string): string {
+  return sql.replace(/,\s*PRIMARY KEY\s*\([^)]*\)\s*NOT ENFORCED(\s*\))/i, "$1");
 }
 
 /**
@@ -156,6 +154,7 @@ export async function validateBigQuery(ddl: string, schemaName: string): Promise
   counter += 1;
   const dataset = `${BIGQUERY_PREFIX}${counter}`;
   const base = `${BIGQUERY}/bigquery/v2/projects/${PROJECT}`;
+  let primaryKeyNotJudged = false;
   try {
     createdBigQuery.push(dataset);
     const made = await call("POST", `${base}/datasets`, { datasetReference: { projectId: PROJECT, datasetId: dataset } });
@@ -168,21 +167,21 @@ export async function validateBigQuery(ddl: string, schemaName: string): Promise
       const failed = (r: Awaited<ReturnType<typeof run>>): boolean => r.status >= 400 || Boolean(r.json.errors) || Boolean((r.json.status as { errorResult?: unknown } | undefined)?.errorResult);
       const r = await run(sql);
       if (failed(r)) {
-        // Isolate the known sibling defect: the table-level PRIMARY KEY is written AFTER the closing paren of the column list.
-        const moved = movePrimaryKeyInside(sql);
-        if (moved !== sql && /PRIMARY KEY must be defined/i.test(errorText(r.json))) {
-          const retry = await run(moved);
-          if (!failed(retry)) return { ok: false, tier, error: `${BQ_PK_OUTSIDE}: rejected as emitted (${errorText(r.json)}), accepted once the constraint is moved inside the column list` };
-          // The emulator cannot create a table with a primary key at all ("Unsupported table DDL fields: ['primaryKey']"): judge the rest.
-          const stripped = sql.replace(/,?\s*\)\s*PRIMARY KEY\s*\([^)]*\)\s*NOT ENFORCED\s*$/i, "\n)");
-          const rest = await run(stripped);
-          if (!failed(rest)) return { ok: false, tier, error: `${BQ_PK_OUTSIDE}: as emitted the emulator's parser says (${errorText(r.json)}); moved inside the list it says (${errorText(retry.json)}, i.e. it cannot create primary-key tables); without the PRIMARY KEY clause the DDL is accepted` };
-          return { ok: false, tier, error: `${errorText(rest.json)} (judged without the PRIMARY KEY clause; as emitted: ${errorText(r.json)})` };
+        // The emulator cannot create a table with a primary key at all ("Unsupported table DDL fields: ['primaryKey']"), although the
+        // clause is inside the column list as BigQuery documents: judge the rest of the DDL without it and say so in the tier.
+        if (/Unsupported table DDL fields: \['primaryKey'\]/.test(errorText(r.json))) {
+          const stripped = stripPrimaryKey(sql);
+          if (stripped !== sql) {
+            const rest = await run(stripped);
+            if (failed(rest)) return { ok: false, tier, error: `${errorText(rest.json)} (judged without the PRIMARY KEY clause; as emitted: ${errorText(r.json)})` };
+            primaryKeyNotJudged = true;
+            continue;
+          }
         }
         return { ok: false, tier, error: errorText(r.json) };
       }
     }
-    return { ok: true, tier };
+    return { ok: true, tier: primaryKeyNotJudged ? `${tier}; PRIMARY KEY clause not judged (${BQ_PK_UNSUPPORTED})` : tier };
   } catch (e) {
     return { ok: false, tier, error: `emulator call failed: ${(e as Error).message}` };
   } finally {

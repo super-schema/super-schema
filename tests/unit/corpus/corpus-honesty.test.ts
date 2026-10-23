@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 import { matchKnownIssue, registryProblems, documentNames, type KnownIssue } from "../../fixtures/corpus/known-issues";
 import { KNOWN_ISSUES } from "../../fixtures/corpus/known-issues";
 import { problemsOf, allowedSkipTiersFromEnv, type CaseResult } from "../../helpers/corpus/orchestrate";
-import { isAllowedBigQueryStatement, splitStatements, BQ_PK_OUTSIDE } from "../../helpers/corpus/emulators";
+import { isAllowedBigQueryStatement, splitStatements, stripPrimaryKey } from "../../helpers/corpus/emulators";
 import type { CorpusCase } from "../../fixtures/corpus/types";
 import type { BuiltCase } from "../../helpers/corpus/build-rows";
 import type { TargetOutcome } from "../../helpers/corpus/run-case";
@@ -22,19 +22,25 @@ const built = (referenced: string[] = []): BuiltCase => ({
 const failed = (target: TargetOutcome["target"], reason: string): TargetOutcome => ({ target, kind: "FAIL", reason, warnings: [] });
 
 describe("a known issue does not mask a different failure", () => {
+  const TS = "TIMESTAMP columns are qualified only as top-level non-repeated columns";
   it("matches the rule's own diagnostic", () => {
-    const hit = matchKnownIssue(baseCase(), "bigquery", failed("bigquery", `validate: ${BQ_PK_OUTSIDE}: as emitted the emulator's parser says (INVALID_ARGUMENT: PRIMARY KEY must be defined in the table element list as column attribute or constraint)`), built());
-    expect(hit?.id).toBe("bigquery-pk-after-column-list");
+    const hit = matchKnownIssue(baseCase(), "bigquery", failed("bigquery", `validate: INVALID_ARGUMENT: ${TS}`), built());
+    expect(hit?.id).toBe("bigquery-emulator-timestamp-array");
+  });
+
+  it("stripPrimaryKey removes the in-list constraint and its comma only", () => {
+    expect(stripPrimaryKey("CREATE TABLE t (\n  a INT64 NOT NULL,\n  PRIMARY KEY (a, b) NOT ENFORCED\n)")).toBe("CREATE TABLE t (\n  a INT64 NOT NULL\n)");
+    expect(stripPrimaryKey("CREATE TABLE t (\n  a INT64\n)")).toBe("CREATE TABLE t (\n  a INT64\n)");
   });
 
   it("does not match another bigquery failure of the same case", () => {
     expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", "validate: INVALID_ARGUMENT: Syntax error: Unexpected integer literal"), built())).toBeUndefined();
     // the right words under a different code are not the rule either
-    expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", "validate: PRIMARY KEY must be defined in the table element list"), built())).toBeUndefined();
+    expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", TS), built())).toBeUndefined();
   });
 
   it("does not match the right diagnostic on a target the rule is not about", () => {
-    expect(matchKnownIssue(baseCase(), "spanner", failed("spanner", `${BQ_PK_OUTSIDE}: PRIMARY KEY must be defined in the table element list`), built())).toBeUndefined();
+    expect(matchKnownIssue(baseCase(), "spanner", failed("spanner", `validate: ${TS}`), built())).toBeUndefined();
   });
 
   it("multi-model gap: only an identifier the case's own document refers to", () => {
