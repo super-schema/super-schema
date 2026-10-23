@@ -19,6 +19,7 @@ import type {
   SuperSchemaOperation,
 } from "@/types/super-schema-model";
 import { getTypeInfo } from "@/lib/data-types";
+import { constraintAppliesTo, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import {
   ENTERPRISE_NAMESPACE,
@@ -799,13 +800,18 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     if (onlyItems && validation.minItems != null) decorators.push(`@minItems(${validation.minItems})`);
     if (onlyItems && validation.maxItems != null) decorators.push(`@maxItems(${validation.maxItems})`);
   } else if (validation) {
-    if (validation.minLength != null) {
+    // Only validators the field's TypeSpec scalar accepts are written; the rest stay in the stored decorators (not deleted).
+    const applies = (kind: ConstraintKind): boolean => constraintAppliesTo(field.type, kind);
+    if (validation.minLength != null && applies("minLength")) {
       decorators.push(`@minLength(${validation.minLength})`);
     }
-    if (validation.maxLength != null) {
+    if (validation.maxLength != null && applies("maxLength")) {
       decorators.push(`@maxLength(${validation.maxLength})`);
     }
-    const bound = (kind: BoundKind, value: number | undefined): number | null => (value == null ? null : boundFor(field.type, kind, value));
+    const bound = (kind: BoundKind, value: number | undefined): number | null => {
+      const decorator = kind === "min" ? "minValue" : kind === "max" ? "maxValue" : kind === "minExclusive" ? "minValueExclusive" : "maxValueExclusive";
+      return value == null || !applies(decorator) ? null : boundFor(field.type, kind, value);
+    };
     const minValue = bound("min", validation.minValue);
     if (minValue !== null) decorators.push(`@minValue(${minValue})`);
     const maxValue = bound("max", validation.maxValue);
@@ -814,13 +820,13 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     if (minExclusive !== null) decorators.push(`@minValueExclusive(${minExclusive})`);
     const maxExclusive = bound("maxExclusive", validation.maxValueExclusive);
     if (maxExclusive !== null) decorators.push(`@maxValueExclusive(${maxExclusive})`);
-    if (validation.pattern != null && field.type !== "enum") {
+    if (validation.pattern != null && field.type !== "enum" && applies("pattern")) {
       decorators.push(`@pattern("${escapeString(validation.pattern)}")`);
     }
-    if (validation.minItems != null) {
+    if (validation.minItems != null && applies("minItems")) {
       decorators.push(`@minItems(${validation.minItems})`);
     }
-    if (validation.maxItems != null) {
+    if (validation.maxItems != null && applies("maxItems")) {
       decorators.push(`@maxItems(${validation.maxItems})`);
     }
   }

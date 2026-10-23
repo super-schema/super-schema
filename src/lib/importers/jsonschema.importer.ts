@@ -42,6 +42,7 @@ import type { Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
 import { getClassificationConfig, type ClassificationConfig } from "./classification-config";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
+import { constraintAppliesTo, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { pickRootEntity } from "./multi-asset";
 import type {
   ParsedEntity,
@@ -1088,6 +1089,19 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     // A numeric const / enum implies a range; an explicit keyword on the property wins.
     for (const implied of resolved.impliedConstraints ?? []) {
       if (!constraints.some((c) => c.type === implied.type)) constraints.push(implied);
+    }
+
+    // A validator the emitted TypeSpec scalar does not accept (maxLength on a date-time) is kept on the field but not written to the
+    // generated source (the real compiler rejects it); say so instead of dropping it silently.
+    const withheld = [
+      ...constraints.map((c) => c.type),
+      ...(minValueExclusive !== undefined ? ["minValueExclusive"] : []),
+      ...(maxValueExclusive !== undefined ? ["maxValueExclusive"] : []),
+    ].filter((kind) => !constraintAppliesTo(resolved.type, kind as ConstraintKind));
+    for (const kind of withheld) {
+      baseCtx.warnings.push(
+        `Field \`${ownerName}.${name}\`: constraint \`${kind}\` was not applied to ${resolved.type} (the TypeSpec type does not accept it); it is kept on the field.`
+      );
     }
 
     const field: ParsedField = {
