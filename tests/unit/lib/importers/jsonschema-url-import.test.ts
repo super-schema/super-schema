@@ -76,6 +76,7 @@ describe("importJsonSchemaFromUrl", () => {
         throw new Error("http must not be called");
       },
       lookup: PUBLIC,
+      gitImportConfig: { mode: "restricted", scopes: ["ApiSpecifications-R"] },
     });
     if (!r.success) throw new Error(r.error.message);
     const d = r.data;

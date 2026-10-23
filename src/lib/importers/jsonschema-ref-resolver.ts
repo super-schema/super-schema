@@ -21,6 +21,7 @@ import { execFile } from "node:child_process";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { $RefParser } from "@apidevtools/json-schema-ref-parser";
 import { parse as parseYaml } from "yaml";
+import { gitRootRefusal, readGitImportConfig, type GitImportConfig } from "./git-import-config";
 import { setOwn } from "@/lib/compiler/governance-decorators";
 import {
   DEFAULT_LIMITS,
@@ -61,6 +62,8 @@ export interface ResolverDeps {
   lookup?: DnsLookup;
   /** Injectable exec for the default `gh` fetcher. */
   execFile?: ExecFileFn;
+  /** Which git-host ROOT URLs may be fetched; defaults to the SCHEMA_IMPORT_GIT_* env (restricted, no scopes). */
+  gitImportConfig?: GitImportConfig;
 }
 
 export interface ResolvedRefs {
@@ -324,8 +327,10 @@ export async function fetchRootDocument(
     if (isGitHost) {
       const git = parseGitFileUrl(url, hosts);
       if (!git.ok) return { ok: false, reason: git.reason };
-      const fetchGitFile = deps.fetchGitFile ?? createGhFetchGitFile(deps.execFile ?? defaultExec, limits, hosts);
       const c = git.coords;
+      const refusal = gitRootRefusal(deps.gitImportConfig ?? readGitImportConfig(), c.owner, c.repo);
+      if (refusal) return { ok: false, reason: refusal };
+      const fetchGitFile = deps.fetchGitFile ?? createGhFetchGitFile(deps.execFile ?? defaultExec, limits, hosts);
       body = await withTimeout(fetchGitFile(c.host, c.owner, c.repo, c.ref, c.path), limits.perFetchTimeoutMs);
     } else {
       const check = checkHttpsUrl(url);
