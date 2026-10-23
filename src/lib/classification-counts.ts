@@ -15,6 +15,15 @@ export type ClassificationCounts = Record<(typeof CLASSIFICATIONS)[number], numb
 
 const isStandard = (level: string): level is (typeof CLASSIFICATIONS)[number] => (CLASSIFICATIONS as readonly string[]).includes(level);
 
+/**
+ * The one place that decides which key a level is tallied and filtered under: a level that is a standard one in any case (`pii`, `Pii`)
+ * is the standard key (`PII`); any other level keeps its own spelling.
+ */
+export function normalizeClassification(level: string): string {
+  const upper = level.toUpperCase();
+  return isStandard(upper) ? upper : level;
+}
+
 /** The levels of `counts` outside the standard scale, with their counts, in name order. */
 export function otherClassificationCounts(counts: Readonly<Record<string, number>>): Array<[string, number]> {
   return Object.entries(counts)
@@ -24,7 +33,7 @@ export function otherClassificationCounts(counts: Readonly<Record<string, number
 
 /** The field list's classification filter: the standard five, then every other level the entity's fields actually carry. */
 export function classificationFilterOptions(levels: ReadonlyArray<string | null | undefined>): Array<{ value: string; label: string }> {
-  const present = [...new Set(levels.filter((l): l is string => !!l && !isStandard(l.toUpperCase())))].sort((a, b) => a.localeCompare(b));
+  const present = [...new Set(levels.filter((l): l is string => !!l && !isStandard(normalizeClassification(l))))].sort((a, b) => a.localeCompare(b));
   return [
     ...CLASSIFICATIONS.map((value) => ({ value, label: CLASSIFICATION_LABELS[value] })),
     ...present.map((value) => ({ value, label: value })),
@@ -34,7 +43,7 @@ export function classificationFilterOptions(levels: ReadonlyArray<string | null 
 /** Does a field of `level` match the filter `value` (a standard level compares case-insensitively, any other level exactly)? */
 export function matchesClassificationFilter(level: string | null | undefined, value: string): boolean {
   if (!level) return false;
-  return isStandard(value) ? level.toUpperCase() === value : level === value;
+  return normalizeClassification(level) === normalizeClassification(value);
 }
 
 /** One row of `prisma.field.groupBy({ by: ["entityId", "classification"], _count: true })`. */
@@ -69,7 +78,7 @@ export function classificationCountsFromGroups(
       counts = emptyClassificationCounts();
       byEntity.set(group.entityId, counts);
     }
-    const classification = group.classification ?? "SENSITIVE";
+    const classification = normalizeClassification(group.classification ?? "SENSITIVE");
     if (classification === "__proto__") continue;
     counts[classification] = (Object.prototype.hasOwnProperty.call(counts, classification) ? counts[classification] : 0) + group._count;
   }
