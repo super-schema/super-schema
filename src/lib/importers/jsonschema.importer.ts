@@ -309,6 +309,8 @@ interface ResolveContext {
   unionByNode: WeakMap<object, string>;
   /** Members of each shared `$defs` union by asset name (a field referencing it carries them too). */
   sharedUnionMembers: Map<string, string[]>;
+  /** Shared `$defs` unions (by asset name) with a member that names nothing in this document: a field using one is low confidence. */
+  unresolvedSharedUnions?: Set<string>;
   /** `<Entity>_<field>` the node being resolved belongs to — the stem of a generated union name. */
   unionStem?: string;
 }
@@ -482,7 +484,7 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
   if (def?.kind === "union") {
     return {
       type: "union",
-      confidence: "medium",
+      confidence: ctx.unresolvedSharedUnions?.has(def.assetName) ? "low" : "medium",
       nullable: false,
       originalType: ref,
       unionName: def.assetName,
@@ -547,6 +549,20 @@ function namedRefMembers(raw: unknown[], ctx: ResolveContext): { names: string[]
   return names.length >= 2 ? { names, hasNull } : undefined;
 }
 
+/** `$ref`s of the members of a combinator that name nothing in this document (an external file / URL, or a missing pointer). */
+function unresolvedMemberRefs(raw: unknown[], ctx: ResolveContext): string[] {
+  const refs: string[] = [];
+  for (const m of raw) {
+    if (!isSchemaObject(m) || typeof m.$ref !== "string" || m.$ref === "#" || m.$ref === "") continue;
+    if (!definitionFor(ctx.definitions, m.$ref) && !refs.includes(m.$ref)) refs.push(m.$ref);
+  }
+  return refs;
+}
+
+function unresolvedUnionWarning(unionName: string, refs: string[]): string {
+  return `Union \`${unionName}\` has members that are not defined in this document (${refs.join(", ")}); they stay as unresolved names and the union is low confidence.`;
+}
+
 /** Cap the member list, reporting what was dropped. */
 function boundMembers(names: string[], label: string, warnings: string[]): string[] {
   if (names.length <= MAX_UNION_MEMBERS) return names;
@@ -574,16 +590,18 @@ function resolveNamedRefUnion(
 ): ResolvedType | undefined {
   const found = namedRefMembers(raw, ctx);
   if (!found) return undefined;
+  const unresolved = unresolvedMemberRefs(raw, ctx);
   let name = ctx.unionByNode.get(node);
   if (name === undefined) {
     name = uniqueName(`${sanitizeIdentifier(ctx.unionStem ?? "Anonymous")}_Union`, ctx.taken);
     ctx.unionByNode.set(node, name);
     ctx.unions.push({ name, memberTypes: boundMembers(found.names, name, ctx.warnings) });
+    if (unresolved.length > 0) ctx.warnings.push(unresolvedUnionWarning(name, unresolved));
   }
   const memberTypes = ctx.unions.find((u) => u.name === name)?.memberTypes;
   return {
     type: "union",
-    confidence: "medium",
+    confidence: unresolved.length > 0 ? "low" : "medium",
     nullable: found.hasNull,
     originalType: `${keyword}(${found.names.length})`,
     unionName: name,
@@ -1344,6 +1362,11 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     if (def.kind !== "union") continue;
     const found = namedRefMembers((def.node.oneOf ?? def.node.anyOf) as unknown[], ctx);
     if (found) ctx.sharedUnionMembers.set(def.assetName, boundMembers(found.names, def.assetName, warnings));
+    const unresolved = unresolvedMemberRefs((def.node.oneOf ?? def.node.anyOf) as unknown[], ctx);
+    if (found && unresolved.length > 0) {
+      (ctx.unresolvedSharedUnions ??= new Set()).add(def.assetName);
+      warnings.push(unresolvedUnionWarning(def.assetName, unresolved));
+    }
   }
 
   const entities: ParsedEntity[] = [];

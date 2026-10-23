@@ -52,6 +52,42 @@ describe("#2 an inline $defs definition referenced by $ref keeps its annotations
   });
 });
 
+describe("#4 a union of unresolved external refs is flagged", () => {
+  it("is low confidence with a warning naming the refs", () => {
+    const doc = parse({
+      title: "R",
+      type: "object",
+      properties: { p: { oneOf: [{ $ref: "a.json" }, { $ref: "b.json" }] } },
+    });
+    const p = field(doc.entities[0], "p");
+    expect(p.type).toBe("union");
+    expect(p.confidence).toBe("low");
+    expect(doc.warnings.join("\n")).toMatch(/R_p_Union.*a\.json.*b\.json/i);
+  });
+
+  it("a union of in-document entities stays medium and silent", () => {
+    const doc = parse({
+      title: "R",
+      type: "object",
+      properties: { p: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }] } },
+      $defs: { A: { type: "object", properties: { x: { type: "string" } } }, B: { type: "object", properties: { y: { type: "string" } } } },
+    });
+    expect(field(doc.entities[0], "p").confidence).toBe("medium");
+    expect(doc.warnings.join("\n")).not.toMatch(/union/i);
+  });
+
+  it("a shared $defs union with an external member is flagged where it is used", () => {
+    const doc = parse({
+      title: "R",
+      type: "object",
+      properties: { p: { $ref: "#/$defs/U" } },
+      $defs: { U: { oneOf: [{ $ref: "a.json" }, { $ref: "b.json" }] } },
+    });
+    expect(field(doc.entities[0], "p").confidence).toBe("low");
+    expect(doc.warnings.join("\n")).toMatch(/union.*U.*a\.json/i);
+  });
+});
+
 describe("#3 entity-level oneOf / anyOf is reported, and allOf members still apply", () => {
   it("lists oneOf as an ignored keyword, preserves it and warns", () => {
     const oneOf = [{ required: ["a"] }, { required: ["b"] }];
