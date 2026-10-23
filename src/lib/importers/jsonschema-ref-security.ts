@@ -130,6 +130,7 @@ export function isBlockedIp(ip: string): boolean {
     if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) {
       return isBlockedIPv4Octets(v4From(g[6]!, g[7]!));
     }
+    if (g[0] === 0x2001 && g[1] === 0) return true; // Teredo 2001::/32 (embeds a tunnel server and client address)
     if (g[0] === 0x2002) return isBlockedIPv4Octets(v4From(g[1]!, g[2]!)); // 6to4
     if ((g[0]! & 0xfe00) === 0xfc00) return true; // fc00::/7
     if ((g[0]! & 0xffc0) === 0xfe80) return true; // fe80::/10
@@ -155,6 +156,10 @@ export function checkHttpsUrl(raw: string): HttpsCheck {
   }
   if (url.username || url.password) {
     return { ok: false, reason: "URLs with embedded credentials are not allowed" };
+  }
+  // A non-default port would let the importer probe which ports of a public host are open (error/timing differences).
+  if (url.port !== "" && url.port !== "443") {
+    return { ok: false, reason: `port ${url.port} is not allowed (only the default https port 443)` };
   }
   const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
   if (!host) return { ok: false, reason: "URL has no host" };

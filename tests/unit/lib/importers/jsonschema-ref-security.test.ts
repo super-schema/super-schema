@@ -53,6 +53,16 @@ describe("checkHttpsUrl", () => {
   ])("blocks %s", (u) => {
     expect(checkHttpsUrl(u).ok).toBe(false);
   });
+  it.each(["https://example.com:8443/a", "https://example.com:22/a", "https://example.com:80/a"])("refuses a non-443 port in %s", (u) => {
+    expect(checkHttpsUrl(u).ok).toBe(false);
+  });
+  it("accepts the default port, written or not", () => {
+    expect(checkHttpsUrl("https://example.com:443/a").ok).toBe(true);
+  });
+  it("blocks a Teredo address", () => {
+    expect(isBlockedIp("2001:0:4136:e378:8000:63bf:3fff:fdd2")).toBe(true);
+    expect(isBlockedIp("2001:db8::1")).toBe(false);
+  });
   it("refuses embedded credentials", () => {
     expect(checkHttpsUrl("https://user:pass@example.com/a").ok).toBe(false);
   });
