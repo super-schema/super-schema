@@ -318,6 +318,35 @@ export const MAX_UNION_MEMBERS = 200;
 /** Entity and field names above this length are not imported (the emitters write a file per declaration). */
 export const MAX_IMPORTED_NAME_LENGTH = 128;
 
+/** One import carries at most this many entities (and, separately, enums); more is not a real schema set and floods the response. */
+export const MAX_IMPORT_ENTITIES = 500;
+
+/** `originalContent` is copied onto every entity of a document; past this many characters in total only the first entity per document keeps it. */
+export const MAX_ORIGINAL_CONTENT_TOTAL = 1_000_000;
+
+/** The error message when an import has too many entities or enums, or undefined when it is within the cap. */
+export function importCountLimitMessage(entityCount: number, enumCount: number): string | undefined {
+  if (entityCount > MAX_IMPORT_ENTITIES) return `The schema defines ${entityCount} entities; one import is limited to ${MAX_IMPORT_ENTITIES}.`;
+  if (enumCount > MAX_IMPORT_ENTITIES) return `The schema defines ${enumCount} enums; one import is limited to ${MAX_IMPORT_ENTITIES}.`;
+  return undefined;
+}
+
+/**
+ * Keeps the per-entity copy of the source document within a total-size budget. Under the budget nothing changes; over it, only the
+ * first entity of each distinct document keeps `originalContent` (the rest get "") and a warning says so.
+ */
+export function budgetOriginalContent(entities: ParsedEntity[], warnings: string[]): void {
+  let total = 0;
+  for (const e of entities) total += e.originalContent.length;
+  if (total <= MAX_ORIGINAL_CONTENT_TOTAL) return;
+  const seen = new Set<string>();
+  for (const e of entities) {
+    if (seen.has(e.originalContent)) e.originalContent = "";
+    else seen.add(e.originalContent);
+  }
+  warnings.push("The schema is large; the original source text is kept on the first entity of each document only.");
+}
+
 const MAX_REF_DEPTH = 16;
 /** Combinator nesting past this is not a real schema; resolve it as an unknown at low confidence. */
 export const MAX_SCHEMA_NESTING = 200;
@@ -1385,6 +1414,10 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
       warnings.push(`Entity "${entity.name}": the fields ${collision.names.map((n) => `"${n}"`).join(" and ")} would both be written as "${collision.becomes}" in ${collision.targets.join(", ")}; those targets will refuse to generate until one is renamed.`);
     }
   }
+
+  const tooMany = importCountLimitMessage(entities.length, enums.length);
+  if (tooMany) return err({ code: "PARSE_ERROR", message: tooMany, suggestedFix: "Split the schema into smaller documents." });
+  budgetOriginalContent(entities, warnings);
 
   return ok({
     sourceFormat: "json-schema",

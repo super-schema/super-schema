@@ -27,6 +27,8 @@ import { setOwn } from "@/lib/compiler/governance-decorators";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import {
   breakInheritanceCycles,
+  budgetOriginalContent,
+  importCountLimitMessage,
   isLowFromUnresolvedRef,
   parseJsonSchemaDocumentIndexed,
   refToEntityName,
@@ -600,6 +602,10 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
       'Provide an object schema with a non-empty "properties" map (at the root or in "$defs").',
     );
   }
+
+  const tooMany = importCountLimitMessage(entities.length, enums.length);
+  if (tooMany) return fail("PARSE_ERROR", tooMany, "Import fewer referenced documents or split the schema.");
+  budgetOriginalContent(entities, warnings);
 
   return ok({
     sourceFormat: "json-schema",
