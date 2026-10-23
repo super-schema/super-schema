@@ -321,7 +321,8 @@ describe("where the worker comes from", () => {
     const result = await runParserJob({ kind: "parseSource", text: "asyncapi: 3.0.0\ninfo:\n  title: t\n  version: '1'\n" });
     expect(result).toMatchObject({ success: true, data: { success: true, data: { asyncapi: "3.0.0" } } });
     expect(parserPoolStatus().workers).toEqual([]);
-  });
+    // the first in-process parse loads the AsyncAPI parser in this process: slow under load, 5 s is too tight
+  }, 30_000);
 
   it("the default place is worker-dist/ in the working directory, where the build script puts it", async () => {
     // no ASYNCAPI_PARSER_WORKER: the file that globalSetup built

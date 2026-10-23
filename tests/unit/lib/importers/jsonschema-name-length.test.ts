@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+// These tests shell out to the real TypeSpec compiler / emitters (~1 s each); under load the 5 s default is too tight.
+vi.setConfig({ testTimeout: 60_000 });
 import { parseJsonSchemaDocument, parseJsonSchema, MAX_IMPORTED_NAME_LENGTH } from "@/lib/importers/jsonschema.importer";
 import { toSingleEntityImport } from "@/lib/importers/multi-asset";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";

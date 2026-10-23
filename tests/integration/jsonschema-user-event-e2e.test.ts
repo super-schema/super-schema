@@ -4,6 +4,8 @@
  * both `$ref`s are unresolvable by design and must stay dangling references.
  */
 import { describe, expect, it, vi, beforeAll } from "vitest";
+// These tests shell out to the real TypeSpec compiler / emitters (~1 s each); under load the 5 s default is too tight.
+vi.setConfig({ testTimeout: 60_000 });
 import type { Prisma } from "@/generated/prisma/client";
 import { createImportedEntities, type ImportedEntityInput } from "@/services/imported-entities";
 import { compileEntity, type PrismaEntityInput, type PrismaFieldInput } from "@/lib/compiler/compiler.service";

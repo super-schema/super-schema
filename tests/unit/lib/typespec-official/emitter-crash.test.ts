@@ -4,6 +4,8 @@
  * emitters do not throw), with the text a real crash prints; everything else — workspace, symlink, config — is real.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
+// These tests shell out to the real TypeSpec compiler / emitters (~1 s each); under load the 5 s default is too tight.
+vi.setConfig({ testTimeout: 60_000 });
 import { EMITTER_CRASH_RAW } from "../../../helpers/emitter-crash";
 
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));

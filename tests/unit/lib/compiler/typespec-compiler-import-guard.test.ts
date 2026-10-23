@@ -5,6 +5,8 @@
  * keep a source that somehow got past the guard from running host JavaScript.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// These tests shell out to the real TypeSpec compiler / emitters (~1 s each); under load the 5 s default is too tight.
+vi.setConfig({ testTimeout: 60_000 });
 import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

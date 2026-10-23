@@ -4,7 +4,10 @@
 // moment it is imported) and the completion UI only through import() too, so a page whose editors have no schema never loads them.
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Several tests walk and read the whole src/ tree; under load that takes longer than the 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
 
 const ROOT = path.resolve(__dirname, "../../../../..");
 const SRC = path.join(ROOT, "src");

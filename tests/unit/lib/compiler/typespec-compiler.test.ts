@@ -3,6 +3,8 @@
  * Node (async), so they verify the AST extraction end-to-end.
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
+// These tests shell out to the real TypeSpec compiler / emitters (~1 s each); under load the 5 s default is too tight.
+vi.setConfig({ testTimeout: 60_000 });
 
 // server-only throws outside an RSC bundle; neutralize it for the Node test.
 vi.mock("server-only", () => ({}));

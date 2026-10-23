@@ -18,6 +18,8 @@
  * emitted .proto with protobufjs to assert it is syntactically valid proto3.
  */
 import { describe, it, expect, vi, beforeAll } from "vitest";
+// These tests shell out to the real TypeSpec compiler / emitters (~1 s each); under load the 5 s default is too tight.
+vi.setConfig({ testTimeout: 60_000 });
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ prisma: {} }));

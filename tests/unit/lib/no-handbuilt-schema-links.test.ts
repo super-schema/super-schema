@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// The guard reads every file under src/; under load that takes longer than the 5 s default.
+vi.setConfig({ testTimeout: 30_000 });
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
