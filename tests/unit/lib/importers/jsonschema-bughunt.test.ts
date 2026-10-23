@@ -88,6 +88,39 @@ describe("#4 a union of unresolved external refs is flagged", () => {
   });
 });
 
+describe("#6 escaped JSON pointers in in-document refs", () => {
+  const doc = () =>
+    parse({
+      title: "R",
+      type: "object",
+      properties: {
+        slash: { $ref: "#/$defs/a~1b" },
+        space: { $ref: "#/$defs/sp%20ace" },
+        tilde: { $ref: "#/$defs/t~0x" },
+        plain: { $ref: "#/$defs/plain" },
+        bad: { $ref: "#/$defs/100%" },
+      },
+      $defs: {
+        "a/b": { type: "object", properties: { x: { type: "string" } } },
+        "sp ace": { type: "object", properties: { x: { type: "string" } } },
+        "t~x": { type: "object", properties: { x: { type: "string" } } },
+        plain: { type: "object", properties: { x: { type: "string" } } },
+      },
+    });
+
+  it("decodes ~1, ~0 and percent escapes", () => {
+    const e = doc().entities[0];
+    for (const [name, target] of [["slash", "a/b"], ["space", "sp ace"], ["tilde", "t~x"], ["plain", "plain"]]) {
+      expect(field(e, name)).toMatchObject({ type: "reference", referencedEntityName: target });
+      expect(field(e, name).confidence).toBe("high");
+    }
+  });
+
+  it("a malformed escape stays an unresolved reference and does not throw", () => {
+    expect(field(doc().entities[0], "bad").confidence).toBe("low");
+  });
+});
+
 describe("#3 entity-level oneOf / anyOf is reported, and allOf members still apply", () => {
   it("lists oneOf as an ignored keyword, preserves it and warns", () => {
     const oneOf = [{ required: ["a"] }, { required: ["b"] }];

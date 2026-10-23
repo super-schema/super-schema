@@ -426,6 +426,24 @@ function isExternalRef(ref: string): boolean {
 
 const DANGLING_REASON = "not defined in this document (kept as a dangling reference)";
 
+/**
+ * An in-document pointer with its escapes undone (RFC 6901 in a URI fragment): each segment is percent-decoded, then `~1` -> `/` and
+ * `~0` -> `~`, so `#/$defs/a~1b` names the definition keyed `a/b`. The definitions are indexed by their raw key. A malformed percent
+ * escape leaves the ref as written (it then reads as unresolved, never throws).
+ */
+function decodePointer(ref: string): string {
+  if (!ref.startsWith("#/")) return ref;
+  try {
+    return `#/${ref
+      .slice(2)
+      .split("/")
+      .map((segment) => decodeURIComponent(segment).replace(/~1/g, "/").replace(/~0/g, "~"))
+      .join("/")}`;
+  } catch {
+    return ref;
+  }
+}
+
 /** `$id` -> entry, per index (an index is never mutated after `indexDefinitions` returns). */
 const ID_INDEXES = new WeakMap<Map<string, DefinitionEntry>, Map<string, DefinitionEntry>>();
 
@@ -435,7 +453,7 @@ const ID_INDEXES = new WeakMap<Map<string, DefinitionEntry>, Map<string, Definit
  * is how a compound document names an embedded resource; without this it read as a reference to a missing file.
  */
 function definitionFor(definitions: Map<string, DefinitionEntry>, ref: string): DefinitionEntry | undefined {
-  const byPointer = definitions.get(ref);
+  const byPointer = definitions.get(ref) ?? definitions.get(decodePointer(ref));
   if (byPointer || ref.startsWith("#")) return byPointer;
   let byId = ID_INDEXES.get(definitions);
   if (!byId) {
