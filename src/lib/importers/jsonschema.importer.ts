@@ -1061,6 +1061,33 @@ function readClassification(
   return {};
 }
 
+/** Keys of a referenced definition that name the DEFINITION, not the field that points at it. */
+const DEFINITION_ONLY_KEYS = new Set(["title", "$schema", "$id", "$defs", "definitions", "$ref"]);
+
+/**
+ * The inline (non-entity, non-enum) `$defs` entries the given sources `$ref`, followed through chains, as extra annotation sources:
+ * a `$ref: "#/$defs/ShortText"` field keeps the definition's constraints, description, deprecated flag and extensions. They come AFTER
+ * the field's own sources, so the property's own siblings win on conflict. A cycle or a chain past MAX_REF_DEPTH stops quietly.
+ */
+function inlineDefinitionSources(own: JsonSchemaNode[], ctx: ResolveContext): JsonSchemaNode[] {
+  const out: JsonSchemaNode[] = [];
+  const seen = new Set<JsonSchemaNode>();
+  const visit = (source: JsonSchemaNode, depth: number): void => {
+    if (typeof source.$ref !== "string" || depth >= MAX_REF_DEPTH) return;
+    const def = definitionFor(ctx.definitions, source.$ref);
+    if (def?.kind !== "inline" || seen.has(def.node)) return;
+    seen.add(def.node);
+    for (const member of schemaSources(def.node)) {
+      const view: JsonSchemaNode = {};
+      for (const [key, value] of Object.entries(member)) if (!DEFINITION_ONLY_KEYS.has(key)) setOwn(view, key, value);
+      out.push(view);
+      visit(member, depth + 1);
+    }
+  };
+  for (const source of own) visit(source, 0);
+  return out;
+}
+
 function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName: string): ParsedField[] {
   const requiredSet = members.required;
   const classificationConfig = getClassificationConfig();
@@ -1074,7 +1101,8 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     const nullable = resolved.nullable || !isRequired;
 
     // A property written as `allOf` merges its members: constraints union (first wins per kind), annotations fold on.
-    const sources = schemaSources(node);
+    const ownSources = schemaSources(node);
+    const sources = [...ownSources, ...inlineDefinitionSources(ownSources, ctx)];
     const constraints: ParsedFieldConstraint[] = [];
     let minValueExclusive: number | undefined;
     let maxValueExclusive: number | undefined;
