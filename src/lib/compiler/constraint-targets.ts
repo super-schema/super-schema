@@ -26,10 +26,12 @@ function derivesFrom(type: string, root: string): boolean | undefined {
 }
 
 /** The range of the fixed-width integer scalars (BigInt, so the 64-bit limits are exact). */
+const span = (min: string, max: string): readonly [bigint, bigint] => [BigInt(min), BigInt(max)];
 const INTEGER_RANGES: Readonly<Record<string, readonly [bigint, bigint]>> = {
-  int8: [-128n, 127n], int16: [-32768n, 32767n], int32: [-2147483648n, 2147483647n], int64: [-(2n ** 63n), 2n ** 63n - 1n],
-  uint8: [0n, 255n], uint16: [0n, 65535n], uint32: [0n, 4294967295n], uint64: [0n, 2n ** 64n - 1n],
-  safeint: [-(2n ** 53n - 1n), 2n ** 53n - 1n],
+  int8: span("-128", "127"), int16: span("-32768", "32767"), int32: span("-2147483648", "2147483647"),
+  int64: span("-9223372036854775808", "9223372036854775807"),
+  uint8: span("0", "255"), uint16: span("0", "65535"), uint32: span("0", "4294967295"), uint64: span("0", "18446744073709551615"),
+  safeint: span("-9007199254740991", "9007199254740991"),
 };
 
 export type BoundKind = "min" | "max" | "minExclusive" | "maxExclusive";

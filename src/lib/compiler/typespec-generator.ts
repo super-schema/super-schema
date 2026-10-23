@@ -808,7 +808,7 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     if (validation.maxLength != null && applies("maxLength")) {
       decorators.push(`@maxLength(${validation.maxLength})`);
     }
-    const bound = (kind: BoundKind, value: number | undefined): number | null => {
+    const bound = (kind: BoundKind, value: number | null | undefined): number | null => {
       const decorator = kind === "min" ? "minValue" : kind === "max" ? "maxValue" : kind === "minExclusive" ? "minValueExclusive" : "maxValueExclusive";
       return value == null || !applies(decorator) ? null : boundFor(field.type, kind, value);
     };
