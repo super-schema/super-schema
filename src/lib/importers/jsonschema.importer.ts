@@ -191,9 +191,9 @@ function flattenAllOf(node: JsonSchemaNode): { members: JsonSchemaNode[]; trunca
   return { members, truncated };
 }
 
-/** `node` plus its flattened `allOf` members; just `[node]` when it has none (or a oneOf/anyOf, which wins). */
+/** `node` plus its flattened `allOf` members (a sibling oneOf / anyOf does not hide them: every allOf member still applies). */
 function schemaSources(node: JsonSchemaNode): JsonSchemaNode[] {
-  if (!Array.isArray(node.allOf) || node.oneOf || node.anyOf) return [node];
+  if (!Array.isArray(node.allOf)) return [node];
   return [node, ...flattenAllOf(node).members];
 }
 
@@ -979,9 +979,19 @@ function indexDefinitions(
 }
 
 function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, unknown>; ignoredKeywords?: string[] } {
+  const sources = schemaSources(node);
   const extensions = captureExtensions(node);
-  const ignoredKeywords = ignoredKeywordsOf(schemaSources(node), false);
-  return { ...(extensions ? { extensions } : {}), ...(ignoredKeywords ? { ignoredKeywords } : {}) };
+  const found = ignoredKeywordsOf(sources, false) ?? [];
+  // An entity-level oneOf / anyOf (alternative `required` sets, a choice between shapes) maps to nothing in the IR: on a FIELD it becomes a
+  // union, on an entity it is a constraint over the whole object. Report it like the other unsupported keywords and keep it verbatim.
+  let preserved = extensions;
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    const holder = sources.find((s) => s[keyword] !== undefined);
+    if (!holder) continue;
+    if (!found.includes(keyword)) found.push(keyword);
+    if (!preserved || !Object.prototype.hasOwnProperty.call(preserved, keyword)) setOwn((preserved ??= {}), keyword, holder[keyword]);
+  }
+  return { ...(preserved ? { extensions: preserved } : {}), ...(found.length > 0 ? { ignoredKeywords: found } : {}) };
 }
 
 const MAX_IGNORED_WARNINGS = 200;
