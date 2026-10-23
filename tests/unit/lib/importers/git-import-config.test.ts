@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { gitRootRefusal, parseGitScopes, readGitImportConfig } from "@/lib/importers/git-import-config";
+import { gitRootRefusal, parseGitScopes, readGitImportConfig, type GitImportConfig } from "@/lib/importers/git-import-config";
 import { fetchRootDocument } from "@/lib/importers/jsonschema-ref-resolver";
 import { importJsonSchemaFromUrl } from "@/lib/importers/jsonschema-url-import";
 
@@ -55,7 +55,7 @@ describe("fetchRootDocument git scope enforcement", () => {
   });
   it("allows a scoped owner and any mode", async () => {
     const fetchGitFile = vi.fn(async () => DOC);
-    for (const gitImportConfig of [{ mode: "restricted", scopes: ["acme"] }, { mode: "any" }] as const) {
+    for (const gitImportConfig of [{ mode: "restricted", scopes: ["acme"] }, { mode: "any" }] as GitImportConfig[]) {
       const r = await fetchRootDocument(GIT_URL, { fetchGitFile, gitImportConfig });
       expect(r.ok).toBe(true);
     }
