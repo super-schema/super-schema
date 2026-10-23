@@ -57,6 +57,8 @@ npm run dev
 | `DB_PROVIDER` | `pglite` | `pglite` or `postgresql` |
 | `PGLITE_DATA_DIR` | `./data/pglite` | PGlite data directory (pglite only) |
 | `DATABASE_URL` | — | **Required** when `DB_PROVIDER=postgresql` |
+| `SCHEMA_IMPORT_GIT_MODE` | `restricted` | JSON Schema "From URL": `any` or `restricted`. Git-host URLs are fetched with the server's own `gh` credentials; unknown value = `restricted` |
+| `SCHEMA_IMPORT_GIT_SCOPES` | (empty) | Comma-separated `owner` or `owner/repo` (case-insensitive) git roots allowed in `restricted` mode. Empty = git-host import disabled |
 
 ## npm scripts
 
