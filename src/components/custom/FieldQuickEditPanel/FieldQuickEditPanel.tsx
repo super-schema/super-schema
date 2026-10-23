@@ -253,6 +253,31 @@ export function FieldQuickEditPanel({
     setJustSaved(false);
   }, [field.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The same field changed underneath the panel (an inline rename in the field list, a TypeSpec sync): the panel must follow it, or
+  // it would show the old values as "Unsaved changes" and a Save would write them back over the change. Local state only: the
+  // save flash and status belong to the panel's own save, whose result arrives through these same props.
+  const persistedSignature = JSON.stringify([
+    field.name, field.type, field.nullable, field.isKey, field.description, field.classification, field.fieldNumber, field.decorators,
+  ]);
+  const seenSignature = useRef(persistedSignature);
+  useEffect(() => {
+    if (seenSignature.current === persistedSignature) return;
+    seenSignature.current = persistedSignature;
+    setLocalName(field.name);
+    setLocalType(field.type);
+    setLocalNullable(field.nullable);
+    setLocalIsKey(field.isKey);
+    setLocalDescription(field.description);
+    setLocalClassification(field.classification);
+    setLocalFieldNumber(field.fieldNumber);
+    const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
+    setTypespec(ts);
+    setLocalSecret(!!ts.identity?.secret);
+    setLocalFormat(ts.identity?.format ?? "");
+    setLocalDefaultValue(ts.identity?.defaultValue != null ? String(ts.identity.defaultValue) : "");
+    setLocalSummary(ts.documentation?.summary ?? "");
+  }, [persistedSignature]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Discard: reset all local state to field prop values
   const handleDiscard = useCallback(() => {
     setLocalName(field.name);
