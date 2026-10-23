@@ -110,6 +110,8 @@ export function SchemaWorkbench({
   const [urlLoading, setUrlLoading] = useState(false);
   // Bumped on mode change / unmount: a late result of an older run is ignored.
   const urlRun = useRef(0);
+  // True while a fetch of the CURRENT run is in flight (a ref, so two Enter presses in one render both see it).
+  const urlBusy = useRef(false);
 
   useEffect(
     () => () => {
@@ -122,6 +124,10 @@ export function SchemaWorkbench({
   // ── Import (drop / paste) ───────────────────────────────────────────
 
   const loadImport = useCallback(async (text: string, filename?: string) => {
+    // Replacing the loaded schema abandons a running URL fetch: its late result must not overwrite this one.
+    urlRun.current += 1;
+    urlBusy.current = false;
+    setUrlLoading(false);
     if (parseTimer.current) clearTimeout(parseTimer.current);
     // Loaded on demand: the detector pulls in `yaml`, which stays out of the wizard chunk.
     const { detectFormat } = await import("@/lib/importers/format-detector");
@@ -186,6 +192,8 @@ export function SchemaWorkbench({
       return;
     }
     if (!onImportResult) return;
+    if (urlBusy.current) return;
+    urlBusy.current = true;
     const run = ++urlRun.current;
     setUrlError(null);
     setUrlLoading(true);
@@ -205,13 +213,17 @@ export function SchemaWorkbench({
       if (run !== urlRun.current) return;
       setUrlError("The import failed unexpectedly. Try again.");
     } finally {
-      if (run === urlRun.current) setUrlLoading(false);
+      if (run === urlRun.current) {
+        urlBusy.current = false;
+        setUrlLoading(false);
+      }
     }
   }
 
   /** Ignore the result of a running URL fetch (its late answer must not navigate or touch state). */
   function abandonUrlFetch() {
     urlRun.current += 1;
+    urlBusy.current = false;
     setUrlLoading(false);
   }
 
@@ -265,6 +277,7 @@ export function SchemaWorkbench({
   const startForm = useCallback((format: WorkbenchFormat) => {
     // starting the form abandons a running URL fetch: a late result must not navigate away from it
     urlRun.current += 1;
+    urlBusy.current = false;
     setUrlLoading(false);
     if (parseTimer.current) clearTimeout(parseTimer.current);
     expectedEcho.current = undefined;

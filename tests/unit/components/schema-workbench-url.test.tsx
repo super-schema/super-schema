@@ -200,6 +200,37 @@ describe("SchemaWorkbench - From URL mode", () => {
     return { ...utils, resolve };
   }
 
+  it("ignores a late result when a dropped file replaces the schema while the fetch is in flight", async () => {
+    let resolve!: (v: unknown) => void;
+    importAction.mockReturnValue(new Promise((r) => (resolve = r)));
+    const { onImportResult } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Drop file" }));
+    const file = new File(['{"type":"record","name":"C","fields":[{"name":"id","type":"long"}]}'], "c.avsc", { type: "text/plain" });
+    fireEvent.change(screen.getByTestId("workbench-file-input"), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "From URL" }));
+    type(GOOD);
+    fireEvent.click(button());
+    expect(button().disabled).toBe(true);
+    // the file finishes reading AFTER the fetch started
+    await waitFor(() => expect((screen.getByTestId("detail-panel-textarea") as HTMLTextAreaElement).value).not.toBe(""));
+    await act(async () => resolve({ success: true, data: resultWithDangling() }));
+    expect(onImportResult).not.toHaveBeenCalled();
+    expect(button().disabled).toBe(false);
+  });
+
+  it("a double Enter in the URL box fetches once", async () => {
+    let resolve!: (v: unknown) => void;
+    importAction.mockReturnValue(new Promise((r) => (resolve = r)));
+    setup();
+    type(GOOD);
+    fireEvent.keyDown(input(), { key: "Enter" });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    await waitFor(() => expect(importAction).toHaveBeenCalledTimes(1));
+    await act(async () => resolve({ success: false, error: { message: "nope" } }));
+    expect(button().disabled).toBe(false);
+    expect(importAction).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a late result after Start over", async () => {
     const { onImportResult, resolve } = await loadImportThenStartFetch();
     fireEvent.click(screen.getByRole("button", { name: "Start over" }));
