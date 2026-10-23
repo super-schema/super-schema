@@ -85,7 +85,8 @@ describe("setEntityPrimaryKeyAction", () => {
   it("sets exactly the requested flags, clears the others, flags unpublished changes and revalidates", async () => {
     const result = await actions.setEntityPrimaryKeyAction("ent-1", ["tenant", "seq"]);
     expect(result).toEqual({ success: true, primaryKey: ["tenant", "seq"] });
-    expect(p.field.updateMany).toHaveBeenCalledWith({ where: { entityId: "ent-1", name: { in: ["tenant", "seq"] } }, data: { isKey: true } });
+    // A key field is required: an optional one makes JSON Schema / OpenAPI / Avro / Protobuf / Java refuse the entity (`no-optional-key`).
+    expect(p.field.updateMany).toHaveBeenCalledWith({ where: { entityId: "ent-1", name: { in: ["tenant", "seq"] } }, data: { isKey: true, nullable: false } });
     expect(p.field.updateMany).toHaveBeenCalledWith({ where: { entityId: "ent-1", name: { notIn: ["tenant", "seq"] } }, data: { isKey: false } });
     expect(p.$executeRawUnsafe).toHaveBeenCalledWith(MARK_DRAFT_CHANGED_SQL, "ent-1");
     expect(p.$transaction).toHaveBeenCalledTimes(1);

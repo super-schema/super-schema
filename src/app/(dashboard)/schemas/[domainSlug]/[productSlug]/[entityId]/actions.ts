@@ -1312,7 +1312,8 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
       beforeState: { primaryKey: existing.filter((field) => field.isKey).map((field) => field.name) } as unknown as object,
       fn: () =>
         prisma.$transaction([
-          prisma.field.updateMany({ where: { entityId, name: { in: fieldNames } }, data: { isKey: true } }),
+          // A key is never null: left optional it makes JSON Schema / OpenAPI / Avro / Protobuf / Java refuse the entity (`no-optional-key`).
+          prisma.field.updateMany({ where: { entityId, name: { in: fieldNames } }, data: { isKey: true, nullable: false } }),
           prisma.field.updateMany({ where: { entityId, name: { notIn: fieldNames } }, data: { isKey: false } }),
           prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
         ]),
