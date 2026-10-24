@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package com.example.shipping;
+
+// A parcel on its way to a customer.
+message Shipment {
+  string shipment_id = 1;
+  Carrier carrier = 2;
+  repeated string tracking_events = 3;
+  map<string, string> attributes = 4;
+  Address destination = 5;
+
+  oneof contact {
+    string email = 6;
+    string phone = 7;
+  }
+
+  message Address {
+    string street = 1;
+    string city = 2;
+  }
+}
+
+enum Carrier {
+  CARRIER_UNSPECIFIED = 0;
+  GROUND = 1;
+  AIR = 2;
+}

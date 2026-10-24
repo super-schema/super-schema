@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SupportTicket",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "subject"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "The ticket's identifier.", "readOnly": true },
+    "subject": { "type": "string", "maxLength": 120 },
+    "priority": { "type": "string", "enum": ["low", "normal", "high"], "default": "normal" },
+    "openedAt": { "type": "string", "format": "date-time" }
+  }
+}

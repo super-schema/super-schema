@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "name": "OrderPlaced",
+  "namespace": "com.example.orders",
+  "doc": "An order was placed by a customer.",
+  "fields": [
+    { "name": "orderId", "type": { "type": "string", "logicalType": "uuid" }, "doc": "The order's identifier." },
+    { "name": "placedAt", "type": { "type": "long", "logicalType": "timestamp-millis" }, "doc": "When the order was placed." },
+    { "name": "shipDate", "type": { "type": "int", "logicalType": "date" } },
+    { "name": "total", "type": { "type": "bytes", "logicalType": "decimal", "precision": 12, "scale": 2 } },
+    { "name": "couponCode", "type": ["null", "string"], "default": null },
+    { "name": "lineSkus", "type": { "type": "array", "items": "string" } },
+    { "name": "labels", "type": { "type": "map", "values": "string" } },
+    { "name": "status", "type": { "type": "enum", "name": "OrderStatus", "symbols": ["NEW", "PAID", "SHIPPED"] } }
+  ]
+}

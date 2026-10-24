@@ -1,0 +1,45 @@
+openapi: 3.0.3
+info:
+  title: Store API
+  version: 1.0.0
+paths:
+  /products:
+    get:
+      operationId: listProducts
+      responses:
+        "200":
+          description: The products of the store.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+components:
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: number
+        currency:
+          type: string
+    Base:
+      type: object
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    Product:
+      allOf:
+        - $ref: "#/components/schemas/Base"
+        - type: object
+          required: [sku]
+          properties:
+            sku:
+              type: string
+            price:
+              $ref: "#/components/schemas/Money"
