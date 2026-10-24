@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { FieldStudio } from "./field-studio";
 import { domainLabel } from "@/lib/entity-placement";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT } from "@/lib/navigation/asset-href";
+import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT, assetHref } from "@/lib/navigation/asset-href";
 import { findEntityInScope } from "../../load-entity-workspace";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
 
@@ -74,7 +74,15 @@ export default async function FieldDetailPage({ params }: Props) {
   // an address that names the slug would be a 404 at the next render. A link by the (old) name is sent to the id's address, and the
   // page is rendered from there with the right segment from the first render.
   if (field.id !== fieldId) {
-    redirect(`/schemas/${encodeURIComponent(domainSlug)}/${encodeURIComponent(productSlug)}/${encodeURIComponent(entityId)}/fields/${encodeURIComponent(field.id)}`);
+    redirect(
+      assetHref({
+        kind: "field",
+        entitySlug: entityId,
+        fieldId: field.id,
+        domainSlug: isTenantLevel ? null : domainSlug,
+        productSlug: isTenantLevel ? null : productSlug,
+      })
+    );
   }
 
   // Tenant-level entities have no domain and therefore no domain policy.
