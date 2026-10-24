@@ -260,48 +260,82 @@ describe("the matcher and the shapes of an address", () => {
     ["/login%2F..%2Fapi%2Fdomains-tree", "redirect /login"],
     ["/api%2Fdomains-tree", "redirect /login"],
     ["/api/v1/../domains-tree", "401"],
-    // Static files are not the middleware's business (the matcher leaves them out); they carry no data of the app.
+    // Static files are not the middleware's business: the matcher leaves out `_next/static` and `_next/image`, and a GET / HEAD of a
+    // file with an image extension is let through by the middleware itself (they carry no data of the app).
     ["/_next/static/x", "not matched"],
     ["/_next/image", "not matched"],
-    ["/favicon.ico", "not matched"],
-    ["/a.png", "not matched"],
+    ["/favicon.ico", "pass"],
+    ["/a.png", "pass"],
   ])("%s -> %s", async (path, expected) => {
     expect(await outcome(path)).toBe(expected);
   });
 
-  describe("a server action (a request with a Next-Action header) always runs the middleware", () => {
-    // `/schemas/foo.png` is a page address (it matches `[domainSlug]`) whose last segment merely ends like an image: the matcher's
-    // exclusion of static files must not let a server action POSTed there skip the door (the action's own auth() would then be the
-    // only check).
-    const withAction = { "next-action": "40abc" };
+  describe("only a GET or HEAD of a static file skips the door: any other request runs the whole session logic", () => {
+    // `/schemas/foo.png` is a page address (it matches `[domainSlug]`) whose last segment merely ends like an image. A server action is
+    // POSTed to a page address: with a `Next-Action` header, or (progressive enhancement, a form posted before React hydrated)
+    // as a multipart form whose body names the action and which carries NO such header. Neither may skip the middleware by the
+    // look of the address, so the matcher excludes only `_next/static` and `_next/image` (never actions), and the middleware
+    // lets a request through unchecked only when its method is GET / HEAD and its path is a static file.
     const matches = (path: string, headers?: Record<string, string>) => unstable_doesMiddlewareMatch({ config, url: url(path), headers });
+    const multipart = () => {
+      const body = new FormData();
+      body.set("$ACTION_ID_40abc", "");
+      return body;
+    };
+    const post = (path: string, init: { headers?: Record<string, string>; multipart?: boolean; method?: string } = {}) =>
+      new NextRequest(url(path), { method: init.method ?? "POST", headers: init.headers, ...(init.multipart ? { body: multipart() } : {}) });
 
-    it.each(["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/a.png", "/favicon.ico", "/x/y.webp", "/schemas/foo.PNG"])(
-      "%s with the header is matched",
+    it.each(["/schemas/foo.png", "/schemas/billing/foo.svg", "/a.png", "/favicon.ico", "/x/y.webp", "/schemas/foo.PNG", "/schemas", "/", "/api/domains-tree"])(
+      "%s is matched, with or without the Next-Action header",
       (path) => {
-        expect(matches(path, withAction), path).toBe(true);
-      },
-    );
-
-    it.each(["/a.png", "/schemas/foo.png", "/favicon.ico", "/x.svg", "/_next/static/x", "/_next/image"])(
-      "%s without the header stays a static file the middleware does not see",
-      (path) => {
-        expect(matches(path), path).toBe(false);
-      },
-    );
-
-    it("a pages path is matched with and without the header", () => {
-      for (const path of ["/schemas", "/schemas/billing/ledger", "/api/domains-tree", "/"]) {
         expect(matches(path), path).toBe(true);
-        expect(matches(path, withAction), path).toBe(true);
+        expect(matches(path, { "next-action": "40abc" }), path).toBe(true);
+      },
+    );
+
+    it.each(["/_next/static/x.js", "/_next/image"])("%s is left out (it is never an action)", (path) => {
+      expect(matches(path), path).toBe(false);
+    });
+
+    it.each(["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/a.png", "/favicon.ico", "/x.webp", "/schemas/foo.PNG", "/schemas/foo.gif"])(
+      "a visitor without a session who POSTs to %s is refused: a Next-Action request gets 401, a multipart form is sent to /login",
+      async (path) => {
+        const action = await middleware(post(path, { headers: { "next-action": "40abc" } }));
+        expect(action.status, `${path} with the header`).toBe(401);
+        expect(action.headers.get("location")).toBeNull();
+        const form = await middleware(post(path, { multipart: true }));
+        expect(form.status, `${path} as a multipart form`).toBe(307);
+        expect(new URL(form.headers.get("location")!).pathname).toBe("/login");
+      },
+    );
+
+    it.each(["POST", "PUT", "PATCH", "DELETE"])("%s to an image-like address runs the session logic", async (method) => {
+      for (const path of ["/schemas/foo.png", "/favicon.ico"]) {
+        const response = await middleware(post(path, { method, multipart: method === "POST" }));
+        expect(response.status, `${method} ${path}`).toBe(307);
+        expect(new URL(response.headers.get("location")!).pathname).toBe("/login");
       }
     });
 
-    it("a visitor without a session who POSTs a server action to /schemas/foo.png gets 401", async () => {
-      const path = "/schemas/foo.png";
-      expect(matches(path, withAction)).toBe(true);
-      const response = await middleware(new NextRequest(url(path), { method: "POST", headers: withAction }));
-      expect(response.status).toBe(401);
+    it("lets a GET or a HEAD of a static file through (no session: logo, favicon)", async () => {
+      for (const method of ["GET", "HEAD"]) {
+        for (const path of ["/logo.png", "/favicon.ico", "/a/b/c.svg", "/x.jpg", "/x.jpeg", "/x.gif", "/x.webp"]) {
+          const response = await middleware(new NextRequest(url(path), { method }));
+          expect(response.status, `${method} ${path}`).toBe(200);
+          expect(response.headers.get("location"), `${method} ${path}`).toBeNull();
+        }
+      }
+    });
+
+    it("does not extend that to a spelling it does not know (.PNG is no static file here): a GET of it meets the door", async () => {
+      const response = await middleware(new NextRequest(url("/logo.PNG")));
+      expect(new URL(response.headers.get("location")!).pathname).toBe("/login");
+    });
+
+    it("lets a POST through for a visitor WITH a session", async () => {
+      const cookie = `${PLAIN}=${await token()}`;
+      const response = await middleware(post("/schemas/foo.png", { multipart: true, headers: { cookie } }));
+      expect(response.status).toBe(200);
       expect(response.headers.get("location")).toBeNull();
     });
   });

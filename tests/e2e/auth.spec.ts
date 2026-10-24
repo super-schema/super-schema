@@ -417,8 +417,8 @@ test.describe("a visitor with a forged or stale session cookie", () => {
   test("a server action POSTed to a page address that ends like an image (/schemas/foo.png) still meets the middleware: 401, never executed", { tag: ["@regression"] }, async ({
     request,
   }) => {
-    // The matcher leaves out static files by the look of the address (`.png`); `/schemas/foo.png` is a page (`[domainSlug]`), and an
-    // action POSTed there used to skip the door. The Next-Action header now always runs the middleware.
+    // The matcher used to leave out static files by the look of the address (`.png`); `/schemas/foo.png` is a page (`[domainSlug]`),
+    // and an action POSTed there skipped the door. Now only a GET / HEAD of a static file does.
     for (const path of ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg"]) {
       for (const cookie of [undefined, `authjs.session-token=${FORGED}`]) {
         const response = await request.post(path, {
@@ -428,6 +428,23 @@ test.describe("a visitor with a forged or stale session cookie", () => {
         });
         expect(response.status(), `${path} with ${cookie ?? "no cookie"}`).toBe(401);
         expect(await response.json(), path).toEqual({ error: "Not authenticated" });
+      }
+    }
+  });
+
+  test("a progressive-enhancement form action (a multipart POST that names the action in its body, no Next-Action header) to /schemas/foo.png is refused too", { tag: ["@regression"] }, async ({
+    request,
+  }) => {
+    for (const path of ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/foo.PNG"]) {
+      for (const cookie of [undefined, `authjs.session-token=${FORGED}`]) {
+        const response = await request.post(path, {
+          headers: cookie ? { cookie } : {},
+          multipart: { "$ACTION_ID_40abc": "" },
+          maxRedirects: 0,
+        });
+        // Sent to the login page: not served, not executed.
+        expect(response.status(), `${path} with ${cookie ?? "no cookie"}`).toBe(307);
+        expect(new URL(response.headers()["location"]).pathname).toBe("/login");
       }
     }
   });

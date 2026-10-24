@@ -3,7 +3,8 @@ import type { NextRequest } from "next/server";
 import { hasValidSession } from "@/lib/session-cookie";
 
 /**
- * The door of the app: runs before every page and every `/api/` endpoint (the matcher below leaves out only static files).
+ * The door of the app: runs before every page and every `/api/` endpoint (the matcher below leaves out only Next's own static assets,
+ * and a GET or HEAD of an image is let through at once).
  *
  * - A visitor needs a VALID session (the cookie is decrypted and verified, `hasValidSession`; a cookie that merely has a session's
  *   name is no session). Without one a page redirects to `/login?callbackUrl=<the page asked for>` (the login page returns there
@@ -25,6 +26,7 @@ const isUnder = (pathname: string, prefix: string) => pathname === prefix || pat
 const isPublicApi = (pathname: string) => PUBLIC_API_PREFIXES.some((prefix) => isUnder(pathname, prefix));
 
 export async function middleware(req: NextRequest) {
+  if (isStaticFileRequest(req)) return NextResponse.next();
   const { pathname } = req.nextUrl;
 
   const isAuthPage = isUnder(pathname, "/login") || isUnder(pathname, "/register");
@@ -62,13 +64,17 @@ export async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
+/**
+ * Only a GET or HEAD of a static file is let through unchecked: `/favicon.ico` and a path ending in an image extension. The address
+ * alone never decides for another method: a server action is POSTed to a PAGE address (a dynamic segment can end in `.png`:
+ * `/schemas/foo.png` is `[domainSlug]`), either with a `Next-Action` header or, as a progressive-enhancement form, as a multipart
+ * body that names the action and carries no such header.
+ */
+const STATIC_FILE = /\.(?:svg|png|jpg|jpeg|gif|webp)$/;
+const isStaticFileRequest = (req: NextRequest) =>
+  (req.method === "GET" || req.method === "HEAD") && (req.nextUrl.pathname === "/favicon.ico" || STATIC_FILE.test(req.nextUrl.pathname));
+
 export const config = {
-  matcher: [
-    // Pages and endpoints: everything but the static files Next serves itself.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
-    // ... EXCEPT that a server action always comes through the door. The exclusion above is by the look of the address, and a page's
-    // address can end like an image (`/schemas/foo.png` is `[domainSlug]`): an action POSTed there (header `Next-Action`) would skip
-    // the middleware and rest on the action's own auth() alone. Matchers are alternatives, so this one adds what the first leaves out.
-    { source: "/:path*", has: [{ type: "header", key: "next-action" }] },
-  ],
+  // Everything but `_next/static` and `_next/image`: they are served by Next itself and are never an action.
+  matcher: ["/((?!_next/static|_next/image).*)"],
 };
