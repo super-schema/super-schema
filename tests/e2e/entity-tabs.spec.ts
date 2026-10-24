@@ -491,6 +491,11 @@ test.describe("the field studio and the right panel", () => {
     await expect(main.getByTestId(ID.studioName)).toHaveValue("id");
     await page.goto(`${invoice.url}/fields/no-such-field`);
     await expect(page.getByText("This page could not be found.")).toBeVisible();
+
+    // The query string goes with the redirect: a link with `?version=` / `?panel=` still carries them at the id's address.
+    await page.goto(`${invoice.url}/fields/id?version=1.2.0&panel=governance`);
+    await expect(page).toHaveURL(`${invoice.url}/fields/${fieldId}?version=1.2.0&panel=governance`);
+    await expect(main.getByTestId(ID.studioName)).toHaveValue("id");
   });
 
   test("field studio: a rename and a second autosave keep the focus and the typed text (the form is not remounted by the refresh after a save)", { tag: ["@regression"] }, async ({

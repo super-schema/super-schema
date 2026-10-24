@@ -12,10 +12,13 @@
  *      are listed, with their reasons, in RAW_TIMER_ALLOWED below;
  *   c. no `test.fixme` / `test.skip` that hides a test without a reason: a declarative one needs a bracketed reason of some substance in
  *      its title (`test.fixme("title [TRACKED: why]", fn)`), a conditional one (`test.skip(cond, "why")`) needs the reason string;
- *   c2. a test that is EXPECTED to fail or is hidden (`test.fail(` / `test.fixme(` in its body, or a declarative `test.fail|fixme|skip("title", fn)`) names a
- *      known defect in its title: `[KD-001 what is broken]`, and that id is an entry of docs/testing/known-defects.md; an entry
- *      with `status: open` in that file is pinned by at least one such title (`no-test` and `dead-code` entries are documented
- *      defects without a test, said explicitly), and every entry has a status;
+ *   c2. a test that is EXPECTED to fail or is hidden (`test.fail(` / `test.fixme(` anywhere in its body, nested steps and callbacks included,
+ *      or a declarative `test.fail|fixme|skip("title", fn)`, `test.describe.skip|fixme("title", fn)` for a whole group) names a
+ *      known defect in its title: `[KD-001 what is broken]`, and that id is an entry of docs/testing/known-defects.md; a marker in a
+ *      hook or in a describe (outside any test) is pinned by the title of the nearest describe, and one outside both is refused; an
+ *      entry with `status: open` in that file is pinned by at least one such title (`no-test` and `dead-code` entries are documented
+ *      defects without a test, said explicitly), every entry has a status, and a heading that names a defect but is not exactly
+ *      `## KD-nnn: title` is a failure (it would be an entry nobody reads);
  *   d. no `test.use({ navigationTimeout | actionTimeout | screenshot | trace | video })`: playwright.config.ts owns them;
  *   e. no local `createDomain` / `createProduct` (helpers/lifecycle.ts) and no local copy of the other shared helpers
  *      (`createEventFromMenu`, `RAW_DB_TEXT`: helpers/event-builder.ts) outside `helpers/`.
@@ -114,9 +117,22 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
   const names = testNames(sf);
   const escaped = names.map((n) => n.replace(/[$]/g, "\\$&")).join("|");
   const skipOrFixme = new RegExp(`^(${escaped})(\\.describe)?\\.(skip|fixme)$`);
-  // In a test's body: `fail` / `fixme` (a conditional `skip(cond, "why")` is an environment's reason, not a defect: rule c). Declaratively: all three.
+  // Not declaratively (inside a test, a step, a hook, a describe): `fail` / `fixme` (a conditional `skip(cond, "why")` is an environment's
+  // reason, not a defect: rule c). Declaratively, with a title (a test or a whole group): all three.
   const markers = new RegExp(`^(${escaped})\\.(fail|fixme)$`);
-  const declarative = new RegExp(`^(${escaped})\\.(fail|fixme|skip)$`);
+  const declarative = new RegExp(`^(${escaped})(\\.describe)?\\.(fail|fixme|skip)$`);
+  // The calls whose title a marker inside them belongs to: a test, or a group (`test.describe`, `.serial`, `.parallel`, `.skip`, ...).
+  const owners = new RegExp(`^(${escaped})(\\.describe(\\.\\w+)?)?$`);
+  /** The title (as written) of the nearest test or group around `node`: `""` when it is not a literal, undefined when there is none. */
+  const owningTitle = (node: ts.Node): string | undefined => {
+    for (let parent = node.parent; parent; parent = parent.parent) {
+      if (ts.isCallExpression(parent) && owners.test(parent.expression.getText(sf))) {
+        const title = parent.arguments[0];
+        return title && isStringLike(title) ? title.getText(sf) : "";
+      }
+    }
+    return undefined;
+  };
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
@@ -141,18 +157,14 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
         }
       }
 
-      // A test that is expected to fail or is hidden (in its body, or declaratively) is pinned to a known defect by its title.
-      if (names.includes(callee)) {
-        const body = node.arguments[node.arguments.length - 1];
-        const title = node.arguments[0] && isStringLike(node.arguments[0]) ? node.arguments[0].getText(sf) : "";
-        let marks = false;
-        const find = (inner: ts.Node): void => {
-          if (ts.isCallExpression(inner) && markers.test(inner.expression.getText(sf))) marks = true;
-          if (!ts.isFunctionLike(inner) || inner === body) ts.forEachChild(inner, find);
-        };
-        if (body && ts.isFunctionLike(body)) find(body);
-        if (marks && !KD_IN_TITLE.test(title)) {
-          add("defect-pin", node, `${titleOf(node)} is expected to fail or hidden: put its known defect in the title, [KD-001 what is broken] (${KNOWN_DEFECTS_FILE})`);
+      // A marker (`test.fail(...)` / `test.fixme(...)` without a title) is pinned to a known defect by the title of the nearest test or group
+      // around it, however deep it sits: in a step, in a callback, in a hook, in a describe.
+      if (markers.test(callee) && !(node.arguments[0] && isStringLike(node.arguments[0]))) {
+        const owner = owningTitle(node);
+        if (owner === undefined) {
+          add("defect-pin", node, `${callee}(...) is outside any test or describe: it has no title to name its known defect in (${KNOWN_DEFECTS_FILE})`);
+        } else if (!KD_IN_TITLE.test(owner)) {
+          add("defect-pin", node, `${callee}(...) in ${owner.slice(0, 70) || "a test with no literal title"} is expected to fail or hidden: put its known defect in that title, [KD-001 what is broken] (${KNOWN_DEFECTS_FILE})`);
         }
       }
       if (declarative.test(callee) && node.arguments[0] && isStringLike(node.arguments[0]) && !KD_IN_TITLE.test(node.arguments[0].getText(sf))) {
@@ -205,7 +217,7 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
 function pinnedDefectIds(file: string, source: string): string[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindOf(file));
   const names = testNames(sf);
-  const callee = new RegExp(`^(${names.map((n) => n.replace(/[$]/g, "\\$&")).join("|")})(\\.(fail|fixme|skip))?$`);
+  const callee = new RegExp(`^(${names.map((n) => n.replace(/[$]/g, "\\$&")).join("|")})(\\.describe)?(\\.(fail|fixme|skip))?$`);
   const ids: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && callee.test(node.expression.getText(sf)) && node.arguments[0] && isStringLike(node.arguments[0])) {
@@ -227,6 +239,25 @@ function knownDefects(markdown: string): Array<{ id: string; title: string; stat
     entries.push({ id: heading[1], title: heading[2].trim(), status: /^- status: (\S+)/m.exec(block)?.[1] });
   }
   return entries;
+}
+
+/**
+ * The headings of the known-defects file that start with `KD` (any level, any spacing, any case) and are not exactly `## KD-nnn: title`, as
+ * `line N: <heading>`. `knownDefects` reads only the exact form, so a malformed heading would otherwise be an entry nobody reads (a test
+ * could name it, or it could be forgotten without a status): it is a failure instead. A fenced code block (an example) is not read.
+ */
+function defectHeadingProblems(markdown: string): string[] {
+  const problems: string[] = [];
+  let fenced = false;
+  markdown.split("\n").forEach((line, index) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      return;
+    }
+    if (fenced) return;
+    if (/^ {0,3}#{1,6}\s*KD(?![A-Za-z])/i.test(line) && !/^## KD-\d{3}: \S/.test(line)) problems.push(`line ${index + 1}: ${line.trim()}`);
+  });
+  return problems;
 }
 
 function listSource(dir: string): string[] {
@@ -331,6 +362,57 @@ describe("the browser suite scanner", () => {
     expect(scan(tagged("needs a network", `test.skip(!online, "the host is not reachable");`))).toEqual([]);
   });
 
+  describe("a defect marker is found wherever it sits, and is pinned by the nearest title that owns it", () => {
+    const tagged = (title: string, body: string) => `test(${JSON.stringify(title)}, { tag: ["@regression"] }, async ({ page }) => { ${body} });`;
+    const pins = (src: string) => scan(src).filter((kind) => kind === "defect-pin");
+
+    it("a declarative test.describe.skip / .fixme / .fail names its defect in the title, like test.skip", () => {
+      expect(pins(`test.describe.skip("group", () => {});`)).toEqual(["defect-pin"]);
+      expect(pins(`test.describe.fixme("group [x]", () => {});`)).toEqual(["defect-pin"]);
+      expect(pins(`test.describe.fixme("group [KD-1 short]", () => {});`)).toEqual(["defect-pin"]);
+      expect(pins(`test.describe.skip("group [KD-004 not rendered yet]", () => {});`)).toEqual([]);
+      expect(pins(`test.describe.fixme("group [KD-005 not wired]", () => {});`)).toEqual([]);
+      // ...and the reason a hidden group needs (rule c) is still asked for on its own
+      expect(scan(`test.describe.skip("group [KD-004 not rendered yet]", () => {});`)).toEqual([]);
+      expect(scan(`test.describe.skip("group", () => {});`)).toEqual(expect.arrayContaining(["hidden-test", "defect-pin"]));
+    });
+
+    it("a marker inside a nested closure of a test (test.step, a callback, an inline helper) belongs to that test", () => {
+      expect(pins(tagged("a", `await test.step("s", async () => { test.fail(true, "why"); });`))).toEqual(["defect-pin"]);
+      expect(pins(tagged("a", `await test.step("s", async () => { await inner(() => { test.fixme(true, "why"); }); });`))).toEqual(["defect-pin"]);
+      expect(pins(tagged("a", `const later = () => { test.fail(true, "why"); }; later();`))).toEqual(["defect-pin"]);
+      expect(pins(tagged("a [KD-001 broken]", `await test.step("s", async () => { test.fail(true, "why"); });`))).toEqual([]);
+      expect(pins(tagged("a [KD-001 broken]", `await test.step("s", async () => { await inner(() => { test.fixme(true, "why"); }); });`))).toEqual([]);
+    });
+
+    it("a marker in a hook or in a describe (outside any test) belongs to the nearest describe: its title names the defect", () => {
+      const group = (title: string, inside: string) => `test.describe(${JSON.stringify(title)}, () => { ${inside} });`;
+      expect(pins(group("group", `test.beforeEach(async () => { test.fixme(true, "why"); });`))).toEqual(["defect-pin"]);
+      expect(pins(group("group", `test.fail(true, "why");`))).toEqual(["defect-pin"]);
+      expect(pins(group("group", `test.beforeAll(async () => { test.fail(true, "why"); });`))).toEqual(["defect-pin"]);
+      expect(pins(group("group [KD-006 racy]", `test.beforeEach(async () => { test.fixme(true, "why"); });`))).toEqual([]);
+      expect(pins(group("group [KD-006 racy]", `test.fail(true, "why");`))).toEqual([]);
+      // the nearest describe is the one that counts, and a test inside it has its own title
+      expect(pins(`test.describe("outer [KD-006 racy]", () => { test.describe("inner", () => { test.fail(true, "why"); }); });`)).toEqual(["defect-pin"]);
+      expect(pins(`test.describe("outer [KD-006 racy]", () => { ${tagged("a", `test.fail(true, "why");`)} });`)).toEqual(["defect-pin"]);
+    });
+
+    it("a marker with no test and no describe around it has nothing to name a defect in: it is flagged", () => {
+      expect(pins(`test.fixme(true, "why");`)).toEqual(["defect-pin"]);
+      expect(pins(`test.beforeEach(async () => { test.fail(true, "why"); });`)).toEqual(["defect-pin"]);
+    });
+
+    it("a conditional skip stays an environment's reason, wherever it sits", () => {
+      expect(pins(tagged("a", `await test.step("s", async () => { test.skip(!online, "the host is not reachable"); });`))).toEqual([]);
+      expect(pins(`test.describe("group", () => { test.beforeEach(async () => { test.skip(!online, "the host is not reachable"); }); });`)).toEqual([]);
+    });
+
+    it("the ids a describe title names are read as pinned, like a test title's", () => {
+      const source = `test.describe("group [KD-004 x]", () => { test.fixme(true, "why"); });\ntest.describe.skip("other [KD-005 y]", () => {});\ntest.describe("plain", () => {});`;
+      expect(pinnedDefectIds("x.spec.ts", source)).toEqual(["KD-004", "KD-005"]);
+    });
+  });
+
   it("reads the known-defect ids named by test titles, and the entries of the known-defects file", () => {
     const source = `test("a [KD-001 x]", { tag: ["@regression"] }, async () => { test.fail(true, "why"); });\ntest.fail("b [KD-002 y]", async () => {});\ntest("c", { tag: ["@regression"] }, async () => {});`;
     expect(pinnedDefectIds("x.spec.ts", source)).toEqual(["KD-001", "KD-002"]);
@@ -339,6 +421,41 @@ describe("the browser suite scanner", () => {
       { id: "KD-002", title: "second", status: "no-test" },
       { id: "KD-003", title: "third", status: undefined },
     ]);
+  });
+
+  describe("a heading of the known-defects file that names a defect but is not `## KD-nnn: title` is a failure", () => {
+    it("accepts the entries it reads, and the other headings and text of the file", () => {
+      expect(defectHeadingProblems("# Known defects\n\nprose about KD-001 and ## KD-002\n\n## KD-001: first\n- status: open\n\n## KD-123: second one\n- status: no-test\n")).toEqual([]);
+      expect(defectHeadingProblems("## Known notes\n## KDs are listed below\n")).toEqual([]);
+    });
+
+    it.each([
+      ["a short id", "## KD-12: title"],
+      ["a long id", "## KD-0001: title"],
+      ["no colon", "## KD-001 title"],
+      ["no title", "## KD-001:"],
+      ["a blank title", "## KD-001:   "],
+      ["no space after the hashes", "##KD-001: title"],
+      ["a level 3 heading", "### KD-001: title"],
+      ["a level 1 heading", "# KD-001: title"],
+      ["a lower-case id", "## kd-001: title"],
+      ["no dash", "## KD001: title"],
+      ["no id", "## KD: title"],
+    ])("flags %s, with its line", (_name, heading) => {
+      const problems = defectHeadingProblems(`# Known defects\n\n## KD-001: fine\n- status: open\n\n${heading}\n- status: open\n`);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("line 6");
+      expect(problems[0]).toContain(heading.trim());
+    });
+
+    it("does not read a heading that sits in a fenced code block (an example of the format)", () => {
+      expect(defectHeadingProblems("## KD-001: fine\n- status: open\n\n```md\n## KD-1 example\n```\n")).toEqual([]);
+    });
+
+    it("an entry whose heading is malformed is not among the entries, so the failure is the only way it can be seen", () => {
+      expect(knownDefects("## KD-001:\n- status: open\n## KD-002: ok\n- status: open\n").map((entry) => entry.id)).toEqual(["KD-002"]);
+      expect(defectHeadingProblems("## KD-001:\n- status: open\n## KD-002: ok\n- status: open\n")).toHaveLength(1);
+    });
   });
 
   it("flags per-spec copies of what the config owns", () => {
@@ -396,6 +513,10 @@ describe("tests/e2e follows the suite rules", () => {
     it(`every id a test title names is an entry of ${KNOWN_DEFECTS_FILE}`, () => {
       const ids = entries.map((entry) => entry.id);
       for (const id of pins) expect(ids, `${id} is named by a test and is not an entry of ${KNOWN_DEFECTS_FILE}`).toContain(id);
+    });
+
+    it("every heading that names a defect is `## KD-nnn: title` (a malformed one would be an entry the guard never reads)", () => {
+      expect(defectHeadingProblems(readFileSync(path.join(REPO_DIR, KNOWN_DEFECTS_FILE), "utf8"))).toEqual([]);
     });
 
     it("every entry has a unique id and a status: open (pinned by a test), no-test or dead-code (said explicitly)", () => {

@@ -4,7 +4,11 @@ Defects of the product that the browser suite (`tests/e2e`, see `e2e.md`) found 
 (`KD-nnn`) that the tests and the commits cite. `tests/unit/e2e-suite-guard.test.ts` reads this file:
 
 - a test that is **expected to fail** (`test.fail`) or hidden (`test.fixme`, a declarative `test.skip`) carries `[KD-nnn what is broken]`
-  in its title, and the id must be an entry here;
+  in its title, and the id must be an entry here. The marker counts wherever it sits (in a `test.step`, in a callback); a whole group
+  hidden with `test.describe.skip` / `test.describe.fixme`, and a marker in a hook or directly in a `test.describe`, names the id in the
+  title of the group;
+- a heading that names a defect must be exactly `## KD-nnn: title` (three digits, one space after the colon): a malformed one fails the
+  guard instead of being skipped;
 - every entry has a line `- status: open | no-test | dead-code`. An `open` entry is pinned by at least one such test (when the defect is
   fixed, the test passes, which Playwright reports as a failure: delete the `test.fail` line and the entry together). `no-test` says in
   so many words that nothing in the suite pins it (a gap in the product that is not worth a test that fails every night, a design
@@ -85,8 +89,18 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 
 ## KD-011: the canonical TypeSpec source of an entity cannot carry a decimal's precision and scale
 
-- status: no-test (a limit of the source format: the field row keeps the precision and scale, a Save of the TypeSpec tab leaves them alone)
+- status: no-test (a limit of the source format: the field row keeps the precision and scale, a Save of the TypeSpec tab leaves them alone while the field stays a decimal; when the type is edited to a non-decimal the pair is cleared with it)
 - symptom: a decimal imported as `NUMERIC(12, 2)` is `decimal` in the entity's TypeSpec source; the DDL targets name the declared
   precision in the table comment (`total: declared decimal(12,2); ...`) because the row has it. A document produced from the source
   alone (a Git export of it) has no precision.
 - where: `typespec-generator.ts` / `typespec-parser.ts` have no spelling for it; `merge-fields.ts` does not touch the `precision` / `scale` columns.
+
+## KD-012: the @slow jsonschema matrix is red until multi-entity Task 12 removes its stale entries
+
+- status: no-test (the @slow jsonschema matrix is itself the red signal; it is to be removed, not pinned, by multi-entity Task 12)
+- symptom: the nightly (`@slow`) JSON Schema matrix fails. It still lists entries in `MULTI_MODEL_KNOWN` / `knownSync` for cases the
+  multi-entity import has since fixed (they now pass where the matrix expects a failure), and it has no expectation yet for the protobuf
+  emitter's nested array of an array of references (the output has a nested array where the matrix says nothing).
+- where: `tests/e2e/jsonschema-lifecycle.spec.ts` and `tests/e2e/fixtures/jsonschema-variations.ts` (`MULTI_MODEL_KNOWN`, `knownSync`).
+- to remove: multi-entity Task 12 drops the stale `MULTI_MODEL_KNOWN` / `knownSync` entries and adds a protobuf nested-array expectation for
+  array-of-refs. That task deletes this entry with them.
