@@ -32,8 +32,8 @@ export interface Workspace {
   cleanup(): Promise<void>;
 }
 
-/** What the `workspace` fixture hands out, built without a test: a `beforeAll` (a serial describe that shares one workspace) uses it too. */
-export async function createWorkspace(entityNames: readonly string[] = []): Promise<Workspace> {
+/** What the `workspace` fixture hands out, made straight in the database (the UI-made one is `createUiWorkspace`, helpers/lifecycle.ts), built without a test: a `beforeAll` (a serial describe that shares one workspace) uses it too. */
+export async function createDbWorkspace(entityNames: readonly string[] = []): Promise<Workspace> {
   const rows = await createWorkspaceRows(entityNames);
   return toWorkspace(rows);
 }
@@ -86,7 +86,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
 
   workspace: async ({ workspaceEntities }, provide) => {
-    const workspace = await createWorkspace(workspaceEntities);
+    const workspace = await createDbWorkspace(workspaceEntities);
     try {
       await provide(workspace);
     } finally {

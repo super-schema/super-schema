@@ -23,7 +23,7 @@ import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 import {
   ENABLED_TARGETS,
   createEntityFromReview,
-  createWorkspace,
+  createUiWorkspace,
   errorToast,
   generateTarget,
   openEditor,
@@ -64,7 +64,7 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
   await step(
     "workspace",
     async () => {
-      const ws = await createWorkspace(page, `lc-${v.id.slice(0, 8)}`);
+      const ws = await createUiWorkspace(page, `lc-${v.id.slice(0, 8)}`);
       domains.push(ws.domain);
       productUrl = ws.productUrl;
     },

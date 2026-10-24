@@ -39,8 +39,8 @@ export async function createProduct(page: Page, domain: string, name: string): P
   return page.url();
 }
 
-/** A fresh domain + product; resolves to the product URL (the `/new` entity wizard hangs off it). */
-export async function createWorkspace(page: Page, prefix: string): Promise<{ domain: string; productUrl: string }> {
+/** A fresh domain + product made through the UI; resolves to the product URL (the `/new` entity wizard hangs off it). The database-backed one is `createDbWorkspace` (helpers/fixtures.ts). */
+export async function createUiWorkspace(page: Page, prefix: string): Promise<{ domain: string; productUrl: string }> {
   const domain = unique(`${prefix}-d-`);
   await createDomain(page, domain);
   const productUrl = await createProduct(page, domain, unique(`${prefix}-p-`));

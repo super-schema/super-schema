@@ -17,10 +17,11 @@
  */
 
 import { mkdirSync } from "node:fs";
+import { login } from "./helpers/auth-state";
 import { test, expect } from "./helpers/fixtures";
 import {
   createEntityFromReview,
-  createWorkspace,
+  createUiWorkspace,
   generateTarget,
   openEditor,
   openSchemasTab,
@@ -50,7 +51,7 @@ test.describe("A1: From URL", () => {
     test.setTimeout(240_000);
     const online = await fetch(PUBLIC_SCHEMA_URL, { signal: AbortSignal.timeout(10_000) }).then((r) => r.ok, () => false);
     test.skip(!online, `${PUBLIC_SCHEMA_URL} is not reachable from this machine`);
-    const { productUrl } = await createWorkspace(page, "a1");
+    const { productUrl } = await createUiWorkspace(page, "a1");
     await openUrlMode(page, productUrl);
     await page.getByTestId("workbench-url-input").fill(PUBLIC_SCHEMA_URL);
     await page.getByTestId("workbench-url-fetch-button").click();
@@ -71,7 +72,7 @@ test.describe("A1: From URL", () => {
 
   test("restricted mode (default) refuses a git-host URL with the clear message", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(120_000);
-    const { productUrl } = await createWorkspace(page, "a1r");
+    const { productUrl } = await createUiWorkspace(page, "a1r");
     await openUrlMode(page, productUrl);
     await page.getByTestId("workbench-url-input").fill(GIT_URL);
     await page.getByTestId("workbench-url-fetch-button").click();
@@ -88,11 +89,14 @@ test.describe("A1: From URL", () => {
 test.describe("A1: git mode any (second server)", () => {
   const anyBase = process.env.E2E_GIT_ANY_BASE_URL;
   test.skip(!anyBase, "set E2E_GIT_ANY_BASE_URL to a server started with SCHEMA_IMPORT_GIT_MODE=any");
-  test.use({ baseURL: anyBase });
+  // Another server is another session: the saved login belongs to the first one (a session cookie is not scoped to a port, and its
+  // signature is that server's), so this test starts logged out and logs in on the second server itself.
+  test.use({ baseURL: anyBase, storageState: { cookies: [], origins: [] } });
 
-  test("the refusal is gone: the server tries the fetch and fails on the host, not on the policy", { tag: ["@regression", "@external"] }, async ({ authedPage: page }) => {
+  test("the refusal is gone: the server tries the fetch and fails on the host, not on the policy", { tag: ["@regression", "@external"] }, async ({ page }) => {
     test.setTimeout(180_000);
-    const { productUrl } = await createWorkspace(page, "a1a");
+    await login(page);
+    const { productUrl } = await createUiWorkspace(page, "a1a");
     await openUrlMode(page, productUrl);
     await page.getByTestId("workbench-url-input").fill(GIT_URL);
     await page.getByTestId("workbench-url-fetch-button").click();
@@ -120,7 +124,7 @@ test.describe("A2: unresolved external $ref", () => {
 
   test("dangling marker and low confidence on review, DRAFT + alert, $ref kept by JSON Schema and OpenAPI", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
-    const { productUrl } = await createWorkspace(page, "a2");
+    const { productUrl } = await createUiWorkspace(page, "a2");
     await pasteAndReview(page, productUrl, SCHEMA);
     await expect(page.getByTestId("import-entity-details")).toBeVisible({ timeout: 45_000 });
     await expect(page.getByTestId("parsed-field-dangling")).toHaveCount(2);
@@ -173,7 +177,7 @@ test.describe("A3: primary-key prompt", () => {
   for (const key of ["bigquery", "postgresql", "spanner"]) {
     test(`${key}: dialog, choose a key, generation succeeds, the key is persisted`, { tag: ["@regression"] }, async ({ authedPage: page }) => {
       test.setTimeout(240_000);
-      const { productUrl } = await createWorkspace(page, `a3${key.slice(0, 3)}`);
+      const { productUrl } = await createUiWorkspace(page, `a3${key.slice(0, 3)}`);
       const idField = "ledger_id";
       await pasteAndReview(page, productUrl, SCHEMA("Ledger", idField));
       await createEntityFromReview(page, productUrl, "Ledger");
@@ -229,7 +233,7 @@ test.describe("A4: x-securityClassification", () => {
 
   test("the level of every field is shown on the review and in the editor", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
-    const { productUrl } = await createWorkspace(page, "a4");
+    const { productUrl } = await createUiWorkspace(page, "a4");
     await pasteAndReview(page, productUrl, SCHEMA);
     await expect(page.getByTestId("import-entity-details")).toBeVisible({ timeout: 45_000 });
     for (const f of ["subscriber_id", "email"]) await page.getByRole("button", { name: `Show import details of ${f}` }).click();
@@ -249,7 +253,7 @@ test.describe("A4: x-securityClassification", () => {
 test.describe("A5: syntax-highlighted paste box", () => {
   test("JSON is tokenised by CodeMirror and TypeSpec gets a coloured layer", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
-    const { productUrl } = await createWorkspace(page, "a5");
+    const { productUrl } = await createUiWorkspace(page, "a5");
     await openWorkbench(page, productUrl);
     await page.getByRole("button", { name: "Paste", exact: true }).click();
     const json = JSON.stringify({ title: "Hi", type: "object", properties: { n: { type: "integer", minimum: 1 } }, required: ["n"] }, null, 2);

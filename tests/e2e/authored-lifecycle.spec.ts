@@ -17,7 +17,7 @@ import { canon } from "./helpers/artifact-text";
 import {
   ENABLED_TARGETS,
   createEntityFromReview,
-  createWorkspace,
+  createUiWorkspace,
   fieldName,
   generateAllTargets,
   generateTarget,
@@ -138,7 +138,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     try {
       let productUrl = "";
       await r.step("workspace", async () => {
-        productUrl = (await createWorkspace(page, "au-blank")).productUrl;
+        productUrl = (await createUiWorkspace(page, "au-blank")).productUrl;
       }, true);
       await r.step("start blank + add fields + create", async () => {
         await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
@@ -178,7 +178,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     try {
       let productUrl = "";
       await r.step("workspace", async () => {
-        productUrl = (await createWorkspace(page, "au-form")).productUrl;
+        productUrl = (await createUiWorkspace(page, "au-form")).productUrl;
       }, true);
       await r.step("build form -> review -> create", async () => {
         await openWorkbench(page, productUrl);
@@ -244,7 +244,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     try {
       let productUrl = "";
       await r.step("workspace", async () => {
-        productUrl = (await createWorkspace(page, "au-tsp")).productUrl;
+        productUrl = (await createUiWorkspace(page, "au-tsp")).productUrl;
       }, true);
       await r.step("paste TypeSpec -> review -> import", async () => {
         await pasteAndReview(page, productUrl, TSP);
@@ -274,7 +274,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     try {
       let productUrl = "";
       await r.step("workspace", async () => {
-        productUrl = (await createWorkspace(page, "au-tab")).productUrl;
+        productUrl = (await createUiWorkspace(page, "au-tab")).productUrl;
       }, true);
       await r.step("start blank with one field", async () => {
         await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
