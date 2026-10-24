@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseAvroSchema } from "@/lib/importers/avro.importer";
+import { parseAvroDocument, parseAvroSchema } from "@/lib/importers/avro.importer";
 
 describe("Avro Importer", () => {
   const validAvro = (fields: unknown[], name = "User") =>
@@ -209,6 +209,41 @@ describe("Avro Importer", () => {
           expect(field.precision, String(precision)).toBeUndefined();
           expect(field.scale, String(precision)).toBeUndefined();
         }
+      });
+
+      describe("a declaration that is not a valid decimal is not kept: a plain decimal, and a warning of the import", () => {
+        const documentOf = (type: unknown) => {
+          const result = parseAvroDocument(validAvro([{ name: "price", type }]));
+          expect(result.success).toBe(true);
+          if (!result.success) throw new Error("did not parse");
+          return result.data;
+        };
+
+        it.each([
+          ["a precision of 1e10", { type: "bytes", logicalType: "decimal", precision: 1e10, scale: 2 }],
+          ["a precision of 1e309 (Infinity once parsed)", JSON.parse('{"type":"bytes","logicalType":"decimal","precision":1e309,"scale":2}')],
+          ["a precision above 76", { type: "bytes", logicalType: "decimal", precision: 77, scale: 2 }],
+          ["a scale above the precision", { type: "bytes", logicalType: "decimal", precision: 5, scale: 6 }],
+          ["a negative scale", { type: "bytes", logicalType: "decimal", precision: 5, scale: -1 }],
+          ["a fractional precision", { type: "bytes", logicalType: "decimal", precision: 5.5, scale: 2 }],
+          ["a precision that is a string", { type: "bytes", logicalType: "decimal", precision: "12", scale: 2 }],
+          ["no precision at all", { type: "bytes", logicalType: "decimal", scale: 2 }],
+          ["a scale of 1e309", JSON.parse('{"type":"bytes","logicalType":"decimal","precision":12,"scale":1e309}')],
+        ])("%s", (_name, type) => {
+          const doc = documentOf(type);
+          const field = doc.entities[0].fields[0];
+          expect(field.type).toBe("decimal");
+          expect(field.precision).toBeUndefined();
+          expect(field.scale).toBeUndefined();
+          const warnings = doc.warnings.filter((w) => w.includes("plain decimal"));
+          expect(warnings).toHaveLength(1);
+          expect(warnings[0]).toContain("price");
+        });
+
+        it("a valid one raises none", () => {
+          const doc = documentOf({ type: "bytes", logicalType: "decimal", precision: 38, scale: 9 });
+          expect(doc.warnings.filter((w) => w.includes("plain decimal"))).toEqual([]);
+        });
       });
 
       it("a field that is not a decimal has none", () => {

@@ -16,7 +16,7 @@ import {
 import { parseScopeTarget, requireId } from "@/services/events/service-guards";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { deleteEntityGuarded, entityDeleteFailure } from "@/services/events/entity-pin-usage";
-import { mapFieldCreateInput } from "@/lib/entity-field-input";
+import { firstInvalidDecimalFactMessage, mapFieldCreateInput } from "@/lib/entity-field-input";
 import { resolveScope, type ScopeTarget } from "@/lib/asset-scope";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { assertNameAvailable, type NamedAsset, type RegistryKind } from "@/services/name-registry.service";
@@ -209,6 +209,10 @@ export async function createEntityWithFieldsAction(
   // A field named like a key the AsyncAPI parser cannot read is refused by name, before anything is created.
   const reservedField = firstReservedFieldNameMessage(fields);
   if (reservedField !== null) return { error: reservedField, code: "VALIDATION_ERROR" };
+
+  // A precision or scale the database cannot hold is said by name here, not an unexpected failure of the create.
+  const badDecimalFact = firstInvalidDecimalFactMessage(fields);
+  if (badDecimalFact !== null) return { error: badDecimalFact, code: "VALIDATION_ERROR" };
 
   try {
     // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.

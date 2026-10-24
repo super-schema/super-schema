@@ -128,6 +128,36 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
     expect(data).not.toHaveProperty("metadata");
   });
 
+  describe("a precision or scale the database cannot hold is a validation error, not an unexpected failure", () => {
+    const decimalField = (precision: unknown, scale: unknown) =>
+      ({ name: "total", type: "decimal", nullable: true, isKey: false, description: "", classification: null, precision, scale }) as never;
+
+    beforeEach(() => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });
+    });
+
+    it.each([
+      ["a precision beyond a 32-bit integer", 99_999_999_999, 2],
+      ["a scale beyond a 32-bit integer", 12, 2 ** 31],
+      ["a negative precision", -1, 0],
+      ["a fractional scale", 12, 0.5],
+      ["a precision that is a string", "12", 2],
+      ["Infinity", Infinity, 2],
+      ["NaN", 12, Number.NaN],
+    ])("refuses %s, names the field, and creates nothing", async (_name, precision, scale) => {
+      const result = await createEntityWithFieldsAction("domain-1", { name: "Ledger", description: "", fields: [decimalField(precision, scale)] });
+      expect(result).toEqual({ error: expect.stringContaining('"total"'), code: "VALIDATION_ERROR" });
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+    });
+
+    it("accepts none, null, and a whole pair", async () => {
+      for (const [precision, scale] of [[null, null], [undefined, undefined], [12, 2], [0, 0]] as const) {
+        const result = await createEntityWithFieldsAction("domain-1", { name: "Ledger", description: "", fields: [decimalField(precision, scale)] });
+        expect(result).toEqual({ success: true, entityId: "entity-1" });
+      }
+    });
+  });
+
   describe("name registry and placement", () => {
     beforeEach(() => {
       mockPrisma.user.findUnique.mockResolvedValue({ id: "user-1" });

@@ -9,7 +9,7 @@ import { unexpectedFailure } from "@/lib/action-context";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
-import { mapFieldCreateInput } from "@/lib/entity-field-input";
+import { firstInvalidDecimalFactMessage, mapFieldCreateInput } from "@/lib/entity-field-input";
 import { createInScope, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { entityExtensionsMetadata } from "@/services/imported-entities";
 import type { CreateFieldInput } from "../[domainSlug]/actions";
@@ -53,6 +53,10 @@ export async function createTenantEntityAction(data: {
   // A field named like a key the AsyncAPI parser cannot read is refused by name, before anything is created.
   const reservedField = firstReservedFieldNameMessage(data.fields);
   if (reservedField !== null) return { error: reservedField };
+
+  // A precision or scale the database cannot hold is said by name here, not an unexpected failure of the create.
+  const badDecimalFact = firstInvalidDecimalFactMessage(data.fields);
+  if (badDecimalFact !== null) return { error: badDecimalFact };
 
   const slug = generateSlug(name);
 

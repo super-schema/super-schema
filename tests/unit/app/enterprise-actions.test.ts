@@ -40,6 +40,16 @@ describe("createTenantEntityAction", () => {
     mockTx.entity.create.mockResolvedValue({ id: "entity-1", slug: "customer" });
   });
 
+  it("refuses a precision or scale the database cannot hold, names the field, and creates nothing", async () => {
+    const result = await createTenantEntityAction({
+      name: "Ledger",
+      description: "",
+      fields: [{ name: "total", type: "decimal", nullable: true, isKey: false, description: "", classification: null, precision: 99_999_999_999, scale: 2 }],
+    });
+    expect(result).toEqual({ error: expect.stringContaining('"total"') });
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+  });
+
   it("creates the entity with domainId and productId null in the active tenant", async () => {
     const result = await createTenantEntityAction({
       name: "  Customer ",

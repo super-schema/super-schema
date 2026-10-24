@@ -24,6 +24,7 @@
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import { pickRootEntity } from "./multi-asset";
+import { declaredDecimalFacts } from "./decimal-facts";
 import type {
   ParsedEntity,
   ParsedField,
@@ -219,7 +220,7 @@ function defineFixed(obj: AvroObject, enclosingNamespace: string | undefined, ct
   const size = Number(obj.size);
   // A fixed carrying a logical type (duration, decimal) maps to that type.
   const resolved: ResolvedType = obj.logicalType
-    ? resolveLogicalType(obj)
+    ? resolveLogicalType(obj, ctx, `fixed type "${fullName}"`)
     : {
         type: "bytes",
         confidence: "high",
@@ -325,7 +326,7 @@ function resolveAvroTypeAt(
 
     // Logical types
     if (obj.logicalType) {
-      return resolveLogicalType(obj);
+      return resolveLogicalType(obj, ctx, `field "${label}"`);
     }
 
     if (obj.type === "enum") {
@@ -386,7 +387,14 @@ function pickTargets(inner: ResolvedType): Partial<ResolvedType> {
 // Resolve Avro logical types
 // ---------------------------------------------------------------------------
 
-function resolveLogicalType(obj: AvroObject): ResolvedType {
+/** A declared number or text for a message, cut short (an Avro document is untrusted text). */
+function shown(value: unknown): string {
+  const text = value === undefined ? "not given" : typeof value === "string" ? JSON.stringify(value) : String(value);
+  return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+}
+
+/** `what` names where the logical type is, for the warning of a decimal that is not kept (`field "Order.total"`). */
+function resolveLogicalType(obj: AvroObject, ctx: AvroContext, what: string): ResolvedType {
   const logicalType = obj.logicalType as string;
 
   switch (logicalType) {
@@ -399,15 +407,18 @@ function resolveLogicalType(obj: AvroObject): ResolvedType {
     case "timestamp-micros":
       return { type: "utcDateTime", confidence: "high", nullable: false, originalType: `long/${logicalType}` };
     case "decimal": {
-      // `precision` is required by the spec (a positive whole number), `scale` defaults to 0; anything else is not kept.
-      const precision = typeof obj.precision === "number" && Number.isInteger(obj.precision) && obj.precision > 0 ? obj.precision : undefined;
-      const scale = precision === undefined ? undefined : typeof obj.scale === "number" && Number.isInteger(obj.scale) && obj.scale >= 0 ? obj.scale : 0;
+      // The spec requires a `precision` (a positive whole number); `scale` defaults to 0. A pair the database cannot hold, or no decimal
+      // can have, is not kept: a plain decimal, and the import says so.
+      const facts = declaredDecimalFacts(obj.precision, obj.scale);
+      if (!facts.ok) {
+        ctx.warnings.push(`The ${what}: decimal ${facts.reason} (precision ${shown(obj.precision)}, scale ${shown(obj.scale)}) — imported as a plain decimal, without precision and scale.`);
+      }
       return {
         type: "decimal",
         confidence: "high",
         nullable: false,
         originalType: `bytes/decimal(${obj.precision},${obj.scale})`,
-        ...(precision !== undefined ? { precision, scale } : {}),
+        ...(facts.ok ? { precision: facts.precision, scale: facts.scale } : {}),
       };
     }
     case "duration":

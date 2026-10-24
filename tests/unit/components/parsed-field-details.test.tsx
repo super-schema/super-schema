@@ -250,6 +250,7 @@ const ENTITY_DISPLAY: Record<keyof ParsedEntity, string> = {
   ignoredKeywords: "not",
   sourceFormat: "Source format",
   originalContent: "internal: raw source text kept only for drift detection",
+  importWarnings: "internal: said by the import service as warnings of the import (not part of the entity's details)",
 };
 
 describe("display exhaustiveness", () => {
@@ -283,6 +284,7 @@ describe("display exhaustiveness", () => {
       ignoredKeywords: ["not"],
       sourceFormat: "json-schema",
       originalContent: "{}",
+      importWarnings: ["a warning of the import"],
     };
     expect(Object.keys(entity).sort()).toEqual(Object.keys(ENTITY_DISPLAY).sort());
     render(<ParsedEntityDetails entity={entity} />);

@@ -146,6 +146,8 @@ export interface ParsedEntity {
   sourceFormat: ImportFormat;
   /** Original schema content (stored for drift detection) */
   originalContent: string;
+  /** What the importer says about what it read, beyond its confidence notes (a declaration it did not keep): shown in the review's warnings. */
+  importWarnings?: string[];
 }
 
 // ---------------------------------------------------------------------------
