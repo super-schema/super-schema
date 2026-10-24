@@ -22,6 +22,11 @@ import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
  *   - `visual`, `a11y` Chromium-only screenshot comparisons / axe scans of a few pages (visual.spec.ts, a11y.spec.ts). Both are kept
  *                      out of `chromium` so they run once, where they are meant to (visual snapshots only in the Playwright Docker image).
  *
+ * FILTERS AND DEPENDENCIES: Playwright runs a project's dependencies (`setup`, and `chromium` for `serial-after`) IN FULL, whatever
+ * `--grep` / `--grep-invert` say, as soon as a project that depends on them has a matching test (verified with `--list`: `--grep @slow
+ * --project=serial-after` lists every chromium test). So a tier run never selects `serial-after` together with `chromium`: the npm
+ * scripts run `chromium` (and the others) first, then `serial-after --no-deps` as its own command, after `setup` has written the login.
+ *
  * A test that passes only on a retry is reported as FLAKY by every reporter below (the list summary, the html report's Flaky filter,
  * junit's <flakyFailure>) and does not fail the run: it is never hidden. `retries` is 1 on CI and 0 locally.
  */

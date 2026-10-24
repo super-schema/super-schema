@@ -2,8 +2,8 @@
  * The `setup` project: one UI login per run, saved as the `storageState` every other project starts from (replaces the login that
  * every test used to do, and the fake session cookie of the layout spec).
  *
- * It carries both the @smoke and the @regression tag only so that a `--grep @smoke` / `--grep-invert "@slow|@external"` run does not
- * filter the login out of the projects that depend on it.
+ * As a dependency it always runs in full, whatever the tier filter says. It carries the @smoke and @regression tags so that it is also
+ * picked when it is selected on its own with a tier filter (`--project=setup --grep @smoke`).
  */
 import { mkdirSync } from "node:fs";
 import path from "node:path";
