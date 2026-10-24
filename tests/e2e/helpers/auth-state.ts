@@ -19,8 +19,22 @@ export const TEST_PASSWORD = process.env.TEST_PASSWORD ?? "admin";
  * The admin's session, written by the `setup` project (tests/e2e/auth.setup.ts) with one UI login per run and read by every other
  * project as its `storageState`. Git-ignored (`playwright/.auth/`): a login is never committed, and never reused from an earlier run
  * (the setup project rewrites it first, because every project depends on it).
+ *
+ * `E2E_AUTH_STATE` names another file (relative paths are taken from the working directory): two suite runs at the same time, against
+ * two servers, must not write one file. scripts/e2e-phases.mjs (and the release runner that calls it) pass a path of their own per run.
  */
-export const AUTH_STATE_PATH = path.resolve(__dirname, "../../../playwright/.auth/admin.json");
+export const AUTH_STATE_PATH = process.env.E2E_AUTH_STATE
+  ? path.resolve(process.cwd(), process.env.E2E_AUTH_STATE)
+  : path.resolve(__dirname, "../../../playwright/.auth/admin.json");
+
+/**
+ * What is saved of a login: its cookies, and nothing of the page's storage. A state that carries `localStorage` hands every test the
+ * values the app wrote while the setup page was open (panel widths, filters, drafts), which makes "the app stores X" assertions pass
+ * without the app doing anything and lets one test's leftovers shape the next one's.
+ */
+export function cookiesOnly<C>(state: { cookies: C[]; origins?: unknown[] }): { cookies: C[]; origins: [] } {
+  return { cookies: state.cookies, origins: [] };
+}
 
 /** Log in through the login form. Success = the page leaves /login (a wrong password surfaces as a timeout on that). */
 export async function login(page: Page): Promise<void> {
