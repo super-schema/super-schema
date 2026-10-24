@@ -444,7 +444,7 @@ test.describe("a visitor with a forged or stale session cookie", () => {
         });
         // Sent to the login page: not served, not executed.
         expect(response.status(), `${path} with ${cookie ?? "no cookie"}`).toBe(307);
-        expect(new URL(response.headers()["location"]).pathname).toBe("/login");
+        expect(new URL(response.headers()["location"], "http://localhost").pathname).toBe("/login");
       }
     }
   });
