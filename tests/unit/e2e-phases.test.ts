@@ -3,9 +3,25 @@
  * without it: a filtered command that pulls `chromium` in full through `serial-after`, a second `playwright test` that clears the
  * first one's results and report, a shard that appends to the last command only, and a stale or missing login.
  */
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MAX_AUTH_AGE_MS, authStateProblem, chooseAuthState, parseCli, planPhases, shardOf } from "../../scripts/e2e-phases.mjs";
+import {
+  MAX_AUTH_AGE_MS,
+  authStateProblem,
+  chooseAuthState,
+  exitCodeOf,
+  isEntryPoint,
+  parseCli,
+  phaseSummaryLine,
+  planPhases,
+  playwrightCommand,
+  runPhases,
+  shardOf,
+} from "../../scripts/e2e-phases.mjs";
 
 const AUTH = "/tmp/run/admin.json";
 const plan = (tier: string, extraArgs: string[] = [], noSerial = false) => planPhases({ tier, extraArgs, noSerial, authState: AUTH });
@@ -114,6 +130,21 @@ describe("planPhases", () => {
     expect(result.skipped).toEqual([expect.stringMatching(/--no-serial/)]);
   });
 
+  it("tier serial sends the extra arguments to the serial phase, not to the login", () => {
+    const { phases } = plan("serial", ["tests/e2e/navigation.spec.ts", "--headed", "--grep=crawl"]);
+    expect(phases.map((p) => p.name)).toEqual(["setup", "serial"]);
+    expect(phases[0].args).not.toContain("--headed");
+    expect(phases[0].args).not.toContain("tests/e2e/navigation.spec.ts");
+    expect(phases[1].args).toEqual(expect.arrayContaining(["tests/e2e/navigation.spec.ts", "--headed", "--grep=crawl", "--project=serial-after", "--no-deps"]));
+  });
+
+  it("tier serial does not skip its serial phase for a shard that is not 1/N (the shard is the caller's, for that one phase)", () => {
+    const { phases, skipped } = plan("serial", ["--shard=2/4"]);
+    expect(phases.map((p) => p.name)).toEqual(["setup", "serial"]);
+    expect(phases[1].args).toContain("--shard=2/4");
+    expect(skipped).toEqual([]);
+  });
+
   it("a first phase run with --no-deps does not run the setup project", () => {
     const { phases } = plan("regression", ["--no-deps"]);
     expect(phases[0].noDeps).toBe(true);
@@ -160,5 +191,151 @@ describe("chooseAuthState", () => {
     const chosen = chooseAuthState({ env: {}, firstPhaseRunsSetup: false, runId: "1" });
     expect(chosen.ownedByThisRun).toBe(false);
     expect(chosen.file).toMatch(/playwright[\\/]\.auth[\\/]admin\.json$/);
+  });
+});
+
+describe("isEntryPoint", () => {
+  const self = path.resolve(__dirname, "../../scripts/e2e-phases.mjs");
+
+  it("is true when the script is run by its real path", () => {
+    expect(isEntryPoint(pathToFileURL(self).href, self)).toBe(true);
+  });
+
+  it("is false when another file is the entry point (the script was imported)", () => {
+    expect(isEntryPoint(pathToFileURL(self).href, "/somewhere/vitest.mjs")).toBe(false);
+    expect(isEntryPoint(pathToFileURL(self).href, undefined)).toBe(false);
+  });
+
+  it("is true through a symlinked directory (macOS /tmp and /var are links), where a plain string compare said no and exit 0 hid it", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "e2e-phases-link-"));
+    try {
+      symlinkSync(path.dirname(self), path.join(dir, "scripts"));
+      const viaLink = path.join(dir, "scripts", "e2e-phases.mjs");
+      expect(isEntryPoint(pathToFileURL(self).href, viaLink)).toBe(true);
+
+      // End to end: no tier is a usage error (exit 2), not a silent exit 0.
+      const run = spawnSync(process.execPath, [viaLink], { encoding: "utf8" });
+      expect(run.stderr).toMatch(/usage: node scripts\/e2e-phases\.mjs/);
+      expect(run.status).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails loudly when the file run has this script's name but is not this file", () => {
+    expect(() => isEntryPoint(pathToFileURL(self).href, "/elsewhere/e2e-phases.mjs", (p: string) => p)).toThrow(/refusing to exit 0 without running/);
+  });
+});
+
+describe("playwrightCommand", () => {
+  it("runs the local playwright CLI with node itself, not through npx (a signal then reaches playwright, not a shell in between)", () => {
+    const { command, args } = playwrightCommand();
+    expect(command).toBe(process.execPath);
+    expect(args).toHaveLength(1);
+    expect(args[0]).toMatch(/@playwright[\\/]test[\\/]cli\.js$/);
+  });
+});
+
+describe("phaseSummaryLine", () => {
+  const [phase] = planPhases({ tier: "smoke", authState: AUTH, outputRoot: "/runs/7" }).phases;
+  const report = path.join("/runs/7", "playwright-report", "main", "index.html");
+  const results = path.join("/runs/7", "test-results", "main");
+
+  it("prints the report and results paths that exist", () => {
+    const line = phaseSummaryLine({ phase, result: { name: "main", code: 0 }, exists: () => true });
+    expect(line).toBe(`  main: passed   report: ${report}   results: ${results}/`);
+  });
+
+  it("prints only the paths that exist: a run with the list reporter alone made neither", () => {
+    expect(phaseSummaryLine({ phase, result: { name: "main", code: 1 }, exists: () => false })).toBe("  main: failed (exit 1)");
+    const onlyResults = phaseSummaryLine({ phase, result: { name: "main", code: 0 }, exists: (p: string) => p === results });
+    expect(onlyResults).toBe(`  main: passed   results: ${results}/`);
+  });
+
+  it("says what happened to a phase that did not run or was refused", () => {
+    expect(phaseSummaryLine({ phase, result: undefined, exists: () => true })).toBe("  main: not run");
+    expect(phaseSummaryLine({ phase, result: { name: "main", code: 1, refused: true }, exists: () => true })).toBe("  main: refused");
+  });
+});
+
+describe("exitCodeOf", () => {
+  it("is the first non-zero code of the phases, else 0", () => {
+    expect(exitCodeOf([{ name: "a", code: 0 }, { name: "b", code: 3 }, { name: "c", code: 1 }])).toBe(3);
+    expect(exitCodeOf([{ name: "a", code: 0 }])).toBe(0);
+  });
+
+  it("is 128 + the signal number once the run was interrupted, whatever the phase said", () => {
+    expect(exitCodeOf([{ name: "a", code: 1 }], "SIGINT")).toBe(130);
+    expect(exitCodeOf([], "SIGTERM")).toBe(143);
+    expect(exitCodeOf([], "SIGHUP")).toBe(129);
+  });
+});
+
+describe("runPhases: the order of the login file's removal and the phases, with fake dependencies", () => {
+  const login = { file: "/runs/7/admin.json", ownedByThisRun: true };
+
+  function harness(options: { codes?: Record<string, number>; throwIn?: string; interruptAfter?: string; files?: Record<string, number> } = {}) {
+    const events: string[] = [];
+    const files = new Map(Object.entries(options.files ?? {}));
+    let interrupted = false;
+    const deps = {
+      interrupted: () => interrupted,
+      runPhase: async (phase: { name: string; runsSetup: boolean }) => {
+        events.push(`run ${phase.name}`);
+        if (phase.runsSetup) files.set(login.file, Date.parse("2026-10-24T11:59:00Z")); // the setup project saves the login
+        if (options.throwIn === phase.name) throw new Error("boom");
+        if (options.interruptAfter === phase.name) interrupted = true;
+        return options.codes?.[phase.name] ?? 0;
+      },
+      rmSync: (file: string) => {
+        files.delete(file);
+        events.push(`rm ${file}`);
+      },
+      mkdirSync: (dir: string) => events.push(`mkdir ${dir}`),
+      existsSync: (file: string) => files.has(file),
+      statSync: (file: string) => ({ mtimeMs: files.get(file) ?? 0 }),
+      now: () => Date.parse("2026-10-24T12:00:00Z"),
+      log: () => {},
+      error: (m: string) => events.push(`error ${m.slice(0, 30)}`),
+    };
+    return { events, deps };
+  }
+  const phases = (tier: string) => planPhases({ tier, authState: login.file }).phases;
+
+  it("removes an old login before the phase that logs in, runs the phases in order, and removes the run's own login at the end", async () => {
+    const { events, deps } = harness();
+    const results = await runPhases({ phases: phases("regression"), auth: login, deps });
+    expect(results.map((r: { name: string; code: number }) => [r.name, r.code])).toEqual([["main", 0], ["serial", 0]]);
+    expect(events).toEqual(["rm /runs/7/admin.json", "mkdir /runs/7", "run main", "run serial", "rm /runs/7/admin.json"]);
+  });
+
+  it("still removes the login when a phase throws", async () => {
+    const { events, deps } = harness({ throwIn: "main" });
+    await expect(runPhases({ phases: phases("regression"), auth: login, deps })).rejects.toThrow("boom");
+    expect(events.at(-1)).toBe("rm /runs/7/admin.json");
+    expect(events).not.toContain("run serial");
+  });
+
+  it("stops before the next phase once interrupted, and still removes the login", async () => {
+    const { events, deps } = harness({ interruptAfter: "main" });
+    const results = await runPhases({ phases: phases("regression"), auth: login, deps });
+    expect(results.map((r: { name: string }) => r.name)).toEqual(["main"]);
+    expect(events).toEqual(["rm /runs/7/admin.json", "mkdir /runs/7", "run main", "rm /runs/7/admin.json"]);
+  });
+
+  it("keeps running the later phase after a failed one (its report is still wanted), and keeps a login it does not own", async () => {
+    const mine = { file: "/runs/7/admin.json", ownedByThisRun: false };
+    const { events, deps } = harness({ codes: { main: 1 }, files: { "/runs/7/admin.json": Date.parse("2026-10-24T11:59:00Z") } });
+    const results = await runPhases({ phases: planPhases({ tier: "regression", authState: mine.file, extraArgs: [] }).phases, auth: mine, deps });
+    expect(results.map((r: { code: number }) => r.code)).toEqual([1, 0]);
+    expect(events.filter((e) => e.startsWith("rm"))).toEqual(["rm /runs/7/admin.json"]); // the one before the phase that logs in; none at the end
+  });
+
+  it("refuses a --no-deps phase when there is no login, without running it", async () => {
+    const { events, deps } = harness();
+    const only = planPhases({ tier: "regression", extraArgs: ["--no-deps"], noSerial: true, authState: login.file }).phases;
+    const results = await runPhases({ phases: only, auth: { file: login.file, ownedByThisRun: false }, deps });
+    expect(results).toEqual([{ name: "main", code: 1, refused: true }]);
+    expect(events.some((e) => e.startsWith("run "))).toBe(false);
   });
 });

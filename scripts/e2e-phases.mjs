@@ -12,18 +12,25 @@
 //   - the login (`setup` project) is one file per run (E2E_AUTH_STATE), so two runs at once do not write the same one, a stale file is
 //     never reused, and a phase that skips `setup` (`--no-deps`) refuses a missing or old file with a message instead of an ENOENT.
 //
-// Playwright arguments after the tier go to the FIRST phase only (a --shard, a file, --headed). The later phase runs unless the shard is
-// not 1/N (it is one job of its own, not a slice) or --no-serial is given. The exit code is the first non-zero one of the phases; a
-// failing phase never stops the next one from running (a red main phase still reports the serial one).
+// Playwright arguments after the tier go to the FIRST phase only (a --shard, a file, --headed); for the tier `serial` they go to the LAST
+// one (its first phase only logs in, which a file or a --grep would break). The later phase runs unless the shard is not 1/N (it is
+// one job of its own, not a slice) or --no-serial is given. The exit code is the first non-zero one of the phases (128 + the signal
+// number after an interrupt); a failing phase never stops the next one from running (a red main phase still reports the serial one).
 //
-// Dependency-free on purpose: the release runner calls it, and `planPhases` / `parseCli` / `authStateProblem` are unit tested
-// (tests/unit/e2e-phases.test.ts) without running anything.
+// Playwright is started with node and its own CLI file (not through npx: a shell in between), as the leader of a process group
+// (scripts/e2e-process.mjs): a SIGINT / SIGTERM / SIGHUP to this script is forwarded to that group once, a second one kills it, and the
+// login file is removed on the way out either way.
+//
+// Dependency-free on purpose: the release runner calls it, and the planner and the pieces around it (`planPhases`, `parseCli`,
+// `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `isEntryPoint`) are unit tested (tests/unit/e2e-phases.test.ts)
+// without running anything.
 
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { SIGNALS, createInterrupt, exitCodeForSignal, signalGroup, spawnGroup } from "./e2e-process.mjs";
 
 export const TIERS = ["smoke", "regression", "nightly", "serial"];
 
@@ -100,16 +107,19 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState, 
   const skipped = [];
   const shard = shardOf(extraArgs);
   const phases = [];
+  // The caller's arguments (a spec file, --grep, --shard, --headed) belong to the phase that runs tests: the first one, except for tier
+  // `serial`, whose first phase only logs in. Only a run whose arguments go to the first phase is a slice of a sharded run.
+  const argsPhase = tier === "serial" ? plan.length - 1 : 0;
   plan.forEach((step, index) => {
     if (index > 0 && noSerial) {
       skipped.push(`${step.name}: skipped (--no-serial)`);
       return;
     }
-    if (index > 0 && shard && shard.index !== 1) {
+    if (index > 0 && argsPhase === 0 && shard && shard.index !== 1) {
       skipped.push(`${step.name}: skipped (shard ${shard.index}/${shard.total}: it runs once, with shard 1/${shard.total})`);
       return;
     }
-    const args = ["test", ...step.args, `--output=${path.join(results(step.name), "artifacts")}`, ...(index === 0 ? extraArgs : [])];
+    const args = ["test", ...step.args, `--output=${path.join(results(step.name), "artifacts")}`, ...(index === argsPhase ? extraArgs : [])];
     const noDeps = hasNoDeps(args);
     phases.push({
       name: step.name,
@@ -152,17 +162,123 @@ export function chooseAuthState({ env, firstPhaseRunsSetup, runId }) {
   return { file: path.resolve("playwright", ".auth", `run-${runId}.json`), ownedByThisRun: true };
 }
 
-/** @param {Phase} phase @returns {Promise<number>} */
+/**
+ * The command that starts the local Playwright CLI: node itself and the CLI file, resolved from this checkout's node_modules (not
+ * `npx playwright`: an extra process in between, and a signal to the wrong one).
+ */
+export function playwrightCommand(resolve = createRequire(import.meta.url).resolve) {
+  return { command: process.execPath, args: [resolve("@playwright/test/cli")] };
+}
+
+/**
+ * The exit code of a run: the signal's (128 + n) when it was interrupted, else the first non-zero code of the phases, else 0.
+ *
+ * @param {Array<{ name: string, code: number }>} results
+ * @param {string} [signal] the signal that interrupted the run
+ */
+export function exitCodeOf(results, signal) {
+  if (signal) return exitCodeForSignal(signal);
+  return results.find((r) => r.code !== 0)?.code ?? 0;
+}
+
+/**
+ * One line of the summary. The report and results paths are printed only when they exist: a run with the `list` reporter alone (any
+ * local run) writes neither, and pointing at a missing file is worse than saying nothing.
+ *
+ * @param {{ phase: Phase, result?: { name: string, code: number, refused?: boolean }, exists?: (file: string) => boolean }} input
+ */
+export function phaseSummaryLine({ phase, result, exists = existsSync }) {
+  const text = !result ? "not run" : result.refused ? "refused" : result.code === 0 ? "passed" : `failed (exit ${result.code})`;
+  const where = [];
+  if (result && !result.refused) {
+    const report = path.join(phase.env.PLAYWRIGHT_HTML_OUTPUT_DIR, "index.html");
+    const results = path.dirname(phase.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE);
+    if (exists(report)) where.push(`report: ${report}`);
+    if (exists(results)) where.push(`results: ${results}/`);
+  }
+  return `  ${phase.name}: ${text}${where.map((w) => `   ${w}`).join("")}`;
+}
+
+/**
+ * Runs the phases in order and returns their results. Everything it touches comes in through `deps`, so the order of the login file's
+ * removal and of the phases is unit tested with fakes. A phase that fails does not stop the next one; an interrupt (`deps.interrupted()`)
+ * does; the login file of this run is removed whatever happens, a thrown error included.
+ *
+ * @param {{ phases: Phase[], auth: { file: string, ownedByThisRun: boolean }, deps: {
+ *   interrupted: () => boolean, runPhase: (phase: Phase) => Promise<number>,
+ *   existsSync: (file: string) => boolean, statSync: (file: string) => { mtimeMs: number }, rmSync: (file: string, options?: object) => void,
+ *   mkdirSync: (dir: string, options?: object) => void, now: () => number, log: (message: string) => void, error: (message: string) => void } }} input
+ * @returns {Promise<Array<{ name: string, code: number, refused?: boolean }>>}
+ */
+export async function runPhases({ phases, auth, deps }) {
+  const results = [];
+  let setupRanThisRun = false;
+  try {
+    for (const phase of phases) {
+      if (deps.interrupted()) break;
+      if (phase.runsSetup && !setupRanThisRun) {
+        // The login is made by this run: whatever is at that path is from an earlier one and must not be mistaken for it.
+        deps.rmSync(auth.file, { force: true });
+        deps.mkdirSync(path.dirname(auth.file), { recursive: true });
+        setupRanThisRun = true;
+      }
+      if (!phase.runsSetup) {
+        const exists = deps.existsSync(auth.file);
+        const problem = authStateProblem({ exists, mtimeMs: exists ? deps.statSync(auth.file).mtimeMs : 0, now: deps.now(), file: auth.file });
+        if (problem) {
+          deps.error(`[e2e-phases] ${phase.name}: refused: ${problem}`);
+          results.push({ name: phase.name, code: 1, refused: true });
+          continue;
+        }
+      }
+      deps.log(`[e2e-phases] ${phase.name}: playwright ${phase.args.join(" ")}`);
+      results.push({ name: phase.name, code: await deps.runPhase(phase) });
+    }
+  } finally {
+    if (auth.ownedByThisRun) deps.rmSync(auth.file, { force: true });
+  }
+  return results;
+}
+
+/**
+ * Whether this module is the script node was started with. The paths are compared as real paths: `import.meta.url` is already the real
+ * one, while `process.argv[1]` keeps a symlink on the way (macOS: /tmp, /var and /private are links; a worktree's node_modules is one),
+ * and comparing the two as strings made `main()` silently not run, with exit code 0. When the file run has THIS script's name and is
+ * still not this file, it throws: a run that does nothing and says nothing is the worst way to fail.
+ *
+ * @param {string} moduleUrl `import.meta.url`
+ * @param {string | undefined} argv1 `process.argv[1]`
+ * @param {(file: string) => string} [realpath]
+ */
+export function isEntryPoint(moduleUrl, argv1, realpath = realpathSync) {
+  if (!argv1) return false;
+  const self = fileURLToPath(moduleUrl);
+  const real = (file) => {
+    try {
+      return realpath(file);
+    } catch {
+      return path.resolve(file);
+    }
+  };
+  const [run, me] = [real(argv1), real(self)];
+  if (run === me) return true;
+  if (path.basename(argv1) === path.basename(self)) {
+    throw new Error(`[e2e-phases] ${argv1} has this script's name but resolves to ${run}, not ${me}: refusing to exit 0 without running anything.`);
+  }
+  return false;
+}
+
+/** @param {Phase} phase @param {(child: import("node:child_process").ChildProcess) => void} onChild @returns {Promise<number>} */
 function runPhase(phase, onChild) {
   return new Promise((resolve) => {
-    const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-    const child = spawn(npx, ["playwright", ...phase.args], { stdio: "inherit", env: { ...process.env, ...phase.env } });
+    const { command, args } = playwrightCommand();
+    const child = spawnGroup(command, [...args, ...phase.args], { stdio: "inherit", env: { ...process.env, ...phase.env } });
     onChild(child);
     child.on("error", (error) => {
       console.error(`[e2e-phases] ${phase.name}: could not start playwright: ${error.message}`);
       resolve(1);
     });
-    child.on("exit", (code) => resolve(code ?? 1));
+    child.on("exit", (code, signal) => resolve(code ?? (signal ? exitCodeForSignal(signal) : 1)));
   });
 }
 
@@ -183,52 +299,40 @@ async function main() {
   for (const note of skipped) console.log(`[e2e-phases] ${note}`);
 
   let child;
-  let interrupted = false;
-  for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, () => {
-      interrupted = true;
-      child?.kill(signal);
-    });
-  }
+  const interrupt = createInterrupt({
+    forward: (signal) => child && signalGroup(child, signal),
+    force: () => child && signalGroup(child, "SIGKILL"),
+  });
+  for (const signal of SIGNALS) process.on(signal, () => interrupt.handle(signal));
+  // Last resort (a throw nobody foresaw, a process.exit elsewhere): the login must not outlive the run.
+  if (auth.ownedByThisRun) process.on("exit", () => rmSync(auth.file, { force: true }));
 
-  const results = [];
-  let setupRanThisRun = false;
-  try {
-    for (const phase of phases) {
-      if (interrupted) break;
-      if (phase.runsSetup && !setupRanThisRun) {
-        // The login is made by this run: whatever is at that path is from an earlier one and must not be mistaken for it.
-        rmSync(auth.file, { force: true });
-        mkdirSync(path.dirname(auth.file), { recursive: true });
-        setupRanThisRun = true;
-      }
-      if (!phase.runsSetup) {
-        const exists = existsSync(auth.file);
-        const problem = authStateProblem({ exists, mtimeMs: exists ? statSync(auth.file).mtimeMs : 0, now: Date.now(), file: auth.file });
-        if (problem) {
-          console.error(`[e2e-phases] ${phase.name}: refused: ${problem}`);
-          results.push({ name: phase.name, code: 1, refused: true });
-          continue;
-        }
-      }
-      console.log(`[e2e-phases] ${phase.name}: playwright ${phase.args.join(" ")}`);
-      const code = await runPhase(phase, (c) => (child = c));
-      results.push({ name: phase.name, code });
-    }
-  } finally {
-    if (auth.ownedByThisRun) rmSync(auth.file, { force: true });
-  }
+  const results = await runPhases({
+    phases,
+    auth,
+    deps: {
+      interrupted: () => interrupt.interrupted,
+      runPhase: (phase) =>
+        runPhase(phase, (c) => {
+          child = c;
+          if (interrupt.interrupted) signalGroup(c, interrupt.signal); // the signal came between two phases
+        }),
+      existsSync,
+      statSync,
+      rmSync,
+      mkdirSync,
+      now: Date.now,
+      log: (message) => console.log(message),
+      error: (message) => console.error(message),
+    },
+  });
+  interrupt.done();
 
   console.log("[e2e-phases] summary:");
-  for (const phase of phases) {
-    const result = results.find((r) => r.name === phase.name);
-    const text = !result ? "not run" : result.refused ? "refused" : result.code === 0 ? "passed" : `failed (exit ${result.code})`;
-    const where = result && !result.refused ? `   report: ${path.join(phase.env.PLAYWRIGHT_HTML_OUTPUT_DIR, "index.html")}   results: ${path.dirname(phase.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE)}/` : "";
-    console.log(`  ${phase.name}: ${text}${where}`);
-  }
-  process.exit(results.find((r) => r.code !== 0)?.code ?? (interrupted ? 130 : 0));
+  for (const phase of phases) console.log(phaseSummaryLine({ phase, result: results.find((r) => r.name === phase.name) }));
+  process.exit(exitCodeOf(results, interrupt.signal));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   await main();
 }
