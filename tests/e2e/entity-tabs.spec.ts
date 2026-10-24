@@ -320,10 +320,13 @@ test.describe("API, Deployments and TypeSpec", () => {
     await expect(main.getByTestId(ID.apiOperation)).toHaveCount(2);
     await expect(main.locator('[data-testid="api-operation"][data-name="getInvoice"]')).toContainText("1p · 1r");
 
-    // Delete one: expand it, Delete.
+    // Delete one: expand it, Delete. The row goes at once and the delete is a server action behind it: it is waited for (by the
+    // operation's id, which is its body) before the page is loaded again.
     const toDelete = main.locator('[data-testid="api-operation"][data-name="listInvoices"]');
+    const operationId = await toDelete.getAttribute("data-operation-id");
+    expect(operationId).toBeTruthy();
     await toDelete.getByRole("button").first().click();
-    await toDelete.getByRole("button", { name: /^Delete/ }).click();
+    await afterServerAction(page, () => toDelete.getByRole("button", { name: /^Delete/ }).click(), { body: operationId! });
     await expect(main.getByTestId(ID.apiOperation)).toHaveCount(1);
     await openEntityPage(page, invoice.url, invoice.name);
     await main.getByTestId(ID.tab("api")).click();

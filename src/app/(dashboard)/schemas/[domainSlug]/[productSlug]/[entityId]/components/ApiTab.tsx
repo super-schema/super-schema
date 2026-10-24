@@ -401,7 +401,7 @@ export function ApiTab({
         const methodColor = METHOD_COLORS[op.httpMethod] ?? METHOD_COLORS.GET;
 
         return (
-          <div key={op.id} data-testid="api-operation" data-name={op.name} className="rounded-lg border border-border/50 overflow-hidden">
+          <div key={op.id} data-testid="api-operation" data-name={op.name} data-operation-id={op.id} className="rounded-lg border border-border/50 overflow-hidden">
             {/* Operation header */}
             <button
               onClick={() => setExpandedOp(isExpanded ? null : op.id)}
