@@ -1,0 +1,46 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`stand-alone generator output is byte-identical to the pre-closure generator > entity with references (unpinned and pinned), emission projection > refs emission 1`] = `
+"@doc("An entity")
+model Order {
+  @key
+  id: string;
+  customer: Customer;
+  lines: Line_Item[];
+  owner: Customer;
+}
+"
+`;
+
+exports[`stand-alone generator output is byte-identical to the pre-closure generator > entity without references, governance on and off > no-refs emission 1`] = `
+"@doc("An entity")
+model Customer {
+  @key
+  @doc("Identifier")
+  id: string;
+  @maxLength(80)
+  email: string;
+  age?: int32;
+  tags: string[];
+}
+"
+`;
+
+exports[`stand-alone generator output is byte-identical to the pre-closure generator > entity without references, governance on and off > no-refs governance 1`] = `
+"import "@superschema/typespec-enterprise";
+import "@typespec/openapi";
+
+@doc("An entity")
+@TypeSpec.OpenAPI.extension("x-tags", #["core", "pii"])
+model Customer {
+  @key
+  @doc("Identifier")
+  id: string;
+  @maxLength(80)
+  @Enterprise.dataClassification(Enterprise.DataClassification.PII)
+  email: string;
+  age?: int32;
+  tags: string[];
+}
+"
+`;

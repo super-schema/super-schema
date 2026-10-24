@@ -31,6 +31,7 @@ import {
   genericExtensionDecorators,
   genericExtensionEntries,
   escapeTypeSpecString,
+  pinDecorator,
 } from "./governance-decorators";
 import {
   enumMemberName,
@@ -68,6 +69,25 @@ export interface GenerateTypeSpecOptions {
    * (see `emitter.service.ts#buildSourceForTarget`).
    */
   governance?: boolean;
+  /**
+   * Generate this entity as one member of a combined closure document (see `closure-source.ts`): the model gets the
+   * closure-unique `modelName` (so do its field-scoped enums, `<modelName>_<field>`), no `namespace X;` line is written (the
+   * caller wraps the output in a `namespace X { ... }` block), and a reference field is typed by `referenceType`.
+   * Absent: the stand-alone path, untouched.
+   */
+  closureMember?: ClosureMemberOptions;
+}
+
+export interface ClosureMemberOptions {
+  /** The model's name in the closure (already a valid, closure-unique identifier). */
+  modelName: string;
+  /**
+   * The TypeSpec type of a reference field (or of an array / map member): `string` is the qualified model, `null` a
+   * reference whose target is not in the closure (generated as `unknown`, never as a name nothing declares).
+   */
+  referenceType(field: SuperSchemaField): string | null;
+  /** The document uses the name `Enterprise` itself (a namespace segment or model), so classifications ride as extensions. */
+  enterpriseShadowed?: boolean;
 }
 
 /**
@@ -97,11 +117,15 @@ export function generateTypeSpec(model: SuperSchemaModel, options: GenerateTypeS
 
 /** {@link generateTypeSpec} plus a report of everything that could not be expressed faithfully. */
 export function generateTypeSpecWithDiagnostics(
-  model: SuperSchemaModel,
+  standalone: SuperSchemaModel,
   options: GenerateTypeSpecOptions = {}
 ): GeneratedTypeSpec {
+  const member = options.closureMember;
+  const model: SuperSchemaModel = member
+    ? { ...standalone, entity: { ...standalone.entity, name: member.modelName }, namespace: undefined }
+    : standalone;
   const governance = resolveGovernance(model, options);
-  const ctx = createContext(model);
+  const ctx = createContext(model, member?.referenceType);
   const lines: string[] = [...governanceImportLines(model, governance)];
 
   // Emit namespace if present
@@ -331,7 +355,8 @@ interface Governance {
 
 function resolveGovernance(model: SuperSchemaModel, options: GenerateTypeSpecOptions): Governance {
   const enabled = options.governance !== false;
-  return { enabled, enterpriseShadowed: enabled && declaresOrReferencesEnterprise(model) };
+  const shadowed = options.closureMember?.enterpriseShadowed === true || declaresOrReferencesEnterprise(model);
+  return { enabled, enterpriseShadowed: enabled && shadowed };
 }
 
 /**
@@ -365,6 +390,7 @@ function governanceImportLines(model: SuperSchemaModel, governance: Governance):
     if (model.entity.metadata?.tags && model.entity.metadata.tags.length > 0) used.add("openapi");
     for (const field of model.fields) {
       if (field.classification) used.add(classificationDecorator(field.classification, governance.enterpriseShadowed).library);
+      if (fieldPin(field) !== undefined) used.add("openapi");
     }
   }
   // Generic extension passthrough is not a governance feature: it needs both libraries whatever the flag.
@@ -432,6 +458,8 @@ interface GenContext {
   hasNoEnumValues(field: SuperSchemaField): boolean;
   /** True when the document declares a union of this (sanitized) name. */
   declaresUnion(name: string): boolean;
+  /** Closure member only: the type of a reference field / member (`null`: not in the closure). Absent on the stand-alone path. */
+  referenceType?(field: SuperSchemaField): string | null;
 }
 
 /**
@@ -439,7 +467,7 @@ interface GenContext {
  * identically (`a-b` / `a_b`, or two non-ASCII names) would declare the same enum twice, so a later one gets a
  * numeric suffix. A shared enum of exactly that name is reused instead of redeclared.
  */
-function createContext(model: SuperSchemaModel): GenContext {
+function createContext(model: SuperSchemaModel, referenceType?: (field: SuperSchemaField) => string | null): GenContext {
   const diagnostics: GeneratorDiagnostic[] = [];
   const entityName = model.entity.name;
 
@@ -474,6 +502,7 @@ function createContext(model: SuperSchemaModel): GenContext {
   return {
     entityName,
     diagnostics,
+    ...(referenceType ? { referenceType } : {}),
     enumNameOf: (field) => names.get(field) ?? `${sanitizeIdentifier(entityName)}_${sanitizeIdentifierSegment(field.name)}`,
     // An enum without symbols is never declared (see generateFieldDefinition for how the field fails loudly).
     declaresInlineEnum: (field) => !reused.has(field) && (inlineValues.get(field)?.length ?? 0) > 0,
@@ -757,6 +786,17 @@ function generateFieldDefinition(
 // Field decorators
 // ---------------------------------------------------------------------------
 
+/** The version a reference field (or an array / map of references) is pinned to; undefined when unpinned or not a reference. */
+function fieldPin(field: SuperSchemaField): string | undefined {
+  if (isDanglingField(field)) return undefined;
+  const memberIsReference =
+    field.type === "reference" ||
+    (field.type === "array" && field.complexType?.arrayElementType === "reference") ||
+    (field.type === "map" && field.complexType?.mapValueType === "reference");
+  const reference = memberIsReference ? field.complexType?.reference : undefined;
+  return reference && !("legacyName" in reference) ? reference.pinnedVersion : undefined;
+}
+
 function generateFieldDecorators(field: SuperSchemaField, governance: Governance): string[] {
   const decorators: string[] = [];
 
@@ -896,6 +936,10 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
     decorators.push(classificationDecorator(field.classification, governance.enterpriseShadowed).line);
   }
 
+  // Reference version pin: SuperSchema metadata of the canonical source, never part of an emission projection.
+  const pin = fieldPin(field);
+  if (governance.enabled && pin !== undefined) decorators.push(pinDecorator(pin));
+
   // Generic vendor extensions (unknown JSON Schema keys etc.) — a JsonSchema + OpenAPI pair per key.
   decorators.push(...genericExtensionDecorators(field.decorators.typespec?.extensions?.openapi));
 
@@ -932,6 +976,7 @@ function resolveCollectionMemberType(
   ctx: GenContext
 ): string {
   if (memberType === "reference") {
+    if (ctx.referenceType && field.complexType?.referencedEntityName) return ctx.referenceType(field) ?? "unknown";
     const refName = field.complexType?.referencedEntityName;
     return refName ? sanitizeIdentifier(refName) : "string";
   }
@@ -988,6 +1033,7 @@ function resolveTypeSpecType(
     }
     case "reference": {
       const refName = field.complexType?.referencedEntityName;
+      if (refName && ctx.referenceType) return ctx.referenceType(field) ?? "unknown";
       if (refName) {
         return sanitizeIdentifier(refName);
       }

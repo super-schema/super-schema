@@ -12,6 +12,7 @@
  *   S  typespec.wireFormat.{encode,encodeSubType}, typespec.documentation.{summary,deprecated}, typespec.visibility
  *   S  typespec.extensions.openapi (the generic `@extension` entries)       P  other extension buckets (xml, ...)
  *   S  danglingRef / referencedEntityName of a dangling field (decoded from the `$ref` / `items` extension the generator writes)
+ *   S  referencedEntityVersion (the reference pin, the `x-super-schema-pin` tag): set from the tag, dropped when the tag is gone
  *   S  arrayElementType when the source names one                          P  otherwise, while the type is unchanged
  *   S  governance.{classification,pii,retentionPolicy,anonymization,qualityRule,sourceMapping,avroLogicalType,avroOrder,
  *      partitionHint,indexHint,clusterHint,deprecation} (compiled path only: that path reads them from the real decorators)
@@ -339,6 +340,11 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
   }
   if (mapped.arrayElementType) out.arrayElementType = mapped.arrayElementType;
   else if (mapped.type !== "array") delete out.arrayElementType;
+
+  // --- reference version pin: source-owned (the `x-super-schema-pin` tag is generated from it and read back) ---
+  const pin = source.decorators.referencedEntityVersion;
+  if (typeof pin === "string" && pin !== "") setOwn(out, "referencedEntityVersion", pin);
+  else delete out.referencedEntityVersion;
 
   // --- classification ---
   const governanceInfo = opts.governance;

@@ -41,6 +41,19 @@ export const ENTERPRISE_NAMESPACE = "Enterprise";
 
 export const CLASSIFICATION_EXTENSION_KEY = "x-classification";
 export const TAGS_EXTENSION_KEY = "x-tags";
+/**
+ * The reference version pin (multi-entity emission). A pin is SuperSchema-level metadata - which published version of a
+ * referenced entity a field resolves to - so it belongs to this family and is NEVER emitted into a target schema: it is
+ * written only with the governance overlay (the canonical stored source) and absent from every emission projection
+ * (`governance: false`), exactly like `x-classification` / `x-tags`.
+ *
+ * Why an `extension` key and not a bare `@superSchemaPin("1.2")` decorator: an undeclared decorator is a compile error
+ * ("Unknown decorator") in the canonical source, which is compiled as is (Source tab, publish gate), and declaring one
+ * would need a JS implementation in the enterprise package. `@TypeSpec.OpenAPI.extension` targets `unknown`, is already
+ * imported wherever the overlay is, and the parsers already consume this family. Written:
+ * `@TypeSpec.OpenAPI.extension("x-super-schema-pin", "1.2")` on the reference property (scalar, array or map of references).
+ */
+export const PIN_EXTENSION_KEY = "x-super-schema-pin";
 
 /** Members of `enum Enterprise.DataClassification`. */
 type EnterpriseDataClassification = "Public" | "Internal" | "PII" | "FINANCIAL" | "Confidential" | "Restricted";
@@ -123,6 +136,11 @@ export function sourceShadowsEnterprise(source: string): boolean {
 export function tagsDecorator(tags: string[]): string {
   const values = tags.map((t) => `"${escapeTypeSpecString(t)}"`).join(", ");
   return `@TypeSpec.OpenAPI.extension("${TAGS_EXTENSION_KEY}", #[${values}])`;
+}
+
+/** The property decorator line carrying a reference's version pin (see {@link PIN_EXTENSION_KEY}). */
+export function pinDecorator(version: string): string {
+  return `@TypeSpec.OpenAPI.extension("${PIN_EXTENSION_KEY}", "${escapeTypeSpecString(version)}")`;
 }
 
 const TYPESPEC_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -359,7 +377,7 @@ export function parseExtensionArguments(inner: string): { key: string; value: un
 }
 
 /** Keys with their own dedicated decorator path; never emitted as generic extensions. */
-const RESERVED_EXTENSION_KEYS: readonly string[] = [TAGS_EXTENSION_KEY, CLASSIFICATION_EXTENSION_KEY];
+const RESERVED_EXTENSION_KEYS: readonly string[] = [TAGS_EXTENSION_KEY, CLASSIFICATION_EXTENSION_KEY, PIN_EXTENSION_KEY];
 
 /** Extensions that pass through generically (everything but the keys with their own path). */
 export function genericExtensionEntries(extensions: Record<string, unknown> | undefined): [string, unknown][] {

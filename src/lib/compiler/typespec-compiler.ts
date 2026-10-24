@@ -37,6 +37,7 @@ import { assertTypeSpecImportsAllowed, TypeSpecImportGuardError } from "@/lib/ty
 import * as gov from "@superschema/typespec-enterprise";
 import {
   CLASSIFICATION_EXTENSION_KEY,
+  PIN_EXTENSION_KEY,
   TAGS_EXTENSION_KEY,
   MAX_LITERAL_DEPTH,
   LiteralSyntaxError,
@@ -220,6 +221,10 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
           break;
         }
         if (s0 === TAGS_EXTENSION_KEY) break;
+        if (s0 === PIN_EXTENSION_KEY) {
+          if (typeof args[1] === "string" && args[1] !== "") d.referencedEntityVersion = args[1];
+          break;
+        }
         // @extension / @TypeSpec.JsonSchema.extension / @TypeSpec.OpenAPI.extension ("x-key", value): the
         // value keeps its JSON shape; the emitted JsonSchema + OpenAPI pair for one key collapses to one entry.
         if (s0) {

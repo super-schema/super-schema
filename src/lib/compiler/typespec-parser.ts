@@ -13,6 +13,7 @@
 import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
 import {
   CLASSIFICATION_EXTENSION_KEY,
+  PIN_EXTENSION_KEY,
   TAGS_EXTENSION_KEY,
   classificationFromEnterpriseMember,
   parseExtensionArguments,
@@ -46,6 +47,8 @@ export interface ParsedTypeSpecDecorators {
    * `x-classification` extension (Story 16.6). The legacy `@tag` form stays in `tag`.
    */
   classification?: string;
+  /** A reference field's version pin, from the `x-super-schema-pin` extension (never a generic extension). */
+  referencedEntityVersion?: string;
   summary?: string;
   minItems?: number;
   maxItems?: number;
@@ -600,6 +603,11 @@ const CLASSIFICATION_EXTENSION_LINE = new RegExp(
   String.raw`^${EXTENSION_DECORATOR}\("${CLASSIFICATION_EXTENSION_KEY}"\s*,\s*"((?:[^"\\]|\\.)*)"\)$`
 );
 
+/** `@TypeSpec.OpenAPI.extension("x-super-schema-pin", "1.2")` (qualified or bare) → the escaped version. */
+const PIN_EXTENSION_LINE = new RegExp(
+  String.raw`^${EXTENSION_DECORATOR}\("${PIN_EXTENSION_KEY}"\s*,\s*"((?:[^"\\]|\\.)*)"\)$`
+);
+
 /** Bare, JsonSchema- or OpenAPI-qualified `extension` decorator call; group 1 is the argument text. */
 const GENERIC_EXTENSION_LINE = /^@(?:TypeSpec\.)?(?:(?:JsonSchema|OpenAPI)\.)?extension\((.*)\)$/;
 
@@ -611,7 +619,7 @@ function parseGenericExtensionLine(line: string): { key: string; value: unknown 
   const m = line.match(GENERIC_EXTENSION_LINE);
   if (!m) return undefined;
   const args = parseExtensionArguments(m[1]);
-  if (!args || args.key === TAGS_EXTENSION_KEY || args.key === CLASSIFICATION_EXTENSION_KEY) return undefined;
+  if (!args || args.key === TAGS_EXTENSION_KEY || args.key === CLASSIFICATION_EXTENSION_KEY || args.key === PIN_EXTENSION_KEY) return undefined;
   return args;
 }
 
@@ -1104,6 +1112,13 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
   const classificationExtMatch = line.match(CLASSIFICATION_EXTENSION_LINE);
   if (classificationExtMatch) {
     return { decorators: { classification: unescapeTypeSpecString(classificationExtMatch[1]) } };
+  }
+
+  // @TypeSpec.OpenAPI.extension("x-super-schema-pin", "1.2") - a reference's version pin
+  const pinMatch = line.match(PIN_EXTENSION_LINE);
+  if (pinMatch) {
+    const version = unescapeTypeSpecString(pinMatch[1]);
+    return version ? { decorators: { referencedEntityVersion: version } } : null;
   }
 
   // @extension("key", value) / @TypeSpec.JsonSchema.extension(...) / @TypeSpec.OpenAPI.extension(...)

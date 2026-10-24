@@ -195,6 +195,28 @@ function unionInfo(decorators: Record<string, unknown>): Pick<ComplexTypeInfo, "
   };
 }
 
+/**
+ * The validated reference identity of an array / map whose members are references, so closure emission can type the
+ * member with the qualified model and carry a pin. Only added for a reference member and only the keys that are set,
+ * so every other array / map compiles to exactly the shape it always did.
+ */
+function collectionReferenceInfo(
+  decorators: Record<string, unknown>,
+  memberKey: "arrayElementType" | "mapValueType"
+): Partial<ComplexTypeInfo> {
+  if (decorators[memberKey] !== "reference") return {};
+  const out: Partial<ComplexTypeInfo> = {};
+  const id = asString(decorators.referencedEntityId);
+  const qualified = asString(decorators.referencedQualifiedName);
+  const version = asString(decorators.referencedEntityVersion);
+  const reference = readFieldReference(decorators);
+  if (id) out.referencedEntityId = id;
+  if (qualified) out.referencedQualifiedName = qualified;
+  if (version) out.referencedEntityVersion = version;
+  if (reference) out.reference = reference;
+  return out;
+}
+
 function extractComplexTypeInfo(
   type: string,
   decorators: Record<string, unknown>
@@ -207,6 +229,7 @@ function extractComplexTypeInfo(
         arrayElementScale: (decorators.arrayElementScale as number) ?? undefined,
         // Target entity when the array holds references (items: { $ref }).
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
+        ...collectionReferenceInfo(decorators, "arrayElementType"),
         enumValues: stringArray(decorators.enumValues),
         ...unionInfo(decorators),
       };
@@ -216,6 +239,7 @@ function extractComplexTypeInfo(
         mapValueType: (decorators.mapValueType as string) ?? undefined,
         // Target entity when the map values are references.
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
+        ...collectionReferenceInfo(decorators, "mapValueType"),
         enumValues: stringArray(decorators.enumValues),
       };
     case "object":
