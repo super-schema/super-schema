@@ -5,6 +5,7 @@ import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import {
   TENANT_PLACEHOLDER,
+  holdsEntityReference,
   qualifiedName,
   readFieldReference,
   type EntityRef,
@@ -321,6 +322,9 @@ export async function loadReferenceClosure(
     const current = entities[i];
     const edges: Edge[] = [];
     for (const field of current.fields) {
+      // Only a field that IS a reference (or an array / map of them) points at an entity: the `referenced*` keys left on a field that was
+      // retyped are stale data and must not keep the old target in the closure (nor fail it with its pin).
+      if (!holdsEntityReference(field.type, field.decorators)) continue;
       const fieldRef = readFieldReference(field.decorators);
       if (!fieldRef) continue;
       const resolved = resolveTarget(index, fieldRef);

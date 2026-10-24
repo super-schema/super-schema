@@ -39,9 +39,34 @@ describe("collectReferencedEntityIds", () => {
   it("tolerates malformed metadata and decorators", () => {
     expect(collectReferencedEntityIds("order", [{ id: "f1", decorators: null }], { relationships: "nope" })).toEqual([]);
   });
+
+  it("ignores the stale reference keys of a field that is no longer a reference (when it says its type)", () => {
+    const stale = { referencedEntityId: "old-target", referencedEntityVersion: "9.9" };
+    const fields = [
+      { id: "f1", type: "string", decorators: stale },
+      { id: "f2", type: "array", decorators: { arrayElementType: "string", ...stale } },
+      { id: "f3", type: "reference", decorators: { referencedEntityId: "customer" } },
+      { id: "f4", type: "array", decorators: { arrayElementType: "reference", referencedEntityId: "address" } },
+      { id: "f5", type: "map", decorators: { mapValueType: "reference", referencedEntityId: "money" } },
+    ];
+    expect(collectReferencedEntityIds("order", fields, null)).toEqual(["address", "customer", "money"]);
+  });
+
+  it("a field that does not say its type counts as before", () => {
+    expect(collectReferencedEntityIds("order", [{ id: "f1", decorators: { referencedEntityId: "x" } }], null)).toEqual(["x"]);
+  });
 });
 
 describe("collectReferencedEntityNames", () => {
+  it("ignores a stale name on a field that is no longer a reference", () => {
+    const fields = [
+      { id: "f1", type: "string", decorators: { referencedEntityName: "Gone" } },
+      { id: "f2", type: "reference", decorators: { referencedEntityName: "Customer" } },
+      { id: "f3", type: "map", decorators: { mapValueType: "reference", referencedEntityName: "Money" } },
+    ];
+    expect(collectReferencedEntityNames(fields)).toEqual(["Customer", "Money"]);
+  });
+
   it("returns names only for references that carry no entity id", () => {
     const fields = [
       { id: "f1", decorators: { referencedEntityName: "Customer" } },

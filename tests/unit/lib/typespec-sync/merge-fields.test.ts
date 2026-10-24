@@ -168,6 +168,32 @@ describe("preserved keys", () => {
     expect(mergeSyncedField(arr, src({ type: "array" })).decorators.arrayElementType).toBe("Customer");
   });
 
+  it("a reference retyped in the source loses its id and qualified name too, not only its name (and the pin)", () => {
+    const stored = { referencedEntityId: "e1", referencedEntityName: "Customer", referencedQualifiedName: "d/p/Customer", referencedEntityVersion: "1.0", keep: 1 };
+    const existing = row({ type: "reference", decorators: { ...stored } });
+    const m = mergeSyncedField(existing, src({ type: "string" }));
+    expect(m.decorators).toMatchObject({ keep: 1 });
+    for (const key of ["referencedEntityId", "referencedEntityName", "referencedQualifiedName", "referencedEntityVersion"]) {
+      expect(m.decorators, key).not.toHaveProperty(key);
+    }
+  });
+
+  it("an array whose element moved off the reference loses its id and qualified name too", () => {
+    const existing = row({
+      type: "array",
+      decorators: { arrayElementType: "reference", referencedEntityId: "e1", referencedEntityName: "Customer", referencedQualifiedName: "d/p/Customer" },
+    });
+    const edit = mergeSyncedField(existing, src({ type: "array", arrayElementType: "Order" }));
+    expect(edit.decorators).not.toHaveProperty("referencedEntityId");
+    expect(edit.decorators).not.toHaveProperty("referencedQualifiedName");
+  });
+
+  it("a reference that stays the same reference keeps its id and qualified name", () => {
+    const decorators = { referencedEntityId: "e1", referencedEntityName: "Customer", referencedQualifiedName: "d/p/Customer" };
+    const existing = row({ type: "reference", decorators: { ...decorators } });
+    expect(mergeSyncedField(existing, src({ type: "Customer" })).decorators).toEqual(decorators);
+  });
+
   it("a resolved reference read back as the bare model name (the real parser output) keeps type and target", () => {
     const existing = row({ type: "reference", decorators: { referencedEntityName: "Customer", governance: { dataCategory: "c" } } });
     for (const type of ["Customer", "Customer | null", "null | Customer"]) {

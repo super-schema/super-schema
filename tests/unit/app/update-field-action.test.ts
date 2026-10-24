@@ -193,10 +193,10 @@ describe("updateFieldAction clears the dangling-reference marker when the field 
   const DANGLING = { ...OWN_FIELD, type: "reference", decorators: { referencedEntityName: "date_time", danglingRef: { ref: "common/date_time.json" }, semantics: { description: "when" } } };
   const written = () => mockPrisma.field.update.mock.calls[0][0].data as { decorators?: Record<string, unknown> };
 
-  it("a type change away from reference removes the marker and keeps every other decorator", async () => {
+  it("a type change away from reference removes the marker and the reference, and keeps every other decorator", async () => {
     mockPrisma.field.findUnique.mockResolvedValue(DANGLING);
     expect(await update("fld-1", { type: "string" })).toEqual({ success: true });
-    expect(written().decorators).toEqual({ referencedEntityName: "date_time", semantics: { description: "when" } });
+    expect(written().decorators).toEqual({ semantics: { description: "when" } });
   });
 
   it("a changed reference target removes the marker", async () => {
@@ -209,5 +209,54 @@ describe("updateFieldAction clears the dangling-reference marker when the field 
     mockPrisma.field.findUnique.mockResolvedValue(DANGLING);
     await update("fld-1", { description: "new" });
     expect(written()).not.toHaveProperty("decorators");
+  });
+});
+
+describe("updateFieldAction drops the reference (target, id, pin) of a field that is no longer one", () => {
+  const PINNED = {
+    ...OWN_FIELD,
+    type: "reference",
+    decorators: {
+      referencedEntityId: "e-addr", referencedEntityName: "Address", referencedQualifiedName: "Billing/Core/Address",
+      referencedEntityVersion: "1.2", semantics: { description: "where" },
+    },
+  };
+  const written = () => mockPrisma.field.update.mock.calls[0][0].data as { type?: string; decorators?: Record<string, unknown> };
+
+  it("the quick editor's save (the whole decorators object, type changed to string): no target, no id, no pin on the stored field", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue(PINNED);
+    expect(await update("fld-1", { type: "string", decorators: { ...PINNED.decorators, typespec: {} } })).toEqual({ success: true });
+    expect(written().type).toBe("string");
+    expect(written().decorators).toEqual({ semantics: { description: "where" }, typespec: {} });
+  });
+
+  it("an array of references whose elements become strings loses it, while one that stays an array of references keeps it", async () => {
+    const list = { ...OWN_FIELD, type: "array", decorators: { arrayElementType: "reference", referencedEntityId: "e-addr", referencedEntityVersion: "1.2" } };
+    mockPrisma.field.findUnique.mockResolvedValue(list);
+    await update("fld-1", { decorators: { arrayElementType: "string", referencedEntityId: "e-addr", referencedEntityVersion: "1.2" } });
+    expect(written().decorators).toEqual({ arrayElementType: "string" });
+
+    vi.clearAllMocks();
+    mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+    mockPrisma.field.update.mockResolvedValue({ id: "fld-1" });
+    mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+    mockPrisma.field.findUnique.mockResolvedValue(list);
+    await update("fld-1", { description: "still a list of references" });
+    expect(written()).not.toHaveProperty("decorators");
+  });
+
+  it("re-pointing a pinned reference at another entity drops the old pin that the client carried along", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue(PINNED);
+    await update("fld-1", {
+      decorators: { ...PINNED.decorators, referencedEntityId: "e-money", referencedEntityName: "Money", referencedQualifiedName: "Billing/Core/Money" },
+    });
+    expect(written().decorators).not.toHaveProperty("referencedEntityVersion");
+    expect(written().decorators).toMatchObject({ referencedEntityId: "e-money" });
+  });
+
+  it("an edit that leaves a pinned reference alone keeps its pin", async () => {
+    mockPrisma.field.findUnique.mockResolvedValue(PINNED);
+    await update("fld-1", { decorators: { ...PINNED.decorators, semantics: { description: "new" } } });
+    expect(written().decorators).toMatchObject({ referencedEntityVersion: "1.2", referencedEntityId: "e-addr" });
   });
 });

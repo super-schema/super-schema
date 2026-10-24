@@ -191,7 +191,7 @@ function generatorWithholds(bucket: string, key: string, value: unknown, mapped:
 }
 
 /** Keys that only mean something for the type they were written for. */
-const TYPE_BOUND_KEYS = ["referencedEntityName", "danglingRef", "enumName", "enumValues", "unionName", "unionMembers", "mapKeyType", "mapValueType"] as const;
+const TYPE_BOUND_KEYS = ["referencedEntityName", "referencedEntityId", "referencedQualifiedName", "danglingRef", "enumName", "enumValues", "unionName", "unionMembers", "mapKeyType", "mapValueType"] as const;
 
 // Governance keys the source owns (deleted when it no longer states them). Everything else in `governance` (dataClass, dataCategory and
 // the format bindings avroFixedSize / protobufFieldNumber / protobufOneofGroup, which the generator never writes) is only overlaid.
@@ -345,6 +345,8 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
   // An array whose element moved off the reference no longer has that target.
   if (existing?.type === "array" && mapped.type === "array" && (existing.decorators as Rec | null)?.arrayElementType === "reference" && mapped.arrayElementType !== "reference") {
     delete out.referencedEntityName;
+    delete out.referencedEntityId;
+    delete out.referencedQualifiedName;
   }
   if (mapped.arrayElementType) out.arrayElementType = mapped.arrayElementType;
   else if (mapped.type !== "array") delete out.arrayElementType;

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadReferenceClosure, type ClosureError } from "@/lib/references/closure";
 import { qualifiedName } from "@/lib/references/entity-reference";
 
-type FieldRow = { id: string; name: string; decorators: Record<string, unknown> };
+type FieldRow = { id: string; name: string; decorators: Record<string, unknown>; type?: string };
 type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[] };
 type EntityRow = {
   id: string;
@@ -22,7 +22,7 @@ const queries = { findMany: [] as Array<{ where: unknown; select: Record<string,
 const toField = (f: FieldRow, i: number) => ({
   id: f.id,
   name: f.name,
-  type: "reference",
+  type: f.type ?? "reference",
   precision: null,
   scale: null,
   nullable: true,
@@ -92,12 +92,15 @@ const qref = (id: string, q: string, ver?: string) => ({
   ...(ver ? { referencedEntityVersion: ver } : {}),
 });
 
-function ent(id: string, over: Partial<EntityRow> = {}, fields: Array<[string, Record<string, unknown>]> = []): EntityRow {
+/** A field of a type other than `reference` (the fixture default): `[name, decorators, type]`. */
+type TypedField = [string, Record<string, unknown>, string?];
+
+function ent(id: string, over: Partial<EntityRow> = {}, fields: TypedField[] = []): EntityRow {
   return {
     id,
     name: id.toUpperCase(),
     tenantId: "t1",
-    fields: fields.map(([name, decorators]) => ({ id: `${id}-${name}`, name, decorators })),
+    fields: fields.map(([name, decorators, type]) => ({ id: `${id}-${name}`, name, decorators, ...(type ? { type } : {}) })),
     versions: [],
     ...over,
   };
@@ -116,6 +119,47 @@ const version = (entityId: string, major: number, minor: number, targets: string
 const names = (r: { entities: Array<{ ref: { entity: string } }> }) => r.entities.map((e) => e.ref.entity);
 
 describe("loadReferenceClosure", () => {
+  describe("a field that is not (or no longer) a reference", () => {
+    it("ignores the stale reference keys of a retyped field: the old target is not in the closure, whatever it would have been", async () => {
+      const db = fakeDb([
+        ent("a", {}, [["was_ref", { ...qref("b", "_tenant/_tenant/B", "9.9") }, "string"]]),
+        // never published and pinned to a version that does not exist: either would fail the closure if the field counted
+        ent("b"),
+      ]);
+      const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
+      expect(r.success && names(r.data)).toEqual(["A"]);
+    });
+
+    it("ignores a stale name-only reference on a plain field (it would be an ambiguous pick for nothing)", async () => {
+      const db = fakeDb([
+        ent("a", {}, [["x", ref("Address"), "integer"]]),
+        ent("x1", { name: "Address", domain: "d1", product: "p1" }),
+        ent("x2", { name: "Address", domain: "d2", product: "p2" }),
+      ]);
+      const r = await loadReferenceClosure(db, "t1", "a", "draft");
+      expect(r.success && names(r.data)).toEqual(["A"]);
+    });
+
+    it("still follows an array of references and a map of references", async () => {
+      const db = fakeDb([
+        ent("a", {}, [
+          ["list", { arrayElementType: "reference", ...ref("B") }, "array"],
+          ["byKey", { mapKeyType: "string", mapValueType: "reference", ...ref("C") }, "map"],
+        ]),
+        ent("b"),
+        ent("c"),
+      ]);
+      const r = await loadReferenceClosure(db, "t1", "a", "draft");
+      expect(r.success && names(r.data)).toEqual(["A", "B", "C"]);
+    });
+
+    it("an array whose elements are not references is not followed, even with a stale target", async () => {
+      const db = fakeDb([ent("a", {}, [["list", { arrayElementType: "string", ...ref("B") }, "array"]]), ent("b")]);
+      const r = await loadReferenceClosure(db, "t1", "a", "draft");
+      expect(r.success && names(r.data)).toEqual(["A"]);
+    });
+  });
+
   it("returns a chain A -> B -> C in order, root first", async () => {
     const db = fakeDb([ent("a", {}, [["b", ref("B")]]), ent("b", {}, [["c", ref("C")]]), ent("c")]);
     const r = await loadReferenceClosure(db, "t1", "a", "draft");

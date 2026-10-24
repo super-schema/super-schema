@@ -37,7 +37,9 @@ describe("decoratorsAfterFieldEdit", () => {
     const next = decoratorsAfterFieldEdit(existing, { type: "string" });
     expect(next).toBeDefined();
     expect(next).not.toHaveProperty("danglingRef");
-    expect(next).toMatchObject({ referencedEntityName: "date_time", semantics: { description: "when" } });
+    // every other key stays; the reference identity of a field that is no longer a reference does not (see "a field that stops being a reference")
+    expect(next).toMatchObject({ semantics: { description: "when" } });
+    expect(next).not.toHaveProperty("referencedEntityName");
   });
 
   it("clears the array-element variant when the array becomes a string array", () => {
@@ -66,6 +68,93 @@ describe("decoratorsAfterFieldEdit", () => {
     expect(decoratorsAfterFieldEdit(plain, { type: "int32" })).toBeUndefined();
     const sent = { semantics: { description: "y" } };
     expect(decoratorsAfterFieldEdit(plain, { decorators: sent })).toBe(sent);
+  });
+});
+
+describe("a field that stops being a reference (decoratorsAfterFieldEdit)", () => {
+  const REFERENCE_KEYS = {
+    referencedEntityId: "e-addr",
+    referencedEntityName: "Address",
+    referencedQualifiedName: "Billing/Core/Address",
+    referencedEntityVersion: "1.2",
+  };
+  const keysOf = (d: Record<string, unknown> | undefined) => Object.keys(d ?? {}).filter((k) => k.startsWith("referenced"));
+
+  it("retyped to a plain type: the reference, its id and its pin are gone, every other key stays", () => {
+    const existing = { type: "reference", decorators: { ...REFERENCE_KEYS, semantics: { description: "x" } } };
+
+    const sent = decoratorsAfterFieldEdit(existing, { type: "string", decorators: { ...REFERENCE_KEYS, semantics: { description: "x" }, typespec: {} } });
+
+    expect(keysOf(sent)).toEqual([]);
+    expect(sent).toMatchObject({ semantics: { description: "x" }, typespec: {} });
+  });
+
+  it("retyped without sending decorators: the stored ones are cleaned and written", () => {
+    const next = decoratorsAfterFieldEdit({ type: "reference", decorators: { ...REFERENCE_KEYS, keep: 1 } }, { type: "int32" });
+
+    expect(keysOf(next)).toEqual([]);
+    expect(next).toMatchObject({ keep: 1 });
+  });
+
+  it("an array whose elements stop being references loses them; an array of references keeps them", () => {
+    const arr = { type: "array", decorators: { arrayElementType: "reference", ...REFERENCE_KEYS } };
+
+    expect(keysOf(decoratorsAfterFieldEdit(arr, { decorators: { arrayElementType: "string", ...REFERENCE_KEYS } }))).toEqual([]);
+    expect(keysOf(decoratorsAfterFieldEdit(arr, { type: "string" }))).toEqual([]);
+    const kept = { arrayElementType: "reference", ...REFERENCE_KEYS, description: "d" };
+    expect(decoratorsAfterFieldEdit(arr, { decorators: kept })).toBe(kept);
+    expect(decoratorsAfterFieldEdit(arr, {})).toBeUndefined();
+  });
+
+  it("a map whose values stop being references loses them; a map of references keeps them", () => {
+    const map = { type: "map", decorators: { mapKeyType: "string", mapValueType: "reference", ...REFERENCE_KEYS } };
+
+    expect(keysOf(decoratorsAfterFieldEdit(map, { decorators: { mapKeyType: "string", mapValueType: "integer", ...REFERENCE_KEYS } }))).toEqual([]);
+    expect(decoratorsAfterFieldEdit(map, {})).toBeUndefined();
+  });
+
+  it("an array that turns into a reference field (or a reference into an array of strings) is judged by what it is NOW", () => {
+    expect(keysOf(decoratorsAfterFieldEdit({ type: "reference", decorators: REFERENCE_KEYS }, { type: "array" }))).toEqual([]);
+    const asReference = decoratorsAfterFieldEdit({ type: "array", decorators: { arrayElementType: "string" } }, { type: "reference", decorators: { ...REFERENCE_KEYS } });
+    expect(keysOf(asReference)).toEqual(Object.keys(REFERENCE_KEYS));
+  });
+
+  it("a reference edited in other ways keeps its reference and its pin", () => {
+    const existing = { type: "reference", decorators: REFERENCE_KEYS };
+    const sent = { ...REFERENCE_KEYS, semantics: { description: "new" } };
+
+    expect(decoratorsAfterFieldEdit(existing, { decorators: sent })).toBe(sent);
+    expect(decoratorsAfterFieldEdit(existing, {})).toBeUndefined();
+  });
+
+  it("changing the TARGET drops the pin of the old one, unless the edit pins something itself", () => {
+    const existing = { type: "reference", decorators: REFERENCE_KEYS };
+    const retargeted = { ...REFERENCE_KEYS, referencedEntityId: "e-money", referencedEntityName: "Money", referencedQualifiedName: "Billing/Core/Money" };
+
+    const cleared = decoratorsAfterFieldEdit(existing, { decorators: retargeted });
+    expect(cleared).not.toHaveProperty("referencedEntityVersion");
+    expect(cleared).toMatchObject({ referencedEntityId: "e-money", referencedQualifiedName: "Billing/Core/Money" });
+
+    const repinned = decoratorsAfterFieldEdit(existing, { decorators: { ...retargeted, referencedEntityVersion: "3.0" } });
+    expect(repinned).toMatchObject({ referencedEntityVersion: "3.0" });
+  });
+
+  it("a name-only (legacy) reference retargeted by name drops a pin as well", () => {
+    const existing = { type: "reference", decorators: { referencedEntityName: "Address", referencedEntityVersion: "1.0" } };
+
+    expect(decoratorsAfterFieldEdit(existing, { decorators: { referencedEntityName: "Money", referencedEntityVersion: "1.0" } })).not.toHaveProperty("referencedEntityVersion");
+  });
+
+  it("a field that never was a reference is left alone", () => {
+    const plain = { type: "string", decorators: { semantics: { description: "x" } } };
+    expect(decoratorsAfterFieldEdit(plain, { type: "int32" })).toBeUndefined();
+  });
+
+  it("does not pollute the prototype", () => {
+    const decorators = JSON.parse('{"__proto__": {"polluted": true}, "referencedEntityId": "e1"}');
+    const next = decoratorsAfterFieldEdit({ type: "reference", decorators }, { type: "string", decorators });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(keysOf(next)).toEqual([]);
   });
 });
 

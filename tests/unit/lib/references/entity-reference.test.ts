@@ -5,8 +5,48 @@ import {
   readFieldReference,
   writeFieldReference,
   applyReferencePick,
+  holdsEntityReference,
+  withoutReferenceKeys,
+  REFERENCE_DECORATOR_KEYS,
   type EntityRef,
 } from "@/lib/references/entity-reference";
+
+describe("holdsEntityReference (does a field of this type carry an entity reference?)", () => {
+  it("a reference field does; so does an array of references and a map of references", () => {
+    expect(holdsEntityReference("reference", {})).toBe(true);
+    expect(holdsEntityReference("array", { arrayElementType: "reference" })).toBe(true);
+    expect(holdsEntityReference("map", { mapKeyType: "string", mapValueType: "reference" })).toBe(true);
+  });
+
+  it("nothing else does, whatever its decorators still hold", () => {
+    const stale = { referencedEntityId: "e1", referencedEntityName: "Address", referencedQualifiedName: "a/b/Address" };
+    expect(holdsEntityReference("string", stale)).toBe(false);
+    expect(holdsEntityReference("array", { ...stale, arrayElementType: "string" })).toBe(false);
+    expect(holdsEntityReference("array", stale)).toBe(false);
+    expect(holdsEntityReference("map", { ...stale, mapValueType: "integer" })).toBe(false);
+    // a map KEY of reference type is not a reference to an entity
+    expect(holdsEntityReference("map", { ...stale, mapKeyType: "reference", mapValueType: "string" })).toBe(false);
+  });
+
+  it("a caller that does not know the type gets the answer it always had: yes", () => {
+    expect(holdsEntityReference(undefined, { referencedEntityId: "e1" })).toBe(true);
+  });
+
+  it("reads own properties of anything that is not a plain object as no element type", () => {
+    for (const bad of [null, undefined, "x", 3, []]) expect(holdsEntityReference("array", bad)).toBe(false);
+    expect(holdsEntityReference("array", Object.create({ arrayElementType: "reference" }))).toBe(false);
+  });
+});
+
+describe("withoutReferenceKeys", () => {
+  it("drops the reference identity, id and pin, keeps every other key, and returns a copy", () => {
+    const decorators = { referencedEntityId: "e", referencedEntityName: "A", referencedQualifiedName: "a/b/A", referencedEntityVersion: "1.0", semantics: { description: "x" }, arrayElementType: "string" };
+    const out = withoutReferenceKeys(decorators);
+    expect(Object.keys(out).sort()).toEqual(["arrayElementType", "semantics"]);
+    expect(out).not.toBe(decorators);
+    expect([...REFERENCE_DECORATOR_KEYS].sort()).toEqual(["referencedEntityId", "referencedEntityName", "referencedEntityVersion", "referencedQualifiedName"]);
+  });
+});
 
 describe("entity-reference", () => {
   it("qualifiedName joins domain/product/entity with _tenant placeholders", () => {

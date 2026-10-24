@@ -1,8 +1,11 @@
 import { inSameLine } from "@/services/name-registry.service";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
+import { holdsEntityReference } from "@/lib/references/entity-reference";
 
 export interface ReferenceSourceField {
   id: string;
+  /** The field's type. When given, a field that holds no entity reference (a retyped one) is skipped; absent: every field counts. */
+  type?: string;
   decorators: unknown;
 }
 
@@ -29,6 +32,7 @@ export function collectReferencedEntityIds(
   const fieldIds = new Set(fields.map((f) => f.id));
 
   for (const field of fields) {
+    if (!holdsEntityReference(field.type, field.decorators)) continue;
     const target = nonBlank(asRecord(field.decorators).referencedEntityId);
     if (target) ids.add(target);
   }
@@ -61,6 +65,7 @@ export function collectReferencedEntityIds(
 export function collectReferencedEntityNames(fields: ReferenceSourceField[]): string[] {
   const byKey = new Map<string, string>();
   for (const field of fields) {
+    if (!holdsEntityReference(field.type, field.decorators)) continue;
     const decorators = asRecord(field.decorators);
     if (nonBlank(decorators.referencedEntityId)) continue;
     const name = nonBlank(decorators.referencedEntityName);
