@@ -77,6 +77,14 @@ describe("buildDecoratorsFromParsedField — multi-entity import metadata", () =
     expect(fixed.governance).toEqual({ avroFixedSize: 16 });
   });
 
+  it("writes only the name for a reference (no qualified/id/version keys invented)", () => {
+    const decorators = buildDecoratorsFromParsedField(field({ type: "reference", referencedEntityName: "Address" }));
+    expect(decorators.referencedEntityName).toBe("Address");
+    for (const k of ["referencedEntityId", "referencedQualifiedName", "referencedEntityVersion"]) {
+      expect(k in decorators).toBe(false);
+    }
+  });
+
   it("adds no new keys for a plain field", () => {
     const decorators = buildDecoratorsFromParsedField(field({}));
     expect(decorators).toEqual({});

@@ -51,4 +51,19 @@ describe("entity-reference", () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(readFieldReference(JSON.parse('{"__proto__": {"referencedQualifiedName": "a/b/c"}}'))).toBeUndefined();
   });
+
+  it("keeps the prototype intact and an own __proto__ key on write", () => {
+    const decorators = JSON.parse('{"__proto__": {"polluted": true}}');
+    const out = writeFieldReference(decorators, { domain: "d", product: "p", entity: "E" });
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(out, "__proto__")).toBe(true);
+    expect(out.polluted).toBeUndefined();
+  });
+
+  it("falls back to legacy when the qualified name is malformed", () => {
+    expect(readFieldReference({ referencedQualifiedName: "a/b", referencedEntityName: "Address" })).toEqual({
+      legacyName: "Address",
+    });
+    expect(readFieldReference({ referencedQualifiedName: "a/b" })).toBeUndefined();
+  });
 });

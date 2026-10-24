@@ -22,6 +22,11 @@ import type {
   SuperSchemaUnionType,
 } from "@/types/super-schema-model";
 import { ALL_DATA_TYPES } from "@/lib/data-types";
+import { readFieldReference } from "@/lib/references/entity-reference";
+
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Input shapes — match Prisma's output without importing Prisma
@@ -221,10 +226,11 @@ function extractComplexTypeInfo(
       };
     case "reference":
       return {
-        referencedEntityId: (decorators.referencedEntityId as string) ?? undefined,
-        referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
-        referencedQualifiedName: (decorators.referencedQualifiedName as string) ?? undefined,
-        referencedEntityVersion: (decorators.referencedEntityVersion as string) ?? undefined,
+        referencedEntityId: asString(decorators.referencedEntityId),
+        referencedEntityName: asString(decorators.referencedEntityName),
+        referencedQualifiedName: asString(decorators.referencedQualifiedName),
+        referencedEntityVersion: asString(decorators.referencedEntityVersion),
+        reference: readFieldReference(decorators),
       };
     case "union":
       return unionInfo(decorators);
