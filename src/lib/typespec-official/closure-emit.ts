@@ -271,7 +271,7 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
   const base = { warnings, errors, options: buildEmitterOptions(key, "closure") };
   switch (key) {
     case "json-schema":
-      return { ...base, ...jsonSchemaPlan(generated) };
+      return { ...base, ...jsonSchemaPlan(generated, places) };
     case "openapi3":
       return { ...base, ...openApiPlan(generated, places) };
     case "protobuf": {
@@ -298,7 +298,10 @@ function cycleGroups(closure: Closure): string[][] {
     const label = qualifiedName(e.ref);
     byLabel.set(label, [...(byLabel.get(label) ?? []), e.entityId]);
   }
-  return closure.cycles.filter((group) => group.length > 1).map((group) => [...new Set(group.flatMap((label) => byLabel.get(label) ?? []))]);
+  return closure.cycles
+    .filter((group) => group.length > 1)
+    .map((group) => [...new Set(group.flatMap((label) => byLabel.get(label) ?? []))])
+    .filter((ids) => ids.length > 1);
 }
 
 const stripRoot = (namespace: string): string =>
@@ -339,22 +342,28 @@ function decorateBlocks(source: string, decorators: (namespace: string) => strin
 
 // JSON Schema ----------------------------------------------------------------
 
-function jsonSchemaPlan(generated: ClosureTypeSpec): Pick<Plan, "source" | "attribute"> {
+function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "verify"> {
   // One `<Name>.json` per declaration: the model and each enum / union / scalar its block declares.
   const owner = new Map<string, string>();
   for (const [entityId, names] of generated.declarations) for (const name of names) if (!owner.has(name)) owner.set(name, entityId);
+  const stemOf = (path: string): string => (path.split("/").pop() ?? path).replace(/\.json$/, "");
   return {
     source: generated.source,
     attribute: (file) => {
-      const entityId = owner.get((file.path.split("/").pop() ?? file.path).replace(/\.json$/, ""));
+      const entityId = owner.get(stemOf(file.path));
       return entityId === undefined ? null : { entityId };
     },
+    // Every entity's model must have its file: an emitter that skipped one must not pass as a smaller, "valid" set.
+    verify: (files) =>
+      places
+        .filter((p) => !files.some((f) => f.entityId === p.entityId && stemOf(f.path) === p.modelName))
+        .map((p) => `The JSON Schema emitter wrote no file for ${p.entityName}.`),
   };
 }
 
 // OpenAPI 3 ------------------------------------------------------------------
 
-function openApiPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute"> {
+function openApiPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "verify"> {
   const first = firstByNamespace(places);
   // `@service` makes each entity's namespace its own document. `@friendlyName` names every schema by its declaration, because
   // a schema from another namespace would otherwise be keyed by its namespace-qualified name (root segment included).
@@ -381,6 +390,11 @@ function openApiPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "s
       const place = first.get(namespace);
       return place ? { entityId: place.entityId, path: `openapi.${stripRoot(namespace)}.${named[2]}` } : null;
     },
+    // Every service (one per namespace) must have its document.
+    verify: (files) =>
+      [...first.values()]
+        .filter((p) => !files.some((f) => f.entityId === p.entityId))
+        .map((p) => `The OpenAPI emitter wrote no document for ${p.entityName}.`),
   };
 }
 

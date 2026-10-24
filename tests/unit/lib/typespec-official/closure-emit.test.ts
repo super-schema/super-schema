@@ -10,12 +10,13 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 
 // The real TypeSpec compiler / emitters run here; under load the 5 s default is too tight.
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 120_000 });
 vi.mock("@/lib/db", () => ({ prisma: {} }));
 
 import type { PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import type { ClosureEntity, ReferenceClosure } from "@/lib/references/closure";
 import { writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
+import { supportsClosureEmission } from "@/lib/schema-targets/catalog";
 import { bundleEmittedFiles, emitClosure, filesForEntity, type EmittedFile } from "@/lib/typespec-official/closure-emit";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 
@@ -74,7 +75,7 @@ const byPath = (files: EmittedFile[], suffix: string): EmittedFile => {
 describe("three-entity closure, one file per entity on every target", () => {
   const out = {} as Record<(typeof TARGETS)[number], { files: EmittedFile[]; warnings: string[] }>;
   beforeAll(async () => {
-    for (const target of TARGETS) out[target] = await emit(threeEntities(), target);
+    await Promise.all(TARGETS.map(async (target) => { out[target] = await emit(threeEntities(), target); }));
   });
 
   it.each(TARGETS)("%s: three files, tagged with the target, mapped to their entities, sorted by path", (target) => {
@@ -198,6 +199,41 @@ describe("three-entity closure, one file per entity on every target", () => {
   });
 });
 
+describe("entities with enums and shared types", () => {
+  const sharedTypes = { custom: { sharedEnums: [{ name: "Status", values: ["open", "closed"] }], aliases: [{ name: "Tags", type: "string[]" }] } };
+  const closure = () =>
+    closureOf([
+      order(),
+      customer(),
+      member("a", "Sales", "Orders", "Address", [field("city", "string", 1), field("kind", "enum", 2, {}, { aliases: ["home", "in-progress"] })], sharedTypes),
+    ]);
+
+  it.each(TARGETS)("%s: emits one set per entity; every file is mapped to its entity where the target names files after declarations", async (target) => {
+    const { files, warnings } = await emit(closure(), target);
+    expect(text(files)).not.toContain("SuperSchemaClosure");
+    expect(new Set(files.map((f) => f.path)).size).toBe(files.length);
+    if (target === "json-schema") {
+      // the model, the inline enum and the shared enum of Address are each a file, all attributed to Address
+      expect(files.map((f) => f.path)).toEqual(expect.arrayContaining(["Sales_Orders_Address.json", "Sales_Orders_Address_kind.json", "Sales_Orders_Address_Status.json"]));
+      for (const f of files) expect(f.entityId).toBeDefined();
+      expect(filesForEntity(files, "a").length).toBeGreaterThanOrEqual(3);
+    } else if (target === "java-pojo") {
+      // a class per model plus a class per enum, in the entity's package directory
+      expect(files).toHaveLength(5);
+      for (const f of files) expect(f.entityId).toBeDefined();
+      expect(filesForEntity(files, "a").map((f) => f.path)).toEqual([
+        "sales/orders/address/SalesOrdersAddress.java",
+        "sales/orders/address/SalesOrdersAddressKind.java",
+        "sales/orders/address/SalesOrdersAddressStatus.java",
+      ]);
+    } else {
+      expect(files).toHaveLength(3);
+      expect(files.map((f) => f.entityId).sort()).toEqual(["a", "c", "o"]);
+    }
+    if (target === "avro") expect(warnings.some((w) => w.includes("in-progress") && w.includes("in_progress"))).toBe(true);
+  });
+});
+
 describe("same-named entities in two products", () => {
   const closure = () => {
     const customerA = member("c1", "Sales", "Orders", "Customer", [field("name", "string", 1)]);
@@ -309,6 +345,13 @@ describe("a stand-alone entity (one entity, no references) keeps today's content
     const viaFromData = await emitOfficialTypeSpecTargetFromData(e.entity, e.fields, target);
     expect(viaFromData.validationStatus).toBe("VALID");
     expect(viaFromData.output).toBe(bundleEmittedFiles(direct.files));
+  });
+});
+
+describe("the catalog says which targets emit a closure", () => {
+  it("flags exactly the five schema targets, not the DB targets or the multi-file code generators", () => {
+    for (const key of TARGETS) expect(supportsClosureEmission(key)).toBe(true);
+    for (const key of ["postgresql", "spanner", "bigquery", "http-client-js", "nope"]) expect(supportsClosureEmission(key)).toBe(false);
   });
 });
 
