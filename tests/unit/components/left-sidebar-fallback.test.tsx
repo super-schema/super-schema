@@ -3,28 +3,35 @@
 // the browser suite reads `left-sidebar` for the loaded explorer: the two used to share that test id, so for a moment two elements
 // carried it and every locator on the sidebar tripped Playwright's strict mode. The fallback has an id of its own.
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LeftSidebar } from "@/components/layout/LeftSidebar";
 
-/** The search params are not ready until `release()` is called: reading them suspends, as they do on a statically rendered page. */
+/**
+ * The search params are not ready until `release()` is called: reading them suspends, as they do on a statically rendered page. Each test
+ * starts with a pending promise of its own (`reset()` in `beforeEach`), so the tests do not depend on their order: a promise that an
+ * earlier test resolved would make React retry the render at once and never show the fallback.
+ */
 const params = vi.hoisted(() => {
   let ready = false;
+  let pending: Promise<void> = Promise.resolve();
   let release: () => void = () => {};
-  const pending = new Promise<void>((resolve) => {
-    release = () => {
-      ready = true;
-      resolve();
-    };
-  });
+  const reset = () => {
+    ready = false;
+    pending = new Promise<void>((resolve) => {
+      release = () => {
+        ready = true;
+        resolve();
+      };
+    });
+  };
+  reset();
   return {
     read: () => {
       if (!ready) throw pending;
       return new URLSearchParams();
     },
     release: () => release(),
-    reset: () => {
-      ready = false;
-    },
+    reset,
   };
 });
 
@@ -45,10 +52,8 @@ vi.mock("@/hooks/useDomainsTree", () => ({
 const open = { width: 260, isCollapsed: false, onMouseDown: vi.fn(), onDoubleClick: vi.fn() };
 const collapsed = { ...open, isCollapsed: true };
 
-afterEach(() => {
-  cleanup();
-  params.reset();
-});
+beforeEach(() => params.reset());
+afterEach(() => cleanup());
 
 describe("LeftSidebar: the loading fallback has a test id of its own", () => {
   it("shows left-sidebar-fallback, and no left-sidebar, while the explorer is loading", () => {
