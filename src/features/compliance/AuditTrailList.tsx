@@ -98,6 +98,10 @@ export function AuditTrailList({
           return (
             <div
               key={entry.id}
+              data-testid="audit-entry"
+              data-action={entry.action}
+              data-entity-type={entry.entityType}
+              data-entity-id={entry.entityId}
               className="surface-1 border border-border rounded-lg overflow-hidden"
             >
               {/* Header row */}

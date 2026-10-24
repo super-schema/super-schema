@@ -81,6 +81,7 @@ export function GovernanceRequestCard({
   return (
     <div
       data-testid="governance-request-card"
+      data-status={request.status}
       className="rounded-lg border border-border p-4"
       style={{
         background: "rgba(28, 28, 38, 0.8)",
@@ -124,6 +125,8 @@ export function GovernanceRequestCard({
             <div className="flex items-center gap-2">
               <input
                 type="text"
+                data-testid="governance-comment"
+                aria-label="Comment"
                 placeholder={`Optional comment for ${actionType}...`}
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
@@ -134,6 +137,7 @@ export function GovernanceRequestCard({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              data-testid="governance-approve"
               onClick={() => handleAction("approve")}
               className="px-4 py-1.5 rounded text-caption font-medium text-white transition-colors"
               style={{
@@ -149,6 +153,7 @@ export function GovernanceRequestCard({
             </button>
             <button
               type="button"
+              data-testid="governance-reject"
               onClick={() => handleAction("reject")}
               className={`px-4 py-1.5 rounded text-caption font-medium transition-colors ${
                 actionType === "reject" && showComment
@@ -163,6 +168,7 @@ export function GovernanceRequestCard({
             {showComment && (
               <button
                 type="button"
+                data-testid="governance-cancel"
                 onClick={() => {
                   setShowComment(false);
                   setActionType(null);

@@ -78,7 +78,7 @@ export function ComplianceResultsTable({
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="compliance-results-table">
       {/* Result count */}
-      <div className="px-space-4 py-space-2 text-body-small text-muted-foreground">
+      <div data-testid="compliance-result-count" className="px-space-4 py-space-2 text-body-small text-muted-foreground">
         Showing {total > 0 ? `${from}-${to}` : "0"} of {pluralize(total, "field")} matching
         filters
       </div>
@@ -137,6 +137,9 @@ export function ComplianceResultsTable({
               fields.map((field) => (
                 <tr
                   key={field.fieldId}
+                  data-testid="compliance-row"
+                  data-entity={field.entityName}
+                  data-field={field.fieldName}
                   className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
                   onClick={() =>
                     router.push(entityHref(field))

@@ -94,6 +94,8 @@ export function ComplianceFilterSidebar({
           <Search className="w-4 h-4 text-muted-foreground shrink-0" />
           <input
             type="text"
+            data-testid="compliance-filter-search"
+            aria-label="Search entities and fields"
             placeholder="Search entities, fields..."
             value={textSearch}
             onChange={(e) => setTextSearch(e.target.value)}
@@ -143,6 +145,8 @@ export function ComplianceFilterSidebar({
           Retention
         </label>
         <select
+          data-testid="compliance-filter-retention"
+          aria-label="Retention"
           value={filters.retention || "any"}
           onChange={(e) =>
             onFilterChange({
@@ -166,6 +170,8 @@ export function ComplianceFilterSidebar({
           Anonymization
         </label>
         <select
+          data-testid="compliance-filter-anonymization"
+          aria-label="Anonymization"
           value={filters.anonymization || "any"}
           onChange={(e) =>
             onFilterChange({
@@ -189,6 +195,8 @@ export function ComplianceFilterSidebar({
           Encryption
         </label>
         <select
+          data-testid="compliance-filter-encryption"
+          aria-label="Encryption"
           value={filters.encryption || "any"}
           onChange={(e) =>
             onFilterChange({
@@ -236,6 +244,7 @@ export function ComplianceFilterSidebar({
 
       {/* Clear All */}
       <button
+        data-testid="compliance-filter-clear"
         onClick={clearAll}
         className="flex items-center justify-center gap-space-2 text-body-small text-muted-foreground hover:text-foreground border border-border rounded-lg px-space-3 py-1.5 hover:bg-accent/50 transition-colors mt-auto"
       >

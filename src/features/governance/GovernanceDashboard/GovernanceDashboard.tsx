@@ -65,6 +65,8 @@ export function GovernanceDashboard({
             <button
               key={tab.key}
               type="button"
+              data-testid={`governance-tab-${tab.key}`}
+              aria-pressed={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={`px-3 py-1.5 rounded-t text-caption font-medium transition-colors ${
                 activeTab === tab.key
@@ -92,6 +94,8 @@ export function GovernanceDashboard({
             {filteredRequests.map((request) => (
               <div
                 key={request.id}
+                data-testid="governance-request-item"
+                data-request-id={request.id}
                 onClick={() => setSelectedRequestId(request.id)}
                 className={`cursor-pointer rounded-lg transition-colors ${
                   selectedRequestId === request.id

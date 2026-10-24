@@ -147,6 +147,11 @@ export function ComplianceGapsView({
             {gaps.map((gap, i) => (
               <tr
                 key={`${gap.fieldId}-${gap.gapType}-${i}`}
+                data-testid="compliance-gap-row"
+                data-entity={gap.entityName}
+                data-field={gap.fieldName}
+                data-gap={gap.gapType}
+                data-severity={gap.severity}
                 className="border-b border-border/50 hover:bg-accent/30 cursor-pointer transition-colors"
                 onClick={() => router.push(gapHref(gap))}
               >

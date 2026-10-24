@@ -51,6 +51,8 @@ export function AuditTrailFilterBar({
     >
       {/* Action type filter */}
       <select
+        data-testid="audit-filter-action"
+        aria-label="Action"
         value={filters.actionTypes?.[0] || ""}
         onChange={(e) =>
           onFilterChange({
@@ -70,6 +72,8 @@ export function AuditTrailFilterBar({
 
       {/* Entity type filter */}
       <select
+        data-testid="audit-filter-type"
+        aria-label="Entity type"
         value={filters.entityType || ""}
         onChange={(e) =>
           onFilterChange({
@@ -92,6 +96,8 @@ export function AuditTrailFilterBar({
         <Search className="w-3 h-3 text-muted-foreground" />
         <input
           type="text"
+          data-testid="audit-filter-entity"
+          aria-label="Entity name or id"
           placeholder="Entity name..."
           value={entityName}
           onChange={(e) => setEntityName(e.target.value)}
@@ -156,6 +162,7 @@ export function AuditTrailFilterBar({
 
       {/* Export */}
       <button
+        data-testid="audit-export"
         onClick={onExport}
         className="flex items-center gap-space-2 px-space-3 py-1.5 text-body-small border border-border rounded-lg hover:bg-accent/50 transition-colors"
       >
