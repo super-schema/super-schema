@@ -336,3 +336,49 @@ describe("loadReferenceClosure", () => {
     expect(small.success).toBe(false);
   });
 });
+
+// Task 7: what the generate action needs of the loader (who owns an ambiguous field, which legacy references resolved).
+describe("loadReferenceClosure: ambiguity owner and legacy resolutions", () => {
+  it("names the entity and the field row that own an ambiguous reference, also when it sits in a member", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["b", ref("B")]]),
+      ent("b", {}, [["addr", ref("Address")]]),
+      ent("x1", { name: "Address", domain: "d1", product: "p1" }),
+      ent("x2", { name: "Address", domain: "d2", product: "p2" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatchObject({ code: "AMBIGUOUS_REFERENCE", field: "addr", entityId: "b", fieldId: "b-addr" });
+  });
+
+  it("reports a legacy name that resolved to exactly one entity, with the owner, the field row and the qualified target", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["cust", ref("Customer")], ["plain", {}]]),
+      ent("c", { name: "Customer", domain: "Sales", product: "Crm" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.upgrades).toEqual([
+      { entityId: "a", fieldId: "a-cust", fieldName: "cust", ref: { entityId: "c", domain: "Sales", product: "Crm", entity: "Customer" } },
+    ]);
+  });
+
+  it("reports no upgrade for a qualified reference, a dangling one, or published content (a frozen snapshot is never rewritten)", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["q", qref("c", "Sales/Crm/Customer")], ["gone", ref("Nowhere")]]),
+      ent("c", { name: "Customer", domain: "Sales", product: "Crm" }),
+    ]);
+    const draft = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(draft.success && draft.data.upgrades).toEqual([]);
+    const published = await loadReferenceClosure(
+      fakeDb([ent("a", { versions: [version("a", 1, 0, ["C"])], latest: "a-v1.0" }), ent("c", { versions: [version("c", 1, 0, [])], latest: "c-v1.0" })]),
+      "t1",
+      "a",
+      "published"
+    );
+    expect(published.success).toBe(true);
+    expect(published.success && published.data.upgrades).toEqual([]);
+  });
+});

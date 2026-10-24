@@ -28,11 +28,15 @@ export type ClosureEntity = {
 };
 
 export type ClosureError =
-  | { code: "AMBIGUOUS_REFERENCE"; field: string; name: string; candidates: EntityRef[] }
+  /** `entityId` / `fieldId` name the entity and the field row that hold the ambiguous reference (a member of the closure, not always the root): where an explicit pick is written. */
+  | { code: "AMBIGUOUS_REFERENCE"; field: string; name: string; candidates: EntityRef[]; entityId: string; fieldId: string }
   | { code: "PIN_NOT_FOUND"; field: string; ref: EntityRef; version: string }
   | { code: "NEVER_PUBLISHED"; ref: EntityRef }
   | { code: "CLOSURE_TOO_LARGE"; limit: number }
   | { code: "CROSS_TENANT" };
+
+/** A legacy name-only reference (on a live field row) that resolved to exactly one entity: what the qualified form would point at. */
+export type LegacyUpgrade = { entityId: string; fieldId: string; fieldName: string; ref: EntityRef };
 
 export type ReferenceClosure = {
   root: ClosureEntity;
@@ -41,6 +45,12 @@ export type ReferenceClosure = {
   draftEntities: EntityRef[];
   /** Strongly connected groups of size > 1, and self-loops, as sorted qualified names. */
   cycles: string[][];
+  /**
+   * Legacy name-only references found on LIVE field rows (draft source) that resolved to exactly one entity. Reported, never
+   * written: loading stays side-effect free, the caller decides whether to apply `upgradeLegacyReference`. Content read from a
+   * published or pinned snapshot is frozen and never listed.
+   */
+  upgrades: LegacyUpgrade[];
 };
 
 export const DEFAULT_MAX_CLOSURE_ENTITIES = 200;
@@ -251,6 +261,7 @@ export async function loadReferenceClosure(
   const entities: ClosureEntity[] = [];
   const graph = new Map<string, string[]>();
   const seen = new Set<string>();
+  const upgrades: LegacyUpgrade[] = [];
 
   const add = async (e: IndexedEntity, pin: string | undefined, field: string): Promise<Result<Loaded, ClosureError>> => {
     const loaded = await loadContent(db, e, mode, pin, field);
@@ -287,8 +298,13 @@ export async function loadReferenceClosure(
             field: field.name,
             name: resolved.name,
             candidates: resolved.ambiguous.map((c) => c.ref),
+            entityId: current.entityId,
+            fieldId: field.id,
           },
         };
+      }
+      if ("legacyName" in fieldRef && current.source === "draft") {
+        upgrades.push({ entityId: current.entityId, fieldId: field.id, fieldName: field.name, ref: resolved.target.ref });
       }
       const pin = "legacyName" in fieldRef ? undefined : fieldRef.pinnedVersion;
       edges.push({ field: field.name, target: resolved.target, pin });
@@ -314,5 +330,6 @@ export async function loadReferenceClosure(
     entities,
     draftEntities: entities.filter((e) => e.source === "draft").map((e) => e.ref),
     cycles: findCycles(graph, (id) => labels.get(id) ?? id),
+    upgrades,
   });
 }
