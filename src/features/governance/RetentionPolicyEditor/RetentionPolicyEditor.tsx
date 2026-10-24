@@ -80,6 +80,8 @@ export function RetentionPolicyEditor({
   const [action, setAction] = useState<RetentionAction>(currentPolicy?.action ?? "delete");
   const [description, setDescription] = useState<string>(currentPolicy?.description ?? "");
   const [isSaving, setIsSaving] = useState(false);
+  // Why the policy cannot be saved, shown under the form (a refused Save used to do nothing at all).
+  const [error, setError] = useState<string | null>(null);
 
   // Date/timestamp fields for reference field selector
   const dateFields = fields.filter((f) =>
@@ -107,8 +109,13 @@ export function RetentionPolicyEditor({
   async function handleSave() {
     const policy = buildPolicy();
     const parsed = RetentionPolicySchema.safeParse(policy);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      setError(issue?.path[0] === "period" ? "The period must be a number of 1 or more." : (issue?.message ?? "This policy cannot be saved."));
+      return;
+    }
 
+    setError(null);
     setIsSaving(true);
     try {
       await onSave(entityId, parsed.data);
@@ -280,6 +287,12 @@ export function RetentionPolicyEditor({
           className="h-8"
         />
       </div>
+
+      {error && (
+        <p role="alert" data-testid="retention-error" className="text-caption text-destructive">
+          {error}
+        </p>
+      )}
 
       {/* Preview + Save */}
       <div className="flex items-center justify-between pt-space-2 border-t border-border/50">
