@@ -260,9 +260,21 @@ function parseJsonFile(file: EmittedFile): Result<JsonObject> {
   }
 }
 
+/**
+ * The root record's Avro file: `<root>.avsc.json` (the default naming this renderer runs the emitter with), else the file the
+ * emitter wrote under its `qualified-file-names` option (closure emission, closure-emit.ts), `<namespace>.<root>.avsc.json`.
+ * The qualified form only counts when exactly one file has it: two namespaces can each hold a record of that name.
+ */
+function findAvroRootFile(files: EmittedFile[], rootModel: string): EmittedFile | undefined {
+  const plain = files.find((f) => [`${rootModel}.avsc.json`, `${rootModel}.avsc`].includes(basename(f.relativePath)));
+  if (plain) return plain;
+  const qualified = files.filter((f) => basename(f.relativePath).endsWith(`.${rootModel}.avsc.json`));
+  return qualified.length === 1 ? qualified[0] : undefined;
+}
+
 export function pickEmittedArtifact(format: PayloadFormat, files: EmittedFile[], rootModel: string): Result<SchemaArtifact> {
   if (format === "avro") {
-    const file = files.find((f) => [`${rootModel}.avsc.json`, `${rootModel}.avsc`].includes(basename(f.relativePath)));
+    const file = findAvroRootFile(files, rootModel);
     if (!file) return err({ code: "ROOT_SCHEMA_NOT_FOUND", message: `Avro emitter wrote no ${rootModel}.avsc.json (got ${files.map((f) => f.relativePath).join(", ")})` });
     const json = parseJsonFile(file);
     if (!json.success) return json;

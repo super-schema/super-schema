@@ -47,6 +47,18 @@ describe("artifact renderer", () => {
     expect(source.indexOf("model Order")).toBeLessThan(source.indexOf("model Address"));
   });
 
+  it("also finds the root's file when the emitter qualified every file name by namespace (closure emission's `qualified-file-names`)", async () => {
+    const qualified = (names: string[]): EmitFiles => async () => ({
+      success: true,
+      data: names.map((relativePath) => ({ relativePath, content: `{"type":"record","name":"${relativePath.split(".").slice(-3, -2)[0]}","fields":[]}` })),
+    });
+    const picked = await createArtifactRenderer({ db: fakeDb() as never, emitFiles: qualified(["com.acme.address.Address.avsc.json", "com.acme.order.Order.avsc.json"]) }).render(order, "avro");
+    expect(picked).toEqual({ success: true, data: { artifact: { format: "avro", schema: { type: "record", name: "Order", fields: [] } }, warnings: [] } });
+    // two namespaces that each hold an `Order`: no way to tell which is the root, so no guess
+    const ambiguous = await createArtifactRenderer({ db: fakeDb() as never, emitFiles: qualified(["com.a.Order.avsc.json", "com.b.Order.avsc.json"]) }).render(order, "avro");
+    expect(ambiguous.success).toBe(false);
+  });
+
   it("caches immutable versions (one emit for two renders) and does not cache failures", async () => {
     const emitFiles = vi.fn<EmitFiles>(async () => ({ success: true, data: [{ relativePath: "Order.avsc.json", content: '{"type":"record","name":"Order"}' }] }));
     const renderer = createArtifactRenderer({ db: fakeDb() as never, emitFiles });
