@@ -1,13 +1,17 @@
 /**
  * Guard for the browser suite (tests/e2e): the rules of docs/superpowers/plans/2026-10-23-release-ui-suite.md that a reviewer would
- * otherwise have to check by eye on every new spec. It reads the specs as TypeScript syntax (not as text), so a comment or a string
- * that merely mentions `waitForTimeout(` is not an offence and a call spelled over several lines is not missed.
+ * otherwise have to check by eye on every new spec. It reads the files as TypeScript syntax (not as text), so a comment or a string
+ * that merely mentions `waitForTimeout(` is not an offence and a call spelled over several lines is not missed. Every .ts / .tsx / .js
+ * / .mjs file under tests/e2e is read, not only the *.spec.ts ones, and `test` is followed through an import alias
+ * (`import { test as setup } from "@playwright/test"`).
  *
- *   a. every `test(...)` call carries a tier tag in its details: `test(name, { tag: ["@regression"] }, fn)`;
- *   b. no `waitForTimeout(` sleep and no `networkidle` wait anywhere in tests/e2e, helpers included (a guess about time or about the
- *      network, not a state of the page);
- *   c. no `test.fixme` / `test.skip` that hides a test without a reason: a declarative one needs a bracketed reason in its title
- *      (`test.fixme("title [TRACKED: why]", fn)`), a conditional one (`test.skip(cond, "why")`) needs the reason string;
+ *   a. every `test(...)` call carries a tier tag in its details: `test(name, { tag: ["@regression"] }, fn)`; a test is never both
+ *      `@smoke` (about 5 minutes, on every pull request, three browsers) and `@slow` / `@external` (nightly only);
+ *   b. no `waitForTimeout(` sleep, no `networkidle` wait and no raw `setTimeout(` sleep anywhere in tests/e2e, helpers included (a
+ *      guess about time or about the network, not a state of the page); the few `setTimeout`s that are not sleeps before an assertion
+ *      are listed, with their reasons, in RAW_TIMER_ALLOWED below;
+ *   c. no `test.fixme` / `test.skip` that hides a test without a reason: a declarative one needs a bracketed reason of some substance in
+ *      its title (`test.fixme("title [TRACKED: why]", fn)`), a conditional one (`test.skip(cond, "why")`) needs the reason string;
  *   d. no `test.use({ navigationTimeout | actionTimeout | screenshot | trace | video })`: playwright.config.ts owns them;
  *   e. no local `createDomain` / `createProduct` (helpers/lifecycle.ts) and no local copy of the other shared helpers
  *      (`createEventFromMenu`, `RAW_DB_TEXT`: helpers/event-builder.ts) outside `helpers/`.
@@ -18,9 +22,13 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const E2E_DIR = path.resolve(__dirname, "../e2e");
+const REPO_DIR = path.resolve(__dirname, "../..");
 
 /** The tags that place a test in a tier (`--grep @smoke`, `--grep-invert "@slow|@external"`, nightly = everything). */
-const TIER_TAGS =["@smoke", "@regression", "@slow", "@external"] as const;
+const TIER_TAGS = ["@smoke", "@regression", "@slow", "@external"] as const;
+
+/** Tags a smoke test must not carry: smoke runs on every pull request, these run nightly only. */
+const NIGHTLY_ONLY_TAGS = ["@slow", "@external"];
 
 /** Options that playwright.config.ts sets once for every project. */
 const CONFIG_OWNED_OPTIONS = ["navigationTimeout", "actionTimeout", "screenshot", "trace", "video"];
@@ -28,7 +36,27 @@ const CONFIG_OWNED_OPTIONS = ["navigationTimeout", "actionTimeout", "screenshot"
 /** Helpers that live in `helpers/` and must not be written again in a spec. */
 const SHARED_HELPER_NAMES = ["createDomain", "createProduct", "createEventFromMenu", "RAW_DB_TEXT"];
 
-type Kind = "untagged-test" | "sleep" | "network-idle" | "hidden-test" | "config-owned-use" | "local-helper";
+/** A reason in a skip/fixme title must be more than a placeholder: `[x]` and `[todo]` explain nothing. */
+const MIN_REASON_LENGTH = 6;
+
+/**
+ * The raw `setTimeout(` calls that are allowed in tests/e2e, each at most `count` times in its file, with why. Everything else that
+ * waits for time is a web-first assertion (`expect(...)`, `expect.poll`, `toPass`).
+ */
+const RAW_TIMER_ALLOWED: ReadonlyArray<{ file: string; count: number; reason: string }> = [
+  {
+    file: "tests/e2e/helpers/lifecycle.ts",
+    count: 1,
+    reason: "`pollEvery`: the cadence of settlePreview's bounded, unit-tested poll (it takes `wait` as a parameter); not a sleep before an assertion",
+  },
+  {
+    file: "tests/e2e/navigation.spec.ts",
+    count: 1,
+    reason: "inside `sidebar.evaluate` (in the page): lets React commit after a requestAnimationFrame before the next pass looks for new nodes",
+  },
+];
+
+type Kind = "untagged-test" | "bad-tiers" | "sleep" | "raw-timer" | "network-idle" | "hidden-test" | "config-owned-use" | "local-helper";
 
 interface Problem {
   kind: Kind;
@@ -53,22 +81,40 @@ function propertyNames(object: ts.ObjectLiteralExpression): string[] {
   return object.properties.flatMap((p) => (p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? [p.name.text] : []));
 }
 
+/** The local names `test` goes by in this file: `test`, and whatever `import { test as X } from "@playwright/test"` renames it to. */
+function testNames(sf: ts.SourceFile): string[] {
+  const names = new Set(["test"]);
+  for (const statement of sf.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== "@playwright/test") continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) if ((element.propertyName ?? element.name).text === "test") names.add(element.name.text);
+  }
+  return [...names];
+}
+
+const scriptKindOf = (file: string): ts.ScriptKind =>
+  file.endsWith(".tsx") ? ts.ScriptKind.TSX : /\.(m|c)?js$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS;
+
 /** Everything the guard rules object to in one source file. `insideHelpers` exempts the shared-helper definitions (rule e). */
 function scanSource(file: string, source: string, insideHelpers = false): Problem[] {
-  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindOf(file));
   const problems: Problem[] = [];
   const add = (kind: Kind, node: ts.Node, message: string) =>
     problems.push({ kind, file, line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, message });
   const titleOf = (call: ts.CallExpression) => call.arguments[0]?.getText(sf).slice(0, 70) ?? "(no title)";
+  const names = testNames(sf);
+  const escaped = names.map((n) => n.replace(/[$]/g, "\\$&")).join("|");
+  const skipOrFixme = new RegExp(`^(${escaped})(\\.describe)?\\.(skip|fixme)$`);
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const callee = node.expression.getText(sf);
 
-      if (callee === "test") {
+      if (names.includes(callee)) {
         const details = node.arguments[1];
         if (!details || !ts.isObjectLiteralExpression(details)) {
-          add("untagged-test", node, `${titleOf(node)} has no details object: use test(name, { tag: ["@regression"] }, fn)`);
+          add("untagged-test", node, `${titleOf(node)} has no details object: use ${callee}(name, { tag: ["@regression"] }, fn)`);
         } else {
           const tag = details.properties.find(
             (p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "tag",
@@ -78,28 +124,39 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
           else if (!tags) add("untagged-test", node, `${titleOf(node)}: write the tags as string literals, so they can be checked`);
           else if (!tags.some((t) => (TIER_TAGS as readonly string[]).includes(t))) {
             add("untagged-test", node, `${titleOf(node)} has the tags ${tags.join(", ")} but no tier tag (${TIER_TAGS.join(", ")})`);
+          } else if (tags.includes("@smoke") && tags.some((t) => NIGHTLY_ONLY_TAGS.includes(t))) {
+            add("bad-tiers", node, `${titleOf(node)} is tagged @smoke and ${tags.filter((t) => NIGHTLY_ONLY_TAGS.includes(t)).join("/")}: smoke runs on every pull request, slow and external tests nightly only`);
           }
         }
       }
 
       if (/\.waitForTimeout$/.test(callee)) add("sleep", node, `${callee}(...): wait for a state of the page with a web-first assertion instead`);
+      if (callee === "setTimeout" || /^(window|globalThis|global)\.setTimeout$/.test(callee)) {
+        add("raw-timer", node, `${callee}(...): a sleep; wait for a state with a web-first assertion (or list it in RAW_TIMER_ALLOWED with its reason)`);
+      }
       if (/\.waitForLoadState$/.test(callee) && node.arguments[0]?.getText(sf).includes("networkidle")) {
         add("network-idle", node, `${callee}("networkidle"): wait for what the page shows instead`);
       }
 
-      if (/^test(\.describe)?\.(skip|fixme)$/.test(callee)) {
+      if (skipOrFixme.test(callee)) {
         const [first, second] = node.arguments;
         if (!first) add("hidden-test", node, `${callee}() hides a test without a reason`);
         else if (isStringLike(first)) {
-          if (!/\[[^\]]+\]/.test(first.getText(sf))) add("hidden-test", node, `${callee}(${titleOf(node)}) lacks a bracketed reason in its title, e.g. [TRACKED: why]`);
+          const reason = /\[([^\]]*)\]/.exec(first.getText(sf))?.[1].trim() ?? "";
+          if (reason.length < MIN_REASON_LENGTH) {
+            add("hidden-test", node, `${callee}(${titleOf(node)}) lacks a bracketed reason of at least ${MIN_REASON_LENGTH} characters in its title, e.g. [TRACKED: why]`);
+          }
         } else if (!isStringLike(second)) {
           add("hidden-test", node, `${callee}(${first.getText(sf).slice(0, 40)}) is a conditional skip without a reason string`);
         }
       }
 
-      if (callee === "test.use" && node.arguments[0] && ts.isObjectLiteralExpression(node.arguments[0])) {
-        const owned = propertyNames(node.arguments[0]).filter((name) => CONFIG_OWNED_OPTIONS.includes(name));
-        if (owned.length > 0) add("config-owned-use", node, `test.use({ ${owned.join(", ")} }): playwright.config.ts sets it once`);
+      if (names.some((n) => callee === `${n}.use`)) {
+        const options = node.arguments[0];
+        if (options && ts.isObjectLiteralExpression(options)) {
+          const owned = propertyNames(options).filter((name) => CONFIG_OWNED_OPTIONS.includes(name));
+          if (owned.length > 0) add("config-owned-use", node, `${callee}({ ${owned.join(", ")} }): playwright.config.ts sets it once`);
+        }
       }
     }
 
@@ -115,32 +172,40 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
   return problems;
 }
 
-function listTs(dir: string): string[] {
+function listSource(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) return listTs(full);
-    return entry.name.endsWith(".ts") ? [full] : [];
+    if (entry.isDirectory()) return listSource(full);
+    return /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry.name) ? [full] : [];
   });
 }
 
-const rel = (file: string) => path.relative(path.resolve(__dirname, "../.."), file);
+const rel = (file: string) => path.relative(REPO_DIR, file).split(path.sep).join("/");
 const insideHelpers = (file: string) => file.startsWith(path.join(E2E_DIR, "helpers") + path.sep);
 
+/** The problems of `kinds` in `files`, as `file:line  message` lines; the allowed raw timers are taken out first. */
 function scanSuite(kinds: Kind[], files: string[]): string[] {
-  return files
-    .flatMap((file) => scanSource(file, readFileSync(file, "utf8"), insideHelpers(file)))
+  const all = files.flatMap((file) => scanSource(file, readFileSync(file, "utf8"), insideHelpers(file)));
+  const allowedLeft = new Map(RAW_TIMER_ALLOWED.map((entry) => [entry.file, entry.count]));
+  return all
     .filter((p) => kinds.includes(p.kind))
+    .filter((p) => {
+      if (p.kind !== "raw-timer") return true;
+      const left = allowedLeft.get(rel(p.file)) ?? 0;
+      if (left === 0) return true;
+      allowedLeft.set(rel(p.file), left - 1);
+      return false;
+    })
     .map((p) => `${rel(p.file)}:${p.line}  ${p.message}`);
 }
 
-const allFiles = listTs(E2E_DIR);
-const specFiles = allFiles.filter((f) => f.endsWith(".spec.ts"));
-/** The setup file and the specs are the tests; helpers/ and fixtures/ are scanned for the sleep and helper-definition rules only. */
-const suiteFiles = allFiles.filter((f) => f.endsWith(".spec.ts") || f.endsWith(".setup.ts"));
+/** Everything under tests/e2e that is source code: specs, the setup file, helpers, fixtures, reporters. */
+const allFiles = listSource(E2E_DIR);
+const specFiles = allFiles.filter((f) => /\.spec\.[tj]sx?$/.test(f));
 const outsideHelpers = allFiles.filter((f) => !insideHelpers(f));
 
 describe("the browser suite scanner", () => {
-  const scan = (src: string, helpers = false) => scanSource("x.spec.ts", src, helpers).map((p) => p.kind);
+  const scan = (src: string, helpers = false, file = "x.spec.ts") => scanSource(file, src, helpers).map((p) => p.kind);
 
   it("flags a test without a tier tag and accepts one with a tier tag", () => {
     expect(scan(`test("a", async () => {});`)).toEqual(["untagged-test"]);
@@ -152,23 +217,42 @@ describe("the browser suite scanner", () => {
     expect(scan("test(`${v.id}`, { tag: '@external' }, async () => {});")).toEqual([]);
   });
 
+  it("follows `test` through an import alias, in any kind of file", () => {
+    const aliased = `import { test as setup } from "@playwright/test";\n`;
+    expect(scan(`${aliased}setup("log in", async () => {});`, false, "auth.setup.ts")).toEqual(["untagged-test"]);
+    expect(scan(`${aliased}setup("log in", { tag: ["@smoke"] }, async () => {});`, false, "auth.setup.ts")).toEqual([]);
+    expect(scan(`${aliased}setup.use({ trace: "on" });`, false, "auth.setup.ts")).toEqual(["config-owned-use"]);
+    expect(scan(`import { test } from "@playwright/test";\ntest("a", async () => {});`, false, "x.js")).toEqual(["untagged-test"]);
+    expect(scan(`import { test as base } from "@playwright/test";\nexport const test = base.extend({});`, true, "fixtures.ts")).toEqual([]);
+  });
+
+  it("refuses a test that is tagged @smoke and @slow / @external", () => {
+    expect(scan(`test("a", { tag: ["@smoke", "@slow"] }, async () => {});`)).toEqual(["bad-tiers"]);
+    expect(scan(`test("a", { tag: ["@smoke", "@regression", "@external"] }, async () => {});`)).toEqual(["bad-tiers"]);
+    expect(scan(`test("a", { tag: ["@smoke", "@regression"] }, async () => {});`)).toEqual([]);
+  });
+
   it("does not take describe / step / use / a mention in a comment or string for a test call", () => {
     expect(scan(`test.describe("d", () => { /* test("x") waitForTimeout(1) */ const s = 'test("y")'; });`)).toEqual([]);
     expect(scan(`await test.step("s", async () => {});`)).toEqual([]);
   });
 
-  it("flags sleeps and networkidle waits", () => {
+  it("flags sleeps, raw timers and networkidle waits", () => {
     expect(scan(`await page.waitForTimeout(500);`)).toEqual(["sleep"]);
+    expect(scan(`await new Promise((resolve) => setTimeout(resolve, 200));`)).toEqual(["raw-timer"]);
+    expect(scan(`await new Promise((resolve) => window.setTimeout(resolve, 200));`)).toEqual(["raw-timer"]);
     expect(scan(`await page.waitForLoadState("networkidle", { timeout: 1 }).catch(() => {});`)).toEqual(["network-idle"]);
     expect(scan(`await page.waitForLoadState("load");`)).toEqual([]);
   });
 
-  it("flags a test that is hidden without a reason", () => {
+  it("flags a test that is hidden without a reason, or with a placeholder for one", () => {
     expect(scan(`test.fixme("emit", async () => {});`)).toEqual(["hidden-test"]);
     expect(scan(`test.skip("emit", async () => {});`)).toEqual(["hidden-test"]);
     expect(scan(`test.fixme();`)).toEqual(["hidden-test"]);
     expect(scan(`test.skip(!online);`)).toEqual(["hidden-test"]);
     expect(scan(`test.describe.skip("group", () => {});`)).toEqual(["hidden-test"]);
+    expect(scan(`test.fixme("emit [x]", async () => {});`)).toEqual(["hidden-test"]);
+    expect(scan(`test.fixme("emit [todo]", async () => {});`)).toEqual(["hidden-test"]);
     expect(scan(`test.fixme("emit [TRACKED: no UI yet]", async () => {});`)).toEqual([]);
     expect(scan(`test.skip(!online, "the host is not reachable");`)).toEqual([]);
   });
@@ -187,34 +271,44 @@ describe("the browser suite scanner", () => {
     expect(scan(`export async function createDomain(page) {}`, true)).toEqual([]);
   });
 
-  it("reads the specs it guards (it cannot pass by finding nothing)", () => {
+  it("reads the files it guards (it cannot pass by finding nothing)", () => {
     expect(specFiles.length).toBeGreaterThanOrEqual(15);
+    expect(allFiles.some((f) => f.endsWith("auth.setup.ts"))).toBe(true);
+    expect(allFiles.some((f) => f.endsWith(path.join("reporters", "flaky-reporter.ts")))).toBe(true);
     const calls = specFiles.reduce((n, f) => n + (readFileSync(f, "utf8").match(/^\s*test\(/gm) ?? []).length, 0);
     expect(calls).toBeGreaterThanOrEqual(50);
+  });
+
+  it("lists every allowed raw timer with a reason, and each of them is really there", () => {
+    for (const entry of RAW_TIMER_ALLOWED) {
+      expect(entry.reason.length, `${entry.file} needs a reason`).toBeGreaterThan(20);
+      const found = scanSource(entry.file, readFileSync(path.join(REPO_DIR, entry.file), "utf8")).filter((p) => p.kind === "raw-timer");
+      expect(found.length, `${entry.file} no longer has the setTimeout it is allowed: remove the entry`).toBe(entry.count);
+    }
   });
 });
 
 describe("tests/e2e follows the suite rules", () => {
-  it("(a) every test carries a tier tag", () => {
-    expect(scanSuite(["untagged-test"], suiteFiles)).toEqual([]);
+  it("(a) every test carries a tier tag, and none is both smoke and nightly-only", () => {
+    expect(scanSuite(["untagged-test", "bad-tiers"], allFiles)).toEqual([]);
   });
 
-  it("(b) no waitForTimeout sleep and no networkidle wait, in a spec or in a helper", () => {
-    expect(scanSuite(["sleep", "network-idle"], allFiles)).toEqual([]);
+  it("(b) no waitForTimeout sleep, networkidle wait or raw setTimeout, in a spec or in a helper", () => {
+    expect(scanSuite(["sleep", "network-idle", "raw-timer"], allFiles)).toEqual([]);
   });
 
   it("(c) no test.fixme / test.skip without a reason", () => {
-    expect(scanSuite(["hidden-test"], suiteFiles)).toEqual([]);
+    expect(scanSuite(["hidden-test"], allFiles)).toEqual([]);
   });
 
   it("(d) timeouts, trace and screenshot are set in playwright.config.ts, not per spec", () => {
-    expect(scanSuite(["config-owned-use"], suiteFiles)).toEqual([]);
+    expect(scanSuite(["config-owned-use"], allFiles)).toEqual([]);
   });
 
   it("(e) createDomain / createProduct / createEventFromMenu / RAW_DB_TEXT are defined once, in helpers/", () => {
     expect(scanSuite(["local-helper"], outsideHelpers)).toEqual([]);
     // ...and they really are defined there.
-    const helperSource = listTs(path.join(E2E_DIR, "helpers")).map((f) => readFileSync(f, "utf8")).join("\n");
+    const helperSource = listSource(path.join(E2E_DIR, "helpers")).map((f) => readFileSync(f, "utf8")).join("\n");
     for (const name of SHARED_HELPER_NAMES) expect(helperSource, `${name} is not defined in helpers/`).toMatch(new RegExp(`(function|const)\\s+${name}\\b`));
   });
 });
