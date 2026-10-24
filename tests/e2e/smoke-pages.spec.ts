@@ -36,23 +36,27 @@ import {
 const ALLOWED_CONSOLE_ERRORS: ReadonlyArray<{ match: RegExp; reason: string }> = [];
 /** Matched against `<METHOD> <url> <status>`. */
 const ALLOWED_FAILED_RESPONSES: ReadonlyArray<{ match: RegExp; reason: string }> = [];
-/** Matched against `<METHOD> <url> <error text>`, with " [server action]" added to a request that carries a Next server action. */
+/**
+ * Matched against `<METHOD> <url> <error text>`, with " [server action, answered <status>]" (or "[server action, no answer]") added to a
+ * request that carries a Next server action (whether the server's answer had ARRIVED when the request was cancelled), and " [prefetch]"
+ * to an RSC request that Next marks as a prefetch.
+ */
 const ALLOWED_FAILED_REQUESTS: ReadonlyArray<{ match: RegExp; reason: string }> = [
   {
     // Chromium says net::ERR_ABORTED, Firefox NS_BINDING_ABORTED, WebKit "cancelled".
-    match: /^GET \S+\?_rsc=\S+ (net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled)$/i,
+    match: /^GET \S+\?_rsc=\S+ (net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) \[prefetch\]$/i,
     reason:
       "Next.js prefetches the RSC payload of every <Link> in view (the ActivityBar's seven) and cancels a prefetch that is still running when the " +
       "link re-renders or the page changes; a cancelled prefetch is not a failure of the page (the page it was a prefetch FROM loaded, which the " +
       "other checks prove), and only this one kind of request is excused.",
   },
   {
-    match: /^POST \S+ (net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) \[server action\]$/i,
+    match: /^POST \S+ (net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled) \[server action, answered 200\]$/i,
     reason:
-      "A client page fetches its data with a server action when it mounts, and Next.js drops the transport of an action that is still in " +
-      "flight when the router state is renewed (about 200 ms after the load, together with the cancelled prefetches above). Not excused " +
-      "blindly: a page whose action was lost would stay on its loading text or lack its content, and every page of the sweep checks that " +
-      "its heading is there and that no `Loading...` text is left; a server action that FAILED answers with a status (the 5xx check).",
+      "Next's client closes the body of a server action's response once it has the result, and the browser then reports the request as " +
+      "cancelled. Investigated: in 20 hard loads of /admin/emitters (a page that loads its data with an action) the POST was reported " +
+      "cancelled 7 times, every time AFTER its HTTP 200 had arrived, and the page showed all its emitters 20 times out of 20: no data is " +
+      "lost. Only a request whose answer (200) had arrived is excused: an action that never got an answer is still a failure.",
   },
 ];
 
@@ -86,9 +90,15 @@ function watchPage(page: Page, baseURL: string): { problems: string[] } {
     }
   });
   page.on("requestfailed", (request) => {
-    const serverAction = request.headers()["next-action"] ? " [server action]" : "";
-    const text = `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ""}${serverAction}`;
-    if (!isAllowed(ALLOWED_FAILED_REQUESTS, text)) problems.push(`request failed: ${text}`);
+    void (async () => {
+      let serverAction = request.headers()["next-router-prefetch"] || request.headers()["next-router-segment-prefetch"] ? " [prefetch]" : "";
+      if (request.headers()["next-action"]) {
+        const answer = await request.response().catch(() => null);
+        serverAction = answer ? ` [server action, answered ${answer.status()}]` : " [server action, no answer]";
+      }
+      const text = `${request.method()} ${request.url()} ${request.failure()?.errorText ?? ""}${serverAction}`;
+      if (!isAllowed(ALLOWED_FAILED_REQUESTS, text)) problems.push(`request failed: ${text}`);
+    })();
   });
   return { problems };
 }
@@ -162,6 +172,7 @@ test.describe("the sweep's detectors", () => {
     await page.route("**/api/v1/health", (route) => route.fulfill({ status: 503, contentType: "application/json", body: "{}" }));
     await page.route("**/canary-missing-asset.js", (route) => route.fulfill({ status: 404, contentType: "text/plain", body: "not found" }));
     await page.route("**/canary-dropped-request", (route) => route.abort("connectionrefused"));
+    await page.route("**/canary-lost-action", (route) => route.abort("connectionrefused"));
     await page.evaluate(() => {
       console.error("canary console error");
       queueMicrotask(() => {
@@ -170,6 +181,7 @@ test.describe("the sweep's detectors", () => {
       void fetch("/api/v1/health");
       void fetch("/canary-missing-asset.js");
       void fetch("/canary-dropped-request").catch(() => {});
+      void fetch("/canary-lost-action", { method: "POST", headers: { "next-action": "40canary" } }).catch(() => {});
     });
 
     // (Chrome also logs "Failed to load resource" for the answers: the watcher counts them itself, so Firefox and WebKit report them too.)
@@ -179,6 +191,7 @@ test.describe("the sweep's detectors", () => {
     await expect.poll(reported, { message: "the watcher missed the 5xx answer" }).toContain("HTTP 503: GET");
     await expect.poll(reported, { message: "the watcher missed the 404 of this site" }).toContain("HTTP 404: GET");
     await expect.poll(reported, { message: "the watcher missed the failed request" }).toContain("request failed: GET");
+    await expect.poll(reported, { message: "the watcher excused a server action that never got an answer" }).toContain("[server action, no answer]");
     // The allow-lists are lists of explicit patterns, not a switch: an entry names its reason.
     for (const list of [ALLOWED_CONSOLE_ERRORS, ALLOWED_FAILED_RESPONSES, ALLOWED_FAILED_REQUESTS]) {
       expect(list.every((entry) => entry.reason.trim().length >= 10)).toBe(true);
