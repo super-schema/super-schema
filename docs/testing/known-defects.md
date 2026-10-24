@@ -166,6 +166,23 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   list, which is already filtered by the tab and the search.
 - where: `src/features/glossary/GlossaryBrowser.tsx` (`allDomains` from `concepts`).
 
+## KD-019: Next is enabled on a last page of notifications that is exactly full
+
+- status: open
+- symptom: `/notifications` with exactly 25 notifications enables Next (`notifications.length < pageSize` is the only test), and it leads to an empty
+  page 2 ("No notifications found.").
+- where: `src/app/(dashboard)/notifications/page.tsx`.
+- pinned by: `discovery.spec.ts`, "with exactly 25 notifications Next is disabled".
+- cost to fix: the API returns the total (it has it: `count`), or the page asks for one more row than it shows.
+
+## KD-020: the command palette finds fields among the first 100 of the database
+
+- status: no-test (a limit for performance, noted in the route)
+- symptom: `/api/command-palette-fields` returns 100 fields (`take: 100`, by entity name, then field name) of ALL tenants: a field of an entity whose name
+  sorts after the first hundred fields is not found, and the palette offers fields of other tenants.
+- where: `src/app/api/command-palette-fields/route.ts`.
+- cost to fix: search on the server (a query parameter) in the active tenant.
+
 ## KD-021: the Enabled toggle of an emitter and the Health tab's compiler and emitter statuses are not wired to anything
 
 - status: no-test (a product gap: nothing for a test to pin that is not the stub itself)
