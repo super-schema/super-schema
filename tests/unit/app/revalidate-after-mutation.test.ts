@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("@/lib/auth", () => ({ auth: mocks.auth }));
 vi.mock("@/lib/db", () => ({ prisma: {} }));
+// The governance actions read the tenant being viewed (a cookie): here there is none.
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn(async () => "tenant-a") }));
 // The by-id ownership guard (the real one is tested in tests/unit/app/by-id-entity-actions-tenant.test.ts): here every entity is the active tenant's.
 vi.mock("@/lib/action-context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/action-context")>()),

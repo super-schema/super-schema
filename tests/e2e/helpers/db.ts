@@ -441,6 +441,8 @@ export async function userIdByEmail(email: string): Promise<string> {
  * the specs write the row). `entityName` is what the dashboard shows; make it unique. Remove with `deleteGovernanceRequestsByEntity`.
  */
 export async function createGovernanceRequest(input: {
+  /** The entity the request is about: the dashboard lists the requests of the entities of the tenant being viewed. */
+  entityId: string;
   entityName: string;
   status?: "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPROVED";
   changeType?: string;
@@ -465,7 +467,7 @@ export async function createGovernanceRequest(input: {
   await pg().query(
     `INSERT INTO governance_requests (id, "entityId", "entityName", "versionId", "changeType", severity, status, "impactReport", "requestedBy", "updatedAt")
      VALUES ($1, $2, $3, $4, $5, $6, $7::"GovernanceStatus", $8::jsonb, $9, now())`,
-    [id, newId(), input.entityName, input.versionId ?? "3", input.changeType ?? "breaking", severity, input.status ?? "PENDING", JSON.stringify(impactReport), input.requestedBy ?? "e2e-requester"],
+    [id, input.entityId, input.entityName, input.versionId ?? "3", input.changeType ?? "breaking", severity, input.status ?? "PENDING", JSON.stringify(impactReport), input.requestedBy ?? "e2e-requester"],
   );
   return { id };
 }

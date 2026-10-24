@@ -76,19 +76,25 @@ async function chooseTab(page: Page, name: "pending" | "all" | "history"): Promi
   await expect(tab(page, name)).toHaveAttribute("aria-pressed", "true");
 }
 
-/** A pending request for an entity with a name no other test has (the dashboard lists every request of the database). */
-async function pendingRequest(overrides: Partial<Parameters<typeof createGovernanceRequest>[0]> = {}): Promise<{ id: string; entityName: string }> {
+/**
+ * A pending request about the entity `entityId` (a request has no foreign key to its entity: the entity's tenant says whose it is, and
+ * the dashboard lists the requests of the tenant being viewed), under a name no other test has.
+ */
+async function pendingRequest(entityId: string, overrides: Partial<Parameters<typeof createGovernanceRequest>[0]> = {}): Promise<{ id: string; entityName: string }> {
   const entityName = unique("GovEntity");
   requestedEntities.push(entityName);
-  const { id } = await createGovernanceRequest({ entityName, ...overrides });
+  const { id } = await createGovernanceRequest({ entityId, entityName, ...overrides });
   return { id, entityName };
 }
 
 test.describe("governance dashboard", () => {
+  test.use({ workspaceEntities: ["GovEntity"] });
+
   test("a pending request is listed with its entity, summary, severity, status, requester and version, and its impact report opens beside the list", { tag: ["@regression"] }, async ({
     authedPage: page,
+    workspace,
   }) => {
-    const { entityName } = await pendingRequest({ summary: "Drops the required column ref_id", severity: "critical", versionId: "7" });
+    const { entityName } = await pendingRequest(workspace.entities[0].id, { summary: "Drops the required column ref_id", severity: "critical", versionId: "7" });
     await openGovernance(page);
 
     const card = requestCard(page, entityName);
@@ -119,8 +125,9 @@ test.describe("governance dashboard", () => {
 
   test("Approve asks for a comment first, then moves the request to History as APPROVED with the decision recorded, and a reload keeps it", { tag: ["@regression"] }, async ({
     authedPage: page,
+    workspace,
   }) => {
-    const { id, entityName } = await pendingRequest();
+    const { id, entityName } = await pendingRequest(workspace.entities[0].id);
     await openGovernance(page);
     const card = requestCard(page, entityName);
 
@@ -149,8 +156,8 @@ test.describe("governance dashboard", () => {
     await expect(requestCard(page, entityName)).toHaveAttribute("data-status", "APPROVED");
   });
 
-  test("Reject records the comment and the request is REJECTED in History after a reload", { tag: ["@regression"] }, async ({ authedPage: page }) => {
-    const { id, entityName } = await pendingRequest({ severity: "medium" });
+  test("Reject records the comment and the request is REJECTED in History after a reload", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
+    const { id, entityName } = await pendingRequest(workspace.entities[0].id, { severity: "medium" });
     await openGovernance(page);
     const card = requestCard(page, entityName);
 
@@ -168,9 +175,9 @@ test.describe("governance dashboard", () => {
     await expect(requestCard(page, entityName)).toContainText("REJECTED");
   });
 
-  test("a decision without a comment is recorded with none, and Cancel decides nothing", { tag: ["@regression"] }, async ({ authedPage: page }) => {
-    const cancelled = await pendingRequest();
-    const approved = await pendingRequest();
+  test("a decision without a comment is recorded with none, and Cancel decides nothing", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
+    const cancelled = await pendingRequest(workspace.entities[0].id);
+    const approved = await pendingRequest(workspace.entities[0].id);
     await openGovernance(page);
 
     const cancelCard = requestCard(page, cancelled.entityName);
@@ -193,9 +200,10 @@ test.describe("governance dashboard", () => {
 
   test("a request that is not pending offers neither button, and only the All tab lists an auto-approved one", { tag: ["@regression"] }, async ({
     authedPage: page,
+    workspace,
   }) => {
-    const auto = await pendingRequest({ status: "AUTO_APPROVED", changeType: "non-breaking", severity: "low" });
-    const done = await pendingRequest({ status: "APPROVED" });
+    const auto = await pendingRequest(workspace.entities[0].id, { status: "AUTO_APPROVED", changeType: "non-breaking", severity: "low" });
+    const done = await pendingRequest(workspace.entities[0].id, { status: "APPROVED" });
     await openGovernance(page);
 
     await expect(requestCard(page, auto.entityName)).toHaveCount(0);
@@ -217,12 +225,14 @@ test.describe("governance dashboard", () => {
     await expect(requestCard(page, auto.entityName)).toHaveCount(0);
   });
 
-  test("a user with no Steward or Admin role cannot decide: the request stays pending", { tag: ["@regression"] }, async ({ browser, baseURL }) => {
-    const { id, entityName } = await pendingRequest();
+  test("a user with no Steward or Admin role cannot decide: the request stays pending", { tag: ["@regression"] }, async ({ browser, baseURL, workspace }) => {
+    const { id, entityName } = await pendingRequest(workspace.entities[0].id);
     await withSecondUser(browser, baseURL, async (visitor) => {
       const page = visitor.page;
       await openGovernance(page);
       const card = requestCard(page, entityName);
+      // Any signed-in user sees the requests of the tenant they are viewing (KD-023: who may see them is a policy not yet decided); only a
+      // Steward or an Admin may decide.
       await expect(card).toBeVisible();
 
       await card.getByTestId("governance-approve").click();
@@ -235,9 +245,31 @@ test.describe("governance dashboard", () => {
     });
   });
 
+  test("a request about an entity of ANOTHER tenant is listed in no tab of this tenant, and the tenant's own request is", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    workspace,
+  }) => {
+    const other = await createSecondTenant();
+    try {
+      const foreignEntity = await createEntityInTenant(other.tenantId, unique("ForeignGovEntity"));
+      const home = await pendingRequest(workspace.entities[0].id);
+      const away = await pendingRequest(foreignEntity.id, { summary: "Names an owner another tenant must not see", status: "PENDING" });
+
+      await openGovernance(page);
+      // The page has answered (its own request is there) before the other tenant's absence means anything.
+      await expect(requestCard(page, home.entityName)).toBeVisible();
+      for (const name of ["pending", "all", "history"] as const) {
+        await chooseTab(page, name);
+        await expect(requestCard(page, away.entityName)).toHaveCount(0);
+      }
+    } finally {
+      await deleteTenantWithDomain(other);
+    }
+  });
+
   // KD-015: the dashboard drops the action's error (`if ("success" in result)`): a refusal looks like nothing happened.
-  test.fail("[KD-015 a refused decision is not explained] a user who may not decide is told so", { tag: ["@regression"] }, async ({ browser, baseURL }) => {
-    const { id, entityName } = await pendingRequest();
+  test.fail("[KD-015 a refused decision is not explained] a user who may not decide is told so", { tag: ["@regression"] }, async ({ browser, baseURL, workspace }) => {
+    const { id, entityName } = await pendingRequest(workspace.entities[0].id);
     await withSecondUser(browser, baseURL, async (visitor) => {
       const page = visitor.page;
       await openGovernance(page);

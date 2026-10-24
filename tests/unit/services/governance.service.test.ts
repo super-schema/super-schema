@@ -27,6 +27,8 @@ let approvals: Array<{
 }> = [];
 let reqCounter = 0;
 let aprCounter = 0;
+// The entities the requests are about, and the tenant each belongs to (a request has no foreign key to its entity).
+let entities: Array<{ id: string; tenantId: string }> = [];
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -85,6 +87,12 @@ vi.mock("@/lib/db", () => ({
         reqCounter = 0;
       }),
     },
+    entity: {
+      findFirst: vi.fn(async (args: { where: { id: string; tenantId: string } }) =>
+        entities.find((e) => e.id === args.where.id && e.tenantId === args.where.tenantId) ?? null),
+      findMany: vi.fn(async (args: { where: { tenantId: string; id: { in: string[] } } }) =>
+        entities.filter((e) => e.tenantId === args.where.tenantId && args.where.id.in.includes(e.id)).map((e) => ({ id: e.id }))),
+    },
     governanceApproval: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         const row = {
@@ -119,6 +127,8 @@ import {
   rejectRequest,
   getRequestsForEntity,
   getPendingRequests,
+  getAllRequests,
+  getRequest,
   checkEmissionGate,
   _resetGovernanceStore,
   type GovernanceContext,
@@ -165,6 +175,83 @@ function makeClassification(
 describe("Governance Service", () => {
   beforeEach(async () => {
     await _resetGovernanceStore();
+  });
+
+  describe("tenant scope", () => {
+    const home = { id: "ent-home", tenantId: "tenant-a" };
+    const away = { id: "ent-away", tenantId: "tenant-b" };
+
+    async function twoRequests() {
+      entities = [home, away];
+      const mine = await createRequest(home.id, 2, makeClassification("breaking"), null, stewardCtx, "Home");
+      const theirs = await createRequest(away.id, 2, makeClassification("breaking"), null, stewardCtx, "Away");
+      if (!mine.success || !theirs.success) throw new Error("setup");
+      return { mine: mine.data, theirs: theirs.data };
+    }
+
+    beforeEach(() => {
+      entities = [];
+    });
+
+    it("the dashboard list holds only the requests of entities of the tenant being viewed", async () => {
+      const { mine } = await twoRequests();
+
+      const result = await getAllRequests("tenant-a");
+
+      expect(result.success && result.data.map((r) => r.id)).toEqual([mine.id]);
+    });
+
+    it("without a tenant (a caller that is not a page) the list is everything, as it was", async () => {
+      await twoRequests();
+      const result = await getAllRequests();
+      expect(result.success && result.data).toHaveLength(2);
+    });
+
+    it("a request of an entity that no longer exists is not listed to a tenant", async () => {
+      await twoRequests();
+      entities = [];
+      const result = await getAllRequests("tenant-a");
+      expect(result.success && result.data).toEqual([]);
+    });
+
+    it("a request of another tenant reads exactly like a missing one, by id", async () => {
+      const { mine, theirs } = await twoRequests();
+
+      expect((await getRequest(mine.id, "tenant-a")).success).toBe(true);
+      const foreign = await getRequest(theirs.id, "tenant-a");
+      const missing = await getRequest("gov-req-none", "tenant-a");
+      expect(foreign.success).toBe(false);
+      expect(!foreign.success && foreign.error.code).toBe("NOT_FOUND");
+      expect(!missing.success && missing.error.code).toBe("NOT_FOUND");
+    });
+
+    it("approve and reject of another tenant's request answer NOT_FOUND and decide nothing", async () => {
+      const { theirs } = await twoRequests();
+      const inA = { ...stewardCtx, tenantId: "tenant-a" };
+
+      const approved = await approveRequest(theirs.id, "ok", inA);
+      const rejected = await rejectRequest(theirs.id, "no", inA);
+
+      for (const result of [approved, rejected]) {
+        expect(result.success).toBe(false);
+        if (!result.success) expect(result.error.code).toBe("NOT_FOUND");
+      }
+      const stored = await getRequest(theirs.id);
+      expect(stored.success && stored.data.status).toBe("PENDING");
+      expect(approvals).toEqual([]);
+    });
+
+    it("approve and reject of the tenant's own request work, and the role gate is unchanged (an author is refused in any tenant)", async () => {
+      const { mine } = await twoRequests();
+
+      const refused = await approveRequest(mine.id, null, { ...authorCtx, tenantId: "tenant-a" });
+      expect(!refused.success && refused.error.code).toBe("FORBIDDEN");
+
+      const approved = await approveRequest(mine.id, "fine", { ...stewardCtx, tenantId: "tenant-a" });
+      expect(approved.success).toBe(true);
+      const stored = await getRequest(mine.id, "tenant-a");
+      expect(stored.success && stored.data.status).toBe("APPROVED");
+    });
   });
 
   describe("createRequest", () => {

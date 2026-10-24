@@ -28,6 +28,17 @@ export interface GovernanceContext {
   userId: string;
   userRole: string;
   domainId?: string;
+  /**
+   * The tenant being viewed. When set, only the requests of entities of that tenant exist for the caller: another tenant's request
+   * answers exactly like a missing one. (A request has no foreign key to its entity: the entity's own tenant says whose it is.)
+   */
+  tenantId?: string;
+}
+
+/** Whether the entity a request is about belongs to the tenant. */
+async function entityInTenant(entityId: string, tenantId: string): Promise<boolean> {
+  const row = await prisma.entity.findFirst({ where: { id: entityId, tenantId }, select: { id: true } });
+  return row !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +168,7 @@ export async function approveRequest(
   const request = await prisma.governanceRequest.findUnique({
     where: { id: requestId },
   });
-  if (!request) {
+  if (!request || (ctx.tenantId !== undefined && !(await entityInTenant(request.entityId, ctx.tenantId)))) {
     return err({
       code: "NOT_FOUND",
       message: `Governance request "${requestId}" not found`,
@@ -212,7 +223,7 @@ export async function rejectRequest(
   const request = await prisma.governanceRequest.findUnique({
     where: { id: requestId },
   });
-  if (!request) {
+  if (!request || (ctx.tenantId !== undefined && !(await entityInTenant(request.entityId, ctx.tenantId)))) {
     return err({
       code: "NOT_FOUND",
       message: `Governance request "${requestId}" not found`,
@@ -278,25 +289,34 @@ export async function getPendingRequests(
 }
 
 /**
- * Get all governance requests (for dashboard).
+ * Get all governance requests (for dashboard). With `tenantId`, only the requests of entities of that tenant: the impact report of a
+ * request names its entity, its summary and the owners of the consumers it affects.
  */
-export async function getAllRequests(): Promise<Result<GovernanceRequest[]>> {
+export async function getAllRequests(tenantId?: string): Promise<Result<GovernanceRequest[]>> {
   const rows = await prisma.governanceRequest.findMany({
     orderBy: { createdAt: "desc" },
   });
-  return ok(rows.map(toGovernanceRequest));
+  if (tenantId === undefined) return ok(rows.map(toGovernanceRequest));
+
+  const entities = await prisma.entity.findMany({
+    where: { tenantId, id: { in: [...new Set(rows.map((row) => row.entityId))] } },
+    select: { id: true },
+  });
+  const inTenant = new Set(entities.map((entity) => entity.id));
+  return ok(rows.filter((row) => inTenant.has(row.entityId)).map(toGovernanceRequest));
 }
 
 /**
  * Get a specific governance request by ID.
  */
 export async function getRequest(
-  requestId: string
+  requestId: string,
+  tenantId?: string
 ): Promise<Result<GovernanceRequest>> {
   const request = await prisma.governanceRequest.findUnique({
     where: { id: requestId },
   });
-  if (!request) {
+  if (!request || (tenantId !== undefined && !(await entityInTenant(request.entityId, tenantId)))) {
     return err({
       code: "NOT_FOUND",
       message: `Governance request "${requestId}" not found`,

@@ -9,6 +9,7 @@ import {
   rejectRequest,
 } from "@/services/governance.service";
 import { getEffectiveRole } from "@/services/rbac.service";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import type { ServiceContext } from "@/types/service-context";
 
 /**
@@ -31,7 +32,8 @@ async function resolveRole(userId: string): Promise<string> {
 export async function getGovernanceRequestsAction() {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
-  const result = await getAllRequests();
+  // The requests of the tenant being viewed (a request names its entity, summary and the owners of what it affects).
+  const result = await getAllRequests(await getActiveTenantId());
   if (!result.success) return { error: result.error.message };
   return { success: true, data: result.data };
 }
@@ -43,6 +45,7 @@ export async function approveGovernanceRequestAction(requestId: string, comment:
   const result = await approveRequest(requestId, comment, {
     userId: session.user.id,
     userRole: role,
+    tenantId: await getActiveTenantId(),
   });
   if (!result.success) return { error: result.error.message };
   revalidateAfterDecision();
@@ -56,6 +59,7 @@ export async function rejectGovernanceRequestAction(requestId: string, comment: 
   const result = await rejectRequest(requestId, comment, {
     userId: session.user.id,
     userRole: role,
+    tenantId: await getActiveTenantId(),
   });
   if (!result.success) return { error: result.error.message };
   revalidateAfterDecision();
