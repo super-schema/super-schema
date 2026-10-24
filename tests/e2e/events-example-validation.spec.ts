@@ -4,9 +4,10 @@
  * the editor (a mismatch is a warning squiggle with hover text, never a blocker), and "Generate from payload" fills in an example the
  * schema accepts.
  *
- * Flow: New Event → Messages → add a message pinning the Order entity → Examples → add an example → Generate from payload → a value of
- * the wrong type gets a squiggle, with the schema's message on hover → Generate again (asks first) replaces it with an example that has no
- * squiggle → the draft still saves.
+ * Flow: New Event → Messages → add a message pinning the Order entity → Examples → add an example → Generate from payload → the
+ * generated JSON has no squiggle → a value of the wrong type gets one, with the schema's message on hover → Generate again (asks first)
+ * replaces it with an example that has none → the draft still saves. Absence of a squiggle is asserted only once the editor reports
+ * its lint pass finished (`data-lint-state="idle"`).
  *
  * The entity is never published (a publish writes immutable audit rows that cannot be deleted): the message pins it unpinned, so the
  * schema is rendered from the entity's current draft, with the real TypeSpec CLI (the first render can take a while).
@@ -83,6 +84,13 @@ const need = <T>(value: T | undefined, what: string): T => {
   return value;
 };
 
+/**
+ * The editor's lint pass for the text it holds has finished: `codemirror-setup.ts` marks `.cm-editor` with `data-lint-state` ("pending"
+ * from an edit until the linter, 250 ms after the last edit, has set its diagnostics; "idle" after). "No squiggle" means something only
+ * once the state is idle, so every absence below is asserted after this, never after a fixed wait.
+ */
+const expectLinted = (wrapper: Locator) => expect(wrapper.locator(".cm-editor")).toHaveAttribute("data-lint-state", "idle");
+
 /** The example's payload editor once CodeMirror has taken over from the textarea, and its content as the editor holds it. */
 async function payloadEditor(main: Locator): Promise<{ wrapper: Locator; content: Locator }> {
   const wrapper = main.getByTestId(ID.payloadEditor);
@@ -123,13 +131,14 @@ test.describe("message examples against their payload schema", () => {
       await expect(main.getByTestId(ID.payloadGenerate)).toHaveText("Generate from payload");
     });
 
-    await test.step("Generate from payload fills in an example with the entity's fields", async () => {
-      const { content } = await payloadEditor(main);
+    await test.step("Generate from payload: an example the schema accepts, so no squiggle", async () => {
+      const { wrapper, content } = await payloadEditor(main);
       await main.getByTestId(ID.payloadGenerate).click();
       await expect(content).toContainText('"orderId"');
       await expect(content).toContainText('"quantity"');
-      // That the schema accepts it is asserted in the last Generate step below, not here: the editor lints 250 ms after the last change
-      // and has no "lint finished" signal, so "no squiggle yet" right after the click would prove nothing (and a sleep is no proof either).
+      await expectLinted(wrapper);
+      await expect(wrapper.locator(WARNING_RANGE)).toHaveCount(0);
+      await expect(wrapper.locator(ERROR_RANGE)).toHaveCount(0);
     });
 
     await test.step("edit a value to the wrong type: a squiggle, and the schema's own words on hover", async () => {
@@ -143,14 +152,13 @@ test.describe("message examples against their payload schema", () => {
       await expect(main.getByTestId("message-examples-0-payload-validation")).toHaveCount(0);
     });
 
-    await test.step("Generate again asks before it replaces what is there, and writes an example the schema accepts", async () => {
+    await test.step("Generate again asks before it replaces what is there; what it writes has no squiggle", async () => {
       await main.getByTestId(ID.payloadGenerate).click();
       await expect(main.getByTestId(ID.replaceConfirm)).toContainText("Replace the current example?");
       await main.getByTestId(ID.replace).click();
       const { wrapper, content } = await payloadEditor(main);
       await expect(content).toContainText('"orderId": "string"');
-      // The squiggle of the step above is on screen until the editor has dropped it, so this assertion waits for that instead of for a
-      // fixed time (assertions retry). A lint pass still pending when it returns would go unseen: there is no "lint finished" signal.
+      await expectLinted(wrapper);
       await expect(wrapper.locator(WARNING_RANGE)).toHaveCount(0);
       await expect(wrapper.locator(ERROR_RANGE)).toHaveCount(0);
     });

@@ -214,3 +214,52 @@ describe("createEditor", () => {
     await vi.waitFor(() => expect(onFocusChange).toHaveBeenLastCalledWith(false));
   });
 });
+
+describe("the lint state marker (data-lint-state on the editor root)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const stateOfEditor = (handle: EditorHandle) => handle.view.dom.dataset.lintState;
+
+  it("is pending from the creation and idle once the first lint pass has set its diagnostics", async () => {
+    vi.useFakeTimers();
+    const { handle } = make();
+    expect(stateOfEditor(handle)).toBe("pending");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(stateOfEditor(handle)).toBe("idle");
+  });
+
+  it("goes pending on an edit and back to idle only when the pass after that edit has finished (the 250 ms debounce)", async () => {
+    vi.useFakeTimers();
+    const { handle } = make();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(stateOfEditor(handle)).toBe("idle");
+
+    handle.view.dispatch({ changes: { from: 0, to: handle.view.state.doc.length, insert: '{"orderId": 5}' } });
+    expect(stateOfEditor(handle)).toBe("pending");
+    await vi.advanceTimersByTimeAsync(200); // the debounce has not run out
+    expect(stateOfEditor(handle)).toBe("pending");
+    handle.view.dispatch({ changes: { from: 0, insert: " " } }); // another edit restarts it
+    await vi.advanceTimersByTimeAsync(200);
+    expect(stateOfEditor(handle)).toBe("pending");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(stateOfEditor(handle)).toBe("idle");
+  });
+
+  it("is idle after a pass that found nothing, as well as after one that flagged something", async () => {
+    vi.useFakeTimers();
+    const { handle } = make({}, '{"a": 1,}'); // invalid JSON: the pass sets one error
+    await vi.advanceTimersByTimeAsync(300);
+    expect(stateOfEditor(handle)).toBe("idle");
+    handle.view.dispatch({ changes: { from: 0, to: handle.view.state.doc.length, insert: '{"a": 1}' } }); // valid: the pass sets none
+    expect(stateOfEditor(handle)).toBe("pending");
+    await vi.advanceTimersByTimeAsync(300);
+    expect(stateOfEditor(handle)).toBe("idle");
+  });
+
+  it("is not there on an editor that does not lint (YAML, read-only)", () => {
+    expect(stateOfEditor(make({ language: "yaml" }).handle)).toBeUndefined();
+    expect(stateOfEditor(make({ readOnly: true }).handle)).toBeUndefined();
+  });
+});

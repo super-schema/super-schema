@@ -9,10 +9,11 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirro
 import { json, jsonLanguage } from "@codemirror/lang-json";
 import { yaml } from "@codemirror/lang-yaml";
 import { bracketMatching, ensureSyntaxTree, HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
-import { forceLinting, linter, lintGutter, type Diagnostic } from "@codemirror/lint";
+import { forceLinting, linter, lintGutter, setDiagnosticsEffect, type Diagnostic } from "@codemirror/lint";
 import { Annotation, Compartment, EditorState, RangeSetBuilder, StateEffect, StateField, type Extension, type Text } from "@codemirror/state";
 import {
   Decoration, drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, hoverTooltip, keymap, lineNumbers, placeholder,
+  ViewPlugin,
 } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
@@ -181,6 +182,25 @@ export function lintJson(text: string): Diagnostic[] {
   const to = Math.min(from + 1, Math.max(end, 1));
   return [{ from, to, severity: "error", message: problem.message, source: "JSON" }];
 }
+
+/**
+ * Whether the lint pass that follows the last edit has finished, as `data-lint-state` on the editor's root (`.cm-editor`): "pending"
+ * from the creation and from every edit until a pass has set its diagnostics (even an empty set: that is what a pass ends with),
+ * "idle" after. The linter waits 250 ms after the last edit, so "nothing is flagged" right after an edit proves nothing; a browser
+ * test waits for "idle" first and then asserts that no marker is there. (Swapping the schema re-lints without an edit and leaves the
+ * state as it was: a test that changes the schema waits for the markers themselves.)
+ */
+const lintStateMarker = (): Extension => [
+  ViewPlugin.define((view) => {
+    view.dom.dataset.lintState = "pending";
+    return {};
+  }),
+  EditorView.updateListener.of((update) => {
+    const linted = update.transactions.some((tr) => tr.effects.some((effect) => effect.is(setDiagnosticsEffect)));
+    if (linted) update.view.dom.dataset.lintState = "idle";
+    else if (update.docChanged) update.view.dom.dataset.lintState = "pending";
+  }),
+];
 
 // ---------------------------------------------------------------------------------------------------------------------------
 // Schema support: `codemirror-json-schema`, loaded the first time an editor is given a schema (see `loadSchemaSupport`).
@@ -425,7 +445,7 @@ export function buildExtensions(o: EditorOptions): Extension[] {
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     );
     if (o.placeholder) extensions.push(placeholder(o.placeholder));
-    if (o.language === "json") extensions.push(linter((view) => lintJson(view.state.doc.toString()), { delay: 250 }), lintGutter());
+    if (o.language === "json") extensions.push(linter((view) => lintJson(view.state.doc.toString()), { delay: 250 }), lintGutter(), lintStateMarker());
   } else {
     extensions.push(keymap.of(defaultKeymap));
   }
