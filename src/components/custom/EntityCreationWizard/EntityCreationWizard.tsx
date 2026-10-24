@@ -13,6 +13,7 @@ import type { StandardTemplate } from "@/lib/schema-standards";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
 import { buildImportAssetsPayload, decimalFacts } from "@/lib/importers/import-payload";
+import { sanitizeImportedText } from "@/lib/importers/text-safety";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import { IMPORTED_ENTITY_FALLBACK_NAME } from "@/lib/importers/types";
 import type { ImportFormat, ParsedEntity } from "@/lib/importers/types";
@@ -406,7 +407,7 @@ export function EntityCreationWizard({
         type: f.type,
         nullable: f.nullable ?? true,
         isKey: f.isKey ?? false,
-        description: f.description,
+        description: sanitizeImportedText(f.description),
         classification: f.classification,
         // A decimal the importer read with its precision and scale keeps them, until the reviewer changes the type of the row.
         ...decimalFacts(f.parsed, f.type),
@@ -417,7 +418,7 @@ export function EntityCreationWizard({
 
     const entityInput = {
       name: state.entityName.trim(),
-      description: state.entityDescription,
+      description: sanitizeImportedText(state.entityDescription),
       fields,
       // The model's own vendor keys (`x-*` of the schema root) belong to the entity, not to a field.
       ...(state.importedEntity?.extensions && Object.keys(state.importedEntity.extensions).length > 0

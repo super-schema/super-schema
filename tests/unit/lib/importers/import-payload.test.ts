@@ -162,3 +162,30 @@ describe("the precision and scale of an imported decimal", () => {
     });
   });
 });
+
+describe("text that PostgreSQL cannot store never reaches a create (every importer shares ParsedField.description)", () => {
+  const field = { name: "note", type: "string", nullable: true, confidence: "high" as const, originalType: "string" };
+
+  it("a NUL is dropped and a lone surrogate replaced in a field's description", () => {
+    expect(parsedFieldToCreateFieldInput({ ...field, description: "a\u0000b\ud800c" }).description).toBe("ab\uFFFDc");
+    expect(parsedFieldToCreateFieldInput({ ...field, description: "plain 😀" }).description).toBe("plain 😀");
+    expect(parsedFieldToCreateFieldInput({ ...field }).description).toBe("");
+  });
+
+  it("... and in the description of every model and entity of a multi-asset payload", () => {
+    const result = {
+      models: [{ name: "Ledger", description: "the\u0000 ledger", fields: [{ ...field, description: "x\u0000y" }], referencedModelNames: [], referencedByModelNames: [], recommendedAsEntity: true }],
+      sharedEnums: [],
+      customScalars: [],
+      unions: [],
+      services: [],
+      decoratorDefinitions: [],
+      warnings: [],
+    } as unknown as Parameters<typeof buildImportAssetsPayload>[0];
+    const payload = buildImportAssetsPayload(result, { ...NO_SELECTION, selectedModels: [0], selectedEntities: [0] });
+    expect(payload.models[0].description).toBe("the ledger");
+    expect(payload.entities[0].description).toBe("the ledger");
+    expect(payload.models[0].fields[0].description).toBe("xy");
+    expect(payload.entities[0].fields[0].description).toBe("xy");
+  });
+});

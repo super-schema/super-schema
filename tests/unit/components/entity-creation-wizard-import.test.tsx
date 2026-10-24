@@ -181,6 +181,27 @@ describe("EntityCreationWizard — multi-entity import", () => {
     expect(fee).toMatchObject({ name: "fee", type: "decimal", precision: null, scale: null });
   });
 
+  it("drops a NUL and replaces a lone surrogate in the descriptions it creates (PostgreSQL text cannot store them)", async () => {
+    mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e-nul" });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse(
+      JSON.stringify({
+        title: "Device",
+        description: "A\u0000 device",
+        type: "object",
+        properties: { id: { type: "string", description: "The\u0000 id\ud800" } },
+      }),
+    );
+    await waitFor(() => expect(screen.getByDisplayValue("Device")).toBeDefined());
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Entity" }));
+
+    await waitFor(() => expect(mocks.createEntityWithFieldsAction).toHaveBeenCalledTimes(1));
+    const [, input] = mocks.createEntityWithFieldsAction.mock.calls[0];
+    expect(input.description).toBe("A device");
+    expect(input.fields[0].description).toBe("The id�");
+  });
+
   it("opens the NEW entity page after a single-entity import creates it (not the product page)", async () => {
     mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e-new" });
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);

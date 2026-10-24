@@ -11,6 +11,7 @@ import type {
   CreateFieldInput,
 } from "@/app/(dashboard)/schemas/[domainSlug]/actions";
 import { buildDecoratorsFromParsedField } from "./decorator-builder";
+import { sanitizeImportedText } from "./text-safety";
 import type { ParsedEntity, ParsedField } from "./types";
 import type { TypeSpecImportResult } from "./typespec.importer";
 
@@ -41,7 +42,7 @@ export function parsedFieldToCreateFieldInput(field: ParsedField): CreateFieldIn
     type: field.type,
     nullable: field.nullable,
     isKey: field.isKey ?? false,
-    description: field.description ?? "",
+    description: sanitizeImportedText(field.description ?? ""),
     classification: field.classification ?? null,
     ...decimalFacts(field, field.type),
     decorators: buildDecoratorsFromParsedField(field),
@@ -55,7 +56,7 @@ export function parsedFieldToCreateFieldInput(field: ParsedField): CreateFieldIn
 function toModelInput(model: ParsedEntity & { extends?: string }) {
   return {
     name: model.name,
-    description: model.description,
+    description: model.description === undefined ? undefined : sanitizeImportedText(model.description),
     extends: model.extends,
     ...(model.extensions && Object.keys(model.extensions).length > 0 ? { extensions: model.extensions } : {}),
     fields: model.fields.map(parsedFieldToCreateFieldInput),
