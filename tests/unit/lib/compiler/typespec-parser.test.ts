@@ -186,6 +186,26 @@ model Blog {
     });
   });
 
+  it("reads a qualified model name (Domain.Product.Entity) as the name, and an array of one as an array of that name", () => {
+    expect(mapTypeSpecType("Billing.Payments.Address")).toEqual({ type: "Billing.Payments.Address" });
+    expect(mapTypeSpecType("Billing.Payments.Address[]")).toEqual({
+      type: "array",
+      arrayElementType: "Billing.Payments.Address",
+    });
+    expect(mapTypeSpecType(" _tenant._tenant.Note[] ")).toEqual({ type: "array", arrayElementType: "_tenant._tenant.Note" });
+
+    const parsed = parseTypeSpec("model Customer {\n  home: Billing.Payments.Address;\n  others: Billing.Payments.Address[];\n}\n");
+    expect(parsed!.fields.map((f) => [f.name, f.type, f.arrayElementType])).toEqual([
+      ["home", "Billing.Payments.Address", undefined],
+      ["others", "array", "Billing.Payments.Address"],
+    ]);
+  });
+
+  it("a dotted name is not a scalar: a built-in type name inside it is not mapped", () => {
+    expect(mapTypeSpecType("Sales.string[]")).toEqual({ type: "array", arrayElementType: "Sales.string" });
+    expect(mapTypeSpecType("Sales.string")).toEqual({ type: "Sales.string" });
+  });
+
   it("returns null for malformed input", () => {
     expect(parseTypeSpec("")).toBeNull();
     expect(parseTypeSpec("just some random text")).toBeNull();

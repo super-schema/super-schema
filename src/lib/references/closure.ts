@@ -70,9 +70,12 @@ type IndexedEntity = {
 
 type Edge = { field: string; target: IndexedEntity; pin?: string };
 
+/** What the resolver needs of a tenant entity: its id, its name and its qualified reference. */
+type Resolvable = { id: string; name: string; ref: EntityRef };
+
 const idKey = (name: string) => sanitizeIdentifier(name.trim()).toLowerCase();
 const nameKey = (name: string) => name.trim().toLowerCase();
-const byQualified = (a: IndexedEntity, b: IndexedEntity) => compareStr(qualifiedName(a.ref), qualifiedName(b.ref));
+const byQualified = (a: Pick<Resolvable, "ref">, b: Pick<Resolvable, "ref">) => compareStr(qualifiedName(a.ref), qualifiedName(b.ref));
 function compareStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -156,10 +159,10 @@ async function loadMemberMetadata(db: DbClient, entityId: string): Promise<unkno
  * Resolves a field reference to an indexed entity: id, then qualified name, then a legacy bare name (tenant-wide).
  * Returns `undefined` (dangling) when nothing matches, or the candidates when a bare name is ambiguous.
  */
-function resolveTarget(
-  index: Map<string, IndexedEntity>,
+function resolveTarget<T extends Resolvable>(
+  index: Map<string, T>,
   fieldRef: EntityRef | { legacyName: string }
-): { target: IndexedEntity } | { ambiguous: IndexedEntity[]; name: string } | undefined {
+): { target: T } | { ambiguous: T[]; name: string } | undefined {
   if ("legacyName" in fieldRef) {
     const all = [...index.values()];
     const exact = all.filter((e) => nameKey(e.name) === nameKey(fieldRef.legacyName));
@@ -178,6 +181,35 @@ function resolveTarget(
   if (matches.length === 0) return undefined;
   if (matches.length === 1) return { target: matches[0] };
   return { ambiguous: matches.sort(byQualified), name: q };
+}
+
+/** What {@link createRefResolver} answers: the one entity a reference means, the several a bare name matches, or nothing (dangling). */
+export type RefResolution = { target: EntityRef } | { ambiguous: EntityRef[]; name: string } | undefined;
+
+/**
+ * The tenant's entities as qualified references (id, domain / product / entity), for resolving a name that is not on a field row yet (a
+ * name written in TypeSpec source). Tenant-scoped like the closure walk, with the same light read (no metadata). A blank tenant id fails
+ * closed (`CROSS_TENANT`): Prisma reads `tenantId: undefined` as "every tenant".
+ */
+export async function loadTenantEntityRefs(db: DbClient, tenantId: string): Promise<Result<EntityRef[], ClosureError>> {
+  if (typeof tenantId !== "string" || tenantId.trim() === "") return { success: false, error: { code: "CROSS_TENANT" } };
+  const index = await loadTenantIndex(db, tenantId);
+  return ok([...index.values()].map((e) => e.ref));
+}
+
+/**
+ * The closure walk's own resolver (id, then qualified name, then a legacy bare name across the tenant) over a list of tenant entity
+ * references, for callers that resolve a reference outside a closure walk. Entries without an id are not resolvable and are skipped.
+ */
+export function createRefResolver(refs: readonly EntityRef[]): (fieldRef: EntityRef | { legacyName: string }) => RefResolution {
+  const index = new Map<string, Resolvable>();
+  for (const ref of refs) if (ref.entityId) index.set(ref.entityId, { id: ref.entityId, name: ref.entity, ref });
+  return (fieldRef) => {
+    const resolved = resolveTarget(index, fieldRef);
+    if (!resolved) return undefined;
+    if ("ambiguous" in resolved) return { ambiguous: resolved.ambiguous.map((e) => e.ref), name: resolved.name };
+    return { target: resolved.target.ref };
+  };
 }
 
 type Loaded = { fields: PrismaFieldInput[]; source: ClosureEntity["source"]; version?: string; sequence?: number };

@@ -187,8 +187,8 @@ TYPESPEC_SCALAR_TO_TYPE["never"] = "never";
 export function mapTypeSpecType(typeExpr: string): { type: string; arrayElementType?: string } {
   const trimmed = typeExpr.trim();
 
-  // Array type: "string[]" or "int32[]"
-  const arrayMatch = trimmed.match(/^(\w+)\[\]$/);
+  // Array type: "string[]" or "int32[]"; the element may be a qualified model name ("Billing.Payments.Address[]"), kept as written
+  const arrayMatch = trimmed.match(/^(\w+(?:\.\w+)*)\[\]$/);
   if (arrayMatch) {
     const elementType = TYPESPEC_SCALAR_TO_TYPE[arrayMatch[1]] ?? arrayMatch[1];
     return { type: "array", arrayElementType: elementType };

@@ -21,7 +21,16 @@ import { requireId } from "@/services/events/service-guards";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
 import { TENANT_PLACEHOLDER, holdsEntityReference, readFieldReference, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
-import { loadReferenceClosure, type LegacyUpgrade, type ResolveMode } from "@/lib/references/closure";
+import { loadReferenceClosure, loadTenantEntityRefs, type LegacyUpgrade, type ResolveMode } from "@/lib/references/closure";
+import {
+  MAX_WRITTEN_NAMES,
+  createNameResolver,
+  resolveSourceReferences,
+  storedReferenceNames,
+  type SourceReference,
+} from "@/lib/references/source-reference";
+import type { PublishNeedsReference } from "@/lib/entity-versioning/publish-plan";
+import { TYPESPEC_STD_TYPE_NAMES } from "@/lib/compiler/typespec-identifiers";
 import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-versioning/schema-version-publishability";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import type { ClosureTargetResult } from "@/lib/emission/closure-generation";
@@ -819,6 +828,11 @@ async function applyTypeSpecFields(
   fieldsToRemove?: string[],
   fieldGovernance?: Record<string, FieldGovernanceInfo>,
   enums?: ReadonlyMap<string, readonly string[]>,
+  /**
+   * Field name -> the entity of the tenant the source's type name for it resolved to. Server-made only (`compileAndApplyTypeSpecSource`);
+   * this function is not exported, so a client cannot hand it one: `applyTypeSpecAction` never passes any.
+   */
+  references?: ReadonlyMap<string, SourceReference>,
 ): Promise<ApplyTypeSpecResult> {
   const session = await auth();
   if (!session?.user?.id) return { added: 0, updated: 0, removed: [], error: "Not authenticated" };
@@ -866,7 +880,12 @@ async function applyTypeSpecFields(
       // The row the source means: the stored decorators MERGED with what the text can express (never replaced), see
       // `@/lib/typespec-sync/merge-fields` for which keys the source owns and which are preserved. `fieldGovernance` is only
       // given on the real-compiler path; a field without governance decorators there is still "known to have none".
-      const merged = mergeSyncedField(existing ?? null, pf, { governance, governanceKnown: fieldGovernance !== undefined, enums });
+      const merged = mergeSyncedField(existing ?? null, pf, {
+        governance,
+        governanceKnown: fieldGovernance !== undefined,
+        enums,
+        reference: references?.get(pf.name),
+      });
       const decoratorsJson = merged.decorators;
       const classification = merged.classification;
 
@@ -2120,6 +2139,12 @@ export interface TypeSpecSourceSaveResult {
   diagnostics: GovernanceDiagnostic[];
   applied?: { added: number; updated: number; removed: string[] };
   error?: string;
+  /**
+   * The save wrote nothing because a field's type names a model that several entities of the tenant have (`useReferencePick` asks, and the
+   * pick comes back as `picks` on the next call). `entityId` is the entity being saved; `fieldId` the row of the field when it has one
+   * (an empty string for a field the source adds).
+   */
+  needsReference?: PublishNeedsReference;
 }
 
 /**
@@ -2128,10 +2153,18 @@ export interface TypeSpecSourceSaveResult {
  * blocking (error-severity) diagnostic — the entity's stored typespecSource
  * is never partially overwritten. On success, persists the source and
  * regenerates the entity's fields from the compiled result.
+ *
+ * A field may be typed with the name of ANOTHER entity of the active tenant (`address: Address;`, or qualified
+ * `address: Billing.Payments.Address;`): the name is resolved with the closure's resolver and the field is stored as a qualified reference
+ * with the entity id (no version: only a pin tag stores one). A name with several matches is never guessed: nothing is written and the
+ * answer is `needsReference`; the pick the author makes comes back as `picks` (field name -> entity id, one of the candidates). The text
+ * stays as typed.
  */
 export async function compileAndApplyTypeSpecSourceAction(
   entityId: string,
-  source: string
+  source: string,
+  /** Picks for the names an earlier call asked about: field name -> the id of the entity chosen. Anything that is not one of the candidates is ignored. */
+  picks?: Record<string, string>
 ): Promise<TypeSpecSourceSaveResult> {
   const session = await auth();
   if (!session?.user?.id) {
@@ -2139,7 +2172,7 @@ export async function compileAndApplyTypeSpecSourceAction(
   }
 
   try {
-    return await compileAndApplyTypeSpecSource(session.user.id, entityId, source);
+    return await compileAndApplyTypeSpecSource(session.user.id, entityId, source, picks);
   } catch (e: unknown) {
     // Anything unexpected (a driver / Prisma message with an absolute path, a compiler crash) is logged and answered
     // generically, in the shape the Source tab reads: the tab leaves "Saving..." and shows `error` in a toast. A disallowed
@@ -2148,10 +2181,18 @@ export async function compileAndApplyTypeSpecSourceAction(
   }
 }
 
+/** The message of a built-in type name given to something the source declares, or null (the same names TypeSpec itself resolves without a declaration). */
+function stdTypeNameMessage(kind: string, name: string): string | null {
+  return TYPESPEC_STD_TYPE_NAMES.has(name)
+    ? `${kind} "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this ${kind.toLowerCase()} instead of the built-in. Choose another name.`
+    : null;
+}
+
 async function compileAndApplyTypeSpecSource(
   userId: string,
   entityId: string,
-  source: string
+  source: string,
+  picks?: unknown
 ): Promise<TypeSpecSourceSaveResult> {
   // Ownership BEFORE anything is loaded: a malformed, missing or foreign id is the same "Entity not found" (a malformed id
   // is rejected without a query, so it never reaches a Prisma validator), before the source is compiled or written.
@@ -2167,10 +2208,33 @@ async function compileAndApplyTypeSpecSource(
     return { success: false, diagnostics: [], error: "Entity not found" };
   }
 
-  const result = await compileTypeSpecWithGovernance(source);
+  // The entity's own rows (which fields the source drops, which references it already stores) and its tenant's entities (what a name
+  // written as a field's type can mean; the entity was just checked to be in the active tenant). Each is read once, on first use: a
+  // source that does not compile, or names nothing outside itself, reads neither.
+  const readFieldRows = () =>
+    prisma.field.findMany({ where: { entityId }, select: { id: true, name: true, type: true, decorators: true } });
+  let fieldRows: ReturnType<typeof readFieldRows> | undefined;
+  const loadFieldRows = () => (fieldRows ??= readFieldRows());
+  let tenantRefs: ReturnType<typeof loadTenantEntityRefs> | undefined;
+  const loadRefs = () => (tenantRefs ??= loadTenantEntityRefs(prisma, entity.tenantId));
+
+  // A field typed with the name of another entity compiles only when that name is declared somewhere, and in this one document it is
+  // not. The compile is told which of the names it could not find are entities of the tenant (or references this entity already stores),
+  // and checks the rest of the source with an empty stand-in for each: the stand-ins live in a separate file of that one compile and are
+  // never stored or emitted.
+  const result = await compileTypeSpecWithGovernance(source, {
+    externalModels: async (written) => {
+      const refs = await loadRefs();
+      if (!refs.success) return new Set<string>();
+      const resolve = createNameResolver(refs.data);
+      const storedNames = storedReferenceNames(await loadFieldRows());
+      return new Set(written.slice(0, MAX_WRITTEN_NAMES).filter((name) => storedNames.has(name) || resolve(name) !== undefined));
+    },
+  });
   if (!result.success) {
     return { success: false, diagnostics: result.diagnostics };
   }
+  const existingFields = await loadFieldRows();
 
   const model = result.document.models[0];
   if (!model) {
@@ -2204,10 +2268,41 @@ async function compileAndApplyTypeSpecSource(
     if (reserved !== null) return { success: false, diagnostics: result.diagnostics, error: `${kind} "${name}": ${reserved}` };
   }
 
-  const existingFields = await prisma.field.findMany({
-    where: { entityId },
-    select: { name: true },
-  });
+  // A model, enum, scalar or union NAMED like a TypeSpec built-in (`model string`, `enum int32`) takes the name over: every field typed with
+  // the built-in is then read as that declaration, or the declaration as the built-in. The save is refused rather than silently mistyped.
+  for (const [kind, name] of [["Model", model.name], ...result.document.models.slice(1).map((m) => ["Model", m.name]), ...declaredNames]) {
+    const builtIn = stdTypeNameMessage(kind, name);
+    if (builtIn !== null) return { success: false, diagnostics: result.diagnostics, error: builtIn };
+  }
+
+  // The names the fields of the entity's model write as their type that are NOT declared by the source: an entity of the tenant, or this
+  // entity itself (its own model's name). Resolved with the closure's resolver; several matches are asked about, nothing is written.
+  const typeNames = result.fieldTypeNames ?? [];
+  const external = result.externalModels ?? new Set<string>();
+  const candidates = typeNames.filter((n) => external.has(n.written) || n.written === model.name);
+  let references: ReadonlyMap<string, SourceReference> | undefined;
+  if (candidates.length > 0) {
+    const refs = await loadRefs();
+    if (!refs.success) return { success: false, diagnostics: result.diagnostics, error: "Entity not found" };
+    const resolved = resolveSourceReferences({
+      fields: candidates,
+      stored: new Map(existingFields.map((f) => [f.name, f])),
+      self: { entityId, modelName: model.name },
+      refs: refs.data,
+      picks,
+    });
+    if (!resolved.ok) {
+      const { field, name, candidates: matches, fieldId } = resolved.ambiguous;
+      return {
+        success: false,
+        diagnostics: result.diagnostics,
+        needsReference: { field, name, candidates: matches, entityId, fieldId },
+        error: `Field "${field}" refers to "${name}", which matches ${matches.length} entities. Choose the entity it means on that field, then save again.`,
+      };
+    }
+    references = resolved.references;
+  }
+
   const newFieldNames = new Set(model.fields.map((f) => f.name));
   const fieldsToRemove = existingFields
     .map((f) => f.name)
@@ -2249,6 +2344,7 @@ async function compileAndApplyTypeSpecSource(
     fieldsToRemove,
     fieldGovernance,
     new Map(enums.map((d) => [d.name, d.values] as const)),
+    references,
   );
 
   if (applyResult.error) {

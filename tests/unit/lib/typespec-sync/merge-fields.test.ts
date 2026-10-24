@@ -347,3 +347,91 @@ describe("entityExtensionsChange", () => {
     expect(entityExtensionsChange({ custom: { extensions: { a: 1 }, other: 1 } }, undefined)).toEqual({ kind: "clear" });
   });
 });
+
+describe("a name the source typed a field with that resolved to an entity of the tenant (Task 11)", () => {
+  const BILLING = { entityId: "addr-1", domain: "Billing", product: "Payments", entity: "Address" };
+  const SALES = { entityId: "addr-2", domain: "Sales", product: "Shipping", entity: "Address" };
+  const QUALIFIED = (r: typeof BILLING) => ({ referencedEntityId: r.entityId, referencedEntityName: r.entity, referencedQualifiedName: `${r.domain}/${r.product}/${r.entity}` });
+
+  it("a new field becomes a reference: id, name and qualified name, and NO version", () => {
+    const m = mergeSyncedField(null, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+
+    expect(m.type).toBe("reference");
+    expect(m.decorators).toEqual(QUALIFIED(BILLING));
+  });
+
+  it("an array element: an array whose element is a reference, the target on the field", () => {
+    const m = mergeSyncedField(null, src({ type: "array", arrayElementType: "Address" }), { reference: { ref: SALES, element: true } });
+
+    expect(m.type).toBe("array");
+    expect(m.decorators).toEqual({ arrayElementType: "reference", ...QUALIFIED(SALES) });
+  });
+
+  it("the pin tag of the source is the only version: stored with the reference, otherwise none (a stale pin goes)", () => {
+    const pinned = mergeSyncedField(null, src({ type: "Address", decorators: { referencedEntityVersion: "1.2" } }), { reference: { ref: BILLING, element: false } });
+    expect(pinned.decorators).toEqual({ ...QUALIFIED(BILLING), referencedEntityVersion: "1.2" });
+
+    const existing = row({ type: "reference", decorators: { ...QUALIFIED(BILLING), referencedEntityVersion: "1.0" } });
+    const unpinned = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    expect(unpinned.decorators).toEqual(QUALIFIED(BILLING));
+  });
+
+  it("a legacy name-only reference written as the same name is upgraded in place; other decorators survive", () => {
+    const existing = row({ type: "reference", decorators: { referencedEntityName: "Address", governance: { dataCategory: "c" } } });
+
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+
+    expect(m.type).toBe("reference");
+    expect(m.decorators).toEqual({ ...QUALIFIED(BILLING), governance: { dataCategory: "c" } });
+    expect(fieldNeedsUpdate(existing, m, src({ type: "Address" }))).toBe(true);
+  });
+
+  it("retargeting replaces the whole target, the id and the qualified name included", () => {
+    const existing = row({ type: "reference", decorators: { ...QUALIFIED(BILLING), referencedEntityVersion: "1.0", keep: 1 } });
+
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: SALES, element: false } });
+
+    expect(m.decorators).toEqual({ ...QUALIFIED(SALES), keep: 1 });
+  });
+
+  it("a field that was a string and is now a reference loses what was bound to the old type", () => {
+    const m = mergeSyncedField(row({ type: "string", decorators: { enumName: "E", typespec: { validation: { maxLength: 5 } } } }), src({ type: "Address" }), {
+      reference: { ref: BILLING, element: false },
+    });
+
+    expect(m.type).toBe("reference");
+    expect(m.decorators).not.toHaveProperty("enumName");
+    expect(m.decorators).toMatchObject(QUALIFIED(BILLING));
+  });
+
+  it("a dangling field (a raw $ref) typed with a name that resolved is a resolved reference: the marker goes", () => {
+    const existing = row({ type: "reference", decorators: { referencedEntityName: "Address", danglingRef: { ref: "common/address.json", reason: "r" } } });
+
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+
+    expect(m.decorators).not.toHaveProperty("danglingRef");
+    expect(m.decorators).toMatchObject(QUALIFIED(BILLING));
+  });
+
+  it("re-saving the same resolved reference changes nothing", () => {
+    const existing = row({ type: "reference", decorators: { ...QUALIFIED(BILLING) } });
+
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+
+    expect(fieldNeedsUpdate(existing, m, src({ type: "Address" }))).toBe(false);
+  });
+
+  it("an id-less reference (a name only) is written without an id, never with a made-up one", () => {
+    const m = mergeSyncedField(null, src({ type: "Address" }), { reference: { ref: { domain: "Billing", product: "Payments", entity: "Address" }, element: false } });
+
+    expect(m.decorators).not.toHaveProperty("referencedEntityId");
+    expect(m.decorators.referencedQualifiedName).toBe("Billing/Payments/Address");
+  });
+
+  it("the input is not modified", () => {
+    const stored = { referencedEntityName: "Address" };
+    const existing = row({ type: "reference", decorators: stored });
+    mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    expect(stored).toEqual({ referencedEntityName: "Address" });
+  });
+});

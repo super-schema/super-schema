@@ -47,6 +47,19 @@ const LEGACY_SEGMENT_WORDS: ReadonlySet<string> = new Set([
   "using", "import",
 ]);
 
+/**
+ * The built-in types a TypeSpec source names without declaring them: the std scalars, and the `Record` / `Array` models. A model, enum,
+ * scalar or union DECLARED with one of these names takes the name over inside its scope (a global `model string {}` makes every `string`
+ * of the document that model), so a field typed with the built-in is silently read as that model, or the other way round. A test checks
+ * this list against the installed compiler's own `TypeSpec` namespace.
+ */
+export const TYPESPEC_STD_TYPE_NAMES: ReadonlySet<string> = new Set([
+  "string", "boolean", "bytes", "numeric", "integer", "float", "decimal", "decimal128",
+  "int8", "int16", "int32", "int64", "safeint", "uint8", "uint16", "uint32", "uint64", "float32", "float64",
+  "plainDate", "plainTime", "utcDateTime", "offsetDateTime", "duration", "url", "unixTimestamp32",
+  "Record", "Array",
+]);
+
 /** An ASCII identifier that is valid as-is in TypeSpec (and in a `.proto` field name). */
 export const BARE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

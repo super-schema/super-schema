@@ -29,6 +29,7 @@ import type { FieldGovernanceInfo } from "@/lib/compiler/typespec-compiler";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { isConstraintWithheld, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { refToEntityName } from "@/lib/importers/jsonschema.importer";
+import { writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
 
 type Rec = Record<string, unknown>;
 
@@ -71,6 +72,12 @@ export interface MergeOptions {
    * such a field is an enum field (and an array of one an array of `enum`), whose stored symbols stay the truth.
    */
   enums?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * The entity of the tenant the source's type name for this field resolved to (see `@/lib/references/source-reference`). The field is then
+   * a reference (an array of references when `element`) to it: its id, name and qualified name are written, a stale target and pin go,
+   * and the pin tag of the source is the only thing that stores a version. Absent: the field is merged as the text says.
+   */
+  reference?: { ref: EntityRef; element: boolean };
 }
 
 export const GENERIC_DANGLING_REASON = "unresolved reference";
@@ -238,6 +245,11 @@ function resolvedTargetAsStored(existing: SyncExistingField | null, source: Sync
   return unchanged;
 }
 
+/** The source field as a reference to an entity the text named: `reference`, or an array whose element is one. */
+function asResolvedReference(source: SyncSourceField, element: boolean): SyncSourceField {
+  return element ? { ...source, type: "array", arrayElementType: "reference" } : { ...source, type: "reference" };
+}
+
 /** A field (or array element) typed with an enum the source declares, read as `enum` / array of `enum`. */
 function enumAsDeclared(
   source: SyncSourceField,
@@ -258,7 +270,7 @@ function enumAsDeclared(
 /** The field row the source text means, given the stored row (null for a field the source adds). Pure; never mutates its inputs. */
 export function mergeSyncedField(existing: SyncExistingField | null, rawSource: SyncSourceField, opts: MergeOptions = {}): MergedField {
   const enumTyped = enumAsDeclared(rawSource, opts.enums);
-  const { source, matched } = resolvedTargetAsStored(existing, enumTyped.source);
+  const { source, matched } = resolvedTargetAsStored(existing, opts.reference ? asResolvedReference(enumTyped.source, opts.reference.element) : enumTyped.source);
   const out: Rec = isRec(existing?.decorators) ? cloneJson(existing.decorators as Rec) : {};
   const mapped = mapSourceField(source);
   const typeChanged = existing !== null && existing.type !== mapped.type;
@@ -384,13 +396,20 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
     out.semantics = { ...out.semantics, description: doc };
   }
 
+  // --- the entity the written name resolved to: stored as the qualified reference; the pin of the source (if any) is the only version ---
+  let decorators = out;
+  if (opts.reference && isReferenceResult) {
+    const pin = typeof out.referencedEntityVersion === "string" && out.referencedEntityVersion !== "" ? out.referencedEntityVersion : undefined;
+    decorators = writeFieldReference(out, { ...opts.reference.ref, ...(pin ? { pinnedVersion: pin } : {}) });
+  }
+
   return {
     type: mapped.type,
     nullable: source.isOptional,
     isKey: source.isKey,
     description: (doc as string | undefined) ?? existing?.description ?? "",
     classification,
-    decorators: out,
+    decorators,
   };
 }
 

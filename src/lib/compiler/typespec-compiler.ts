@@ -29,10 +29,12 @@ import {
   type Diagnostic,
   type LinterRuleSet,
 } from "@typespec/compiler";
+import { SyntaxKind } from "@typespec/compiler/ast";
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { mapTypeSpecType } from "./typespec-parser";
 import { createLibraryOnlyHost } from "./library-only-host";
+import { isPlainIdentifier, quoteIdentifier } from "./typespec-identifiers";
 import { assertTypeSpecImportsAllowed, TypeSpecImportGuardError } from "@/lib/typespec/import-guard";
 import * as gov from "@superschema/typespec-enterprise";
 import {
@@ -83,15 +85,28 @@ const WORK_DIR = join(process.cwd(), ".typespec-work");
 let sharedHost: CompilerHost | undefined;
 const libraryOnlyHost = (): CompilerHost => (sharedHost ??= createLibraryOnlyHost());
 
+/** The line a VALIDATION-ONLY compile adds in front of the source (see `stubs` below): positions in its diagnostics are shifted back by this. */
+const STUBS_IMPORT = 'import "./stubs.tsp";\n';
+const STUBS_FILE = "stubs.tsp";
+
 async function compileSource(
   source: string,
-  options?: { linterRuleSet?: LinterRuleSet }
+  options?: {
+    linterRuleSet?: LinterRuleSet;
+    /**
+     * Validation only: declarations written to a SECOND file the source is given an import of (`stubs.tsp`, imported by one line placed
+     * before the source's text, which is otherwise compiled as it is). The models declared there are not in the source file, so they are
+     * not part of the document read back from it: nothing here is stored or emitted. Only `compileTypeSpecWithGovernance` passes it.
+     */
+    stubs?: string;
+  }
 ): Promise<{ program: Program; mainPath: string }> {
   const { text } = assertTypeSpecImportsAllowed(source);
   await mkdir(WORK_DIR, { recursive: true });
   const dir = await mkdtemp(join(WORK_DIR, "job-"));
   const mainPath = join(dir, "main.tsp");
-  await writeFile(mainPath, text, "utf8");
+  if (options?.stubs !== undefined) await writeFile(join(dir, STUBS_FILE), options.stubs, "utf8");
+  await writeFile(mainPath, options?.stubs !== undefined ? STUBS_IMPORT + text : text, "utf8");
   try {
     const program = await compile(libraryOnlyHost(), mainPath, {
       noEmit: true,
@@ -555,6 +570,17 @@ export interface ModelGovernanceInfo {
   deprecation?: { since: string; replacement?: string };
 }
 
+/**
+ * A field of the entity's model (its first model) whose type is a plain NAME: `Address`, `Billing.Payments.Address`, or the same as the
+ * element of an array (`element`). Read from the syntax tree, so a qualified name is as written (the semantic type only knows the model's
+ * short name). A template instance (`Record<Address>`), a union, an inline model and the like are not plain names and are not listed.
+ */
+export interface FieldTypeName {
+  field: string;
+  written: string;
+  element: boolean;
+}
+
 export type CompileWithGovernanceResult =
   | {
       success: true;
@@ -563,42 +589,153 @@ export type CompileWithGovernanceResult =
       fieldGovernance: Record<string, FieldGovernanceInfo>;
       modelGovernance: Record<string, ModelGovernanceInfo>;
       diagnostics: GovernanceDiagnostic[];
+      /** The plain type names the fields of the entity's model write (see {@link FieldTypeName}), in field order. */
+      fieldTypeNames: FieldTypeName[];
+      /** The names `options.externalModels` accepted: the source compiled only because they were given a stand-in. Empty for a source that compiled on its own. */
+      externalModels: ReadonlySet<string>;
     }
   | {
       success: false;
       diagnostics: GovernanceDiagnostic[];
     };
 
+export interface CompileWithGovernanceOptions {
+  /**
+   * The Source tab saves a source whose fields may be typed with the name of ANOTHER entity of the tenant, a model that source does not
+   * declare, so on its own it fails with `invalid-ref`. When it does, for a name a field of the entity's model WRITES that the compiler
+   * could not find (as written: `Address` or `Billing.Payments.Address`), this is asked which of them the caller resolves (an entity of
+   * the tenant); the source is compiled once more with an empty stand-in model for each name it accepts, so the rest of the source is
+   * still checked for real. The stand-ins live in a separate file: they are not in the document read back, so nothing of them is stored
+   * or emitted. A name in any other position (extends, a spread, `Record<T>`, a union) is never offered: it stays an error.
+   */
+  externalModels?: (written: string[]) => Promise<ReadonlySet<string>> | ReadonlySet<string>;
+}
+
 const GOVERNANCE_RULE_SET: LinterRuleSet = {
   extends: ["@superschema/typespec-enterprise/recommended"],
 };
 
+/** The identifiers the compiler reports as unknown (`Unknown identifier Address`; for `A.B.C` the first segment it could not find). */
+function unknownIdentifiers(diagnostics: readonly GovernanceDiagnostic[]): Set<string> {
+  const names = new Set<string>();
+  for (const d of diagnostics) {
+    if (d.severity !== "error" || d.code !== "invalid-ref") continue;
+    const m = /^Unknown identifier (.+)$/.exec(d.message);
+    if (m) names.add(m[1]);
+  }
+  return names;
+}
+
+/** The declarations of the stand-in models: `model Address {}` and `namespace Billing.Payments { model Address {} }`. */
+function standInDeclarations(names: Iterable<string>): string {
+  const ident = (name: string) => (isPlainIdentifier(name) ? name : quoteIdentifier(name));
+  const lines = ["// Validation only: stand-ins for the tenant entities the source refers to. Never stored, never emitted."];
+  for (const written of names) {
+    const parts = written.split(".");
+    const model = ident(parts[parts.length - 1]);
+    lines.push(parts.length === 1 ? `model ${model} {}` : `namespace ${parts.slice(0, -1).map(ident).join(".")} { model ${model} {} }`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * The name `node` is when it is a plain type reference without template arguments, else undefined. A member chain longer than
+ * {@link MAX_NAME_SEGMENTS} is not a name an entity can have (read iteratively: a hostile source cannot overflow the stack).
+ */
+const MAX_NAME_SEGMENTS = 8;
+function plainTypeName(node: unknown): string | undefined {
+  const ref = node as { kind?: SyntaxKind; target?: unknown; arguments?: readonly unknown[] } | undefined;
+  if (ref?.kind !== SyntaxKind.TypeReference || (ref.arguments?.length ?? 0) > 0) return undefined;
+  const segments: string[] = [];
+  let cursor = ref.target as { kind?: SyntaxKind; sv?: string; id?: { sv?: string }; base?: unknown; selector?: string } | undefined;
+  while (cursor?.kind === SyntaxKind.MemberExpression) {
+    if (cursor.selector !== "." || typeof cursor.id?.sv !== "string" || cursor.id.sv === "" || segments.length >= MAX_NAME_SEGMENTS) return undefined;
+    segments.unshift(cursor.id.sv);
+    cursor = cursor.base as typeof cursor | undefined;
+  }
+  if (cursor?.kind !== SyntaxKind.Identifier || typeof cursor.sv !== "string" || cursor.sv === "") return undefined;
+  segments.unshift(cursor.sv);
+  return segments.join(".");
+}
+
+/** {@link FieldTypeName}s of the first model of the source (the entity's model; the same one `compileTypeSpecDocumentFromProgram` lists first). */
+function entityFieldTypeNames(program: Program, mainPath: string): FieldTypeName[] {
+  const found: { model?: Model } = {};
+  navigateProgram(program, {
+    model(m: Model) {
+      if (found.model || !isFromSource(m, mainPath)) return;
+      if (m.name === "Array" || m.name === "Record" || !m.name) return;
+      found.model = m;
+    },
+  });
+  const names: FieldTypeName[] = [];
+  if (!found.model) return names;
+  for (const [, prop] of found.model.properties) {
+    const node = prop.node as { kind?: SyntaxKind; value?: { kind?: SyntaxKind; elementType?: unknown } } | undefined;
+    if (node?.kind !== SyntaxKind.ModelProperty || !node.value) continue;
+    const direct = plainTypeName(node.value);
+    if (direct !== undefined) {
+      names.push({ field: prop.name, written: direct, element: false });
+    } else if (node.value.kind === SyntaxKind.ArrayExpression) {
+      const element = plainTypeName(node.value.elementType);
+      if (element !== undefined) names.push({ field: prop.name, written: element, element: true });
+    }
+  }
+  return names;
+}
+
 export async function compileTypeSpecWithGovernance(
-  source: string
+  source: string,
+  options?: CompileWithGovernanceOptions
 ): Promise<CompileWithGovernanceResult> {
+  const first = await governanceCompile(source);
+  if (first.result.success || !options?.externalModels || !first.program) return first.result;
+
+  // The type of a field names something the source does not declare: is it an entity of the tenant? Only the names the compiler could
+  // not find are offered, and only when written as the type of a field (or of an array's element) of the entity's model.
+  const unknown = unknownIdentifiers(first.result.diagnostics);
+  if (unknown.size === 0) return first.result;
+  const unresolved = [...new Set(entityFieldTypeNames(first.program, first.mainPath).map((n) => n.written))].filter((written) =>
+    unknown.has(written.split(".")[0])
+  );
+  if (unresolved.length === 0) return first.result;
+  const accepted = await options.externalModels(unresolved);
+  const standIns = unresolved.filter((written) => accepted.has(written));
+  if (standIns.length === 0) return first.result;
+  return (await governanceCompile(source, standInDeclarations(standIns), new Set(standIns))).result;
+}
+
+async function governanceCompile(
+  source: string,
+  standIns?: string,
+  externalModels: ReadonlySet<string> = new Set()
+): Promise<{ result: CompileWithGovernanceResult; program?: Program; mainPath: string }> {
   let compiled: { program: Program; mainPath: string };
   try {
-    compiled = await compileSource(source, { linterRuleSet: GOVERNANCE_RULE_SET });
+    compiled = await compileSource(source, { linterRuleSet: GOVERNANCE_RULE_SET, ...(standIns !== undefined ? { stubs: standIns } : {}) });
   } catch (e) {
     // A disallowed import is a normal, user-facing failure of this source (shown like any compile error);
     // anything else is unexpected and propagates as before.
     if (e instanceof TypeSpecImportGuardError) {
-      return { success: false, diagnostics: [{ severity: "error", code: e.code, message: e.message }] };
+      return { result: { success: false, diagnostics: [{ severity: "error", code: e.code, message: e.message }] }, mainPath: "" };
     }
     throw e;
   }
   const { program, mainPath } = compiled;
 
-  const allDiagnostics: GovernanceDiagnostic[] = (program.diagnostics ?? []).map((d: Diagnostic) => ({
-    severity: d.severity === "error" ? "error" : "warning",
-    code: d.code,
-    message: d.message,
-    target: describeDiagnosticTarget(d),
-  }));
+  // A diagnostic raised inside the stand-in file is about the stand-in (a lint on an empty model), never about the user's source.
+  const allDiagnostics: GovernanceDiagnostic[] = (program.diagnostics ?? [])
+    .filter((d: Diagnostic) => standIns === undefined || !isInStandInFile(d))
+    .map((d: Diagnostic) => ({
+      severity: d.severity === "error" ? "error" : "warning",
+      code: d.code,
+      message: d.message,
+      target: describeDiagnosticTarget(d, mainPath, standIns !== undefined ? STUBS_IMPORT.length : 0),
+    }));
 
   const hasBlockingError = allDiagnostics.some((d) => d.severity === "error");
   if (hasBlockingError) {
-    return { success: false, diagnostics: allDiagnostics };
+    return { result: { success: false, diagnostics: allDiagnostics }, program, mainPath };
   }
 
   const fieldGovernance: Record<string, FieldGovernanceInfo> = {};
@@ -654,15 +791,38 @@ export async function compileTypeSpecWithGovernance(
   // the semantic accessors above.
   const document = compileTypeSpecDocumentFromProgram(program, mainPath);
 
-  return { success: true, document, fieldGovernance, modelGovernance, diagnostics: allDiagnostics };
+  return {
+    result: {
+      success: true,
+      document,
+      fieldGovernance,
+      modelGovernance,
+      diagnostics: allDiagnostics,
+      fieldTypeNames: entityFieldTypeNames(program, mainPath),
+      externalModels,
+    },
+    program,
+    mainPath,
+  };
 }
 
-function describeDiagnosticTarget(d: Diagnostic): string | undefined {
+/** The position in the SOURCE: `prefix` characters (the stand-in import line) are not part of it. */
+function describeDiagnosticTarget(d: Diagnostic, mainPath?: string, prefix = 0): string | undefined {
   try {
     const loc = getSourceLocation(d.target as Parameters<typeof getSourceLocation>[0]);
-    return loc ? `line ${loc.pos}` : undefined;
+    if (!loc) return undefined;
+    return `line ${mainPath !== undefined && loc.file?.path === mainPath ? Math.max(0, loc.pos - prefix) : loc.pos}`;
   } catch {
     return undefined;
+  }
+}
+
+function isInStandInFile(d: Diagnostic): boolean {
+  try {
+    const loc = getSourceLocation(d.target as Parameters<typeof getSourceLocation>[0]);
+    return loc?.file?.path !== undefined && basename(loc.file.path) === STUBS_FILE;
+  } catch {
+    return false;
   }
 }
 
