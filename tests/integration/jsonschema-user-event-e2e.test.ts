@@ -259,7 +259,10 @@ describe("user event schema: emission with the real emitters", () => {
     const result = await emit(entity(), prismaFields(["tenant"]), "bigquery");
     expect(result.errors).toEqual([]);
     expect(result.output).toContain("created_time STRING NOT NULL");
-    expect(result.output).toContain("user_links ARRAY<STRING> NOT NULL");
+    // A BigQuery ARRAY column is REPEATED: it cannot be NOT NULL (sibling fix 5b4b7d73a "no NOT NULL on ARRAY columns"), so the
+    // required array is `ARRAY<STRING>` and the DDL stays valid.
+    expect(result.output).toMatch(/user_links ARRAY<STRING> OPTIONS\(/);
+    expect(result.output).not.toContain("user_links ARRAY<STRING> NOT NULL");
     expect(result.output).toContain("PRIMARY KEY (tenant) NOT ENFORCED");
     expect(result.output).toContain("created_time: declared reference; stored as STRING");
   });
@@ -332,7 +335,9 @@ describe("user event schema: emission with the real emitters", () => {
     );
     const result = await emit(entity(), fields, "json-schema");
     expect(result.errors).toEqual([]);
-    // A single file (the output is that file's JSON): the hostile text is only the value of one `$ref`, no second model appeared.
+    // A single file (the output is that file's JSON, not a `===== path =====` bundle): the hostile text is only the value of one
+    // `$ref`, no second model (`Evil`) became a file of its own.
+    expect(result.output).not.toContain("=====");
     const schema = JSON.parse(result.output) as { $id?: string; properties: Record<string, { $ref?: string }> };
     expect(schema.$id).toBe("UserEvent.json");
     expect(schema.properties.created_time.$ref).toBe(hostile);
