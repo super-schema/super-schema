@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { authenticateRequest } from "../v1/middleware";
 
 export async function GET(request: Request) {
@@ -9,7 +10,11 @@ export async function GET(request: Request) {
   }
 
   try {
+    // The fields of the tenant being viewed (the `active_tenant` cookie; a caller with an API key has none, so it gets the default tenant,
+    // like every other route that asks).
+    const tenantId = await getActiveTenantId();
     const fields = await prisma.field.findMany({
+      where: { entity: { tenantId } },
       select: {
         id: true,
         slug: true,

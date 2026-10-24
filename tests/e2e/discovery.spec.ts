@@ -28,6 +28,7 @@
  */
 import type { Locator, Page } from "@playwright/test";
 import {
+  createEntityInTenant,
   createFieldRow,
   createNotifications,
   createSecondTenant,
@@ -127,7 +128,7 @@ test.describe("command palette: fields", () => {
 
   test("a field is found as 'Entity → field' and opens its studio", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
     const entity = workspace.entities[0];
-    const { id: fieldId } = await createFieldRow(entity.id, { name: "palette_probe", type: "int32" });
+    await createFieldRow(entity.id, { name: "palette_probe", type: "int32" });
     await openDashboard(page);
     await openPalette(page);
 
@@ -138,8 +139,24 @@ test.describe("command palette: fields", () => {
     await option.click();
 
     await expect(page).toHaveURL(new RegExp(`/schemas/${workspace.domainSlug}/${workspace.productSlug}/${entity.slug}/fields/`));
-    expect(new URL(page.url()).pathname).toContain(`/fields/`);
-    expect(fieldId).toBeTruthy();
+  });
+
+  test("the palette is offered the fields of the tenant being viewed, and none of another tenant", { tag: ["@regression"] }, async ({ request, workspace }) => {
+    const other = await createSecondTenant();
+    try {
+      // Named to sort before letters too: before the tenant filter it was inside the first 100 fields every tenant's palette was given.
+      const awayName = `0${unique("away")}`;
+      await createEntityInTenant(other.tenantId, awayName);
+
+      const response = await request.get("/api/command-palette-fields");
+      expect(response.status()).toBe(200);
+      const entityNames = new Set(((await response.json()) as Array<{ entityName: string }>).map((field) => field.entityName));
+      // The answer has this tenant's own entity (the workspace's), so the absence of the other's means something.
+      expect(entityNames.has(workspace.entities[0].name)).toBe(true);
+      expect(entityNames.has(awayName)).toBe(false);
+    } finally {
+      await deleteTenantWithDomain(other);
+    }
   });
 });
 

@@ -3,10 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   authenticateRequest: vi.fn(),
+  getActiveTenantId: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: { field: { findMany: mocks.findMany } } }));
 vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: mocks.authenticateRequest }));
+// The tenant being viewed is a cookie of the request: a unit test names it.
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId }));
 
 import { GET } from "@/app/api/command-palette-fields/route";
 
@@ -17,6 +20,7 @@ function fieldRow(entity: Record<string, unknown>) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.authenticateRequest.mockResolvedValue({ authenticated: true });
+  mocks.getActiveTenantId.mockResolvedValue("tenant-a");
 });
 
 describe("GET /api/command-palette-fields", () => {
@@ -47,6 +51,25 @@ describe("GET /api/command-palette-fields", () => {
 
     expect(body[0].domainSlug).toBeNull();
     expect(body[0].productSlug).toBeNull();
+  });
+
+  it("asks only for the fields of entities of the tenant being viewed (it used to take the first 100 of every tenant)", async () => {
+    mocks.findMany.mockResolvedValue([]);
+
+    await GET(new Request("http://localhost/api/command-palette-fields"));
+
+    expect(mocks.getActiveTenantId).toHaveBeenCalledTimes(1);
+    expect(mocks.findMany.mock.calls[0][0].where).toEqual({ entity: { tenantId: "tenant-a" } });
+    expect(mocks.findMany.mock.calls[0][0].take).toBe(100);
+  });
+
+  it("follows the tenant the caller views", async () => {
+    mocks.findMany.mockResolvedValue([]);
+    mocks.getActiveTenantId.mockResolvedValue("tenant-b");
+
+    await GET(new Request("http://localhost/api/command-palette-fields"));
+
+    expect(mocks.findMany.mock.calls[0][0].where).toEqual({ entity: { tenantId: "tenant-b" } });
   });
 
   it("rejects unauthenticated requests", async () => {
