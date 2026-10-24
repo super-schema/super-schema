@@ -108,7 +108,7 @@ export function DomainDeletionDialog({
 
         <div className="space-y-space-3 p-space-5">
           {blockingParts.length > 0 ? (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-space-3">
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-space-3" data-testid="domain-deletion-blocked">
               <p className="text-body-small font-medium text-destructive">
                 {blockedHeading}
               </p>

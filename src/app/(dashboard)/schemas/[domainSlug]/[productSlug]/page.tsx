@@ -227,8 +227,6 @@ export default async function ProductWorkspacePage({
       productSlug={productSlug}
       productName={product.name}
       domainDescription={domain.description}
-      isSystemDomain={domain.isSystem}
-      canDeleteDomain={false}
       domainPolicy={domainPolicy as Record<string, unknown> | null}
       entities={entities}
       sharedEnums={sharedEnums}

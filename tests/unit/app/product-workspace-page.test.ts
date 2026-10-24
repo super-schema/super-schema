@@ -116,7 +116,9 @@ describe("ProductWorkspacePage", () => {
     expect(element.props.models).toBeUndefined();
     expect(element.props.decoratorDefinitions).toBeUndefined();
     expect(element.props.deletionImpact).toBeUndefined();
-    expect(element.props.canDeleteDomain).toBe(false);
+    // Deleting a domain is a feature of the Domains page (DomainGrid); the product page has no such prop.
+    expect(element.props.canDeleteDomain).toBeUndefined();
+    expect(element.props.isSystemDomain).toBeUndefined();
     expect(element.props).toMatchObject({
       domainId: "dom-1",
       productId: "prod-1",

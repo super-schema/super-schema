@@ -33,13 +33,11 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EntityCard } from "@/components/custom/EntityCard";
-import { DomainDeletionDialog } from "@/components/custom/DomainDeletionDialog";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { standardClassificationVariant } from "@/lib/classification-counts";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo } from "@/lib/data-types";
 import { createEntityWithFieldsAction, deleteEntityAction, type CreateFieldInput } from "./actions";
-import { deleteDomainAction } from "../actions";
 import { CreateDropdown } from "./components/CreateDropdown";
 import { DomainTypesTab, type DomainTypeCreateIntent, type InheritedDataTypes, type SharedEnumData, type CustomScalarData, type UnionTypeData } from "./components/DomainTypesTab";
 import { DomainApisTab, type InheritedServices, type ServiceData } from "./components/DomainApisTab";
@@ -51,7 +49,6 @@ import type { EventListItem } from "@/features/events/event-page/load-events-lis
 import { assetHref } from "@/lib/navigation/asset-href";
 import { formatDateOnly } from "@/lib/date-format";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
-import type { DomainDeletionImpact } from "@/types/domain-deletion";
 
 export type DomainTab = "entities" | "data-types" | "apis" | "events";
 
@@ -98,13 +95,6 @@ interface DomainWorkspaceProps {
   productSlug: string;
   productName: string;
   domainDescription: string;
-  isSystemDomain?: boolean;
-  /**
-   * Domain deletion is only offered when this is true AND `deletionImpact` is
-   * provided; callers that disable deletion can skip computing the impact.
-   */
-  canDeleteDomain?: boolean;
-  deletionImpact?: DomainDeletionImpact;
   domainPolicy: Record<string, unknown> | null;
   entities: EntityData[];
   /** Product-level data types (managed here). */
@@ -183,9 +173,6 @@ export function DomainWorkspace({
   productSlug,
   productName,
   domainDescription,
-  isSystemDomain = false,
-  canDeleteDomain = false,
-  deletionImpact,
   domainPolicy,
   entities,
   sharedEnums,
@@ -263,9 +250,6 @@ export function DomainWorkspace({
   const [typeCreateIntent, setTypeCreateIntent] = useState<DomainTypeCreateIntent | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
   const [isDeletingEntity, setIsDeletingEntity] = useState(false);
-  const [domainDeleteOpen, setDomainDeleteOpen] = useState(false);
-  const [isDeletingDomain, setIsDeletingDomain] = useState(false);
-  const [domainDeleteError, setDomainDeleteError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
@@ -438,46 +422,8 @@ export function DomainWorkspace({
     }
   }
 
-  async function handleDeleteDomain() {
-    setDomainDeleteError(null);
-    setIsDeletingDomain(true);
-    try {
-      const result = await deleteDomainAction(domainId);
-      if (result.error) {
-        setDomainDeleteError(result.error);
-        return;
-      }
-
-      toast.success(`"${domainName}" deleted`);
-      void invalidateDomainsTree();
-      setDomainDeleteOpen(false);
-      router.push("/schemas");
-    } catch {
-      setDomainDeleteError("Unable to delete the domain. Please try again.");
-    } finally {
-      setIsDeletingDomain(false);
-    }
-  }
-
-  const deletionEnabled = canDeleteDomain && !isSystemDomain && deletionImpact !== undefined;
-
   return (
     <div className="animate-auth-fade-up">
-      {deletionEnabled && (
-        <DomainDeletionDialog
-          open={domainDeleteOpen}
-          domainName={domainName}
-          impact={deletionImpact}
-          isDeleting={isDeletingDomain}
-          error={domainDeleteError}
-          onOpenChange={(open) => {
-            setDomainDeleteOpen(open);
-            if (!open) setDomainDeleteError(null);
-          }}
-          onConfirm={handleDeleteDomain}
-        />
-      )}
-
       {/* New Event dialog: a created event opens on its own page */}
       <NewEventDialog
         productId={productId}
@@ -582,21 +528,6 @@ export function DomainWorkspace({
             onNewApi={() => selectTab("apis")}
             onNewEvent={() => setNewEventOpen(true)}
           />
-          {deletionEnabled ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setDomainDeleteError(null);
-                setDomainDeleteOpen(true);
-              }}
-              className="gap-1.5 text-muted-foreground hover:text-destructive hover:border-destructive/50"
-              title="Delete domain"
-            >
-              <Trash2 className="w-4 h-4" />
-              Delete
-            </Button>
-          ) : null}
         </div>
       </div>
 
