@@ -20,7 +20,7 @@ import {
 import { requireId } from "@/services/events/service-guards";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
-import { TENANT_PLACEHOLDER, readFieldReference, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
+import { TENANT_PLACEHOLDER, holdsEntityReference, readFieldReference, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
 import { loadReferenceClosure, type LegacyUpgrade, type ResolveMode } from "@/lib/references/closure";
 import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-versioning/schema-version-publishability";
 import { getActiveTenantId } from "@/lib/active-tenant";
@@ -1344,7 +1344,11 @@ export async function setFieldReferenceAction(
       select: { id: true, entityId: true, type: true, decorators: true },
     });
     if (!field || field.entityId !== entityId) return notFound("Field");
-    if (field.type !== "reference") return err({ code: "VALIDATION_ERROR", message: "Only a reference field can point at an entity" });
+    // A reference field, or an array / map of references (the same keys, stored on the field's decorators): the ambiguity of such a field
+    // is asked about too (`needsReference`), so its pick must be writable.
+    if (!holdsEntityReference(field.type, field.decorators)) {
+      return err({ code: "VALIDATION_ERROR", message: "Only a reference field (or an array or map of references) can point at an entity" });
+    }
 
     const target = await prisma.entity.findUnique({
       where: { id: ref.entityId },

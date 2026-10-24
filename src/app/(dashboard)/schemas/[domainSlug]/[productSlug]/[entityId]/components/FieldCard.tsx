@@ -11,7 +11,7 @@ import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo, isComplexType, formatComplexTypeDisplay } from "@/lib/data-types";
 import { getFieldCompleteness } from "@/lib/validation/field-completeness";
-import { applyReferencePick, readFieldReference, type PickableEntity } from "@/lib/references/entity-reference";
+import { applyReferencePick, holdsEntityReference, readFieldReference, type PickableEntity } from "@/lib/references/entity-reference";
 import { ReferencePinControl, type ReferenceFieldControls } from "./ReferencePinControl";
 
 interface FieldData {
@@ -138,7 +138,7 @@ export const FieldCard = memo(function FieldCard({
         : `Suggestions: ${fc.suggestions.join(", ")}`;
   const decoratorTags = getDecoratorSummary(field.decorators);
   // The pin belongs to a reference that is stored qualified, with the id of what it references; a name-only one has nothing to pin yet.
-  const storedReference = field.type === "reference" ? readFieldReference(field.decorators) : undefined;
+  const storedReference = holdsEntityReference(field.type, field.decorators) ? readFieldReference(field.decorators) : undefined;
   const pinnable = storedReference && "entity" in storedReference && storedReference.entityId ? storedReference : undefined;
   const fieldEvolution = (field.decorators?.evolution || {}) as Record<string, unknown>;
   const isFieldDeprecated = !!fieldEvolution.deprecated;

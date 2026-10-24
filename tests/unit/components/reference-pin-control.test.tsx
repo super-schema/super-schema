@@ -181,6 +181,22 @@ describe("FieldCard reference fields", () => {
     expect(screen.getByTestId("reference-pin-open")).toBeDefined();
   });
 
+  it("has the pin control on an array of references and a map of references too", () => {
+    const decorators = { ...FIELD.decorators, arrayElementType: "reference", mapValueType: "reference" };
+    const { rerender } = render(card({ field: { ...FIELD, type: "array", decorators } }));
+    expect(screen.getByTestId("reference-pin-open")).toBeDefined();
+    expect(screen.getByTestId("reference-pin-badge").textContent).toContain("v1.2");
+
+    rerender(card({ field: { ...FIELD, type: "map", decorators } }));
+    expect(screen.getByTestId("reference-pin-open")).toBeDefined();
+  });
+
+  it("an array of something else shows no pin, even when it still carries a stale reference", () => {
+    render(card({ field: { ...FIELD, type: "array", decorators: { ...FIELD.decorators, arrayElementType: "string" } } }));
+    expect(screen.queryByTestId("reference-pin-open")).toBeNull();
+    expect(screen.queryByTestId("reference-pin-badge")).toBeNull();
+  });
+
   it("opening the pin control asks for the REFERENCED entity's versions and pins on THIS field", async () => {
     render(card());
     fireEvent.click(screen.getByTestId("reference-pin-open"));

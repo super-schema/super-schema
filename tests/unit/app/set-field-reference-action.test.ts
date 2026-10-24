@@ -116,6 +116,38 @@ describe("setFieldReferenceAction", () => {
     expect(r).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
   });
 
+  it.each([
+    ["an array of references", "array", { arrayElementType: "reference", referencedEntityName: "Address" }],
+    ["a map of references", "map", { mapKeyType: "string", mapValueType: "reference", referencedEntityName: "Address" }],
+  ])("accepts %s: the pick dialog is not a dead end for them", async (_label, type, decorators) => {
+    mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", type, decorators, entity: { tenantId: "tenant-1" } });
+
+    const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2" });
+
+    expect(r.success).toBe(true);
+    expect(written()).toMatchObject({
+      ...decorators,
+      referencedEntityId: "ent-2",
+      referencedEntityName: "Customer",
+      referencedQualifiedName: "Sales/Crm/Customer",
+    });
+    expect(written()).not.toHaveProperty("referencedEntityVersion");
+  });
+
+  it.each([
+    ["an array of strings", "array", { arrayElementType: "string" }],
+    ["an array with no element type", "array", {}],
+    ["a map of integers keyed by reference", "map", { mapKeyType: "reference", mapValueType: "integer" }],
+    ["an enum", "enum", {}],
+  ])("rejects %s: nothing in it is an entity reference", async (_label, type, decorators) => {
+    mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", type, decorators, entity: { tenantId: "tenant-1" } });
+
+    const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2" });
+
+    expect(r).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
   it("refuses a viewer (and an unassigned user) before reading or writing anything", async () => {
     for (const role of [{ success: true, data: "VIEWER" }, { success: true, data: null }, { success: false, error: { code: "DB_ERROR", message: "x" } }]) {
       getEffectiveRole.mockResolvedValue(role);
