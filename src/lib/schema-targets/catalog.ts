@@ -3,6 +3,9 @@ export type SchemaTargetRuntime = "native" | "typespec-cli";
 export type SchemaTargetCategory = "schema" | "codegen";
 export type SchemaTargetStability = "stable" | "preview" | "alpha";
 
+/** A schema target's catalog key (`json-schema`, `avro`, ...). */
+export type TargetId = string;
+
 export interface SchemaTargetDefinition {
   key: string;
   displayName: string;
@@ -18,6 +21,11 @@ export interface SchemaTargetDefinition {
   enabledInSchemaTab: boolean;
   supportsFieldOverrides: boolean;
   unavailableReason?: string;
+  /**
+   * The target emits a reference closure (an entity plus everything it references) as one file per entity
+   * (`emitClosure`, closure-emit.ts). The DB targets do not: a reference stays a plain column there, so they emit the one entity.
+   */
+  closureEmission?: boolean;
 }
 
 export interface SchemaTargetAvailability {
@@ -54,6 +62,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     stability: "stable",
     enabledInSchemaTab: true,
     supportsFieldOverrides: false,
+    closureEmission: true,
   },
   {
     key: "java-pojo",
@@ -68,6 +77,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     stability: "preview",
     enabledInSchemaTab: true,
     supportsFieldOverrides: false,
+    closureEmission: true,
   },
   {
     key: "spanner",
@@ -112,6 +122,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     packageName: "@typespec/openapi3",
     enabledInSchemaTab: true,
     supportsFieldOverrides: false,
+    closureEmission: true,
   },
   {
     key: "json-schema",
@@ -127,6 +138,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     packageName: "@typespec/json-schema",
     enabledInSchemaTab: true,
     supportsFieldOverrides: false,
+    closureEmission: true,
   },
   {
     key: "protobuf",
@@ -142,6 +154,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     packageName: "@typespec/protobuf",
     enabledInSchemaTab: true,
     supportsFieldOverrides: false,
+    closureEmission: true,
   },
   {
     key: "http-client-js",
@@ -253,6 +266,11 @@ export function getSchemaTargetCatalog(): SchemaTargetDefinition[] {
 
 export function getSchemaTargetDefinition(key: string): SchemaTargetDefinition | undefined {
   return SCHEMA_TARGETS.find((target) => target.key === key);
+}
+
+/** True for the targets that emit a reference closure as one file per entity (see {@link SchemaTargetDefinition.closureEmission}). */
+export function supportsClosureEmission(key: string): boolean {
+  return getSchemaTargetDefinition(key)?.closureEmission === true;
 }
 
 export function getSchemaTargetAvailabilities(): SchemaTargetAvailability[] {

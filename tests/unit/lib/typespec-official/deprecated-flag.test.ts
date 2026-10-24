@@ -24,7 +24,8 @@ describe("a field deprecated without a message", () => {
   it("is deprecated in the generated JSON Schema and OpenAPI", async () => {
     const js = await emitOfficialTypeSpecTargetFromData(entity, fields(), "json-schema");
     expect(js.errors).toEqual([]);
-    expect(JSON.parse(js.output).$defs.Evt.properties.old.deprecated).toBe(true);
+    // One `Evt.json` per model (no `bundleId` since closure emission): the schema is the document itself, not a `$defs` entry.
+    expect(JSON.parse(js.output).properties.old.deprecated).toBe(true);
     const oa = await emitOfficialTypeSpecTargetFromData(entity, fields(), "openapi3");
     expect(oa.errors).toEqual([]);
     expect(oa.output).toMatch(/old:[\s\S]*?deprecated: true/);

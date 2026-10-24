@@ -190,7 +190,8 @@ describe("user event schema: emission with the real emitters", () => {
   it("re-emits the resolvable fields as JSON Schema with one x-securityClassification per field, descriptions, constraints, required", async () => {
     const result = await emit(entity(), resolvedOnly(), "json-schema");
     expect(result.errors).toEqual([]);
-    const schema = (JSON.parse(result.output) as { $defs: { UserEvent: { properties: Record<string, Record<string, unknown>>; required?: string[] } } }).$defs.UserEvent;
+    // No `bundleId` since closure emission: one `UserEvent.json` per model, the schema is the document itself (not a `$defs` entry).
+    const schema = JSON.parse(result.output) as { properties: Record<string, Record<string, unknown>>; required?: string[] };
     expect(schema.properties.component).toMatchObject({
       type: "string", minLength: 1, maxLength: 100, pattern: "^([A-Za-z0-9-_])+$",
       description: "Name of the source component logging the user event(s).",
@@ -217,7 +218,7 @@ describe("user event schema: emission with the real emitters", () => {
 
   it("json-schema: created_time is { $ref } and user_links is an array with items { $ref } and its bounds", async () => {
     const result = await emit(entity(), prismaFields(), "json-schema");
-    const schema = (JSON.parse(result.output) as { $defs: { UserEvent: { properties: Record<string, Record<string, unknown>>; required: string[] } } }).$defs.UserEvent;
+    const schema = JSON.parse(result.output) as { properties: Record<string, Record<string, unknown>>; required: string[] };
     expect(schema.properties.created_time).toMatchObject({
       $ref: "common_components/v4/schema/json/openapi-2.0/date_time.json",
       description: "Event creation timestamp.",
@@ -331,8 +332,9 @@ describe("user event schema: emission with the real emitters", () => {
     );
     const result = await emit(entity(), fields, "json-schema");
     expect(result.errors).toEqual([]);
-    const schema = JSON.parse(result.output) as { $defs: Record<string, { properties: Record<string, { $ref?: string }> }> };
-    expect(Object.keys(schema.$defs)).toEqual(["UserEvent"]);
-    expect(schema.$defs.UserEvent.properties.created_time.$ref).toBe(hostile);
+    // A single file (the output is that file's JSON): the hostile text is only the value of one `$ref`, no second model appeared.
+    const schema = JSON.parse(result.output) as { $id?: string; properties: Record<string, { $ref?: string }> };
+    expect(schema.$id).toBe("UserEvent.json");
+    expect(schema.properties.created_time.$ref).toBe(hostile);
   });
 });

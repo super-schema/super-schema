@@ -14,13 +14,14 @@ import { protobufFieldName, quoteIdentifier, sanitizeIdentifier } from "@/lib/co
 import type { ValidationError } from "@/lib/compiler/types";
 import type { ValidationStatus } from "@/lib/emission/emission.types";
 import type { SuperSchemaModel } from "@/types/super-schema-model";
-import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import { getSchemaTargetDefinition, type SchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import { CLOSURE_ROOT_NAMESPACE } from "@/lib/compiler/closure-source";
 import { buildDbTypeSpecTarget, isDbTypeSpecTarget } from "./db-source";
 import { describeNameCollision, findNameCollisions } from "./name-collisions";
 import { boundedForLog, describeEmitterFailure, errorDiagnostics, warningDiagnostics } from "./emitter-diagnostics";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
-import { ok, err, type Result } from "@/types/result";
+import { ok, err, type Result, type ServiceError } from "@/types/result";
 import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
 
 const execFileAsync = promisify(execFile);
@@ -96,30 +97,43 @@ export async function emitOfficialTypeSpecTargetForEntity(
   return emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, targetKey);
 }
 
+/** The catalog target for a key that the Schemas tab can emit, else the message that says why not. */
+export function resolveEmittableTarget(targetKey: string): { target: SchemaTargetDefinition } | { error: string } {
+  const target = getSchemaTargetDefinition(targetKey);
+  if (!target || target.runtime !== "typespec-cli") {
+    return { error: `Unsupported TypeSpec target "${targetKey}"` };
+  }
+  if (!target.enabledInSchemaTab) {
+    return { error: target.unavailableReason ?? `Target "${target.displayName}" is not available in the Schemas tab.` };
+  }
+  return { target };
+}
+
 export async function emitOfficialTypeSpecTargetFromData(
   entity: PrismaEntityInput,
   fields: PrismaFieldInput[],
   targetKey: string
 ): Promise<OfficialTypeSpecTargetResult> {
-  const target = getSchemaTargetDefinition(targetKey);
-  if (!target || target.runtime !== "typespec-cli") {
-    return invalidResult(`Unsupported TypeSpec target "${targetKey}"`);
-  }
+  const resolved = resolveEmittableTarget(targetKey);
+  if ("error" in resolved) return invalidResult(resolved.error);
+  const target = resolved.target;
 
-  if (!target.enabledInSchemaTab) {
-    return invalidResult(
-      target.unavailableReason ??
-        `Target "${target.displayName}" is not available in the Schemas tab.`
-    );
+  // The schema targets (not the DB ones, where a reference stays a plain column) go through the same closure pipeline as an
+  // entity with references: a stand-alone entity is a closure of one, which `emitClosure` generates from the unchanged
+  // stand-alone source. Loaded lazily: closure-emit imports this module for the runner and the source builders.
+  if (target.closureEmission) {
+    const { emitClosure, standaloneClosure, bundleEmittedFiles } = await import("./closure-emit");
+    const emitted = await emitClosure(standaloneClosure(entity, fields), target.key);
+    if (!emitted.success) return resultFromEmissionError(emitted.error);
+    const { files, warnings } = emitted.data;
+    return { output: bundleEmittedFiles(files), validationStatus: warnings.length > 0 ? "WARNING" : "VALID", warnings, errors: [] };
   }
 
   const model = compileEntity(entity, fields);
   // A name that already exists in the database may be too long for the emitters (they write a file per declaration and crash with
   // ENAMETOOLONG): say so instead.
-  const overlong = [model.entity.name, ...model.fields.map((f) => f.name)].find((name) => name.length > MAX_EMITTED_NAME_LENGTH);
-  if (overlong !== undefined) {
-    return invalidResult(`The name "${overlong.slice(0, 40)}..." is ${overlong.length} characters long; names longer than ${MAX_EMITTED_NAME_LENGTH} characters cannot be generated. Rename it.`);
-  }
+  const overlong = findOverlongName(model);
+  if (overlong !== undefined) return invalidResult(overlongNameMessage(overlong));
   // Names that this target rewrites into the same identifier would give an invalid schema: refuse, naming them.
   const collisions = findNameCollisions(model, target.key);
   if (collisions.length > 0) {
@@ -130,7 +144,7 @@ export async function emitOfficialTypeSpecTargetFromData(
   if (built.errors.length > 0) {
     return { output: "", validationStatus: "INVALID", warnings: built.warnings, errors: built.errors.map((message) => ({ message })) };
   }
-  const options = buildEmitterOptions(target.key, model);
+  const options = buildEmitterOptions(target.key, "entity");
   const result = await runTypeSpecEmitter(target.packageName ?? "", built.source, options, isDbTypeSpecTarget(target.key));
   if (built.warnings.length === 0) return result;
   return {
@@ -140,10 +154,38 @@ export async function emitOfficialTypeSpecTargetFromData(
   };
 }
 
-function buildEmitterOptions(
-  targetKey: string,
-  model: SuperSchemaModel
-): Record<string, unknown> {
+/** The first entity or field name that is too long for the emitters (see {@link MAX_EMITTED_NAME_LENGTH}). */
+export function findOverlongName(model: SuperSchemaModel): string | undefined {
+  return [model.entity.name, ...model.fields.map((f) => f.name)].find((name) => name.length > MAX_EMITTED_NAME_LENGTH);
+}
+
+export function overlongNameMessage(name: string): string {
+  return `The name "${name.slice(0, 40)}..." is ${name.length} characters long; names longer than ${MAX_EMITTED_NAME_LENGTH} characters cannot be generated. Rename it.`;
+}
+
+/**
+ * A failed closure emission as a target result. `EMISSION_INVALID` carries its messages (and the warnings found so far) in
+ * `details`; any other error is one message.
+ */
+function resultFromEmissionError(error: ServiceError): OfficialTypeSpecTargetResult {
+  const details = (error.details ?? {}) as { errors?: unknown; warnings?: unknown };
+  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
+  const messages = strings(details.errors);
+  return {
+    output: "",
+    validationStatus: "INVALID",
+    warnings: strings(details.warnings),
+    errors: (messages.length > 0 ? messages : [error.message]).map((message) => ({ message })),
+  };
+}
+
+/**
+ * The emitter options for a target. `scope: "closure"` is the multi-entity run: the closure source puts every entity under the
+ * reserved root namespace, so the sibling emitters that derive a package / namespace from it are told to drop that root
+ * (`strip-namespace-root`), and Avro names every file by its namespace-qualified name (`qualified-file-names`) so a file name
+ * never depends on what else was emitted. `scope: "entity"` keeps the stand-alone options.
+ */
+export function buildEmitterOptions(targetKey: string, scope: "entity" | "closure"): Record<string, unknown> {
   switch (targetKey) {
     case "openapi3":
       return {
@@ -151,16 +193,17 @@ function buildEmitterOptions(
         "openapi-versions": ["3.1.0"],
       };
     case "json-schema":
+      // No `bundleId`: one `<Model>.json` per model, with native `$ref`s to the sibling files.
       return {
         emitAllModels: true,
         "file-type": "json",
-        bundleId: sanitizeIdentifier(model.entity.name),
       };
     case "protobuf":
       return {};
     case "avro":
+      return scope === "closure" ? { "strip-namespace-root": CLOSURE_ROOT_NAMESPACE, "qualified-file-names": true } : {};
     case "java-pojo":
-      return {};
+      return scope === "closure" ? { "strip-namespace-root": CLOSURE_ROOT_NAMESPACE } : {};
     case "spanner":
     case "postgresql":
     case "bigquery":
@@ -171,7 +214,7 @@ function buildEmitterOptions(
 }
 
 /** The `main.tsp` for a target, plus what the projection for that target had to change (warnings) or could not (errors). */
-interface TargetSource {
+export interface TargetSource {
   source: string;
   warnings: string[];
   errors: string[];
@@ -181,7 +224,7 @@ interface TargetSource {
 const UNTYPED_REFERENCE_TARGETS = new Set(["avro", "java-pojo", "protobuf"]);
 
 /** One warning per field that holds an unresolved external `$ref`, for the targets that degrade it (the others keep or note it themselves). */
-function danglingReferenceWarnings(model: SuperSchemaModel, targetKey: string): string[] {
+export function danglingReferenceWarnings(model: SuperSchemaModel, targetKey: string): string[] {
   if (!UNTYPED_REFERENCE_TARGETS.has(targetKey)) return [];
   return model.fields
     .filter((field) => field.danglingRef !== undefined)
@@ -193,7 +236,7 @@ function danglingReferenceWarnings(model: SuperSchemaModel, targetKey: string): 
 
 const plainSource = (source: string): TargetSource => ({ source, warnings: [], errors: [] });
 
-function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): TargetSource {
+export function buildSourceForTarget(model: SuperSchemaModel, targetKey: string): TargetSource {
   if (isDbTypeSpecTarget(targetKey)) {
     return buildDbTypeSpecTarget(model, targetKey);
   }
@@ -271,7 +314,7 @@ function buildProtobufSource(baseSource: string, model: SuperSchemaModel): strin
 const LEADING_IMPORTS = /^(?:\s*import\s+"[^"\n]+";[ \t]*\n)+/;
 
 /** The `import "...";` lines a source opens with (they must stay ahead of any `using` / namespace the wrapper adds), and the rest. */
-function splitLeadingImports(source: string): { imports: string[]; rest: string } {
+export function splitLeadingImports(source: string): { imports: string[]; rest: string } {
   const head = LEADING_IMPORTS.exec(source)?.[0] ?? "";
   return { imports: head.split("\n").map((line) => line.trim()).filter(Boolean), rest: source.slice(head.length) };
 }
@@ -499,16 +542,7 @@ async function runTypeSpecEmitter(
   surfaceWarnings = false
 ): Promise<OfficialTypeSpecTargetResult> {
   const run = await runTypeSpecEmitterWithWarnings(packageName, source, emitterOptions);
-  if (!run.success) {
-    // Every code but EMITTER_FAILED is a message written here. EMITTER_FAILED carries the compiler's raw output (banner,
-    // temp paths, progress lines, an emitter crash's stack): its error diagnostics are the message; a failure without any
-    // is the generic text, the raw output goes to the server log only.
-    if (run.error.code !== "EMITTER_FAILED") return invalidResult(run.error.message);
-    if (errorDiagnostics(run.error.message).length === 0) {
-      console.error(`[typespec-emitter] ${packageName} failed without an error diagnostic:`, boundedForLog(run.error.message));
-    }
-    return invalidResult(describeEmitterFailure(run.error.message));
-  }
+  if (!run.success) return invalidResult(emitterFailureMessage(packageName, run.error));
   const result = targetResultFromFiles(packageName, run.data.files);
   if (!surfaceWarnings || run.data.warnings.length === 0 || result.validationStatus === "INVALID") return result;
   return {
@@ -516,6 +550,19 @@ async function runTypeSpecEmitter(
     warnings: [...result.warnings, ...run.data.warnings],
     validationStatus: result.validationStatus === "VALID" ? "WARNING" : result.validationStatus,
   };
+}
+
+/**
+ * The message a user sees for a failed emitter run. Every code but EMITTER_FAILED is a message written here. EMITTER_FAILED carries
+ * the compiler's raw output (banner, temp paths, progress lines, an emitter crash's stack): its error diagnostics are the message; a
+ * failure without any is the generic text, the raw output goes to the server log only.
+ */
+export function emitterFailureMessage(packageName: string, error: ServiceError): string {
+  if (error.code !== "EMITTER_FAILED") return error.message;
+  if (errorDiagnostics(error.message).length === 0) {
+    console.error(`[typespec-emitter] ${packageName} failed without an error diagnostic:`, boundedForLog(error.message));
+  }
+  return describeEmitterFailure(error.message);
 }
 
 /** What an emitter run wrote, as a target result: VALID only when the output is usable (see {@link unusableOutputReason}). */
@@ -581,7 +628,7 @@ async function collectTextFiles(rootDir: string): Promise<EmittedFile[]> {
   return files;
 }
 
-function bundleGeneratedFiles(files: EmittedFile[]): string {
+export function bundleGeneratedFiles(files: EmittedFile[]): string {
   if (files.length === 1) {
     return files[0].content;
   }
@@ -650,6 +697,6 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function escapeTypeSpecString(value: string): string {
+export function escapeTypeSpecString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
