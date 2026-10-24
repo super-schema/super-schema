@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useMemo } from "react";
+import { useActionState, useEffect, useId, useMemo, useRef, useState } from "react";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,20 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const emailId = useId();
+  const passwordId = useId();
+  const confirmId = useId();
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLInputElement>(null);
+
+  // After the server refused the form the focus goes to the first field with an error (the e-mail for a general failure).
+  useEffect(() => {
+    if (!state) return;
+    if (state.error || state.fieldErrors?.email) emailRef.current?.focus();
+    else if (state.fieldErrors?.password) passwordRef.current?.focus();
+    else if (state.fieldErrors?.confirmPassword) confirmRef.current?.focus();
+  }, [state]);
 
   const strength = useMemo(() => getPasswordStrength(password), [password]);
   const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
@@ -100,6 +114,7 @@ export default function RegisterPage() {
       {/* General error */}
       {state?.error && (
         <div
+          role="alert"
           data-testid="register-error"
           className="flex items-center gap-2 bg-destructive/10 text-destructive text-body-small p-space-3 rounded-lg mb-space-4 border border-destructive/20"
         >
@@ -120,10 +135,13 @@ export default function RegisterPage() {
       >
         {/* Email */}
         <div>
-          <label className="text-body-small text-foreground mb-space-1 block font-medium">
+          <label htmlFor={emailId} className="text-body-small text-foreground mb-space-1 block font-medium">
             Email
           </label>
           <Input
+            id={emailId}
+            ref={emailRef}
+            aria-describedby={state?.fieldErrors?.email ? `${emailId}-error` : undefined}
             name="email"
             type="email"
             placeholder="you@example.com"
@@ -136,7 +154,7 @@ export default function RegisterPage() {
             onChange={(e) => setEmail(e.target.value)}
           />
           {state?.fieldErrors?.email && (
-            <p className="text-caption text-destructive mt-space-1" data-testid="register-email-error">
+            <p id={`${emailId}-error`} className="text-caption text-destructive mt-space-1" data-testid="register-email-error">
               {state.fieldErrors.email}
             </p>
           )}
@@ -144,11 +162,14 @@ export default function RegisterPage() {
 
         {/* Password */}
         <div>
-          <label className="text-body-small text-foreground mb-space-1 block font-medium">
+          <label htmlFor={passwordId} className="text-body-small text-foreground mb-space-1 block font-medium">
             Password
           </label>
           <div className="relative">
             <Input
+              id={passwordId}
+              ref={passwordRef}
+              aria-describedby={state?.fieldErrors?.password ? `${passwordId}-error` : undefined}
               name="password"
               type={showPassword ? "text" : "password"}
               placeholder="Min 8 characters"
@@ -177,7 +198,7 @@ export default function RegisterPage() {
             </button>
           </div>
           {state?.fieldErrors?.password && (
-            <p className="text-caption text-destructive mt-space-1" data-testid="register-password-error">
+            <p id={`${passwordId}-error`} className="text-caption text-destructive mt-space-1" data-testid="register-password-error">
               {state.fieldErrors.password}
             </p>
           )}
@@ -198,7 +219,6 @@ export default function RegisterPage() {
                 ))}
               </div>
               <p
-                data-testid="register-password-strength"
                 className={`text-caption mt-space-1 ${
                   strength.score <= 1
                     ? "text-destructive"
@@ -215,11 +235,14 @@ export default function RegisterPage() {
 
         {/* Confirm Password */}
         <div>
-          <label className="text-body-small text-foreground mb-space-1 block font-medium">
+          <label htmlFor={confirmId} className="text-body-small text-foreground mb-space-1 block font-medium">
             Confirm Password
           </label>
           <div className="relative">
             <Input
+              id={confirmId}
+              ref={confirmRef}
+              aria-describedby={state?.fieldErrors?.confirmPassword ? `${confirmId}-error` : undefined}
               name="confirmPassword"
               type={showConfirmPassword ? "text" : "password"}
               placeholder="Confirm password"
@@ -273,7 +296,7 @@ export default function RegisterPage() {
             </div>
           )}
           {state?.fieldErrors?.confirmPassword && (
-            <p className="text-caption text-destructive mt-space-1" data-testid="register-confirm-password-error">
+            <p id={`${confirmId}-error`} className="text-caption text-destructive mt-space-1" data-testid="register-confirm-password-error">
               {state.fieldErrors.confirmPassword}
             </p>
           )}

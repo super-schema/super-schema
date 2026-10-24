@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -26,6 +26,15 @@ export default function LoginPage() {
   const [isPending, setIsPending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
+  const emailId = useId();
+  const passwordId = useId();
+  const errorId = useId();
+  const emailRef = useRef<HTMLInputElement>(null);
+
+  // A refusal re-keys the card (that restarts the shake) and so drops the focused element: the focus goes to the e-mail field of the new card.
+  useEffect(() => {
+    if (shakeKey > 0) emailRef.current?.focus();
+  }, [shakeKey]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -59,6 +68,7 @@ export default function LoginPage() {
   return (
     <div
       key={shakeKey}
+      data-testid="login-card"
       className={`surface-glass rounded-xl border border-border p-space-8 w-full ${error ? "animate-auth-shake" : ""}`}
     >
       {/* Header */}
@@ -113,6 +123,8 @@ export default function LoginPage() {
       {/* Error */}
       {error && (
         <div
+          id={errorId}
+          role="alert"
           data-testid="login-error"
           className="flex items-center gap-2 bg-destructive/10 text-destructive text-body-small p-space-3 rounded-lg mb-space-4 border border-destructive/20"
         >
@@ -127,10 +139,13 @@ export default function LoginPage() {
       {/* method="post": credentials must never be put in a query string (a form submitted before hydration is submitted natively). */}
       <form method="post" onSubmit={handleSubmit} data-testid="login-form" className="space-y-space-4">
         <div>
-          <label className="text-body-small text-foreground mb-space-1 block font-medium">
+          <label htmlFor={emailId} className="text-body-small text-foreground mb-space-1 block font-medium">
             Email
           </label>
           <Input
+            id={emailId}
+            ref={emailRef}
+            aria-describedby={error ? errorId : undefined}
             name="email"
             type="email"
             placeholder="you@example.com"
@@ -144,11 +159,13 @@ export default function LoginPage() {
         </div>
 
         <div>
-          <label className="text-body-small text-foreground mb-space-1 block font-medium">
+          <label htmlFor={passwordId} className="text-body-small text-foreground mb-space-1 block font-medium">
             Password
           </label>
           <div className="relative">
             <Input
+              id={passwordId}
+              aria-describedby={error ? errorId : undefined}
               name="password"
               type={showPassword ? "text" : "password"}
               required
