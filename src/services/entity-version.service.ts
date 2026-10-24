@@ -2,8 +2,9 @@
  * Entity versioning — Draft + Publish (spec §5, Phase 2a "slim").
  *
  * The Entity row + its fields are the draft. publishEntity freezes the draft
- * into an immutable EntityVersion (MAJOR.MINOR), pins every referenced
- * entity's latest published version in SchemaReference (role FIELD), and
+ * into an immutable EntityVersion (MAJOR.MINOR), pins every directly referenced
+ * entity in SchemaReference (role FIELD) at the version the publish recorded for it
+ * (a pinned version, otherwise the latest published one), and
  * moves the draft pointers — one transaction, entity row locked.
  *
  * The draft is judged against its REAL reference closure (`loadPublishClosure`: the entity at its saved rows, everything it
@@ -24,7 +25,7 @@ import type { ServiceContext } from "@/types/service-context";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { toFieldSnapshot } from "@/lib/diff/field-snapshot";
 import { resolveEntityReferences } from "@/lib/entity-versioning/line-references";
-import { analyzePublish, planPublish, type PublishAnalysis, type PublishState } from "@/lib/entity-versioning/publish-plan";
+import { analyzePublish, planPublish, type PublishAnalysis, type PublishPlan, type PublishState } from "@/lib/entity-versioning/publish-plan";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import { isSourceStale, WRITE_BACK_SOURCE_SQL } from "@/lib/entity-versioning/draft-state";
@@ -96,6 +97,40 @@ function isUniqueViolation(e: unknown): boolean {
  * (`null` exactly when `closureBlocker` is set: the plan then refuses before anything uses it).
  */
 type LoadedPublishState = PublishState & { sourceStale: boolean; closure: ReferenceClosure | null };
+
+/**
+ * The EntityVersion each direct-reference edge (`SchemaReference`, read by the artifact renderer, usage and pin-usage) points at, in
+ * `plan.pins` order. It is the version the closure USED, the one recorded in `referencedVersions`: the pinned version for a pinned
+ * reference, the latest published one at publish time otherwise, so an edge never contradicts the record. A direct reference the
+ * closure did not use (found only through the relationships metadata, which the closure does not follow) keeps the latest published
+ * version the planner found. A recorded version whose row cannot be read here (it was just read by the closure, in this same
+ * transaction) aborts the publish, retryable.
+ */
+async function edgeTargetVersionIds(db: Db, plan: PublishPlan): Promise<string[]> {
+  const used = new Map(plan.referencedVersions.flatMap((r) => (r.ref.entityId ? [[r.ref.entityId, r.version] as const] : [])));
+  const wanted = plan.pins.flatMap((pin) => {
+    const label = used.get(pin.entityId);
+    const parsed = label === undefined ? undefined : parseVersionLabel(label);
+    return parsed?.success ? [{ entityId: pin.entityId, major: parsed.data.major, minor: parsed.data.minor }] : [];
+  });
+  const rows = wanted.length === 0 ? [] : await db.entityVersion.findMany({ where: { OR: wanted }, select: { id: true, entityId: true, major: true, minor: true } });
+  const idOf = new Map(rows.map((row) => [`${row.entityId}@${formatVersionLabel(row)}`, row.id]));
+
+  return plan.pins.map((pin) => {
+    const label = used.get(pin.entityId);
+    if (label === undefined) return pin.versionId;
+    // A recorded label is `formatVersionLabel` output ("2.1"), the same form the rows are keyed by.
+    const id = idOf.get(`${pin.entityId}@${label}`);
+    if (!id) {
+      throw new ServiceErrorRejection({
+        code: "CONFLICT",
+        message: "A referenced entity changed during publish, try again",
+        suggestedFix: "Publish again.",
+      });
+    }
+    return id;
+  });
+}
 
 /** The same recorded versions, in the same order (the closure is deterministic): did a referenced entity move between two loads? */
 function sameReferencedVersions(a: readonly ReferencedVersion[], b: readonly ReferencedVersion[]): boolean {
@@ -264,13 +299,14 @@ export async function publishEntity(
             });
 
             if (plan.data.pins.length > 0) {
+              const targets = await edgeTargetVersionIds(tx, plan.data);
               await tx.schemaReference.createMany({
-                data: plan.data.pins.map((pin) => ({
+                data: plan.data.pins.map((pin, i) => ({
                   fromKind: "ENTITY_VERSION" as const,
                   fromId: version.id,
                   role: "FIELD" as const,
                   toKind: "ENTITY_VERSION" as const,
-                  toId: pin.versionId,
+                  toId: targets[i],
                   isDraft: false,
                 })),
                 skipDuplicates: true,

@@ -171,6 +171,46 @@ describe("publish against the real reference closure (PostgreSQL)", () => {
     }
   });
 
+  it("the SchemaReference edges of a pinned and an unpinned reference point at the versions the publish recorded", async () => {
+    let domainId: string | undefined;
+    try {
+      const sc = await scope();
+      domainId = sc.domainId;
+      const customer = await sc.entity("Customer");
+      await sc.field(customer.id, "name");
+      const customer10 = unwrap(await publishEntity(customer.id, {}, ctx));
+      const pinned = await sc.entity("Pinned");
+      await sc.field(pinned.id, "id");
+      await sc.reference(pinned.id, "buyer", customer, "1.0");
+      const loose = await sc.entity("Loose");
+      await sc.field(loose.id, "id");
+      await sc.reference(loose.id, "buyer", customer);
+      const pinnedV = unwrap(await publishEntity(pinned.id, {}, ctx));
+
+      await addField(sc, customer.id, "email");
+      const customer11 = unwrap(await publishEntity(customer.id, {}, ctx));
+      expect(customer11.label).toBe("1.1");
+      const looseV = unwrap(await publishEntity(loose.id, {}, ctx));
+      // Republishing the pinned entity (its own edit) must keep pointing at the pinned 1.0, not at the now-latest 1.1.
+      await addField(sc, pinned.id, "note");
+      const pinnedV2 = unwrap(await publishEntity(pinned.id, {}, ctx));
+
+      const edgesOf = async (fromId: string) => (await prisma.schemaReference.findMany({ where: { fromKind: "ENTITY_VERSION", fromId } })).map((e) => e.toId);
+      expect(await edgesOf(pinnedV.id)).toEqual([customer10.id]);
+      expect(await edgesOf(pinnedV2.id)).toEqual([customer10.id]);
+      expect(await edgesOf(looseV.id)).toEqual([customer11.id]);
+
+      // Each edge names the version the same publish recorded for that entity.
+      for (const [entityId, version] of [[pinned.id, pinnedV2], [loose.id, looseV]] as const) {
+        const [toId] = await edgesOf(version.id);
+        const target = await prisma.entityVersion.findUniqueOrThrow({ where: { id: toId } });
+        expect((await recordedOf(entityId)).recorded.map((r) => `${r.ref.entityId}@${r.version}`)).toEqual([`${target.entityId}@${target.major}.${target.minor}`]);
+      }
+    } finally {
+      await cleanup(domainId);
+    }
+  });
+
   it("a pin whose version does not exist blocks the publish and the preview, naming the field and the version", async () => {
     let domainId: string | undefined;
     try {

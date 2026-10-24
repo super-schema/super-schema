@@ -140,6 +140,10 @@ function fakePrisma() {
       const k = where.entityId_major_minor!;
       return versions().find((v) => v.entityId === k.entityId && v.major === k.major && v.minor === k.minor) ?? null;
     }),
+    // The edges' targets: `where: { OR: [{ entityId, major, minor }, ...] }`.
+    findMany: vi.fn(async ({ where }: { where: { OR: Array<{ entityId: string; major: number; minor: number }> } }) =>
+      versions().filter((v) => where.OR.some((k) => k.entityId === v.entityId && k.major === v.major && k.minor === v.minor))
+    ),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
       h.created.push(data);
       const row: VersionRow = {
@@ -379,6 +383,70 @@ describe("publishEntity: records the versions it used", () => {
     const retried = await publishEntity("order", {}, ctxFor(prisma));
     expect(retried.success).toBe(true);
     expect(readReferencedVersions(createdReport())[0].version).toBe("1.1");
+  });
+});
+
+describe("publishEntity: the SchemaReference edges agree with the recorded versions", () => {
+  /** The (fromId, toId) rows the publish wrote. */
+  const edges = (tx: { schemaReference: { createMany: ReturnType<typeof vi.fn> } }) =>
+    tx.schemaReference.createMany.mock.calls.flatMap((c) => (c[0] as { data: Array<{ fromId: string; toId: string; role: string; isDraft: boolean }> }).data);
+
+  it("an unpinned direct reference points at the latest published version, the one recorded", async () => {
+    orderAndCustomer();
+    publishAs("cust", 1, 2, [["name", "string"]]);
+    const { prisma, tx } = fakePrisma();
+    expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
+    expect(edges(tx)).toEqual([expect.objectContaining({ fromId: "order-v1.0", toId: "cust-v1.2", role: "FIELD", isDraft: false })]);
+    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.2", pinned: false });
+  });
+
+  it("a PINNED direct reference points at the pinned version, not at the latest published one", async () => {
+    orderAndCustomer(qref("cust", "Customer", "1.0"));
+    publishAs("cust", 1, 2, [["name", "string"], ["extra", "string"]]);
+    const { prisma, tx } = fakePrisma();
+    expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
+    expect(edges(tx).map((e) => e.toId)).toEqual(["cust-v1.0"]);
+    expect(readReferencedVersions(createdReport())[0]).toMatchObject({ version: "1.0", pinned: true });
+  });
+
+  it("every edge names exactly the version recorded for its entity (pinned and unpinned side by side)", async () => {
+    h.store.entities = [
+      entity("order", "Order", [["a", "reference", qref("cust", "Customer", "1.0")], ["b", "reference", qref("addr", "Address")]]),
+      entity("cust", "Customer", [["name", "string"]]),
+      entity("addr", "Address", [["street", "string"]]),
+    ];
+    publishAs("cust", 1, 0, [["name", "string"]]);
+    publishAs("cust", 1, 1, [["name", "string"]]);
+    publishAs("addr", 3, 0, [["street", "string"]]);
+    const { prisma, tx } = fakePrisma();
+    expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
+
+    const recorded = readReferencedVersions(createdReport());
+    const edgeLabels = edges(tx).map((e) => {
+      const v = versions().find((row) => row.id === e.toId)!;
+      return [v.entityId, `${v.major}.${v.minor}`];
+    });
+    expect(edgeLabels.sort()).toEqual(recorded.map((r) => [r.ref.entityId, r.version]).sort());
+    expect(edgeLabels.sort()).toEqual([["addr", "3.0"], ["cust", "1.0"]]);
+  });
+
+  it("a direct reference the closure did not use (found only through the relationships metadata) keeps the latest published version", async () => {
+    h.store.entities = [
+      entity("order", "Order", [["id", "string"]], { metadata: { relationships: [{ fieldId: "order.id", targetEntityId: "cust" }] } }),
+      entity("cust", "Customer", [["name", "string"]]),
+    ];
+    publishAs("cust", 1, 4, [["name", "string"]]);
+    const { prisma, tx } = fakePrisma();
+    expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
+    expect(readReferencedVersions(createdReport())).toEqual([]);
+    expect(edges(tx).map((e) => e.toId)).toEqual(["cust-v1.4"]);
+  });
+
+  it("writes no edge when nothing is referenced", async () => {
+    h.store.entities = [entity("order", "Order", [["id", "string"]])];
+    const { prisma, tx } = fakePrisma();
+    expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
+    expect(tx.schemaReference.createMany).not.toHaveBeenCalled();
   });
 });
 
