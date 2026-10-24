@@ -6,6 +6,7 @@ import {
   getDomainsAdminAction,
   createDomainAdminAction,
 } from "@/app/(dashboard)/admin/actions";
+import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 
 interface DomainRow {
   id: string;
@@ -17,6 +18,7 @@ interface DomainRow {
 }
 
 export function DomainDataTable() {
+  const invalidateDomainsTree = useInvalidateDomainsTree();
   const [search, setSearch] = useState("");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [domains, setDomains] = useState<DomainRow[]>([]);
@@ -82,6 +84,8 @@ export function DomainDataTable() {
     }
     setCreating(false);
     setShowCreateDialog(false);
+    // The explorer keeps the domains tree for a minute: a domain made here is in it from now on.
+    void invalidateDomainsTree();
     await load();
   }
 
@@ -108,6 +112,8 @@ export function DomainDataTable() {
             <Search className="w-4 h-4 text-muted-foreground shrink-0" />
             <input
               type="text"
+              data-testid="domain-filter"
+              aria-label="Filter domains"
               placeholder="Filter domains..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -117,6 +123,7 @@ export function DomainDataTable() {
         </div>
         <button
           onClick={openCreate}
+          data-testid="domain-create-open"
           className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small"
         >
           <Plus className="w-4 h-4" />
@@ -126,7 +133,7 @@ export function DomainDataTable() {
 
       {/* Table */}
       <div className="border border-border rounded-lg overflow-hidden">
-        <table className="w-full text-body-small">
+        <table className="w-full text-body-small" data-testid="domain-table">
           <thead>
             <tr className="border-b border-border bg-muted/50">
               <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Name</th>
@@ -156,6 +163,8 @@ export function DomainDataTable() {
               filtered.map((domain) => (
                 <tr
                   key={domain.id}
+                  data-testid="domain-row"
+                  data-name={domain.name}
                   className="border-b border-border last:border-0 hover:bg-accent/50 transition-colors"
                 >
                   <td className="px-space-4 py-space-3 text-foreground font-medium">{domain.name}</td>
@@ -188,6 +197,7 @@ export function DomainDataTable() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-space-4"
           role="dialog"
           aria-modal="true"
+          data-testid="domain-create-dialog"
           aria-labelledby="create-domain-title"
           onKeyDown={(e) => {
             if (e.key === "Escape") setShowCreateDialog(false);
@@ -210,6 +220,7 @@ export function DomainDataTable() {
             {createError && (
               <div
                 role="alert"
+                data-testid="domain-create-error"
                 className="mb-space-3 rounded-md border border-destructive bg-destructive/5 px-space-3 py-space-2 text-body-small text-destructive"
               >
                 {createError}
@@ -223,6 +234,7 @@ export function DomainDataTable() {
                 </label>
                 <input
                   id="domain-name"
+                  data-testid="domain-create-name"
                   type="text"
                   autoFocus
                   value={newName}
@@ -237,6 +249,7 @@ export function DomainDataTable() {
                 </label>
                 <textarea
                   id="domain-description"
+                  data-testid="domain-create-description"
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
                   rows={3}
@@ -256,6 +269,7 @@ export function DomainDataTable() {
               </button>
               <button
                 onClick={handleCreate}
+                data-testid="domain-create-submit"
                 disabled={creating}
                 className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50"
               >
