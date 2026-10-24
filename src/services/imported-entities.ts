@@ -52,18 +52,20 @@ type ImportedField = ImportedEntityInput["fields"][number];
  * The entity-level extensions worth persisting: the payload arrives untyped from the browser, so only a plain object counts (arrays,
  * primitives and null are ignored). `x-tags` / `x-classification` have their own path and stay out; a `__proto__` key is kept as an own data key.
  */
-function sanitizeExtensions(raw: unknown): Record<string, unknown> | undefined {
+function sanitizeExtensions(raw: unknown): Prisma.InputJsonObject | undefined {
   if (!isPlainObject(raw)) return undefined;
   const out: Record<string, unknown> = {};
   for (const [key, value] of genericExtensionEntries(raw as Record<string, unknown>)) setOwn(out, key, value);
-  return Object.keys(out).length > 0 ? out : undefined;
+  // The values come from parsed JSON (the browser payload / a JSON Schema document), so the object is JSON by construction: this is
+  // where `unknown` is told so, once, for every Prisma `Json` column it is written to.
+  return Object.keys(out).length > 0 ? (out as Prisma.InputJsonObject) : undefined;
 }
 
 /**
  * `{ metadata: { custom: { extensions } } }` for the single-entity creates (the wizard's field preview), `{}` when there is nothing
  * worth storing: the same shape and the same sanitising the bulk import writes, so both paths keep an entity's `x-*` keys.
  */
-export function entityExtensionsMetadata(raw: unknown): { metadata?: { custom: { extensions: Record<string, unknown> } } } {
+export function entityExtensionsMetadata(raw: unknown): { metadata?: { custom: { extensions: Prisma.InputJsonObject } } } {
   const extensions = sanitizeExtensions(raw);
   return extensions ? { metadata: { custom: { extensions } } } : {};
 }

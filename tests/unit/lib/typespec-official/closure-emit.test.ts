@@ -43,7 +43,7 @@ function member(id: string, domain: string, product: string, entity: string, fie
 }
 
 function closureOf(entities: ClosureEntity[], cycles: string[][] = []): ReferenceClosure {
-  return { root: entities[0], entities, draftEntities: [], cycles };
+  return { root: entities[0], entities, draftEntities: [], cycles, upgrades: [] };
 }
 
 const ADDRESS: EntityRef & { entityId: string } = { entityId: "a", domain: "Sales", product: "Orders", entity: "Address" };

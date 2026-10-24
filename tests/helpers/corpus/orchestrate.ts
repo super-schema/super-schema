@@ -174,7 +174,7 @@ export interface ProblemOptions {
 }
 
 /** The tiers a run may skip, from `CORPUS_ALLOW_SKIP_TIERS=spanner,bigquery,java`. */
-export function allowedSkipTiersFromEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+export function allowedSkipTiersFromEnv(env: Record<string, string | undefined> = process.env): string[] {
   return (env.CORPUS_ALLOW_SKIP_TIERS ?? "").split(",").map((t) => t.trim()).filter(Boolean);
 }
 
