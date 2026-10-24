@@ -1,10 +1,14 @@
 import { prisma } from "@/lib/db";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import type { EntityMetadata } from "@/types/schemas/entity-metadata.schema";
 import { LineagePageClient } from "./lineage-client";
 import { domainLabel } from "@/lib/entity-placement";
+import { entityRelationships } from "@/lib/lineage/entity-relationships";
 
 export default async function LineagePage() {
+  // The graph of the tenant being viewed (the explorer, the retention page and the other lists scope the same way).
   const entities = await prisma.entity.findMany({
+    where: { tenantId: await getActiveTenantId() },
     include: {
       domain: true,
       product: true,
@@ -13,6 +17,8 @@ export default async function LineagePage() {
           name: true,
           type: true,
           classification: true,
+          // A reference field keeps the id of the entity it references here: that is where the edges of the graph come from.
+          decorators: true,
         },
       },
       _count: { select: { fields: true } },
@@ -21,10 +27,7 @@ export default async function LineagePage() {
 
   const entityData = entities.map((e) => {
     const metadata = (e.metadata as EntityMetadata) || {};
-    const relationships = (metadata.relationships || []).map((r) => ({
-      targetEntityId: r.targetEntityId,
-      type: r.cardinality,
-    }));
+    const relationships = entityRelationships({ metadataRelationships: metadata.relationships || [], fields: e.fields });
 
     const piiCount = e.fields.filter(
       (f) => f.classification === "PII"
