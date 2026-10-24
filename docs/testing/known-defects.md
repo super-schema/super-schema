@@ -104,9 +104,10 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `tests/e2e/jsonschema-lifecycle.spec.ts` and `tests/e2e/fixtures/jsonschema-variations.ts` (`MULTI_MODEL_KNOWN`, `knownSync`).
 - to remove: multi-entity Task 12 drops the stale `MULTI_MODEL_KNOWN` / `knownSync` entries and adds a protobuf nested-array expectation for
   array-of-refs. That task deletes this entry with them.
+
 ## KD-013: the Type Mapping Reference has no row for OpenAPI 3, JSON Schema and the Java POJO
 
-- status: no-test (a design question: the page tabulates "the technologies that have a mapping table", and these have none under their catalog key)
+- status: no-test (a design question: the page tabulates "the technologies that have a mapping table", and these have none under their catalog key; `type-mappings.spec.ts` CHARACTERIZES it: the first test lists exactly the five technologies, so the day the table gains a row that test fails and is edited with this entry)
 - symptom: `/schemas/type-mappings` has five rows (BigQuery, Avro, Spanner, PostgreSQL, Protobuf) while the Schemas tab offers eight targets. The
   OpenAPI mappings exist (31 entries in `default-mappings.ts`) under the format name `openapi`, and the catalog's key for the target is
   `openapi3`, so the page's filter (`getMappingsForTarget(target.key)`) never finds them. JSON Schema and the Java POJO have no mapping table
@@ -138,16 +139,15 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - pinned by: `governance-compliance.spec.ts`, "a user who may not decide is told so".
 - cost to fix: show the error (a toast, or under the card) and, better, not offer the buttons to a user who cannot use them.
 
-## KD-016: the compliance pages read the fields of every tenant
+## KD-016: the compliance Audit Trail reads the audit rows of every tenant
 
-- status: open
-- symptom: the Query tab lists, the Gaps tab counts and the Audit Trail tab lists the rows of ALL tenants (a field of another tenant's entity
-  appears in the table of the tenant being viewed). The Lineage Graph and the command palette's fields did the same (the graph is fixed: it reads
-  the active tenant; the palette is KD-020).
-- where: `src/services/compliance.service.ts` (`queryFields`, `detectGaps`: no tenant in the where clause; `audit_log` has no tenant column).
-- pinned by: `governance-compliance.spec.ts`, "an entity of another tenant is not listed".
-- cost to fix: the routes take the active tenant (`getActiveTenantId`) and the two queries filter `entity: { tenantId }`; the audit trail needs the
-  tenant of the audited row (a join by entity type, or a column).
+- status: no-test (the Query and Gaps tabs were scoped to the tenant being viewed, the "compliance tenants" test in `governance-compliance.spec.ts` pins it; the Audit Trail cannot be, see below, and no test can say what the right answer is until it has a tenant)
+- symptom: the Audit Trail tab lists, and its CSV exports, the `audit_log` rows of ALL tenants: who changed what, in entities, domains and products
+  of another tenant. (Before this was fixed the Query and Gaps tabs read every tenant's fields too: `resolveContext` now passes the tenant being
+  viewed and `queryFields` / `detectGaps` filter `entity.tenantId`.)
+- where: `src/services/compliance.service.ts` (`queryAuditTrail`): `audit_log` has no tenant column; a row names an `entityType` and an `entityId`,
+  and the tenant has to be found through that entity's table (Entity, Field, Domain, Product, GitConfig ... each its own join).
+- cost to fix: a `tenantId` column on `audit_log` written by `withAudit` (the caller knows the tenant), a backfill, and the filter; or the join per type.
 
 ## KD-017: the glossary's detail panel never lists the linked fields
 
@@ -161,7 +161,7 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 
 ## KD-018: the glossary's domain tabs are the domains of what is listed
 
-- status: no-test (cosmetic)
+- status: no-test (cosmetic; `glossary-lineage.spec.ts` CHARACTERIZES it: its domain-tab test asserts that Healthcare is not a tab while Finance is chosen, so a fix edits that test with this entry)
 - symptom: with Finance chosen, the other domain tabs disappear until All is chosen again: the tabs are derived from the concepts of the current
   list, which is already filtered by the tab and the search.
 - where: `src/features/glossary/GlossaryBrowser.tsx` (`allDomains` from `concepts`).
@@ -175,13 +175,13 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - pinned by: `discovery.spec.ts`, "with exactly 25 notifications Next is disabled".
 - cost to fix: the API returns the total (it has it: `count`), or the page asks for one more row than it shows.
 
-## KD-020: the command palette finds fields among the first 100 of the database
+## KD-020: the command palette finds fields among the first 100 of the tenant
 
-- status: no-test (a limit for performance, noted in the route)
-- symptom: `/api/command-palette-fields` returns 100 fields (`take: 100`, by entity name, then field name) of ALL tenants: a field of an entity whose name
-  sorts after the first hundred fields is not found, and the palette offers fields of other tenants.
+- status: no-test (a limit for performance, noted in the route; the cross-tenant part was fixed: the route filters `entity.tenantId` of the tenant being viewed, a caller with an API key has none and gets the default tenant, and `discovery.spec.ts` ("the palette is offered the fields of the tenant being viewed") pins it)
+- symptom: `/api/command-palette-fields` returns 100 fields (`take: 100`, by entity name, then field name): a field of an entity whose name sorts after
+  the first hundred fields of the tenant is not found by the palette.
 - where: `src/app/api/command-palette-fields/route.ts`.
-- cost to fix: search on the server (a query parameter) in the active tenant.
+- cost to fix: search on the server (a query parameter), instead of filtering a fixed page in the browser.
 
 ## KD-021: the Enabled toggle of an emitter and the Health tab's compiler and emitter statuses are not wired to anything
 
@@ -190,3 +190,23 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   catalog's `enabledInSchemaTab`). Admin > Health shows "TypeSpec Compiler" and "Emitters" as healthy always: both checks return a constant.
 - where: `src/services/emitter-config.service.ts` (no caller outside the admin page), `src/services/health.service.ts` (`defaultCompilerCheck`,
   `defaultEmitterCheck`).
+
+## KD-022: nothing produces a governance request
+
+- status: dead-code
+- symptom: `governance.service.createRequest` (the producer: it classifies a change and writes a PENDING or AUTO_APPROVED request) has no caller.
+  The Governance dashboard, its approve and reject, the emission gate (`checkEmissionGate`) and the Admin health card "Pending Governance" all
+  read requests that only a database write can make (the e2e specs write the rows). A published entity never waits for approval.
+- where: `src/services/governance.service.ts` (`createRequest`); the publish flow (`entity-version.service.ts`) never calls it.
+- cost to fix: decide where a request is raised (a breaking publish, a classification change) and call it there, in the same transaction as the
+  publish; this is a product decision, not a fix.
+
+## KD-023: who may SEE governance requests is not decided
+
+- status: no-test (a policy question; `governance-compliance.spec.ts` shows the current rule in a comment: any signed-in user sees the requests of the tenant they are viewing)
+- symptom: the dashboard lists the requests of the tenant being viewed to any signed-in user, whatever their role (registration is open). A
+  request's impact report carries the entity's name, a summary of the change and the e-mail of the owner of each affected consumer. Deciding
+  (approve, reject) is limited to Steward and Admin; seeing is not limited at all.
+- where: `src/app/(dashboard)/governance/actions.ts` (`getGovernanceRequestsAction`: a session and no role).
+- cost to fix: a role floor for the list (and a narrower impact report for the roles below it), with the access-control work: tenant-, domain- and
+  product-scoped roles.
