@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireSession } from "@/lib/require-session";
 import { buildExplorerTree } from "@/lib/navigation/build-explorer-tree";
 
 type GroupedLevel = { domainId: string | null; productId: string | null; _count: { _all: number } };
@@ -10,6 +11,9 @@ const asLevelCounts = (rows: GroupedLevel[]) =>
   rows.map(({ domainId, productId, _count }) => ({ domainId, productId, count: _count._all }));
 
 export async function GET() {
+  const denied = await requireSession();
+  if (denied) return denied;
+
   const tenantId = await getActiveTenantId();
   const levelSelect = { domainId: true, productId: true } as const;
   // Traits and events are only counted per level (never listed), so they are aggregated in the

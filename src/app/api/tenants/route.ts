@@ -1,8 +1,12 @@
 import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { getActiveTenantId } from "@/lib/active-tenant";
+import { requireSession } from "@/lib/require-session";
 
 export async function GET() {
+  const denied = await requireSession();
+  if (denied) return denied;
+
   const [tenants, activeTenantId] = await Promise.all([
     prisma.tenant.findMany({
       where: { isActive: true },
