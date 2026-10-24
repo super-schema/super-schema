@@ -401,6 +401,28 @@ test.describe("a visitor with a forged or stale session cookie", () => {
     // What stays public on purpose: the health probe.
     expect((await request.get("/api/v1/health", { maxRedirects: 0 })).status()).toBe(200);
   });
+
+  test("a server action from a page whose session has gone gets a 401, not a redirect the browser would POST again", { tag: ["@regression"] }, async ({
+    request,
+  }) => {
+    const withActionHeader: Array<Record<string, string>> = [{ "next-action": "40abc" }, { "next-action": "40abc", cookie: `authjs.session-token=${FORGED}` }];
+    for (const headers of withActionHeader) {
+      const response = await request.post("/schemas", { headers, maxRedirects: 0, data: "[]" });
+      expect(response.status(), JSON.stringify(headers)).toBe(401);
+      expect(response.headers()["location"]).toBeUndefined();
+      expect(await response.json()).toEqual({ error: "Not authenticated" });
+    }
+  });
+
+  test("odd spellings of the endpoint's address (//api, /API, an encoded letter, an encoded slash under /login) serve no data without a session", { tag: ["@regression"] }, async ({
+    request,
+  }) => {
+    for (const path of ["//api/domains-tree", "/API/domains-tree", "/%61pi/domains-tree", "/api/domains-tree/", "/login%2F..%2Fapi%2Fdomains-tree"]) {
+      const response = await request.get(path, { maxRedirects: 0, failOnStatusCode: false });
+      expect(response.status(), `${path} answered ${response.status()}`).not.toBe(200);
+      expect(await response.text(), `${path} served the explorer's data`).not.toMatch(/Playground|"domains"/);
+    }
+  });
 });
 
 test.describe("sign out", () => {
