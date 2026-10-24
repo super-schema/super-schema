@@ -38,6 +38,7 @@ vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernan
 
 import { publishEntity, previewPublish, loadReferenceStaleness } from "@/services/entity-version.service";
 import { readReferencedVersions } from "@/lib/entity-versioning/referenced-versions";
+import { needsReferenceOf } from "@/lib/entity-versioning/publish-plan";
 import type { ServiceContext } from "@/types/service-context";
 
 const entities = () => h.store.entities as EntityRow[];
@@ -300,6 +301,47 @@ describe("publishEntity: blocked while a closure member cannot be published agai
     expect(res.error.message).toContain("9.9");
     expect(res.error.message).toContain("Sales / Orders / Customer");
     expect(h.created).toHaveLength(0);
+  });
+
+  describe("an ambiguous bare-name reference", () => {
+    const world = () => {
+      h.store.entities = [
+        entity("order", "Order", [["addr", "reference", { referencedEntityName: "Address" }]]),
+        entity("x1", "Address", [["street", "string"]]),
+        entity("x2", "Address", [["street", "string"]]),
+      ];
+    };
+    const pick = {
+      field: "addr",
+      name: "Address",
+      candidates: [
+        { entityId: "x1", domain: "Sales", product: "Orders", entity: "Address" },
+        { entityId: "x2", domain: "Sales", product: "Orders", entity: "Address" },
+      ],
+      entityId: "order",
+      fieldId: "order.addr",
+    };
+
+    it("blocks the publish with the candidates in the message AND in the error's structured blockers (the pick dialog's input)", async () => {
+      world();
+      const { prisma } = fakePrisma();
+      const res = await publishEntity("order", {}, ctxFor(prisma));
+      expect(res.success).toBe(false);
+      if (res.success) return;
+      expect(res.error.code).toBe("PUBLISH_BLOCKED");
+      expect(res.error.message).toContain("Sales / Orders / Address");
+      const blockers = (res.error.details as { blockers: Array<{ kind: string; code: string; details?: unknown }> }).blockers;
+      expect(blockers).toEqual([expect.objectContaining({ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", details: pick })]);
+      expect(needsReferenceOf(blockers as never)).toEqual(pick);
+      expect(h.created).toHaveLength(0);
+    });
+
+    it("is previewed with the same structure", async () => {
+      world();
+      const { prisma } = fakePrisma();
+      const res = await previewPublish("order", ctxFor(prisma));
+      expect(res.success && needsReferenceOf(res.data.blockers)).toEqual(pick);
+    });
   });
 
   it("a closure blocker is previewed too, so the dialog shows it before the user tries", async () => {

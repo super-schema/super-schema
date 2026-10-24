@@ -197,6 +197,40 @@ describe("loadPublishClosure", () => {
       expect(res.error.message).toContain("d2 / p2 / Address");
     });
 
+    it("an ambiguous reference also carries the structure a pick dialog needs: the field, the name, the candidates and the entity + field row that hold it", async () => {
+      // The ambiguous reference is held by a MEMBER (B), not by the root: the pick must be written on B's field.
+      const db = fakeDb([
+        ent("a", {}, [["b", qref("b", Q("B"))]]),
+        ent("b", { versions: [{ ...version("b", 1, 0), fieldSnapshot: [toField({ id: "b-addr", name: "addr", decorators: { referencedEntityName: "Address" } }, 0)] }], latest: "b-v1.0" }),
+        ent("x1", { name: "Address", domain: "d1", product: "p1" }),
+        ent("x2", { name: "Address", domain: "d2", product: "p2" }),
+      ]);
+      const res = await loadPublishClosure(db, root);
+      expect(res.success).toBe(false);
+      if (res.success) return;
+      expect(res.error.code).toBe("AMBIGUOUS_REFERENCE");
+      expect(res.error.details).toEqual({
+        field: "addr",
+        name: "Address",
+        candidates: [
+          { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+          { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+        ],
+        entityId: "b",
+        fieldId: "b-addr",
+      });
+    });
+
+    it("the other blockers carry their own details (the entity, the pin)", async () => {
+      const never = await loadPublishClosure(fakeDb([ent("a", {}, [["b", qref("b", Q("B"))]]), ent("b")]), root);
+      expect(!never.success && never.error.details).toEqual({ ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" } });
+      const pin = await loadPublishClosure(
+        fakeDb([ent("a", {}, [["cust", qref("b", Q("B"), "9.9")]]), ent("b", { versions: [version("b", 1, 0)], latest: "b-v1.0" })]),
+        root
+      );
+      expect(!pin.success && pin.error.details).toEqual({ field: "cust", ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "9.9" });
+    });
+
     it("a closure over the cap", async () => {
       const db = fakeDb([ent("a", {}, [["b", qref("b", Q("B"))]]), ent("b", { versions: [version("b", 1, 0)], latest: "b-v1.0" })]);
       const res = await loadPublishClosure(db, root, { maxEntities: 1 });

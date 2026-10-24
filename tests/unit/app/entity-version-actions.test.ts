@@ -77,6 +77,42 @@ describe("entity version actions", () => {
     expect(h.revalidatePath).not.toHaveBeenCalled();
   });
 
+  it("answers an ambiguous reference with the pick the UI needs (needsReference, generateSchemaAction's shape) beside the error", async () => {
+    const pick = {
+      field: "addr",
+      name: "Address",
+      candidates: [
+        { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+        { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+      ],
+      entityId: "e1",
+      fieldId: "e1.addr",
+    };
+    h.publishEntity.mockResolvedValue({
+      success: false,
+      error: {
+        code: "PUBLISH_BLOCKED",
+        message: 'Field "addr" refers to "Address", which matches 2 entities',
+        details: { blockers: [{ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: "m", details: pick }] },
+      },
+    });
+    expect(await publishEntityAction("e1", {})).toEqual({
+      error: 'Field "addr" refers to "Address", which matches 2 entities',
+      code: "PUBLISH_BLOCKED",
+      needsReference: pick,
+    });
+  });
+
+  it("a blocked publish without an ambiguous reference carries no needsReference", async () => {
+    h.publishEntity.mockResolvedValue({
+      success: false,
+      error: { code: "PUBLISH_BLOCKED", message: "Publish Customer first", details: { blockers: [{ kind: "UNPUBLISHED_REFERENCE", entityId: "c", entityName: "Customer", message: "Publish Customer first" }] } },
+    });
+    const result = await publishEntityAction("e1", {});
+    expect(result).toEqual({ error: "Publish Customer first", code: "PUBLISH_BLOCKED" });
+    expect(result).not.toHaveProperty("needsReference");
+  });
+
   it("passes preview and version list through", async () => {
     h.previewPublish.mockResolvedValue({ success: true, data: { isFirstPublish: true } });
     h.listEntityVersions.mockResolvedValue({ success: true, data: [SUMMARY] });

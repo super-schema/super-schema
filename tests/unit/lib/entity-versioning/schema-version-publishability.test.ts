@@ -64,13 +64,23 @@ describe("draftReferenceRefusal", () => {
     const message = draftReferenceRefusal([ref("c", "Customer"), ref("z", "Zip", "Geo", "Codes")]);
     expect(message).toContain("Sales / Orders / Customer");
     expect(message).toContain("Geo / Codes / Zip");
-    expect(message).toMatch(/Publish (them|it)/);
     expect(message).toMatch(/published mode/);
     expect(message).toMatch(/regenerate/i);
   });
 
-  it("is singular for one", () => {
-    expect(draftReferenceRefusal([ref("c", "Customer")])).toMatch(/Publish it/);
+  it("does not tell the user to publish what may already be published: draft-mode generation lists every member as draft", () => {
+    // The common case is that they ARE published (a page-generated version records every member at its saved state), so the
+    // instruction is conditional, never "publish them first".
+    for (const drafts of [[ref("c", "Customer")], [ref("c", "Customer"), ref("z", "Zip")]]) {
+      const message = draftReferenceRefusal(drafts);
+      expect(message).not.toMatch(/Publish (them|it) first/);
+      expect(message).toMatch(/Publish any of them that are not yet published, then regenerate/);
+      expect(message).toMatch(/from the published versions/);
+    }
+  });
+
+  it("says the entity's own unpublished edits are not part of a regeneration from the published versions", () => {
+    expect(draftReferenceRefusal([ref("c", "Customer")])).toMatch(/unpublished edits to this entity itself are not included/);
   });
 
   it("names at most five, then +N more", () => {

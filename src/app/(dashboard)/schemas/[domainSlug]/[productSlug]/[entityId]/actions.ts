@@ -1406,7 +1406,8 @@ export async function setFieldReferenceAction(
  * (`loadReferenceClosure` + `emitClosure`): one file per entity, stored as `files` (and `output` as their bundled string) with a
  * `resolution` recording which version of each entity was used. `opts.mode` decides what an unpinned reference resolves to: `draft`
  * (the default: this is the entity's current saved state) the latest saved definition, the version is then a preview; `published`
- * (the publish flow, regeneration of a published version) the latest PUBLISHED version of each entity, never a draft. A pin overrides
+ * (the publish flow, regeneration of a published version) the latest PUBLISHED version of each entity, never a draft, the ENTITY ITSELF
+ * included: it is read from its latest published version too, so unpublished edits to it are not in the result. A pin overrides
  * both. A bare-name reference that matches several entities is not guessed: nothing is emitted or written and the answer is
  * `{ needsReference: { field, name, candidates, entityId, fieldId } }` for the UI to ask (`setFieldReferenceAction` saves the pick).
  * The DB targets (and the native runtime) keep their own path, one entity, and ignore `mode`.
@@ -1463,6 +1464,8 @@ export async function generateSchemaAction(entityId: string, target: string, opt
       let officialResult: ClosureTargetResult;
       if (targetDefinition.closureEmission) {
         // The root passed the tenant check above, so its closure is confined to that same (active) tenant.
+        // In published mode the ROOT too is read from its latest PUBLISHED version, not from its saved rows: unpublished edits to the
+        // entity itself are not in the result (publish the entity first to include them), exactly like its referenced entities.
         const { closureFailure, describeResolution, emitClosureTarget } = await import("@/lib/emission/closure-generation");
         const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, mode);
         if (!loaded.success) {
@@ -1646,13 +1649,16 @@ async function upgradeLegacyReferences(entityId: string, userId: string, upgrade
  *
  * A stored version that resolved a REFERENCED entity at draft state (`draftReferencedEntities`: a version generated from the entity
  * page is a preview of the saved draft of what it references) is refused: a published schema never contains draft content of a
- * referenced entity. The refusal names those entities, says to publish them and regenerate in published mode, and carries
- * `needsPublishedRegeneration` + `draftEntities` for the UI. A version regenerated in published mode, a stand-alone one (no
- * references) and a DB / native one (no `resolution`) publish exactly as before.
+ * referenced entity. The refusal names those entities, says to publish any that are not yet published and then regenerate from the
+ * published versions, and carries `needsPublishedRegeneration` + `draftEntities` for the UI. A version regenerated in published mode,
+ * a stand-alone one (no references) and a DB / native one (no `resolution`) publish exactly as before.
  *
  * `opts.regenerateFromPublished === true` is the one-step way out of that refusal: the target is regenerated in published mode
  * (`generateSchemaAction(..., { mode: "published" })`, which refuses naming any referenced entity that was never published or any pin
  * that is gone) and the REGENERATED version is published, never the preview. It does nothing when the version is publishable as it is.
+ * Published mode reads the ENTITY ITSELF from its latest published version too, so the regenerated version does not include unpublished
+ * edits to the entity (the refusal says so). An ambiguous bare-name reference met while regenerating is answered with `needsReference`
+ * (the shape `generateSchemaAction` answers) beside the error, so the UI can ask for the pick.
  */
 export async function publishSchemaAction(
   entityId: string,
@@ -1708,6 +1714,8 @@ export async function publishSchemaAction(
           return {
             error: `Field "${field}" refers to "${name}", which matches ${candidates.length} entities. Choose the entity it means on that field, then publish again.`,
             code: "AMBIGUOUS_REFERENCE",
+            // The pick to ask for: where it is written (entityId + fieldId, a member as often as this entity) and what it chooses from.
+            needsReference: result.needsReference,
           };
         }
         if (!("schemaVersion" in result) || !result.schemaVersion) return { error: "Regenerating from the published versions failed" };

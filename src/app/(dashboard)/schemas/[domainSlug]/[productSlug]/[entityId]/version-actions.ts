@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { failureOf, inActiveTenant, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
 import { getEffectiveRole } from "@/services/rbac.service";
 import { listEntityVersions, previewPublish, publishEntity } from "@/services/entity-version.service";
-import type { PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
+import { needsReferenceOf, type PublishAnalysis, type PublishBlocker, type PublishNeedsReference } from "@/lib/entity-versioning/publish-plan";
 import { isBumpKind, MAX_CHANGE_SUMMARY, type EntityVersionSummary, type PublishInput } from "@/lib/entity-versioning/types";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -40,7 +40,7 @@ export async function getPublishPreviewAction(
 export async function publishEntityAction(
   entityId: string,
   input: PublishInput
-): Promise<{ success: true; version: EntityVersionSummary } | { error: string; code?: string }> {
+): Promise<{ success: true; version: EntityVersionSummary } | { error: string; code?: string; needsReference?: PublishNeedsReference }> {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
   const raw: Partial<PublishInput> = typeof input === "object" && input !== null ? input : {};
@@ -61,7 +61,13 @@ export async function publishEntityAction(
       { bump: raw.bump, changeSummary: raw.changeSummary },
       await serviceContext(session.user.id)
     );
-    if (!res.success) return { ...failureOf(res.error, "publishEntityAction") };
+    if (!res.success) {
+      // A publish blocked by an ambiguous bare-name reference also answers WHICH pick it needs (`needsReference`, the shape
+      // `generateSchemaAction` answers), so the UI can open the pick dialog instead of showing a sentence.
+      const blockers = (res.error.details as { blockers?: PublishBlocker[] } | undefined)?.blockers;
+      const needsReference = Array.isArray(blockers) ? needsReferenceOf(blockers) : undefined;
+      return { ...failureOf(res.error, "publishEntityAction"), ...(needsReference ? { needsReference } : {}) };
+    }
     revalidatePath("/schemas");
     return { success: true, version: res.data };
   } catch (e: unknown) {

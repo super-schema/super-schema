@@ -5,7 +5,8 @@
  * state by definition, and every referenced entity resolves to its latest SAVED definition, drafts included. Such output is a
  * preview of what the entity references right now, and it cannot be published as it is: a published schema can never contain draft
  * content of a referenced entity. It becomes publishable once it is regenerated in published mode (each referenced entity at its latest
- * published version or pin), which needs those entities to be published first.
+ * published version or pin), which needs those entities to be published first. Published mode reads the ENTITY ITSELF at its latest
+ * published version as well, so unpublished edits to it are not part of the regenerated version.
  *
  * The rule, precisely: a stored schema version is unpublishable if and only if its `resolution` lists a REFERENCED entity (any entry
  * other than the root) whose `source` is `draft`. The root's own draft state does not count (`resolution.preview` does count the root,
@@ -43,10 +44,14 @@ export function draftReferencedEntities(resolution: SchemaVersionResolution | un
     .map((entry) => entry.ref);
 }
 
-/** The refusal shown when a stored version resolved referenced entities at draft state: names them and says how to fix it. */
+/**
+ * The refusal shown when a stored version resolved referenced entities at draft state: names them and says how to fix it. A
+ * page-generated version lists EVERY referenced entity as draft (it reads their saved state, published or not), so the usual case is
+ * that they are already published: the instruction is conditional ("any of them that are not yet published"). Regenerating from the
+ * published versions reads the entity itself at its latest published version too, which the text says.
+ */
 export function draftReferenceRefusal(drafts: readonly EntityRef[]): string {
   const named = drafts.slice(0, MAX_NAMED).map(describeRef).join(", ");
   const more = drafts.length > MAX_NAMED ? ` +${drafts.length - MAX_NAMED} more` : "";
-  const them = drafts.length === 1 ? "it" : "them";
-  return `This schema version was generated from the saved draft of ${named}${more}, so it is a preview and cannot be published: a published schema never contains draft content of an entity it references. Publish ${them} first, then regenerate this schema in published mode and publish the new version.`;
+  return `This schema version was generated from the saved draft of ${named}${more}, so it is a preview and cannot be published: a published schema never contains draft content of an entity it references. Publish any of them that are not yet published, then regenerate this schema from the published versions (published mode) and publish the new version. The published versions include this entity itself, so unpublished edits to this entity itself are not included.`;
 }

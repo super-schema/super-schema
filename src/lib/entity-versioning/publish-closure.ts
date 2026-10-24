@@ -20,8 +20,18 @@ import type { ReferencedVersion } from "./referenced-versions";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-/** Why a publish cannot proceed, as the planner shows it. `entityId` is set when the message is about one specific entity. */
-export type PublishClosureBlocker = { code: ClosureError["code"] | "DRAFT_REFERENCE"; message: string; entityId?: string };
+/**
+ * Why a publish cannot proceed, as the planner shows it. `entityId` is set when the message is about one specific entity.
+ * `details` is the closure's own structure for the failure (`closureFailure(error).details`): for `AMBIGUOUS_REFERENCE`
+ * `{ field, name, candidates, entityId, fieldId }` (the entity and field row that HOLD the reference, a member as often as the root:
+ * where the pick is written), for `PIN_NOT_FOUND` `{ field, ref, version }`, for `NEVER_PUBLISHED` `{ ref }`.
+ */
+export type PublishClosureBlocker = {
+  code: ClosureError["code"] | "DRAFT_REFERENCE";
+  message: string;
+  entityId?: string;
+  details?: object;
+};
 
 export type PublishClosure = {
   closure: ReferenceClosure;
@@ -34,17 +44,20 @@ const describeRef = (ref: EntityRef): string => qualifiedName(ref).split("/").jo
 
 /** A closure error as a publish blocker. The wording follows the generate path's (`closureFailure`), except where a publish needs its own. */
 export function publishBlockerFor(error: ClosureError, rootName: string): PublishClosureBlocker {
+  const failure = closureFailure(error);
+  const details = failure.details ? { details: failure.details } : {};
   switch (error.code) {
     case "NEVER_PUBLISHED":
       return {
         code: error.code,
         message: `Publish ${error.ref.entity} first: ${describeRef(error.ref)} has never been published, and a published ${rootName} can only use published versions of what it references.`,
         ...(error.ref.entityId ? { entityId: error.ref.entityId } : {}),
+        ...details,
       };
     case "PIN_NOT_FOUND":
-      return { code: error.code, message: closureFailure(error).message, ...(error.ref.entityId ? { entityId: error.ref.entityId } : {}) };
+      return { code: error.code, message: failure.message, ...(error.ref.entityId ? { entityId: error.ref.entityId } : {}), ...details };
     default:
-      return { code: error.code, message: closureFailure(error).message };
+      return { code: error.code, message: failure.message, ...details };
   }
 }
 

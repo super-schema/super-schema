@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyzePublish, planPublish, type PublishState } from "@/lib/entity-versioning/publish-plan";
+import { analyzePublish, needsReferenceOf, planPublish, type PublishState } from "@/lib/entity-versioning/publish-plan";
 import type { FieldSnapshot } from "@/services/version-history/version.types";
 
 function f(name: string, extra: Partial<FieldSnapshot> = {}): FieldSnapshot {
@@ -135,6 +135,40 @@ describe("the reference closure (Task 8)", () => {
       closureBlocker: { code: "AMBIGUOUS_REFERENCE", entityId: "cust", message: "Field x refers to Address, which matches 2 entities." },
     });
     expect(analyzePublish(s).blockers.map((b) => b.kind)).toEqual(["UNPUBLISHED_REFERENCE", "CLOSURE_BLOCKED"]);
+  });
+
+  describe("an ambiguous reference stays structured (for the pick dialog)", () => {
+    const candidates = [
+      { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+      { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+    ];
+    const details = { field: "addr", name: "Address", candidates, entityId: "cust", fieldId: "cust.addr" };
+    const ambiguous = { code: "AMBIGUOUS_REFERENCE", message: "Field addr refers to Address, which matches 2 entities.", details };
+
+    it("keeps the details on the blocker, in the analysis and in the plan's error", () => {
+      const s = state({ closureBlocker: ambiguous });
+      expect(analyzePublish(s).blockers).toEqual([{ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: ambiguous.message, details }]);
+      const res = planPublish(s);
+      expect(!res.success && (res.error.details as { blockers: unknown[] }).blockers).toEqual([
+        { kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: ambiguous.message, details },
+      ]);
+    });
+
+    it("needsReferenceOf reads the pick the blocker asks for, in generateSchemaAction's needsReference shape", () => {
+      expect(needsReferenceOf(analyzePublish(state({ closureBlocker: ambiguous })).blockers)).toEqual(details);
+    });
+
+    it("needsReferenceOf is undefined for every other blocker, and for a malformed one", () => {
+      expect(needsReferenceOf(analyzePublish(state({ closureBlocker: { code: "NEVER_PUBLISHED", entityId: "x", message: "m", details: { ref: {} } } })).blockers)).toBeUndefined();
+      expect(needsReferenceOf(analyzePublish(state({ entity: { ...ENTITY, status: "RETIRED" } })).blockers)).toBeUndefined();
+      expect(needsReferenceOf([{ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: "m" }])).toBeUndefined();
+      expect(needsReferenceOf([{ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: "m", details: { field: "f", name: 3, candidates: "x", entityId: "e", fieldId: "i" } }])).toBeUndefined();
+    });
+
+    it("needsReferenceOf reads it from a plan error's details too", () => {
+      const res = planPublish(state({ closureBlocker: ambiguous }));
+      expect(!res.success && needsReferenceOf((res.error.details as { blockers: never[] }).blockers)).toEqual(details);
+    });
   });
 
   it("the plan carries the referenced versions the closure used, unchanged", () => {

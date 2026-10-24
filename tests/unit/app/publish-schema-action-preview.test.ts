@@ -179,8 +179,9 @@ describe("publishSchemaAction refuses a preview that resolved referenced entitie
     expect(refusal.error).toContain("_tenant / _tenant / Customer");
     expect(refusal.error).toContain("_tenant / _tenant / Address");
     expect(refusal.error).not.toContain("Order"); // the root is not a draft reference
-    expect(refusal.error).toMatch(/Publish them first/);
+    expect(refusal.error).toMatch(/Publish any of them that are not yet published, then regenerate/);
     expect(refusal.error).toMatch(/published mode/);
+    expect(refusal.error).toMatch(/unpublished edits to this entity itself are not included/);
     expect(refusal.draftEntities.map((e) => e.entity)).toEqual(["Customer", "Address"]);
     expect(p.entity.update).not.toHaveBeenCalled();
     expect(p.auditLog.create).not.toHaveBeenCalled();
@@ -283,6 +284,43 @@ describe("publishSchemaAction with regenerateFromPublished", () => {
 
     expect(result).toMatchObject({ code: "NEVER_PUBLISHED" });
     expect((result as { error: string }).error).toContain("_tenant / _tenant / Customer");
+    expect(stored("a", "json-schema").some((v) => v.status === "published")).toBe(false);
+  });
+
+  it("answers an ambiguous reference found while regenerating with the pick the UI needs, in generateSchemaAction's needsReference shape", async () => {
+    // Order -> Customer. Customer's saved draft references Address (so the page-generated preview succeeds, with draft references);
+    // its PUBLISHED 1.0 holds a bare-name reference to "Dup", which two entities share: regenerating from the published versions cannot guess.
+    h.store.versions = [
+      publish("a", 1, 0, [["cust", qualified("b", "_tenant/_tenant/Customer")]]),
+      publish("b", 1, 0, [["dup", { referencedEntityName: "Dup" }]]),
+    ];
+    h.store.entities = [
+      entity("a", "Order", [["cust", qualified("b", "_tenant/_tenant/Customer")]], { latestVersionId: "a-v1.0" }),
+      entity("b", "Customer", [["addr", qualified("c", "_tenant/_tenant/Address")]], { latestVersionId: "b-v1.0" }),
+      entity("c", "Address"),
+      entity("x1", "Dup", [], { domain: "d1", product: "p1" }),
+      entity("x2", "Dup", [], { domain: "d2", product: "p2" }),
+    ];
+    expect(await actions.generateSchemaAction("a", "json-schema")).toMatchObject({ success: true });
+    p.entity.update.mockClear();
+
+    const result = await actions.publishSchemaAction("a", "json-schema", 1, { regenerateFromPublished: true });
+
+    const generated = await actions.generateSchemaAction("a", "json-schema", { mode: "published" });
+    expect(generated).toHaveProperty("needsReference"); // what generating alone answers
+    expect(result).toMatchObject({ code: "AMBIGUOUS_REFERENCE", needsReference: (generated as { needsReference: unknown }).needsReference });
+    expect((result as { needsReference: unknown }).needsReference).toEqual({
+      field: "dup",
+      name: "Dup",
+      candidates: [
+        { entityId: "x1", domain: "d1", product: "p1", entity: "Dup" },
+        { entityId: "x2", domain: "d2", product: "p2", entity: "Dup" },
+      ],
+      entityId: "b",
+      fieldId: "b.dup",
+    });
+    expect((result as { error: string }).error).toMatch(/Dup/);
+    expect(p.entity.update).not.toHaveBeenCalled();
     expect(stored("a", "json-schema").some((v) => v.status === "published")).toBe(false);
   });
 
