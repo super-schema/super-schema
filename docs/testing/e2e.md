@@ -95,7 +95,7 @@ whatever your shell has under the prefixes `PG`, `AUTH_`, `NEXTAUTH_`, `E2E_`, `
 
 | Option | Meaning |
 | --- | --- |
-| `--tier smoke\|regression\|nightly` | required (the npm scripts set one; a later `--tier` wins) |
+| `--tier smoke\|regression\|nightly\|serial` | required (the npm scripts set one; a later `--tier` wins). `serial` is a login and then the `serial-after` project alone (`--no-deps`): the only way to run its `@slow` / `@external` specs without Playwright running all of `chromium` first; the arguments after `--` go to that last phase |
 | `--shard i/n` | slice `i` of `n`. The `serial-after` phase of the regression tier runs with slice 1 only |
 | `--project <name>` | narrow the tier to a project (repeatable): `--tier smoke --project firefox-smoke`. It narrows; it does not add |
 | `--reuse-build` | skip the build when it can be reused (below) |
@@ -130,18 +130,91 @@ with a message (use `--reuse-build` to share the other's build, or run from a se
 
 ## Running it in CI
 
+`.github/workflows/e2e.yml` (the workflow `e2e`) runs the release runner on GitHub-hosted `ubuntu-latest` machines. It is a workflow of its
+own; `.github/workflows/ci.yml` (the unit tests, on PGlite and PostgreSQL) is unchanged. Every job installs Node 22, runs `npm ci` and
+`npx prisma generate`, installs the browsers it needs, and calls `npm run test:e2e:release`.
+
+| Event | Job | Status check | Time limit | Gates a merge |
+| --- | --- | --- | --- | --- |
+| pull request | `smoke`: the smoke tier on Chromium, Firefox and WebKit | `e2e-smoke` | 25 min | **yes**, once a maintainer requires it (below) |
+| nightly (`schedule`, 02:23 UTC), a tag `v*` | `regression`: the regression tier, four shards | `e2e-regression (1/4)`, `e2e-regression (2/4)`, `e2e-regression (3/4)`, `e2e-regression (4/4)` | 60 min each | no, it reports |
+| nightly, a tag `v*` | `nightly-extra`: what the nightly tier has and the regression tier has not, three legs | `e2e-nightly-extra (slow-chromium)`, `e2e-nightly-extra (slow-serial)`, `e2e-nightly-extra (cross-browser)` | 90 min each | no, it reports |
+| `workflow_dispatch` | the input `tier`: `smoke` runs `smoke`; `regression` runs `regression`; `nightly` runs `regression` and `nightly-extra` | as above | as above | no |
+
+A leg or a shard that fails does not cancel the others (`fail-fast: false`). A newer push to a pull request cancels that pull request's
+older run; nothing else is cancelled.
+
+### Making `smoke` gate merges (branch protection)
+
+Whether a check blocks a merge is a **repository setting**, and a workflow file cannot change it. A maintainer has to add the check once:
+Settings, Branches (or Rulesets), the rule for `main`, "Require status checks to pass before merging", and then make `e2e-smoke` a
+required status check. This is the only new check to require.
+
+- GitHub lists a check only after it has reported once: open a pull request first, let `e2e-smoke` run, then add it.
+- Do not require the `e2e-regression (...)` or `e2e-nightly-extra (...)` checks. They do not run on pull requests, and a required check
+  that never reports blocks every merge. They are for reading the next morning, and before a release.
+- The `pull_request` trigger has no path or branch filter on purpose, so `e2e-smoke` reports on every pull request. Keep it that way.
+- `ci.yml`'s checks (`test (pglite)`, `test (postgresql)`) are separate; require them as you do now.
+
+### What `nightly-extra` runs, and why it is not `--tier nightly`
+
+The nightly tier is everything, so it includes the regression tests that the four shards have just run. The rest is run as three legs, each
+selecting tests that no other leg and no regression shard selects (at the time of writing: regression 52 tests, the legs 17, 6 and 10,
+the nightly tier 85 in all; `node scripts/e2e-phases.mjs <tier> --list ...` prints the sets):
+
 ```bash
-npx playwright install --with-deps chromium firefox webkit
-CI=true E2E_OUTPUT_ROOT="$PWD/test-results/ci" npm run test:e2e:release:smoke
-CI=true E2E_OUTPUT_ROOT="$PWD/test-results/ci" npm run test:e2e:release -- --tier regression --shard 2/4
+# slow-chromium: the @slow and @external tests of Chromium (the JSON Schema matrix, the URL import over the network)
+npm run test:e2e:release -- --tier nightly --project chromium -- --grep "@slow|@external"
+# slow-serial: the same tags in `serial-after` (the navigation crawl, external event references)
+npm run test:e2e:release -- --tier serial -- --grep "@slow|@external"
+# cross-browser: the smoke tests on Firefox and WebKit
+npm run test:e2e:release -- --tier smoke --project firefox-smoke --project webkit-smoke
 ```
+
+`slow-serial` has a tier of its own because Playwright runs a project's dependencies in full whatever `--grep` says: `--project serial-after`
+with the grep would run all of `chromium` first. The `serial` tier logs in and runs `serial-after` alone. A `visual` leg (`--tier nightly
+--project visual`, in the Playwright Docker image) is added with the visual specs.
+
+### Artifacts, the flaky list, and the same run on your machine
+
+Each job (each shard and leg) uploads two artifacts, also after a failure (`if: always()`), kept 14 days:
+
+| Artifact | Holds |
+| --- | --- |
+| `e2e-smoke-playwright-report`, `e2e-regression-<shard>-playwright-report`, `e2e-nightly-extra-<leg>-playwright-report` | the html report of each phase (`main`, and `serial` for regression shard 1): download, unzip, `npx playwright show-report <folder>/main` |
+| `e2e-smoke-test-results`, `e2e-regression-<shard>-test-results`, `e2e-nightly-extra-<leg>-test-results` | `test-results/<phase>/`: traces, screenshots and video of failures, `junit.xml`, `flaky-tests.json`; and `server.log`, the app's log |
+
+A test that passes only on its retry keeps the job green and is shown in three places: the **job summary** of the run (a "flaky tests"
+table at the bottom of the job's page, written by `scripts/ci-flaky-summary.mjs`; "No test passed only on a retry." when there is none),
+a warning annotation per test on the run, and `flaky-tests.json` in the `-test-results` artifact.
+
+The jobs run exactly these commands, so you can run any of them yourself (Docker and the browsers needed, `CI=true` for the same reporters):
+
+```bash
+CI=true npm run test:e2e:release -- --tier smoke
+CI=true npm run test:e2e:release -- --tier regression --shard 2/4
+```
+
+and the three `nightly-extra` commands above. Add `--list-only` for a dry run, and `E2E_OUTPUT_ROOT="$PWD/test-results/ci-smoke"` to
+collect the reports in one place, as the jobs do.
 
 - `CI=true` switches Playwright to the CI reporters (below), one worker and one retry; without it a run prints the `list` reporter only
   and writes no html or junit files.
-- `E2E_OUTPUT_ROOT` puts every report in one directory to upload as an artifact (also on failure: `if: always()`); `server.log` is there
-  too. Use a path under `test-results/` or `playwright-report/`, which version control ignores (another directory needs a `.gitignore` line).
-- GitHub-hosted runners have Docker; no Postgres service is needed (the runner makes its own container).
-- Do not run the regression shards of one job on one checkout at the same time without `--reuse-build` (they share `.next`).
+- Each job's `E2E_OUTPUT_ROOT` is `test-results/ci-<job>` (with the shard or leg: `ci-regression-2`, `ci-nightly-extra-slow-serial`). Use a
+  path under `test-results/` or `playwright-report/`, which version control ignores (another directory needs a `.gitignore` line).
+- Docker comes with the GitHub-hosted runners, and the workflow has no Postgres service: the runner makes its own container.
+- Browsers: `smoke` installs Chromium, Firefox and WebKit, a shard installs Chromium, a leg what it names. They are cached in
+  `~/.cache/ms-playwright`, keyed by the Playwright version in `package-lock.json` and the browsers; on a cache hit only the system
+  libraries are installed (`playwright install-deps`).
+- Do not run the regression shards of one job on one checkout at the same time without `--reuse-build` (they share `.next`). In CI every
+  shard has a machine of its own.
+- Before the first run: `npm ci` has to work on the runner. `package.json` has `file:../typespec/packages/*` dependencies (a sibling
+  checkout) and `package-lock.json` resolves packages from an internal registry host; `ci.yml` needs both in the same way, and this workflow
+  adds nothing for them. If `npm ci` fails on a hosted runner, it fails in both workflows, and the fix (a registry the runner can reach,
+  the sibling repository checked out) belongs to both.
+- `tests/unit/ci-e2e-workflow.test.ts` reads the workflow as YAML (read-only permissions, first-party actions only, a timeout on every
+  job, uploads and the flaky summary after a failure, no tests selected twice) and checks that this page names every check; run it after
+  an edit of the workflow. `actionlint` is not part of the repository: run it if you have it.
 
 ## Reading a run
 
@@ -151,11 +224,11 @@ Everything of a run is under its output root (printed at the start and at the en
 | --- | --- |
 | html report of a phase | `<root>/playwright-report/<phase>/index.html`: `npx playwright show-report <root>/playwright-report/main` |
 | junit | `<root>/test-results/<phase>/junit.xml` (retries included: a test that passed on a retry has a `<flakyFailure>`) |
-| flaky tests | `<root>/test-results/<phase>/flaky-tests.json`, a FLAKY block in the console, a warning annotation on GitHub |
+| flaky tests | `<root>/test-results/<phase>/flaky-tests.json`, a FLAKY block in the console, a warning annotation and a table in the job summary on GitHub |
 | traces, screenshots, video of failures | `<root>/test-results/<phase>/artifacts/<test>/`: `npx playwright show-trace <trace.zip>` |
 | the app's log | `<root>/server.log` (kept whatever the result) |
 
-The phases are `main` (and `serial` for the regression tier, which runs `serial-after` as its own command). The summary at the end of
+The phases are `main` (and `serial` for the regression tier, which runs `serial-after` as its own command; `setup` and `serial` for the `serial` tier). The summary at the end of
 the run lists each phase's result and the report paths that exist. A test that passes only on a retry does not fail the run and is never
 hidden: it is listed as flaky in all of the above. Old runs stay in `test-results/run-<id>`; delete them when you do not need them
 (`test-results` is ignored by version control).

@@ -44,9 +44,15 @@ interface Job {
   services?: unknown;
   steps: Step[];
 }
+interface Triggers {
+  pull_request?: Record<string, unknown> | null;
+  schedule: Array<{ cron: string }>;
+  push: { tags?: string[]; branches?: string[]; "branches-ignore"?: string[] };
+  workflow_dispatch: { inputs: { tier: { type: string; options: string[]; default: string } } };
+}
 interface Workflow {
   name?: string;
-  on: Record<string, any>;
+  on: Triggers;
   permissions?: Record<string, string> | string;
   concurrency?: { group?: string; "cancel-in-progress"?: unknown };
   env?: Record<string, unknown>;
@@ -128,7 +134,7 @@ describe("e2e.yml: when it runs", () => {
   });
 
   it("schedule has one cron, a fixed minute and hour every day (once a night, UTC)", () => {
-    const crons = (workflow.on.schedule as Array<{ cron: string }>).map((s) => s.cron);
+    const crons = workflow.on.schedule.map((s) => s.cron);
     expect(crons).toHaveLength(1);
     expect(crons[0]).toMatch(/^([0-5]?\d) ([01]?\d|2[0-3]) \* \* \*$/);
   });
@@ -463,5 +469,22 @@ describe("the repository around the workflow", () => {
     expect(ci.name).toBe("CI");
     expect(ci.jobs.test.steps.some((s) => s.run === "npm test")).toBe(true);
     expect(ci.jobs.test.strategy?.matrix).toEqual({ provider: ["pglite", "postgresql"] });
+  });
+
+  it("docs/testing/e2e.md names every status check of the workflow, says which one to require, and where the flaky list is", () => {
+    const docs = readFileSync(path.join(REPO, "docs", "testing", "e2e.md"), "utf8");
+    // The status check of a job is its `name` (the matrix legs' names, with the matrix filled in, for the jobs that have one).
+    const checkNames = (id: string) => {
+      const j = job(id);
+      const legs: Array<Record<string, string>> = j.strategy?.matrix?.include ?? (j.strategy?.matrix?.shard ? j.strategy.matrix.shard.map((shard) => ({ shard: String(shard) })) : [{}]);
+      return legs.map((leg) => String(j.name).replace(/\$\{\{\s*matrix\.(\w+)\s*\}\}/g, (_m, key) => String(leg[key])));
+    };
+    for (const id of Object.keys(workflow.jobs)) for (const name of checkNames(id)) expect(docs, `docs/testing/e2e.md does not mention the check ${name}`).toContain(name);
+    expect(checkNames("smoke")).toEqual(["e2e-smoke"]);
+    // The one to require is `e2e-smoke` (the line may wrap between the name and the words), and the others must not be required.
+    expect(docs).toMatch(/`e2e-smoke`\s+a\s+required\s+status\s+check/i);
+    expect(docs).toMatch(/do not require the `e2e-regression/i);
+    expect(docs).toContain("flaky-tests.json");
+    expect(docs).toContain("branch protection");
   });
 });
