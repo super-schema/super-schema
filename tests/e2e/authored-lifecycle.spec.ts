@@ -12,8 +12,8 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
 import { test, expect } from "./helpers/auth";
+import { canon } from "./helpers/artifact-text";
 import {
   ENABLED_TARGETS,
   createEntityFromReview,
@@ -35,13 +35,6 @@ import {
 test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const EVIDENCE = "/tmp/e2e-evidence/authored";
-const canon = (text: string): string => {
-  try {
-    return JSON.stringify(parseYaml(text));
-  } catch {
-    return text;
-  }
-};
 
 interface StepResult {
   step: string;

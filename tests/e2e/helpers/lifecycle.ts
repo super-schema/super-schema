@@ -9,7 +9,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { unique } from "./auth";
 import { fillWorkbenchPaste, expectDetailPanelText } from "./workbench";
 import { SCHEMA_TARGETS_FOR_TESTS } from "./targets";
-import { readPreviewFrom } from "./preview-text";
+import { previewSignature, readPreviewFrom, settlePreview, type PreviewSource } from "./preview-text";
 
 export { unique };
 
@@ -137,19 +137,23 @@ const targetButton = (page: Page, displayName: string): Locator =>
  * NOT run in a browser yet: the walking and joining are unit tested (tests/unit/e2e-helpers/preview-text.test.ts) against a fake page.
  */
 export async function readPreview(page: Page): Promise<string> {
+  return readPreviewFrom(previewSourceOf(page));
+}
+
+/** The Schemas tab as a `PreviewSource`: the file list, one file selected by its path, the code on show. */
+function previewSourceOf(page: Page): PreviewSource {
   const tab = page.getByTestId("schemas-tab");
   const items = tab.getByTestId("schema-file-item");
-  return readPreviewFrom({
-    filePaths: async () => (await items.count()) === 0 ? [] : items.evaluateAll((els) => els.map((el) => el.getAttribute("data-path") ?? "")),
-    select: async (index) => {
-      const item = items.nth(index);
-      await item.click();
+  return {
+    filePaths: async () => ((await items.count()) === 0 ? [] : items.evaluateAll((els) => els.map((el) => el.getAttribute("data-path") ?? ""))),
+    select: async (path) => {
+      // By the path of the snapshot, never by position: a list re-rendered in another order cannot make this click another file.
+      await tab.locator(`[data-testid="schema-file-item"][data-path=${JSON.stringify(path)}]`).click({ timeout: 5_000 });
       // The code preview's header carries the shown file's path: wait until it is the one that was asked for.
-      const path = (await item.getAttribute("data-path")) ?? "";
-      await expect(tab.getByTestId("schema-code-preview").locator("span").first()).toHaveText(path);
+      await expect(tab.getByTestId("schema-code-preview").locator("span").first()).toHaveText(path, { timeout: 5_000 });
     },
     code: async () => (await tab.locator("pre code > div > span:nth-child(2)").allInnerTexts()).join("\n"),
-  });
+  };
 }
 
 /**
@@ -171,6 +175,7 @@ export async function generateTarget(
   });
   // A drafted target is regenerated IN PLACE (the version number stays), so the change is told by the toast, then by the text.
   const previous = await readPreview(page);
+  const previousSignature = await previewSignature(previewSourceOf(page));
   await page.getByTestId("schemas-tab").getByRole("button", { name: /^(Generate|Regenerate)$/ }).click();
 
   const dialog = page.getByTestId("primary-key-dialog");
@@ -199,14 +204,17 @@ export async function generateTarget(
   const type = await toast.getAttribute("data-type");
   const toastText = (await toast.innerText()).trim();
   if (type === "error") return { code: "", error: toastText, askedForKey };
-  // The toast comes before the versions are reloaded: wait for the preview to show the new text (or settle on the same one).
-  // The file list can be replaced while it is read (the versions reload under it): a read that fails then counts as "not settled yet".
-  const settled = () => readPreview(page).catch(() => "");
-  let code = await settled();
-  for (let i = 0; i < 40 && (code === previous || code === ""); i += 1) {
-    await page.waitForTimeout(200);
-    code = await settled();
-  }
+  // The toast comes before the versions are reloaded: wait for the preview to show the new text (or settle on the same one), within
+  // the same 8 s as ever. A round costs one cheap signature (the file list and the file on show); every file is clicked through only
+  // when that changed, every fifth round, and while nothing is readable (`settlePreview`, unit tested). A read that fails because the
+  // file list was replaced under it counts as "not settled yet".
+  const code = await settlePreview({
+    previous,
+    previousSignature,
+    read: () => readPreview(page),
+    signature: () => previewSignature(previewSourceOf(page)),
+    wait: (ms) => page.waitForTimeout(ms),
+  });
   return { code, warning: type === "warning" ? toastText : undefined, askedForKey };
 }
 

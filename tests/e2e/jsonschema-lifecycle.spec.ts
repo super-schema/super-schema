@@ -17,8 +17,8 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
 import { test, expect } from "./helpers/auth";
+import { canon, requiredOf } from "./helpers/artifact-text";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 import {
   ENABLED_TARGETS,
@@ -42,42 +42,13 @@ test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-o
 const EVIDENCE = "/tmp/e2e-evidence/lifecycle";
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** The artifact as compact JSON when it parses (JSON or YAML), so one spelling of a substring matches either output syntax. */
-function canon(text: string): string {
-  try {
-    return JSON.stringify(parseYaml(text));
-  } catch {
-    return text;
-  }
-}
+// `canon` (compact JSON of the artifact) and `requiredOf` (the entity's `required` list) read a multi-file artifact file by file:
+// helpers/artifact-text.ts, unit tested in tests/unit/e2e-helpers.
 
 interface StepResult {
   step: string;
   pass: boolean;
   detail?: string;
-}
-
-/** `required` of the (first) schema in a JSON Schema / OpenAPI text that has an own property list. */
-function requiredOf(text: string, entityName: string): string[] | null {
-  let doc: unknown;
-  try {
-    doc = parseYaml(text);
-  } catch {
-    return null;
-  }
-  const seen = new Set<unknown>();
-  let best: string[] | null = null;
-  const walk = (node: unknown, key: string) => {
-    if (!node || typeof node !== "object" || seen.has(node)) return;
-    seen.add(node);
-    const o = node as Record<string, unknown>;
-    if (Array.isArray(o.required) && (norm(key) === norm(entityName) || norm(String(o.title ?? "")) === norm(entityName))) {
-      best = o.required.map(String);
-    }
-    for (const [k, v] of Object.entries(o)) walk(v, k);
-  };
-  walk(doc, "");
-  return best;
 }
 
 async function lifecycle(page: import("@playwright/test").Page, v: Variation, results: StepResult[], domains: string[]) {
