@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TypeGrid } from "./TypeGrid";
-import { qualifiedName } from "@/lib/references/entity-reference";
+import { qualifiedName, type PickableEntity } from "@/lib/references/entity-reference";
+
+export type { PickableEntity };
 
 export interface ComplexTypeConfig {
   /** For array: the element type */
@@ -34,11 +36,12 @@ interface ComplexTypePromptProps {
   entities?: PickableEntity[];
 }
 
-/** A tenant entity the reference picker can offer; domain / product make its qualified name. */
-export type PickableEntity = { id: string; name: string; domain?: string; product?: string };
-
+/** The stored qualified name of a picked entity (`domain/product/entity`), when it carries its domain and product. */
 const qualifiedOf = (e: PickableEntity) =>
   e.domain && e.product ? qualifiedName({ domain: e.domain, product: e.product, entity: e.name }) : undefined;
+
+/** How a person reads an entity in the list: `domain / product / entity`. */
+const labelOf = (e: PickableEntity) => (e.domain && e.product ? `${e.domain} / ${e.product} / ${e.name}` : e.name);
 
 export function ComplexTypePrompt({
   complexType,
@@ -174,6 +177,14 @@ function ReferencePrompt({
     e.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // A typed name that is exactly one entity's name IS that entity (it is written qualified, with its id). One that several entities
+  // share is never guessed: the author picks which from the list, so confirming waits for that. One that matches none stays a plain
+  // name, as a legacy reference does.
+  const typed = entityName.trim();
+  const sameName = picked || !typed ? [] : entities.filter((e) => e.name === typed);
+  const resolved = picked ?? (sameName.length === 1 ? sameName[0] : undefined);
+  const needsPick = sameName.length > 1;
+
   const cardinalities: { value: ComplexTypeConfig["referenceCardinality"]; label: string }[] = [
     { value: "one-to-one", label: "1:1" },
     { value: "one-to-many", label: "1:N" },
@@ -201,18 +212,26 @@ function ReferencePrompt({
           <div className="border border-border/50 rounded-lg mt-1 max-h-[120px] overflow-y-auto">
             {filteredEntities.map((e) => (
               <button
+                type="button"
                 key={e.id}
+                data-testid="reference-prompt-candidate"
+                aria-pressed={picked?.id === e.id}
                 onClick={() => {
                   setEntityName(e.name);
                   setSearchQuery(e.name);
                   setPicked(e);
                 }}
-                className="w-full text-left px-2 py-1 text-caption hover:bg-accent/30 transition-colors"
+                className={`w-full text-left px-2 py-1 text-caption hover:bg-accent/30 transition-colors ${picked?.id === e.id ? "bg-accent/40" : ""}`}
               >
-                {qualifiedOf(e) ?? e.name}
+                {labelOf(e)}
               </button>
             ))}
           </div>
+        )}
+        {needsPick && (
+          <p data-testid="reference-prompt-ambiguous" className="mt-1 text-caption text-warning">
+            {sameName.length} entities are named &quot;{typed}&quot;. Choose which one from the list.
+          </p>
         )}
       </div>
       <div>
@@ -238,11 +257,11 @@ function ReferencePrompt({
       <Button
         size="sm"
         className="w-full"
-        disabled={!entityName.trim()}
+        disabled={!typed || needsPick}
         onClick={() =>
           onConfirm({
-            referencedEntityName: entityName.trim(),
-            ...(picked && { referencedEntityId: picked.id, referencedQualifiedName: qualifiedOf(picked) }),
+            referencedEntityName: typed,
+            ...(resolved && { referencedEntityId: resolved.id, referencedQualifiedName: qualifiedOf(resolved) }),
             referenceCardinality: cardinality,
           })
         }

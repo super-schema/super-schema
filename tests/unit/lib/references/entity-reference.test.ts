@@ -4,6 +4,7 @@ import {
   parseQualifiedName,
   readFieldReference,
   writeFieldReference,
+  applyReferencePick,
   type EntityRef,
 } from "@/lib/references/entity-reference";
 
@@ -65,5 +66,48 @@ describe("entity-reference", () => {
       legacyName: "Address",
     });
     expect(readFieldReference({ referencedQualifiedName: "a/b" })).toBeUndefined();
+  });
+});
+
+describe("applyReferencePick (the type picker's choice written onto a reference field's decorators)", () => {
+  const picked = { referencedEntityName: "Address", referencedEntityId: "e-addr", referencedQualifiedName: "Billing/Core/Address" };
+
+  it("a picked entity is written fully qualified, with its id", () => {
+    const out = applyReferencePick({ other: 1 }, picked);
+    expect(out.other).toBe(1);
+    expect(readFieldReference(out)).toEqual({ entityId: "e-addr", domain: "Billing", product: "Core", entity: "Address" });
+  });
+
+  it("never writes a version, and re-pointing the reference drops the pin of the old target", () => {
+    const out = applyReferencePick(
+      { referencedEntityId: "old", referencedQualifiedName: "A/B/Old", referencedEntityName: "Old", referencedEntityVersion: "1.2" },
+      picked,
+    );
+    expect("referencedEntityVersion" in out).toBe(false);
+    expect(readFieldReference(out)).toEqual({ entityId: "e-addr", domain: "Billing", product: "Core", entity: "Address" });
+  });
+
+  it("a typed name that was not picked stays name-only, and drops the id, qualified name and pin of an earlier target", () => {
+    const out = applyReferencePick(
+      { referencedEntityId: "old", referencedQualifiedName: "A/B/Old", referencedEntityName: "Old", referencedEntityVersion: "1.2", keep: true },
+      { referencedEntityName: "Unknown" },
+    );
+    expect(readFieldReference(out)).toEqual({ legacyName: "Unknown" });
+    expect(out.keep).toBe(true);
+    expect("referencedEntityId" in out).toBe(false);
+    expect("referencedEntityVersion" in out).toBe(false);
+  });
+
+  it("a pick without a usable id or qualified name is written as a name, not as a half-qualified reference", () => {
+    expect(readFieldReference(applyReferencePick({}, { referencedEntityName: "Address", referencedEntityId: "e1" }))).toEqual({ legacyName: "Address" });
+    expect(readFieldReference(applyReferencePick({}, { referencedEntityName: "Address", referencedQualifiedName: "a/b" }))).toEqual({ legacyName: "Address" });
+  });
+
+  it("returns an untouched copy when there is no name at all, and does not pollute the prototype", () => {
+    const decorators = JSON.parse('{"__proto__": {"polluted": true}, "x": 1}');
+    const out = applyReferencePick(decorators, {});
+    expect(out.x).toBe(1);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(out).not.toBe(decorators);
   });
 });

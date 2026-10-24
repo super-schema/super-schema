@@ -19,16 +19,29 @@ import { getTypesByCategory, getTypeInfo, isComplexType, type DataType } from "@
 import { TypeGrid } from "./TypeGrid";
 import { ComplexTypePrompt, type ComplexTypeConfig, type PickableEntity } from "./ComplexTypePrompt";
 
+/** The complex types that have a configuration prompt. */
+export type PromptedComplexType = "array" | "map" | "reference" | "enum";
+
+const ALL_PROMPTED_TYPES: ReadonlyArray<PromptedComplexType> = ["array", "map", "reference", "enum"];
+
 interface TypePickerProps {
   value: string;
   onChange: (value: string) => void;
   className?: string;
   compact?: boolean;
-  /** Called when a complex type (array/map/reference/enum) is configured */
+  /**
+   * Called when a complex type (array/map/reference/enum) is configured, AFTER `onChange(type)` with the same type: the caller that wants
+   * to write the type and its configuration in one update does it here and ignores that `onChange`.
+   */
   onComplexTypeConfig?: (type: string, config: ComplexTypeConfig) => void;
+  /** Which complex types open their prompt when `onComplexTypeConfig` is given (default: all four); the others are chosen directly. */
+  promptTypes?: ReadonlyArray<PromptedComplexType>;
   /** If true, hide complex types from selection */
   excludeComplex?: boolean;
-  /** Available entities for reference type picker */
+  /**
+   * Available entities for the reference prompt, which lists them as `domain / product / entity`. Without a reference prompt they are also
+   * listed in the type search (choosing one sets the type to the entity's name).
+   */
   entities?: PickableEntity[];
   /** Disable the picker */
   disabled?: boolean;
@@ -48,17 +61,21 @@ function TypePickerBody({
   onSearchQueryChange,
   excludeComplex,
   entities,
+  searchEntities,
   onSelect,
   onComplexConfirm,
   onComplexBack,
 }: {
   view: PickerView;
-  complexType: "array" | "map" | "reference" | "enum" | null;
+  complexType: PromptedComplexType | null;
   value: string;
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
   excludeComplex?: boolean;
+  /** The entities the reference prompt lists. */
   entities?: PickableEntity[];
+  /** The entities the type search lists as types (none when the reference prompt is the way to choose one). */
+  searchEntities?: PickableEntity[];
   onSelect: (typeId: string) => void;
   onComplexConfirm: (config: ComplexTypeConfig) => void;
   onComplexBack: () => void;
@@ -144,10 +161,10 @@ function TypePickerBody({
             );
           })}
           {/* Entity types */}
-          {entities && entities.length > 0 && (() => {
+          {searchEntities && searchEntities.length > 0 && (() => {
             const matchingEntities = searchQuery.trim()
-              ? entities.filter((e) => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
-              : entities;
+              ? searchEntities.filter((e) => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              : searchEntities;
             if (matchingEntities.length === 0) return null;
             return (
               <CommandGroup heading="Entities">
@@ -179,6 +196,7 @@ export function TypePicker({
   className,
   compact,
   onComplexTypeConfig,
+  promptTypes = ALL_PROMPTED_TYPES,
   excludeComplex,
   entities,
   disabled,
@@ -186,8 +204,10 @@ export function TypePicker({
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<PickerView>("grid");
   const [searchQuery, setSearchQuery] = useState("");
-  const [complexType, setComplexType] = useState<"array" | "map" | "reference" | "enum" | null>(null);
+  const [complexType, setComplexType] = useState<PromptedComplexType | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const prompts = (typeId: string): typeId is PromptedComplexType =>
+    onComplexTypeConfig !== undefined && (promptTypes as ReadonlyArray<string>).includes(typeId);
 
   const selectedType = getTypeInfo(value);
 
@@ -210,10 +230,8 @@ export function TypePicker({
   }, [searchQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSelect(typeId: string) {
-    const COMPLEX_TYPES_WITH_PROMPT = new Set(["array", "map", "reference", "enum"]);
-
-    if (COMPLEX_TYPES_WITH_PROMPT.has(typeId) && onComplexTypeConfig) {
-      setComplexType(typeId as "array" | "map" | "reference" | "enum");
+    if (prompts(typeId)) {
+      setComplexType(typeId);
       setView("complex");
       return;
     }
@@ -269,6 +287,9 @@ export function TypePicker({
           onSearchQueryChange={setSearchQuery}
           excludeComplex={excludeComplex}
           entities={entities}
+          // With the reference prompt, choosing an entity goes through it (its id and qualified name); listing entities as TYPES too would set
+          // the field's type to an entity's name.
+          searchEntities={prompts("reference") ? undefined : entities}
           onSelect={handleSelect}
           onComplexConfirm={handleComplexConfirm}
           onComplexBack={handleComplexBack}
