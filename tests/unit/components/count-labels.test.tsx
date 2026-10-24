@@ -31,6 +31,7 @@ import { BulkImportReviewScreen } from "@/components/custom/ImportDialog/BulkImp
 import { ImportDialog } from "@/components/custom/ImportDialog";
 import { ComplianceResultsTable } from "@/features/compliance/ComplianceResultsTable";
 import { FieldEditor } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/field-editor";
+import { ComplexTypePrompt } from "@/components/custom/TypePicker/ComplexTypePrompt";
 
 afterEach(cleanup);
 
@@ -167,5 +168,18 @@ describe("field editor", () => {
     );
     expect(screen.getByText(/ of 1 field complete$/)).toBeTruthy();
     expect(screen.queryByText(/1 fields/)).toBeNull();
+  });
+});
+
+describe("the enum prompt's confirm button", () => {
+  it("says how many values it will confirm: 1 value, 2 values", () => {
+    render(<ComplexTypePrompt complexType="enum" onConfirm={vi.fn()} onBack={vi.fn()} />);
+    const input = screen.getByPlaceholderText("Add value...");
+    for (const [value, label] of [["A", "Confirm enum(1 value)"], ["B", "Confirm enum(2 values)"]] as const) {
+      fireEvent.change(input, { target: { value } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(screen.getByRole("button", { name: label })).toBeTruthy();
+    }
+    expect(screen.queryByText(/1 values/)).toBeNull();
   });
 });

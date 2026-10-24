@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TypeGrid } from "./TypeGrid";
 import { qualifiedName, type PickableEntity } from "@/lib/references/entity-reference";
+import { pluralize } from "@/lib/pluralize";
 
 export type { PickableEntity };
 
@@ -343,7 +344,7 @@ function EnumPrompt({ onConfirm }: { onConfirm: (config: ComplexTypeConfig) => v
         disabled={values.length === 0}
         onClick={() => onConfirm({ enumValues: values })}
       >
-        Confirm enum({values.length} values)
+        Confirm enum({pluralize(values.length, "value")})
       </Button>
     </div>
   );
