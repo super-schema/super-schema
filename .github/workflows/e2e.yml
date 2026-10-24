@@ -1,0 +1,228 @@
+# The browser suite (tests/e2e) as a release check. Long version: docs/testing/e2e.md ("CI").
+#
+#   pull request         `smoke` (Chromium, Firefox, WebKit). The only job that gates a merge: a maintainer requires its status
+#                        check, `e2e-smoke`, in the branch protection of the repository (it is a repository setting, not a file).
+#   schedule, tag v*     `regression` (four shards) and `nightly-extra` (what the nightly tier has and the regression tier does not).
+#                        They report; nothing requires them.
+#   workflow_dispatch    the same by hand: the `tier` input picks smoke, regression, or nightly (regression + nightly-extra).
+#
+# Every job runs the release runner (scripts/e2e-release.mjs, `npm run test:e2e:release`). There is no `services:` block on purpose:
+# the runner starts its own throwaway postgres:16 with `docker run` (a free port, a random password, data on tmpfs), migrates and seeds
+# it, builds the app and starts it on a port of its own, runs the tier, and removes everything again. GitHub's ubuntu runners have Docker.
+#
+# What the three jobs run, and why `nightly-extra` is three legs and not `--tier nightly`: the nightly tier is everything, so it
+# would run the regression tests a second time. The rest is (a) the @slow and @external tests of Chromium, (b) the same tags in the
+# `serial-after` project, and (c) the smoke tests on Firefox and WebKit. Playwright runs a project's dependencies in full whatever
+# --grep says, so (a) and (b) cannot be one command with `--project serial-after` (it would run all of `chromium` first): (b) is the
+# `serial` tier, which logs in and runs `serial-after` alone. A `visual` leg (`--tier nightly --project visual`, in the Playwright
+# Docker image) comes with the visual specs.
+name: e2e
+
+on:
+  pull_request:
+  schedule:
+    - cron: "23 2 * * *" # 02:23 UTC, once a night
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "smoke: the pull-request tier. regression: the four shards. nightly: the shards and the slow, external and cross-browser rest."
+        type: choice
+        options: [smoke, regression, nightly]
+        default: smoke
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: true # Playwright's CI reporters (html, junit, the flaky list), one worker, one retry, forbidOnly
+
+jobs:
+  smoke:
+    name: e2e-smoke
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      E2E_OUTPUT_ROOT: ${{ github.workspace }}/test-results/ci-smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Playwright version (the key of the browser cache)
+        id: playwright
+        run: |
+          echo "version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+      - name: Cache the Playwright browsers
+        id: browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-firefox-webkit
+      - name: Install the Playwright browsers and their system libraries
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Install the system libraries of the cached browsers
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium firefox webkit
+      - name: Smoke tier (Chromium, Firefox, WebKit)
+        run: npm run test:e2e:release -- --tier smoke
+      - name: Flaky tests in the job summary
+        if: always()
+        env:
+          SUMMARY_TITLE: smoke
+        run: node scripts/ci-flaky-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke-playwright-report
+          path: ${{ env.E2E_OUTPUT_ROOT }}/playwright-report
+          retention-days: 14
+      - name: Upload the test results (traces, videos, screenshots, junit.xml, flaky list) and the app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke-test-results
+          path: |
+            ${{ env.E2E_OUTPUT_ROOT }}/test-results
+            ${{ env.E2E_OUTPUT_ROOT }}/server.log
+          retention-days: 14
+
+  regression:
+    name: e2e-regression (${{ matrix.shard }}/4)
+    if: github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.tier != 'smoke')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      E2E_OUTPUT_ROOT: ${{ github.workspace }}/test-results/ci-regression-${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Playwright version (the key of the browser cache)
+        id: playwright
+        run: |
+          echo "version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+      - name: Cache the Playwright browsers
+        id: browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium
+      - name: Install Chromium and its system libraries
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Install the system libraries of the cached Chromium
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - name: Regression tier, one shard of four
+        run: npm run test:e2e:release -- --tier regression --shard ${{ matrix.shard }}/4
+      - name: Flaky tests in the job summary
+        if: always()
+        env:
+          SUMMARY_TITLE: regression ${{ matrix.shard }}/4
+        run: node scripts/ci-flaky-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-regression-${{ matrix.shard }}-playwright-report
+          path: ${{ env.E2E_OUTPUT_ROOT }}/playwright-report
+          retention-days: 14
+      - name: Upload the test results (traces, videos, screenshots, junit.xml, flaky list) and the app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-regression-${{ matrix.shard }}-test-results
+          path: |
+            ${{ env.E2E_OUTPUT_ROOT }}/test-results
+            ${{ env.E2E_OUTPUT_ROOT }}/server.log
+          retention-days: 14
+
+  nightly-extra:
+    name: e2e-nightly-extra (${{ matrix.part }})
+    if: github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.tier == 'nightly')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `args` are the runner's, after `npm run test:e2e:release --`. Each leg selects tests that no other leg and no regression
+          # shard selects (tests/unit/ci-e2e-workflow.test.ts checks the shape; `node scripts/e2e-phases.mjs <tier> --list ...` the sets).
+          - part: slow-chromium
+            browsers: chromium
+            args: --tier nightly --project chromium -- --grep "@slow|@external"
+          - part: slow-serial
+            browsers: chromium
+            args: --tier serial -- --grep "@slow|@external"
+          - part: cross-browser
+            browsers: chromium firefox webkit
+            args: --tier smoke --project firefox-smoke --project webkit-smoke
+    env:
+      E2E_OUTPUT_ROOT: ${{ github.workspace }}/test-results/ci-nightly-extra-${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Playwright version (the key of the browser cache)
+        id: playwright
+        run: |
+          echo "version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+      - name: Cache the Playwright browsers
+        id: browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.browsers }}
+      - name: Install the Playwright browsers and their system libraries
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps ${{ matrix.browsers }}
+      - name: Install the system libraries of the cached browsers
+        if: steps.browsers.outputs.cache-hit == 'true'
+        run: npx playwright install-deps ${{ matrix.browsers }}
+      - name: Nightly remainder, one leg
+        run: npm run test:e2e:release -- ${{ matrix.args }}
+      - name: Flaky tests in the job summary
+        if: always()
+        env:
+          SUMMARY_TITLE: nightly-extra ${{ matrix.part }}
+        run: node scripts/ci-flaky-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-nightly-extra-${{ matrix.part }}-playwright-report
+          path: ${{ env.E2E_OUTPUT_ROOT }}/playwright-report
+          retention-days: 14
+      - name: Upload the test results (traces, videos, screenshots, junit.xml, flaky list) and the app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-nightly-extra-${{ matrix.part }}-test-results
+          path: |
+            ${{ env.E2E_OUTPUT_ROOT }}/test-results
+            ${{ env.E2E_OUTPUT_ROOT }}/server.log
+          retention-days: 14
