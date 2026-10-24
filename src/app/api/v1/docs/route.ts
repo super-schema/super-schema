@@ -130,7 +130,10 @@ const openApiSpec = {
       post: {
         summary: "Emit entity to all targets",
         description:
-          "Runs the emission pipeline (compile + emit to BigQuery, Avro, OpenAPI) and returns per-target results.",
+          "Runs the emission pipeline for every enabled target and returns per-target results. JSON Schema, OpenAPI 3, Protobuf, Avro and Java " +
+          "are emitted for the entity together with every entity it references, one file per entity (`files`, tagged by target; `output` is " +
+          "their bundled string); `resolution` says which version of each entity was used (`preview: true` when drafts were). " +
+          "A bare-name reference that matches several entities fails with 422 AMBIGUOUS_REFERENCE and the candidates in `error.details`.",
         tags: ["Emission"],
         parameters: [
           {
@@ -154,6 +157,7 @@ const openApiSpec = {
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "404": { $ref: "#/components/responses/NotFound" },
+          "422": { description: "A reference of the entity cannot be resolved (AMBIGUOUS_REFERENCE, PIN_NOT_FOUND, NEVER_PUBLISHED, CLOSURE_TOO_LARGE)" },
         },
       },
     },

@@ -86,13 +86,20 @@ vi.mock("@/services/rbac.service", () => ({
 // version lifecycle, so the emitter is canned: the real `tsp` shell-out is covered by db-emitter-parity and
 // e2e-critical-flows (Flow 2), which an entity without a primary key (these fixtures) cannot be emitted through anyway.
 
-vi.mock("@/lib/typespec-official/emitter.service", () => ({
+vi.mock("@/lib/typespec-official/emitter.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/typespec-official/emitter.service")>()),
   emitOfficialTypeSpecTargetForEntity: vi.fn(async () => ({
     output: "CREATE TABLE `dataset.TestEntity` (\n  id STRING NOT NULL\n);",
     validationStatus: "VALID",
     warnings: [],
     errors: [],
   })),
+}));
+
+// The closure targets (JSON Schema, OpenAPI, Protobuf, Avro, Java) emit the entity and what it references through `emitClosure`.
+vi.mock("@/lib/typespec-official/closure-emit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/typespec-official/closure-emit")>()),
+  emitClosure: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -579,12 +586,18 @@ describe("SchemasTab Workflow", () => {
       });
       mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
 
-      // Generate for a different target (avro) — should start at version 1
-      vi.mocked((await import("@/lib/typespec-official/emitter.service")).emitOfficialTypeSpecTargetForEntity).mockResolvedValueOnce({
-        output: '{"type":"record","name":"TestEntity","fields":[]}',
-        validationStatus: "VALID",
-        warnings: [],
-        errors: [],
+      // Generate for a different target (avro) — should start at version 1. Avro is a closure target: the tenant index the closure
+      // reads holds just this entity, and the emission is canned.
+      mockPrisma.entity.findMany.mockResolvedValue([
+        { id: "ent-1", name: "TestEntity", description: "", status: "DRAFT", version: 1, domainId: null, metadata: {}, latestVersionId: null, domain: null, product: null },
+      ]);
+      vi.mocked((await import("@/lib/typespec-official/closure-emit")).emitClosure).mockResolvedValueOnce({
+        success: true,
+        data: {
+          files: [{ path: "TestEntity.avsc.json", content: '{"type":"record","name":"TestEntity","fields":[]}', target: "avro", entityId: "ent-1" }],
+          warnings: [],
+          entityFiles: { "ent-1": ["TestEntity.avsc.json"] },
+        },
       });
 
       const result = await generateSchemaAction("ent-1", "avro");
