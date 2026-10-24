@@ -129,15 +129,31 @@ export type ClosureTypeSpec = {
   models: Map<string, string>;
   /** What the generator could not express faithfully, across every member. */
   diagnostics: GeneratorDiagnostic[];
+  /** entityId -> the namespace its block sits in (`SuperSchemaClosure.Domain.Product.Entity`; a merged group shares one). */
+  namespaces: Map<string, string>;
+  /**
+   * entityId -> every top-level name its block declares (model, enums, unions, scalars, aliases, interfaces), in source order.
+   * A target that names a file after a declaration (JSON Schema writes `<Name>.json` for each) maps the file back to its entity with this.
+   */
+  declarations: Map<string, string[]>;
+  /** Reference fields typed `unknown` because their target is not part of the closure (one entry per entity and field). */
+  unresolved: Array<{ entityId: string; fieldName: string; reference: string }>;
 };
+
+/** A top-level declaration line of an entity block, before the block is indented: `model Name {`, `enum Name {`, ... */
+const DECLARATION = /^(?:model|enum|union|scalar|alias|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/;
 
 /**
  * Generates the combined document. Root first, then the rest in closure order. `opts.target` adds the import a target
  * needs (`json-schema`); `opts.governance` (default false: the emission projection) keeps the governance overlay and the pin tag.
+ * `opts.mergeNamespaces`: groups of entity ids whose blocks all sit in the namespace of the group's FIRST id (a target that
+ * derives a package from the namespace, such as Protobuf, needs one namespace for a reference cycle). Each member keeps its
+ * own block and unique model name; references are written against the shared namespace. An id that is not in the closure
+ * is ignored, and so is a group of fewer than two members.
  */
 export function generateClosureTypeSpec(
   closure: { entities: ClosureEntity[] },
-  opts: { target: ClosureTarget; governance?: boolean }
+  opts: { target: ClosureTarget; governance?: boolean; mergeNamespaces?: string[][] }
 ): ClosureTypeSpec {
   const governance = opts.governance === true;
 
@@ -150,6 +166,11 @@ export function generateClosureTypeSpec(
     taken.add(modelName);
     return { entity, namespace: namespaceOf(entity.ref), modelName };
   });
+  for (const group of opts.mergeNamespaces ?? []) {
+    const members = group.map((id) => placed.find((p) => p.entity.entityId === id)).filter((p): p is Placed => p !== undefined);
+    if (members.length < 2) continue;
+    for (const p of members) p.namespace = members[0].namespace;
+  }
 
   const qualifiedModel = (p: Placed) => `${p.namespace}.${p.modelName}`;
   const byId = new Map(placed.map((p) => [p.entity.entityId, p]));
@@ -178,11 +199,23 @@ export function generateClosureTypeSpec(
   const imports: string[] = [];
   const blocks: string[] = [];
   const diagnostics: GeneratorDiagnostic[] = [];
+  const declarations = new Map<string, string[]>();
+  const unresolved: ClosureTypeSpec["unresolved"] = [];
   for (const p of placed) {
     const model = prefixSharedNames(compileEntity(p.entity.entity, p.entity.fields), p.modelName);
+    const reported = new Set<string>();
+    const memberReferenceType = (field: SuperSchemaField): string | null => {
+      const type = referenceType(field);
+      const ref = field.complexType?.reference;
+      if (type === null && ref && !reported.has(field.name)) {
+        reported.add(field.name);
+        unresolved.push({ entityId: p.entity.entityId, fieldName: field.name, reference: "legacyName" in ref ? ref.legacyName : qualifiedName(ref) });
+      }
+      return type;
+    };
     const generated = generateTypeSpecWithDiagnostics(model, {
       governance,
-      closureMember: { modelName: p.modelName, referenceType, enterpriseShadowed },
+      closureMember: { modelName: p.modelName, referenceType: memberReferenceType, enterpriseShadowed },
     });
     diagnostics.push(...generated.diagnostics);
 
@@ -193,6 +226,13 @@ export function generateClosureTypeSpec(
       i++;
     }
     const body = lines.slice(i).filter((l, idx, all) => !(idx === 0 && l === "") && !(idx === all.length - 1 && l === ""));
+    declarations.set(
+      p.entity.entityId,
+      body.flatMap((l) => {
+        const declared = DECLARATION.exec(l);
+        return declared ? [declared[1]] : [];
+      })
+    );
     blocks.push([`namespace ${p.namespace} {`, ...body.map((l) => (l === "" ? "" : `  ${l}`)), "}"].join("\n"));
   }
 
@@ -204,5 +244,8 @@ export function generateClosureTypeSpec(
     rootModel: placed[0]?.modelName ?? "",
     models: new Map(placed.map((p) => [p.entity.entityId, qualifiedModel(p)])),
     diagnostics,
+    namespaces: new Map(placed.map((p) => [p.entity.entityId, p.namespace])),
+    declarations,
+    unresolved,
   };
 }

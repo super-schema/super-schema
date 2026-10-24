@@ -225,3 +225,51 @@ describe("closure reference typing gate", () => {
     await expectCompiles(out.source);
   });
 });
+
+describe("closure emission hooks (namespaces, declarations, unresolved references, merged namespaces)", () => {
+  const sharedTypes = { custom: { sharedEnums: [{ name: "Status", values: ["a", "b"] }], aliases: [{ name: "Tags", type: "string[]" }] } };
+
+  it("reports each entity's namespace and every top-level name its block declares", () => {
+    const a = member("a", "D", "P", "A", [field("kind", "enum", 1, {}, { aliases: ["x", "y"] })], sharedTypes);
+    const b = member("b", "D", "P", "B", []);
+    const out = generateClosureTypeSpec({ entities: [a, b] }, { target: "json-schema" });
+    expect(out.namespaces.get("a")).toBe("SuperSchemaClosure.D.P.A");
+    expect(out.namespaces.get("b")).toBe("SuperSchemaClosure.D.P.B");
+    expect(out.declarations.get("a")).toEqual(expect.arrayContaining(["D_P_A", "D_P_A_Status", "D_P_A_Tags", "D_P_A_kind"]));
+    expect(out.declarations.get("b")).toEqual(["D_P_B"]);
+  });
+
+  it("lists a reference whose target is not in the closure once per field, and nothing for a resolved one", () => {
+    const root = member("o1", "Sales", "Orders", "Order", [
+      field("ok", "reference", 1, refTo({ entityId: "c1", domain: "Sales", product: "Orders", entity: "Customer" })),
+      field("ghost", "reference", 2, refTo({ entityId: "gone", domain: "X", product: "Y", entity: "Ghost" })),
+      field("ghosts", "array", 3, { arrayElementType: "reference", referencedEntityName: "Nope" }),
+    ]);
+    const customer = member("c1", "Sales", "Orders", "Customer", []);
+    const out = generateClosureTypeSpec({ entities: [root, customer] }, { target: "avro" });
+    expect(out.unresolved).toEqual([
+      { entityId: "o1", fieldName: "ghost", reference: "X/Y/Ghost" },
+      { entityId: "o1", fieldName: "ghosts", reference: "Nope" },
+    ]);
+  });
+
+  it("puts a merged group in the namespace of its first member, references written against it, and compiles", async () => {
+    const a = member("a", "D", "P", "A", [field("peer", "reference", 1, refTo({ entityId: "b", domain: "D", product: "P", entity: "B" }))]);
+    const b = member("b", "D", "P", "B", [field("peer", "reference", 1, refTo({ entityId: "a", domain: "D", product: "P", entity: "A" }))]);
+    const c = member("c", "D", "P", "C", [field("a", "reference", 1, refTo({ entityId: "a", domain: "D", product: "P", entity: "A" }))]);
+    const out = generateClosureTypeSpec({ entities: [c, a, b] }, { target: "protobuf", mergeNamespaces: [["a", "b"]] });
+    expect(out.namespaces.get("b")).toBe("SuperSchemaClosure.D.P.A");
+    expect(out.models.get("b")).toBe("SuperSchemaClosure.D.P.A.D_P_B");
+    expect(out.source).toContain("peer: SuperSchemaClosure.D.P.A.D_P_B;");
+    expect(out.source).toContain("namespace SuperSchemaClosure.D.P.C {");
+    await expectCompiles(out.source);
+  });
+
+  it("ignores a merge group of one, and an id that is not in the closure", () => {
+    const a = member("a", "D", "P", "A", []);
+    const b = member("b", "D", "P", "B", []);
+    const out = generateClosureTypeSpec({ entities: [a, b] }, { target: "avro", mergeNamespaces: [["a"], ["b", "nope"]] });
+    expect(out.namespaces.get("a")).toBe("SuperSchemaClosure.D.P.A");
+    expect(out.namespaces.get("b")).toBe("SuperSchemaClosure.D.P.B");
+  });
+});
