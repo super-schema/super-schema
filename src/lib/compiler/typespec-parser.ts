@@ -619,7 +619,7 @@ function parseGenericExtensionLine(line: string): { key: string; value: unknown 
   const m = line.match(GENERIC_EXTENSION_LINE);
   if (!m) return undefined;
   const args = parseExtensionArguments(m[1]);
-  if (!args || args.key === TAGS_EXTENSION_KEY || args.key === CLASSIFICATION_EXTENSION_KEY || args.key === PIN_EXTENSION_KEY) return undefined;
+  if (!args || args.key === TAGS_EXTENSION_KEY || args.key === CLASSIFICATION_EXTENSION_KEY) return undefined;
   return args;
 }
 
@@ -1118,7 +1118,8 @@ function parseDecoratorLine(line: string): DecoratorParseResult | null {
   const pinMatch = line.match(PIN_EXTENSION_LINE);
   if (pinMatch) {
     const version = unescapeTypeSpecString(pinMatch[1]);
-    return version ? { decorators: { referencedEntityVersion: version } } : null;
+    // An empty value is no pin: it stays an ordinary extension (falls through to the generic reader).
+    if (version) return { decorators: { referencedEntityVersion: version } };
   }
 
   // @extension("key", value) / @TypeSpec.JsonSchema.extension(...) / @TypeSpec.OpenAPI.extension(...)

@@ -1,5 +1,77 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`stand-alone enum / shared type / union / alias shapes > are unchanged, governance on and off > shared emission 1`] = `
+"namespace Support.Core;
+
+scalar Money extends decimal;
+
+enum Priority {
+  low,
+  high,
+}
+
+union Ident {
+  string,
+  int32,
+}
+
+alias Tags = string[];
+
+enum Ticket_state {
+  open,
+  "in-progress",
+}
+
+enum Ticket_states {
+  x,
+  y,
+}
+
+@doc("An entity")
+model Ticket {
+  state: Ticket_state;
+  key: Ident;
+  states: Ticket_states[];
+}
+"
+`;
+
+exports[`stand-alone enum / shared type / union / alias shapes > are unchanged, governance on and off > shared governance 1`] = `
+"namespace Support.Core;
+
+scalar Money extends decimal;
+
+enum Priority {
+  low,
+  high,
+}
+
+union Ident {
+  string,
+  int32,
+}
+
+alias Tags = string[];
+
+enum Ticket_state {
+  open,
+  "in-progress",
+}
+
+enum Ticket_states {
+  x,
+  y,
+}
+
+@doc("An entity")
+model Ticket {
+  state: Ticket_state;
+  key: Ident;
+  states: Ticket_states[];
+}
+"
+`;
+
 exports[`stand-alone generator output is byte-identical to the pre-closure generator > entity with references (unpinned and pinned), emission projection > refs emission 1`] = `
 "@doc("An entity")
 model Order {

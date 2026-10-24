@@ -32,6 +32,7 @@ import {
   genericExtensionEntries,
   escapeTypeSpecString,
   pinDecorator,
+  PIN_EXTENSION_KEY,
 } from "./governance-decorators";
 import {
   enumMemberName,
@@ -941,7 +942,13 @@ function generateFieldDecorators(field: SuperSchemaField, governance: Governance
   if (governance.enabled && pin !== undefined) decorators.push(pinDecorator(pin));
 
   // Generic vendor extensions (unknown JSON Schema keys etc.) — a JsonSchema + OpenAPI pair per key.
-  decorators.push(...genericExtensionDecorators(field.decorators.typespec?.extensions?.openapi));
+  // (`x-super-schema-pin` is the pin tag only on a pinned reference; on any other field it is an ordinary extension.)
+  decorators.push(
+    ...genericExtensionDecorators(
+      field.decorators.typespec?.extensions?.openapi,
+      governance.enabled && pin !== undefined ? [PIN_EXTENSION_KEY] : []
+    )
+  );
 
   // A dangling `$ref` keeps its original string: `$ref` for a direct reference, `items: { $ref }` for an array's item type.
   // The extensions are applied after the emitter's own keys, so they replace the `unknown` / `items: {}` they stand for.
@@ -976,7 +983,7 @@ function resolveCollectionMemberType(
   ctx: GenContext
 ): string {
   if (memberType === "reference") {
-    if (ctx.referenceType && field.complexType?.referencedEntityName) return ctx.referenceType(field) ?? "unknown";
+    if (ctx.referenceType && field.complexType?.reference) return ctx.referenceType(field) ?? "unknown";
     const refName = field.complexType?.referencedEntityName;
     return refName ? sanitizeIdentifier(refName) : "string";
   }
@@ -1033,7 +1040,7 @@ function resolveTypeSpecType(
     }
     case "reference": {
       const refName = field.complexType?.referencedEntityName;
-      if (refName && ctx.referenceType) return ctx.referenceType(field) ?? "unknown";
+      if (ctx.referenceType && field.complexType?.reference) return ctx.referenceType(field) ?? "unknown";
       if (refName) {
         return sanitizeIdentifier(refName);
       }

@@ -34,6 +34,33 @@ const withRefs = compileEntity(entity("Order"), [
   }),
 ]);
 
+// Added in fix round 1. Equality with the ORIGINAL generator (commit 1f27116, before this task) was proven for this exact
+// model, governance on and off, by a temporary test importing `git show 1f27116:src/lib/compiler/typespec-generator.ts`
+// (deleted afterwards); the snapshots below were then taken from the current code.
+const shared = compileEntity(
+  entity("Ticket", {
+    custom: {
+      namespace: "Support.Core",
+      sharedEnums: [{ name: "Priority", values: ["low", "high"] }],
+      customScalars: [{ name: "Money", baseType: "decimal" }],
+      unionTypes: [{ name: "Ident", memberTypes: ["string", "int32"] }],
+      aliases: [{ name: "Tags", type: "string[]" }],
+    },
+  }),
+  [
+    fld("state", "enum", 0, { aliases: ["open", "in-progress"] }),
+    fld("key", "union", 1, { decorators: { unionName: "Ident" } }),
+    fld("states", "array", 2, { decorators: { arrayElementType: "enum", enumValues: ["x", "y"] } }),
+  ]
+);
+
+describe("stand-alone enum / shared type / union / alias shapes", () => {
+  it("are unchanged, governance on and off", () => {
+    expect(generateTypeSpec(shared)).toMatchSnapshot("shared governance");
+    expect(generateTypeSpec(shared, { governance: false })).toMatchSnapshot("shared emission");
+  });
+});
+
 describe("stand-alone generator output is byte-identical to the pre-closure generator", () => {
   it("entity without references, governance on and off", () => {
     expect(generateTypeSpec(noRefs)).toMatchSnapshot("no-refs governance");

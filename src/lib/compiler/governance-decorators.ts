@@ -52,6 +52,10 @@ export const TAGS_EXTENSION_KEY = "x-tags";
  * would need a JS implementation in the enterprise package. `@TypeSpec.OpenAPI.extension` targets `unknown`, is already
  * imported wherever the overlay is, and the parsers already consume this family. Written:
  * `@TypeSpec.OpenAPI.extension("x-super-schema-pin", "1.2")` on the reference property (scalar, array or map of references).
+ *
+ * The key is reserved ONLY on a reference-typed field: the parsers hand a string value back as `referencedEntityVersion`,
+ * and the sync (`merge-fields.ts`) keeps it as the pin when the field is a reference, otherwise returns it to the ordinary
+ * extensions. So a vendor extension that happens to use this key on any other field (or on a model) survives untouched.
  */
 export const PIN_EXTENSION_KEY = "x-super-schema-pin";
 
@@ -377,7 +381,7 @@ export function parseExtensionArguments(inner: string): { key: string; value: un
 }
 
 /** Keys with their own dedicated decorator path; never emitted as generic extensions. */
-const RESERVED_EXTENSION_KEYS: readonly string[] = [TAGS_EXTENSION_KEY, CLASSIFICATION_EXTENSION_KEY, PIN_EXTENSION_KEY];
+const RESERVED_EXTENSION_KEYS: readonly string[] = [TAGS_EXTENSION_KEY, CLASSIFICATION_EXTENSION_KEY];
 
 /** Extensions that pass through generically (everything but the keys with their own path). */
 export function genericExtensionEntries(extensions: Record<string, unknown> | undefined): [string, unknown][] {

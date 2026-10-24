@@ -221,8 +221,9 @@ function readDecorators(type: Type): ParsedTypeSpecDecorators {
           break;
         }
         if (s0 === TAGS_EXTENSION_KEY) break;
-        if (s0 === PIN_EXTENSION_KEY) {
-          if (typeof args[1] === "string" && args[1] !== "") d.referencedEntityVersion = args[1];
+        // The reference pin (a non-empty string); any other value of this key is an ordinary extension (see merge-fields).
+        if (s0 === PIN_EXTENSION_KEY && typeof args[1] === "string" && args[1] !== "") {
+          d.referencedEntityVersion = args[1];
           break;
         }
         // @extension / @TypeSpec.JsonSchema.extension / @TypeSpec.OpenAPI.extension ("x-key", value): the

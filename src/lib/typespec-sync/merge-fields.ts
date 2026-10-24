@@ -24,7 +24,7 @@
  * (the field was resolved), exactly the `activeDanglingRef` / `decoratorsAfterFieldEdit` semantics of the field editors.
  */
 
-import { classificationFromDecorators, setOwn } from "@/lib/compiler/governance-decorators";
+import { PIN_EXTENSION_KEY, classificationFromDecorators, setOwn } from "@/lib/compiler/governance-decorators";
 import type { FieldGovernanceInfo } from "@/lib/compiler/typespec-compiler";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { isConstraintWithheld, type ConstraintKind } from "@/lib/compiler/constraint-targets";
@@ -294,6 +294,14 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
   if (derived.visibility) typespec.visibility = derived.visibility;
   else delete typespec.visibility;
 
+  // The pin tag means something only on a reference; on any other field the same key is the user's ordinary extension.
+  const sourcePin = source.decorators.referencedEntityVersion;
+  const isReferenceResult =
+    mapped.type === "reference" ||
+    (mapped.type === "array" && mapped.arrayElementType === "reference") ||
+    (mapped.type === "map" && isRec(existing?.decorators) && (existing.decorators as Rec).mapValueType === "reference");
+  if (typeof sourcePin === "string" && sourcePin !== "" && !isReferenceResult) setOwn(mapped.extensions, PIN_EXTENSION_KEY, sourcePin);
+
   const extBucket: Rec = isRec(typespec.extensions) ? (typespec.extensions as Rec) : {};
   if (Object.keys(mapped.extensions).length > 0) setOwn(extBucket, "openapi", mapped.extensions);
   else delete extBucket.openapi;
@@ -342,8 +350,7 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
   else if (mapped.type !== "array") delete out.arrayElementType;
 
   // --- reference version pin: source-owned (the `x-super-schema-pin` tag is generated from it and read back) ---
-  const pin = source.decorators.referencedEntityVersion;
-  if (typeof pin === "string" && pin !== "") setOwn(out, "referencedEntityVersion", pin);
+  if (isReferenceResult && typeof sourcePin === "string" && sourcePin !== "") setOwn(out, "referencedEntityVersion", sourcePin);
   else delete out.referencedEntityVersion;
 
   // --- classification ---

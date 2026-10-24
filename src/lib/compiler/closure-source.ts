@@ -4,7 +4,7 @@
  * One document holds every entity of the closure, each in its own `namespace <Domain>.<Product>.<Entity> { ... }` block, its
  * model named by {@link uniqueModelName} (unique across the closure, so the JSON Schema / Avro file names `<Model>.json`
  * never collide even when two products each have an `Order`). A reference field is typed with the target's fully qualified
- * model (`Sales.Orders.Customer.Sales_Orders_Customer`); a reference to something not in the closure is `unknown`, never a
+ * model (`SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer`); a reference to something not in the closure is `unknown`, never a
  * name nothing declares. A self-reference and an A <-> B cycle are plain forward references and compile.
  *
  * This is the EMISSION projection: governance is off by default, so the reference pin tag (`x-super-schema-pin`, see
@@ -16,7 +16,7 @@
 import type { ClosureEntity } from "@/lib/references/closure";
 import { TENANT_PLACEHOLDER, qualifiedName, type EntityRef } from "@/lib/references/entity-reference";
 import { compileEntity } from "@/lib/compiler/compiler.service";
-import type { SuperSchemaField } from "@/types/super-schema-model";
+import type { SuperSchemaField, SuperSchemaModel } from "@/types/super-schema-model";
 import { ENTERPRISE_NAMESPACE, JSON_SCHEMA_LIBRARY_IMPORT } from "./governance-decorators";
 import { generateTypeSpecWithDiagnostics, type GeneratorDiagnostic } from "./typespec-generator";
 import { sanitizeIdentifier } from "./typespec-identifiers";
@@ -51,13 +51,69 @@ export function uniqueModelName(ref: EntityRef): string {
   return lossless ? joined : `${joined}_${shortHash(qualifiedName(ref))}`;
 }
 
-/** A namespace segment: sanitized (keywords prefixed, invalid characters replaced), `_tenant` kept as it is a valid identifier. */
+/**
+ * Every entity namespace lives under this one root, and every reference is written from it
+ * (`SuperSchemaClosure.<Domain>.<Product>.<Entity>.<Model>`). TypeSpec resolves the FIRST segment of a reference lexically,
+ * innermost scope outward, so a relative `Billing.Billing.Customer.M` breaks as soon as an enclosing namespace has a member
+ * called `Billing` (domain == product, entity == domain, ...). The root is safe because no enclosing scope can hold a member
+ * with its name: members are the sanitized segments (which {@link namespaceSegment} never lets equal the root) and models /
+ * shared types, all named `<domain>_<product>_<entity>...` (they contain `_`, the root does not).
+ */
+export const CLOSURE_ROOT_NAMESPACE = "SuperSchemaClosure";
+
+/** A namespace segment: sanitized (keywords prefixed, invalid characters replaced), never equal to the reserved root. */
 function namespaceSegment(segment: string): string {
-  return sanitizeIdentifier(segment);
+  const safe = sanitizeIdentifier(segment);
+  return safe === CLOSURE_ROOT_NAMESPACE ? `_${safe}` : safe;
 }
 
 function namespaceOf(ref: EntityRef): string {
-  return [ref.domain, ref.product, ref.entity].map(namespaceSegment).join(".");
+  return [CLOSURE_ROOT_NAMESPACE, ...[ref.domain, ref.product, ref.entity].map(namespaceSegment)].join(".");
+}
+
+/**
+ * Closure mode only: every shared type an entity declares (enum, scalar, union, alias, interface) is renamed
+ * `<modelName>_<name>`, and every use of it in the entity (field type, array element / map value, union name and members,
+ * alias / union member text) follows, so two entities that each declare a shared `Status` stay distinct declarations and
+ * distinct emitted file names. Pure; the input model is not mutated. The stand-alone path never calls this.
+ */
+function prefixSharedNames(model: SuperSchemaModel, modelName: string): SuperSchemaModel {
+  const declared = new Set<string>();
+  for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases, model.interfaces]) {
+    for (const d of group ?? []) declared.add(sanitizeIdentifier(d.name));
+  }
+  if (declared.size === 0) return model;
+  const rename = (name: string): string => (declared.has(sanitizeIdentifier(name)) ? `${modelName}_${sanitizeIdentifier(name)}` : name);
+  // Free text (union members, alias targets) may mention a declared name inside an expression: replace whole identifiers.
+  const renameInText = (text: string): string => text.replace(/[A-Za-z_][A-Za-z0-9_]*/g, (word) => rename(word));
+  const opt = (v: string | undefined) => (v === undefined ? undefined : rename(v));
+
+  return {
+    ...model,
+    sharedEnums: model.sharedEnums?.map((d) => ({ ...d, name: rename(d.name) })),
+    customScalars: model.customScalars?.map((d) => ({ ...d, name: rename(d.name), baseType: renameInText(d.baseType) })),
+    unionTypes: model.unionTypes?.map((d) => ({ ...d, name: rename(d.name), memberTypes: d.memberTypes.map(renameInText) })),
+    aliases: model.aliases?.map((d) => ({ ...d, name: rename(d.name), type: renameInText(d.type) })),
+    interfaces: model.interfaces?.map((d) => ({ ...d, name: rename(d.name) })),
+    fields: model.fields.map((f) => {
+      const ct = f.complexType;
+      return {
+        ...f,
+        type: rename(f.type) as SuperSchemaField["type"],
+        ...(ct
+          ? {
+              complexType: {
+                ...ct,
+                ...(ct.arrayElementType !== undefined ? { arrayElementType: opt(ct.arrayElementType) } : {}),
+                ...(ct.mapValueType !== undefined ? { mapValueType: opt(ct.mapValueType) } : {}),
+                ...(ct.unionName !== undefined ? { unionName: opt(ct.unionName) } : {}),
+                ...(ct.unionMembers !== undefined ? { unionMembers: ct.unionMembers.map(rename) } : {}),
+              },
+            }
+          : {}),
+      };
+    }),
+  };
 }
 
 type Placed = { entity: ClosureEntity; namespace: string; modelName: string };
@@ -69,7 +125,7 @@ export type ClosureTypeSpec = {
   source: string;
   /** The root entity's model name (the stem of its `<Model>.json` / `<Model>.avsc`). */
   rootModel: string;
-  /** entityId -> the model's fully qualified TypeSpec name (`Domain.Product.Entity.Model`), in closure order. */
+  /** entityId -> the model's fully qualified TypeSpec name (`SuperSchemaClosure.Domain.Product.Entity.Model`), in closure order. */
   models: Map<string, string>;
   /** What the generator could not express faithfully, across every member. */
   diagnostics: GeneratorDiagnostic[];
@@ -123,7 +179,7 @@ export function generateClosureTypeSpec(
   const blocks: string[] = [];
   const diagnostics: GeneratorDiagnostic[] = [];
   for (const p of placed) {
-    const model = compileEntity(p.entity.entity, p.entity.fields);
+    const model = prefixSharedNames(compileEntity(p.entity.entity, p.entity.fields), p.modelName);
     const generated = generateTypeSpecWithDiagnostics(model, {
       governance,
       closureMember: { modelName: p.modelName, referenceType, enterpriseShadowed },

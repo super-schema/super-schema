@@ -89,4 +89,27 @@ describe("reference pin tag", () => {
     const parsed = parseTypeSpecDocument(`model M {\n  ${pinDecorator(hostile)}\n  r: Customer;\n}\n`);
     expect(parsed.models[0].fields[0].decorators.referencedEntityVersion).toBe(hostile);
   });
+
+  it("a vendor extension named like the pin key stays an ordinary extension on a non-reference field", () => {
+    const stored: SyncExistingField = {
+      type: "string", nullable: false, isKey: false, description: "", classification: null,
+      decorators: { typespec: { extensions: { openapi: { [PIN_EXTENSION_KEY]: "vendor-value" } } } },
+    };
+    const m = compileEntity(
+      { id: "e", name: "Thing", description: "", status: "DRAFT", version: 1, domainId: null, metadata: {}, domain: null },
+      [fld("note", "string", 0, stored.decorators as Record<string, unknown>)]
+    );
+    const source = generateTypeSpec(m);
+    expect(source).toContain(`"${PIN_EXTENSION_KEY}", "vendor-value"`);
+    const parsed = parseTypeSpecDocument(source).models[0].fields[0] as unknown as SyncSourceField;
+    const merged = mergeSyncedField(stored, parsed);
+    expect(merged.decorators).not.toHaveProperty("referencedEntityVersion");
+    expect(merged.decorators.typespec).toEqual({ extensions: { openapi: { [PIN_EXTENSION_KEY]: "vendor-value" } } });
+  });
+
+  it("a non-string value of the pin key is never read as a pin", () => {
+    const parsed = parseTypeSpecDocument(`model M {\n  @TypeSpec.OpenAPI.extension("${PIN_EXTENSION_KEY}", 5)\n  r: string;\n}\n`);
+    expect(parsed.models[0].fields[0].decorators.referencedEntityVersion).toBeUndefined();
+    expect(parsed.models[0].fields[0].decorators.extensions).toEqual({ [PIN_EXTENSION_KEY]: 5 });
+  });
 });

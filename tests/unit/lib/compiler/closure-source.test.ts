@@ -21,7 +21,7 @@ const field = (name: string, type: string, sortOrder: number, decorators: Record
 const refTo = (target: EntityRef & { entityId: string }) =>
   writeFieldReference({}, target) as Record<string, unknown>;
 
-function member(id: string, domain: string, product: string, entity: string, fields: PrismaFieldInput[]): ClosureEntity {
+function member(id: string, domain: string, product: string, entity: string, fields: PrismaFieldInput[], metadata: unknown = {}): ClosureEntity {
   const ref: EntityRef = { entityId: id, domain, product, entity };
   return {
     entityId: id,
@@ -29,7 +29,7 @@ function member(id: string, domain: string, product: string, entity: string, fie
     source: "published",
     version: "1.0",
     fields: [field("id", "uuid", 0, {}, { isKey: true }), ...fields],
-    entity: { id, name: entity, description: "", status: "PUBLISHED", version: 1, domainId: null, metadata: {}, domain: null },
+    entity: { id, name: entity, description: "", status: "PUBLISHED", version: 1, domainId: null, metadata, domain: null },
   };
 }
 
@@ -86,12 +86,12 @@ describe("generateClosureTypeSpec", () => {
   it("gives same-named entities in different products distinct namespaces and model names, and types references with the qualified model", async () => {
     const out = generateClosureTypeSpec({ entities: [order, customerSales, customerSupport] }, { target: "json-schema" });
     expect(out.rootModel).toBe("Sales_Orders_Order");
-    expect(out.models.get("c1")).toBe("Sales.Orders.Customer.Sales_Orders_Customer");
-    expect(out.models.get("c2")).toBe("Support.Tickets.Customer.Support_Tickets_Customer");
-    expect(out.source).toContain("namespace Sales.Orders.Customer {");
-    expect(out.source).toContain("namespace Support.Tickets.Customer {");
-    expect(out.source).toContain("buyer: Sales.Orders.Customer.Sales_Orders_Customer;");
-    expect(out.source).toContain("agent: Support.Tickets.Customer.Support_Tickets_Customer;");
+    expect(out.models.get("c1")).toBe("SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer");
+    expect(out.models.get("c2")).toBe("SuperSchemaClosure.Support.Tickets.Customer.Support_Tickets_Customer");
+    expect(out.source).toContain("namespace SuperSchemaClosure.Sales.Orders.Customer {");
+    expect(out.source).toContain("namespace SuperSchemaClosure.Support.Tickets.Customer {");
+    expect(out.source).toContain("buyer: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer;");
+    expect(out.source).toContain("agent: SuperSchemaClosure.Support.Tickets.Customer.Support_Tickets_Customer;");
     expect(new Set(out.models.values()).size).toBe(3);
     await expectCompiles(out.source);
   });
@@ -105,10 +105,10 @@ describe("generateClosureTypeSpec", () => {
       field("legacyGhost", "array", 5, { arrayElementType: "reference", referencedEntityName: "Nope" }),
     ]);
     const out = generateClosureTypeSpec({ entities: [root, customerSales] }, { target: "avro" });
-    expect(out.source).toContain("buyers: Sales.Orders.Customer.Sales_Orders_Customer[];");
-    expect(out.source).toContain("byName: Record<Sales.Orders.Customer.Sales_Orders_Customer>;");
+    expect(out.source).toContain("buyers: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer[];");
+    expect(out.source).toContain("byName: Record<SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer>;");
     expect(out.source).toContain("ghost: unknown;");
-    expect(out.source).toContain("legacy: Sales.Orders.Customer.Sales_Orders_Customer;");
+    expect(out.source).toContain("legacy: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer;");
     expect(out.source).toContain("legacyGhost: unknown[];");
     await expectCompiles(out.source);
   });
@@ -120,8 +120,8 @@ describe("generateClosureTypeSpec", () => {
     ]);
     const b = member("b", "D", "P", "B", [field("back", "reference", 1, refTo({ entityId: "a", domain: "D", product: "P", entity: "A" }))]);
     const out = generateClosureTypeSpec({ entities: [a, b] }, { target: "json-schema" });
-    expect(out.source).toContain("self: D.P.A.D_P_A;");
-    expect(out.source).toContain("back: D.P.A.D_P_A;");
+    expect(out.source).toContain("self: SuperSchemaClosure.D.P.A.D_P_A;");
+    expect(out.source).toContain("back: SuperSchemaClosure.D.P.A.D_P_A;");
     await expectCompiles(out.source);
   });
 
@@ -158,8 +158,70 @@ describe("generateClosureTypeSpec", () => {
 
   it("adds the json-schema import only for that target, once, ahead of the namespaces", () => {
     const js = generateClosureTypeSpec({ entities: [customerSales] }, { target: "json-schema" });
-    expect(js.source.startsWith('import "@typespec/json-schema";\n\nnamespace Sales.Orders.Customer {')).toBe(true);
+    expect(js.source.startsWith('import "@typespec/json-schema";\n\nnamespace SuperSchemaClosure.Sales.Orders.Customer {')).toBe(true);
     const avro = generateClosureTypeSpec({ entities: [customerSales] }, { target: "avro" });
     expect(avro.source).not.toContain("import ");
+  });
+});
+
+describe("closure namespace scoping (reserved root)", () => {
+  const selfRef = (id: string, d: string, p: string, e: string) =>
+    field("me", "reference", 1, refTo({ entityId: id, domain: d, product: p, entity: e }));
+  const other = (id: string, d: string, p: string, e: string) =>
+    field("other", "reference", 2, refTo({ entityId: id, domain: d, product: p, entity: e }));
+
+  const cases: [string, [string, string, string], [string, string, string]][] = [
+    ["domain == product", ["Billing", "Billing", "Invoice"], ["Billing", "Billing", "Customer"]],
+    ["product == entity", ["Billing", "Ledger", "Ledger"], ["Billing", "Ledger", "Customer"]],
+    ["domain == entity", ["Billing", "Ledger", "Billing"], ["Billing", "Ledger", "Customer"]],
+    ["domain == product == entity", ["Billing", "Billing", "Billing"], ["Billing", "Billing", "Customer"]],
+    ["entity named like the root", ["Billing", "Ledger", "SuperSchemaClosure"], ["Billing", "Ledger", "Customer"]],
+    ["domain named like the root", ["SuperSchemaClosure", "SuperSchemaClosure", "SuperSchemaClosure"], ["SuperSchemaClosure", "Ledger", "Customer"]],
+  ];
+  for (const [label, a, b] of cases) {
+    it(`compiles with ${label}, in both directions`, async () => {
+      const x = member("x", ...a, [other("y", ...b), selfRef("x", ...a)]);
+      const y = member("y", ...b, [other("x", ...a)]);
+      const out = generateClosureTypeSpec({ entities: [x, y] }, { target: "json-schema" });
+      expect(new Set(out.models.values()).size).toBe(2);
+      await expectCompiles(out.source);
+    });
+  }
+});
+
+describe("closure shared types", () => {
+  const shared = {
+    custom: {
+      sharedEnums: [{ name: "Status", values: ["a", "b"] }],
+      customScalars: [{ name: "Money", baseType: "decimal" }],
+      unionTypes: [{ name: "Ident", memberTypes: ["string", "int32"] }],
+      aliases: [{ name: "Tags", type: "string[]" }],
+    },
+  };
+  const withShared = (id: string, entity: string) =>
+    member(id, "D", "P", entity, [field("key", "union", 2, { unionName: "Ident" })], shared);
+
+  it("declares each entity's shared types under distinct names that the entity's fields use, and compiles", async () => {
+    const out = generateClosureTypeSpec({ entities: [withShared("a", "A"), withShared("b", "B")] }, { target: "json-schema" });
+    const declared = [...out.source.matchAll(/^\s*(?:enum|scalar|union|alias) (\w+)/gm)].map((m) => m[1]);
+    expect(declared).toEqual(expect.arrayContaining(["D_P_A_Status", "D_P_A_Money", "D_P_A_Ident", "D_P_A_Tags", "D_P_B_Status", "D_P_B_Money", "D_P_B_Ident", "D_P_B_Tags"]));
+    expect(new Set(declared).size).toBe(declared.length);
+    expect(out.source).toContain("key: D_P_A_Ident;");
+    expect(out.source).toContain("key: D_P_B_Ident;");
+    await expectCompiles(out.source);
+  });
+});
+
+describe("closure reference typing gate", () => {
+  it("types a reference that has only a qualified name (no referencedEntityName), scalar and array", async () => {
+    const target = member("c1", "Sales", "Orders", "Customer", []);
+    const root = member("o1", "Sales", "Orders", "Order", [
+      field("scalarQ", "reference", 1, { referencedQualifiedName: "Sales/Orders/Customer" }),
+      field("byQualified", "array", 2, { arrayElementType: "reference", referencedQualifiedName: "Sales/Orders/Customer" }),
+    ]);
+    const out = generateClosureTypeSpec({ entities: [root, target] }, { target: "avro" });
+    expect(out.source).toContain("byQualified: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer[];");
+    expect(out.source).toContain("scalarQ: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer;");
+    await expectCompiles(out.source);
   });
 });
