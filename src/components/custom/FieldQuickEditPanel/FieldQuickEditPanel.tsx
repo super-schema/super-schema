@@ -18,6 +18,7 @@ import {
   applyReferencePick,
   holdsEntityReference,
   readFieldReference,
+  referencePickChangesNothing,
   withoutReferenceKeys,
   type PickableEntity,
   type ReferencePick,
@@ -513,7 +514,9 @@ export function FieldQuickEditPanel({
                     referenceTargets
                       ? (_type, config) => {
                           setJustSaved(false);
-                          setLocalReference(config);
+                          // The same target picked again writes the decorators the field already has (and the saved field would not change
+                          // either, so nothing would ever clear a pending pick): that is no change at all.
+                          setLocalReference(referencePickChangesNothing(field.decorators, config) ? null : config);
                         }
                       : undefined
                   }

@@ -6,10 +6,36 @@ import {
   writeFieldReference,
   applyReferencePick,
   holdsEntityReference,
+  referencePickChangesNothing,
   withoutReferenceKeys,
   REFERENCE_DECORATOR_KEYS,
   type EntityRef,
 } from "@/lib/references/entity-reference";
+
+describe("referencePickChangesNothing (the same target picked again)", () => {
+  const stored = { keep: { a: 1, b: [1, 2] }, referencedEntityName: "Address", referencedEntityId: "e-addr", referencedQualifiedName: "Billing/Core/Address" };
+  const same = { referencedEntityName: "Address", referencedEntityId: "e-addr", referencedQualifiedName: "Billing/Core/Address" };
+
+  it("is true for the target the field already points at, whatever order its keys were stored in", () => {
+    expect(referencePickChangesNothing(stored, same)).toBe(true);
+    const shuffled = { referencedQualifiedName: "Billing/Core/Address", keep: { b: [1, 2], a: 1 }, referencedEntityId: "e-addr", referencedEntityName: "Address" };
+    expect(referencePickChangesNothing(shuffled, same)).toBe(true);
+  });
+
+  it("is false for another target, for a typed name over a qualified reference, and for a field with no reference yet", () => {
+    expect(referencePickChangesNothing(stored, { referencedEntityName: "Money", referencedEntityId: "e-money", referencedQualifiedName: "Billing/Core/Money" })).toBe(false);
+    expect(referencePickChangesNothing(stored, { referencedEntityName: "Address" })).toBe(false);
+    expect(referencePickChangesNothing({ keep: 1 }, same)).toBe(false);
+  });
+
+  it("is false when the field is PINNED: a pick writes no pin, so re-picking the same target drops it", () => {
+    expect(referencePickChangesNothing({ ...stored, referencedEntityVersion: "1.2" }, same)).toBe(false);
+  });
+
+  it("is false when the same entity was renamed (the qualified name changes)", () => {
+    expect(referencePickChangesNothing(stored, { ...same, referencedEntityName: "Address2", referencedQualifiedName: "Billing/Core/Address2" })).toBe(false);
+  });
+});
 
 describe("holdsEntityReference (does a field of this type carry an entity reference?)", () => {
   it("a reference field does; so does an array of references and a map of references", () => {

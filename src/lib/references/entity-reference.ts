@@ -126,6 +126,15 @@ export function writeFieldReference(decorators: Record<string, unknown>, ref: En
   return out;
 }
 
+/** `JSON.stringify` with the keys of every object in order, so two objects with the same content compare equal whatever order their keys were written in. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+}
+
 /** What the type picker's reference prompt reports: the typed or picked name, and for a PICKED entity its id and qualified name. */
 export type ReferencePick = {
   referencedEntityName?: string;
@@ -155,4 +164,12 @@ export function applyReferencePick(decorators: Record<string, unknown>, pick: Re
   const out = withoutReferenceKeys(decorators);
   setOwn(out, "referencedEntityName", name);
   return out;
+}
+
+/**
+ * True when applying `pick` would write exactly the decorators the field already has: the same target picked again, with no pin to drop.
+ * The pin of the same target is NOT unchanged (a pick writes no pin), so re-picking a pinned reference is a change.
+ */
+export function referencePickChangesNothing(decorators: Record<string, unknown>, pick: ReferencePick): boolean {
+  return canonicalJson(applyReferencePick(decorators, pick)) === canonicalJson(decorators);
 }

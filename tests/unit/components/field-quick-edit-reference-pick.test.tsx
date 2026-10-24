@@ -120,6 +120,52 @@ describe("choosing the reference type in the selected-field panel", () => {
     expect(data.decorators).not.toHaveProperty("referencedEntityVersion");
   });
 
+  it("re-picking the SAME target of an unpinned reference changes nothing: the panel is not dirty (no Save, nothing to Discard)", async () => {
+    const { referencedEntityVersion: _pin, ...unpinned } = REFERENCE_FIELD.decorators;
+    void _pin;
+    mount({ ...REFERENCE_FIELD, decorators: unpinned });
+    openTypePicker("reference");
+    fireEvent.click(screen.getAllByText("reference").at(-1) as HTMLElement);
+    search("Customer");
+    fireEvent.click(screen.getByText("Sales / Crm / Customer"));
+    confirm();
+
+    expect(screen.queryByTestId("field-save-btn")).toBeNull();
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
+    // the target on show is still the stored one
+    expect(screen.getByTestId("field-reference-target").textContent).toContain("Sales / Crm / Customer");
+  });
+
+  it("re-picking the same target of a PINNED reference is a change (the pin goes): dirty, and saved without the pin", async () => {
+    mount(REFERENCE_FIELD);
+    openTypePicker("reference");
+    fireEvent.click(screen.getAllByText("reference").at(-1) as HTMLElement);
+    search("Customer");
+    fireEvent.click(screen.getByText("Sales / Crm / Customer"));
+    confirm();
+
+    const data = await save();
+
+    expect(data.decorators).toMatchObject({ referencedEntityId: "e-cust" });
+    expect(data.decorators).not.toHaveProperty("referencedEntityVersion");
+  });
+
+  it("a pick identical to the stored one after a DIFFERENT pick was made first is clean again", async () => {
+    const { referencedEntityVersion: _pin, ...unpinned } = REFERENCE_FIELD.decorators;
+    void _pin;
+    mount({ ...REFERENCE_FIELD, decorators: unpinned });
+    for (const [text, label] of [["Addr", "Billing / Core / Address"], ["Customer", "Sales / Crm / Customer"]]) {
+      openTypePicker("reference");
+      fireEvent.click(screen.getAllByText("reference").at(-1) as HTMLElement);
+      search(text);
+      fireEvent.click(screen.getByText(label));
+      confirm();
+      if (text === "Addr") expect(screen.getByTestId("field-save-btn")).toBeDefined();
+    }
+
+    expect(screen.queryByTestId("field-save-btn")).toBeNull();
+  });
+
   it("an edit that leaves the reference alone keeps it and its pin", async () => {
     mount(REFERENCE_FIELD);
     fireEvent.click(screen.getByText("Add description..."));
