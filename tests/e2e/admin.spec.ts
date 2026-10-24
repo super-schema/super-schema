@@ -132,7 +132,8 @@ test.describe("users", () => {
 
     await expect(row.getByRole("cell").nth(1)).toHaveText("Admin");
     await expect(row.getByTestId(ID.roleBadge)).toHaveText(["ADMIN"]);
-    await expect(row.getByRole("cell").nth(3)).toHaveText("active");
+    // Email, Name, Roles: no "Status" column (nothing in the database says whether a user is active).
+    await expect(centerPanel(page).getByTestId(ID.userTable).getByRole("columnheader")).toHaveText(["Email", "Name", "Roles"]);
   });
 
   test("a user who registers is listed, with no roles and no name", { tag: ["@regression"] }, async ({ authedPage: page, browser, baseURL }) => {
@@ -150,7 +151,7 @@ test.describe("users", () => {
   test("a user's name is edited, saved and listed after a reload; Save waits for a change", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     const email = `${unique("e2e-name-")}@example.com`;
     createdUsers.push(email);
-    await createUserRow({ email, name: "Before Rename" });
+    const { id: userId } = await createUserRow({ email, name: "Before Rename" });
 
     await openUsers(page);
     const detail = await openUser(page, email);
@@ -163,6 +164,13 @@ test.describe("users", () => {
 
     await openUsers(page);
     await expect((await userRow(page, email)).getByRole("cell").nth(1)).toHaveText("After Rename");
+
+    // The change is in the audit trail: who made it, and the name as it was.
+    const audit = await pg().query(
+      `SELECT "userId", "beforeState"->>'name' AS before FROM audit_log WHERE action = 'UPDATE' AND "entityType" = 'User' AND "entityId" = $1`,
+      [userId],
+    );
+    expect(audit.rows).toEqual([{ userId: await userIdByEmail(TEST_EMAIL), before: "Before Rename" }]);
   });
 
   test("a system-level role is assigned, shown on the row, kept after a reload, and removed after a confirmation", { tag: ["@regression"] }, async ({
@@ -373,6 +381,13 @@ test.describe("domains", () => {
     await expect(centerPanel(page).getByText(name).first()).toBeVisible();
     const { rows } = await pg().query(`SELECT slug, "isSystem" FROM domains WHERE name = $1`, [name]);
     expect(rows).toEqual([{ slug: name, isSystem: false }]);
+
+    // And it is in the audit trail, made by the admin who clicked Create (the Compliance Audit Trail tab lists it from here).
+    const audit = await pg().query(
+      `SELECT "userId", "afterState"->>'name' AS name FROM audit_log WHERE action = 'CREATE' AND "entityType" = 'Domain' AND "afterState"->>'name' = $1`,
+      [name],
+    );
+    expect(audit.rows).toEqual([{ userId: await userIdByEmail(TEST_EMAIL), name }]);
   });
 
   test("the domain's page opens from the explorer entry the admin tab made", { tag: ["@regression"] }, async ({ authedPage: page }) => {
@@ -437,6 +452,10 @@ async function openEmitters(page: Page): Promise<void> {
 const emitterCard = (page: Page, name: string): Locator => centerPanel(page).locator(`[data-testid="${ID.emitterCard}"][data-emitter="${name}"]`);
 
 test.describe("emitters", () => {
+  // The toggle test flips the SEEDED `openapi` row to Disabled for a few seconds (and puts it back in a `finally`); the list test reads
+  // the same row as Enabled. Not at the same time: one worker, one after the other.
+  test.describe.configure({ mode: "serial" });
+
   test("the seeded emitter configs are listed with their version, format and description", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openEmitters(page);
 

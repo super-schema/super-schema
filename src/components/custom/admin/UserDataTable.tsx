@@ -11,8 +11,6 @@ interface UserRow {
   email: string;
   name: string | null;
   roles: { id: string; role: Role; domainId: string | null; domainName?: string }[];
-  lastLogin?: string;
-  status: string;
 }
 
 export function UserDataTable() {
@@ -36,7 +34,6 @@ export function UserDataTable() {
           email: u.email,
           name: u.name,
           roles: u.roles ?? [],
-          status: "active",
         }))
       );
     }
@@ -100,20 +97,19 @@ export function UserDataTable() {
               <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Email</th>
               <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Name</th>
               <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Roles</th>
-              <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Status</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={4} className="px-space-4 py-space-8 text-center text-muted-foreground">
+                <td colSpan={3} className="px-space-4 py-space-8 text-center text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin inline mr-space-2" />
                   Loading users…
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-space-4 py-space-8 text-center text-muted-foreground">
+                <td colSpan={3} className="px-space-4 py-space-8 text-center text-muted-foreground">
                   {search.trim() ? "No users match your filter." : "No users found."}
                 </td>
               </tr>
@@ -151,15 +147,6 @@ export function UserDataTable() {
                         );
                       })}
                     </div>
-                  </td>
-                  <td className="px-space-4 py-space-3">
-                    <span className={`inline-flex px-2 py-0.5 rounded-full text-caption ${
-                      user.status === "active"
-                        ? "bg-success/20 text-success"
-                        : "bg-muted text-muted-foreground"
-                    }`}>
-                      {user.status}
-                    </span>
                   </td>
                 </tr>
               ))
