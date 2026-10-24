@@ -17,7 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
 import { afterAll, describe, expect, it } from "vitest";
-import { collectFlaky, renderSummary } from "../../scripts/ci-flaky-summary.mjs";
+import { MAX_ROWS, collectFlaky, renderSummary } from "../../scripts/ci-flaky-summary.mjs";
 import { parseArgs, planRun } from "../../scripts/e2e-release.mjs";
 
 const REPO = path.resolve(__dirname, "../..");
@@ -271,6 +271,33 @@ describe("e2e.yml: the steps every job shares", () => {
     expect(installs.map((s) => s.if)).toEqual(expect.arrayContaining([expect.stringContaining("!= 'true'"), expect.stringContaining("== 'true'")]));
   });
 
+  it("every browser cache key, with the matrix filled in, is a valid key: no space, no comma (legs that install the same browsers share an entry on purpose)", () => {
+    for (const [id, j] of jobs) {
+      const legs: Array<Record<string, string>> = j.strategy?.matrix?.include ?? (j.strategy?.matrix?.shard ? j.strategy.matrix.shard.map((shard) => ({ shard: String(shard) })) : [{}]);
+      const cache = stepsOf(j).find((s) => s.uses === "actions/cache@v4")!;
+      for (const leg of legs) {
+        const key = String(cache.with?.key)
+          .replace(/\$\{\{\s*runner\.os\s*\}\}/g, "Linux")
+          .replace(/\$\{\{\s*steps\.\w+\.outputs\.version\s*\}\}/g, "1.59.1")
+          .replace(/\$\{\{\s*matrix\.(\w+)\s*\}\}/g, (_m, name) => String(leg[name]));
+        expect(key, `${id} ${JSON.stringify(leg)}`).toMatch(/^[A-Za-z0-9._-]+$/);
+      }
+    }
+  });
+
+  it.each(jobs.map(([id]) => [id]))("%s: the checkout does not leave the token in the repository's git config (persist-credentials: false)", (id) => {
+    const checkouts = stepsOf(job(id)).filter((s) => s.uses === "actions/checkout@v4");
+    expect(checkouts.length).toBeGreaterThan(0);
+    for (const checkout of checkouts) expect(checkout.with?.["persist-credentials"]).toBe(false);
+  });
+
+  it("starts with the prerequisite that npm ci must work on the runner, and points at the docs", () => {
+    const header = WORKFLOW_TEXT.split("\n").slice(0, 16).join("\n");
+    expect(header).toMatch(/# Prerequisite: `npm ci` must succeed on the runner/);
+    expect(header).toContain("file:../typespec/packages/*");
+    expect(header).toContain("docs/testing/e2e.md");
+  });
+
   it("the smoke job installs Chromium, Firefox and WebKit", () => {
     const install = allRuns(job("smoke"));
     expect(install).toMatch(/playwright install --with-deps chromium firefox webkit/);
@@ -286,8 +313,10 @@ describe("e2e.yml: the steps every job shares", () => {
 
   it("nightly-extra installs what its leg needs (the matrix names the browsers)", () => {
     expect(allRuns(job("nightly-extra"))).toMatch(/playwright install --with-deps \$\{\{ matrix\.browsers \}\}/);
-    expect(String(stepsOf(job("nightly-extra")).find((s) => s.uses === "actions/cache@v4")?.with?.key)).toContain("matrix.browsers");
+    expect(String(stepsOf(job("nightly-extra")).find((s) => s.uses === "actions/cache@v4")?.with?.key)).toContain("matrix.browser_key");
     for (const leg of job("nightly-extra").strategy!.matrix!.include!) {
+      // The key is the browsers joined with hyphens (a cache key must not contain spaces or commas).
+      expect(leg.browser_key).toBe(leg.browsers.split(" ").join("-"));
       // The login (the `setup` project) runs on Chromium whatever the leg tests, so every leg has it.
       expect(leg.browsers.split(" ")).toContain("chromium");
       if (/firefox-smoke/.test(leg.args)) expect(leg.browsers.split(" ")).toContain("firefox");
@@ -378,6 +407,8 @@ describe("e2e.yml: reports", () => {
     for (const upload of uploads) {
       expect(upload.if, `${id}: ${upload.name}`).toBe("always()");
       expect(upload.with?.["retention-days"]).toBe(14);
+      // v4 fails on a name that already exists in the run ("Re-run failed jobs" uploads the same names again).
+      expect(upload.with?.overwrite, `${id}: ${upload.name} needs overwrite: true`).toBe(true);
       expect(String(upload.with?.path)).toContain("${{ env.E2E_OUTPUT_ROOT }}");
       // Two jobs (or legs) with one artifact name would fail the second upload (actions/upload-artifact@v4).
       expect(String(upload.with?.name)).toContain(id);
@@ -437,6 +468,36 @@ describe("scripts/ci-flaky-summary.mjs", () => {
     expect(collectFlaky(path.join(scratch, "missing")).rows).toEqual([]);
   });
 
+  it("says that there are no results (not that nothing was flaky) when the root is missing or has no report of any phase", () => {
+    const missing = path.join(scratch, "no-such-root");
+    const text = renderSummary({ title: "smoke", ...collectFlaky(missing) });
+    expect(text).toContain(`No test results found at ${missing} (the run may have failed before tests started).`);
+    expect(text).not.toContain("No test passed only on a retry");
+    const onlyLog = path.join(scratch, "only-a-log");
+    write(onlyLog, "server.log", "Ready");
+    expect(collectFlaky(onlyLog).reports).toBe(0);
+    expect(renderSummary({ title: "smoke", ...collectFlaky(onlyLog) })).toContain("No test results found at");
+    // A root with a junit.xml of a phase did run tests: that one is "nothing flaky", as before.
+    const ran = path.join(scratch, "ran");
+    write(ran, "test-results/main/junit.xml", "<testsuites/>");
+    expect(collectFlaky(ran).reports).toBe(1);
+    expect(renderSummary({ title: "smoke", ...collectFlaky(ran) })).toContain("No test passed only on a retry.");
+  });
+
+  it(`stops the table at ${MAX_ROWS} rows and says how many more there are`, () => {
+    const root = path.join(scratch, "many");
+    const rows = Array.from({ length: MAX_ROWS + 50 }, (_unused, i) => ({ project: "chromium", title: `test ${i}`, location: `tests/e2e/a.spec.ts:${i + 1}`, attempts: 2 }));
+    write(root, "test-results/main/flaky-tests.json", JSON.stringify(rows));
+    const text = renderSummary({ title: "regression 1/4", ...collectFlaky(root) });
+    expect(text).toContain(`${MAX_ROWS + 50} test(s) failed and then passed on a retry`);
+    expect(text.split("\n").filter((line) => line.startsWith("| main |"))).toHaveLength(MAX_ROWS);
+    expect(text).toContain("| main | chromium | test 99 |");
+    expect(text).not.toContain("| main | chromium | test 100 |");
+    expect(text).toContain("and 50 more");
+    // At the cap exactly there is nothing more to say.
+    expect(renderSummary({ title: "x", rows: rows.slice(0, MAX_ROWS).map((r) => ({ phase: "main", ...r })) })).not.toContain(" more");
+  });
+
   it("reads the lists of the legs of a job that runs the runner more than once (a root with sub-roots), and not the traces", () => {
     const root = path.join(scratch, "nested");
     write(root, "a/test-results/main/flaky-tests.json", JSON.stringify(FLAKY));
@@ -460,6 +521,35 @@ describe("scripts/ci-flaky-summary.mjs", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("### smoke: flaky tests");
     expect(result.stdout).toContain("orders \\| the \\| table");
+  });
+
+  const script = path.join(REPO, "scripts", "ci-flaky-summary.mjs");
+  const withoutRoot = () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, SUMMARY_TITLE: "smoke" };
+    delete env.E2E_OUTPUT_ROOT;
+    return env;
+  };
+
+  it("has no default root: without E2E_OUTPUT_ROOT or an argument it reads nothing (not the working directory), says so, and exits 0", () => {
+    const cwd = path.join(scratch, "cwd-with-a-list");
+    write(cwd, "test-results/main/flaky-tests.json", JSON.stringify(FLAKY));
+    const result = spawnSync(process.execPath, [script], { cwd, env: withoutRoot(), encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("No output root given (set E2E_OUTPUT_ROOT or pass the directory as an argument)");
+    expect(result.stdout).not.toContain("orders");
+    expect(result.stdout).not.toContain("1 test(s)");
+  });
+
+  it("takes the root as an argument, and a root that does not exist is a message, not a failure", () => {
+    const root = path.join(scratch, "by-argument");
+    write(root, "test-results/main/flaky-tests.json", JSON.stringify(FLAKY));
+    const given = spawnSync(process.execPath, [script, root], { env: withoutRoot(), encoding: "utf8" });
+    expect(given.status).toBe(0);
+    expect(given.stdout).toContain("orders \\| the \\| table");
+    const missing = spawnSync(process.execPath, [script, path.join(scratch, "nowhere")], { env: withoutRoot(), encoding: "utf8" });
+    expect(missing.status).toBe(0);
+    expect(missing.stdout).toContain("No test results found at");
+    expect(missing.stdout).toContain("the run may have failed before tests started");
   });
 });
 
@@ -486,5 +576,8 @@ describe("the repository around the workflow", () => {
     expect(docs).toMatch(/do not require the `e2e-regression/i);
     expect(docs).toContain("flaky-tests.json");
     expect(docs).toContain("branch protection");
+    // Require it only once it has run green; and the counts say what they count.
+    expect(docs).toMatch(/only after it has run green once/i);
+    expect(docs).toMatch(/do not count the `setup`/i);
   });
 });

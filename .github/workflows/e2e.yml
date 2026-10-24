@@ -1,5 +1,9 @@
 # The browser suite (tests/e2e) as a release check. Long version: docs/testing/e2e.md ("CI").
 #
+# Prerequisite: `npm ci` must succeed on the runner. package.json has file:../typespec/packages/* dependencies and the lockfile
+# resolves from internal registries; a runner without that network and registry access, and without the sibling `typespec`
+# repository built at ../typespec, fails at `npm ci`. See docs/testing/e2e.md ("Running it in CI").
+#
 #   pull request         `smoke` (Chromium, Firefox, WebKit). The only job that gates a merge: a maintainer requires its status
 #                        check, `e2e-smoke`, in the branch protection of the repository (it is a repository setting, not a file).
 #   schedule, tag v*     `regression` (four shards) and `nightly-extra` (what the nightly tier has and the regression tier does not).
@@ -52,6 +56,8 @@ jobs:
       E2E_OUTPUT_ROOT: ${{ github.workspace }}/test-results/ci-smoke
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -88,6 +94,7 @@ jobs:
           name: e2e-smoke-playwright-report
           path: ${{ env.E2E_OUTPUT_ROOT }}/playwright-report
           retention-days: 14
+          overwrite: true
       - name: Upload the test results (traces, videos, screenshots, junit.xml, flaky list) and the app log
         if: always()
         uses: actions/upload-artifact@v4
@@ -97,6 +104,7 @@ jobs:
             ${{ env.E2E_OUTPUT_ROOT }}/test-results
             ${{ env.E2E_OUTPUT_ROOT }}/server.log
           retention-days: 14
+          overwrite: true
 
   regression:
     name: e2e-regression (${{ matrix.shard }}/4)
@@ -111,6 +119,8 @@ jobs:
       E2E_OUTPUT_ROOT: ${{ github.workspace }}/test-results/ci-regression-${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -147,6 +157,7 @@ jobs:
           name: e2e-regression-${{ matrix.shard }}-playwright-report
           path: ${{ env.E2E_OUTPUT_ROOT }}/playwright-report
           retention-days: 14
+          overwrite: true
       - name: Upload the test results (traces, videos, screenshots, junit.xml, flaky list) and the app log
         if: always()
         uses: actions/upload-artifact@v4
@@ -156,6 +167,7 @@ jobs:
             ${{ env.E2E_OUTPUT_ROOT }}/test-results
             ${{ env.E2E_OUTPUT_ROOT }}/server.log
           retention-days: 14
+          overwrite: true
 
   nightly-extra:
     name: e2e-nightly-extra (${{ matrix.part }})
@@ -166,21 +178,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `browsers` is what `playwright install` is given; `browser_key` is the same list joined with hyphens, for the cache key (a key
+          # must not contain spaces). Legs and shards that install the same browsers share one cache entry on purpose.
           # `args` are the runner's, after `npm run test:e2e:release --`. Each leg selects tests that no other leg and no regression
           # shard selects (tests/unit/ci-e2e-workflow.test.ts checks the shape; `node scripts/e2e-phases.mjs <tier> --list ...` the sets).
           - part: slow-chromium
             browsers: chromium
+            browser_key: chromium
             args: --tier nightly --project chromium -- --grep "@slow|@external"
           - part: slow-serial
             browsers: chromium
+            browser_key: chromium
             args: --tier serial -- --grep "@slow|@external"
           - part: cross-browser
             browsers: chromium firefox webkit
+            browser_key: chromium-firefox-webkit
             args: --tier smoke --project firefox-smoke --project webkit-smoke
     env:
       E2E_OUTPUT_ROOT: ${{ github.workspace }}/test-results/ci-nightly-extra-${{ matrix.part }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -196,7 +215,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.browsers }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.browser_key }}
       - name: Install the Playwright browsers and their system libraries
         if: steps.browsers.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps ${{ matrix.browsers }}
@@ -217,6 +236,7 @@ jobs:
           name: e2e-nightly-extra-${{ matrix.part }}-playwright-report
           path: ${{ env.E2E_OUTPUT_ROOT }}/playwright-report
           retention-days: 14
+          overwrite: true
       - name: Upload the test results (traces, videos, screenshots, junit.xml, flaky list) and the app log
         if: always()
         uses: actions/upload-artifact@v4
@@ -226,3 +246,4 @@ jobs:
             ${{ env.E2E_OUTPUT_ROOT }}/test-results
             ${{ env.E2E_OUTPUT_ROOT }}/server.log
           retention-days: 14
+          overwrite: true

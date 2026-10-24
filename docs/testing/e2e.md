@@ -151,6 +151,8 @@ Settings, Branches (or Rulesets), the rule for `main`, "Require status checks to
 required status check. This is the only new check to require.
 
 - GitHub lists a check only after it has reported once: open a pull request first, let `e2e-smoke` run, then add it.
+- Require `e2e-smoke` only after it has run green once (for example by a `workflow_dispatch` run of the `smoke` tier on `main`): a
+  required check that always fails blocks every merge.
 - Do not require the `e2e-regression (...)` or `e2e-nightly-extra (...)` checks. They do not run on pull requests, and a required check
   that never reports blocks every merge. They are for reading the next morning, and before a release.
 - The `pull_request` trigger has no path or branch filter on purpose, so `e2e-smoke` reports on every pull request. Keep it that way.
@@ -160,7 +162,8 @@ required status check. This is the only new check to require.
 
 The nightly tier is everything, so it includes the regression tests that the four shards have just run. The rest is run as three legs, each
 selecting tests that no other leg and no regression shard selects (at the time of writing: regression 52 tests, the legs 17, 6 and 10,
-the nightly tier 85 in all; `node scripts/e2e-phases.mjs <tier> --list ...` prints the sets):
+the nightly tier 85 in all; `node scripts/e2e-phases.mjs <tier> --list ...` prints the sets). These counts do not count the `setup`
+login test, which the raw `--list` prints once more in every phase:
 
 ```bash
 # slow-chromium: the @slow and @external tests of Chromium (the JSON Schema matrix, the URL import over the network)
@@ -185,7 +188,8 @@ Each job (each shard and leg) uploads two artifacts, also after a failure (`if: 
 | `e2e-smoke-test-results`, `e2e-regression-<shard>-test-results`, `e2e-nightly-extra-<leg>-test-results` | `test-results/<phase>/`: traces, screenshots and video of failures, `junit.xml`, `flaky-tests.json`; and `server.log`, the app's log |
 
 A test that passes only on its retry keeps the job green and is shown in three places: the **job summary** of the run (a "flaky tests"
-table at the bottom of the job's page, written by `scripts/ci-flaky-summary.mjs`; "No test passed only on a retry." when there is none),
+table at the bottom of the job's page, written by `scripts/ci-flaky-summary.mjs`; "No test passed only on a retry." when there is none, "No test results found at ..." when
+the run failed before its tests started, at most 100 rows and "and N more" after them),
 a warning annotation per test on the run, and `flaky-tests.json` in the `-test-results` artifact.
 
 The jobs run exactly these commands, so you can run any of them yourself (Docker and the browsers needed, `CI=true` for the same reporters):
@@ -208,10 +212,10 @@ collect the reports in one place, as the jobs do.
   libraries are installed (`playwright install-deps`).
 - Do not run the regression shards of one job on one checkout at the same time without `--reuse-build` (they share `.next`). In CI every
   shard has a machine of its own.
-- Before the first run: `npm ci` has to work on the runner. `package.json` has `file:../typespec/packages/*` dependencies (a sibling
-  checkout) and `package-lock.json` resolves packages from an internal registry host; `ci.yml` needs both in the same way, and this workflow
-  adds nothing for them. If `npm ci` fails on a hosted runner, it fails in both workflows, and the fix (a registry the runner can reach,
-  the sibling repository checked out) belongs to both.
+- Prerequisite: `npm ci` must succeed on the runner. `package.json` has `file:../typespec/packages/*` dependencies and the lockfile
+  resolves from internal registries; a runner without that network and registry access, and without the sibling `typespec` repository
+  built at `../typespec`, fails at `npm ci`. `ci.yml` needs the same, and this workflow adds nothing for it: if `npm ci` fails, it fails
+  in both workflows, and the fix belongs to both. (The same note is at the top of `.github/workflows/e2e.yml`.)
 - `tests/unit/ci-e2e-workflow.test.ts` reads the workflow as YAML (read-only permissions, first-party actions only, a timeout on every
   job, uploads and the flaky summary after a failure, no tests selected twice) and checks that this page names every check; run it after
   an edit of the workflow. `actionlint` is not part of the repository: run it if you have it.
