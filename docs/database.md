@@ -58,6 +58,8 @@ npm run dev
 | `PGLITE_DATA_DIR` | `./data/pglite` | PGlite data directory (pglite only) |
 | `DATABASE_URL` | — | **Required** when `DB_PROVIDER=postgresql` |
 | `E2E_DATABASE_URL` | — | The browser suite's PostgreSQL database (the specs write their fixtures to it directly; it wins over `DATABASE_URL`). `npm run test:e2e:release` sets it to its own throwaway Docker database — see [`docs/testing/e2e.md`](testing/e2e.md) |
+| `HEALTH_DB_DEGRADED_MS` | `500` | `GET /api/v1/health`: a database that answers in this many milliseconds or more is `degraded` (HTTP 200). Not a positive number = the default |
+| `HEALTH_DB_TIMEOUT_MS` | `5000` | `GET /api/v1/health`: a database that has not answered within this many milliseconds, or fails, makes the probe `unhealthy` (HTTP 503); a hung database cannot hang the probe. The answer never carries the database's own error (it is logged by the server) |
 | `SCHEMA_IMPORT_GIT_MODE` | `restricted` | JSON Schema "From URL": `any` or `restricted`. Git-host URLs are fetched with the server's own `gh` credentials; unknown value = `restricted` |
 | `SCHEMA_IMPORT_GIT_SCOPES` | (empty) | Comma-separated `owner` or `owner/repo` (case-insensitive) git roots allowed in `restricted` mode. Empty = git-host import disabled |
 

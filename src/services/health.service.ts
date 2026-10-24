@@ -70,25 +70,59 @@ export function _setEmitterChecker(checker: () => Promise<ComponentStatus>): voi
 // Default check implementations
 // ---------------------------------------------------------------------------
 
+/**
+ * What this endpoint says about a failure is generic: it needs no login, and a database error carries the host, the user and
+ * sometimes the connection string. The real error goes to the server's log (`[health] ...`).
+ */
+const DB_UNAVAILABLE = "Database unavailable";
+const DB_TIMEOUT = "Database did not answer in time";
+
+/** HEALTH_DB_DEGRADED_MS: a database that answers in this many ms or more is "degraded" (HTTP 200), not "unhealthy". */
+const DEFAULT_DB_DEGRADED_MS = 500;
+/** HEALTH_DB_TIMEOUT_MS: a database that has not answered by now FAILS the probe (HTTP 503), instead of hanging it. */
+const DEFAULT_DB_TIMEOUT_MS = 5000;
+
+/** A setting that is a positive number of milliseconds; anything else (unset, empty, text, zero, negative) is the default. */
+function positiveMs(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return raw !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+class DbCheckTimeout extends Error {}
+
+/**
+ * `work` or a rejection after `ms`, whichever is first. Prisma's `$queryRaw` cannot be cancelled, so a hung query keeps running in the
+ * background; what is bounded is the PROBE. The loser's later rejection is handled (it must not become an unhandled rejection) and the
+ * timer is cleared.
+ */
+async function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new DbCheckTimeout()), ms);
+  });
+  work.catch(() => {});
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function defaultDbCheck(): Promise<ComponentStatus> {
+  const degradedAfterMs = positiveMs(process.env.HEALTH_DB_DEGRADED_MS, DEFAULT_DB_DEGRADED_MS);
+  const timeoutMs = positiveMs(process.env.HEALTH_DB_TIMEOUT_MS, DEFAULT_DB_TIMEOUT_MS);
   const start = Date.now();
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await within(Promise.resolve(prisma.$queryRaw`SELECT 1`), timeoutMs);
     const latency = Date.now() - start;
-    return {
-      name: "Database",
-      status: latency < 100 ? "healthy" : latency < 500 ? "degraded" : "unhealthy",
-      message: `Connection OK (${latency}ms)`,
-      latencyMs: latency,
-    };
+    return latency < degradedAfterMs
+      ? { name: "Database", status: "healthy", message: `Connection OK (${latency}ms)`, latencyMs: latency }
+      : { name: "Database", status: "degraded", message: `Slow answer (${latency}ms)`, latencyMs: latency };
   } catch (e) {
     const latency = Date.now() - start;
-    return {
-      name: "Database",
-      status: "unhealthy",
-      message: e instanceof Error ? e.message : "Database check failed",
-      latencyMs: latency,
-    };
+    const timedOut = e instanceof DbCheckTimeout;
+    console.error(timedOut ? `[health] the database did not answer within ${timeoutMs} ms` : "[health] the database check failed", e instanceof Error ? e : { message: String(e) });
+    return { name: "Database", status: "unhealthy", message: timedOut ? DB_TIMEOUT : DB_UNAVAILABLE, latencyMs: latency };
   }
 }
 
@@ -123,11 +157,8 @@ export async function checkDatabase(
   try {
     return await dbChecker();
   } catch (e) {
-    return {
-      name: "Database",
-      status: "unhealthy",
-      message: e instanceof Error ? e.message : "Database check failed",
-    };
+    console.error("[health] the database check threw", e);
+    return { name: "Database", status: "unhealthy", message: DB_UNAVAILABLE };
   }
 }
 
@@ -141,11 +172,8 @@ export async function checkCompiler(
   try {
     return await compilerChecker();
   } catch (e) {
-    return {
-      name: "TypeSpec Compiler",
-      status: "unhealthy",
-      message: e instanceof Error ? e.message : "Compiler check failed",
-    };
+    console.error("[health] the compiler check threw", e);
+    return { name: "TypeSpec Compiler", status: "unhealthy", message: "Compiler check failed" };
   }
 }
 
@@ -159,11 +187,8 @@ export async function checkEmitters(
   try {
     return await emitterChecker();
   } catch (e) {
-    return {
-      name: "Emitters",
-      status: "unhealthy",
-      message: e instanceof Error ? e.message : "Emitter check failed",
-    };
+    console.error("[health] the emitter check threw", e);
+    return { name: "Emitters", status: "unhealthy", message: "Emitter check failed" };
   }
 }
 

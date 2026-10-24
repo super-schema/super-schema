@@ -82,6 +82,9 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   "ASYNCAPI_PARSER_MAX_MESSAGE_BYTES",
   "ASYNCAPI_PARSER_REBUILD_BACKOFF_MS",
   "ASYNCAPI_PARSER_BREAKER_MS",
+  // src/services/health.service.ts: the health probe's thresholds (empty = its defaults, 500 ms degraded and 5000 ms timeout)
+  "HEALTH_DB_DEGRADED_MS",
+  "HEALTH_DB_TIMEOUT_MS",
   // libpq / node-pg read these when the connection string does not carry them (an empty value is "not set" to node-pg)
   "PGHOST",
   "PGHOSTADDR",

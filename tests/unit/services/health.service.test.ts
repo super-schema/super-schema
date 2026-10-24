@@ -91,7 +91,9 @@ describe("Health Service", () => {
 
       const result = await checkDatabase(adminCtx);
       expect(result.status).toBe("unhealthy");
-      expect(result.message).toContain("Connection refused");
+      // Generic: the endpoint needs no login, so the raw error (host, user ...) stays in the server's log.
+      expect(result.message).toBe("Database unavailable");
+      expect(result.message).not.toContain("Connection refused");
     });
   });
 
@@ -108,7 +110,7 @@ describe("Health Service", () => {
 
       const result = await checkCompiler(adminCtx);
       expect(result.status).toBe("unhealthy");
-      expect(result.message).toContain("Compiler not found");
+      expect(result.message).toBe("Compiler check failed");
     });
   });
 

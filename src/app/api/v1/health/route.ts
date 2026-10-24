@@ -10,6 +10,11 @@ import { runHealthCheck } from "@/services/health.service";
 import type { ServiceContext } from "@/types/service-context";
 import { prisma } from "@/lib/db";
 
+/** What an unauthenticated caller is told when the check itself could not run: nothing of the cause (it is logged). */
+function unavailable() {
+  return NextResponse.json({ status: "unhealthy", error: "Health check unavailable" }, { status: 503, headers: { "Cache-Control": "no-cache" } });
+}
+
 export async function GET() {
   // System context — no user session required
   const ctx: ServiceContext = {
@@ -18,16 +23,17 @@ export async function GET() {
     prisma,
   };
 
-  const result = await runHealthCheck(ctx);
+  let result: Awaited<ReturnType<typeof runHealthCheck>>;
+  try {
+    result = await runHealthCheck(ctx);
+  } catch (error) {
+    console.error("[health] the health check could not run", error);
+    return unavailable();
+  }
 
   if (!result.success) {
-    return NextResponse.json(
-      { status: "unhealthy", error: result.error.message },
-      {
-        status: 503,
-        headers: { "Cache-Control": "no-cache" },
-      }
-    );
+    console.error("[health] the health check failed", result.error);
+    return unavailable();
   }
 
   const httpStatus = result.data.status === "unhealthy" ? 503 : 200;
