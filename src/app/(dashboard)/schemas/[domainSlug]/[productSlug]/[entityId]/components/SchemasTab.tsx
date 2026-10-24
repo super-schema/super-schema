@@ -23,6 +23,7 @@ import { getSchemaVersionsAction, publishSchemaAction, saveSchemaFieldTypeOverri
 import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "@/types/schema-version";
 import { SchemaCodePreview } from "./SchemaCodePreview";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
+import { publishRefusalToast } from "./publish-refusal";
 import { generationWarningToast, stagedWarningToast } from "./generate-warnings";
 import { StagedEmitDialog } from "@/features/emission/StagedEmitDialog/StagedEmitDialog";
 import { getTargetTypeOptions, type TargetTypeOption } from "@/lib/type-mapping/target-type-catalog";
@@ -443,11 +444,29 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
     finally { setIsGenerating(false); }
   }
 
+  // The way out of a refused preview (a version that used the saved draft of an entity it references): regenerate from the published
+  // versions and publish the result. Offered on the refusal toast, never done silently.
+  async function handleRegenerateAndPublish(targetKey: string, version: number) {
+    setIsPublishing(true);
+    try {
+      const result = await publishSchemaAction(entityId, targetKey, version, { regenerateFromPublished: true });
+      if (result.error) { toast.error(result.error); return; }
+      toast.success(`${getTargetMeta(targetKey).displayName} regenerated from the published versions and published`);
+      await loadVersions();
+    } catch { toast.error("Deploy failed"); }
+    finally { setIsPublishing(false); }
+  }
+
   async function handlePublish(targetKey: string, version: number) {
     setIsPublishing(true);
     try {
       const result = await publishSchemaAction(entityId, targetKey, version);
-      if (result.error) { toast.error(result.error); return; }
+      if (result.error) {
+        const refusal = publishRefusalToast(result, () => void handleRegenerateAndPublish(targetKey, version));
+        if (refusal.options) toast.error(refusal.message, refusal.options);
+        else toast.error(refusal.message);
+        return;
+      }
       toast.success(`${getTargetMeta(targetKey).displayName} v${version} marked as deployed`);
       await loadVersions();
     } catch { toast.error("Deploy failed"); }

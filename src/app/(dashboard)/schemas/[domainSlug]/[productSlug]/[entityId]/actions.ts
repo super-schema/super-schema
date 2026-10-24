@@ -20,7 +20,7 @@ import {
 import { requireId } from "@/services/events/service-guards";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
-import { TENANT_PLACEHOLDER, readFieldReference, upgradeLegacyReference, writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
+import { TENANT_PLACEHOLDER, readFieldReference, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
 import { loadReferenceClosure, type LegacyUpgrade, type ResolveMode } from "@/lib/references/closure";
 import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-versioning/schema-version-publishability";
 import { getActiveTenantId } from "@/lib/active-tenant";

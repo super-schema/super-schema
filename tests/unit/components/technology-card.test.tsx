@@ -51,6 +51,7 @@ vi.mock(
   })
 );
 
+import { toast } from "sonner";
 import { TechnologyCard } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/TechnologyCard";
 
 afterEach(() => {
@@ -249,5 +250,59 @@ describe("TechnologyCard", () => {
     expect(screen.getByText("Example values")).toBeDefined();
     expect(screen.getByText(/123456789012345\.6789/)).toBeDefined();
     expect(screen.getByText(/Financial totals/)).toBeDefined();
+  });
+});
+
+describe("TechnologyCard publish refusal (Task 8)", () => {
+  const PREVIEW_REFUSAL = {
+    error: "This schema version was generated from the saved draft of Sales / Orders / Customer, so it is a preview and cannot be published.",
+    code: "PREVIEW_NOT_PUBLISHABLE",
+    needsPublishedRegeneration: true,
+  };
+
+  it("a plain refusal is the error toast only, with no way out attached", async () => {
+    publishSchemaActionMock.mockResolvedValue({ error: "Version 1 not found" });
+    render(<TechnologyCard {...baseProps} entityVersion={2} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /mark deployed/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Version 1 not found"));
+    expect(publishSchemaActionMock).toHaveBeenCalledTimes(1);
+    expect(publishSchemaActionMock).toHaveBeenCalledWith("entity-1", "bigquery", 1);
+  });
+
+  it("a preview refusal shows the message with a button that regenerates from the published versions and publishes", async () => {
+    publishSchemaActionMock.mockResolvedValueOnce(PREVIEW_REFUSAL).mockResolvedValueOnce({ success: true });
+    const onVersionsChange = vi.fn();
+    render(<TechnologyCard {...baseProps} onVersionsChange={onVersionsChange} entityVersion={2} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /mark deployed/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    const [message, options] = vi.mocked(toast.error).mock.calls[0] as unknown as [string, { action: { label: string; onClick: () => void } }];
+    expect(message).toBe(PREVIEW_REFUSAL.error);
+    expect(options.action.label).toBe("Regenerate from published and publish");
+    expect(publishSchemaActionMock).toHaveBeenCalledTimes(1); // nothing regenerated until the user asks
+
+    options.action.onClick();
+
+    await waitFor(() => expect(publishSchemaActionMock).toHaveBeenCalledTimes(2));
+    expect(publishSchemaActionMock).toHaveBeenLastCalledWith("entity-1", "bigquery", 1, { regenerateFromPublished: true });
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/published versions/)));
+    expect(onVersionsChange).toHaveBeenCalled();
+  });
+
+  it("when regenerating fails (an entity was never published) its own message is shown, plainly", async () => {
+    publishSchemaActionMock
+      .mockResolvedValueOnce(PREVIEW_REFUSAL)
+      .mockResolvedValueOnce({ error: "Sales / Orders / Customer has never been published, so a published schema cannot use it.", code: "NEVER_PUBLISHED" });
+    render(<TechnologyCard {...baseProps} entityVersion={2} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /mark deployed/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    (vi.mocked(toast.error).mock.calls[0] as unknown as [string, { action: { onClick: () => void } }])[1].action.onClick();
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(2));
+    expect(toast.error).toHaveBeenLastCalledWith("Sales / Orders / Customer has never been published, so a published schema cannot use it.");
   });
 });

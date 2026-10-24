@@ -22,6 +22,7 @@ import {
 import type { SchemaVersion } from "@/types/schema-version";
 import { StatusBadge } from "./SchemaVersionList";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
+import { publishRefusalToast } from "./publish-refusal";
 import { SchemaVersionList } from "./SchemaVersionList";
 import { SchemaCodePreview } from "./SchemaCodePreview";
 import type { SchemaTargetFieldMappingRow } from "@/lib/schema-targets/field-type-overrides";
@@ -497,13 +498,38 @@ export function TechnologyCard({
     }
   }, [generate, targetInfo, fieldsCount, onVersionsChange, loadMappings]);
 
+  // The way out of a refused preview (a version that used the saved draft of an entity it references): regenerate from the published
+  // versions and publish the result. Offered on the refusal toast, never done silently.
+  const handleRegenerateAndPublish = useCallback(
+    async (version: number) => {
+      setActionPending(`publish-${version}`);
+      try {
+        const result = await publishSchemaAction(entityId, targetInfo.key, version, { regenerateFromPublished: true });
+        if (result.error) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success(`${targetInfo.displayName} regenerated from the published versions and published`);
+        setViewingVersion(null);
+        await Promise.resolve(onVersionsChange());
+      } catch {
+        toast.error("Publish failed");
+      } finally {
+        setActionPending(null);
+      }
+    },
+    [entityId, targetInfo, onVersionsChange]
+  );
+
   const handlePublish = useCallback(
     async (version: number) => {
       setActionPending(`publish-${version}`);
       try {
         const result = await publishSchemaAction(entityId, targetInfo.key, version);
         if (result.error) {
-          toast.error(result.error);
+          const refusal = publishRefusalToast(result, () => void handleRegenerateAndPublish(version));
+          if (refusal.options) toast.error(refusal.message, refusal.options);
+          else toast.error(refusal.message);
           return;
         }
         toast.success(`${targetInfo.displayName} v${version} published`);
@@ -514,7 +540,7 @@ export function TechnologyCard({
         setActionPending(null);
       }
     },
-    [entityId, targetInfo, onVersionsChange]
+    [entityId, targetInfo, onVersionsChange, handleRegenerateAndPublish]
   );
 
   const handleDeploy = useCallback(
