@@ -66,6 +66,10 @@ vi.mock("@/lib/db", () => ({
         return roleStore.length;
       }),
     },
+    // The domains that exist: the ones whose id starts with "dom-" (a role row has a foreign key to its domain).
+    domain: {
+      findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id.startsWith("dom-") ? { id: args.where.id } : null)),
+    },
   },
 }));
 
@@ -115,6 +119,19 @@ describe("RBAC Service", () => {
         expect(result.data.role).toBe("VIEWER");
         expect(result.data.domainId).toBe("dom-1");
       }
+    });
+
+    it("refuses a domain that does not exist, with a message, and writes nothing", async () => {
+      const result = await assignRole(
+        { userId: "user-1", role: "VIEWER", domainId: "no-such-domain" },
+        adminCtx
+      );
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("NOT_FOUND");
+        expect(result.error.message).toBe('Domain "no-such-domain" not found');
+      }
+      expect(await _getRoleStore()).toEqual([]);
     });
 
     it("assigns a domain-scoped AUTHOR role", async () => {

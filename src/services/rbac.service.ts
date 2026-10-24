@@ -115,6 +115,18 @@ export async function assignRole(
     });
   }
 
+  // The role row has a foreign key to its domain: a domain that does not exist is said, not left to the database to refuse.
+  if (domainId) {
+    const domain = await prisma.domain.findUnique({ where: { id: domainId }, select: { id: true } });
+    if (!domain) {
+      return err({
+        code: "NOT_FOUND",
+        message: `Domain "${domainId}" not found`,
+        suggestedFix: "Use the id of an existing domain.",
+      });
+    }
+  }
+
   // Prevent duplicate role assignments
   const existing = await prisma.userRole.findFirst({
     where: {
