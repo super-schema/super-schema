@@ -414,6 +414,24 @@ test.describe("a visitor with a forged or stale session cookie", () => {
     }
   });
 
+  test("a server action POSTed to a page address that ends like an image (/schemas/foo.png) still meets the middleware: 401, never executed", { tag: ["@regression"] }, async ({
+    request,
+  }) => {
+    // The matcher leaves out static files by the look of the address (`.png`); `/schemas/foo.png` is a page (`[domainSlug]`), and an
+    // action POSTed there used to skip the door. The Next-Action header now always runs the middleware.
+    for (const path of ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg"]) {
+      for (const cookie of [undefined, `authjs.session-token=${FORGED}`]) {
+        const response = await request.post(path, {
+          headers: { "next-action": "x", ...(cookie ? { cookie } : {}) },
+          maxRedirects: 0,
+          data: "[]",
+        });
+        expect(response.status(), `${path} with ${cookie ?? "no cookie"}`).toBe(401);
+        expect(await response.json(), path).toEqual({ error: "Not authenticated" });
+      }
+    }
+  });
+
   test("odd spellings of the endpoint's address (//api, /API, an encoded letter, an encoded slash under /login) serve no data without a session", { tag: ["@regression"] }, async ({
     request,
   }) => {

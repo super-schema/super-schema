@@ -64,6 +64,11 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
+    // Pages and endpoints: everything but the static files Next serves itself.
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    // ... EXCEPT that a server action always comes through the door. The exclusion above is by the look of the address, and a page's
+    // address can end like an image (`/schemas/foo.png` is `[domainSlug]`): an action POSTed there (header `Next-Action`) would skip
+    // the middleware and rest on the action's own auth() alone. Matchers are alternatives, so this one adds what the first leaves out.
+    { source: "/:path*", has: [{ type: "header", key: "next-action" }] },
   ],
 };

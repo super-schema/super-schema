@@ -269,6 +269,43 @@ describe("the matcher and the shapes of an address", () => {
     expect(await outcome(path)).toBe(expected);
   });
 
+  describe("a server action (a request with a Next-Action header) always runs the middleware", () => {
+    // `/schemas/foo.png` is a page address (it matches `[domainSlug]`) whose last segment merely ends like an image: the matcher's
+    // exclusion of static files must not let a server action POSTed there skip the door (the action's own auth() would then be the
+    // only check).
+    const withAction = { "next-action": "40abc" };
+    const matches = (path: string, headers?: Record<string, string>) => unstable_doesMiddlewareMatch({ config, url: url(path), headers });
+
+    it.each(["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/a.png", "/favicon.ico", "/x/y.webp", "/schemas/foo.PNG"])(
+      "%s with the header is matched",
+      (path) => {
+        expect(matches(path, withAction), path).toBe(true);
+      },
+    );
+
+    it.each(["/a.png", "/schemas/foo.png", "/favicon.ico", "/x.svg", "/_next/static/x", "/_next/image"])(
+      "%s without the header stays a static file the middleware does not see",
+      (path) => {
+        expect(matches(path), path).toBe(false);
+      },
+    );
+
+    it("a pages path is matched with and without the header", () => {
+      for (const path of ["/schemas", "/schemas/billing/ledger", "/api/domains-tree", "/"]) {
+        expect(matches(path), path).toBe(true);
+        expect(matches(path, withAction), path).toBe(true);
+      }
+    });
+
+    it("a visitor without a session who POSTs a server action to /schemas/foo.png gets 401", async () => {
+      const path = "/schemas/foo.png";
+      expect(matches(path, withAction)).toBe(true);
+      const response = await middleware(new NextRequest(url(path), { method: "POST", headers: withAction }));
+      expect(response.status).toBe(401);
+      expect(response.headers.get("location")).toBeNull();
+    });
+  });
+
   it("no unauthenticated address of the app's data is let through", async () => {
     for (const path of ["/schemas", "/schemas/billing", "/api/tenants", "/api/compliance/gaps", "/admin", "/glossary", "/"]) {
       expect(await outcome(path), path).not.toBe("pass");
