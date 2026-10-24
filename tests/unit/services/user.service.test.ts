@@ -1,4 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// `withAudit` writes the audit row through the app's own client; here it is a pass-through that remembers how it was called.
+vi.mock("@/lib/audit", () => ({
+  AuditUserMissingError: class AuditUserMissingError extends Error {},
+  withAudit: vi.fn(async ({ fn }: { fn: () => Promise<unknown> }) => fn()),
+}));
+
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { getUsers, getUserById, updateUser } from "@/services/user.service";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -175,6 +183,41 @@ describe("User Service", () => {
       expect(result.success).toBe(false);
       if (!result.success) expect(result.error.code).toBe("FORBIDDEN");
       expect(users.find((u) => u.id === "user-1")!.name).toBe("Alice");
+    });
+
+    it("writes one audit entry for the admin who made the change, carrying the name as it was", async () => {
+      await updateUser({ id: "user-1", name: "Alice Updated" }, adminCtx);
+
+      expect(withAudit).toHaveBeenCalledTimes(1);
+      const call = vi.mocked(withAudit).mock.calls[0][0];
+      expect(call).toMatchObject({ action: "UPDATE", entityType: "User", entityId: "user-1", userId: "admin-1", beforeState: { name: "Alice" } });
+    });
+
+    it("writes no audit entry for a call it refuses (a role, a blank name, a missing user)", async () => {
+      await updateUser({ id: "user-1", name: "Hacked" }, viewerCtx);
+      await updateUser({ id: "user-1", name: "" }, adminCtx);
+      await updateUser({ id: "nonexistent", name: "Test" }, adminCtx);
+
+      expect(withAudit).not.toHaveBeenCalled();
+    });
+
+    it("tells an admin whose own user no longer exists to sign in again, and changes nothing", async () => {
+      vi.mocked(withAudit).mockRejectedValueOnce(new AuditUserMissingError("gone"));
+
+      const result = await updateUser({ id: "user-1", name: "Never Saved" }, adminCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.code).toBe("UNAUTHORIZED");
+      expect(users.find((u) => u.id === "user-1")!.name).toBe("Alice");
+    });
+
+    it("a user deleted between the read and the write (P2025) is NOT_FOUND", async () => {
+      fakePrisma.user.update.mockRejectedValueOnce(Object.assign(new Error("Record to update not found."), { code: "P2025" }));
+
+      const result = await updateUser({ id: "user-1", name: "Late" }, adminCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.code).toBe("NOT_FOUND");
     });
 
     it("passes an unrelated database error on as a failure, never as NOT_FOUND", async () => {

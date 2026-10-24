@@ -6,6 +6,7 @@
  * All service functions return Result<T>.
  */
 
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -131,15 +132,31 @@ export async function updateUser(
     });
   }
 
+  const existing = await ctx.prisma.user.findUnique({ where: { id: parsed.data.id }, select: { id: true, name: true } });
+  if (!existing) return userNotFound(parsed.data.id);
+
   try {
-    const updated = await ctx.prisma.user.update({
-      where: { id: parsed.data.id },
-      data: parsed.data.name !== undefined ? { name: parsed.data.name } : {},
-      select: { ...USER_SELECT, updatedAt: true },
+    // A change of a user's name is audited like the other admin changes: the entry carries the name as it was.
+    const updated = await withAudit({
+      action: "UPDATE",
+      entityType: "User",
+      entityId: existing.id,
+      userId: ctx.userId,
+      beforeState: { name: existing.name },
+      fn: () =>
+        ctx.prisma.user.update({
+          where: { id: existing.id },
+          data: parsed.data.name !== undefined ? { name: parsed.data.name } : {},
+          select: { ...USER_SELECT, updatedAt: true },
+        }),
     });
     return ok(updated);
   } catch (e: unknown) {
-    // P2025: "an operation failed because it depends on one or more records that were required but not found".
+    // The session of the acting admin names a user that no longer exists: the audit entry cannot be written.
+    if (e instanceof AuditUserMissingError) {
+      return err({ code: "UNAUTHORIZED", message: "Your session is stale. Sign out and sign in again, then retry.", suggestedFix: "Sign out and sign in again." });
+    }
+    // P2025: "an operation failed because it depends on one or more records that were required but not found" (deleted since the read).
     if (typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2025") return userNotFound(parsed.data.id);
     throw e;
   }
