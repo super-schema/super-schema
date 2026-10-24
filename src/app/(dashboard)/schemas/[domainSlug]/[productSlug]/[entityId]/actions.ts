@@ -32,6 +32,7 @@ import {
   type SchemaTargetTypeOverrides,
 } from "@/lib/schema-targets/field-type-overrides";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import type { FieldTypeMapping, SchemaVersion, SchemaVersionsMap } from "@/types/schema-version";
 import {
   getTargetRequirements,
   primaryKeyIneligibility,
@@ -951,30 +952,6 @@ async function applyTypeSpecFields(
 // ---------------------------------------------------------------------------
 // Schema version management (stored in entity metadata JSONB)
 // ---------------------------------------------------------------------------
-
-export interface FieldTypeMapping {
-  fieldName: string;
-  sourceType: string;
-  targetType: string;
-}
-
-export interface SchemaVersion {
-  version: number;
-  status: "draft" | "published" | "deployed";
-  output: string;
-  generatedAt: string;
-  entityVersion: number;
-  fieldTypeMappings?: FieldTypeMapping[];
-  typeOverrideSnapshot?: FieldTargetTypeOverride[];
-  overrideDriftSummary?: {
-    activeCount: number;
-    staleCount: number;
-  };
-  publishedAt?: string;
-  deployedAt?: string;
-}
-
-export type SchemaVersionsMap = Record<string, SchemaVersion[]>;
 
 async function getSchemaTargetFieldMappingsInternal(
   entityId: string,

@@ -19,7 +19,7 @@ import {
   getSchemaTargetFieldMappingsAction,
   saveSchemaFieldTypeOverrideAction,
 } from "../actions";
-import type { SchemaVersion } from "../actions";
+import type { SchemaVersion } from "@/types/schema-version";
 import { StatusBadge } from "./SchemaVersionList";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import { SchemaVersionList } from "./SchemaVersionList";

@@ -6,6 +6,7 @@
  */
 
 import type { EmitterWarning, ValidationError } from "@/lib/compiler/types";
+import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
 
 // ---------------------------------------------------------------------------
 // Validation status for an emitted target
@@ -22,8 +23,10 @@ export interface TargetOutput {
   name: string;
   /** The target format identifier (e.g., "bigquery-ddl", "avro-schema", "openapi-3.1") */
   targetFormat: string;
-  /** The emitted output string (DDL, JSON, YAML, etc.) */
+  /** The emitted output string (DDL, JSON, YAML, etc.); for a closure target, the bundled `===== path =====` string of `files`. */
   output: string;
+  /** The structured form of `output`: one file per entity, for the closure targets only (the DB targets emit one string). */
+  files?: EmittedFile[];
   /** Whether the output passed validation */
   isValid: boolean;
   /** Computed validation status */

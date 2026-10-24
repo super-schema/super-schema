@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { getSchemaVersionsAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
-import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "../actions";
+import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "@/types/schema-version";
 import { SchemaCodePreview } from "./SchemaCodePreview";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import { generationWarningToast, stagedWarningToast } from "./generate-warnings";

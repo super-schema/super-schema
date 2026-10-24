@@ -2,7 +2,7 @@
 
 import { Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { SchemaVersion } from "../actions";
+import type { SchemaVersion } from "@/types/schema-version";
 import { formatDateOnly } from "@/lib/date-format";
 
 // ---------------------------------------------------------------------------

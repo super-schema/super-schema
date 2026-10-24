@@ -167,7 +167,8 @@ export function overlongNameMessage(name: string): string {
  * A failed closure emission as a target result. `EMISSION_INVALID` carries its messages (and the warnings found so far) in
  * `details`; any other error is one message.
  */
-function resultFromEmissionError(error: ServiceError): OfficialTypeSpecTargetResult {
+/** A failed closure emission as a target result: INVALID, with the emitter's own messages (`details.errors`) and warnings. */
+export function resultFromEmissionError(error: ServiceError): OfficialTypeSpecTargetResult {
   const details = (error.details ?? {}) as { errors?: unknown; warnings?: unknown };
   const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []);
   const messages = strings(details.errors);
