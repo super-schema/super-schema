@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -8,8 +8,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 
+const subscribeNever = () => () => {};
+
+/** False in the server's HTML and while the page hydrates, true once this component runs in the browser. */
+function useHydrated(): boolean {
+  return useSyncExternalStore(subscribeNever, () => true, () => false);
+}
+
 export default function LoginPage() {
   const router = useRouter();
+  // The submit button stays disabled until React is running this form: a form submitted before that is submitted by the browser itself.
+  const hydrated = useHydrated();
   // The e-mail is state of this component (above the re-keyed card below), so a refused login does not empty it: the user mistyped the
   // password, not the address. The password is left to the browser and is cleared with the card.
   const [email, setEmail] = useState("");
@@ -111,7 +120,8 @@ export default function LoginPage() {
       )}
 
       {/* Form */}
-      <form onSubmit={handleSubmit} data-testid="login-form" className="space-y-space-4">
+      {/* method="post": credentials must never be put in a query string (a form submitted before hydration is submitted natively). */}
+      <form method="post" onSubmit={handleSubmit} data-testid="login-form" className="space-y-space-4">
         <div>
           <label className="text-body-small text-foreground mb-space-1 block font-medium">
             Email
@@ -159,7 +169,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <Button type="submit" className="w-full h-10" disabled={isPending} data-testid="login-submit">
+        <Button type="submit" className="w-full h-10" disabled={isPending || !hydrated} data-testid="login-submit">
           {isPending ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
