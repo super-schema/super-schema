@@ -328,7 +328,8 @@ test.describe("tenant switcher", () => {
       await expect(page.getByText("Organizations", { exact: true })).toBeVisible();
 
       await expect(tenantOption(page, other.tenantId)).toContainText(other.tenantName);
-      await expect(tenantOption(page, other.tenantId)).toContainText("1");
+      // Its one domain: the count is a number of its own, read exactly.
+      await expect(tenantOption(page, other.tenantId).getByTestId("tenant-option-domain-count")).toHaveText("1");
       await expect(tenantOption(page, other.tenantId)).toHaveAttribute("data-active", "false");
       const active = page.locator('[data-testid="tenant-option"][data-active="true"]');
       await expect(active).toHaveCount(1);

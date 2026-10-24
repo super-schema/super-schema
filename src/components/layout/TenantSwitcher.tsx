@@ -108,7 +108,7 @@ export function TenantSwitcher() {
                 )}
               />
               <span className="flex-1 truncate">{tenant.name}</span>
-              <span className="text-caption text-muted-foreground">
+              <span className="text-caption text-muted-foreground" data-testid="tenant-option-domain-count">
                 {tenant.domainCount}
               </span>
             </DropdownMenuItem>

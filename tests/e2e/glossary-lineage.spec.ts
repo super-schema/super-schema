@@ -406,16 +406,19 @@ test.describe("lineage", () => {
     await expect(viewport(page)).toHaveAttribute("style", fitted);
   });
 
-  test("an entity of another tenant, and its references, are not drawn", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+  test("an entity of another tenant, and its references, are not drawn", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
     const other = await createSecondTenant();
     try {
       const a = await createEntityInTenant(other.tenantId, unique("ForeignLinA"));
       const b = await createEntityInTenant(other.tenantId, unique("ForeignLinB"));
       await createReferenceFieldRow(a.id, { id: b.id, name: "ForeignLinB" });
+      // This tenant has a pair of its own: it is drawn, which says the page has answered before the other tenant's absence means anything.
+      const [from, to] = workspace.entities;
+      await createReferenceFieldRow(from.id, to);
 
       await openLineage(page);
-      // The page has answered: either a graph or the empty state of this tenant is there.
-      await expect(centerPanel(page).locator(".react-flow, [data-testid='lineage-empty-state']").first()).toBeVisible();
+      await expect(node(page, from.id)).toBeVisible();
+      await expect(node(page, to.id)).toBeVisible();
       await expect(node(page, a.id)).toHaveCount(0);
       await expect(node(page, b.id)).toHaveCount(0);
       await expect(edge(page, a.id, b.id)).toHaveCount(0);
