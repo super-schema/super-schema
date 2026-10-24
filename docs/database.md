@@ -57,6 +57,7 @@ npm run dev
 | `DB_PROVIDER` | `pglite` | `pglite` or `postgresql` |
 | `PGLITE_DATA_DIR` | `./data/pglite` | PGlite data directory (pglite only) |
 | `DATABASE_URL` | — | **Required** when `DB_PROVIDER=postgresql` |
+| `E2E_DATABASE_URL` | — | The browser suite's PostgreSQL database (the specs write their fixtures to it directly; it wins over `DATABASE_URL`). `npm run test:e2e:release` sets it to its own throwaway Docker database — see [`docs/testing/e2e.md`](testing/e2e.md) |
 | `SCHEMA_IMPORT_GIT_MODE` | `restricted` | JSON Schema "From URL": `any` or `restricted`. Git-host URLs are fetched with the server's own `gh` credentials; unknown value = `restricted` |
 | `SCHEMA_IMPORT_GIT_SCOPES` | (empty) | Comma-separated `owner` or `owner/repo` (case-insensitive) git roots allowed in `restricted` mode. Empty = git-host import disabled |
 
