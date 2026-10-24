@@ -7,6 +7,7 @@ import { pickRootEntity } from "@/lib/importers/multi-asset";
 import type { ParsedEntity, ParsedField } from "@/lib/importers/types";
 import { renameReservedFields } from "@/lib/reserved-field-names";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
+import { splitBundledFiles } from "./validators";
 
 export interface Difference { path: string; before: unknown; after: unknown; classification: "EXPECTED" | "OPEN" | "DEFECT"; why?: string }
 export interface RoundTripResult { status: "SAME" | "EXPECTED_DIFF" | "OPEN_DIFF" | "DEFECT" | "SKIPPED" | "REIMPORT_FAILED"; differences: Difference[]; note?: string }
@@ -98,8 +99,35 @@ function diff(path: string, a: unknown, b: unknown, out: Difference[], ctx: { ig
   out.push({ path, before: a, after: b, classification: nameRule || (rule && !rule.open) ? "EXPECTED" : rule ? "OPEN" : "DEFECT", why: nameRule ? "an entity name is written as a TypeSpec identifier (spaces and symbols become `_`, a reserved word gets a prefix)" : rule?.why });
 }
 
+/**
+ * The importer reads ONE document. The app's JSON Schema output is one file per model (no `bundleId`): a bare document, or several
+ * `===== <Name>.json =====` blocks whose `$ref`s name each other's files. Both are read as the bundle shape the emitter used to
+ * write, `{ $id: <root>, $defs: { <Name>: <document> } }` (each `$defs` entry keeps its own `$id`, which is how a `$ref: "Name.json"`
+ * resolves), with the root entity first. Output that is not JSON is returned as it is, for the importer to report.
+ */
+export function asImportableDocument(output: string, rootName: string): string {
+  const split = splitBundledFiles(output);
+  const files = split.length > 0 ? split : [{ name: "", body: output }];
+  const entries: Array<[string, Record<string, unknown>]> = [];
+  for (const file of files) {
+    let schema: unknown;
+    try { schema = JSON.parse(file.body); } catch { return output; }
+    if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return output;
+    const { $schema: _dialect, ...rest } = schema as Record<string, unknown>;
+    void _dialect;
+    const id = typeof rest.$id === "string" ? rest.$id : file.name;
+    const stem = (id.split("/").pop() ?? id).replace(/\.json$/, "");
+    if (stem === "") return output;
+    entries.push([stem, rest]);
+  }
+  const rootStem = (entries.find(([stem]) => stem === sanitizeIdentifier(rootName)) ?? entries[0])[0];
+  const ordered = [...entries.filter(([stem]) => stem === rootStem), ...entries.filter(([stem]) => stem !== rootStem)];
+  const dialect = (() => { try { return (JSON.parse(files[0].body) as { $schema?: unknown }).$schema; } catch { return undefined; } })();
+  return JSON.stringify({ ...(typeof dialect === "string" ? { $schema: dialect } : {}), $id: rootStem, $defs: Object.fromEntries(ordered) });
+}
+
 export function compareRoundTrip(original: ParsedEntity, generatedJsonSchema: string): RoundTripResult {
-  const reparsed = parseJsonSchemaDocument(generatedJsonSchema);
+  const reparsed = parseJsonSchemaDocument(asImportableDocument(generatedJsonSchema, original.name));
   if (!reparsed.success) return { status: "REIMPORT_FAILED", differences: [], note: reparsed.error.message.slice(0, 300) };
   const second = pickRootEntity(reparsed.data);
   const differences: Difference[] = [];

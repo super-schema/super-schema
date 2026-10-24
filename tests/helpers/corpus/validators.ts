@@ -30,23 +30,100 @@ export interface Validation {
 const pass = (tier: string): Validation => ({ ok: true, tier });
 const fail = (tier: string, error: string): Validation => ({ ok: false, tier, error: error.slice(0, 700) });
 
+/** At most this many unresolved external `$ref`s are stubbed per output (a hostile document cannot make the loop unbounded). */
+const MAX_STUBBED_REFS = 500;
+
+/**
+ * Makes the node a JSON pointer (`/$defs/Money`) names exist in `stub` (as `{}`); true when something was added. A pointer that is
+ * not a plain `/a/b` path (an anchor, `__proto__`, an empty path) adds nothing, so the caller gives up on that ref.
+ */
+function graftPointer(stub: Record<string, unknown>, pointer: string): boolean {
+  if (!pointer.startsWith("/")) return false;
+  let node = stub;
+  let added = false;
+  for (const raw of pointer.slice(1).split("/")) {
+    let key: string;
+    try { key = decodeURIComponent(raw).replace(/~1/g, "/").replace(/~0/g, "~"); } catch { return added; }
+    if (key === "__proto__") return added;
+    if (!Object.prototype.hasOwnProperty.call(node, key)) {
+      node[key] = {};
+      added = true;
+    }
+    const next = node[key];
+    if (typeof next !== "object" || next === null) return added;
+    node = next as Record<string, unknown>;
+  }
+  return added;
+}
+
+/**
+ * The JSON Schema output of the app is one bare document, or (a closure, or a stand-alone entity that declares an enum / shared
+ * type) several documents joined as `===== <Name>.json =====` blocks, which reference each other by file (`$ref: "Other.json"`,
+ * resolved against each document's own `$id`). Every document is added to one ajv instance (adding validates it against the
+ * meta-schema of its dialect) and compiled, so a `$ref` to a sibling file must resolve.
+ *
+ * An external `$ref` that points at NO document of the output (`common_components/.../date_time.json`) is kept dangling ON PURPOSE
+ * (an import has no base URL to fetch it from): it is not a defect of the output, so it is given an empty stub schema and
+ * compilation continues. Only a ref that is unresolved for any other reason fails.
+ */
 export async function validateJsonSchema(output: string): Promise<Validation> {
   const tier = "ajv 8 meta-schema compile";
-  let schema: Record<string, unknown>;
-  try { schema = JSON.parse(output); } catch (e) { return fail(tier, `not JSON: ${(e as Error).message}`); }
-  const uri = String(schema.$schema ?? "");
+  const bundled = splitBundledFiles(output);
+  const files = bundled.length > 0 ? bundled : [{ name: "main.json", body: output }];
+  const schemas: Array<{ name: string; schema: Record<string, unknown> }> = [];
+  for (const file of files) {
+    try {
+      const parsed: unknown = JSON.parse(file.body);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return fail(tier, `${file.name} is not a JSON object`);
+      schemas.push({ name: file.name, schema: parsed as Record<string, unknown> });
+    } catch (e) {
+      return fail(tier, `not JSON${bundled.length > 0 ? ` (${file.name})` : ""}: ${(e as Error).message}`);
+    }
+  }
+  const uri = String(schemas[0]?.schema.$schema ?? "");
+  const known = uri.includes("2020-12") || uri.includes("2019-09");
   const options = { strict: false, validateFormats: false, allErrors: false };
   try {
-    let Ctor: new (o: object) => { compile(s: object): unknown };
+    let Ctor: new (o: object) => {
+      addSchema(s: object, key?: string): unknown;
+      removeSchema(key: string): unknown;
+      getSchema(key: string): unknown;
+    };
     if (uri.includes("2020-12")) Ctor = compilerReq("ajv/dist/2020").default;
     else if (uri.includes("2019-09")) Ctor = compilerReq("ajv/dist/2019").default;
     else Ctor = compilerReq("ajv").default ?? compilerReq("ajv");
     const ajv = new Ctor(options);
-    const { $schema: _ignored, ...rest } = schema;
-    void _ignored;
-    // Compiling the schema validates it against the meta-schema of its dialect; a draft we do not know is compiled as the default.
-    ajv.compile(uri.includes("2020-12") || uri.includes("2019-09") ? schema : rest);
-    return pass(tier);
+    const keys = schemas.map(({ name, schema }) => {
+      // A draft we do not know is compiled as the default one.
+      const { $schema: _ignored, ...rest } = schema;
+      void _ignored;
+      const key = typeof schema.$id === "string" && schema.$id !== "" ? schema.$id : name;
+      ajv.addSchema(known ? schema : rest, key);
+      return key;
+    });
+    let stubbed = 0;
+    const stubs = new Map<string, Record<string, unknown>>();
+    for (const key of keys) {
+      for (;;) {
+        try {
+          // Compiling the schema validates it against the meta-schema of its dialect and resolves its references.
+          ajv.getSchema(key);
+          break;
+        } catch (e) {
+          const { missingSchema, missingRef } = e as { missingSchema?: unknown; missingRef?: unknown };
+          if (typeof missingSchema !== "string" || stubbed >= MAX_STUBBED_REFS) throw e;
+          const stub = stubs.get(missingSchema) ?? {};
+          // A ref with a pointer (`other.json#/$defs/Money`) needs that node to exist in the stub.
+          const pointer = typeof missingRef === "string" && missingRef.includes("#") ? missingRef.slice(missingRef.indexOf("#") + 1) : "";
+          if (!graftPointer(stub, pointer) && stubs.has(missingSchema)) throw e;
+          if (stubs.has(missingSchema)) ajv.removeSchema(missingSchema);
+          stubs.set(missingSchema, stub);
+          stubbed += 1;
+          ajv.addSchema(stub, missingSchema);
+        }
+      }
+    }
+    return pass(stubbed > 0 ? `${tier} (dangling external $ref tolerated)` : tier);
   } catch (e) {
     return fail(tier, (e as Error).message);
   }
@@ -149,13 +226,16 @@ function exec(cmd: string, args: string[], cwd: string, timeout: number): Promis
 
 let javacAvailable: Promise<boolean> | undefined;
 
-/** Splits the "===== Name.java =====" multi-file output of the java-pojo emitter. */
-export function splitJavaFiles(output: string): Array<{ name: string; body: string }> {
+/** Splits the "===== Name.ext =====" multi-file output (bundleGeneratedFiles) into its files; empty when the output is one bare file. */
+export function splitBundledFiles(output: string): Array<{ name: string; body: string }> {
   const parts = output.split(/^===== (.+?) =====$/m);
   const files: Array<{ name: string; body: string }> = [];
   for (let i = 1; i + 1 < parts.length; i += 2) files.push({ name: parts[i].trim(), body: parts[i + 1] });
   return files;
 }
+
+/** The java-pojo emitter's multi-file output (a single class is written without the marker, see validateJava). */
+export const splitJavaFiles = splitBundledFiles;
 
 /** Stub annotation types for the annotation packages the emitter may import (all imports of those packages become empty @interfaces). */
 function stubsFor(sources: string[]): Array<{ rel: string; body: string }> {
