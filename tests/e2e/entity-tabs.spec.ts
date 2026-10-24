@@ -496,6 +496,18 @@ test.describe("the field studio and the right panel", () => {
     await page.goto(`${invoice.url}/fields/id?version=1.2.0&panel=governance`);
     await expect(page).toHaveURL(`${invoice.url}/fields/${fieldId}?version=1.2.0&panel=governance`);
     await expect(main.getByTestId(ID.studioName)).toHaveValue("id");
+
+    // What a hard load of the old address is answered, with no browser to follow it: not a 307. `loading.tsx` (the entity segment's skeleton)
+    // starts the response stream before the page runs, so by the time the page calls redirect() the status is sent: Next answers 200 and
+    // writes `<meta http-equiv="refresh" content="1;url=...">` into the stream, which a browser follows. (Were the skeleton removed, the
+    // answer would be a plain 307 with a Location header.) Either way the target is the id's address with the query string.
+    const raw = await page.request.get(`${invoice.url}/fields/id?version=1.2.0`, { maxRedirects: 0 });
+    const location =
+      raw.status() >= 300 && raw.status() < 400
+        ? raw.headers().location
+        : /<meta[^>]*http-equiv="refresh"[^>]*content="\d+;url=([^"]+)"/i.exec(await raw.text())?.[1];
+    expect(location, `status ${raw.status()}: neither a Location header nor a meta refresh`).toBeDefined();
+    expect(new URL(location!, page.url()).pathname + new URL(location!, page.url()).search).toBe(`${invoice.url}/fields/${fieldId}?version=1.2.0`);
   });
 
   test("field studio: a rename and a second autosave keep the focus and the typed text (the form is not remounted by the refresh after a save)", { tag: ["@regression"] }, async ({
