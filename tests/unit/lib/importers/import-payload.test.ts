@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 import { parseProtobufDocument } from "@/lib/importers/protobuf.importer";
 import { toAssetImportResult } from "@/lib/importers/multi-asset";
-import { buildImportAssetsPayload, parsedFieldToCreateFieldInput } from "@/lib/importers/import-payload";
+import { buildImportAssetsPayload, decimalFacts, parsedFieldToCreateFieldInput } from "@/lib/importers/import-payload";
 import { mapDocumentToImportResult } from "@/lib/importers/typespec.importer";
 import { parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
 
@@ -118,6 +118,47 @@ describe("parsedFieldToCreateFieldInput", () => {
       precision: null,
       scale: null,
       decorators: { semantics: { description: "Contact" }, classification: { level: "PII" } },
+    });
+  });
+});
+
+describe("the precision and scale of an imported decimal", () => {
+  const decimal = { name: "total", type: "decimal", nullable: true, confidence: "high" as const, originalType: "NUMERIC(12, 2)", precision: 12, scale: 2 };
+
+  it("travel into the create input of an imported field", () => {
+    expect(parsedFieldToCreateFieldInput(decimal)).toMatchObject({ type: "decimal", precision: 12, scale: 2 });
+  });
+
+  it("are null for a field that declared none", () => {
+    expect(parsedFieldToCreateFieldInput({ ...decimal, precision: undefined, scale: undefined })).toMatchObject({ precision: null, scale: null });
+  });
+
+  it("travel through the multi-asset payload, for a model and an entity alike", () => {
+    const result = {
+      models: [{ name: "Ledger", fields: [decimal], referencedModelNames: [], referencedByModelNames: [], recommendedAsEntity: true }],
+      sharedEnums: [],
+      customScalars: [],
+      unions: [],
+      services: [],
+      decoratorDefinitions: [],
+      warnings: [],
+    } as unknown as Parameters<typeof buildImportAssetsPayload>[0];
+    const payload = buildImportAssetsPayload(result, { ...NO_SELECTION, selectedModels: [0], selectedEntities: [0] });
+    expect(payload.models[0].fields[0]).toMatchObject({ precision: 12, scale: 2 });
+    expect(payload.entities[0].fields[0]).toMatchObject({ precision: 12, scale: 2 });
+  });
+
+  describe("decimalFacts (what the single-entity review writes)", () => {
+    it("keeps them while the type is still the imported one", () => {
+      expect(decimalFacts(decimal, "decimal")).toEqual({ precision: 12, scale: 2 });
+    });
+
+    it("drops them when the reviewer changed the type (they belong to a decimal)", () => {
+      expect(decimalFacts(decimal, "string")).toEqual({ precision: null, scale: null });
+    });
+
+    it("is null for a field the importer did not parse (a template, a field added by hand)", () => {
+      expect(decimalFacts(undefined, "decimal")).toEqual({ precision: null, scale: null });
     });
   });
 });

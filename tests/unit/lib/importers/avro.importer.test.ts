@@ -165,6 +165,58 @@ describe("Avro Importer", () => {
       expect(result.data.fields[0].type).toBe("decimal");
       expect(result.data.fields[0].confidence).toBe("high");
     });
+
+    describe("the precision and scale of a decimal are kept", () => {
+      const one = (type: unknown) => {
+        const result = parseAvroSchema(validAvro([{ name: "price", type }]));
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("did not parse");
+        return result.data.fields[0];
+      };
+
+      it("bytes with logicalType decimal", () => {
+        const field = one({ type: "bytes", logicalType: "decimal", precision: 12, scale: 2 });
+        expect(field.type).toBe("decimal");
+        expect(field.precision).toBe(12);
+        expect(field.scale).toBe(2);
+      });
+
+      it("a scale that is not written is 0 (the Avro default)", () => {
+        const field = one({ type: "bytes", logicalType: "decimal", precision: 9 });
+        expect(field.precision).toBe(9);
+        expect(field.scale).toBe(0);
+      });
+
+      it("inside a union with null the field is nullable and keeps them", () => {
+        const field = one(["null", { type: "bytes", logicalType: "decimal", precision: 18, scale: 4 }]);
+        expect(field.nullable).toBe(true);
+        expect(field.type).toBe("decimal");
+        expect(field.precision).toBe(18);
+        expect(field.scale).toBe(4);
+      });
+
+      it("a fixed decimal", () => {
+        const field = one({ type: "fixed", name: "Money", size: 8, logicalType: "decimal", precision: 18, scale: 4 });
+        expect(field.type).toBe("decimal");
+        expect(field.precision).toBe(18);
+        expect(field.scale).toBe(4);
+      });
+
+      it("a precision that is not a positive whole number is not kept (and nothing is made up)", () => {
+        for (const precision of ["12", -1, 1.5, null]) {
+          const field = one({ type: "bytes", logicalType: "decimal", precision, scale: 2 });
+          expect(field.type, String(precision)).toBe("decimal");
+          expect(field.precision, String(precision)).toBeUndefined();
+          expect(field.scale, String(precision)).toBeUndefined();
+        }
+      });
+
+      it("a field that is not a decimal has none", () => {
+        const field = one({ type: "long", logicalType: "timestamp-millis" });
+        expect(field.precision).toBeUndefined();
+        expect(field.scale).toBeUndefined();
+      });
+    });
   });
 
   describe("entity name extraction", () => {

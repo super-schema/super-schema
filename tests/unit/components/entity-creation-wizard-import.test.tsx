@@ -162,6 +162,25 @@ describe("EntityCreationWizard — multi-entity import", () => {
     });
   });
 
+  it("keeps the precision and scale of an imported decimal (BigQuery NUMERIC(12, 2)) in the create call, and shows them in the review row", async () => {
+    mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e-dec" });
+    render(<EntityCreationWizard target={PRODUCT_TARGET} />);
+    await pasteAndParse("CREATE TABLE ledger (\n  id STRING NOT NULL,\n  total NUMERIC(12, 2),\n  fee NUMERIC\n);");
+    await waitFor(() => expect(screen.getByDisplayValue("ledger")).toBeDefined());
+    // The review row of the decimal says what the source declared; a plain NUMERIC says nothing of the kind.
+    expect(screen.getByText("(12,2)")).toBeDefined();
+    expect(screen.getAllByText(/^\(\d+,\d+\)$/)).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create Entity" }));
+
+    await waitFor(() => expect(mocks.createEntityWithFieldsAction).toHaveBeenCalledTimes(1));
+    const [, input] = mocks.createEntityWithFieldsAction.mock.calls[0];
+    const [id, total, fee] = input.fields;
+    expect(id).toMatchObject({ name: "id", precision: null, scale: null });
+    expect(total).toMatchObject({ name: "total", type: "decimal", precision: 12, scale: 2 });
+    expect(fee).toMatchObject({ name: "fee", type: "decimal", precision: null, scale: null });
+  });
+
   it("opens the NEW entity page after a single-entity import creates it (not the product page)", async () => {
     mocks.createEntityWithFieldsAction.mockResolvedValue({ success: true, entityId: "e-new" });
     render(<EntityCreationWizard target={PRODUCT_TARGET} />);

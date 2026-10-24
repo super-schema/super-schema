@@ -235,6 +235,11 @@ export const ParsedFieldSummaryBadges = memo(function ParsedFieldSummaryBadges({
           {field.classification}
         </Badge>
       )}
+      {field.precision !== undefined && (
+        <Badge variant="outline" className="text-[9px] h-3.5 font-mono" title="Declared precision and scale">
+          ({field.precision},{field.scale ?? 0})
+        </Badge>
+      )}
       {dangling && (
         <Badge variant="outline" className="text-[9px] h-3.5 border-warning/40 text-warning">
           dangling ref
@@ -286,6 +291,8 @@ export const ParsedFieldDetails = memo(function ParsedFieldDetails({ field, enti
           <Row label="Key">{field.isKey ? "Yes" : "No"}</Row>
           {field.description && <Row label="Description">{field.description}</Row>}
           {field.format && <Row label="Format">{field.format}</Row>}
+          {field.precision !== undefined && <Row label="Precision">{String(field.precision)}</Row>}
+          {field.precision !== undefined && <Row label="Scale">{String(field.scale ?? 0)}</Row>}
           {field.constraints?.map((c) => (
             <Row key={`${c.type}`} label={`Constraint: ${CONSTRAINT_LABEL[c.type] ?? c.type}`}>
               {String(c.value)}

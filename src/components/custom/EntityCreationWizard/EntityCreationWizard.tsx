@@ -12,7 +12,7 @@ import { createTenantEntityAction } from "@/app/(dashboard)/schemas/enterprise/a
 import type { StandardTemplate } from "@/lib/schema-standards";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
-import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
+import { buildImportAssetsPayload, decimalFacts } from "@/lib/importers/import-payload";
 import { buildDecoratorsFromParsedField } from "@/lib/importers/decorator-builder";
 import { IMPORTED_ENTITY_FALLBACK_NAME } from "@/lib/importers/types";
 import type { ImportFormat, ParsedEntity } from "@/lib/importers/types";
@@ -408,8 +408,8 @@ export function EntityCreationWizard({
         isKey: f.isKey ?? false,
         description: f.description,
         classification: f.classification,
-        precision: null,
-        scale: null,
+        // A decimal the importer read with its precision and scale keeps them, until the reviewer changes the type of the row.
+        ...decimalFacts(f.parsed, f.type),
         ...(Object.keys(decorators).length > 0 ? { decorators } : {}),
         ...(f.fieldNumber != null ? { fieldNumber: f.fieldNumber } : {}),
       };

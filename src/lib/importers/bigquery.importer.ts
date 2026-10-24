@@ -6,7 +6,9 @@
  * Handles:
  * - CREATE TABLE with project.dataset.table name format
  * - Column definitions with types and NOT NULL constraints
- * - OPTIONS(description='...') for field descriptions
+ * - OPTIONS(description=...) for field descriptions: a GoogleSQL string literal (single, double or triple quoted, raw r'...', with its
+ *   escapes), found as the option itself and not as text inside another option's value
+ * - NUMERIC(p, s) / BIGNUMERIC(p, s) / DECIMAL / BIGDECIMAL: the declared precision and scale are kept on the field
  * - PARTITION BY and CLUSTER BY (ignored for import)
  * - Standard BigQuery types: STRING, INT64, FLOAT64, BOOL, BYTES,
  *   TIMESTAMP, DATETIME, DATE, NUMERIC, BIGNUMERIC, STRUCT, ARRAY
@@ -88,15 +90,10 @@ function parseColumnLine(line: string): ParsedField | null {
   const optionsStr = match[4] || "";
 
   // Extract description from OPTIONS
-  let description: string | undefined;
-  // A string literal is single- or double-quoted (BigQuery writes its own DDL with double quotes), may hold a ")" and escapes a quote with a backslash.
-  const descMatch = optionsStr.match(/description\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/i);
-  if (descMatch) {
-    description = (descMatch[1] ?? descMatch[2]).replace(/\\(.)/g, "$1");
-  }
+  const description = optionStringValue(optionsStr, "description");
 
   // Resolve type
-  const { type, confidence, originalType } = resolveBigQueryType(rawType);
+  const { type, confidence, originalType, precision, scale } = resolveBigQueryType(rawType);
 
   return {
     name,
@@ -105,7 +102,121 @@ function parseColumnLine(line: string): ParsedField | null {
     description,
     confidence,
     originalType,
+    ...(precision !== undefined ? { precision } : {}),
+    ...(scale !== undefined ? { scale } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// GoogleSQL string literals (the values of OPTIONS(...))
+// ---------------------------------------------------------------------------
+
+const SIMPLE_ESCAPES: Record<string, string> = {
+  a: "\x07",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "\\": "\\",
+  "?": "?",
+  '"': '"',
+  "'": "'",
+  "`": "`",
+};
+
+/** The escape that starts at `text[at]` (a backslash): what it stands for and how many characters it takes. An unknown one stays as written. */
+function decodeEscape(text: string, at: number): [string, number] {
+  const next = text[at + 1];
+  if (next === undefined) return ["\\", 1];
+  if (next in SIMPLE_ESCAPES) return [SIMPLE_ESCAPES[next], 2];
+  // \ooo (octal), \xHH, \uHHHH, \UHHHHHHHH: a fixed number of digits after the prefix
+  const fixed = (digits: number, radix: 8 | 16, prefix: number): [string, number] | null => {
+    const body = text.slice(at + prefix, at + prefix + digits);
+    const valid = radix === 8 ? /^[0-7]+$/ : /^[0-9a-fA-F]+$/;
+    if (body.length !== digits || !valid.test(body)) return null;
+    const code = parseInt(body, radix);
+    return code <= 0x10ffff ? [String.fromCodePoint(code), prefix + digits] : null;
+  };
+  const decoded = /[0-7]/.test(next)
+    ? fixed(3, 8, 1)
+    : next === "x" || next === "X"
+      ? fixed(2, 16, 2)
+      : next === "u"
+        ? fixed(4, 16, 2)
+        : next === "U"
+          ? fixed(8, 16, 2)
+          : null;
+  return decoded ?? [`\\${next}`, 2];
+}
+
+/**
+ * The GoogleSQL string literal that starts at `text[start]`, or null when none does (or it is not closed): single or double quoted,
+ * triple quoted (it may hold the quote and parentheses), raw (`r'...'`: no escape is decoded, a backslash-quote is two characters).
+ */
+function readStringLiteral(text: string, start: number): { value: string; end: number } | null {
+  let i = start;
+  let raw = false;
+  if ((text[i] === "r" || text[i] === "R") && (text[i + 1] === '"' || text[i + 1] === "'")) {
+    raw = true;
+    i += 1;
+  }
+  const quote = text[i];
+  if (quote !== '"' && quote !== "'") return null;
+  const delimiter = text.startsWith(quote.repeat(3), i) ? quote.repeat(3) : quote;
+  i += delimiter.length;
+  let value = "";
+  while (i < text.length) {
+    if (text.startsWith(delimiter, i)) return { value, end: i + delimiter.length };
+    if (text[i] === "\\") {
+      if (raw) {
+        value += text.slice(i, i + 2);
+        i += 2;
+      } else {
+        const [decoded, length] = decodeEscape(text, i);
+        value += decoded;
+        i += length;
+      }
+      continue;
+    }
+    value += text[i];
+    i += 1;
+  }
+  return null;
+}
+
+/**
+ * The string value of the option `name` in the text between the parentheses of OPTIONS(...): the option itself (at the top level, at the
+ * start or after a comma), never text that only looks like it inside another option's string or brackets.
+ */
+function optionStringValue(options: string, name: string): string | undefined {
+  const key = new RegExp(`${name}\\s*=\\s*`, "iy");
+  let depth = 0;
+  let atStart = true; // at the start of an option: the start of the text, or after a top-level comma
+  for (let i = 0; i < options.length; ) {
+    const ch = options[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
+    }
+    if (atStart && depth === 0) {
+      key.lastIndex = i;
+      const found = key.exec(options);
+      if (found) return readStringLiteral(options, i + found[0].length)?.value;
+    }
+    const literal = readStringLiteral(options, i);
+    if (literal) {
+      i = literal.end;
+      atStart = false;
+      continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+    else if (ch === ")" || ch === "]" || ch === "}") depth = Math.max(0, depth - 1);
+    atStart = ch === "," && depth === 0;
+    i += 1;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +227,9 @@ function resolveBigQueryType(rawType: string): {
   type: string;
   confidence: ImportConfidence;
   originalType: string;
+  /** Declared by NUMERIC(p, s) and its aliases. */
+  precision?: number;
+  scale?: number;
 } {
   // Handle ARRAY<...>
   const arrayMatch = rawType.match(/^ARRAY\s*<\s*(.+)\s*>$/i);
@@ -136,15 +250,17 @@ function resolveBigQueryType(rawType: string): {
     };
   }
 
-  // Handle NUMERIC(p,s) / BIGNUMERIC(p,s)
-  const numericMatch = rawType.match(/^(NUMERIC|BIGNUMERIC|DECIMAL|BIGDECIMAL)\s*(?:\(\s*\d+\s*(?:,\s*\d+)?\s*\))?$/i);
+  // Handle NUMERIC(p,s) / BIGNUMERIC(p,s): the declared precision and scale are kept (BigQuery: the scale of NUMERIC(p) is 0)
+  const numericMatch = rawType.match(/^(NUMERIC|BIGNUMERIC|DECIMAL|BIGDECIMAL)\s*(?:\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\))?$/i);
   if (numericMatch) {
     const baseType = numericMatch[1].toUpperCase();
     const mapped = BIGQUERY_TYPE_MAP[baseType];
+    const precision = numericMatch[2] !== undefined ? Number(numericMatch[2]) : undefined;
     return {
       type: mapped?.type || "decimal",
       confidence: mapped?.confidence || "high",
       originalType: rawType,
+      ...(precision !== undefined ? { precision, scale: Number(numericMatch[3] ?? 0) } : {}),
     };
   }
 

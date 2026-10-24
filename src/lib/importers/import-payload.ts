@@ -26,6 +26,15 @@ export interface ImportAssetSelection {
   selectedDecorators: number[];
 }
 
+/**
+ * The precision and scale the field row gets for a parsed field: the source's own (BigQuery `NUMERIC(12, 2)`, Avro `decimal`), as long
+ * as the field is still of the type the importer gave it (a reviewer who changed the type of the row left the decimal behind), else null.
+ */
+export function decimalFacts(parsed: ParsedField | undefined, currentType: string): { precision: number | null; scale: number | null } {
+  if (!parsed || parsed.type !== currentType) return { precision: null, scale: null };
+  return { precision: parsed.precision ?? null, scale: parsed.scale ?? null };
+}
+
 export function parsedFieldToCreateFieldInput(field: ParsedField): CreateFieldInput {
   return {
     name: field.name,
@@ -34,8 +43,7 @@ export function parsedFieldToCreateFieldInput(field: ParsedField): CreateFieldIn
     isKey: field.isKey ?? false,
     description: field.description ?? "",
     classification: field.classification ?? null,
-    precision: null,
-    scale: null,
+    ...decimalFacts(field, field.type),
     decorators: buildDecoratorsFromParsedField(field),
     // An enum field's symbols travel verbatim as its aliases, which the generator prefers; the `A|B` copy in the pattern slot (kept for
     // rows written before) cannot carry an empty symbol or one that contains `|`.

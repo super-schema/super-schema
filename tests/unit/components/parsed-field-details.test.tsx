@@ -28,6 +28,8 @@ const FULL: ParsedField = {
   confidence: "medium",
   originalType: "integer/int32",
   format: "money",
+  precision: 12,
+  scale: 2,
   constraints: [
     { type: "minLength", value: 2 },
     { type: "maxLength", value: 9 },
@@ -205,6 +207,8 @@ const FIELD_DISPLAY: Record<keyof ParsedField, string> = {
   isKey: "Key",
   classification: "Classification",
   format: "Format",
+  precision: "Precision",
+  scale: "Scale",
   deprecated: "Deprecated",
   deprecatedMessage: "Deprecated",
   constraints: "Constraint: min length",

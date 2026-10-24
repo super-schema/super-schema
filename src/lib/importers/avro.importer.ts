@@ -65,6 +65,9 @@ interface ResolvedType {
   mapKeyType?: string;
   mapValueType?: string;
   governance?: ParsedFieldGovernance;
+  /** A decimal's declared precision and scale. */
+  precision?: number;
+  scale?: number;
 }
 
 type NamedDefinition =
@@ -395,13 +398,18 @@ function resolveLogicalType(obj: AvroObject): ResolvedType {
     case "timestamp-millis":
     case "timestamp-micros":
       return { type: "utcDateTime", confidence: "high", nullable: false, originalType: `long/${logicalType}` };
-    case "decimal":
+    case "decimal": {
+      // `precision` is required by the spec (a positive whole number), `scale` defaults to 0; anything else is not kept.
+      const precision = typeof obj.precision === "number" && Number.isInteger(obj.precision) && obj.precision > 0 ? obj.precision : undefined;
+      const scale = precision === undefined ? undefined : typeof obj.scale === "number" && Number.isInteger(obj.scale) && obj.scale >= 0 ? obj.scale : 0;
       return {
         type: "decimal",
         confidence: "high",
         nullable: false,
         originalType: `bytes/decimal(${obj.precision},${obj.scale})`,
+        ...(precision !== undefined ? { precision, scale } : {}),
       };
+    }
     case "duration":
       return { type: "duration", confidence: "high", nullable: false, originalType: "fixed/duration" };
     case "uuid":
@@ -428,6 +436,8 @@ function mapField(f: AvroObject, namespace: string | undefined, ctx: AvroContext
   if (resolved.mapKeyType) field.mapKeyType = resolved.mapKeyType;
   if (resolved.mapValueType) field.mapValueType = resolved.mapValueType;
   if (resolved.governance) field.governance = resolved.governance;
+  if (resolved.precision !== undefined) field.precision = resolved.precision;
+  if (resolved.scale !== undefined) field.scale = resolved.scale;
   return field;
 }
 

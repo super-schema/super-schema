@@ -57,6 +57,10 @@ export interface ParsedField {
   deprecated?: boolean;
   /** Deprecation message */
   deprecatedMessage?: string;
+  /** Declared precision of a decimal (BigQuery `NUMERIC(12, 2)`, Avro `decimal`): the digits in all. Absent when the source declares none. */
+  precision?: number;
+  /** Declared scale of a decimal: the digits after the point (0 when the source gives a precision alone). */
+  scale?: number;
   /** Validation constraints (minLength, maxLength, etc.) */
   constraints?: ParsedFieldConstraint[];
   /** Summary text (@summary decorator) */
