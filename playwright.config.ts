@@ -27,8 +27,10 @@ import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
  * --project=serial-after` lists every chromium test). So a tier run never selects `serial-after` together with `chromium`: the npm
  * scripts run `chromium` (and the others) first, then `serial-after --no-deps` as its own command, after `setup` has written the login.
  *
- * A test that passes only on a retry is reported as FLAKY by every reporter below (the list summary, the html report's Flaky filter,
- * junit's <flakyFailure>) and does not fail the run: it is never hidden. `retries` is 1 on CI and 0 locally.
+ * A test that passes only on a retry does not fail the run, and is never hidden: `list` prints "N flaky" with the names, the html
+ * report has a Flaky filter, and tests/e2e/reporters/flaky-reporter.ts (on CI) prints a FLAKY block, writes
+ * test-results/flaky-tests.json and raises a GitHub warning annotation. (junit alone would hide it: verified with `retries: 1`, it
+ * records a test that passed on the retry as a plain pass.) `retries` is 1 on CI and 0 locally.
  */
 
 /**
@@ -65,7 +67,12 @@ export default defineConfig({
   retries: CI ? 1 : 0,
   workers: CI ? 1 : undefined,
   reporter: CI
-    ? [["list"], ["html", { open: "never" }], ["junit", { outputFile: "test-results/junit.xml" }]]
+    ? [
+        ["list"],
+        ["html", { open: "never" }],
+        ["junit", { outputFile: "test-results/junit.xml" }],
+        ["./tests/e2e/reporters/flaky-reporter.ts"],
+      ]
     : [["list"]],
   use: {
     baseURL: EXTERNAL_BASE_URL ?? "http://localhost:3000",
