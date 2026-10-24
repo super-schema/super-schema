@@ -19,6 +19,12 @@ export interface SchemaTargetDefinition {
   docsUrl?: string;
   packageName?: string;
   enabledInSchemaTab: boolean;
+  /**
+   * The target APPLIES a stored per-field type override (`metadata.schemaTargetTypeOverrides`) to what it generates. The Manual Override
+   * table and the alerts about stored overrides are offered only for such a target. False for every target today: the TypeSpec CLI
+   * emitters (`src/lib/typespec-official`) do not read the overrides, so a saved one never reached the DDL (KD-001 in
+   * docs/testing/known-defects.md). The stored overrides stay where they are.
+   */
   supportsFieldOverrides: boolean;
   unavailableReason?: string;
   /**
@@ -47,7 +53,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     category: "schema",
     stability: "stable",
     enabledInSchemaTab: true,
-    supportsFieldOverrides: true,
+    supportsFieldOverrides: false,
   },
   {
     key: "avro",
@@ -91,7 +97,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     category: "schema",
     stability: "stable",
     enabledInSchemaTab: true,
-    supportsFieldOverrides: true,
+    supportsFieldOverrides: false,
   },
   {
     key: "postgresql",
@@ -106,7 +112,7 @@ const SCHEMA_TARGETS: SchemaTargetDefinition[] = [
     stability: "stable",
     docsUrl: "https://www.postgresql.org/docs/current/datatype.html",
     enabledInSchemaTab: true,
-    supportsFieldOverrides: true,
+    supportsFieldOverrides: false,
   },
   {
     key: "openapi3",

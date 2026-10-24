@@ -35,7 +35,8 @@ vi.mock("@/lib/schema-targets/catalog", () => ({
   ],
   getSchemaTargetDefinition: (key: string) => ({
     displayName: key === "bigquery" ? "BigQuery" : key === "avro" ? "Avro" : "Spanner",
-    supportsFieldOverrides: true,
+    // Spanner is a target whose generation does not apply a stored override: it is not offered the Manual Override table.
+    supportsFieldOverrides: key !== "spanner",
   }),
 }));
 
@@ -98,6 +99,32 @@ describe("SchemasTab UI", () => {
       expect(screen.getByText("Generated Schema")).toBeDefined();
       expect(screen.getByText("Manual Override")).toBeDefined();
     });
+  });
+
+  it("offers Manual Override only for a target whose generation applies overrides", async () => {
+    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, schemaVersions: {} });
+    render(<SchemasTab {...baseProps} />);
+
+    // BigQuery is selected first and applies overrides here.
+    await waitFor(() => expect(screen.getAllByText("Manual Override").length).toBeGreaterThan(0));
+
+    // Spanner does not: no tab, and the Generated Schema tab and the Mapping Matrix stay.
+    screen.getByRole("button", { name: "Spanner" }).click();
+    await waitFor(() => expect(screen.queryByText("Manual Override")).toBeNull());
+    expect(screen.getByText("Generated Schema")).toBeDefined();
+    expect(screen.getByText("Mapping Matrix")).toBeDefined();
+  });
+
+  it("leaves the Manual Override table for the schema when the selected target is changed to one that does not apply overrides", async () => {
+    (getSchemaVersionsActionMock as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true, schemaVersions: {} });
+    render(<SchemasTab {...baseProps} />);
+    (await screen.findAllByText("Manual Override"))[0].click();
+    await waitFor(() => expect(screen.getByText("Super Schema Type")).toBeDefined());
+
+    screen.getByRole("button", { name: "Spanner" }).click();
+
+    await waitFor(() => expect(screen.queryByText("Super Schema Type")).toBeNull());
+    expect(screen.getByText(/No schema generated yet/)).toBeDefined();
   });
 
   it("shows type override table with field list", async () => {

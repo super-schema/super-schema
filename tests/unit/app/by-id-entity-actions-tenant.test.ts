@@ -35,6 +35,17 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: h.prisma }));
+// The tenant guard of the override actions is under test, not which targets apply overrides (none does today, catalog.ts): BigQuery plays one.
+vi.mock("@/lib/schema-targets/catalog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/schema-targets/catalog")>();
+  return {
+    ...actual,
+    getSchemaTargetDefinition: (key: string) => {
+      const definition = actual.getSchemaTargetDefinition(key);
+      return definition && key === "bigquery" ? { ...definition, supportsFieldOverrides: true } : definition;
+    },
+  };
+});
 vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));

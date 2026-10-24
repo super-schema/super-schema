@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   generateEntityAlerts,
   generateReferenceStalenessAlerts,
@@ -8,6 +8,21 @@ import {
   type AlertFieldInput,
 } from "@/lib/validation/entity-alerts";
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
+
+// Which targets APPLY a stored override to what they generate (`supportsFieldOverrides`): none does today, so a test of the alerts for
+// stored overrides says which target it pretends offers them.
+const offering = vi.hoisted(() => new Set<string>());
+vi.mock("@/lib/schema-targets/catalog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/schema-targets/catalog")>();
+  return {
+    ...actual,
+    getSchemaTargetDefinition: (key: string) => {
+      const definition = actual.getSchemaTargetDefinition(key);
+      return definition && offering.has(key) ? { ...definition, supportsFieldOverrides: true } : definition;
+    },
+  };
+});
+afterEach(() => offering.clear());
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -199,7 +214,38 @@ describe("generateEntityAlerts", () => {
 });
 
 describe("generateTargetDriftAlerts", () => {
-  it("surfaces persisted field overrides as target alerts", () => {
+  it("says nothing about stored overrides of a target whose generation does not apply them (the stored data stays untouched)", () => {
+    const stored = {
+      "field-1": {
+        fieldId: "field-1",
+        fieldName: "user_id",
+        sourceType: "string",
+        defaultMappedType: "STRING(MAX)",
+        mappedType: "STRING(36)",
+        createdAt: "2026-04-07T10:00:00.000Z",
+        updatedAt: "2026-04-07T10:00:00.000Z",
+        comment: "SUPER SCHEMA TYPE OVERRIDE: logical string defaulted to STRING(MAX); user selected STRING(36).",
+      },
+    };
+    const entity = makeEntity({
+      version: 3,
+      metadata: {
+        schemaTargetTypeOverrides: {
+          spanner: { "field-1": { ...stored["field-1"], target: "spanner" } },
+          bigquery: { "field-1": { ...stored["field-1"], target: "bigquery" } },
+          postgresql: { "field-1": { ...stored["field-1"], target: "postgresql", defaultMappedType: "text", mappedType: "uuid" } },
+        },
+        schemaVersions: { spanner: [{ version: 1, entityVersion: 2 }] },
+      },
+    });
+    const alerts = generateTargetDriftAlerts(entity, [makeField({ id: "field-1", name: "user_id", type: "string", nullable: false })]);
+    expect(alerts).toEqual([]);
+    // Data untouched: the stored overrides are still on the entity.
+    expect(Object.keys((entity.metadata as { schemaTargetTypeOverrides: object }).schemaTargetTypeOverrides)).toEqual(["spanner", "bigquery", "postgresql"]);
+  });
+
+  it("surfaces persisted field overrides as target alerts (for a target that applies them)", () => {
+    offering.add("spanner");
     const entity = makeEntity({
       version: 3,
       metadata: {
@@ -244,6 +290,7 @@ describe("generateTargetDriftAlerts", () => {
   });
 
   it("marks stale target overrides as errors when the source field changed", () => {
+    offering.add("postgresql");
     const entity = makeEntity({
       metadata: {
         schemaTargetTypeOverrides: {

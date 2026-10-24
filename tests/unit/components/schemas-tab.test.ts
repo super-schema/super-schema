@@ -44,6 +44,20 @@ const { mockPrisma } = vi.hoisted(() => {
 
 vi.mock("@/lib/db", () => ({ prisma: mockPrisma }));
 
+// Which targets APPLY a stored per-field type override (`supportsFieldOverrides`): none does today (catalog.ts), so a test of the override
+// machinery says which target it pretends does.
+const offering = vi.hoisted(() => new Set<string>());
+vi.mock("@/lib/schema-targets/catalog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/schema-targets/catalog")>();
+  return {
+    ...actual,
+    getSchemaTargetDefinition: (key: string) => {
+      const definition = actual.getSchemaTargetDefinition(key);
+      return definition && offering.has(key) ? { ...definition, supportsFieldOverrides: true } : definition;
+    },
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Mock: NextAuth session
 // ---------------------------------------------------------------------------
@@ -120,6 +134,7 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  offering.clear();
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
   // A BigQuery target needs a primary key (an entity without one is asked for it, not emitted): the default entity has one.
   mockPrisma.field.findMany.mockResolvedValue([
@@ -168,7 +183,8 @@ describe("SchemasTab Workflow", () => {
       expect((versions[0] as { status: string }).status).toBe("draft");
     });
 
-    it("stores precision-aware field type mapping snapshots", async () => {
+    it("stores precision-aware field type mapping snapshots (for a target that applies overrides)", async () => {
+      offering.add("bigquery");
       const decimalField = {
         id: "field-amount",
         name: "amount",
@@ -482,7 +498,15 @@ describe("SchemasTab Workflow", () => {
   });
 
   describe("saveSchemaFieldTypeOverrideAction", () => {
+    it("refuses an override for a target whose generation does not apply overrides, and writes nothing", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", tenantId: "tenant-1", metadata: {} });
+      const result = await saveSchemaFieldTypeOverrideAction({ entityId: "ent-1", target: "bigquery", fieldId: "field-1", mappedType: "STRING(36)" });
+      expect(result.error).toContain("does not support per-field physical type overrides");
+      expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    });
+
     it("rejects physical target types outside the selected target catalog", async () => {
+      offering.add("bigquery");
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
         tenantId: "tenant-1",

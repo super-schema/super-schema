@@ -275,6 +275,9 @@ export function generateTargetDriftAlerts(
   }));
 
   for (const target of Object.keys(overrides)) {
+    // A stored override of a target whose generation does not apply overrides changes nothing the user can see: no card for it (the
+    // stored data stays, it is shown again if the target starts to apply overrides).
+    if (getSchemaTargetDefinition(target)?.supportsFieldOverrides !== true) continue;
     const targetRows = buildSchemaTargetFieldMappings(
       normalizedFields,
       target,

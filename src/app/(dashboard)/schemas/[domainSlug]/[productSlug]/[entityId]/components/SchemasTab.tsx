@@ -77,6 +77,8 @@ interface TargetMeta {
   displayName: string;
   icon: React.ReactNode;
   language: string;
+  /** Its generation applies a stored per-field type override: only then is the Manual Override table offered (catalog.ts). */
+  supportsFieldOverrides: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +103,7 @@ function getTargetMeta(key: string): TargetMeta {
     displayName: info?.displayName ?? key,
     icon: <IconComponent className="w-4 h-4" />,
     language: langByKey[key] ?? "text",
+    supportsFieldOverrides: info?.supportsFieldOverrides === true,
   };
 }
 
@@ -609,17 +612,19 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                   >
                     Generated Schema
                   </button>
-                  <button
-                    type="button"
-                    data-testid="schema-content-tab-overrides"
-                    aria-pressed={contentTab === "overrides"}
-                    onClick={() => setContentTab("overrides")}
-                    className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
-                      contentTab === "overrides" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    Manual Override
-                  </button>
+                  {selected.supportsFieldOverrides && (
+                    <button
+                      type="button"
+                      data-testid="schema-content-tab-overrides"
+                      aria-pressed={contentTab === "overrides"}
+                      onClick={() => setContentTab("overrides")}
+                      className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
+                        contentTab === "overrides" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Manual Override
+                    </button>
+                  )}
                   <button
                     type="button"
                     data-testid="schema-content-tab-matrix"
@@ -728,7 +733,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
               )}
 
               {/* Manual overrides */}
-              {contentTab === "overrides" && (
+              {contentTab === "overrides" && selected.supportsFieldOverrides && (
                 <TypeOverrideTable
                   fields={fields}
                   targetKey={selected.key}
