@@ -215,6 +215,10 @@ export interface ComplexTypeInfo {
   // Reference
   referencedEntityId?: string;
   referencedEntityName?: string;
+  /** `domain/product/entity` (`_tenant` for a missing domain / product). */
+  referencedQualifiedName?: string;
+  /** Present only when the reference is pinned to a version. */
+  referencedEntityVersion?: string;
   // Union (a field typed by a named union, or an array of one)
   unionName?: string;
   unionMembers?: string[];

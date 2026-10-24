@@ -1,0 +1,68 @@
+import { setOwn } from "@/lib/event-specs/own-property";
+
+/** Placeholder segment for a reference target that has no domain / product. */
+export const TENANT_PLACEHOLDER = "_tenant";
+
+/**
+ * A fully qualified reference to another entity. `entityId` is the stable identity (absent when only a name was
+ * parsed); `pinnedVersion` is stored only when the author pinned one.
+ */
+export type EntityRef = {
+  entityId?: string;
+  domain: string;
+  product: string;
+  entity: string;
+  pinnedVersion?: string;
+};
+
+export function qualifiedName(ref: EntityRef): string {
+  return `${ref.domain}/${ref.product}/${ref.entity}`;
+}
+
+export function parseQualifiedName(s: string): EntityRef | undefined {
+  if (typeof s !== "string") return undefined;
+  const parts = s.split("/");
+  if (parts.length !== 3 || parts.some((p) => p.length === 0)) return undefined;
+  return { domain: parts[0], product: parts[1], entity: parts[2] };
+}
+
+function ownString(obj: Record<string, unknown>, key: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(obj, key)) return undefined;
+  const v = obj[key];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/**
+ * Reads the reference stored on a field's decorators. A qualified reference yields an `EntityRef`; a name-only
+ * (pre-qualification) one yields `{ legacyName }`.
+ */
+export function readFieldReference(decorators: unknown): EntityRef | { legacyName: string } | undefined {
+  if (!decorators || typeof decorators !== "object" || Array.isArray(decorators)) return undefined;
+  const d = decorators as Record<string, unknown>;
+  const qualified = ownString(d, "referencedQualifiedName");
+  const parsed = qualified ? parseQualifiedName(qualified) : undefined;
+  if (parsed) {
+    const entityId = ownString(d, "referencedEntityId");
+    const pinnedVersion = ownString(d, "referencedEntityVersion");
+    const ref: EntityRef = { domain: parsed.domain, product: parsed.product, entity: parsed.entity };
+    if (entityId) ref.entityId = entityId;
+    if (pinnedVersion) ref.pinnedVersion = pinnedVersion;
+    return ref;
+  }
+  const legacyName = ownString(d, "referencedEntityName");
+  return legacyName ? { legacyName } : undefined;
+}
+
+/** Returns a copy of `decorators` carrying `ref`; a stale version pin is dropped unless `ref` pins one. */
+export function writeFieldReference(decorators: Record<string, unknown>, ref: EntityRef): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(decorators)) {
+    if (key === "referencedEntityVersion") continue;
+    setOwn(out, key, decorators[key]);
+  }
+  if (ref.entityId) setOwn(out, "referencedEntityId", ref.entityId);
+  setOwn(out, "referencedEntityName", ref.entity);
+  setOwn(out, "referencedQualifiedName", qualifiedName(ref));
+  if (ref.pinnedVersion) setOwn(out, "referencedEntityVersion", ref.pinnedVersion);
+  return out;
+}

@@ -223,6 +223,8 @@ function extractComplexTypeInfo(
       return {
         referencedEntityId: (decorators.referencedEntityId as string) ?? undefined,
         referencedEntityName: (decorators.referencedEntityName as string) ?? undefined,
+        referencedQualifiedName: (decorators.referencedQualifiedName as string) ?? undefined,
+        referencedEntityVersion: (decorators.referencedEntityVersion as string) ?? undefined,
       };
     case "union":
       return unionInfo(decorators);
