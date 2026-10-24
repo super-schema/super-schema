@@ -444,10 +444,16 @@ test.describe("retention policies", () => {
     await form.getByTestId("retention-period").fill("-5");
     await form.getByTestId("retention-save").click();
 
-    await expect(form.getByTestId("retention-error")).toBeVisible();
-    await expect(form.getByTestId("retention-error")).toContainText(/period/i);
+    // The words of the schema's rule: a whole number of 1 or more.
+    await expect(form.getByTestId("retention-error")).toHaveText("The period must be a whole number of 1 or more.");
     expect(await storedPolicy(workspace.entities[0].id)).toBeNull();
     await expect(page.locator('[data-sonner-toast][data-type="success"]')).toHaveCount(0);
+
+    // The refusal described the policy as it was: editing the period takes it away, and the corrected policy is saved.
+    await form.getByTestId("retention-period").fill("7");
+    await expect(form.getByTestId("retention-error")).toHaveCount(0);
+    await savePolicy(page);
+    expect(await storedPolicy(workspace.entities[0].id)).toMatchObject({ strategy: "age-based", period: 7 });
   });
 
   test("an entity with a PII field and no policy is flagged, and the flag goes when a policy is saved", { tag: ["@regression"] }, async ({

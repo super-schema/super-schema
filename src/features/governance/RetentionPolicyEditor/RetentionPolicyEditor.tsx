@@ -80,8 +80,16 @@ export function RetentionPolicyEditor({
   const [action, setAction] = useState<RetentionAction>(currentPolicy?.action ?? "delete");
   const [description, setDescription] = useState<string>(currentPolicy?.description ?? "");
   const [isSaving, setIsSaving] = useState(false);
-  // Why the policy cannot be saved, shown under the form (a refused Save used to do nothing at all).
+  // Why the policy cannot be saved, shown under the form (a refused Save used to do nothing at all). Editing anything clears it: it
+  // described the policy as it was.
   const [error, setError] = useState<string | null>(null);
+
+  function edited<T>(set: (value: T) => void): (value: T) => void {
+    return (value) => {
+      setError(null);
+      set(value);
+    };
+  }
 
   // Date/timestamp fields for reference field selector
   const dateFields = fields.filter((f) =>
@@ -110,8 +118,8 @@ export function RetentionPolicyEditor({
     const policy = buildPolicy();
     const parsed = RetentionPolicySchema.safeParse(policy);
     if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      setError(issue?.path[0] === "period" ? "The period must be a number of 1 or more." : (issue?.message ?? "This policy cannot be saved."));
+      // The schema's own words: the rule and the message are one thing.
+      setError(parsed.error.issues[0]?.message ?? "This policy cannot be saved.");
       return;
     }
 
@@ -147,7 +155,7 @@ export function RetentionPolicyEditor({
               type="button"
               data-testid={`retention-strategy-${s.value}`}
               aria-pressed={strategy === s.value}
-              onClick={() => setStrategy(s.value)}
+              onClick={() => edited(setStrategy)(s.value)}
               className={`flex items-start gap-2 p-space-3 rounded-lg border text-left transition-colors ${
                 strategy === s.value
                   ? "border-primary bg-primary/5 text-foreground"
@@ -178,13 +186,13 @@ export function RetentionPolicyEditor({
                   min={1}
                   data-testid="retention-period"
                   value={period}
-                  onChange={(e) => setPeriod(parseInt(e.target.value) || 1)}
+                  onChange={(e) => edited(setPeriod)(parseInt(e.target.value) || 1)}
                   className="h-8 w-20"
                 />
                 <select
                   data-testid="retention-period-unit"
                   value={periodUnit}
-                  onChange={(e) => setPeriodUnit(e.target.value as PeriodUnit)}
+                  onChange={(e) => edited(setPeriodUnit)(e.target.value as PeriodUnit)}
                   className="h-8 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                 >
                   {PERIOD_UNITS.map((u) => (
@@ -201,7 +209,7 @@ export function RetentionPolicyEditor({
               <select
                 data-testid="retention-reference-field"
                 value={referenceField}
-                onChange={(e) => setReferenceField(e.target.value)}
+                onChange={(e) => edited(setReferenceField)(e.target.value)}
                 className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value="">Select a date field...</option>
@@ -228,7 +236,7 @@ export function RetentionPolicyEditor({
           <textarea
             data-testid="retention-condition"
             value={condition}
-            onChange={(e) => setCondition(e.target.value)}
+            onChange={(e) => edited(setCondition)(e.target.value)}
             placeholder="status = 'DELETED' AND created_at < NOW() - INTERVAL 1 YEAR"
             rows={3}
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-mono-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
@@ -260,7 +268,7 @@ export function RetentionPolicyEditor({
               type="button"
               data-testid={`retention-action-${a.value}`}
               aria-pressed={action === a.value}
-              onClick={() => setAction(a.value)}
+              onClick={() => edited(setAction)(a.value)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-caption transition-colors ${
                 action === a.value
                   ? "border-primary bg-primary/5 text-foreground"
@@ -282,7 +290,7 @@ export function RetentionPolicyEditor({
         <Input
           data-testid="retention-description"
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={(e) => edited(setDescription)(e.target.value)}
           placeholder="e.g., GDPR compliance — delete PII after account closure"
           className="h-8"
         />

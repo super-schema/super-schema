@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  RETENTION_PERIOD_MESSAGE,
   RetentionPolicySchema,
   migrateSimpleRetention,
   formatRetentionSummary,
@@ -77,6 +78,18 @@ describe("RetentionPolicySchema", () => {
     };
     const result = RetentionPolicySchema.safeParse(policy);
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a whole number of 1 or more, and says what a period is when it is refused", () => {
+    const withPeriod = (period: number) => RetentionPolicySchema.safeParse({ strategy: "age-based", period, periodUnit: "days", action: "delete" });
+
+    expect(withPeriod(1).success).toBe(true);
+    expect(withPeriod(90).success).toBe(true);
+    for (const bad of [0.5, 1.5, 0, -1]) {
+      const result = withPeriod(bad);
+      expect(result.success, `period ${bad}`).toBe(false);
+      expect(!result.success && result.error.issues[0].message).toBe(RETENTION_PERIOD_MESSAGE);
+    }
   });
 
   it("rejects negative period", () => {

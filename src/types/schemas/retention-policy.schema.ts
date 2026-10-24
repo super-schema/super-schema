@@ -40,11 +40,14 @@ export type PeriodUnit = z.infer<typeof PeriodUnitEnum>;
 // Schema
 // ---------------------------------------------------------------------------
 
+/** A retention period counts whole days, months or years: 0.5 and 0 are not periods, and the editor says so in these words. */
+export const RETENTION_PERIOD_MESSAGE = "The period must be a whole number of 1 or more.";
+
 export const RetentionPolicySchema = z.object({
   strategy: RetentionStrategyEnum,
 
   // For age-based and rolling-window
-  period: z.number().positive().optional(),
+  period: z.number().int(RETENTION_PERIOD_MESSAGE).min(1, RETENTION_PERIOD_MESSAGE).optional(),
   periodUnit: PeriodUnitEnum.optional(),
   referenceField: z.string().optional(),
 
