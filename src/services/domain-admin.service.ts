@@ -10,9 +10,9 @@ import { Prisma } from "@/generated/prisma/client";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { domainDeleteBlocker } from "@/lib/domain-deletion";
-import { ensureDefaultTenantId } from "@/lib/org-defaults";
 import { EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
 import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
+import { createDomainRow } from "@/services/domain-row.service";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -152,13 +152,15 @@ export async function getDomainsAdmin(
 }
 
 // ---------------------------------------------------------------------------
-// getDomainById — a domain of the active tenant; any other reads as missing
+// getDomainById — Admin only; a domain of the active tenant, any other reads as missing
 // ---------------------------------------------------------------------------
 
 export async function getDomainAdminById(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<DomainRecord>> {
+  if (ctx.userRole !== "ADMIN") return forbidden();
+
   const row = await ctx.prisma.domain.findFirst({ where: { id, tenantId: await getActiveTenantId() } });
   if (!row) return domainNotFound(id);
   return ok(toRecord(row));
@@ -183,46 +185,16 @@ export async function createDomainAdmin(
     });
   }
 
-  const name = parsed.data.name.trim();
-  if (name === "") {
-    return err({ code: "VALIDATION_ERROR", message: "Domain name is required", suggestedFix: "Check the domain input fields." });
-  }
-  const slug = slugFor(name);
-  if (!slug.success) return slug;
-
-  // New domains belong to the tenant the user is currently viewing; a fresh install has none until the default one is made.
-  await ensureDefaultTenantId(ctx.prisma);
-  const tenantId = await getActiveTenantId();
-
-  // Unique name per tenant, case-insensitively (the database's own unique index is case-sensitive).
-  const duplicate = await ctx.prisma.domain.findFirst({
-    where: { tenantId, name: { equals: name, mode: "insensitive" } },
-    select: { id: true },
-  });
-  if (duplicate) return duplicateName(name);
-
   try {
-    const created = await withAudit({
-      action: "CREATE",
-      entityType: "Domain",
-      entityId: "pending",
-      userId: ctx.userId,
-      fn: () =>
-        ctx.prisma.domain.create({
-          data: {
-            name,
-            slug: slug.data,
-            description: parsed.data.description ?? "",
-            tenantId,
-            ...(parsed.data.policyTemplate ? { policyTemplate: parsed.data.policyTemplate as Prisma.InputJsonValue } : {}),
-          },
-        }),
-    });
-    return ok(toRecord(created));
+    // The row itself (name, slug, duplicate check, tenant, audit) is `createDomainRow`'s: the Domains page's action makes it the same way.
+    const created = await createDomainRow(
+      { name: parsed.data.name, description: parsed.data.description, policyTemplate: parsed.data.policyTemplate, userId: ctx.userId },
+      ctx.prisma
+    );
+    if (!created.success) return created;
+    return ok(toRecord(created.data));
   } catch (e: unknown) {
     if (e instanceof AuditUserMissingError) return staleSession();
-    // The same slug from another spelling ("Order Data" / "order-data") is caught by the unique index, not by the name check.
-    if (isPrismaCode(e, "P2002")) return duplicateName(name);
     throw e;
   }
 }

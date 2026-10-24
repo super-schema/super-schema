@@ -6,6 +6,7 @@ vi.mock("@/lib/db", () => ({
       create: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     tenant: {
       findUnique: vi.fn().mockResolvedValue({ id: "tenant_default" }),
@@ -19,6 +20,9 @@ vi.mock("@/lib/db", () => ({
     },
   },
 }));
+
+// The tenant being viewed comes from the request's cookie (createDomainRow); a unit test has no request.
+vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn(async () => "tenant_default") }));
 
 import { createDomain, getDomains, getDomainById } from "@/services/domain.service";
 import { prisma } from "@/lib/db";

@@ -1,5 +1,3 @@
-import { prisma } from "@/lib/db";
-import { withAudit } from "@/lib/audit";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { Domain } from "@/generated/prisma/client";
@@ -9,9 +7,7 @@ import {
   PolicyTemplateSchema,
   type CreateDomainInput,
 } from "@/types/schemas/domain.schema";
-import type { Prisma } from "@/generated/prisma/client";
-import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
-import { ensureDefaultTenantId } from "@/lib/org-defaults";
+import { createDomainRow } from "@/services/domain-row.service";
 
 export async function createDomain(
   input: CreateDomainInput,
@@ -23,15 +19,6 @@ export async function createDomain(
       code: "VALIDATION_ERROR",
       message: parsed.error.issues[0].message,
       suggestedFix: "Check the domain input fields and try again.",
-    });
-  }
-
-  const domainSlug = generateSlug(parsed.data.name);
-  if (isReservedSchemaRouteSlug(domainSlug)) {
-    return err({
-      code: "VALIDATION_ERROR",
-      message: `"${domainSlug}" is reserved for a schemas utility page.`,
-      suggestedFix: "Choose a different domain name.",
     });
   }
 
@@ -48,41 +35,12 @@ export async function createDomain(
     }
   }
 
-  try {
-    const domain = await withAudit({
-      action: "CREATE",
-      entityType: "Domain",
-      entityId: "pending",
-      userId: ctx.userId,
-      fn: async () => {
-        const tenantId = await ensureDefaultTenantId();
-        return prisma.domain.create({
-          data: {
-            name: parsed.data.name,
-            slug: domainSlug,
-            tenantId,
-            description: parsed.data.description,
-            policyTemplate:
-              (parsed.data.policyTemplate as Prisma.InputJsonValue) ??
-              undefined,
-          },
-        });
-      },
-    });
-    return ok(domain);
-  } catch (e: unknown) {
-    if (
-      e instanceof Error &&
-      e.message.includes("Unique constraint failed")
-    ) {
-      return err({
-        code: "DUPLICATE",
-        message: `A domain named "${parsed.data.name}" already exists`,
-        suggestedFix: "Choose a different domain name.",
-      });
-    }
-    throw e;
-  }
+  // The row itself (the name's slug and its reserved words, the duplicate check, the tenant, the audit row) is `createDomainRow`'s:
+  // the Domains page's action and the Admin tab make it the same way.
+  return createDomainRow(
+    { name: parsed.data.name, description: parsed.data.description, policyTemplate: parsed.data.policyTemplate, userId: ctx.userId },
+    ctx.prisma
+  );
 }
 
 export async function getDomains(

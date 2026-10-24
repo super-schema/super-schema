@@ -3,11 +3,9 @@
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
+import { createDomainRow } from "@/services/domain-row.service";
 import { resolveGlobalAdminAccess } from "@/lib/access-control";
 import { revalidatePath } from "next/cache";
-import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
-import { ensureDefaultTenantId } from "@/lib/org-defaults";
-import { getActiveTenantId } from "@/lib/active-tenant";
 import { isInActiveTenant, unexpectedFailure } from "@/lib/action-context";
 import { domainDeleteBlocker } from "@/lib/domain-deletion";
 import { combineBlockers, EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
@@ -34,38 +32,14 @@ export async function createDomainAction(formData: FormData) {
     return { error: "You must be logged in" };
   }
 
-  const name = formData.get("name") as string;
+  const name = (formData.get("name") as string | null) ?? "";
   const description = (formData.get("description") as string) || "";
 
-  if (!name || name.trim().length === 0) {
-    return { error: "Domain name is required" };
-  }
-
-  if (name.length > 64) {
-    return { error: "Domain name must be 64 characters or less" };
-  }
-
-  const slug = generateSlug(name);
-  if (isReservedSchemaRouteSlug(slug)) {
-    return { error: `"${slug}" is reserved for a schemas utility page` };
-  }
-
   try {
-    await withAudit({
-      action: "CREATE",
-      entityType: "Domain",
-      entityId: "pending",
-      userId: session.user.id,
-      fn: async () => {
-        // New domains belong to the tenant the user is currently viewing.
-        // ensureDefaultTenantId guarantees a tenant exists on a fresh install.
-        await ensureDefaultTenantId();
-        const tenantId = await getActiveTenantId();
-        return prisma.domain.create({
-          data: { name: name.trim(), slug, description, tenantId },
-        });
-      },
-    });
+    // Any signed-in user may make a domain; what a domain row must be (the name, its slug, the duplicate check, the tenant, the audit
+    // row) is `createDomainRow`'s, the same function the Admin tab uses.
+    const created = await createDomainRow({ name, description, userId: session.user.id }, prisma);
+    if (!created.success) return { error: created.error.message };
     revalidatePath("/schemas");
     return { success: true };
   } catch (e: unknown) {
@@ -74,9 +48,6 @@ export async function createDomainAction(formData: FormData) {
         error:
           "Your session is stale. Sign out and sign in again, then create the domain.",
       };
-    }
-    if (e instanceof Error && e.message.includes("Unique constraint")) {
-      return { error: `A domain named "${name}" already exists` };
     }
     return { ...unexpectedFailure("createDomainAction", e) };
   }

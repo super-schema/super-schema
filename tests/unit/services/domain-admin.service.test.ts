@@ -20,6 +20,7 @@ import {
   removeInheritance,
   type DomainRecord,
 } from "@/services/domain-admin.service";
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import type { ServiceContext } from "@/types/service-context";
 
 // ---------------------------------------------------------------------------
@@ -60,7 +61,11 @@ const fakePrisma = {
       // The service's own order: system domains first, then by name.
       rows.filter((r) => matches(r, args.where)).sort((a, b) => Number(b.isSystem) - Number(a.isSystem) || a.name.localeCompare(b.name)),
     ),
-    findFirst: vi.fn(async (args: { where?: Where }) => rows.find((r) => matches(r, args.where)) ?? null),
+    // A copy, as the database answers: the audit entry's "before" must not change when the row is written afterwards.
+    findFirst: vi.fn(async (args: { where?: Where }) => {
+      const found = rows.find((r) => matches(r, args.where));
+      return found ? { ...found, _count: { ...found._count } } : null;
+    }),
     create: vi.fn(async (args: { data: Partial<Row> & { name: string; slug: string; tenantId: string } }) => {
       if (rows.some((r) => r.tenantId === args.data.tenantId && (r.slug === args.data.slug || r.name === args.data.name))) {
         throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
@@ -379,6 +384,108 @@ describe("Domain Admin Service", () => {
       const result = await deleteDomainAdmin(row.id, viewerCtx);
       expect(!result.success && result.error.code).toBe("FORBIDDEN");
       expect(rows).toHaveLength(1);
+    });
+  });
+
+  describe("getDomainAdminById role gate", () => {
+    it("rejects non-Admin users like every other function of the service, and reads nothing", async () => {
+      const row = seed({ name: "Finance" });
+      const result = await getDomainAdminById(row.id, viewerCtx);
+      expect(!result.success && result.error.code).toBe("FORBIDDEN");
+      expect(fakePrisma.domain.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("audit trail", () => {
+    it("create writes one audit entry for the acting user", async () => {
+      await createDomainAdmin({ name: "Audited" }, adminCtx);
+
+      expect(withAudit).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(withAudit).mock.calls[0][0]).toMatchObject({ action: "CREATE", entityType: "Domain", userId: "admin-1" });
+    });
+
+    it("update writes one audit entry that carries the domain as it was", async () => {
+      const row = seed({ name: "Before", description: "old text" });
+      await updateDomainAdmin({ id: row.id, description: "new text" }, adminCtx);
+
+      expect(withAudit).toHaveBeenCalledTimes(1);
+      const call = vi.mocked(withAudit).mock.calls[0][0];
+      expect(call).toMatchObject({ action: "UPDATE", entityType: "Domain", entityId: row.id, userId: "admin-1" });
+      expect(call.beforeState).toMatchObject({ id: row.id, name: "Before", description: "old text" });
+    });
+
+    it("delete writes one audit entry that carries the domain as it was", async () => {
+      const row = seed({ name: "Doomed" });
+      await deleteDomainAdmin(row.id, adminCtx);
+
+      expect(withAudit).toHaveBeenCalledTimes(1);
+      const call = vi.mocked(withAudit).mock.calls[0][0];
+      expect(call).toMatchObject({ action: "DELETE", entityType: "Domain", entityId: row.id, userId: "admin-1" });
+      expect(call.beforeState).toMatchObject({ id: row.id, name: "Doomed" });
+    });
+
+    it("a refused call writes no audit entry: a role, a validation, a missing domain, a system rename, a blocked delete", async () => {
+      const system = seed({ name: "Public", isSystem: true });
+      const busy = seed({ name: "Busy", _count: { entities: 1, products: 0, traits: 0, eventSpecs: 0 } });
+      await createDomainAdmin({ name: "Nope" }, viewerCtx);
+      await createDomainAdmin({ name: "!!!" }, adminCtx);
+      await updateDomainAdmin({ id: "missing", name: "X" }, adminCtx);
+      await updateDomainAdmin({ id: system.id, name: "Everyone" }, adminCtx);
+      await deleteDomainAdmin(busy.id, adminCtx);
+      await deleteDomainAdmin(system.id, adminCtx);
+
+      expect(withAudit).not.toHaveBeenCalled();
+    });
+
+    it("create, update and delete tell a session whose user no longer exists to sign in again, and change nothing", async () => {
+      const row = seed({ name: "Keep" });
+      // One failure for each of the three calls below (a plain mockRejectedValue would outlive this test).
+      for (let i = 0; i < 3; i++) vi.mocked(withAudit).mockRejectedValueOnce(new AuditUserMissingError("gone"));
+
+      const created = await createDomainAdmin({ name: "Ghost" }, adminCtx);
+      const updated = await updateDomainAdmin({ id: row.id, name: "Renamed" }, adminCtx);
+      const deleted = await deleteDomainAdmin(row.id, adminCtx);
+
+      for (const result of [created, updated, deleted]) {
+        expect(result.success).toBe(false);
+        if (!result.success) expect(result.error.code).toBe("UNAUTHORIZED");
+      }
+      expect(rows.map((r) => r.name)).toEqual(["Keep"]);
+    });
+  });
+
+  describe("a database that answers with a code", () => {
+    it("update: the domain deleted between the read and the write (P2025) is NOT_FOUND", async () => {
+      const row = seed({ name: "Vanishing" });
+      fakePrisma.domain.update.mockRejectedValueOnce(Object.assign(new Error("Record to update not found."), { code: "P2025" }));
+
+      const result = await updateDomainAdmin({ id: row.id, description: "x" }, adminCtx);
+      expect(!result.success && result.error.code).toBe("NOT_FOUND");
+    });
+
+    it("delete: the same, NOT_FOUND", async () => {
+      const row = seed({ name: "Vanishing" });
+      fakePrisma.domain.delete.mockRejectedValueOnce(Object.assign(new Error("Record to delete does not exist."), { code: "P2025" }));
+
+      const result = await deleteDomainAdmin(row.id, adminCtx);
+      expect(!result.success && result.error.code).toBe("NOT_FOUND");
+    });
+
+    it("update: a clash the unique index finds (the same slug from another spelling) is DUPLICATE", async () => {
+      seed({ name: "Order Data" });
+      const other = seed({ name: "Something Else" });
+
+      const result = await updateDomainAdmin({ id: other.id, name: "order-data" }, adminCtx);
+      expect(!result.success && result.error.code).toBe("DUPLICATE");
+      expect(rows.find((r) => r.id === other.id)!.name).toBe("Something Else");
+    });
+
+    it("update and delete let a failure they do not know THROW (never a quiet NOT_FOUND)", async () => {
+      const row = seed({ name: "Unlucky" });
+      fakePrisma.domain.update.mockRejectedValueOnce(Object.assign(new Error("connection lost"), { code: "P1001" }));
+      await expect(updateDomainAdmin({ id: row.id, description: "x" }, adminCtx)).rejects.toThrow("connection lost");
+      fakePrisma.domain.delete.mockRejectedValueOnce(Object.assign(new Error("connection lost"), { code: "P1001" }));
+      await expect(deleteDomainAdmin(row.id, adminCtx)).rejects.toThrow("connection lost");
     });
   });
 
