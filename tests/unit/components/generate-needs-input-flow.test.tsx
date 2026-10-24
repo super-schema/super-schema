@@ -79,4 +79,28 @@ describe("generating a target that needs a primary key", () => {
     expect(onGenerated).not.toHaveBeenCalled();
     expect(toastMock.error).not.toHaveBeenCalled();
   });
+
+  it("reports a reference that matches several entities as an error, never as a generation that happened", async () => {
+    generate.mockResolvedValueOnce({
+      needsReference: {
+        field: "addr",
+        name: "Address",
+        candidates: [
+          { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+          { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+        ],
+        entityId: "ent-1",
+        fieldId: "fld-1",
+      },
+    });
+    const onGenerated = mount();
+
+    fireEvent.click(screen.getByTestId("generate-selected-schema"));
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+    expect(String(toastMock.error.mock.calls[0][0])).toContain('Field "addr" refers to "Address", which matches 2 entities');
+    expect(onGenerated).not.toHaveBeenCalled();
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
 });

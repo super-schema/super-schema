@@ -36,6 +36,12 @@ export function useGenerateWithInputs(entityId: string) {
       // Each round answers one question; a target asks for at most a couple, the bound only guards a server that never settles.
       for (let round = 0; round < 3; round += 1) {
         const result = await generateSchemaAction(entityId, target);
+        // A bare-name reference that matches several entities: nothing was generated. Until the pick dialog is wired here it is
+        // reported as the error it is (never as a generation that silently did not happen).
+        if ("needsReference" in result && result.needsReference) {
+          const { field, name, candidates } = result.needsReference;
+          return { error: `Field "${field}" refers to "${name}", which matches ${candidates.length} entities. Choose the entity it means on that field, then generate again.` };
+        }
         const needed = "needsInput" in result ? result.needsInput : undefined;
         if (!needed || needed.length === 0) return result;
         const requirement = needed[0];

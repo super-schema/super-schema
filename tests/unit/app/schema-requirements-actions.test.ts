@@ -9,8 +9,9 @@ const h = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
   getEffectiveRole: vi.fn(),
   emitOfficial: vi.fn(),
+  emitClosure: vi.fn(),
   prisma: {
-    entity: { findUnique: vi.fn(), update: vi.fn() },
+    entity: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     field: { findMany: vi.fn(), updateMany: vi.fn() },
     auditLog: { create: vi.fn() },
     $executeRawUnsafe: vi.fn(),
@@ -23,7 +24,15 @@ vi.mock("@/lib/auth", () => ({ auth: h.auth }));
 vi.mock("next/cache", () => ({ revalidatePath: h.revalidatePath }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: h.getActiveTenantId }));
 vi.mock("@/services/rbac.service", () => ({ getEffectiveRole: h.getEffectiveRole }));
-vi.mock("@/lib/typespec-official/emitter.service", () => ({ emitOfficialTypeSpecTargetForEntity: h.emitOfficial }));
+vi.mock("@/lib/typespec-official/emitter.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/typespec-official/emitter.service")>()),
+  emitOfficialTypeSpecTargetForEntity: h.emitOfficial,
+}));
+// The closure targets (avro here) emit through `emitClosure`; the DB targets (bigquery, postgresql, spanner) through `emitOfficial`.
+vi.mock("@/lib/typespec-official/closure-emit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/typespec-official/closure-emit")>()),
+  emitClosure: h.emitClosure,
+}));
 vi.mock("@/services/type-mapping.service", () => ({ getOverridesForEntity: vi.fn().mockResolvedValue({ success: true, data: [] }) }));
 
 import { MARK_DRAFT_CHANGED_SQL } from "@/lib/entity-versioning/draft-state";
@@ -48,7 +57,11 @@ beforeEach(() => {
   p.field.findMany.mockResolvedValue(FIELDS);
   p.field.updateMany.mockResolvedValue({ count: 1 });
   p.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+  p.entity.findMany.mockResolvedValue([
+    { id: "ent-1", name: "ImportedEntity", description: "", status: "DRAFT", version: 1, domainId: null, metadata: {}, latestVersionId: null, domain: null, product: null },
+  ]);
   h.emitOfficial.mockResolvedValue({ output: "DDL", validationStatus: "VALID", warnings: [], errors: [] });
+  h.emitClosure.mockResolvedValue({ success: true, data: { files: [{ path: "a.avsc.json", content: "{}", target: "avro", entityId: "ent-1" }], warnings: [], entityFiles: {} } });
 });
 
 describe("setEntityPrimaryKeyAction", () => {
@@ -141,9 +154,12 @@ describe("generateSchemaAction: needs input", () => {
     expect(result).toMatchObject({ success: true });
   });
 
-  it("does not look at fields or ask for a target without requirements", async () => {
-    await actions.generateSchemaAction("ent-1", "avro");
-    expect(h.emitOfficial).toHaveBeenCalledWith("ent-1", "avro");
+  it("does not look at fields or ask for a target without requirements: a closure target emits its closure, not the single entity", async () => {
+    const result = await actions.generateSchemaAction("ent-1", "avro");
+    expect(result).toMatchObject({ success: true });
+    expect(h.emitClosure).toHaveBeenCalledWith(expect.objectContaining({ entities: [expect.objectContaining({ entityId: "ent-1" })] }), "avro");
+    expect(h.emitOfficial).not.toHaveBeenCalled();
+    expect(p.field.findMany).toHaveBeenCalledTimes(1); // the closure's own read of the root's fields, no requirement shape
   });
 
   it("turns a missing-primary-key diagnostic that slipped past the pre-check into needsInput", async () => {

@@ -6,7 +6,6 @@ import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/v
 import {
   TENANT_PLACEHOLDER,
   qualifiedName,
-  parseQualifiedName,
   readFieldReference,
   type EntityRef,
 } from "@/lib/references/entity-reference";

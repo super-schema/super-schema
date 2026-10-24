@@ -20,7 +20,11 @@ import {
 import { requireId } from "@/services/events/service-guards";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
-import { TENANT_PLACEHOLDER, writeFieldReference } from "@/lib/references/entity-reference";
+import { TENANT_PLACEHOLDER, readFieldReference, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
+import { loadReferenceClosure, type LegacyUpgrade, type ResolveMode } from "@/lib/references/closure";
+import { getActiveTenantId } from "@/lib/active-tenant";
+import type { ClosureTargetResult } from "@/lib/emission/closure-generation";
+import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import {
   buildSchemaTargetFieldMappings,
@@ -32,7 +36,7 @@ import {
   type SchemaTargetTypeOverrides,
 } from "@/lib/schema-targets/field-type-overrides";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
-import type { FieldTypeMapping, SchemaVersion, SchemaVersionsMap } from "@/types/schema-version";
+import type { FieldTypeMapping, SchemaVersion, SchemaVersionResolution, SchemaVersionsMap } from "@/types/schema-version";
 import {
   getTargetRequirements,
   primaryKeyIneligibility,
@@ -1396,10 +1400,28 @@ export async function setFieldReferenceAction(
 /**
  * Generate a schema for ONE target, store as draft version in entity metadata. When the target needs an input the entity does
  * not carry (a primary key), nothing is emitted and the answer is `{ needsInput: [...] }` for the UI to ask.
+ *
+ * The closure targets (JSON Schema, OpenAPI 3, Protobuf, Avro, Java POJO) generate the entity TOGETHER WITH everything it references
+ * (`loadReferenceClosure` + `emitClosure`): one file per entity, stored as `files` (and `output` as their bundled string) with a
+ * `resolution` recording which version of each entity was used. `opts.mode` decides what an unpinned reference resolves to: `draft`
+ * (the default: this is the entity's current saved state) the latest saved definition, the version is then a preview; `published`
+ * (the publish flow, regeneration of a published version) the latest PUBLISHED version of each entity, never a draft. A pin overrides
+ * both. A bare-name reference that matches several entities is not guessed: nothing is emitted or written and the answer is
+ * `{ needsReference: { field, name, candidates, entityId, fieldId } }` for the UI to ask (`setFieldReferenceAction` saves the pick).
+ * The DB targets (and the native runtime) keep their own path, one entity, and ignore `mode`.
+ *
+ * Emission itself writes nothing. When it succeeded, the ROOT's legacy name-only references that resolved to exactly one entity are
+ * upgraded to the qualified form in a separate step that fails soft (see `upgradeLegacyReferences`).
  */
-export async function generateSchemaAction(entityId: string, target: string) {
+export async function generateSchemaAction(entityId: string, target: string, opts?: { mode?: ResolveMode }) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
+
+  const requestedMode: unknown = opts?.mode;
+  if (requestedMode !== undefined && requestedMode !== "draft" && requestedMode !== "published") {
+    return { error: 'The mode must be "draft" or "published"', code: "VALIDATION_ERROR" as const };
+  }
+  const mode: ResolveMode = requestedMode ?? "draft";
 
   try {
     // Ownership FIRST: both emitters read the entity by id and trust it, so a foreign id must stop here.
@@ -1425,6 +1447,8 @@ export async function generateSchemaAction(entityId: string, target: string) {
       warnings: unknown[];
       errors: unknown[];
     };
+    // Set by the closure targets only: the structured files, the versions used and the legacy references that resolved.
+    let closureRun: { files?: EmittedFile[]; resolution: SchemaVersionResolution; upgrades: LegacyUpgrade[] } | undefined;
 
     if (targetDefinition.runtime === "native") {
       const { emitEntity } = await import("@/lib/emission/emission.service");
@@ -1435,10 +1459,26 @@ export async function generateSchemaAction(entityId: string, target: string) {
       }
       targetOutput = nativeTargetOutput;
     } else {
-      const { emitOfficialTypeSpecTargetForEntity } = await import(
-        "@/lib/typespec-official/emitter.service"
-      );
-      const officialResult = await emitOfficialTypeSpecTargetForEntity(entityId, target);
+      let officialResult: ClosureTargetResult;
+      if (targetDefinition.closureEmission) {
+        // The root passed the tenant check above, so its closure is confined to that same (active) tenant.
+        const { closureFailure, describeResolution, emitClosureTarget } = await import("@/lib/emission/closure-generation");
+        const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, mode);
+        if (!loaded.success) {
+          if (loaded.error.code === "AMBIGUOUS_REFERENCE") {
+            const { field, name, candidates, entityId: ownerEntityId, fieldId } = loaded.error;
+            return { needsReference: { field, name, candidates, entityId: ownerEntityId, fieldId } };
+          }
+          return { ...failureOf(closureFailure(loaded.error), "generateSchemaAction") };
+        }
+        officialResult = await emitClosureTarget(loaded.data, targetDefinition.key);
+        closureRun = { files: officialResult.files, resolution: describeResolution(loaded.data, mode), upgrades: loaded.data.upgrades };
+      } else {
+        const { emitOfficialTypeSpecTargetForEntity } = await import(
+          "@/lib/typespec-official/emitter.service"
+        );
+        officialResult = await emitOfficialTypeSpecTargetForEntity(entityId, target);
+      }
       if (officialResult.validationStatus === "INVALID") {
         // A diagnostic that means "an input is missing" slipped past the pre-check: still a question, not an error string.
         const slipped = officialResult.errors.flatMap((error) => structuredDiagnostics(error.message));
@@ -1507,6 +1547,7 @@ export async function generateSchemaAction(entityId: string, target: string) {
       output: targetOutput.output,
       generatedAt: new Date().toISOString(),
       entityVersion: entity.version,
+      ...(closureRun?.files ? { files: closureRun.files, resolution: closureRun.resolution } : {}),
       fieldTypeMappings,
       typeOverrideSnapshot,
       overrideDriftSummary: typeOverrideSnapshot
@@ -1539,6 +1580,9 @@ export async function generateSchemaAction(entityId: string, target: string) {
         }),
     });
 
+    // Generation is done and stored; qualifying the references it resolved is a separate step that never fails it.
+    if (closureRun) await upgradeLegacyReferences(entityId, session.user.id, closureRun.upgrades);
+
     revalidatePath("/schemas");
     return {
       success: true,
@@ -1549,6 +1593,50 @@ export async function generateSchemaAction(entityId: string, target: string) {
     };
   } catch (e: unknown) {
     return { ...unexpectedFailure("generateSchemaAction", e) };
+  }
+}
+
+/**
+ * After a successful closure generation: writes the qualified form (`referencedEntityId` + `referencedQualifiedName`, never a version)
+ * of the ROOT entity's legacy name-only references that resolved to exactly one entity (`upgradeLegacyReference`), so a later
+ * same-named entity cannot make them ambiguous. Deliberately narrow and quiet:
+ * - only the root's own fields (a generate call does not edit other entities), and never content read from a published or pinned
+ *   snapshot (the loader lists none of those);
+ * - the edit role `setFieldReferenceAction` requires: a viewer's generation stays read-only;
+ * - each field is re-read first and skipped unless it is still a legacy reference (a pick made meanwhile wins);
+ * - not a draft edit (the reference means the same thing): the draft marker and the stale-source marker are left alone;
+ * - fails soft per field: the generation is already stored, so a failure here is logged and nothing more.
+ */
+async function upgradeLegacyReferences(entityId: string, userId: string, upgrades: LegacyUpgrade[]): Promise<void> {
+  const own = upgrades.filter((upgrade) => upgrade.entityId === entityId);
+  if (own.length === 0) return;
+  try {
+    const role = await resolveUserRole(userId);
+    if (ROLE_HIERARCHY.indexOf(role as Role) < ROLE_HIERARCHY.indexOf("AUTHOR")) return;
+  } catch (e: unknown) {
+    console.error("[generateSchemaAction] legacy reference upgrade skipped: the role could not be read", e);
+    return;
+  }
+  for (const upgrade of own) {
+    try {
+      const field = await prisma.field.findUnique({ where: { id: upgrade.fieldId }, select: { id: true, entityId: true, type: true, decorators: true } });
+      if (!field || field.entityId !== entityId || field.type !== "reference") continue;
+      if (!field.decorators || typeof field.decorators !== "object" || Array.isArray(field.decorators)) continue;
+      const current = field.decorators as Record<string, unknown>;
+      const existing = readFieldReference(current);
+      if (!existing || !("legacyName" in existing)) continue;
+      const decorators = upgradeLegacyReference(current, upgrade.ref);
+      await withAudit({
+        action: "UPDATE",
+        entityType: "Field",
+        entityId: field.id,
+        userId,
+        beforeState: field as unknown as object,
+        fn: () => prisma.field.update({ where: { id: field.id }, data: { decorators: decorators as Prisma.InputJsonValue } }),
+      });
+    } catch (e: unknown) {
+      console.error("[generateSchemaAction] legacy reference upgrade failed", e);
+    }
   }
 }
 
