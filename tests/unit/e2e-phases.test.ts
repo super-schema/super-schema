@@ -83,6 +83,16 @@ describe("planPhases", () => {
     expect(new Set(phases.map((p) => p.env.PLAYWRIGHT_HTML_OUTPUT_DIR)).size).toBe(phases.length);
   });
 
+  it("puts every report and result under an output root of the run, so two runs from one checkout do not meet", () => {
+    const { phases } = planPhases({ tier: "regression", authState: AUTH, outputRoot: "/runs/42" });
+    for (const phase of phases) {
+      expect(phase.env.PLAYWRIGHT_HTML_OUTPUT_DIR).toBe(path.join("/runs/42", "playwright-report", phase.name));
+      expect(phase.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "junit.xml"));
+      expect(phase.env.E2E_FLAKY_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "flaky-tests.json"));
+      expect(phase.args).toContain(`--output=${path.join("/runs/42", "test-results", phase.name, "artifacts")}`);
+    }
+  });
+
   it("forwards the extra arguments to the first phase only", () => {
     const { phases } = plan("regression", ["--shard=1/4", "--headed"]);
     expect(phases[0].args).toEqual(expect.arrayContaining(["--shard=1/4", "--headed"]));

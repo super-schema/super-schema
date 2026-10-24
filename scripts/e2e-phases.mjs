@@ -7,7 +7,8 @@
 //   - Playwright runs a project's dependencies in full whatever --grep says, so `serial-after` (which depends on `chromium`) cannot
 //     share a filtered command with `chromium`: the regression tier is two commands, the browser projects, then `serial-after --no-deps`;
 //   - every `playwright test` clears its output directory and replaces the html report of the one before. Each phase therefore writes
-//     to a directory of its own: test-results/<phase>/ (artifacts, junit.xml, flaky-tests.json) and playwright-report/<phase>/;
+//     to a directory of its own: test-results/<phase>/ (artifacts, junit.xml, flaky-tests.json) and playwright-report/<phase>/, under
+//     E2E_OUTPUT_ROOT when it is set (two runs at once from one checkout give each its own root; default: the working directory);
 //   - the login (`setup` project) is one file per run (E2E_AUTH_STATE), so two runs at once do not write the same one, a stale file is
 //     never reused, and a phase that skips `setup` (`--no-deps`) refuses a missing or old file with a message instead of an ENOENT.
 //
@@ -64,10 +65,12 @@ const hasNoDeps = (args) => args.includes("--no-deps");
  * The phases of a run, in order, each with the arguments of `playwright test` and the environment that points its reports and its login
  * at a place of its own. Pure: no file is read or written here.
  *
- * @param {{ tier: string, noSerial?: boolean, extraArgs?: string[], authState: string }} input
+ * @param {{ tier: string, noSerial?: boolean, extraArgs?: string[], authState: string, outputRoot?: string }} input
  * @returns {{ phases: Phase[], skipped: string[] }}
  */
-export function planPhases({ tier, noSerial = false, extraArgs = [], authState }) {
+export function planPhases({ tier, noSerial = false, extraArgs = [], authState, outputRoot = "." }) {
+  const results = (phase) => path.join(outputRoot, "test-results", phase);
+  const report = (phase) => path.join(outputRoot, "playwright-report", phase);
   /** @type {Array<{ name: string, args: string[] }>} */
   let plan;
   switch (tier) {
@@ -106,7 +109,7 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState }
       skipped.push(`${step.name}: skipped (shard ${shard.index}/${shard.total}: it runs once, with shard 1/${shard.total})`);
       return;
     }
-    const args = ["test", ...step.args, `--output=${path.join("test-results", step.name, "artifacts")}`, ...(index === 0 ? extraArgs : [])];
+    const args = ["test", ...step.args, `--output=${path.join(results(step.name), "artifacts")}`, ...(index === 0 ? extraArgs : [])];
     const noDeps = hasNoDeps(args);
     phases.push({
       name: step.name,
@@ -116,9 +119,9 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState }
       runsSetup: args.includes("--project=setup") || !noDeps,
       env: {
         E2E_AUTH_STATE: authState,
-        PLAYWRIGHT_HTML_OUTPUT_DIR: path.join("playwright-report", step.name),
-        PLAYWRIGHT_JUNIT_OUTPUT_FILE: path.join("test-results", step.name, "junit.xml"),
-        E2E_FLAKY_FILE: path.join("test-results", step.name, "flaky-tests.json"),
+        PLAYWRIGHT_HTML_OUTPUT_DIR: report(step.name),
+        PLAYWRIGHT_JUNIT_OUTPUT_FILE: path.join(results(step.name), "junit.xml"),
+        E2E_FLAKY_FILE: path.join(results(step.name), "flaky-tests.json"),
       },
     });
   });
@@ -172,9 +175,10 @@ async function main() {
     process.exit(2);
   }
 
-  const first = planPhases({ ...cli, authState: "x" }).phases[0];
+  const outputRoot = process.env.E2E_OUTPUT_ROOT || ".";
+  const first = planPhases({ ...cli, authState: "", outputRoot }).phases[0];
   const auth = chooseAuthState({ env: process.env, firstPhaseRunsSetup: first.runsSetup, runId: `${process.pid}-${randomBytes(4).toString("hex")}` });
-  const { phases, skipped } = planPhases({ ...cli, authState: auth.file });
+  const { phases, skipped } = planPhases({ ...cli, authState: auth.file, outputRoot });
   console.log(`[e2e-phases] login: ${auth.file}${auth.ownedByThisRun ? " (this run's own, removed at the end)" : ""}`);
   for (const note of skipped) console.log(`[e2e-phases] ${note}`);
 
@@ -219,7 +223,7 @@ async function main() {
   for (const phase of phases) {
     const result = results.find((r) => r.name === phase.name);
     const text = !result ? "not run" : result.refused ? "refused" : result.code === 0 ? "passed" : `failed (exit ${result.code})`;
-    const where = result && !result.refused ? `   report: playwright-report/${phase.name}/index.html   results: test-results/${phase.name}/` : "";
+    const where = result && !result.refused ? `   report: ${path.join(phase.env.PLAYWRIGHT_HTML_OUTPUT_DIR, "index.html")}   results: ${path.dirname(phase.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE)}/` : "";
     console.log(`  ${phase.name}: ${text}${where}`);
   }
   process.exit(results.find((r) => r.code !== 0)?.code ?? (interrupted ? 130 : 0));
