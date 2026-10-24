@@ -32,11 +32,15 @@ export default function LoginPage() {
     setError(null);
     setIsPending(true);
 
+    // What the fields hold NOW, not what React heard of: autofill can fill a field without a change event. The state only keeps the
+    // address for after a refusal.
     const formData = new FormData(e.currentTarget);
-    const password = formData.get("password") as string;
+    const typedEmail = String(formData.get("email") ?? "");
+    const password = String(formData.get("password") ?? "");
+    setEmail(typedEmail);
 
     const result = await signIn("credentials", {
-      email,
+      email: typedEmail,
       password,
       redirect: false,
     });

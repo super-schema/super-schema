@@ -111,7 +111,13 @@ export default function RegisterPage() {
       )}
 
       {/* Form */}
-      <form action={formAction} data-testid="register-form" className="space-y-space-4">
+      <form
+        action={formAction}
+        data-testid="register-form"
+        className="space-y-space-4"
+        // The address the field holds when the form is sent (autofill fills a field without a change event), kept for after a refusal.
+        onSubmit={(event) => setEmail(String(new FormData(event.currentTarget).get("email") ?? ""))}
+      >
         {/* Email */}
         <div>
           <label className="text-body-small text-foreground mb-space-1 block font-medium">
