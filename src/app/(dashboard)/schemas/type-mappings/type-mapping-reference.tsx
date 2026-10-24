@@ -104,7 +104,7 @@ export function TypeMappingReference() {
             Pick a Super Schema logical type and see exactly how it maps to each supported Super Schema native schema technology, with examples and data-quality warnings.
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-space-2 text-caption">
+        <div className="grid grid-cols-3 gap-space-2 text-caption" data-testid="mapping-summary">
           <Badge variant="success">{summary.safe} safe</Badge>
           <Badge variant={summary.risky > 0 ? "warning" : "success"}>{summary.risky} risky</Badge>
           <Badge variant={summary.unmapped > 0 ? "destructive" : "success"}>{summary.unmapped} unmapped</Badge>
@@ -205,19 +205,24 @@ export function TypeMappingReference() {
                   const cell = selectedRow.cells[target.key];
                   const risk = cell.risk;
                   return (
-                    <tr key={target.key} className={index % 2 === 0 ? "" : "bg-muted/10"}>
+                    <tr
+                      key={target.key}
+                      data-testid="type-mapping-row"
+                      data-target={target.key}
+                      className={index % 2 === 0 ? "" : "bg-muted/10"}
+                    >
                       <td className="px-3 py-3 align-top">
                         <div className="font-medium text-foreground">{target.displayName}</div>
                         <div className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">{target.outputLanguage}</div>
                       </td>
                       <td className="px-3 py-3 align-top">
-                        <div className="font-mono text-body-small text-primary">{cell.mapping.mappedType}</div>
+                        <div className="font-mono text-body-small text-primary" data-testid="mapped-type">{cell.mapping.mappedType}</div>
                         {cell.targetType?.description && (
                           <p className="mt-1 max-w-[220px] text-[10px] text-muted-foreground">{cell.targetType.description}</p>
                         )}
                       </td>
                       <td className="px-3 py-3 align-top">
-                        <Badge variant={RISK_BADGE_VARIANT[risk.severity]}>
+                        <Badge variant={RISK_BADGE_VARIANT[risk.severity]} data-testid="mapping-health" data-severity={risk.severity}>
                           {risk.severity === "safe" ? (
                             <CheckCircle2 className={`h-3 w-3 ${RISK_ICON_CLASS[risk.severity]}`} />
                           ) : (

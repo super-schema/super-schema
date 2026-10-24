@@ -110,6 +110,8 @@ export default function NotificationsPage() {
       {/* Filters */}
       <div className="flex gap-4 mb-4">
         <select
+          data-testid="notification-filter-type"
+          aria-label="Type"
           value={filterType}
           onChange={(e) => {
             setFilterType(e.target.value);
@@ -128,6 +130,8 @@ export default function NotificationsPage() {
         </select>
 
         <select
+          data-testid="notification-filter-read"
+          aria-label="Status"
           value={filterRead}
           onChange={(e) => {
             setFilterRead(e.target.value);
@@ -172,6 +176,9 @@ export default function NotificationsPage() {
               notifications.map((n) => (
                 <tr
                   key={n.id}
+                  data-testid="notification-row"
+                  data-title={n.title}
+                  data-read={n.read ? "true" : "false"}
                   className="border-t border-border/50 hover:bg-accent/20"
                 >
                   <td className="px-4 py-3">
@@ -207,14 +214,16 @@ export default function NotificationsPage() {
       {/* Pagination */}
       <div className="flex justify-between items-center mt-4">
         <button
+          data-testid="notifications-previous"
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page === 1}
           className="px-3 py-1.5 text-sm border border-border rounded-lg disabled:opacity-50"
         >
           Previous
         </button>
-        <span className="text-sm text-muted-foreground">Page {page}</span>
+        <span data-testid="notifications-page" className="text-sm text-muted-foreground">Page {page}</span>
         <button
+          data-testid="notifications-next"
           onClick={() => setPage((p) => p + 1)}
           disabled={notifications.length < pageSize}
           className="px-3 py-1.5 text-sm border border-border rounded-lg disabled:opacity-50"

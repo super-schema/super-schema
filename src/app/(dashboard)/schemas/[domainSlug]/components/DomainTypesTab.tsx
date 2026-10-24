@@ -198,12 +198,12 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
       {/* Delete confirmation dialog */}
       {deleteDialog.pending && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm">
+          <div role="dialog" aria-modal="true" data-testid="data-type-delete-dialog" className="bg-background border border-border rounded-xl shadow-xl p-space-6 max-w-sm">
             <h3 className="text-heading-3 text-foreground mb-2">Delete "{deleteDialog.pending.name}"?</h3>
             <p className="text-body-small text-muted-foreground mb-4">This action cannot be undone.</p>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={deleteDialog.cancel}>Cancel</Button>
-              <Button variant="destructive" size="sm" onClick={deleteDialog.confirm}>Delete</Button>
+              <Button variant="outline" size="sm" data-testid="data-type-delete-cancel" onClick={deleteDialog.cancel}>Cancel</Button>
+              <Button variant="destructive" size="sm" data-testid="data-type-delete-confirm" onClick={deleteDialog.confirm}>Delete</Button>
             </div>
           </div>
         </div>
@@ -215,6 +215,9 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
           {subTabs.map((tab) => (
             <button
               key={tab.id}
+              data-testid="data-type-subtab"
+              data-subtab={tab.id}
+              aria-pressed={activeSubTab === tab.id}
               onClick={() => setActiveSubTab(tab.id)}
               className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-body-small transition-colors ${
                 activeSubTab === tab.id
@@ -224,7 +227,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
             >
               <tab.icon className="w-3.5 h-3.5 shrink-0" />
               {tab.label}
-              <Badge variant="secondary" className="text-[10px] h-4 px-1 ml-auto">{tab.count}</Badge>
+              <Badge variant="secondary" className="text-[10px] h-4 px-1 ml-auto" data-testid="data-type-subtab-count">{tab.count}</Badge>
             </button>
           ))}
         </div>
@@ -269,18 +272,18 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
             <div className="space-y-space-2">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-body-small font-semibold text-foreground">Shared Enums</h3>
-                <Button size="sm" className="gap-1 h-7 text-[11px]" onClick={() => setShowCreateEnum(true)} disabled={showCreateEnum}>
+                <Button size="sm" className="gap-1 h-7 text-[11px]" data-testid="data-type-new-enum" onClick={() => setShowCreateEnum(true)} disabled={showCreateEnum}>
                   <Plus className="w-3 h-3" /> New Enum
                 </Button>
               </div>
 
               {showCreateEnum && (
-                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
-                  <Input value={newEnumName} onChange={(e) => setNewEnumName(e.target.value)} placeholder="EnumName" className="h-7 font-mono text-caption" autoFocus />
-                  <Input value={newEnumValues} onChange={(e) => setNewEnumValues(e.target.value)} placeholder="Value1, Value2, Value3" className="h-7 text-caption" />
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2" data-testid="data-type-form-enum">
+                  <Input value={newEnumName} onChange={(e) => setNewEnumName(e.target.value)} placeholder="EnumName" aria-label="Enum name" data-testid="data-type-name" className="h-7 font-mono text-caption" autoFocus />
+                  <Input value={newEnumValues} onChange={(e) => setNewEnumValues(e.target.value)} placeholder="Value1, Value2, Value3" aria-label="Enum values" data-testid="data-type-members" className="h-7 text-caption" />
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowCreateEnum(false)}>Cancel</Button>
-                    <Button size="sm" className="h-6 text-[10px]" onClick={handleCreateEnum} disabled={!newEnumName.trim()}>Create</Button>
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" data-testid="data-type-cancel" onClick={() => setShowCreateEnum(false)}>Cancel</Button>
+                    <Button size="sm" className="h-6 text-[10px]" data-testid="data-type-create" onClick={handleCreateEnum} disabled={!newEnumName.trim()}>Create</Button>
                   </div>
                 </div>
               )}
@@ -303,15 +306,15 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
             <div className="space-y-space-2">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-body-small font-semibold text-foreground">Custom Scalars</h3>
-                <Button size="sm" className="gap-1 h-7 text-[11px]" onClick={() => setShowCreateScalar(true)} disabled={showCreateScalar}>
+                <Button size="sm" className="gap-1 h-7 text-[11px]" data-testid="data-type-new-scalar" onClick={() => setShowCreateScalar(true)} disabled={showCreateScalar}>
                   <Plus className="w-3 h-3" /> New Scalar
                 </Button>
               </div>
 
               {showCreateScalar && (
-                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
-                  <Input value={newScalarName} onChange={(e) => setNewScalarName(e.target.value)} placeholder="ScalarName" className="h-7 font-mono text-caption" autoFocus />
-                  <select value={newScalarBase} onChange={(e) => setNewScalarBase(e.target.value)} className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption">
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2" data-testid="data-type-form-scalar">
+                  <Input value={newScalarName} onChange={(e) => setNewScalarName(e.target.value)} placeholder="ScalarName" aria-label="Scalar name" data-testid="data-type-name" className="h-7 font-mono text-caption" autoFocus />
+                  <select value={newScalarBase} onChange={(e) => setNewScalarBase(e.target.value)} aria-label="Scalar base type" data-testid="data-type-base" className="h-7 w-full rounded-lg border border-border bg-popover px-2 text-caption">
                     <option value="string">extends string</option>
                     <option value="int32">extends int32</option>
                     <option value="int64">extends int64</option>
@@ -321,8 +324,8 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
                     <option value="bytes">extends bytes</option>
                   </select>
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowCreateScalar(false)}>Cancel</Button>
-                    <Button size="sm" className="h-6 text-[10px]" onClick={handleCreateScalar} disabled={!newScalarName.trim()}>Create</Button>
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" data-testid="data-type-cancel" onClick={() => setShowCreateScalar(false)}>Cancel</Button>
+                    <Button size="sm" className="h-6 text-[10px]" data-testid="data-type-create" onClick={handleCreateScalar} disabled={!newScalarName.trim()}>Create</Button>
                   </div>
                 </div>
               )}
@@ -332,7 +335,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               )}
 
               {customScalars.map((s) => (
-                <div key={s.id} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/scalar">
+                <div key={s.id} data-testid="data-type-card" data-kind="scalar" data-name={s.name} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/scalar">
                   <div className="flex items-center gap-space-2">
                     <span className="font-mono text-body-small text-foreground font-medium">{s.name}</span>
                     <ScalarTypeBadges s={s} />
@@ -341,6 +344,8 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
                         const r = await deleteCustomScalarAction(s.id);
                         if (r.error) toast.error(r.error); else { void invalidateDomainsTree(); toast.success(`Scalar "${s.name}" deleted`); }
                       })}
+                      data-testid="data-type-delete"
+                      aria-label={`Delete ${s.name}`}
                       className="ml-auto opacity-0 group-hover/scalar:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -357,18 +362,18 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
             <div className="space-y-space-2">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-body-small font-semibold text-foreground">Union Types</h3>
-                <Button size="sm" className="gap-1 h-7 text-[11px]" onClick={() => setShowCreateUnion(true)} disabled={showCreateUnion}>
+                <Button size="sm" className="gap-1 h-7 text-[11px]" data-testid="data-type-new-union" onClick={() => setShowCreateUnion(true)} disabled={showCreateUnion}>
                   <Plus className="w-3 h-3" /> New Union
                 </Button>
               </div>
 
               {showCreateUnion && (
-                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
-                  <Input value={newUnionName} onChange={(e) => setNewUnionName(e.target.value)} placeholder="UnionName" className="h-7 font-mono text-caption" autoFocus />
-                  <Input value={newUnionMembers} onChange={(e) => setNewUnionMembers(e.target.value)} placeholder="TypeA | TypeB | TypeC" className="h-7 font-mono text-caption" />
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2" data-testid="data-type-form-union">
+                  <Input value={newUnionName} onChange={(e) => setNewUnionName(e.target.value)} placeholder="UnionName" aria-label="Union name" data-testid="data-type-name" className="h-7 font-mono text-caption" autoFocus />
+                  <Input value={newUnionMembers} onChange={(e) => setNewUnionMembers(e.target.value)} placeholder="TypeA | TypeB | TypeC" aria-label="Union members" data-testid="data-type-members" className="h-7 font-mono text-caption" />
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setShowCreateUnion(false)}>Cancel</Button>
-                    <Button size="sm" className="h-6 text-[10px]" onClick={handleCreateUnion} disabled={!newUnionName.trim()}>Create</Button>
+                    <Button variant="ghost" size="sm" className="h-6 text-[10px]" data-testid="data-type-cancel" onClick={() => setShowCreateUnion(false)}>Cancel</Button>
+                    <Button size="sm" className="h-6 text-[10px]" data-testid="data-type-create" onClick={handleCreateUnion} disabled={!newUnionName.trim()}>Create</Button>
                   </div>
                 </div>
               )}
@@ -499,12 +504,14 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
   }
 
   return (
-    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/enum">
+    <div data-testid="data-type-card" data-kind="enum" data-name={e.name} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/enum">
       <div className="flex items-center gap-space-2 mb-1">
         <span className="font-mono text-body-small text-foreground font-medium">{e.name}</span>
         <Badge variant="secondary" className="text-[10px] h-4 px-1">{pluralize(values.length, "value")}</Badge>
         <button
           onClick={() => onDelete(e.name)}
+          data-testid="data-type-delete"
+          aria-label={`Delete ${e.name}`}
           className="ml-auto opacity-0 group-hover/enum:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
         >
           <Trash2 className="w-3.5 h-3.5" />
@@ -513,18 +520,18 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
       {e.description && <p className="text-caption text-muted-foreground mb-1.5">{e.description}</p>}
       <div className="flex flex-wrap gap-1">
         {values.map((v) => (
-          <Badge key={v} variant="outline" className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
+          <Badge key={v} variant="outline" data-testid="data-type-member" data-member={v} className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
             {v}
-            <button onClick={() => removeValue(v)} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
+            <button onClick={() => removeValue(v)} aria-label={`Remove ${v}`} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
           </Badge>
         ))}
         {isAdding ? (
           <input autoFocus value={newValue} onChange={(ev) => setNewValue(ev.target.value)}
             onKeyDown={(ev) => { if (ev.key === "Enter") addValue(); if (ev.key === "Escape") { setIsAdding(false); setNewValue(""); } }}
             onBlur={() => { if (newValue.trim()) addValue(); else setIsAdding(false); }}
-            placeholder="value" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
+            placeholder="value" aria-label="New value" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
         ) : (
-          <button onClick={() => setIsAdding(true)} className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+          <button onClick={() => setIsAdding(true)} aria-label="Add value" className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
             <Plus className="w-2.5 h-2.5" />
           </button>
         )}
@@ -562,12 +569,14 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
   }
 
   return (
-    <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/union">
+    <div data-testid="data-type-card" data-kind="union" data-name={u.name} className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/union">
       <div className="flex items-center gap-space-2 mb-1">
         <span className="font-mono text-body-small text-foreground font-medium">{u.name}</span>
         <span className="text-caption text-muted-foreground">=</span>
         <button
           onClick={() => onDelete(u.name)}
+          data-testid="data-type-delete"
+          aria-label={`Delete ${u.name}`}
           className="ml-auto opacity-0 group-hover/union:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
         >
           <Trash2 className="w-3.5 h-3.5" />
@@ -578,9 +587,9 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
         {members.map((m, i) => (
           <span key={m} className="flex items-center gap-0.5">
             {i > 0 && <span className="text-[10px] text-muted-foreground/50 mx-0.5">|</span>}
-            <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
+            <Badge variant="outline" data-testid="data-type-member" data-member={m} className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
               {m}
-              <button onClick={() => removeMember(m)} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
+              <button onClick={() => removeMember(m)} aria-label={`Remove ${m}`} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>
             </Badge>
           </span>
         ))}
@@ -588,9 +597,9 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
           <input autoFocus value={newMember} onChange={(ev) => setNewMember(ev.target.value)}
             onKeyDown={(ev) => { if (ev.key === "Enter") addMember(); if (ev.key === "Escape") { setIsAdding(false); setNewMember(""); } }}
             onBlur={() => { if (newMember.trim()) addMember(); else setIsAdding(false); }}
-            placeholder="type" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
+            placeholder="type" aria-label="New member" className="h-5 w-20 rounded border border-input bg-transparent px-1.5 text-[10px] font-mono focus:outline-none focus:ring-1 focus:ring-ring" />
         ) : (
-          <button onClick={() => setIsAdding(true)} className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
+          <button onClick={() => setIsAdding(true)} aria-label="Add member" className="flex items-center gap-0.5 h-5 px-1.5 rounded-full border border-dashed border-border text-[10px] text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
             <Plus className="w-2.5 h-2.5" />
           </button>
         )}

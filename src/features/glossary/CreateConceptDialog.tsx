@@ -87,7 +87,7 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-label="Create Business Concept" data-testid="concept-dialog">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -105,7 +105,7 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
         <h2 className="text-heading-2 text-foreground">Create Business Concept</h2>
 
         {error && (
-          <div className="px-3 py-2 rounded bg-red-500/10 border border-red-500/30 text-caption text-red-400">
+          <div role="alert" data-testid="concept-error" className="px-3 py-2 rounded bg-red-500/10 border border-red-500/30 text-caption text-red-400">
             {error}
           </div>
         )}
@@ -113,10 +113,12 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
         <form onSubmit={handleSubmit} className="space-y-3">
           {/* Name */}
           <div>
-            <label className="block text-caption font-medium text-foreground mb-1">
+            <label htmlFor="concept-name" className="block text-caption font-medium text-foreground mb-1">
               Name <span className="text-red-400">*</span>
             </label>
             <input
+              id="concept-name"
+              data-testid="concept-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -127,10 +129,12 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
 
           {/* Domain */}
           <div>
-            <label className="block text-caption font-medium text-foreground mb-1">
+            <label htmlFor="concept-domain" className="block text-caption font-medium text-foreground mb-1">
               Domain
             </label>
             <select
+              id="concept-domain"
+              data-testid="concept-domain"
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
               className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
@@ -145,10 +149,12 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
 
           {/* Definition */}
           <div>
-            <label className="block text-caption font-medium text-foreground mb-1">
+            <label htmlFor="concept-definition" className="block text-caption font-medium text-foreground mb-1">
               Definition
             </label>
             <textarea
+              id="concept-definition"
+              data-testid="concept-definition"
               value={definition}
               onChange={(e) => setDefinition(e.target.value)}
               placeholder="Human-readable definition of this business concept..."
@@ -159,10 +165,12 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
 
           {/* Synonyms */}
           <div>
-            <label className="block text-caption font-medium text-foreground mb-1">
+            <label htmlFor="concept-synonyms" className="block text-caption font-medium text-foreground mb-1">
               Synonyms <span className="text-muted-foreground">(comma-separated)</span>
             </label>
             <input
+              id="concept-synonyms"
+              data-testid="concept-synonyms"
               type="text"
               value={synonymsText}
               onChange={(e) => setSynonymsText(e.target.value)}
@@ -174,10 +182,12 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
           {/* Canonical Type + Classification in a row */}
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-caption font-medium text-foreground mb-1">
+              <label htmlFor="concept-type" className="block text-caption font-medium text-foreground mb-1">
                 Canonical Type
               </label>
               <select
+                id="concept-type"
+                data-testid="concept-type"
                 value={canonicalType}
                 onChange={(e) => setCanonicalType(e.target.value)}
                 className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
@@ -190,10 +200,12 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
               </select>
             </div>
             <div className="flex-1">
-              <label className="block text-caption font-medium text-foreground mb-1">
+              <label htmlFor="concept-classification" className="block text-caption font-medium text-foreground mb-1">
                 Classification
               </label>
               <select
+                id="concept-classification"
+                data-testid="concept-classification"
                 value={classification}
                 onChange={(e) => setClassification(e.target.value)}
                 className="w-full px-3 py-2 rounded border border-border bg-transparent text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
@@ -209,10 +221,12 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
 
           {/* Tags */}
           <div>
-            <label className="block text-caption font-medium text-foreground mb-1">
+            <label htmlFor="concept-tags" className="block text-caption font-medium text-foreground mb-1">
               Tags <span className="text-muted-foreground">(comma-separated)</span>
             </label>
             <input
+              id="concept-tags"
+              data-testid="concept-tags"
               type="text"
               value={tagsText}
               onChange={(e) => setTagsText(e.target.value)}
@@ -235,6 +249,7 @@ export function CreateConceptDialog({ open, onClose, onSubmit }: CreateConceptDi
             </button>
             <button
               type="submit"
+              data-testid="concept-submit"
               disabled={submitting}
               className="px-4 py-2 rounded text-caption font-medium text-white disabled:opacity-50"
               style={{

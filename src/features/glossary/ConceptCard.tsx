@@ -31,6 +31,7 @@ export function ConceptCard({ concept, isSelected, onClick }: ConceptCardProps) 
   return (
     <div
       data-testid="concept-card"
+      data-name={concept.name}
       onClick={onClick}
       className={`rounded-lg border border-border p-4 cursor-pointer transition-all ${
         isSelected

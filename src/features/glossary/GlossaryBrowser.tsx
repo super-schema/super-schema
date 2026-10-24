@@ -123,6 +123,9 @@ export function GlossaryBrowser() {
                 <button
                   key={domain}
                   type="button"
+                  data-testid="glossary-domain-tab"
+                  data-domain={domain}
+                  aria-pressed={activeDomain === domain}
                   onClick={() => setActiveDomain(domain)}
                   className={`w-full text-left px-3 py-1.5 rounded text-caption transition-colors ${
                     activeDomain === domain
@@ -146,6 +149,8 @@ export function GlossaryBrowser() {
           </label>
           <input
             type="text"
+            data-testid="glossary-search"
+            aria-label="Search concepts"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search concepts..."
@@ -155,6 +160,7 @@ export function GlossaryBrowser() {
 
         <button
           type="button"
+          data-testid="glossary-new-concept"
           onClick={() => setShowCreateDialog(true)}
           className="w-full px-3 py-2 rounded text-caption font-medium text-white"
           style={{

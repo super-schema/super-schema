@@ -95,6 +95,9 @@ export function TenantSwitcher() {
           return (
             <DropdownMenuItem
               key={tenant.id}
+              data-testid="tenant-option"
+              data-tenant-id={tenant.id}
+              data-active={isActive ? "true" : "false"}
               onClick={() => handleSelect(tenant.id)}
               className="flex items-center gap-space-2"
             >
