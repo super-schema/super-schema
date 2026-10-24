@@ -331,6 +331,24 @@ export async function deleteUsersByEmail(emails: readonly string[]): Promise<num
   return res.rows.length;
 }
 
+/**
+ * An event spec (an Events asset) in a product of a domain: a draft with an empty document, the least that counts as "the domain holds
+ * an event" for the deletion guard. It goes with the domain (the cascade).
+ */
+export async function createEventSpecInProduct(domainId: string, productId: string): Promise<{ id: string; name: string }> {
+  const db = pg();
+  const domain = await db.query(`SELECT "tenantId" FROM domains WHERE id = $1`, [domainId]);
+  const tenantId = domain.rows[0]?.tenantId as string | undefined;
+  if (!tenantId) throw new Error(`createEventSpecInProduct: no domain ${domainId}`);
+  const spec = { id: newId(), name: `e2e-event-${suffix()}` };
+  await db.query(
+    `INSERT INTO event_specs (id, name, document, "tenantId", "domainId", "productId", "updatedAt")
+     VALUES ($1, $2, '{}'::jsonb, $3, $4, $5, now())`,
+    [spec.id, spec.name, tenantId, domainId, productId]
+  );
+  return spec;
+}
+
 /** Delete tenant-level entities by exact name. Returns rows deleted. */
 export async function deleteTenantEntitiesByName(names: readonly string[]): Promise<number> {
   if (names.length === 0) return 0;

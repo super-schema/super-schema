@@ -3,9 +3,10 @@
  *
  *   @smoke       the create path: a domain (name + description), a product in it, a blank entity with a field from the wizard; each
  *                shows in its grid, in the explorer, and opens its page;
- *   @regression  what the forms refuse (blank, duplicate and reserved names), deleting a domain through the DomainDeletionDialog (its
- *                impact counts before the confirmation; entities block it), deleting a product, deleting an entity (confirmation
- *                dialog, Cancel keeps it), the blank wizard, and the Enterprise entity at /schemas/enterprise/new.
+ *   @regression  what the forms refuse (blank, duplicate and reserved names; Cancel creates nothing, checked after a reload), deleting a
+ *                domain through the DomainDeletionDialog (its impact counts before the confirmation; entities and Events assets block
+ *                it), deleting a product and an entity (a confirmation dialog each, Cancel keeps it), the blank wizard, the inline
+ *                editing of an entity's description, tags and owner, and the Enterprise entity at /schemas/enterprise/new.
  *
  * What a test needs to exist BEFORE the operation it is about (the domain it deletes, the product it refuses a duplicate of) comes from
  * the `workspace` fixture (straight in the database, removed afterwards); everything under test is done through the UI. A domain or an
@@ -13,25 +14,18 @@
  *
  * NOT AVAILABLE IN THE UI (so not tested; nothing was invented for it): renaming or editing a domain (name, description), editing a
  * product's name / description / tier / owner team (only its contacts: product-contacts.spec.ts), renaming an entity (its name is
- * fixed at creation). A product is deleted by its card's trash button with no confirmation dialog (a toast tells it).
+ * fixed at creation; its description, tags and owner are editable and tested here), deleting a domain from anywhere but the Domains
+ * grid.
  *
  * Page content is queried inside the center panel and the explorer through `leftSidebar`: a hard load streams the page behind its
  * loading.tsx and Next leaves a hidden copy of the streamed segment in <body>. Dialogs and toasts are portals, queried on `page`.
  */
 import type { Locator, Page } from "@playwright/test";
-import { test, expect as baseExpect, unique } from "./helpers/fixtures";
+import { test, expect, unique } from "./helpers/fixtures";
 import { centerPanel, leftSidebar } from "./helpers/event-builder";
-import { deleteDomainsByName, deleteTenantEntitiesByName, createProductInDomain, disconnectDb } from "./helpers/db";
+import { deleteDomainsByName, deleteTenantEntitiesByName, createEventSpecInProduct, createProductInDomain, disconnectDb } from "./helpers/db";
 import { waitForHydration } from "./helpers/hydration";
 import { fieldName } from "./helpers/lifecycle";
-
-/**
- * Every assertion below waits for the server: a page render, or a server action together with the refresh of its page. Measured on the hierarchy spec (the same server work): a domain is
- * created in 0.1 s when the suite runs with one worker (as CI does), and in 4 s when eight workers use the one server, which is
- * just under `expect`'s default 5 s and what made the first version of these specs fail now and then. They wait up to the 30 s of
- * `actionTimeout` (playwright.config.ts) instead; an assertion that holds returns at once.
- */
-const expect = baseExpect.configure({ timeout: 30_000 });
 
 /** Test ids of the domain grid, the product grid, the entity cards, the deletion dialogs and the entity wizard. */
 const ID = {
@@ -45,6 +39,7 @@ const ID = {
   domainCard: "domain-card",
   domainCardDelete: "domain-card-delete",
   deletionDialog: "domain-deletion-dialog",
+  deletionBlocked: "domain-deletion-blocked",
   deletionWarning: "domain-deletion-warning",
   deletionImpact: "domain-deletion-impact",
   deletionImpactOf: (key: string) => `domain-deletion-impact-${key}`,
@@ -59,6 +54,9 @@ const ID = {
   productError: "create-product-error",
   productCard: "product-card",
   productCardDelete: "product-card-delete",
+  deleteProductDialog: "delete-product-dialog",
+  deleteProductConfirm: "delete-product-confirm",
+  deleteProductCancel: "delete-product-cancel",
   entityCard: "entity-card",
   entityCardDelete: "entity-card-delete",
   emptyStartBlank: "entity-empty-start-blank",
@@ -76,6 +74,21 @@ const ID = {
   wizardFieldRow: "wizard-field-row",
   wizardFieldName: "wizard-field-name",
   wizardCreate: "wizard-create-entity",
+  wizardBack: "wizard-back",
+  wizardRemoveField: "wizard-remove-field",
+  entityMeta: "inline-entity-meta",
+  addDescription: "entity-add-description",
+  descriptionInput: "entity-description-input",
+  descriptionSave: "entity-description-save",
+  description: "entity-description",
+  addTag: "add-tag-button",
+  tagInput: "inline-tag-input",
+  tag: "inline-tag",
+  ownerButton: "inline-owner-button",
+  ownerInput: "inline-owner-input",
+  metaSaveControls: "meta-save-controls",
+  metaSave: "meta-save-btn",
+  metaDiscard: "meta-discard-btn",
   notFound: "dashboard-not-found",
 } as const;
 
@@ -251,7 +264,7 @@ test.describe("create a domain, a product and an entity", () => {
     await expect(page).toHaveURL((url) => url.pathname === productPath);
     const eCard = entityCard(page, entityName);
     await expect(eCard).toBeVisible();
-    await expect(eCard).toContainText("1 field");
+    await expect(eCard.getByText("1 field", { exact: true }), "the card says '1 field', not '1 fields'").toBeVisible();
     await expect(explorerEntity(page, entityName)).toBeVisible();
 
     // Its page shows the name and the field.
@@ -280,8 +293,13 @@ test.describe("domains", () => {
     await form.getByTestId(ID.domainName).fill(cancelled);
     await form.getByTestId(ID.domainCancel).click();
     await expect(form).toBeHidden();
+    // What the server holds, not what the page remembers: after a reload the cancelled name is nowhere.
+    await page.reload();
+    await expect(centerPanel(page).getByRole("heading", { name: "Domains", level: 1 })).toBeVisible();
+    await expect(domainCard(page, workspace.domainName)).toBeVisible();
     await expect(domainCard(page, cancelled)).toHaveCount(0);
     await expect(explorerDomain(page, cancelled)).toHaveCount(0);
+    await waitForHydration(centerPanel(page).getByTestId(ID.createDomain));
 
     // A name of blanks passes the browser's `required` and is refused by the server.
     form = await openDomainForm(page);
@@ -347,6 +365,34 @@ test.describe("domains", () => {
     await expect(page.getByTestId(ID.notFound)).toBeVisible();
   });
 
+  test("a domain that holds an event and no entity can be asked about: the dialog is the blocked one ('Delete or move all Events assets first'), Delete Domain is disabled", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    workspace,
+  }) => {
+    // The grid's delete button looks at entities only, so it is enabled; the dialog it opens counts Events assets too.
+    await createEventSpecInProduct(workspace.domainId, workspace.productId);
+    await openDomains(page);
+    const card = domainCard(page, workspace.domainName);
+    await expect(card).toContainText("0 entities");
+    await expect(card.getByTestId(ID.domainCardDelete)).toBeEnabled();
+    await waitForHydration(card.getByTestId(ID.domainCardDelete));
+
+    await card.getByTestId(ID.domainCardDelete).click();
+    const dialog = page.getByTestId(ID.deletionDialog);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId(ID.deletionBlocked)).toContainText("Delete or move all Events assets first.");
+    await expect(dialog.getByTestId(ID.deletionBlocked)).toContainText("This domain currently contains 1 event.");
+    await expect(dialog.getByTestId(ID.deletionImpactOf("eventSpecs"))).toHaveText("1 event");
+    await expect(dialog.getByTestId(ID.deletionImpactOf("products"))).toHaveText("1 product");
+    await expect(dialog.getByTestId(ID.deletionConfirm)).toBeDisabled();
+
+    // Nothing can be confirmed, and Cancel leaves everything as it was.
+    await dialog.getByTestId(ID.deletionCancel).click();
+    await expect(dialog).toBeHidden();
+    await page.reload();
+    await expect(domainCard(page, workspace.domainName)).toBeVisible();
+  });
+
   test.describe("a domain that holds entities", () => {
     test.use({ workspaceEntities: [unique("Customer"), unique("Invoice")] });
 
@@ -389,7 +435,12 @@ test.describe("products", () => {
     await form.getByTestId(ID.productName).fill(cancelled);
     await form.getByTestId(ID.productCancel).click();
     await expect(form).toBeHidden();
+    // What the server holds, not what the page remembers: after a reload the cancelled name is nowhere.
+    await page.reload();
+    await expect(productCard(page, workspace.productName)).toBeVisible();
     await expect(productCard(page, cancelled)).toHaveCount(0);
+    await expect(explorerProduct(page, cancelled)).toHaveCount(0);
+    await waitForHydration(centerPanel(page).getByTestId(ID.newProduct).first());
 
     // A blank name (checked in the browser before anything is sent).
     form = await openProductForm(page);
@@ -404,7 +455,7 @@ test.describe("products", () => {
     await expect(productCard(page, workspace.productName)).toHaveCount(1);
   });
 
-  test("an empty product is deleted by its card: a toast tells it, the card and the explorer row go, and its page is gone", { tag: ["@regression"] }, async ({
+  test("an empty product is deleted through a confirmation: Cancel keeps it, Delete removes the card, the explorer row and the page", { tag: ["@regression"] }, async ({
     authedPage: page,
     workspace,
   }) => {
@@ -415,9 +466,29 @@ test.describe("products", () => {
     await expect(card.getByTestId(ID.productCardDelete)).toBeEnabled();
     await waitForHydration(card.getByTestId(ID.productCardDelete));
 
+    // Asked first: the dialog names the product and says it cannot be undone; nothing is deleted yet.
     await card.getByTestId(ID.productCardDelete).click();
+    const dialog = page.getByTestId(ID.deleteProductDialog);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: `Delete \u201c${workspace.productName}\u201d?` })).toBeVisible();
+    await expect(dialog).toContainText("This permanently deletes this product. This action cannot be undone.");
+    await expect(successToast(page, "deleted")).toHaveCount(0);
 
+    // Cancel: nothing is deleted, here and on the server.
+    await dialog.getByTestId(ID.deleteProductCancel).click();
+    await expect(dialog).toBeHidden();
+    await expect(card).toBeVisible();
+    await page.reload();
+    await expect(productCard(page, workspace.productName)).toBeVisible();
+    await expect(explorerProduct(page, workspace.productName)).toBeVisible();
+    await waitForHydration(productCard(page, workspace.productName).getByTestId(ID.productCardDelete));
+
+    // Confirm: a toast tells it, the card and the explorer row go, and the page of the product is gone.
+    await productCard(page, workspace.productName).getByTestId(ID.productCardDelete).click();
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId(ID.deleteProductConfirm).click();
     await expect(successToast(page, `"${workspace.productName}" deleted`)).toBeVisible();
+    await expect(dialog).toBeHidden();
     await expect(productCard(page, workspace.productName)).toHaveCount(0);
     await expect(centerPanel(page).getByRole("heading", { name: "Create your first product" })).toBeVisible();
     await expect(explorerProduct(page, workspace.productName)).toHaveCount(0);
@@ -465,13 +536,13 @@ test.describe("entities", () => {
 
     // Remove the first field: one is left, and it is the second.
     await main.getByTestId(ID.wizardFieldRow).first().hover();
-    await main.getByTestId(ID.wizardFieldRow).first().getByTitle("Remove field").click();
+    await main.getByTestId(ID.wizardFieldRow).first().getByTestId(ID.wizardRemoveField).click();
     await expect(main.getByTestId(ID.wizardFieldRow)).toHaveCount(1);
     await expect(main.getByTestId(ID.wizardFieldName)).toHaveValue("second");
     await expect(main.getByText("1 field", { exact: true })).toBeVisible();
 
     // Back: the methods again, with nothing created.
-    await main.getByRole("button", { name: "Back" }).click();
+    await main.getByTestId(ID.wizardBack).click();
     await expect(main.getByRole("heading", { name: "Create New Entity" })).toBeVisible();
     await expect(main.getByTestId(ID.methodBlank)).toBeVisible();
     await page.goto(workspace.productUrl);
@@ -522,6 +593,75 @@ test.describe("entities", () => {
   });
 });
 
+test.describe("entity details", () => {
+  test.use({ workspaceEntities: [unique("Payment")] });
+
+  test("description, tags and owner are edited inline, saved, and are still there after a reload; Discard drops an edit", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    workspace,
+  }) => {
+    const entity = workspace.entities[0];
+    const main = centerPanel(page);
+    const meta = main.getByTestId(ID.entityMeta);
+    const description = `What a ${entity.name} is for`;
+    await page.goto(entity.url);
+    await expect(meta).toBeVisible();
+    await waitForHydration(meta.getByTestId(ID.addTag));
+    await expect(meta.getByTestId(ID.tag)).toHaveCount(0);
+    await expect(meta.getByTestId(ID.ownerButton)).toHaveText("Add owner");
+
+    // The description saves by itself.
+    await meta.getByTestId(ID.addDescription).click();
+    await meta.getByTestId(ID.descriptionInput).fill(description);
+    await meta.getByTestId(ID.descriptionSave).click();
+    await expect(meta.getByTestId(ID.description)).toHaveText(description);
+
+    // Tags and the owner are edited, then saved together (the entity says "Unsaved" until then). A tag is stored lower-case.
+    await meta.getByTestId(ID.addTag).click();
+    await meta.getByTestId(ID.tagInput).fill("Payments");
+    await meta.getByTestId(ID.tagInput).press("Enter");
+    await meta.getByTestId(ID.addTag).click();
+    await meta.getByTestId(ID.tagInput).fill("pii-review");
+    await meta.getByTestId(ID.tagInput).press("Enter");
+    await meta.getByTestId(ID.ownerButton).click();
+    await meta.getByTestId(ID.ownerInput).fill("Payments Platform");
+    await meta.getByTestId(ID.ownerInput).press("Enter");
+    await expect(meta.getByTestId(ID.tag)).toHaveText(["payments", "pii-review"]);
+    await expect(meta.getByTestId(ID.ownerButton)).toHaveText("Payments Platform");
+    await expect(meta.getByTestId(ID.metaSaveControls)).toContainText("Unsaved");
+    await meta.getByTestId(ID.metaSave).click();
+    await expect(meta.getByTestId(ID.metaSaveControls)).toHaveCount(0);
+
+    // After a reload the server's copy is shown.
+    await page.reload();
+    await expect(meta).toBeVisible();
+    await expect(meta.getByTestId(ID.description)).toHaveText(description);
+    await expect(meta.getByTestId(ID.tag)).toHaveText(["payments", "pii-review"]);
+    await expect(meta.getByTestId(ID.ownerButton)).toHaveText("Payments Platform");
+    await expect(meta.getByTestId(ID.metaSaveControls)).toHaveCount(0);
+
+    // Discard: an edit that is not saved goes, and nothing was written.
+    await waitForHydration(meta.getByTestId(ID.addTag));
+    await meta.getByTestId(ID.addTag).click();
+    await meta.getByTestId(ID.tagInput).fill("scratch");
+    await meta.getByTestId(ID.tagInput).press("Enter");
+    await expect(meta.getByTestId(ID.tag)).toHaveCount(3);
+    await meta.getByTestId(ID.metaDiscard).click();
+    await expect(meta.getByTestId(ID.tag)).toHaveText(["payments", "pii-review"]);
+    await expect(meta.getByTestId(ID.metaSaveControls)).toHaveCount(0);
+
+    // Removing a tag and saving removes it for good.
+    await meta.getByRole("button", { name: "Remove tag payments" }).click();
+    await expect(meta.getByTestId(ID.tag)).toHaveText(["pii-review"]);
+    await meta.getByTestId(ID.metaSave).click();
+    await expect(meta.getByTestId(ID.metaSaveControls)).toHaveCount(0);
+    await page.reload();
+    await expect(meta.getByTestId(ID.tag)).toHaveText(["pii-review"]);
+    await expect(meta.getByTestId(ID.ownerButton)).toHaveText("Payments Platform");
+    await expect(meta.getByTestId(ID.description)).toHaveText(description);
+  });
+});
+
 // ------------------------------------------------------------------------------------------------------------------------------
 // The Enterprise (tenant-level) entity
 // ------------------------------------------------------------------------------------------------------------------------------
@@ -558,6 +698,6 @@ test.describe("enterprise entity", () => {
     await expect(main.getByRole("heading", { name: "Enterprise", level: 1 })).toBeVisible();
     const card = entityCard(page, entityName);
     await expect(card).toBeVisible();
-    await expect(card).toContainText("1 field");
+    await expect(card.getByText("1 field", { exact: true })).toBeVisible();
   });
 });
