@@ -140,23 +140,35 @@ describe("a document that declares or references the name `Enterprise` (R53)", (
     60_000
   );
 
-  it("falls back for a referenced name too: the publish gate's stub `model Enterprise {}` compiles", async () => {
-    const model = compileEntity(
-      {
-        id: "e3", name: "Order", description: "", status: "DRAFT", version: 1, domainId: null,
-        metadata: null, domain: null,
-      },
-      [
-        fld("email", "PII", 0),
-        fld("owner", null, 1, { type: "reference", decorators: { referencedEntityName: "Enterprise" } }),
-      ]
-    );
+  it("falls back for a referenced name too: a closure whose member is called Enterprise compiles (the publish gate's real closure)", async () => {
+    const orderFields = [
+      fld("email", "PII", 0),
+      fld("owner", null, 1, { type: "reference", decorators: { referencedEntityId: "e2", referencedEntityName: "Enterprise" } }),
+    ];
+    const entity = (id: string, name: string) => ({
+      id, name, description: "", status: "DRAFT", version: 1, domainId: null, metadata: null, domain: null,
+    });
+    const model = compileEntity(entity("e3", "Order"), orderFields);
     model.namespace = "Sales";
-    const source = generateTypeSpec(model);
-    expect(source).not.toContain("@Enterprise.");
-    const { stubUnresolvedReferences, referencedModelNames } = await import("@/lib/entity-versioning/resolve-source");
-    const gated = stubUnresolvedReferences(source, referencedModelNames(model));
-    expect(gated).toContain("model Enterprise {}");
+    expect(generateTypeSpec(model)).not.toContain("@Enterprise.");
+
+    const { generateClosureTypeSpec } = await import("@/lib/compiler/closure-source");
+    const member = (id: string, name: string, fields: PrismaFieldInput[], source: "draft" | "published") => ({
+      entityId: id,
+      ref: { entityId: id, domain: "Sales", product: "Orders", entity: name },
+      source,
+      ...(source === "published" ? { version: "1.0" } : {}),
+      fields,
+      entity: entity(id, name),
+    });
+    const closure = {
+      entities: [
+        member("e3", "Order", orderFields, "draft"),
+        member("e2", "Enterprise", [fld("id", null, 0, { isKey: true, nullable: false })], "published"),
+      ],
+    };
+    const gated = generateClosureTypeSpec(closure, { target: "publish-gate", governance: true }).source;
+    expect(gated).not.toContain("@Enterprise.");
     const result = await compiler.compileTypeSpecWithGovernance(gated);
     expect(result.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
   }, 60_000);

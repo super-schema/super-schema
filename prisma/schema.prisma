@@ -333,7 +333,9 @@ model EntityVersion {
   /// FieldSnapshot[] (src/services/version-history/version.types.ts)
   fieldSnapshot       Json
   changeKind          EntityVersionChangeKind
-  /// Per-format compatibility findings — {} until Story 14.3.
+  /// Per-format compatibility findings (Story 14.3, not yet written) and, under the key `referencedVersions`, the exact
+  /// version of every entity this version's reference closure used: { ref: EntityRef; version: "MAJOR.MINOR"; pinned: boolean }[]
+  /// (src/lib/entity-versioning/referenced-versions.ts). Versions published before that was recorded hold {}.
   compatReport        Json                    @default("{}")
   changeSummary       String?
   publishedById       String

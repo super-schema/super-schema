@@ -3,6 +3,7 @@ import type { FieldSnapshot } from "@/services/version-history/version.types";
 import { suggestBump } from "./bump-suggestion";
 import { INITIAL_VERSION, formatVersionLabel, nextVersionNumber, resolveBump } from "./version-math";
 import type { BumpKind, ChangeKind, VersionNumber } from "./types";
+import type { ReferencedVersion } from "./referenced-versions";
 
 export interface PublishState {
   entity: {
@@ -19,13 +20,21 @@ export interface PublishState {
   references: Array<{ entityId: string; entityName: string | null; latestVersionId: string | null }>;
   /** By-name references that match no entity in the entity's line — not pinned, surfaced as warnings. */
   unresolvedReferenceNames?: string[];
+  /**
+   * What the REAL reference closure says (`loadPublishClosure`: the entity at its saved rows, everything it references, transitively,
+   * at its latest published version or pin): why it cannot be published against, if so. `entityId` is the entity the message is about.
+   */
+  closureBlocker?: { code: string; message: string; entityId?: string };
+  /** The version of every referenced entity the closure used, to record on the published version (empty: references nothing). */
+  referencedVersions?: ReferencedVersion[];
 }
 
 export type PublishBlocker =
   | { kind: "RETIRED"; message: string }
   | { kind: "NO_CHANGES"; message: string }
   | { kind: "UNPUBLISHED_REFERENCE"; entityId: string; entityName: string; message: string }
-  | { kind: "MISSING_REFERENCE"; entityId: string; message: string };
+  | { kind: "MISSING_REFERENCE"; entityId: string; message: string }
+  | { kind: "CLOSURE_BLOCKED"; code: string; message: string; entityId?: string };
 
 /** Shown in the publish dialog; never stops the publish. */
 export type PublishWarning = { kind: "UNRESOLVED_REFERENCE"; entityName: string; message: string };
@@ -57,6 +66,8 @@ export interface PublishPlan {
   sequence: number;
   changeKind: ChangeKind;
   pins: ReferencePin[];
+  /** What the version records about the entities it used: stored with the version, read back for staleness. */
+  referencedVersions: ReferencedVersion[];
 }
 
 /** Everything the publish dialog shows. Never fails — blockers are data. */
@@ -88,6 +99,19 @@ export function analyzePublish(state: PublishState): PublishAnalysis {
       });
     } else {
       pins.push({ entityId: ref.entityId, entityName: ref.entityName, versionId: ref.latestVersionId });
+    }
+  }
+
+  // The closure sees what the direct references above cannot (an entity only reachable through a published one, a pin that is gone, an
+  // ambiguous bare name). One it names that is already blocked above as an unpublished direct reference is not reported twice.
+  const closure = state.closureBlocker;
+  if (closure) {
+    const alreadyBlocked =
+      closure.code === "NEVER_PUBLISHED" &&
+      closure.entityId !== undefined &&
+      blockers.some((b) => b.kind === "UNPUBLISHED_REFERENCE" && b.entityId === closure.entityId);
+    if (!alreadyBlocked) {
+      blockers.push({ kind: "CLOSURE_BLOCKED", code: closure.code, message: closure.message, ...(closure.entityId ? { entityId: closure.entityId } : {}) });
     }
   }
 
@@ -144,6 +168,7 @@ export function planPublish(state: PublishState, requested?: BumpKind): Result<P
   }
 
   const { latest, entity } = state;
+  const referencedVersions = state.referencedVersions ?? [];
   if (!latest) {
     const { version, changeKind } = nextVersionNumber(null, "MINOR");
     return ok({
@@ -152,11 +177,19 @@ export function planPublish(state: PublishState, requested?: BumpKind): Result<P
       sequence: Math.max(entity.version, 1),
       changeKind,
       pins: analysis.pins,
+      referencedVersions,
     });
   }
 
   const bump = resolveBump(analysis.suggestedBump ?? "MINOR", requested);
   if (!bump.success) return bump;
   const { version, changeKind } = nextVersionNumber(latest, bump.data);
-  return ok({ version, label: formatVersionLabel(version), sequence: latest.sequence + 1, changeKind, pins: analysis.pins });
+  return ok({
+    version,
+    label: formatVersionLabel(version),
+    sequence: latest.sequence + 1,
+    changeKind,
+    pins: analysis.pins,
+    referencedVersions,
+  });
 }

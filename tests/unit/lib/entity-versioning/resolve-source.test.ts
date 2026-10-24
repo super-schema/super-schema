@@ -1,15 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   needsRegeneration,
+  compileClosure,
   compileRegeneratedSource,
   confirmRegeneratedSource,
-  referencedModelNames,
-  stubUnresolvedReferences,
   type ResolveSourceDeps,
 } from "@/lib/entity-versioning/resolve-source";
+import * as resolveSource from "@/lib/entity-versioning/resolve-source";
 import { compileTypeSpecWithGovernance } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
-import { compileEntity } from "@/lib/compiler/compiler.service";
+import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
+import type { ClosureEntity } from "@/lib/references/closure";
+import { writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
 
 function model(over: { name?: string; fields?: unknown[]; parentEntityName?: string; spreadFrom?: string[] } = {}) {
   return {
@@ -23,16 +25,36 @@ function deps(over: Partial<ResolveSourceDeps> = {}): ResolveSourceDeps & {
   loadModel: ReturnType<typeof vi.fn>;
   generate: ReturnType<typeof vi.fn>;
   compile: ReturnType<typeof vi.fn>;
+  generateClosure: ReturnType<typeof vi.fn>;
 } {
   return {
     loadModel: vi.fn().mockResolvedValue({ success: true, data: model() }),
     generate: vi.fn().mockReturnValue("model Order {\n  id?: string;\n}\n"),
     compile: vi.fn().mockResolvedValue({ success: true, diagnostics: [] }),
+    generateClosure: vi.fn().mockReturnValue("namespace SuperSchemaClosure.d.p.Order { model Order {} }\n"),
     ...over,
   } as never;
 }
 
 const DB = {} as never;
+const CLOSURE = { entities: [] } as never;
+
+const field = (name: string, type: string, sortOrder: number, decorators: Record<string, unknown> = {}, extra: Partial<PrismaFieldInput> = {}): PrismaFieldInput => ({
+  id: `f-${name}`, name, type, precision: null, scale: null, nullable: true, isKey: false,
+  fieldNumber: null, description: "", classification: null, aliases: [], decorators, sortOrder, ...extra,
+});
+
+function member(id: string, name: string, fields: PrismaFieldInput[], source: ClosureEntity["source"] = "published", metadata: unknown = null): ClosureEntity {
+  const ref: EntityRef = { entityId: id, domain: "Sales", product: "Orders", entity: name };
+  return {
+    entityId: id,
+    ref,
+    source,
+    ...(source === "draft" ? {} : { version: "1.0" }),
+    fields: [field("id", "string", 0, {}, { nullable: false, isKey: true }), ...fields],
+    entity: { id, name, description: "", status: "DRAFT", version: 1, domainId: null, metadata, domain: null },
+  };
+}
 
 describe("needsRegeneration", () => {
   it("is true when the stored source is missing or stale, false only for a fresh stored source", () => {
@@ -43,15 +65,17 @@ describe("needsRegeneration", () => {
   });
 });
 
-describe("compileRegeneratedSource (phase 1, outside the lock)", () => {
-  it("regenerates from the field rows, compiles the text, and returns the generated source", async () => {
+describe("compileClosure (the publish gate)", () => {
+  it("compiles the combined source of the closure, once, and succeeds when it compiles", async () => {
     const d = deps();
-    const res = await compileRegeneratedSource(DB, "e1", d);
-    expect(res).toEqual({ success: true, data: "model Order {\n  id?: string;\n}\n" });
-    expect(d.compile).toHaveBeenCalledWith("model Order {\n  id?: string;\n}\n");
+    const res = await compileClosure(CLOSURE, d);
+    expect(res).toEqual({ success: true, data: undefined });
+    expect(d.generateClosure).toHaveBeenCalledWith(CLOSURE);
+    expect(d.compile).toHaveBeenCalledTimes(1);
+    expect(d.compile).toHaveBeenCalledWith("namespace SuperSchemaClosure.d.p.Order { model Order {} }\n");
   });
 
-  it("blocks with the compiler diagnostics when the regenerated source does not compile", async () => {
+  it("blocks with the compiler diagnostics (errors only in the message) when the closure does not compile", async () => {
     const d = deps({
       compile: vi.fn().mockResolvedValue({
         success: false,
@@ -61,7 +85,7 @@ describe("compileRegeneratedSource (phase 1, outside the lock)", () => {
         ],
       }),
     });
-    const res = await compileRegeneratedSource(DB, "e1", d);
+    const res = await compileClosure(CLOSURE, d);
     expect(res.success).toBe(false);
     if (!res.success) {
       expect(res.error.code).toBe("PUBLISH_BLOCKED");
@@ -71,66 +95,109 @@ describe("compileRegeneratedSource (phase 1, outside the lock)", () => {
       expect((res.error.details as { diagnostics: unknown[] }).diagnostics).toHaveLength(2);
     }
   });
+});
+
+describe("compileRegeneratedSource (phase 1, outside the lock)", () => {
+  it("regenerates the entity's own text from the field rows, gates the CLOSURE with the compiler, and returns the entity's own text", async () => {
+    const d = deps();
+    const res = await compileRegeneratedSource(DB, "e1", CLOSURE, d);
+    expect(res).toEqual({ success: true, data: "model Order {\n  id?: string;\n}\n" });
+    // The compiler saw the combined closure source, never the stand-alone text (which refers to other models by bare name).
+    expect(d.compile).toHaveBeenCalledWith("namespace SuperSchemaClosure.d.p.Order { model Order {} }\n");
+    expect(d.compile).not.toHaveBeenCalledWith("model Order {\n  id?: string;\n}\n");
+  });
+
+  it("blocks with the diagnostics and returns no text when the closure does not compile", async () => {
+    const d = deps({
+      compile: vi.fn().mockResolvedValue({ success: false, diagnostics: [{ severity: "error", code: "invalid-ref", message: "Unknown identifier Thing" }] }),
+    });
+    const res = await compileRegeneratedSource(DB, "e1", CLOSURE, d);
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error.code).toBe("PUBLISH_BLOCKED");
+      expect(res.error.message).toContain("Unknown identifier Thing");
+    }
+  });
 
   it("passes loader failures through without compiling", async () => {
     const d = deps({ loadModel: vi.fn().mockResolvedValue({ success: false, error: { code: "NOT_FOUND", message: "gone" } }) });
-    const res = await compileRegeneratedSource(DB, "e1", d);
+    const res = await compileRegeneratedSource(DB, "e1", CLOSURE, d);
     expect(res).toEqual({ success: false, error: { code: "NOT_FOUND", message: "gone" } });
     expect(d.compile).not.toHaveBeenCalled();
   });
 
-  it("gates reference fields with stub models but returns the unstubbed source", async () => {
-    const m = model({
-      fields: [
-        { name: "buyer", complexType: { referencedEntityId: "b1", referencedEntityName: "Buyer" } },
-        { name: "id", complexType: undefined },
+  it("gates a tagged entity with classified fields and a reference through the REAL generators + compiler", async () => {
+    const real = (id: string, name: string, fields: PrismaFieldInput[], source: ClosureEntity["source"], metadata: unknown) => member(id, name, fields, source, metadata);
+    const customer = real("c", "Customer", [field("email", "string", 1, {}, { classification: "PII" })], "published", { tags: ["crm"] });
+    const order = real(
+      "o",
+      "Order",
+      [
+        field("email", "string", 1, {}, { classification: "PII" }),
+        field("code", "string", 2, {}, { classification: "TOP_SECRET" }),
+        field("buyer", "reference", 3, writeFieldReference({}, { entityId: "c", domain: "Sales", product: "Orders", entity: "Customer" })),
       ],
-    });
-    const d = deps({
-      loadModel: vi.fn().mockResolvedValue({ success: true, data: m }),
-      generate: vi.fn().mockReturnValue("model Order {\n  buyer?: Buyer;\n}\n"),
-    });
-    const res = await compileRegeneratedSource(DB, "e1", d);
-    expect(d.compile).toHaveBeenCalledWith("model Order {\n  buyer?: Buyer;\n}\n\nmodel Buyer {}\n");
-    expect(res).toEqual({ success: true, data: "model Order {\n  buyer?: Buyer;\n}\n" });
-  });
-
-  it("hands the generator's own text to the compiler verbatim: nothing is stripped (Story 16.6)", async () => {
-    const text = [
-      'import "@superschema/typespec-enterprise";',
-      "",
-      '@doc("Orders")',
-      "model Order {",
-      "  @Enterprise.dataClassification(Enterprise.DataClassification.PII)",
-      "  email?: string;",
-      "}",
-      "",
-    ].join("\n");
-    const d = deps({ generate: vi.fn().mockReturnValue(text) });
-    const res = await compileRegeneratedSource(DB, "e1", d);
-
-    expect(d.compile).toHaveBeenCalledWith(text);
-    expect(res).toEqual({ success: true, data: text });
-  });
-
-  it("gates a tagged entity with classified fields through the REAL generator + compiler (Story 16.6)", async () => {
-    const f = (name: string, classification: string | null, i: number) => ({
-      id: `f-${name}`, name, type: "string", precision: null, scale: null, nullable: true, isKey: false,
-      fieldNumber: null, description: "", classification, aliases: [] as string[], decorators: {}, sortOrder: i,
-    });
-    const real = compileEntity(
-      { id: "e1", name: "Order", description: "Orders", status: "DRAFT", version: 1, domainId: null, metadata: { tags: ["sales"] }, domain: null },
-      [f("id", null, 0), f("email", "PII", 1), f("code", "TOP_SECRET", 2)]
+      "draft",
+      { tags: ["sales"] }
     );
+    const entities = [order, customer];
+    const stored = compileEntity(order.entity, order.fields);
 
-    const res = await compileRegeneratedSource(DB, "e1", {
-      loadModel: vi.fn().mockResolvedValue({ success: true, data: real }),
+    const res = await compileRegeneratedSource(DB, "o", { entities }, {
+      loadModel: vi.fn().mockResolvedValue({ success: true, data: stored }),
       generate: generateTypeSpec,
       compile: compileTypeSpecWithGovernance,
     });
-
-    expect(res).toEqual({ success: true, data: generateTypeSpec(real) });
+    expect(res).toEqual({ success: true, data: generateTypeSpec(stored) });
   }, 60_000);
+});
+
+describe("compileClosure with the real compiler", () => {
+  const compileOf = (entities: ClosureEntity[]) => compileClosure({ entities });
+
+  it("a reference to a published member compiles", async () => {
+    const customer = member("c", "Customer", []);
+    const order = member("o", "Order", [field("buyer", "reference", 1, writeFieldReference({}, customer.ref as never))], "draft");
+    expect(await compileOf([order, customer])).toEqual({ success: true, data: undefined });
+  }, 60_000);
+
+  it("a source the compiler rejects blocks the publish with its diagnostic (the real compiler is what runs)", async () => {
+    const res = await compileClosure({ entities: [] }, { generateClosure: () => "model A { b: Nope; }\n" });
+    expect(res.success).toBe(false);
+    if (!res.success) {
+      expect(res.error.code).toBe("PUBLISH_BLOCKED");
+      expect(res.error.message).toMatch(/Nope/);
+    }
+  }, 60_000);
+
+  it("a reference that matches no entity stays dangling and compiles (typed unknown; there are no stub models)", async () => {
+    const order = member("o", "Order", [field("buyer", "reference", 1, { referencedEntityName: "Nobody" })], "draft");
+    expect(await compileOf([order])).toEqual({ success: true, data: undefined });
+  }, 60_000);
+
+  it("a self-reference and a cycle compile", async () => {
+    const a = member("a", "A", [field("b", "reference", 1, writeFieldReference({}, { entityId: "b", domain: "Sales", product: "Orders", entity: "B" }))], "draft");
+    const b = member("b", "B", [field("a", "reference", 1, writeFieldReference({}, { entityId: "a", domain: "Sales", product: "Orders", entity: "A" })), field("me", "reference", 2, writeFieldReference({}, { entityId: "b", domain: "Sales", product: "Orders", entity: "B" }))]);
+    expect(await compileOf([a, b])).toEqual({ success: true, data: undefined });
+  }, 60_000);
+
+  it("a reference to an entity called Enterprise (the governance library namespace) compiles", async () => {
+    const enterprise = member("e", "Enterprise", []);
+    const order = member(
+      "o",
+      "Order",
+      [field("email", "string", 1, {}, { classification: "PII" }), field("owner", "reference", 2, writeFieldReference({}, enterprise.ref as never))],
+      "draft"
+    );
+    expect(await compileOf([order, enterprise])).toEqual({ success: true, data: undefined });
+  }, 60_000);
+});
+
+describe("stubs are gone", () => {
+  it("resolve-source exports neither the stub generator nor its name collector", () => {
+    expect(Object.keys(resolveSource)).not.toContain("stubUnresolvedReferences");
+    expect(Object.keys(resolveSource)).not.toContain("referencedModelNames");
+  });
 });
 
 describe("confirmRegeneratedSource (phase 2, inside the lock)", () => {
@@ -158,31 +225,5 @@ describe("confirmRegeneratedSource (phase 2, inside the lock)", () => {
       success: false,
       error: { code: "NOT_FOUND", message: "gone" },
     });
-  });
-});
-
-describe("referencedModelNames / stubUnresolvedReferences", () => {
-  it("collects reference, parent and spread names, sanitised and de-duplicated", () => {
-    const m = model({
-      parentEntityName: "Base Thing",
-      spreadFrom: ["Audit", "Audit"],
-      fields: [
-        { complexType: { referencedEntityName: "Buyer" } },
-        { complexType: { referencedEntityName: "Buyer" } },
-        { complexType: { referencedEntityName: "my-entity" } },
-        { complexType: {} },
-        {},
-      ],
-    });
-    expect(referencedModelNames(m).sort()).toEqual(["Audit", "Base_Thing", "Buyer", "my_entity"]);
-  });
-
-  it("never stubs a name the source already declares (including the entity's own model)", () => {
-    const src = "model Order {\n  parent?: Order;\n  buyer?: Buyer;\n}\nenum Buyer2 { a }\n";
-    expect(stubUnresolvedReferences(src, ["Order", "Buyer", "Buyer2"])).toBe(`${src}\nmodel Buyer {}\n`);
-  });
-
-  it("returns the source unchanged when there is nothing to stub", () => {
-    expect(stubUnresolvedReferences("model A {}\n", [])).toBe("model A {}\n");
   });
 });

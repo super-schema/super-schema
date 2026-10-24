@@ -31,6 +31,7 @@ const CURRENT = ["@doc(\"Orders\")", "model Order {", "  id: string;", "}", ""].
 function fakePrisma(typespecSource: string) {
   const entityRow = {
     id: "e1",
+    tenantId: "t1",
     name: "Order",
     status: "DRAFT",
     version: 1,
@@ -50,9 +51,13 @@ function fakePrisma(typespecSource: string) {
     }),
     entity: {
       findUnique: vi.fn().mockResolvedValue(entityRow),
-      findMany: vi.fn().mockResolvedValue([]),
+      // The tenant index the reference closure reads (Task 8): just this entity, which references nothing.
+      findMany: vi.fn().mockResolvedValue([
+        { ...entityRow, description: "", domainId: null, latestVersionId: null, domain: null, product: null },
+      ]),
       update: vi.fn().mockResolvedValue({ id: "e1" }),
     },
+    field: { findMany: vi.fn().mockResolvedValue([]) },
     entityVersion: {
       create: vi.fn(async ({ data }: { data: { resolvedSource: string } }) => {
         created.push(data);
@@ -66,6 +71,7 @@ function fakePrisma(typespecSource: string) {
   };
   const prisma = {
     entity: tx.entity,
+    field: tx.field,
     $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
   };
   return { prisma, created, executed };

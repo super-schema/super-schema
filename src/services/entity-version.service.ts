@@ -6,6 +6,12 @@
  * entity's latest published version in SchemaReference (role FIELD), and
  * moves the draft pointers — one transaction, entity row locked.
  *
+ * The draft is judged against its REAL reference closure (`loadPublishClosure`: the entity at its saved rows, everything it
+ * references, transitively, at its latest PUBLISHED version or pin, never a draft): a member that was never published or a pin that is
+ * gone blocks the publish with a message naming the entity, the closure's combined TypeSpec is what the compile gate checks, and the
+ * version used of every referenced entity is recorded on the published version (`compatReport.referencedVersions`, see
+ * referenced-versions.ts) so staleness can be reported later (`loadReferenceStaleness`).
+ *
  * Deferred to Phase 2b: Data Type closure in resolvedSource (14.2), per-format
  * compatibility rule tables + compatReport (14.3), MAJOR governance (14.4),
  * EntityVersionArtifact (14.5).
@@ -24,10 +30,20 @@ import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning
 import { isSourceStale, WRITE_BACK_SOURCE_SQL } from "@/lib/entity-versioning/draft-state";
 import {
   needsRegeneration,
+  compileClosure,
   compileRegeneratedSource,
   confirmRegeneratedSource,
   freezableStoredSource,
 } from "@/lib/entity-versioning/resolve-source";
+import { loadPublishClosure } from "@/lib/entity-versioning/publish-closure";
+import {
+  readReferencedVersions,
+  referencedVersionsReport,
+  referenceStaleness,
+  type ReferenceStaleness,
+  type ReferencedVersion,
+} from "@/lib/entity-versioning/referenced-versions";
+import type { ReferenceClosure } from "@/lib/references/closure";
 import { ServiceErrorRejection } from "@/services/scoped-create.service";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -75,8 +91,16 @@ function isUniqueViolation(e: unknown): boolean {
   return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
 }
 
-/** The planner's state plus whether the stored source lags the field rows (R42). */
-type LoadedPublishState = PublishState & { sourceStale: boolean };
+/**
+ * The planner's state plus whether the stored source lags the field rows (R42) and the closure the publish is judged against
+ * (`null` exactly when `closureBlocker` is set: the plan then refuses before anything uses it).
+ */
+type LoadedPublishState = PublishState & { sourceStale: boolean; closure: ReferenceClosure | null };
+
+/** The same recorded versions, in the same order (the closure is deterministic): did a referenced entity move between two loads? */
+function sameReferencedVersions(a: readonly ReferencedVersion[], b: readonly ReferencedVersion[]): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
 
 async function loadPublishState(db: Db, entityId: string): Promise<Result<LoadedPublishState>> {
   const entity = await db.entity.findUnique({
@@ -97,7 +121,14 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
       : [];
   const byId = new Map(targets.map((t) => [t.id, t]));
 
+  // The real closure: the draft at its saved rows, every member at its published version or pin. The direct references above only
+  // see one level (and only by id or by name in the line); this sees the whole closure, and what it used is what gets recorded.
+  const published = await loadPublishClosure(db, { id: entity.id, tenantId: entity.tenantId, name: entity.name });
+
   return ok({
+    closure: published.success ? published.data.closure : null,
+    closureBlocker: published.success ? undefined : published.error,
+    referencedVersions: published.success ? published.data.referencedVersions : [],
     sourceStale: isSourceStale(entity.metadata),
     entity: {
       id: entity.id,
@@ -147,11 +178,19 @@ export async function publishEntity(
     if (!pre.success) return err(pre.error);
     const prePlan = planPublish(pre.data, opts.bump);
     if (!prePlan.success) return err(prePlan.error);
+    // A closure blocker (a member never published, a pin that is gone, ...) was already a plan blocker above, so the closure is here.
+    const closure = pre.data.closure;
+    if (!closure) return err({ code: "PUBLISH_BLOCKED", message: "The entity's references could not be resolved", suggestedFix: "Publish again." });
     let precompiled: string | null = null;
     if (needsRegeneration(pre.data.entity.typespecSource, pre.data.sourceStale)) {
-      const compiled = await compileRegeneratedSource(db, entityId);
+      const compiled = await compileRegeneratedSource(db, entityId, closure);
       if (!compiled.success) return err(compiled.error);
       precompiled = compiled.data;
+    } else if (closure.entities.length > 1) {
+      // A fresh stored source is frozen as it is, but when it refers to other entities the combined closure it belongs to must still
+      // compile: that is what every consumer will emit. An entity that references nothing is not compiled here (unchanged).
+      const gated = await compileClosure(closure);
+      if (!gated.success) return err(gated.error);
     }
 
     const created = await withAudit({
@@ -170,6 +209,16 @@ export async function publishEntity(
             if (!state.success) throw new ServiceErrorRejection(state.error);
             const plan = planPublish(state.data, opts.bump);
             if (!plan.success) throw new ServiceErrorRejection(plan.error);
+
+            // The compile in phase 1 vouches for the closure it compiled. If a referenced entity published (or a pin moved) since,
+            // what would be recorded is no longer what was checked: abort, retryable, like an edit to the entity itself.
+            if (!sameReferencedVersions(prePlan.data.referencedVersions, plan.data.referencedVersions)) {
+              throw new ServiceErrorRejection({
+                code: "CONFLICT",
+                message: "A referenced entity changed during publish, try again",
+                suggestedFix: "Publish again.",
+              });
+            }
 
             // Phase 2 — the source to freeze (R42/R45/R46). A fresh stored source is used as-is, except
             // that legacy `@tag` lines (stored before Story 16.6) are upgraded first (R53). A
@@ -206,7 +255,8 @@ export async function publishEntity(
                 resolvedSource: source,
                 fieldSnapshot: state.data.currentFields as unknown as Prisma.InputJsonValue,
                 changeKind: plan.data.changeKind,
-                compatReport: {},
+                // The exact version of every referenced entity the closure used (pinned or latest published); no column needed.
+                compatReport: referencedVersionsReport(plan.data.referencedVersions) as unknown as Prisma.InputJsonValue,
                 changeSummary,
                 publishedById: ctx.userId,
               },
@@ -302,4 +352,28 @@ export async function getLatestPublishedVersion(
   const entity = await ctx.prisma.entity.findUnique({ where: { id: entityId }, select: { latestVersion: true } });
   if (!entity) return entityNotFound(entityId);
   return ok(entity.latestVersion);
+}
+
+/**
+ * The references of the entity's latest published version that have fallen behind: an UNPINNED reference whose entity has a newer
+ * published version than the one recorded when this version was published (a pinned one is never stale). Empty for an entity that
+ * was never published and for a version published before references were recorded. Feeds the entity's alerts.
+ */
+export async function loadReferenceStaleness(db: Db, entityId: string): Promise<Result<ReferenceStaleness[]>> {
+  const entity = await db.entity.findUnique({
+    where: { id: entityId },
+    select: { tenantId: true, latestVersion: { select: { compatReport: true } } },
+  });
+  if (!entity) return entityNotFound(entityId);
+
+  const recorded = readReferencedVersions(entity.latestVersion?.compatReport);
+  const ids = [...new Set(recorded.flatMap((r) => (!r.pinned && r.ref.entityId ? [r.ref.entityId] : [])))];
+  if (ids.length === 0) return ok([]);
+
+  const referenced = await db.entity.findMany({
+    where: { id: { in: ids }, tenantId: entity.tenantId },
+    select: { id: true, latestVersion: { select: { major: true, minor: true } } },
+  });
+  const latest = new Map(referenced.flatMap((e) => (e.latestVersion ? [[e.id, formatVersionLabel(e.latestVersion)] as const] : [])));
+  return ok(referenceStaleness({ referencedVersions: recorded }, latest));
 }

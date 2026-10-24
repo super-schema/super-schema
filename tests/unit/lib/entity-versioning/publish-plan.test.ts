@@ -26,7 +26,7 @@ describe("first publish", () => {
   it("is 1.0 INITIAL with sequence mirroring Entity.version", () => {
     expect(planPublish(state())).toEqual({
       success: true,
-      data: { version: { major: 1, minor: 0 }, label: "1.0", sequence: 1, changeKind: "INITIAL", pins: [] },
+      data: { version: { major: 1, minor: 0 }, label: "1.0", sequence: 1, changeKind: "INITIAL", pins: [], referencedVersions: [] },
     });
     const legacy = planPublish(state({ entity: { ...ENTITY, version: 4 } }));
     expect(legacy.success && legacy.data.sequence).toBe(4);
@@ -96,6 +96,56 @@ describe("blockers and pins", () => {
     expect(planPublish(s)).toMatchObject({
       success: true,
       data: { pins: [{ entityId: "addr", entityName: "Address", versionId: "v-addr-3" }] },
+    });
+  });
+});
+
+describe("the reference closure (Task 8)", () => {
+  const cust = { code: "NEVER_PUBLISHED" as const, entityId: "cust", message: "Publish Customer first: sales / orders / Customer has never been published." };
+
+  it("a closure blocker (a member never published, a pin that is gone) blocks the publish and its message reaches the error", () => {
+    const s = state({ closureBlocker: { code: "PIN_NOT_FOUND", entityId: "addr", message: 'Field "addr" pins version 9.9 of sales / orders / Address, which does not exist.' } });
+    expect(analyzePublish(s).blockers).toEqual([{ kind: "CLOSURE_BLOCKED", code: "PIN_NOT_FOUND", entityId: "addr", message: expect.stringContaining("9.9") }]);
+    const res = planPublish(s);
+    expect(!res.success && res.error.code).toBe("PUBLISH_BLOCKED");
+    expect(!res.success && res.error.message).toContain("sales / orders / Address");
+  });
+
+  it("a transitive member the direct references do not mention is reported", () => {
+    const s = state({
+      references: [{ entityId: "addr", entityName: "Address", latestVersionId: "v-addr-3" }],
+      closureBlocker: { ...cust, entityId: "deep" },
+    });
+    expect(analyzePublish(s).blockers.map((b) => b.kind)).toEqual(["CLOSURE_BLOCKED"]);
+  });
+
+  it("an entity already blocked as an unpublished direct reference is not reported twice", () => {
+    const s = state({
+      references: [{ entityId: "cust", entityName: "Customer", latestVersionId: null }],
+      closureBlocker: cust,
+    });
+    expect(analyzePublish(s).blockers).toEqual([
+      { kind: "UNPUBLISHED_REFERENCE", entityId: "cust", entityName: "Customer", message: "Publish Customer first" },
+    ]);
+  });
+
+  it("an ambiguous reference (no single entity to name) is never dropped as a duplicate", () => {
+    const s = state({
+      references: [{ entityId: "cust", entityName: "Customer", latestVersionId: null }],
+      closureBlocker: { code: "AMBIGUOUS_REFERENCE", entityId: "cust", message: "Field x refers to Address, which matches 2 entities." },
+    });
+    expect(analyzePublish(s).blockers.map((b) => b.kind)).toEqual(["UNPUBLISHED_REFERENCE", "CLOSURE_BLOCKED"]);
+  });
+
+  it("the plan carries the referenced versions the closure used, unchanged", () => {
+    const referencedVersions = [
+      { ref: { entityId: "b", domain: "d", product: "p", entity: "B" }, version: "1.2", pinned: false },
+      { ref: { entityId: "c", domain: "d", product: "p", entity: "C" }, version: "1.0", pinned: true },
+    ];
+    expect(planPublish(state({ referencedVersions }))).toMatchObject({ success: true, data: { referencedVersions } });
+    expect(planPublish(state({ latest: published([ID]), currentFields: [ID, EMAIL], referencedVersions }))).toMatchObject({
+      success: true,
+      data: { referencedVersions },
     });
   });
 });
