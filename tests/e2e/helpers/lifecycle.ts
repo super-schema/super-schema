@@ -9,6 +9,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { unique } from "./auth";
 import { fillWorkbenchPaste, expectDetailPanelText } from "./workbench";
 import { SCHEMA_TARGETS_FOR_TESTS } from "./targets";
+import { readPreviewFrom } from "./preview-text";
 
 export { unique };
 
@@ -129,10 +130,26 @@ const targetButton = (page: Page, displayName: string): Locator =>
     .filter({ hasNotText: /Regenerate|Generate$/ })
     .first();
 
-/** The preview of the selected target, without the line-number gutter. */
+/**
+ * The generated artifact of the selected target, without the line-number gutter. A version of several files (one per entity, a JSON
+ * Schema inline enum in a file of its own) shows one file at a time, so every `schema-file-item` is selected in turn and the files are
+ * joined in the `===== path =====` form of the stored output (`readPreviewFrom`); a single plain preview is returned as it is.
+ * NOT run in a browser yet: the walking and joining are unit tested (tests/unit/e2e-helpers/preview-text.test.ts) against a fake page.
+ */
 export async function readPreview(page: Page): Promise<string> {
-  const lines = await page.getByTestId("schemas-tab").locator("pre code > div > span:nth-child(2)").allInnerTexts();
-  return lines.join("\n");
+  const tab = page.getByTestId("schemas-tab");
+  const items = tab.getByTestId("schema-file-item");
+  return readPreviewFrom({
+    filePaths: async () => (await items.count()) === 0 ? [] : items.evaluateAll((els) => els.map((el) => el.getAttribute("data-path") ?? "")),
+    select: async (index) => {
+      const item = items.nth(index);
+      await item.click();
+      // The code preview's header carries the shown file's path: wait until it is the one that was asked for.
+      const path = (await item.getAttribute("data-path")) ?? "";
+      await expect(tab.getByTestId("schema-code-preview").locator("span").first()).toHaveText(path);
+    },
+    code: async () => (await tab.locator("pre code > div > span:nth-child(2)").allInnerTexts()).join("\n"),
+  });
 }
 
 /**
@@ -183,10 +200,12 @@ export async function generateTarget(
   const toastText = (await toast.innerText()).trim();
   if (type === "error") return { code: "", error: toastText, askedForKey };
   // The toast comes before the versions are reloaded: wait for the preview to show the new text (or settle on the same one).
-  let code = await readPreview(page);
+  // The file list can be replaced while it is read (the versions reload under it): a read that fails then counts as "not settled yet".
+  const settled = () => readPreview(page).catch(() => "");
+  let code = await settled();
   for (let i = 0; i < 40 && (code === previous || code === ""); i += 1) {
     await page.waitForTimeout(200);
-    code = await readPreview(page);
+    code = await settled();
   }
   return { code, warning: type === "warning" ? toastText : undefined, askedForKey };
 }
