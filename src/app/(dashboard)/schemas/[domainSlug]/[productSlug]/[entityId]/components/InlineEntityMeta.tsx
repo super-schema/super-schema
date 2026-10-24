@@ -159,6 +159,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
       {hasDescription && !isEditingDesc && (
         <div className="flex items-start gap-1 group/desc">
           <p
+            data-testid="entity-description"
             className={`text-body-small text-muted-foreground flex-1 ${
               isDescExpanded ? "" : "line-clamp-1"
             }`}
@@ -187,6 +188,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
                 }}
                 className="p-0.5 rounded hover:bg-accent text-muted-foreground"
                 title="Edit description"
+                data-testid="entity-description-edit"
               >
                 <Pencil className="w-3 h-3" />
               </button>
@@ -202,6 +204,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
             setIsEditingDesc(true);
           }}
           className="text-caption text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          data-testid="entity-add-description"
         >
           + Add description
         </button>
@@ -219,6 +222,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
               }
             }}
             placeholder="Entity description..."
+            data-testid="entity-description-input"
             rows={2}
             className="w-full rounded-md border border-input bg-transparent px-2 py-1.5 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
           />
@@ -226,6 +230,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
             <button
               onClick={() => setIsEditingDesc(false)}
               className="px-2 py-0.5 text-caption text-muted-foreground hover:text-foreground rounded"
+              data-testid="entity-description-cancel"
             >
               Cancel
             </button>
@@ -236,6 +241,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
                 await updateEntityDescriptionAction(entity.id, descInput);
               }}
               className="px-2 py-0.5 text-caption text-primary hover:text-primary/80 rounded font-medium"
+              data-testid="entity-description-save"
             >
               Save
             </button>
@@ -248,7 +254,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
         {/* Tags */}
         <div className="flex flex-wrap items-center gap-1" data-testid="inline-tags">
           {tags.map((tag) => (
-            <Badge key={tag} variant="secondary" className="text-[11px] h-5 gap-0.5 pl-1.5">
+            <Badge key={tag} variant="secondary" className="text-[11px] h-5 gap-0.5 pl-1.5" data-testid="inline-tag">
               {tag}
               {!isReadOnly && (
                 <button
@@ -298,6 +304,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
                   }
                 }}
                 placeholder="tag name"
+                data-testid="inline-tag-input"
                 className="h-5 w-20 rounded-full border border-input bg-transparent px-2 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
@@ -320,6 +327,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
                   setIsEditingOwner(true);
                 }
               }}
+              data-testid="inline-owner-button"
               className={`text-caption ${
                 owner
                   ? "text-muted-foreground"
@@ -344,6 +352,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
               }}
               onBlur={commitOwner}
               placeholder="owner name"
+              data-testid="inline-owner-input"
               className="h-5 w-28 rounded border border-input bg-transparent px-1.5 text-caption text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
           )}

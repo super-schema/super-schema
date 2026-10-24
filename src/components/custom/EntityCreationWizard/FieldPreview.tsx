@@ -158,6 +158,7 @@ export function FieldPreview({
       <button
         type="button"
         onClick={onBack}
+        data-testid="wizard-back"
         className="flex items-center gap-1 text-body-small text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
@@ -296,6 +297,7 @@ export function FieldPreview({
                     onClick={() => removeField(field.tempId)}
                     className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded opacity-0 group-hover:opacity-100"
                     title="Remove field"
+                    data-testid="wizard-remove-field"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
