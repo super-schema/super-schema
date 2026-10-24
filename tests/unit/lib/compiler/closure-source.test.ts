@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll } from "vitest";
 import type { PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import type { ClosureEntity } from "@/lib/references/closure";
 import { qualifiedName, writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
-import { generateClosureTypeSpec, uniqueModelName } from "@/lib/compiler/closure-source";
+import { closureModelNames, generateClosureTypeSpec, uniqueModelName } from "@/lib/compiler/closure-source";
 
 // Real @typespec/compiler compiles (~1 s each).
 vi.setConfig({ testTimeout: 60_000 });
@@ -83,17 +83,37 @@ describe("generateClosureTypeSpec", () => {
     field("agent", "reference", 2, refTo({ entityId: "c2", domain: "Support", product: "Tickets", entity: "Customer" })),
   ]);
 
-  it("gives same-named entities in different products distinct namespaces and model names, and types references with the qualified model", async () => {
+  it("names a model after its entity, qualifies ONLY the same-named ones (product first), and types references with the qualified model", async () => {
     const out = generateClosureTypeSpec({ entities: [order, customerSales, customerSupport] }, { target: "json-schema" });
-    expect(out.rootModel).toBe("Sales_Orders_Order");
-    expect(out.models.get("c1")).toBe("SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer");
-    expect(out.models.get("c2")).toBe("SuperSchemaClosure.Support.Tickets.Customer.Support_Tickets_Customer");
+    expect(out.rootModel).toBe("Order");
+    expect(out.models.get("o1")).toBe("SuperSchemaClosure.Sales.Orders.Order.Order");
+    expect(out.models.get("c1")).toBe("SuperSchemaClosure.Sales.Orders.Customer.Orders_Customer");
+    expect(out.models.get("c2")).toBe("SuperSchemaClosure.Support.Tickets.Customer.Tickets_Customer");
     expect(out.source).toContain("namespace SuperSchemaClosure.Sales.Orders.Customer {");
     expect(out.source).toContain("namespace SuperSchemaClosure.Support.Tickets.Customer {");
-    expect(out.source).toContain("buyer: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer;");
-    expect(out.source).toContain("agent: SuperSchemaClosure.Support.Tickets.Customer.Support_Tickets_Customer;");
+    expect(out.source).toContain("buyer: SuperSchemaClosure.Sales.Orders.Customer.Orders_Customer;");
+    expect(out.source).toContain("agent: SuperSchemaClosure.Support.Tickets.Customer.Tickets_Customer;");
     expect(new Set(out.models.values()).size).toBe(3);
     await expectCompiles(out.source);
+  });
+
+  it("a closure of one entity, with or without a self-reference, uses exactly the stand-alone names", async () => {
+    const plain = generateClosureTypeSpec({ entities: [member("a", "Sales", "Orders", "Order status", [field("kind", "enum", 1, {}, { aliases: ["x", "y"] })], { custom: { sharedEnums: [{ name: "Status", values: ["a", "b"] }] } })] }, { target: "json-schema" });
+    expect(plain.rootModel).toBe("Order_status");
+    // the inline enum is `<Entity>_<field>` and the shared enum keeps its own name: both as the stand-alone generator writes them
+    expect(plain.declarations.get("a")).toEqual(["Status", "Order_status_kind", "Order_status"]);
+    const selfRef = generateClosureTypeSpec({ entities: [member("s", "D", "P", "Node", [field("parent", "reference", 1, refTo({ entityId: "s", domain: "D", product: "P", entity: "Node" }))])] }, { target: "avro" });
+    expect(selfRef.rootModel).toBe("Node");
+    expect(selfRef.source).toContain("parent: SuperSchemaClosure.D.P.Node.Node;");
+    await expectCompiles(plain.source);
+    await expectCompiles(selfRef.source);
+  });
+
+  it("a name does not change when an entity of the closure is added, unless it now collides", () => {
+    const alone = generateClosureTypeSpec({ entities: [order] }, { target: "avro" });
+    const withUnrelated = generateClosureTypeSpec({ entities: [order, member("x", "Other", "Area", "Invoice", [])] }, { target: "avro" });
+    expect(withUnrelated.rootModel).toBe(alone.rootModel);
+    expect(withUnrelated.rootModel).toBe("Order");
   });
 
   it("emits arrays and maps of references qualified, and an unresolvable one as unknown", async () => {
@@ -105,10 +125,10 @@ describe("generateClosureTypeSpec", () => {
       field("legacyGhost", "array", 5, { arrayElementType: "reference", referencedEntityName: "Nope" }),
     ]);
     const out = generateClosureTypeSpec({ entities: [root, customerSales] }, { target: "avro" });
-    expect(out.source).toContain("buyers: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer[];");
-    expect(out.source).toContain("byName: Record<SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer>;");
+    expect(out.source).toContain("buyers: SuperSchemaClosure.Sales.Orders.Customer.Customer[];");
+    expect(out.source).toContain("byName: Record<SuperSchemaClosure.Sales.Orders.Customer.Customer>;");
     expect(out.source).toContain("ghost: unknown;");
-    expect(out.source).toContain("legacy: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer;");
+    expect(out.source).toContain("legacy: SuperSchemaClosure.Sales.Orders.Customer.Customer;");
     expect(out.source).toContain("legacyGhost: unknown[];");
     await expectCompiles(out.source);
   });
@@ -120,8 +140,8 @@ describe("generateClosureTypeSpec", () => {
     ]);
     const b = member("b", "D", "P", "B", [field("back", "reference", 1, refTo({ entityId: "a", domain: "D", product: "P", entity: "A" }))]);
     const out = generateClosureTypeSpec({ entities: [a, b] }, { target: "json-schema" });
-    expect(out.source).toContain("self: SuperSchemaClosure.D.P.A.D_P_A;");
-    expect(out.source).toContain("back: SuperSchemaClosure.D.P.A.D_P_A;");
+    expect(out.source).toContain("self: SuperSchemaClosure.D.P.A.A;");
+    expect(out.source).toContain("back: SuperSchemaClosure.D.P.A.A;");
     await expectCompiles(out.source);
   });
 
@@ -201,14 +221,154 @@ describe("closure shared types", () => {
   const withShared = (id: string, entity: string) =>
     member(id, "D", "P", entity, [field("key", "union", 2, { unionName: "Ident" })], shared);
 
-  it("declares each entity's shared types under distinct names that the entity's fields use, and compiles", async () => {
+  it("prefixes the shared types that two entities both declare with the entity's model name, uses them in the entity's fields, and compiles", async () => {
     const out = generateClosureTypeSpec({ entities: [withShared("a", "A"), withShared("b", "B")] }, { target: "json-schema" });
     const declared = [...out.source.matchAll(/^\s*(?:enum|scalar|union|alias) (\w+)/gm)].map((m) => m[1]);
-    expect(declared).toEqual(expect.arrayContaining(["D_P_A_Status", "D_P_A_Money", "D_P_A_Ident", "D_P_A_Tags", "D_P_B_Status", "D_P_B_Money", "D_P_B_Ident", "D_P_B_Tags"]));
+    expect(declared).toEqual(expect.arrayContaining(["A_Status", "A_Money", "A_Ident", "A_Tags", "B_Status", "B_Money", "B_Ident", "B_Tags"]));
     expect(new Set(declared).size).toBe(declared.length);
-    expect(out.source).toContain("key: D_P_A_Ident;");
-    expect(out.source).toContain("key: D_P_B_Ident;");
+    expect(out.source).toContain("key: A_Ident;");
+    expect(out.source).toContain("key: B_Ident;");
     await expectCompiles(out.source);
+  });
+
+  it("prefixes only the shared types something else claims: a name only one entity declares keeps its stand-alone name", async () => {
+    const onlyA = member("a", "D", "P", "A", [field("key", "union", 2, { unionName: "Ident" })], shared);
+    const onlyB = member("b", "D", "P", "B", [], { custom: { sharedEnums: [{ name: "Status", values: ["x"] }] } });
+    const out = generateClosureTypeSpec({ entities: [onlyA, onlyB] }, { target: "json-schema" });
+    // `Status` is declared by both -> prefixed in both; `Money`, `Ident`, `Tags` only by A -> as the stand-alone generator writes them
+    expect(out.declarations.get("a")).toEqual(expect.arrayContaining(["A_Status", "Money", "Ident", "Tags", "A"]));
+    expect(out.declarations.get("b")).toEqual(["B_Status", "B"]);
+    expect(out.source).toContain("key: Ident;");
+    await expectCompiles(out.source);
+  });
+
+  it("prefixes a shared type that is called like another entity's model, so the file / class names stay distinct", async () => {
+    const owner = member("a", "D", "P", "A", [], { custom: { sharedEnums: [{ name: "B", values: ["x"] }] } });
+    const entityB = member("b", "D", "P", "B", []);
+    const out = generateClosureTypeSpec({ entities: [owner, entityB] }, { target: "json-schema" });
+    expect(out.declarations.get("a")).toEqual(["A_B", "A"]);
+    expect(out.declarations.get("b")).toEqual(["B"]);
+    await expectCompiles(out.source);
+  });
+});
+
+describe("closureModelNames", () => {
+  const ref = (domain: string, product: string, entity: string) => ({ domain, product, entity });
+
+  it("is the sanitized entity name, as the stand-alone path writes it", () => {
+    expect(closureModelNames([ref("Sales", "Orders", "Order")])).toEqual(["Order"]);
+    expect(closureModelNames([ref("Sales", "Orders", "Order status"), ref("Sales", "Orders", "model")])).toEqual(["Order_status", "_model"]);
+  });
+
+  it("qualifies only the colliding entities: product first, the others keep their name", () => {
+    expect(closureModelNames([ref("Sales", "Orders", "Customer"), ref("Support", "Tickets", "Customer"), ref("Sales", "Orders", "Order")])).toEqual([
+      "Orders_Customer",
+      "Tickets_Customer",
+      "Order",
+    ]);
+  });
+
+  it("goes on to the domain when the product does not tell them apart (same name, same product name, two domains)", () => {
+    expect(closureModelNames([ref("Sales", "Orders", "Customer"), ref("Billing", "Orders", "Customer"), ref("Sales", "Tickets", "Customer")])).toEqual([
+      "Sales_Orders_Customer",
+      "Billing_Orders_Customer",
+      "Tickets_Customer",
+    ]);
+  });
+
+  it("is independent of the order, and keeps a name stable when an unrelated entity is added", () => {
+    const refs = [ref("Sales", "Orders", "Customer"), ref("Billing", "Orders", "Customer"), ref("Support", "Tickets", "Customer"), ref("Sales", "Orders", "Order")];
+    const names = closureModelNames(refs);
+    const reversed = closureModelNames([...refs].reverse()).reverse();
+    expect(reversed).toEqual(names);
+    expect(closureModelNames([...refs, ref("X", "Y", "Invoice")]).slice(0, 4)).toEqual(names);
+  });
+
+  it("hashes only as the last resort, when sanitizing still merges two different references", () => {
+    const names = closureModelNames([ref("a-b", "c", "X"), ref("a_b", "c", "X"), ref("a", "b_c", "X")]);
+    expect(new Set(names).size).toBe(3);
+    for (const n of names) expect(n).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/);
+    // `a-b` / `a_b` entities with the same product: entity names merge, product names merge, only the hash tells them apart
+    const merged = closureModelNames([ref("d", "p", "a-b"), ref("d", "p", "a_b")]);
+    expect(new Set(merged).size).toBe(2);
+    expect(merged[0]).toMatch(/_[0-9a-f]{8}$/);
+    // plain segments never need a hash
+    for (const n of closureModelNames([ref("Sales", "Orders", "Customer"), ref("Billing", "Orders", "Customer")])) expect(n).not.toMatch(/_[0-9a-f]{8}$/);
+  });
+
+  it("never lets a qualified name take another entity's name", () => {
+    const names = closureModelNames([ref("A", "Orders", "Customer"), ref("B", "Tickets", "Customer"), ref("C", "D", "Orders_Customer")]);
+    expect(new Set(names).size).toBe(3);
+  });
+
+  it("does not use the reserved closure root, an empty name or a reserved name as it is", () => {
+    expect(closureModelNames([ref("Billing", "Ledger", "SuperSchemaClosure")])).toEqual(["Ledger_SuperSchemaClosure"]);
+    expect(closureModelNames([ref("Billing", "Ledger", "")])[0]).not.toBe("");
+    expect(closureModelNames([ref("Sales", "Orders", "Sales"), ref("Sales", "Orders", "Order")], new Set(["Sales"]))).toEqual(["Orders_Sales", "Order"]);
+  });
+
+  it("keeps identical references on one name (the closure suffixes those by order)", () => {
+    const names = closureModelNames([ref("D", "P", "Same"), ref("D", "P", "Same")]);
+    expect(names[0]).toBe(names[1]);
+  });
+});
+
+describe("closure model names compile with the real compiler", () => {
+  const withRef = (id: string, d: string, p: string, e: string, to: Array<[string, string, string, string]>): ClosureEntity =>
+    member(id, d, p, e, to.map(([tid, td, tp, te], i) => field(`r${i}`, "reference", i + 1, refTo({ entityId: tid, domain: td, product: tp, entity: te }))));
+
+  it("the same entity name in two products", async () => {
+    const out = generateClosureTypeSpec(
+      {
+        entities: [
+          withRef("o", "Sales", "Orders", "Order", [["c1", "Sales", "Orders", "Customer"], ["c2", "Sales", "Tickets", "Customer"]]),
+          member("c1", "Sales", "Orders", "Customer", []),
+          member("c2", "Sales", "Tickets", "Customer", []),
+        ],
+      },
+      { target: "json-schema" }
+    );
+    expect([...out.models.values()].map((m) => m.split(".").pop())).toEqual(["Order", "Orders_Customer", "Tickets_Customer"]);
+    await expectCompiles(out.source);
+  });
+
+  it("the same entity name in two domains (same product name)", async () => {
+    const out = generateClosureTypeSpec(
+      {
+        entities: [
+          withRef("o", "Sales", "Orders", "Order", [["c1", "Sales", "Orders", "Customer"], ["c2", "Billing", "Orders", "Customer"]]),
+          member("c1", "Sales", "Orders", "Customer", []),
+          member("c2", "Billing", "Orders", "Customer", []),
+        ],
+      },
+      { target: "json-schema" }
+    );
+    expect([...out.models.values()].map((m) => m.split(".").pop())).toEqual(["Order", "Sales_Orders_Customer", "Billing_Orders_Customer"]);
+    await expectCompiles(out.source);
+  });
+
+  it("entity names that sanitize identically (`a-b` and `a_b` in one product)", async () => {
+    const out = generateClosureTypeSpec(
+      {
+        entities: [
+          withRef("o", "D", "P", "Root", [["x", "D", "P", "a-b"], ["y", "D", "P", "a_b"]]),
+          member("x", "D", "P", "a-b", []),
+          member("y", "D", "P", "a_b", []),
+        ],
+      },
+      { target: "json-schema" }
+    );
+    const names = [...out.models.values()].map((m) => m.split(".").pop() as string);
+    expect(new Set(names).size).toBe(3);
+    expect(names[0]).toBe("Root");
+    await expectCompiles(out.source);
+  });
+
+  it("a Protobuf message is never called like a domain of the closure (protoc resolves the first name component innermost first)", async () => {
+    const entities = [withRef("o", "Sales", "Orders", "Sales", [["c", "Sales", "Orders", "Customer"]]), member("c", "Sales", "Orders", "Customer", [])];
+    expect(generateClosureTypeSpec({ entities }, { target: "protobuf" }).rootModel).toBe("Orders_Sales");
+    expect(generateClosureTypeSpec({ entities }, { target: "json-schema" }).rootModel).toBe("Sales");
+    await expectCompiles(generateClosureTypeSpec({ entities }, { target: "protobuf" }).source);
   });
 });
 
@@ -220,8 +380,8 @@ describe("closure reference typing gate", () => {
       field("byQualified", "array", 2, { arrayElementType: "reference", referencedQualifiedName: "Sales/Orders/Customer" }),
     ]);
     const out = generateClosureTypeSpec({ entities: [root, target] }, { target: "avro" });
-    expect(out.source).toContain("byQualified: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer[];");
-    expect(out.source).toContain("scalarQ: SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer;");
+    expect(out.source).toContain("byQualified: SuperSchemaClosure.Sales.Orders.Customer.Customer[];");
+    expect(out.source).toContain("scalarQ: SuperSchemaClosure.Sales.Orders.Customer.Customer;");
     await expectCompiles(out.source);
   });
 });
@@ -235,8 +395,8 @@ describe("closure emission hooks (namespaces, declarations, unresolved reference
     const out = generateClosureTypeSpec({ entities: [a, b] }, { target: "json-schema" });
     expect(out.namespaces.get("a")).toBe("SuperSchemaClosure.D.P.A");
     expect(out.namespaces.get("b")).toBe("SuperSchemaClosure.D.P.B");
-    expect(out.declarations.get("a")).toEqual(expect.arrayContaining(["D_P_A", "D_P_A_Status", "D_P_A_Tags", "D_P_A_kind"]));
-    expect(out.declarations.get("b")).toEqual(["D_P_B"]);
+    expect(out.declarations.get("a")).toEqual(expect.arrayContaining(["A", "Status", "Tags", "A_kind"]));
+    expect(out.declarations.get("b")).toEqual(["B"]);
   });
 
   it("lists a reference whose target is not in the closure once per field, and nothing for a resolved one", () => {
@@ -259,8 +419,8 @@ describe("closure emission hooks (namespaces, declarations, unresolved reference
     const c = member("c", "D", "P", "C", [field("a", "reference", 1, refTo({ entityId: "a", domain: "D", product: "P", entity: "A" }))]);
     const out = generateClosureTypeSpec({ entities: [c, a, b] }, { target: "protobuf", mergeNamespaces: [["a", "b"]] });
     expect(out.namespaces.get("b")).toBe("SuperSchemaClosure.D.P.A");
-    expect(out.models.get("b")).toBe("SuperSchemaClosure.D.P.A.D_P_B");
-    expect(out.source).toContain("peer: SuperSchemaClosure.D.P.A.D_P_B;");
+    expect(out.models.get("b")).toBe("SuperSchemaClosure.D.P.A.B");
+    expect(out.source).toContain("peer: SuperSchemaClosure.D.P.A.B;");
     expect(out.source).toContain("namespace SuperSchemaClosure.D.P.C {");
     await expectCompiles(out.source);
   });

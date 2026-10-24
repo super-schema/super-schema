@@ -2,9 +2,10 @@
  * Combined multi-entity TypeSpec source for a reference closure (multi-entity emission, Task 4).
  *
  * One document holds every entity of the closure, each in its own `namespace <Domain>.<Product>.<Entity> { ... }` block, its
- * model named by {@link uniqueModelName} (unique across the closure, so the JSON Schema / Avro file names `<Model>.json`
- * never collide even when two products each have an `Order`). A reference field is typed with the target's fully qualified
- * model (`SuperSchemaClosure.Sales.Orders.Customer.Sales_Orders_Customer`); a reference to something not in the closure is `unknown`, never a
+ * model named after the entity (see {@link closureModelNames}: only entities that would share a name are qualified, so the JSON
+ * Schema / Avro file names `<Model>.json` never collide even when two products each have an `Order`, and a closure of one entity
+ * keeps its stand-alone names). A reference field is typed with the target's fully qualified model
+ * (`SuperSchemaClosure.Sales.Orders.Customer.Customer`); a reference to something not in the closure is `unknown`, never a
  * name nothing declares. A self-reference and an A <-> B cycle are plain forward references and compile.
  *
  * This is the EMISSION projection: governance is off by default, so the reference pin tag (`x-super-schema-pin`, see
@@ -37,12 +38,15 @@ function shortHash(text: string): string {
 }
 
 /**
- * The model name of an entity in a combined document: `<domain>_<product>_<entity>`, each segment sanitized, so a name is
- * readable and the same on every run. Joining with `_` and sanitizing can merge two DIFFERENT references (`a-b`/`c` and
- * `a_b`/`c`, or `a_b`/`c` and `a`/`b_c`); a name is therefore the plain join only when every segment is purely alphanumeric
- * (the `_tenant` placeholder aside), which cannot merge. Otherwise a short stable hash of the qualified name is appended.
- * The result is always a valid, non-reserved TypeSpec identifier. Two refs with the SAME qualified name get the same name
- * (the closure disambiguates those by order).
+ * The FULLY QUALIFIED model name of an entity: `<domain>_<product>_<entity>`, each segment sanitized, so a name is readable and
+ * the same on every run. Joining with `_` and sanitizing can merge two DIFFERENT references (`a-b`/`c` and `a_b`/`c`, or
+ * `a_b`/`c` and `a`/`b_c`); a name is therefore the plain join only when every segment is purely alphanumeric (the `_tenant`
+ * placeholder aside), which cannot merge. Otherwise a short stable hash of the qualified name is appended. The result is always a
+ * valid, non-reserved TypeSpec identifier.
+ *
+ * This is the LAST tier of {@link closureModelNames}: a model is named after its entity, and only an entity whose name another
+ * entity of the closure would share (or that cannot be used as it is) is qualified, step by step, up to this name. Two refs with
+ * the SAME qualified name get the same name here (the closure disambiguates those by order).
  */
 export function uniqueModelName(ref: EntityRef): string {
   const segments = [ref.domain, ref.product, ref.entity];
@@ -57,9 +61,56 @@ export function uniqueModelName(ref: EntityRef): string {
  * innermost scope outward, so a relative `Billing.Billing.Customer.M` breaks as soon as an enclosing namespace has a member
  * called `Billing` (domain == product, entity == domain, ...). The root is safe because no enclosing scope can hold a member
  * with its name: members are the sanitized segments (which {@link namespaceSegment} never lets equal the root) and models /
- * shared types, all named `<domain>_<product>_<entity>...` (they contain `_`, the root does not).
+ * shared types, which {@link closureModelNames} and the shared-name prefixing never let equal it either.
  */
 export const CLOSURE_ROOT_NAMESPACE = "SuperSchemaClosure";
+
+const MODEL_NAME_TIERS = 3;
+
+const nameSegment = (s: string): string => s.replace(/[^A-Za-z0-9_]/g, "_");
+
+/** The name tier `tier` of a ref: 0 the entity, 1 `<Product>_<Entity>`, 2 `<Domain>_<Product>_<Entity>`, 3 that plus a hash if sanitizing merged. */
+function modelNameAtTier(ref: EntityRef, tier: number): string {
+  switch (tier) {
+    case 0:
+      return sanitizeIdentifier(ref.entity);
+    case 1:
+      return sanitizeIdentifier(`${nameSegment(ref.product)}_${nameSegment(ref.entity)}`);
+    case 2:
+      return sanitizeIdentifier([ref.domain, ref.product, ref.entity].map(nameSegment).join("_"));
+    default:
+      return uniqueModelName(ref);
+  }
+}
+
+/**
+ * The model name of each entity of a closure, in order. A model is named after its ENTITY (the sanitized entity name, exactly what
+ * the stand-alone path writes), so a file / message / record / class is called what the user calls the entity and does not change
+ * when the entity gains a reference. Only an entity that would get the SAME name as another entity of the closure is qualified, and
+ * only those: first `<Product>_<Entity>`, then `<Domain>_<Product>_<Entity>`, and only if sanitizing still merges two distinct
+ * references a stable hash ({@link uniqueModelName}). A name that cannot be used as it is (empty, the reserved closure root, or one
+ * of `reserved`) is qualified the same way. Deterministic and independent of the entities' order, except that references with an
+ * identical qualified name keep one name here (the caller suffixes `_2`, `_3`, ... by order). Pure.
+ *
+ * A closure of one entity therefore always gets today's stand-alone name.
+ */
+export function closureModelNames(refs: readonly EntityRef[], reserved: ReadonlySet<string> = new Set()): string[] {
+  const tiers = refs.map(() => 0);
+  for (;;) {
+    const names = refs.map((ref, i) => modelNameAtTier(ref, tiers[i]));
+    const sharedBy = new Map<string, number>();
+    for (const name of names) sharedBy.set(name, (sharedBy.get(name) ?? 0) + 1);
+    let bumped = false;
+    names.forEach((name, i) => {
+      const unusable = name === "" || name === CLOSURE_ROOT_NAMESPACE || reserved.has(name);
+      if ((unusable || (sharedBy.get(name) ?? 0) > 1) && tiers[i] < MODEL_NAME_TIERS) {
+        tiers[i] += 1;
+        bumped = true;
+      }
+    });
+    if (!bumped) return names;
+  }
+}
 
 /** A namespace segment: sanitized (keywords prefixed, invalid characters replaced), never equal to the reserved root. */
 function namespaceSegment(segment: string): string {
@@ -71,17 +122,24 @@ function namespaceOf(ref: EntityRef): string {
   return [CLOSURE_ROOT_NAMESPACE, ...[ref.domain, ref.product, ref.entity].map(namespaceSegment)].join(".");
 }
 
-/**
- * Closure mode only: every shared type an entity declares (enum, scalar, union, alias, interface) is renamed
- * `<modelName>_<name>`, and every use of it in the entity (field type, array element / map value, union name and members,
- * alias / union member text) follows, so two entities that each declare a shared `Status` stay distinct declarations and
- * distinct emitted file names. Pure; the input model is not mutated. The stand-alone path never calls this.
- */
-function prefixSharedNames(model: SuperSchemaModel, modelName: string): SuperSchemaModel {
+/** The (sanitized) names of the shared types a model declares: enums, scalars, unions, aliases, interfaces. */
+function sharedTypeNames(model: SuperSchemaModel): Set<string> {
   const declared = new Set<string>();
   for (const group of [model.sharedEnums, model.customScalars, model.unionTypes, model.aliases, model.interfaces]) {
     for (const d of group ?? []) declared.add(sanitizeIdentifier(d.name));
   }
+  return declared;
+}
+
+/**
+ * Closure mode only: a shared type an entity declares (enum, scalar, union, alias, interface) whose name `mustPrefix` flags is
+ * renamed `<modelName>_<name>`, and every use of it in the entity (field type, array element / map value, union name and members,
+ * alias / union member text) follows, so two entities that each declare a shared `Status` stay distinct declarations and distinct
+ * emitted file names. A name nothing else in the closure claims keeps its stand-alone name. Pure; the input model is not mutated.
+ * The stand-alone path never calls this.
+ */
+function prefixSharedNames(model: SuperSchemaModel, modelName: string, mustPrefix: (name: string) => boolean): SuperSchemaModel {
+  const declared = new Set([...sharedTypeNames(model)].filter(mustPrefix));
   if (declared.size === 0) return model;
   const rename = (name: string): string => (declared.has(sanitizeIdentifier(name)) ? `${modelName}_${sanitizeIdentifier(name)}` : name);
   // Free text (union members, alias targets) may mention a declared name inside an expression: replace whole identifiers.
@@ -157,15 +215,28 @@ export function generateClosureTypeSpec(
 ): ClosureTypeSpec {
   const governance = opts.governance === true;
 
-  // Closure-unique model names: the deterministic name, then `_2`, `_3` ... for the same name claimed twice.
+  // Model names: the entity's own name, qualified only where two entities of the closure would share it (see closureModelNames);
+  // then `_2`, `_3` ... for the same qualified name claimed twice. A .proto reference is written `Domain.Product.Entity.Message`
+  // and protoc resolves its first component innermost scope first, so a message named like a domain would hide it: Protobuf
+  // treats the domains of the closure as reserved names.
+  const reserved = opts.target === "protobuf" ? new Set(closure.entities.map((e) => namespaceSegment(e.ref.domain))) : undefined;
+  const baseNames = closureModelNames(closure.entities.map((e) => e.ref), reserved);
   const taken = new Set<string>();
-  const placed: Placed[] = closure.entities.map((entity) => {
-    const base = uniqueModelName(entity.ref);
+  const placed: Placed[] = closure.entities.map((entity, i) => {
+    const base = baseNames[i];
     let modelName = base;
     for (let n = 2; taken.has(modelName); n++) modelName = `${base}_${n}`;
     taken.add(modelName);
     return { entity, namespace: namespaceOf(entity.ref), modelName };
   });
+
+  // A shared type keeps its stand-alone name unless another entity claims the name (a second entity declaring it, or a model of
+  // the closure called that), or it is the reserved root: then the entity's model name is prefixed to it.
+  const compiled = new Map(placed.map((p) => [p, compileEntity(p.entity.entity, p.entity.fields)] as const));
+  const sharedClaims = new Map<string, number>();
+  for (const model of compiled.values()) for (const name of sharedTypeNames(model)) sharedClaims.set(name, (sharedClaims.get(name) ?? 0) + 1);
+  const mustPrefix = (name: string): boolean =>
+    (sharedClaims.get(name) ?? 0) > 1 || taken.has(name) || name === CLOSURE_ROOT_NAMESPACE || (reserved?.has(name) ?? false);
   for (const group of opts.mergeNamespaces ?? []) {
     const members = group.map((id) => placed.find((p) => p.entity.entityId === id)).filter((p): p is Placed => p !== undefined);
     if (members.length < 2) continue;
@@ -202,7 +273,7 @@ export function generateClosureTypeSpec(
   const declarations = new Map<string, string[]>();
   const unresolved: ClosureTypeSpec["unresolved"] = [];
   for (const p of placed) {
-    const model = prefixSharedNames(compileEntity(p.entity.entity, p.entity.fields), p.modelName);
+    const model = prefixSharedNames(compiled.get(p) as SuperSchemaModel, p.modelName, mustPrefix);
     const reported = new Set<string>();
     const memberReferenceType = (field: SuperSchemaField): string | null => {
       const type = referenceType(field);

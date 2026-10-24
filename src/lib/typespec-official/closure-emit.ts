@@ -54,10 +54,25 @@ import {
 
 export type { TargetId };
 
-/** One generated file of a closure emission: where it goes, what it holds, which target wrote it and (when known) for which entity. */
+/**
+ * One generated file of a closure emission: where it goes, what it holds, which target wrote it and the entity it was written for.
+ *
+ * NOT every entity has a file carrying its own `entityId`: the members of a Protobuf reference cycle share ONE package and ONE
+ * `.proto` file, which is tagged with the first member only (the others are served by it). Use {@link ClosureEmission.entityFiles}
+ * to find the files that carry an entity, never `files.find((f) => f.entityId === id)` alone. A file whose entity cannot be told
+ * (none is dropped silently: see {@link emitClosure}) has no `entityId`.
+ */
 export type EmittedFile = { path: string; content: string; target: TargetId; entityId?: string };
 
-export type ClosureEmission = { files: EmittedFile[]; warnings: string[] };
+export type ClosureEmission = {
+  files: EmittedFile[];
+  warnings: string[];
+  /**
+   * For EVERY entity of the closure (by id), the paths of the files that carry its definition: its own files, or the shared file
+   * of the cycle it belongs to (Protobuf: one file lists several entities). Empty only when no file could be tied to the entity.
+   */
+  entityFiles: Record<string, string[]>;
+};
 
 /** What emission needs of a closure; a `ReferenceClosure` (from `loadReferenceClosure`) is one. */
 export type Closure = Pick<ReferenceClosure, "entities" | "cycles"> & Partial<Pick<ReferenceClosure, "root" | "draftEntities">>;
@@ -84,8 +99,12 @@ export function filesForEntity(files: readonly EmittedFile[], entityId: string):
   return files.filter((file) => file.entityId === entityId);
 }
 
-/** Where a file goes and which entity it belongs to; `null` drops a file that is not part of the closure. */
-type Attribution = { entityId?: string; path?: string } | null;
+/**
+ * Where a file goes and which entity it belongs to; `null` drops a file that matches no entity of the closure (on every target:
+ * an emitter may write what the closure did not ask for, such as a library model, and it must not reach the set). `alsoFor` lists
+ * the other entities a shared file carries (a Protobuf cycle's package).
+ */
+type Attribution = { entityId: string; path?: string; alsoFor?: string[] } | null;
 
 interface Plan {
   source: string;
@@ -114,8 +133,21 @@ const compareCodeUnits = (a: string, b: string): number => (a < b ? -1 : a > b ?
 /**
  * Emits the closure for one schema target: every entity's file, sorted by path, plus the warnings (what a projection changed,
  * a reference that could not be typed, a cycle that had to share a package). Stand-alone entities keep today's content.
+ *
+ * Files that match no entity of the closure are dropped on every target, and every entity must be served by at least one file (an
+ * emitter that skipped one is an error, not a smaller "valid" set). Never throws: a failure anywhere in compiling, generating or
+ * running is an `EMISSION_FAILED` error.
  */
 export async function emitClosure(closure: Closure, targetKey: TargetId): Promise<Result<ClosureEmission, ServiceError>> {
+  try {
+    return await emitClosureUnguarded(closure, targetKey);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return err({ code: "EMISSION_FAILED", message: `Closure emission failed: ${reason.length > 300 ? `${reason.slice(0, 300)}...` : reason}` });
+  }
+}
+
+async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Promise<Result<ClosureEmission, ServiceError>> {
   const resolved = resolveEmittableTarget(targetKey);
   if ("error" in resolved) return err({ code: "UNSUPPORTED_TARGET", message: resolved.error });
   const target = resolved.target;
@@ -162,23 +194,24 @@ export async function emitClosure(closure: Closure, targetKey: TargetId): Promis
   }
 
   const files: EmittedFile[] = [];
+  const served = new Map<string, Set<string>>(entities.map((e) => [e.entityId, new Set<string>()]));
   for (const raw of run.data.files) {
     const path = raw.relativePath.split(/[\\/]/).join("/");
     const attribution = plan.attribute({ path, content: raw.content });
     if (attribution === null) continue;
-    files.push({
-      path: attribution.path ?? path,
-      content: raw.content,
-      target: key,
-      ...(attribution.entityId !== undefined ? { entityId: attribution.entityId } : {}),
-    });
+    const finalPath = attribution.path ?? path;
+    files.push({ path: finalPath, content: raw.content, target: key, entityId: attribution.entityId });
+    for (const id of [attribution.entityId, ...(attribution.alsoFor ?? [])]) served.get(id)?.add(finalPath);
   }
   files.sort((a, b) => compareCodeUnits(a.path, b.path));
   if (files.length === 0) return err({ code: "EMITTER_NO_OUTPUT", message: `Emitter "${packageName}" completed but wrote no file for this closure.`, details: { warnings: plan.warnings } });
 
-  const problems = [...(plan.verify?.(files) ?? []), ...verifyTargetOutput(key, files)];
+  // Every entity needs a file: a target that skipped one must not pass as a smaller, "valid" set.
+  const unserved = entities.filter((e) => (served.get(e.entityId)?.size ?? 0) === 0).map((e) => `The ${target.displayName} emitter wrote no file for ${e.entity.name}.`);
+  const problems = [...unserved, ...(plan.verify?.(files) ?? []), ...verifyTargetOutput(key, files)];
   if (problems.length > 0) return invalid(problems, plan.warnings);
-  return ok({ files, warnings: plan.warnings });
+  const entityFiles = Object.fromEntries(entities.map((e) => [e.entityId, [...(served.get(e.entityId) ?? [])].sort(compareCodeUnits)]));
+  return ok({ files, warnings: plan.warnings, entityFiles });
 }
 
 /** Checks every target makes of what the emitter wrote (the safety nets behind the source projections). */
@@ -259,6 +292,16 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
   });
 
   const warnings: string[] = [];
+  // Entities whose qualified names sanitize to the same namespace (`a-b` / `a_b` entities of one product) share it: one OpenAPI
+  // service, one Protobuf package, one Avro namespace and Java package. Their models keep distinct names, but say so.
+  if (key !== "json-schema") {
+    const cycleMembers = new Set(key === "protobuf" ? groups.flat() : []);
+    for (const [namespace, group] of placesByNamespace(places)) {
+      if (group.length > 1 && !group.every((p) => cycleMembers.has(p.entityId))) {
+        warnings.push(`${group.map((p) => p.entityName).join(" and ")} have the same namespace "${stripRoot(namespace)}" once their names are made valid identifiers, so they share it.`);
+      }
+    }
+  }
   entities.forEach((entity, i) => {
     const prefix = multi ? `${entity.entity.name}: ` : "";
     warnings.push(...danglingReferenceWarnings(models[i], key).map((w) => `${prefix}${w}`));
@@ -271,8 +314,10 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
   const base = { warnings, errors, options: buildEmitterOptions(key, "closure") };
   switch (key) {
     case "json-schema":
+      errors.push(...duplicateDeclarationErrors(generated, places, "JSON Schema writes one file per name"));
       return { ...base, ...jsonSchemaPlan(generated, places) };
     case "openapi3":
+      errors.push(...duplicateDeclarationErrors(generated, places, "an OpenAPI document keys every schema by its name"));
       return { ...base, ...openApiPlan(generated, places) };
     case "protobuf": {
       const proto = protobufPlan(generated, places, groups, closure);
@@ -291,6 +336,21 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
   }
 }
 
+/**
+ * A name two entities both declare (a model named like another entity's inline enum `<Entity>_<field>`, say). Models are named after
+ * their entity and only qualified when entity names collide, so this is rare; the targets that put every declaration in one flat
+ * name space (`why`) would fail it with an opaque compiler diagnostic or overwrite a file: say which entities and which name instead.
+ */
+function duplicateDeclarationErrors(generated: ClosureTypeSpec, places: Place[], why: string): string[] {
+  const owners = new Map<string, string[]>();
+  for (const p of places) {
+    for (const name of new Set(generated.declarations.get(p.entityId) ?? [])) owners.set(name, [...(owners.get(name) ?? []), p.entityName]);
+  }
+  return [...owners]
+    .filter(([, names]) => names.length > 1)
+    .map(([name, names]) => `${names.join(" and ")} both declare "${name}", and ${why}: rename one of them.`);
+}
+
 /** Entity ids of each reference cycle with more than one member, in the order the closure lists them (sorted by qualified name). */
 function cycleGroups(closure: Closure): string[][] {
   const byLabel = new Map<string, string[]>();
@@ -307,11 +367,19 @@ function cycleGroups(closure: Closure): string[][] {
 const stripRoot = (namespace: string): string =>
   namespace.startsWith(`${CLOSURE_ROOT_NAMESPACE}.`) ? namespace.slice(CLOSURE_ROOT_NAMESPACE.length + 1) : namespace;
 
-/** The first place of each namespace (the entity a namespace-level file is attributed to). */
-function firstByNamespace(places: Place[]): Map<string, Place> {
-  const first = new Map<string, Place>();
-  for (const p of places) if (!first.has(p.namespace)) first.set(p.namespace, p);
-  return first;
+/**
+ * The places of each namespace, in closure order. A namespace several entities share (a Protobuf cycle's package, or qualified
+ * names that sanitize alike) is ONE document / package / directory that serves all of them.
+ */
+function placesByNamespace(places: Place[]): Map<string, Place[]> {
+  const groups = new Map<string, Place[]>();
+  for (const p of places) groups.set(p.namespace, [...(groups.get(p.namespace) ?? []), p]);
+  return groups;
+}
+
+/** A namespace-level file as an attribution: tagged with the group's first entity, serving the others too. */
+function attributeToGroup(group: Place[], path?: string): NonNullable<Attribution> {
+  return { entityId: group[0].entityId, ...(path !== undefined ? { path } : {}), alsoFor: group.slice(1).map((p) => p.entityId) };
 }
 
 /**
@@ -364,12 +432,12 @@ function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan,
 // OpenAPI 3 ------------------------------------------------------------------
 
 function openApiPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "verify"> {
-  const first = firstByNamespace(places);
+  const groups = placesByNamespace(places);
   // `@service` makes each entity's namespace its own document. `@friendlyName` names every schema by its declaration, because
   // a schema from another namespace would otherwise be keyed by its namespace-qualified name (root segment included).
   const decorated = decorateBlocks(
     generated.source,
-    (namespace) => [`@service(#{ title: "${escapeTypeSpecString(first.get(namespace)?.entityName ?? stripRoot(namespace))}" })`],
+    (namespace) => [`@service(#{ title: "${escapeTypeSpecString(groups.get(namespace)?.[0].entityName ?? stripRoot(namespace))}" })`],
     (name) => `  @friendlyName("${name}")`
   );
   const { imports, rest } = splitLeadingImports(decorated);
@@ -384,17 +452,17 @@ function openApiPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "s
       // One service: the emitter writes `openapi.yaml`. Several: `openapi.<namespace>.yaml`; the namespace names the entity.
       const namespace = named[1];
       if (namespace === undefined) {
-        const only = places[0];
-        return only ? { entityId: only.entityId } : null;
+        const only = [...groups.values()][0];
+        return only && groups.size === 1 ? attributeToGroup(only) : null;
       }
-      const place = first.get(namespace);
-      return place ? { entityId: place.entityId, path: `openapi.${stripRoot(namespace)}.${named[2]}` } : null;
+      const group = groups.get(namespace);
+      return group ? attributeToGroup(group, `openapi.${stripRoot(namespace)}.${named[2]}`) : null;
     },
     // Every service (one per namespace) must have its document.
     verify: (files) =>
-      [...first.values()]
-        .filter((p) => !files.some((f) => f.entityId === p.entityId))
-        .map((p) => `The OpenAPI emitter wrote no document for ${p.entityName}.`),
+      [...groups.values()]
+        .filter((group) => !files.some((f) => f.entityId === group[0].entityId))
+        .map((group) => `The OpenAPI emitter wrote no document for ${group[0].entityName}.`),
   };
 }
 
@@ -411,7 +479,7 @@ function protobufPlan(
   let body = projectTypeSpecSourceForProtobuf(generated.source);
   for (const p of places) body = injectProtobufFieldNumbers(body, p.modelName, p.model.fields);
 
-  const first = firstByNamespace(places);
+  const groupsOfPackages = placesByNamespace(places);
   const packageOf = (namespace: string): string => stripRoot(namespace);
   const decorated = decorateBlocks(body, (namespace) => [`@package({ name: "${packageOf(namespace)}" })`]);
   const { imports, rest } = splitLeadingImports(decorated);
@@ -424,21 +492,21 @@ function protobufPlan(
   });
 
   const pathOf = (namespace: string): string => `${packageOf(namespace).split(".").join("/")}.proto`;
-  const byPath = new Map([...first].map(([namespace, place]) => [pathOf(namespace), place]));
+  const byPath = new Map([...groupsOfPackages].map(([namespace, group]) => [pathOf(namespace), group]));
   return {
     source,
     warnings,
     attribute: (file) => {
-      const place = byPath.get(file.path);
-      return place ? { entityId: place.entityId } : {};
+      const group = byPath.get(file.path);
+      return group ? attributeToGroup(group) : null;
     },
     // The protobuf emitter silently drops a message whose fields lack `@field(n)` and then writes no file (or only the syntax line).
     verify: (files) =>
-      [...byPath].flatMap(([path, place]) => {
+      [...byPath].flatMap(([path, group]) => {
         const written = files.find((f) => f.path === path);
         return written && /^\s*message\s+\S+\s*\{/m.test(written.content)
           ? []
-          : [`The protobuf emitter wrote no message for ${place.entityName}: none of its fields received a @field(n) number, so it dropped the whole message.`];
+          : [`The protobuf emitter wrote no message for ${group[0].entityName}: none of its fields received a @field(n) number, so it dropped the whole message.`];
       }),
   };
 }
@@ -464,15 +532,16 @@ function javaDirectoryOf(path: string): string | null {
 /**
  * Maps a file to the entity whose qualified path (`domain.product.entity`) its namespace / package directory ends with, comparing
  * lowercase alphanumerics only (the emitters lowercase and sanitize the segments themselves). A file that matches no entity is
- * kept without an entity.
+ * dropped like on every other target; an entity left without a file by a miss here is an error (see `emitClosure`), never a
+ * silently smaller set.
  */
 function namespaceAttribution(places: Place[], namespaceOfFile: (path: string) => string | null): Plan["attribute"] {
-  const keyed = [...firstByNamespace(places).values()].map((place) => ({ place, key: normalizePath(stripRoot(place.namespace)) }));
+  const keyed = [...placesByNamespace(places).values()].map((group) => ({ group, key: normalizePath(stripRoot(group[0].namespace)) }));
   return (file) => {
     const namespace = namespaceOfFile(file.path);
-    if (namespace === null) return {};
+    if (namespace === null) return null;
     const normalized = normalizePath(namespace);
     const match = keyed.find(({ key }) => normalized === key || normalized.endsWith(`.${key}`));
-    return match ? { entityId: match.place.entityId } : {};
+    return match ? attributeToGroup(match.group) : null;
   };
 }

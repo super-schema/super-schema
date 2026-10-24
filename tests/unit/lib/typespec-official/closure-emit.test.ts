@@ -17,7 +17,7 @@ import type { PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import type { ClosureEntity, ReferenceClosure } from "@/lib/references/closure";
 import { writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
 import { supportsClosureEmission } from "@/lib/schema-targets/catalog";
-import { bundleEmittedFiles, emitClosure, filesForEntity, type EmittedFile } from "@/lib/typespec-official/closure-emit";
+import { bundleEmittedFiles, emitClosure, filesForEntity, type ClosureEmission, type EmittedFile } from "@/lib/typespec-official/closure-emit";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 
 const TARGETS = ["json-schema", "openapi3", "protobuf", "avro", "java-pojo"] as const;
@@ -59,7 +59,27 @@ const order = () =>
 /** Order -> Customer -> Address, and Order -> Address: three entities, root first. */
 const threeEntities = () => closureOf([order(), customer(), address()]);
 
-async function emit(closure: ReferenceClosure, target: string): Promise<{ files: EmittedFile[]; warnings: string[] }> {
+const JAVAC_AVAILABLE = spawnSync("javac", ["-version"]).status === 0;
+
+/** Writes the files under their paths and compiles them together with `javac`; the exit status is the verdict, stderr is for the failure message. */
+function compileJava(files: EmittedFile[]): { status: number | null; stderr: string; classDirs: string[] } {
+  const dir = mkdtempSync(path.join(tmpdir(), "closure-javac-"));
+  try {
+    const sources: string[] = [];
+    for (const f of files) {
+      const full = path.join(dir, "src", f.path);
+      mkdirSync(path.dirname(full), { recursive: true });
+      writeFileSync(full, f.content);
+      sources.push(full);
+    }
+    const compiled = spawnSync("javac", ["-d", path.join(dir, "out"), ...sources], { encoding: "utf8" });
+    return { status: compiled.status, stderr: compiled.stderr, classDirs: compiled.status === 0 ? readdirSync(path.join(dir, "out")) : [] };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function emit(closure: ReferenceClosure, target: string): Promise<ClosureEmission> {
   const result = await emitClosure(closure, target);
   if (!result.success) throw new Error(`emitClosure(${target}) failed: ${result.error.code} ${result.error.message}`);
   return result.data;
@@ -73,7 +93,7 @@ const byPath = (files: EmittedFile[], suffix: string): EmittedFile => {
 };
 
 describe("three-entity closure, one file per entity on every target", () => {
-  const out = {} as Record<(typeof TARGETS)[number], { files: EmittedFile[]; warnings: string[] }>;
+  const out = {} as Record<(typeof TARGETS)[number], ClosureEmission>;
   beforeAll(async () => {
     await Promise.all(TARGETS.map(async (target) => { out[target] = await emit(threeEntities(), target); }));
   });
@@ -96,11 +116,11 @@ describe("three-entity closure, one file per entity on every target", () => {
 
   it("json-schema: Order.json points at the Address file with a native $ref, no bundle", () => {
     const { files } = out["json-schema"];
-    expect(files.map((f) => f.path)).toEqual(["Sales_Orders_Address.json", "Sales_Orders_Customer.json", "Sales_Orders_Order.json"]);
-    const orderFile = JSON.parse(byPath(files, "Sales_Orders_Order.json").content);
-    expect(orderFile.properties.ship.$ref).toBe("Sales_Orders_Address.json");
-    expect(orderFile.properties.buyer.$ref).toBe("Sales_Orders_Customer.json");
-    expect(byPath(files, "Sales_Orders_Order.json").content).toContain('"$ref": "Sales_Orders_Address.json"');
+    expect(files.map((f) => f.path)).toEqual(["Address.json", "Customer.json", "Order.json"]);
+    const orderFile = JSON.parse(byPath(files, "Order.json").content);
+    expect(orderFile.properties.ship.$ref).toBe("Address.json");
+    expect(orderFile.properties.buyer.$ref).toBe("Customer.json");
+    expect(byPath(files, "Order.json").content).toContain('"$ref": "Address.json"');
     expect(text(files)).not.toContain("$defs");
   });
 
@@ -109,15 +129,15 @@ describe("three-entity closure, one file per entity on every target", () => {
     expect(files.map((f) => f.path)).toEqual(["openapi.Sales.Orders.Address.yaml", "openapi.Sales.Orders.Customer.yaml", "openapi.Sales.Orders.Order.yaml"]);
     const doc = parseYaml(byPath(files, "openapi.Sales.Orders.Order.yaml").content) as { info: { title: string }; components: { schemas: Record<string, { properties?: Record<string, { $ref?: string }> }> } };
     expect(doc.info.title).toBe("Order");
-    expect(Object.keys(doc.components.schemas).sort()).toEqual(["Sales_Orders_Address", "Sales_Orders_Customer", "Sales_Orders_Order"]);
-    expect(doc.components.schemas.Sales_Orders_Order.properties?.ship.$ref).toBe("#/components/schemas/Sales_Orders_Address");
+    expect(Object.keys(doc.components.schemas).sort()).toEqual(["Address", "Customer", "Order"]);
+    expect(doc.components.schemas.Order.properties?.ship.$ref).toBe("#/components/schemas/Address");
     for (const f of files) {
       const refs = [...f.content.matchAll(/\$ref:\s*'?([^'\n]+)'?/g)].map((m) => m[1]);
       for (const ref of refs) expect(ref.startsWith("#/")).toBe(true);
     }
     // the Address file is its own service and carries only Address
     const addressDoc = parseYaml(byPath(files, "openapi.Sales.Orders.Address.yaml").content) as { components: { schemas: Record<string, unknown> } };
-    expect(Object.keys(addressDoc.components.schemas)).toEqual(["Sales_Orders_Address"]);
+    expect(Object.keys(addressDoc.components.schemas)).toEqual(["Address"]);
   });
 
   it("protobuf: one package per entity from its qualified path, imports between the files", () => {
@@ -127,63 +147,57 @@ describe("three-entity closure, one file per entity on every target", () => {
     expect(orderProto).toContain("package Sales.Orders.Order;");
     expect(orderProto).toContain('import "Sales/Orders/Address.proto";');
     expect(orderProto).toContain('import "Sales/Orders/Customer.proto";');
-    expect(orderProto).toContain("message Sales_Orders_Order");
+    expect(orderProto).toContain("message Order");
     expect(byPath(files, "Sales/Orders/Address.proto").content).not.toContain("import ");
   });
 
   it("avro: Order's file holds Address inline once, then refers to it by full name, in the entity's own namespace", () => {
     const { files } = out.avro;
     expect(files.map((f) => f.path)).toEqual([
-      "com.superschema.sales.orders.address.SalesOrdersAddress.avsc.json",
-      "com.superschema.sales.orders.customer.SalesOrdersCustomer.avsc.json",
-      "com.superschema.sales.orders.order.SalesOrdersOrder.avsc.json",
+      "com.superschema.sales.orders.address.Address.avsc.json",
+      "com.superschema.sales.orders.customer.Customer.avsc.json",
+      "com.superschema.sales.orders.order.Order.avsc.json",
     ]);
-    const orderSchema = JSON.parse(byPath(files, "SalesOrdersOrder.avsc.json").content);
+    const orderSchema = JSON.parse(byPath(files, "Order.avsc.json").content);
     expect(orderSchema.namespace).toBe("com.superschema.sales.orders.order");
     const definitions: unknown[] = [];
     const walk = (node: unknown): void => {
       if (Array.isArray(node)) return node.forEach(walk);
       if (typeof node !== "object" || node === null) return;
       const record = node as Record<string, unknown>;
-      if (record.type === "record" && record.name === "SalesOrdersAddress") definitions.push(record);
+      if (record.type === "record" && record.name === "Address") definitions.push(record);
       Object.values(record).forEach(walk);
     };
     walk(orderSchema);
     expect(definitions).toHaveLength(1);
     const ship = orderSchema.fields.find((f: { name: string }) => f.name === "ship");
-    expect(ship.type).toBe("com.superschema.sales.orders.address.SalesOrdersAddress");
+    expect(ship.type).toBe("com.superschema.sales.orders.address.Address");
   });
 
   it("java: the classes import each other across packages and live under their package directories", () => {
     const { files } = out["java-pojo"];
     expect(files.map((f) => f.path)).toEqual([
-      "sales/orders/address/SalesOrdersAddress.java",
-      "sales/orders/customer/SalesOrdersCustomer.java",
-      "sales/orders/order/SalesOrdersOrder.java",
+      "sales/orders/address/Address.java",
+      "sales/orders/customer/Customer.java",
+      "sales/orders/order/Order.java",
     ]);
-    const orderJava = byPath(files, "SalesOrdersOrder.java").content;
+    const orderJava = byPath(files, "Order.java").content;
     expect(orderJava).toContain("package sales.orders.order;");
-    expect(orderJava).toContain("import sales.orders.address.SalesOrdersAddress;");
-    expect(orderJava).toContain("import sales.orders.customer.SalesOrdersCustomer;");
+    expect(orderJava).toContain("import sales.orders.address.Address;");
+    expect(orderJava).toContain("import sales.orders.customer.Customer;");
   });
 
-  const javacAvailable = spawnSync("javac", ["-version"]).status === 0;
-  it.skipIf(!javacAvailable)("java: the set compiles with javac", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "closure-javac-"));
-    try {
-      const sources: string[] = [];
-      for (const f of out["java-pojo"].files) {
-        const full = path.join(dir, "src", f.path);
-        mkdirSync(path.dirname(full), { recursive: true });
-        writeFileSync(full, f.content);
-        sources.push(full);
-      }
-      const compiled = spawnSync("javac", ["-d", path.join(dir, "out"), ...sources], { encoding: "utf8" });
-      expect(compiled.stderr).toBe("");
-      expect(compiled.status).toBe(0);
-      expect(readdirSync(path.join(dir, "out"))).toContain("sales");
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+  it.skipIf(!JAVAC_AVAILABLE)("java: the set compiles with javac", () => {
+    const compiled = compileJava(out["java-pojo"].files);
+    expect(compiled.status, compiled.stderr).toBe(0);
+    expect(compiled.classDirs).toContain("sales");
+  });
+
+  it("every entity is served by exactly its own file(s) (entityFiles)", () => {
+    for (const target of TARGETS) {
+      const { files, entityFiles } = out[target];
+      expect(Object.keys(entityFiles).sort()).toEqual(["a", "c", "o"]);
+      for (const id of ["a", "c", "o"]) expect(entityFiles[id]).toEqual(filesForEntity(files, id).map((f) => f.path));
     }
   });
 
@@ -214,7 +228,7 @@ describe("entities with enums and shared types", () => {
     expect(new Set(files.map((f) => f.path)).size).toBe(files.length);
     if (target === "json-schema") {
       // the model, the inline enum and the shared enum of Address are each a file, all attributed to Address
-      expect(files.map((f) => f.path)).toEqual(expect.arrayContaining(["Sales_Orders_Address.json", "Sales_Orders_Address_kind.json", "Sales_Orders_Address_Status.json"]));
+      expect(files.map((f) => f.path)).toEqual(expect.arrayContaining(["Address.json", "Address_kind.json", "Status.json"]));
       for (const f of files) expect(f.entityId).toBeDefined();
       expect(filesForEntity(files, "a").length).toBeGreaterThanOrEqual(3);
     } else if (target === "java-pojo") {
@@ -222,9 +236,9 @@ describe("entities with enums and shared types", () => {
       expect(files).toHaveLength(5);
       for (const f of files) expect(f.entityId).toBeDefined();
       expect(filesForEntity(files, "a").map((f) => f.path)).toEqual([
-        "sales/orders/address/SalesOrdersAddress.java",
-        "sales/orders/address/SalesOrdersAddressKind.java",
-        "sales/orders/address/SalesOrdersAddressStatus.java",
+        "sales/orders/address/Address.java",
+        "sales/orders/address/AddressKind.java",
+        "sales/orders/address/Status.java",
       ]);
     } else {
       expect(files).toHaveLength(3);
@@ -234,22 +248,100 @@ describe("entities with enums and shared types", () => {
   });
 });
 
-describe("same-named entities in two products", () => {
-  const closure = () => {
-    const customerA = member("c1", "Sales", "Orders", "Customer", [field("name", "string", 1)]);
-    const customerB = member("c2", "Support", "Tickets", "Customer", [field("name", "string", 1)]);
-    const root = member("o", "Sales", "Orders", "Order", [
-      field("buyer", "reference", 1, refTo({ entityId: "c1", domain: "Sales", product: "Orders", entity: "Customer" })),
-      field("agent", "reference", 2, refTo({ entityId: "c2", domain: "Support", product: "Tickets", entity: "Customer" })),
-    ]);
-    return closureOf([root, customerA, customerB]);
-  };
+describe("names: after the entity, qualified only where entities collide", () => {
+  const customerIn = (id: string, d: string, p: string) => member(id, d, p, "Customer", [field("name", "string", 1)]);
+  const toCustomer = (id: string, d: string, p: string) => refTo({ entityId: id, domain: d, product: p, entity: "Customer" });
 
-  it.each(TARGETS)("%s: three distinct files, one per entity", async (target) => {
-    const { files } = await emit(closure(), target);
+  it("an entity keeps the name it has stand-alone when it gains references (Order.json, message Order, class Order)", async () => {
+    const solo = closureOf([member("o", "Sales", "Orders", "Order", [field("note", "string", 1)])]);
+    const withRefs = closureOf([order(), customer(), address()]);
+    expect((await emit(solo, "json-schema")).files.map((f) => f.path)).toEqual(["Order.json"]);
+    expect((await emit(withRefs, "json-schema")).files.map((f) => f.path)).toContain("Order.json");
+    expect(byPath((await emit(withRefs, "protobuf")).files, "Order.proto").content).toContain("message Order {");
+    expect(byPath((await emit(withRefs, "java-pojo")).files, "Order.java").content).toContain("public class Order {");
+  });
+
+  describe("the same entity name in two products", () => {
+    const closure = () =>
+      closureOf([
+        member("o", "Sales", "Orders", "Order", [field("buyer", "reference", 1, toCustomer("c1", "Sales", "Orders")), field("agent", "reference", 2, toCustomer("c2", "Support", "Tickets"))]),
+        customerIn("c1", "Sales", "Orders"),
+        customerIn("c2", "Support", "Tickets"),
+      ]);
+
+    it.each(TARGETS)("%s: three distinct files, one per entity", async (target) => {
+      const { files } = await emit(closure(), target);
+      expect(files).toHaveLength(3);
+      expect(new Set(files.map((f) => f.path)).size).toBe(3);
+      expect(files.map((f) => f.entityId).sort()).toEqual(["c1", "c2", "o"]);
+    });
+
+    it("json-schema: only the two Customers are qualified (product first), Order keeps its name, each $ref points at the right file", async () => {
+      const { files } = await emit(closure(), "json-schema");
+      expect(files.map((f) => f.path)).toEqual(["Order.json", "Orders_Customer.json", "Tickets_Customer.json"]);
+      const orderSchema = JSON.parse(byPath(files, "Order.json").content);
+      expect(orderSchema.properties.buyer.$ref).toBe("Orders_Customer.json");
+      expect(orderSchema.properties.agent.$ref).toBe("Tickets_Customer.json");
+    });
+
+    it("avro / java / protobuf: the colliding ones are qualified, the namespace / package is the full qualified path", async () => {
+      expect((await emit(closure(), "avro")).files.map((f) => f.path)).toEqual([
+        "com.superschema.sales.orders.customer.OrdersCustomer.avsc.json",
+        "com.superschema.sales.orders.order.Order.avsc.json",
+        "com.superschema.support.tickets.customer.TicketsCustomer.avsc.json",
+      ]);
+      expect((await emit(closure(), "java-pojo")).files.map((f) => f.path)).toEqual([
+        "sales/orders/customer/OrdersCustomer.java",
+        "sales/orders/order/Order.java",
+        "support/tickets/customer/TicketsCustomer.java",
+      ]);
+      expect((await emit(closure(), "protobuf")).files.map((f) => f.path)).toEqual(["Sales/Orders/Customer.proto", "Sales/Orders/Order.proto", "Support/Tickets/Customer.proto"]);
+    });
+  });
+
+  it.each(TARGETS)("%s: the same entity name in two domains with the same product name stays distinct (domain qualifies)", async (target) => {
+    const closure = closureOf([
+      member("o", "Sales", "Orders", "Order", [field("buyer", "reference", 1, toCustomer("c1", "Sales", "Orders")), field("agent", "reference", 2, toCustomer("c2", "Billing", "Orders"))]),
+      customerIn("c1", "Sales", "Orders"),
+      customerIn("c2", "Billing", "Orders"),
+    ]);
+    const { files } = await emit(closure, target);
     expect(files).toHaveLength(3);
     expect(new Set(files.map((f) => f.path)).size).toBe(3);
-    expect(files.map((f) => f.entityId).sort()).toEqual(["c1", "c2", "o"]);
+    if (target === "json-schema") expect(files.map((f) => f.path)).toEqual(["Billing_Orders_Customer.json", "Order.json", "Sales_Orders_Customer.json"]);
+  });
+
+  it.each(TARGETS)("%s: entity names that sanitize identically (`a-b` / `a_b`) stay distinct", async (target) => {
+    const closure = closureOf([
+      member("o", "D", "P", "Root", [
+        field("x", "reference", 1, refTo({ entityId: "x", domain: "D", product: "P", entity: "a-b" })),
+        field("y", "reference", 2, refTo({ entityId: "y", domain: "D", product: "P", entity: "a_b" })),
+      ]),
+      member("x", "D", "P", "a-b", [field("v", "string", 1)]),
+      member("y", "D", "P", "a_b", [field("v", "string", 1)]),
+    ]);
+    const { files, warnings, entityFiles } = await emit(closure, target);
+    expect(new Set(files.map((f) => f.path)).size).toBe(files.length);
+    // Their names stay distinct (hash last), but their NAMESPACE (domain.product.entity once sanitized) is one: OpenAPI and Protobuf
+    // write one document / package for the pair, Avro and Java one file each in the same namespace. Every entity is still served.
+    expect(files).toHaveLength(target === "openapi3" || target === "protobuf" ? 2 : 3);
+    for (const id of ["o", "x", "y"]) expect(entityFiles[id].length).toBeGreaterThan(0);
+    if (target === "json-schema") {
+      expect(warnings).toEqual([]);
+    } else {
+      expect(warnings.some((w) => w.includes("a-b and a_b") && w.includes("share it"))).toBe(true);
+    }
+  });
+
+  it.each(TARGETS)("%s: an entity named like the reserved closure root is emitted under a qualified name (the root must not be shadowed)", async (target) => {
+    const closure = closureOf([
+      member("o", "Billing", "Ledger", "SuperSchemaClosure", [field("c", "reference", 1, toCustomer("c1", "Billing", "Ledger"))]),
+      customerIn("c1", "Billing", "Ledger"),
+    ]);
+    const { files } = await emit(closure, target);
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => f.entityId).sort()).toEqual(["c1", "o"]);
+    if (target === "json-schema") expect(files.map((f) => f.path)).toEqual(["Customer.json", "Ledger_SuperSchemaClosure.json"]);
   });
 });
 
@@ -260,23 +352,68 @@ describe("a reference cycle and a self-reference", () => {
   const cycle = () => closureOf([c(), a(), b()], [["Sales/Orders/A", "Sales/Orders/B"]]);
 
   it("protobuf: the members of a cycle share ONE package and file, with a warning; an outside entity imports it", async () => {
-    const { files, warnings } = await emit(cycle(), "protobuf");
+    const { files, warnings, entityFiles } = await emit(cycle(), "protobuf");
     expect(files.map((f) => f.path)).toEqual(["Sales/Orders/A.proto", "Sales/Orders/C.proto"]);
     const shared = byPath(files, "Sales/Orders/A.proto").content;
     expect(shared).toContain("package Sales.Orders.A;");
-    expect(shared).toContain("message Sales_Orders_A");
-    expect(shared).toContain("message Sales_Orders_B");
+    expect(shared).toMatch(/message A \{[^}]*B peer = 2;/);
+    expect(shared).toMatch(/message B \{[^}]*A peer = 2;/);
     expect(shared).not.toContain("import ");
     expect(byPath(files, "Sales/Orders/C.proto").content).toContain('import "Sales/Orders/A.proto";');
     expect(warnings.some((w) => w.includes("Sales/Orders/A") && w.includes("Sales/Orders/B") && /share/i.test(w))).toBe(true);
+    // the shared file is tagged with the first member only: the second member is served through entityFiles
     expect(byPath(files, "Sales/Orders/A.proto").entityId).toBe("ea");
+    expect(filesForEntity(files, "eb")).toEqual([]);
+    expect(entityFiles).toEqual({ ea: ["Sales/Orders/A.proto"], eb: ["Sales/Orders/A.proto"], ec: ["Sales/Orders/C.proto"] });
   });
 
-  it.each(["json-schema", "openapi3", "avro", "java-pojo"])("%s: a cycle emits one file per entity, no warning", async (target) => {
-    const { files, warnings } = await emit(cycle(), target);
-    expect(files).toHaveLength(3);
-    expect(files.map((f) => f.entityId).sort()).toEqual(["ea", "eb", "ec"]);
+  it("json-schema: the files point at each other with a native $ref", async () => {
+    const { files, warnings } = await emit(cycle(), "json-schema");
+    expect(files.map((f) => f.path)).toEqual(["A.json", "B.json", "C.json"]);
+    expect(JSON.parse(byPath(files, "A.json").content).properties.peer.$ref).toBe("B.json");
+    expect(JSON.parse(byPath(files, "B.json").content).properties.peer.$ref).toBe("A.json");
+    expect(JSON.parse(byPath(files, "C.json").content).properties.a.$ref).toBe("A.json");
     expect(warnings).toEqual([]);
+  });
+
+  it("openapi3: each service holds both members of the cycle, referring to each other natively", async () => {
+    const { files, warnings } = await emit(cycle(), "openapi3");
+    expect(files.map((f) => f.path)).toEqual(["openapi.Sales.Orders.A.yaml", "openapi.Sales.Orders.B.yaml", "openapi.Sales.Orders.C.yaml"]);
+    for (const f of ["openapi.Sales.Orders.A.yaml", "openapi.Sales.Orders.B.yaml", "openapi.Sales.Orders.C.yaml"]) {
+      const doc = parseYaml(byPath(files, f).content) as { components: { schemas: Record<string, { properties?: Record<string, { $ref?: string }> }> } };
+      expect(Object.keys(doc.components.schemas).sort()).toEqual(f.includes(".C.") ? ["A", "B", "C"] : ["A", "B"]);
+      expect(doc.components.schemas.A.properties?.peer.$ref).toBe("#/components/schemas/B");
+      expect(doc.components.schemas.B.properties?.peer.$ref).toBe("#/components/schemas/A");
+    }
+    expect(warnings).toEqual([]);
+  });
+
+  it("avro: the first use of the other member is inline, the way back to the file's own record is by full name", async () => {
+    const { files, warnings } = await emit(cycle(), "avro");
+    expect(files.map((f) => f.path)).toEqual([
+      "com.superschema.sales.orders.a.A.avsc.json",
+      "com.superschema.sales.orders.b.B.avsc.json",
+      "com.superschema.sales.orders.c.C.avsc.json",
+    ]);
+    const aSchema = JSON.parse(byPath(files, "A.avsc.json").content);
+    expect(aSchema.namespace).toBe("com.superschema.sales.orders.a");
+    const inlineB = aSchema.fields.find((f: { name: string }) => f.name === "peer").type;
+    expect(inlineB).toMatchObject({ type: "record", name: "B", namespace: "com.superschema.sales.orders.b" });
+    expect(inlineB.fields.find((f: { name: string }) => f.name === "peer").type).toBe("com.superschema.sales.orders.a.A");
+    const bSchema = JSON.parse(byPath(files, "B.avsc.json").content);
+    expect(bSchema.fields.find((f: { name: string }) => f.name === "peer").type).toMatchObject({ type: "record", name: "A" });
+    expect(warnings).toEqual([]);
+  });
+
+  it("java: the cyclic set imports across packages and compiles with javac", async () => {
+    const { files, warnings } = await emit(cycle(), "java-pojo");
+    expect(files.map((f) => f.path)).toEqual(["sales/orders/a/A.java", "sales/orders/b/B.java", "sales/orders/c/C.java"]);
+    expect(byPath(files, "A.java").content).toContain("import sales.orders.b.B;");
+    expect(byPath(files, "B.java").content).toContain("import sales.orders.a.A;");
+    expect(warnings).toEqual([]);
+    if (!JAVAC_AVAILABLE) return;
+    const compiled = compileJava(files);
+    expect(compiled.status, compiled.stderr).toBe(0);
   });
 
   const selfRef = () => closureOf(
@@ -284,12 +421,24 @@ describe("a reference cycle and a self-reference", () => {
     [["Sales/Orders/Node"]]
   );
 
-  it.each(TARGETS)("%s: a self-reference emits its own single file", async (target) => {
-    const { files, warnings } = await emit(selfRef(), target);
+  it.each(TARGETS)("%s: a self-reference emits its own single file, with the stand-alone names", async (target) => {
+    const { files, warnings, entityFiles } = await emit(selfRef(), target);
     expect(files).toHaveLength(1);
     expect(files[0].entityId).toBe("s");
+    expect(entityFiles).toEqual({ s: [files[0].path] });
     expect(text(files)).not.toContain("SuperSchemaClosure");
     expect(warnings).toEqual([]);
+  });
+
+  it("the self-reference refers to its own file / record / class / schema, by the entity name", async () => {
+    expect(JSON.parse((await emit(selfRef(), "json-schema")).files[0].content).properties.parent.$ref).toBe("Node.json");
+    expect(JSON.parse((await emit(selfRef(), "avro")).files[0].content).fields[1].type).toBe("com.superschema.sales.orders.node.Node");
+    const openapi = parseYaml((await emit(selfRef(), "openapi3")).files[0].content) as { components: { schemas: { Node: { properties: { parent: { $ref: string } } } } } };
+    expect(openapi.components.schemas.Node.properties.parent.$ref).toBe("#/components/schemas/Node");
+    expect((await emit(selfRef(), "protobuf")).files[0].content).toMatch(/message Node \{[^}]*Node parent = 2;/);
+    const java = await emit(selfRef(), "java-pojo");
+    expect(java.files[0].path).toBe("sales/orders/node/Node.java");
+    expect(java.files[0].content).toContain("private Node parent;");
   });
 });
 
