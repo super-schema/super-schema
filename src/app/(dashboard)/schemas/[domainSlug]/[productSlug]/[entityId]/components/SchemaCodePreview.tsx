@@ -8,9 +8,11 @@ interface SchemaCodePreviewProps {
   code: string;
   language?: string;
   onCopy: () => void;
+  /** The caption in the header: "Preview" unless the code is one file of a set (then its path). */
+  title?: string;
 }
 
-export function SchemaCodePreview({ code, language = "sql", onCopy }: SchemaCodePreviewProps) {
+export function SchemaCodePreview({ code, language = "sql", onCopy, title = "Preview" }: SchemaCodePreviewProps) {
   const [copied, setCopied] = useState(false);
   const lines = code.split("\n");
 
@@ -22,10 +24,12 @@ export function SchemaCodePreview({ code, language = "sql", onCopy }: SchemaCode
   }, [code, onCopy]);
 
   return (
-    <div className="relative rounded-md border border-border/50 bg-muted/20 overflow-hidden">
+    <div data-testid="schema-code-preview" className="relative rounded-md border border-border/50 bg-muted/20 overflow-hidden">
       <div className="flex items-center justify-between px-space-3 py-space-1 bg-muted/30 border-b border-border/50">
-        <span className="text-caption text-muted-foreground">Preview</span>
+        <span className={`text-caption text-muted-foreground truncate ${title === "Preview" ? "" : "font-mono"}`} title={title}>{title}</span>
         <button
+          type="button"
+          data-testid="schema-code-copy"
           onClick={handleCopy}
           className="inline-flex items-center gap-1 text-caption text-muted-foreground hover:text-foreground transition-colors"
           title="Copy to clipboard"
