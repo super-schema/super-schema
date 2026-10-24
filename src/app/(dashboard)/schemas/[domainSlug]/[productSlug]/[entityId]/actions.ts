@@ -70,6 +70,7 @@ import {
 } from "@/lib/compiler/typespec-compiler";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { fieldNeedsUpdate, mergeSyncedField, entityExtensionsChange } from "@/lib/typespec-sync/merge-fields";
+import { isDecimalType } from "@/lib/data-types";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import {
@@ -933,6 +934,9 @@ async function applyTypeSpecFields(
                   description: merged.description,
                   classification,
                   decorators: decoratorsJson as Prisma.InputJsonValue,
+                  // The precision and scale live in the row, not in the text: a field that stops being a decimal takes them with it
+                  // (a save that keeps it a decimal leaves them as they are).
+                  ...(isDecimalType(existing.type) && !isDecimalType(merged.type) ? { precision: null, scale: null } : {}),
                 },
               }),
           });
