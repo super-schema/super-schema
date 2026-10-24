@@ -15,6 +15,7 @@ import {
   dockerRunArgs,
   dockerRunEnv,
   hermeticEnv,
+  judgeProviders,
   parseArgs,
   pickPorts,
   planRun,
@@ -36,6 +37,10 @@ const DEVELOPER = {
   NEXTAUTH_URL: "http://localhost:3000",
   PORT: "3000",
   SCHEMA_IMPORT_GIT_MODE: "any",
+  AI_PROVIDER: "ollama",
+  GOOGLE_CLIENT_ID: "dev-google-id",
+  API_KEY: "dev-api-key",
+  DIRECT_URL: "postgresql://dev:devpass@db.internal:5432/direct",
   TEST_EMAIL: "someone@example.com",
   PLAYWRIGHT_BROWSERS_PATH: "/cache/ms-playwright",
   NEXT_PUBLIC_APP_URL: "https://app.example",
@@ -149,13 +154,13 @@ describe("planRun: ports, names and places of two runs", () => {
     expect(p.containerName).toMatch(/^ss-e2e-[0-9a-f]{8}$/);
   });
 
-  it("an app port and a db port that differ, in the dynamic range, away from 3000, 5432 and the 5380-5410 block", () => {
-    for (let i = 0; i < 200; i += 1) {
+  it("an app port and a db port that differ, in 20000-32000 (below Linux's ephemeral ports, which outgoing connections take), away from 3000, 5432 and the 5380-5410 block", () => {
+    for (let i = 0; i < 500; i += 1) {
       const { app, db } = pickPorts();
       expect(app).not.toBe(db);
       for (const port of [app, db]) {
         expect(port).toBeGreaterThanOrEqual(20000);
-        expect(port).toBeLessThanOrEqual(39999);
+        expect(port).toBeLessThanOrEqual(32000);
         expect(port === 3000 || port === 5432 || (port >= 5380 && port <= 5410)).toBe(false);
       }
     }
@@ -186,16 +191,34 @@ describe("planRun: the environment of every child", () => {
   const p = plan();
   const everything = { db: p.env.db, app: p.env.app, phases: p.env.phases };
 
-  it("never carries a developer's database, auth or port settings", () => {
+  it("never carries a developer's database, auth, AI or API-key settings, in any child (scripts/e2e-env.mjs has the groups)", () => {
     const text = JSON.stringify(everything);
-    for (const secret of ["devpass", "db.internal", "devdb", "dev-auth-secret", "dev-secret", "dev.example"]) expect(text).not.toContain(secret);
+    for (const secret of ["devpass", "db.internal", "devdb", "dev-auth-secret", "dev-secret", "dev.example", "dev-google-id", "dev-api-key", "ollama", "someone@example.com"]) {
+      expect(text, secret).not.toContain(secret);
+    }
     for (const env of Object.values(everything) as Array<Record<string, string>>) {
-      expect(env.PGHOST).toBeUndefined();
-      expect(env.PGPASSWORD).toBeUndefined();
-      expect(env.AUTH_SECRET).toBeUndefined();
-      expect(env.AUTH_URL).toBeUndefined();
       expect(env.PORT).toBeUndefined();
       expect(env.TEST_EMAIL).toBeUndefined();
+    }
+  });
+
+  it("gives the app the run's own auth origin and secret under BOTH names Auth.js reads: it prefers AUTH_URL / AUTH_SECRET, which a .env could otherwise supply", () => {
+    for (const env of [p.env.app, p.env.db]) {
+      expect(env.AUTH_URL).toBe(p.baseUrl);
+      expect(env.NEXTAUTH_URL).toBe(p.baseUrl);
+      expect(env.AUTH_SECRET).toBe(p.authSecret);
+      expect(env.NEXTAUTH_SECRET).toBe(p.authSecret);
+    }
+  });
+
+  it("defines the developer's feature toggles and secrets as empty strings for the children that load a .env, and leaves them out of the browser run", () => {
+    for (const env of [p.env.app, p.env.db]) {
+      for (const name of ["GOOGLE_CLIENT_ID", "AI_PROVIDER", "API_KEY", "DIRECT_URL", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES", "PGHOST", "PGPASSWORD"]) {
+        expect(env[name], name).toBe("");
+      }
+    }
+    for (const name of ["GOOGLE_CLIENT_ID", "AI_PROVIDER", "API_KEY", "DIRECT_URL", "PGHOST", "PGPASSWORD", "AUTH_URL", "AUTH_SECRET"]) {
+      expect(p.env.phases[name], name).toBeUndefined();
     }
   });
 
@@ -214,8 +237,6 @@ describe("planRun: the environment of every child", () => {
     expect(p.env.app.NEXTAUTH_URL).toBe(`http://localhost:${p.ports.app}`);
     expect(p.env.app.NEXTAUTH_SECRET).toBe(p.authSecret);
     expect(p.env.app.AUTH_TRUST_HOST).toBe("true");
-    expect(p.env.app.SCHEMA_IMPORT_GIT_MODE).toBe("restricted");
-    expect(p.env.app.SCHEMA_IMPORT_GIT_SCOPES).toBe("");
   });
 
   it("points the browser run at the app, and gives it a login file and an output root of its own", () => {
@@ -267,32 +288,56 @@ describe("dockerRunArgs", () => {
   });
 });
 
-describe("decideBuild", () => {
-  const base = { reuseBuild: true, hasBuild: true, buildMtimeMs: 2000, sourceMtimeMs: 1000, stamp: { fingerprint: "f1" }, fingerprint: "f1" };
+describe("decideBuild: a build is reused only for the same inputs", () => {
+  const base = { reuseBuild: true, hasBuild: true, stamp: { inputsHash: "h1" }, inputsHash: "h1" };
 
   it("builds fresh without --reuse-build", () => {
     expect(decideBuild({ ...base, reuseBuild: false })).toEqual({ reuse: false, reason: expect.stringMatching(/--reuse-build/) });
   });
 
-  it("reuses a build that is newer than the sources, made by this runner, with the same baked values", () => {
-    expect(decideBuild(base)).toEqual({ reuse: true, reason: expect.stringMatching(/newer than src/) });
+  it("reuses a build whose stamp has the same hash of inputs (no modification times: a checkout of an older commit changes the hash)", () => {
+    expect(decideBuild(base)).toEqual({ reuse: true, reason: expect.stringMatching(/same inputs/) });
   });
 
   it.each([
     ["there is no finished build", { hasBuild: false }, /no finished build/],
     ["the build was not made by this runner", { stamp: undefined }, /not made by this runner/],
-    ["an env-baked value differs", { stamp: { fingerprint: "other" } }, /NEXT_PUBLIC/],
-    ["a source is newer than the build", { sourceMtimeMs: 3000 }, /newer than \.next/],
+    ["the stamp is from an older runner (no hash of inputs)", { stamp: {} }, /older runner/],
+    ["an input changed (a source, a config file, the lockfile, public/, a NEXT_PUBLIC_ value)", { inputsHash: "h2" }, /input.*changed/],
   ])("rebuilds when %s, and says so", (_name, change, reason) => {
     expect(decideBuild({ ...base, ...change })).toEqual({ reuse: false, reason: expect.stringMatching(reason) });
   });
+});
 
-  it("the plan's fingerprint changes with a NEXT_PUBLIC_ value, not with the run's own ports or secrets", () => {
-    const a = plan();
-    const b = plan();
-    const c = plan(["--tier", "smoke"], { ...DEVELOPER, NEXT_PUBLIC_APP_URL: "https://other.example" });
-    expect(a.buildFingerprint).toBe(b.buildFingerprint);
-    expect(a.buildFingerprint).not.toBe(c.buildFingerprint);
+describe("judgeProviders: is the app that answered the one that was configured", () => {
+  const base = "http://localhost:24000";
+  const credentials = (origin: string) => ({
+    credentials: { id: "credentials", name: "credentials", type: "credentials", signinUrl: `${origin}/api/auth/signin/credentials`, callbackUrl: `${origin}/api/auth/callback/credentials` },
+  });
+
+  it("accepts an app whose sign-in URLs are under the run's origin and that has no Google provider", () => {
+    expect(judgeProviders(credentials(base), base)).toEqual({ ok: true });
+  });
+
+  it("refuses an app that signs in at another origin: an AUTH_URL of a .env that got through (the dev server's, for one)", () => {
+    for (const leaked of ["http://leak", "http://localhost:3000", "http://localhost:24001"]) {
+      const verdict = judgeProviders(credentials(leaked), base);
+      expect(verdict.ok).toBe(false);
+      expect(verdict).toMatchObject({ message: expect.stringContaining(leaked) });
+    }
+  });
+
+  it("does not take a longer origin that merely starts the same for the run's own (24000 vs 240001)", () => {
+    expect(judgeProviders(credentials("http://localhost:240001"), base).ok).toBe(false);
+  });
+
+  it("refuses an app that offers Google sign-in: a GOOGLE_CLIENT_ID that got through", () => {
+    const verdict = judgeProviders({ ...credentials(base), google: { id: "google", signinUrl: `${base}/api/auth/signin/google`, callbackUrl: `${base}/api/auth/callback/google` } }, base);
+    expect(verdict).toMatchObject({ ok: false, message: expect.stringMatching(/Google sign-in/) });
+  });
+
+  it.each([[null], [[]], [{}], ["<html>"], [{ credentials: {} }]])("refuses an answer that is not a list of providers with URLs (%j)", (answer) => {
+    expect(judgeProviders(answer, base).ok).toBe(false);
   });
 });
 
@@ -317,11 +362,28 @@ describe("buildConflict: two runs from one checkout share .next", () => {
 });
 
 /** Fake dependencies: every call is recorded, in order, in `events`. */
-function fakeDeps(options: { fail?: string; phasesCode?: number; reuse?: boolean; conflict?: string | null; docker?: { ok: boolean; message?: string }; blockOn?: string; containerBusy?: number } = {}) {
+function fakeDeps(
+  options: {
+    fail?: string;
+    phasesCode?: number;
+    reuse?: boolean;
+    conflict?: string | null;
+    docker?: { ok: boolean; message?: string };
+    blockOn?: string;
+    containerBusy?: number;
+    /** The first n starts of the app find the port taken (the app exits with EADDRINUSE before it is ready). */
+    appPortTaken?: number;
+    verify?: { ok: boolean; message?: string };
+  } = {},
+) {
   const events: string[] = [];
   const messages: string[] = [];
   const handlers: Array<(signal: string) => void> = [];
+  const stamped: string[] = [];
+  const startedOn: number[] = [];
   let containerAttempts = 0;
+  let serverStarts = 0;
+  let appPort = 30000;
   const blocked = (signal: AbortSignal) => new Promise<void>((resolve) => (signal.aborted ? resolve() : signal.addEventListener("abort", () => resolve())));
   const record = async (name: string) => {
     events.push(name);
@@ -361,18 +423,37 @@ function fakeDeps(options: { fail?: string; phasesCode?: number; reuse?: boolean
       }
       return options.fail === `exec ${label}` ? 1 : 0;
     },
-    buildDecision: () => ({ reuse: options.reuse ?? false, reason: "test" }),
+    buildDecision: () => ({ reuse: options.reuse ?? false, reason: "test", inputsHash: "hash-before" }),
     buildConflict: () => options.conflict ?? null,
     registerRun: async () => {
       events.push("register run");
       return { setState: (s: string) => events.push(`run state ${s}`), unregister: () => events.push("unregister run") };
     },
-    writeBuildStamp: async () => record("write stamp"),
-    startServer: async () => {
+    writeBuildStamp: async (_plan: unknown, inputsHash: string) => {
+      await record("write stamp");
+      stamped.push(inputsHash);
+    },
+    freeAppPort: async (preferred: number) => {
+      events.push("free app port");
+      // The first probe finds the planned port free; after a start that found it taken, the port is another one.
+      appPort = serverStarts === 0 ? preferred : preferred + 1;
+      return appPort;
+    },
+    startServer: async (planOfStart: { ports: { app: number } }) => {
+      serverStarts += 1;
       events.push("start server");
+      startedOn.push(planOfStart.ports.app);
       return { stop: async () => void events.push("stop server"), exited: new Promise<never>(() => {}) };
     },
-    waitForHealth: async () => record("wait health"),
+    waitForHealth: async () => {
+      events.push("wait health");
+      if (serverStarts <= (options.appPortTaken ?? 0)) throw Object.assign(new Error("EADDRINUSE: the app could not bind its port"), { portInUse: true });
+      if (options.fail === "wait health") throw new Error("wait health failed");
+    },
+    verifyApp: async () => {
+      events.push("verify app");
+      return options.verify ?? { ok: true };
+    },
     runPhases: async (_plan: unknown, ctx: { signal: AbortSignal }) => {
       events.push("run phases");
       if (options.blockOn === "run phases") {
@@ -382,7 +463,7 @@ function fakeDeps(options: { fail?: string; phasesCode?: number; reuse?: boolean
       return options.phasesCode ?? 0;
     },
   };
-  return { deps, events, messages, handlers };
+  return { deps, events, messages, handlers, stamped, startedOn };
 }
 
 /** The setup of a full run in order (what must be undone in reverse), as the fake records it. */
@@ -398,8 +479,10 @@ const FULL_RUN = [
   "exec build",
   "write stamp",
   "run state serving",
+  "free app port",
   "start server",
   "wait health",
+  "verify app",
   "run phases",
 ];
 
@@ -445,9 +528,70 @@ describe("runRelease", () => {
     expect(events.slice(-5)).toEqual(["stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
   });
 
-  it("keeps going through the teardown when one of its steps fails", async () => {
-    const { deps, events } = fakeDeps({ fail: "remove container" });
-    expect(await runRelease(plan(), deps)).toBe(0);
+  it("keeps going through the teardown when one of its steps fails, and says so in the last line even though the run passed", async () => {
+    const { deps, events, messages } = fakeDeps({ fail: "remove container" });
+    const p = plan();
+    expect(await runRelease(p, deps)).toBe(0);
+    expect(events.slice(-5)).toEqual(["stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
+    const last = messages.at(-1) as string;
+    expect(last).toMatch(/done: exit 0/);
+    expect(last).toMatch(/TEARDOWN INCOMPLETE/);
+    expect(last).toContain(`remove the container ${p.containerName} failed`);
+    expect(last).toContain(`docker rm -f ${p.containerName}`);
+  });
+
+  it("names a leftover directory and a leftover app in the last line, with what to do about each", async () => {
+    const { deps, messages } = fakeDeps({ fail: "remove tmp" });
+    const p = plan();
+    expect(await runRelease(p, deps)).toBe(0);
+    expect(messages.at(-1)).toContain(`rm -rf ${p.tmpDir}`);
+  });
+
+  it("has no TEARDOWN INCOMPLETE line when every teardown step worked", async () => {
+    const { deps, messages } = fakeDeps();
+    await runRelease(plan(), deps);
+    expect(messages.join("\n")).not.toMatch(/TEARDOWN INCOMPLETE/);
+  });
+
+  it("records the build's stamp with the hash of the inputs taken BEFORE the build", async () => {
+    const { deps, stamped } = fakeDeps();
+    await runRelease(plan(), deps);
+    expect(stamped).toEqual(["hash-before"]);
+  });
+
+  it("probes the app port again just before the app starts (after the build), and starts the app on the port it got", async () => {
+    const { deps, events, startedOn } = fakeDeps();
+    const p = plan();
+    await runRelease(p, deps);
+    expect(events.indexOf("free app port")).toBeGreaterThan(events.indexOf("exec build"));
+    expect(events.indexOf("free app port")).toBeLessThan(events.indexOf("start server"));
+    expect(startedOn).toEqual([p.ports.app]);
+  });
+
+  it("picks another app port and starts again when the port was taken in between: at most three starts, one stop per failed one", async () => {
+    const { deps, events, startedOn } = fakeDeps({ appPortTaken: 2 });
+    const p = plan();
+    expect(await runRelease(p, deps)).toBe(0);
+    expect(events.filter((e) => e === "start server")).toHaveLength(3);
+    expect(startedOn).toEqual([p.ports.app, p.ports.app + 1, p.ports.app + 2]);
+    // The two that never got ready are stopped on the spot; the one that did is stopped by the teardown.
+    expect(events.filter((e) => e === "stop server")).toHaveLength(3);
+    expect(events.slice(-5)).toEqual(["stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
+  });
+
+  it("gives up when the app port is taken three times, and tears down", async () => {
+    const { deps, events } = fakeDeps({ appPortTaken: 3 });
+    expect(await runRelease(plan(), deps)).toBe(EXIT.setup);
+    expect(events.filter((e) => e === "start server")).toHaveLength(3);
+    expect(events).not.toContain("run phases");
+    expect(events.slice(-4)).toEqual(["unregister run", "remove container", "remove tmp", "signals off"]);
+  });
+
+  it("checks the app before it runs the browser: an app that answers for another auth origin (an AUTH_URL that got through) stops the run", async () => {
+    const { deps, events, messages } = fakeDeps({ verify: { ok: false, message: 'the app signs in at "http://leak/api/auth/signin/credentials", not under http://localhost:1' } });
+    expect(await runRelease(plan(), deps)).toBe(EXIT.setup);
+    expect(events).not.toContain("run phases");
+    expect(messages.join("\n")).toMatch(/the app signs in at "http:\/\/leak/);
     expect(events.slice(-5)).toEqual(["stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
   });
 

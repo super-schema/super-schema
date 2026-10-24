@@ -13,10 +13,14 @@
 //   1. refuses when Docker is not running;
 //   2. a throwaway PostgreSQL: `docker run -d --rm --name ss-e2e-<id> postgres:16` on a free loopback port, data on tmpfs, a random
 //      password; waits until it accepts connections;
-//   3. `prisma migrate deploy`, then `npm run db:seed` (the seed opens its database exclusively, so it runs before the app starts);
+//   3. `prisma migrate deploy`, then `npm run db:seed` (the database is migrated and seeded before the app starts, so the app never
+//      sees a half-made one; PostgreSQL has no single-process lock, unlike the embedded PGlite);
 //   4. a production build, `npm run build -- --webpack` (Turbopack refuses a symlinked node_modules, which is what a worktree has),
-//      unless --reuse-build finds a build in .next that is newer than the sources and was made with the same baked-in values;
-//   5. the app: `AUTH_TRUST_HOST=true next start -p <free port>`, its log in <output root>/server.log; waits for /api/v1/health;
+//      unless --reuse-build finds a build in .next that was made from the same inputs (a hash of the sources, config files, lockfile,
+//      public/ and the NEXT_PUBLIC_ values, kept in .next/e2e-release-build.json);
+//   5. the app: `AUTH_TRUST_HOST=true next start -p <free port>` (the port is probed again just before it starts, up to three tries),
+//      its log in <output root>/server.log; waits until it is ready and `/api/v1/health` answers, then checks that its sign-in URL is
+//      under the run's own origin and that Google sign-in is off (a leaked AUTH_URL or GOOGLE_CLIENT_ID stops the run);
 //   6. `scripts/e2e-phases.mjs <tier>` with E2E_BASE_URL pointing at that app, E2E_DATABASE_URL at that database, and an output root and
 //      a login file of the run's own: the exit code of the run is that script's;
 //   7. teardown, in the reverse order of the setup: the app (SIGTERM, SIGKILL after a grace period), the run's marker, the container
@@ -24,9 +28,11 @@
 //      SIGHUP (exit code 128 + the signal's number).
 //
 // Never touched: a developer's `.env` database, `data/pglite`, a dev server on :3000 or any other port. The children get an environment
-// made for them (`hermeticEnv` drops DATABASE_URL, PG*, AUTH_*, PORT, the git-import settings of the developer's shell), every port is
-// random and free at the time, every name carries the run's id, so two runs at the same time do not meet. The one thing two runs from one
-// checkout share is `.next`: a run that would rebuild it under another run that serves from it refuses, and says so (`--reuse-build`).
+// made for them (scripts/e2e-env.mjs: every name the app reads is SET to the run's value, BLANKED as "", DROPPED, or ALLOWED on purpose;
+// a name that is only missing from the shell would be filled in by the checkout's `.env`), every port is random and free at the time,
+// every name carries the run's id, so two runs at the same time do not meet. The one thing two runs from one checkout share is
+// `.next`: a run that would rebuild it under another run that serves from it refuses, and says so (`--reuse-build`). Two runs that
+// are given the same E2E_OUTPUT_ROOT share its server.log: give each its own.
 //
 // Exit codes: the phases script's (0 passed, 1 a test failed ...); 2 usage; 3 the environment could not be set up (Docker, database,
 // build, app); 128 + n when stopped by a signal.
@@ -42,6 +48,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hashBuildInputs } from "./e2e-build-inputs.mjs";
+import { appEnvironment, hermeticEnv, phasesEnvironment } from "./e2e-env.mjs";
 import { isEntryPoint, parseCli, planPhases } from "./e2e-phases.mjs";
 import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spawnGroup, terminateGroup } from "./e2e-process.mjs";
 
@@ -51,7 +59,7 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spa
  *   tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, shard?: string, projects: string[], extra: string[],
  *   runId: string, containerName: string, image: string, dbPassword: string, authSecret: string,
  *   root: string, tmpDir: string, outputRoot: string, serverLog: string, authState: string,
- *   buildFingerprint: string, baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
+ *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
  * }} FixedPlan the part of a plan that does not depend on the ports
  * @typedef {FixedPlan & {
  *   ports: { app: number, db: number }, databaseUrl: string, baseUrl: string,
@@ -69,7 +77,8 @@ export const POSTGRES_IMAGE = "postgres:16";
 export const CONTAINER_PREFIX = "ss-e2e-";
 const DB_NAME = "superschema";
 const DB_USER = "postgres";
-const PORT_RANGE = { min: 20000, max: 39999 };
+/** Below Linux's ephemeral range (32768 and up), which outgoing connections take: a port picked here is not one a client socket holds. */
+const PORT_RANGE = { min: 20000, max: 32000 };
 /** Ports a run must never take: the dev server, PostgreSQL's own, and the block another local service uses. */
 const RESERVED_PORTS = [[3000, 3000], [5432, 5432], [5380, 5410]];
 const DB_READY_TIMEOUT_MS = 90_000;
@@ -77,9 +86,14 @@ const HEALTH_TIMEOUT_MS = 120_000;
 const SERVER_STOP_GRACE_MS = 10_000;
 const DOCKER_RM_TIMEOUT_MS = 60_000;
 const CONTAINER_START_ATTEMPTS = 3;
+const APP_START_ATTEMPTS = 3;
+/** The app is trusted to be the one on its port when it printed "Ready" (below) or has been up this long and answers /api/v1/health. */
+const READY_FALLBACK_MS = 10_000;
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.dirname(SCRIPTS_DIR);
+
+export { HERMETIC_ALLOWED_NAMES, HERMETIC_BLANKED_NAMES, HERMETIC_DROPPED_NAMES, HERMETIC_SET_NAMES, hermeticEnv } from "./e2e-env.mjs";
 
 export class UsageError extends Error {}
 /** A step of the setup that failed for a reason the message says (as opposed to a bug of this script, which also gets a stack). */
@@ -95,7 +109,7 @@ export const USAGE = `usage: node scripts/e2e-release.mjs --tier <${RELEASE_TIER
   --tier <name>        smoke (pull requests), regression (every functional spec, Chromium), nightly (everything)
   --shard <i/n>        run slice i of n (regression is run as 4 slices in CI)
   --project <name>     narrow the tier to a Playwright project (repeatable): chromium, firefox-smoke, a11y ...
-  --reuse-build        skip \`next build\` when .next is newer than the sources and was built by this runner with the same NEXT_PUBLIC_ values
+  --reuse-build        skip \`next build\` when .next was built by this runner from the same inputs (sources, config, lockfile, public/, NEXT_PUBLIC_ values)
   --keep               leave the database container running afterwards (it prints how to connect and how to remove it)
   --list-only          provision, build and start everything, but only LIST the tests of the tier (a dry run)
   --output-root <dir>  where the reports and server.log go (default: $E2E_OUTPUT_ROOT, else test-results/run-<id>)
@@ -191,29 +205,6 @@ export function pickPorts(next = () => randomInt(PORT_RANGE.min, PORT_RANGE.max 
   return { app, db: one(app) };
 }
 
-/** What a developer's shell or `.env` could say that a release run must not inherit: other databases, other auth settings, other ports. */
-const DEVELOPER_SETTINGS = new Set([
-  "DATABASE_URL", "DIRECT_URL", "SHADOW_DATABASE_URL", "E2E_DATABASE_URL", "E2E_BASE_URL", "E2E_AUTH_STATE", "E2E_OUTPUT_ROOT", "E2E_FLAKY_FILE",
-  "DB_PROVIDER", "PGLITE_DATA_DIR", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "AUTH_SECRET", "AUTH_URL", "AUTH_TRUST_HOST", "PORT", "HOSTNAME", "NODE_ENV",
-  "TEST_EMAIL", "TEST_PASSWORD", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES",
-]);
-
-/**
- * The environment without a developer's settings (see DEVELOPER_SETTINGS, and every libpq variable: PGHOST, PGPASSWORD ...).
- *
- * @param {Record<string, string | undefined>} env
- * @returns {Record<string, string>}
- */
-export function hermeticEnv(env) {
-  /** @type {Record<string, string>} */
-  const out = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || DEVELOPER_SETTINGS.has(key) || /^PG[A-Z_]+$/.test(key)) continue;
-    out[key] = value;
-  }
-  return out;
-}
-
 /** The bin files of the tools the runner starts with node itself (no npx, no shell: a signal then reaches the tool). */
 function resolveBins(root) {
   const require = createRequire(path.join(root, "package.json"));
@@ -223,14 +214,6 @@ function resolveBins(root) {
     return path.join(dir, typeof manifest.bin === "string" ? manifest.bin : manifest.bin[name]);
   };
   return { prisma: bin("prisma", "prisma"), next: bin("next", "next") };
-}
-
-/** The values `next build` bakes into the bundle: reusing a build made with other ones would serve the old. */
-function buildFingerprint(env) {
-  const baked = Object.entries(env)
-    .filter(([key]) => key.startsWith("NEXT_PUBLIC_"))
-    .sort(([a], [b]) => a.localeCompare(b));
-  return createHash("sha1").update(JSON.stringify({ mode: "webpack", baked })).digest("hex");
 }
 
 /**
@@ -243,28 +226,8 @@ function buildFingerprint(env) {
 export function withPorts(fixed, ports) {
   const databaseUrl = `postgresql://${DB_USER}:${fixed.dbPassword}@127.0.0.1:${ports.db}/${DB_NAME}`;
   const baseUrl = `http://localhost:${ports.app}`;
-  const app = {
-    ...fixed.baseEnv,
-    DB_PROVIDER: "postgresql",
-    DATABASE_URL: databaseUrl,
-    E2E_DATABASE_URL: databaseUrl,
-    PGLITE_DATA_DIR: path.join(fixed.tmpDir, "pglite-unused"),
-    NEXTAUTH_SECRET: fixed.authSecret,
-    NEXTAUTH_URL: baseUrl,
-    AUTH_TRUST_HOST: "true",
-    // The default is what the runner wants (git-host import restricted and off); say it, so a `.env` cannot change it.
-    SCHEMA_IMPORT_GIT_MODE: "restricted",
-    SCHEMA_IMPORT_GIT_SCOPES: "",
-  };
-  const phases = {
-    ...fixed.baseEnv,
-    DATABASE_URL: databaseUrl,
-    E2E_DATABASE_URL: databaseUrl,
-    DB_PROVIDER: "postgresql",
-    E2E_BASE_URL: baseUrl,
-    E2E_OUTPUT_ROOT: fixed.outputRoot,
-    E2E_AUTH_STATE: fixed.authState,
-  };
+  const app = appEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, authSecret: fixed.authSecret, pgliteDir: path.join(fixed.tmpDir, "pglite-unused") });
+  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState });
   const node = process.execPath;
   return {
     ...fixed,
@@ -327,7 +290,6 @@ export function planRun(argv, env = process.env, options = {}) {
     outputRoot,
     serverLog: path.join(outputRoot, "server.log"),
     authState: path.join(tmpDir, "admin.json"),
-    buildFingerprint: buildFingerprint(baseEnv),
     baseEnv,
     bins: options.bins ?? resolveBins(root),
     phasesArgv,
@@ -371,19 +333,20 @@ export function dockerRunEnv(plan) {
 // ------------------------------------------------------------------------------------------------------------------------------------
 
 /**
- * Whether the build in .next can be used again. Nothing here is a guess: --reuse-build is the caller's request, and each of the other
- * conditions has a reason that is printed.
+ * Whether the build in .next can be used again: only when it was made by this runner from the same inputs (`hashBuildInputs`: the
+ * content of the sources, the config files, the lockfile, public/, the NEXT_PUBLIC_ values and the build mode). Nothing here is a guess:
+ * --reuse-build is the caller's request, and each of the other conditions has a reason that is printed.
  *
- * @param {{ reuseBuild: boolean, hasBuild: boolean, buildMtimeMs: number, sourceMtimeMs: number, stamp?: { fingerprint?: string }, fingerprint: string }} input
+ * @param {{ reuseBuild: boolean, hasBuild: boolean, stamp?: { inputsHash?: string }, inputsHash: string }} input
  * @returns {{ reuse: boolean, reason: string }}
  */
-export function decideBuild({ reuseBuild, hasBuild, buildMtimeMs, sourceMtimeMs, stamp, fingerprint }) {
+export function decideBuild({ reuseBuild, hasBuild, stamp, inputsHash }) {
   if (!reuseBuild) return { reuse: false, reason: "no --reuse-build: always a fresh build" };
   if (!hasBuild) return { reuse: false, reason: ".next has no finished build (no BUILD_ID)" };
   if (!stamp) return { reuse: false, reason: "the build in .next was not made by this runner (no e2e-release stamp)" };
-  if (stamp.fingerprint !== fingerprint) return { reuse: false, reason: "the NEXT_PUBLIC_* values or the build mode differ from those of the build in .next" };
-  if (sourceMtimeMs > buildMtimeMs) return { reuse: false, reason: "src, package.json, next.config.ts or the Prisma schema is newer than .next" };
-  return { reuse: true, reason: ".next is newer than src, made by this runner, with the same NEXT_PUBLIC_* values and build mode" };
+  if (!stamp.inputsHash) return { reuse: false, reason: "the stamp of the build in .next is from an older runner (no hash of its inputs)" };
+  if (stamp.inputsHash !== inputsHash) return { reuse: false, reason: "an input of the build changed since the one in .next was made (a source, config file, the lockfile, public/ or a NEXT_PUBLIC_ value)" };
+  return { reuse: true, reason: ".next was built by this runner from the same inputs (sources, config, lockfile, public/, NEXT_PUBLIC_ values, build mode)" };
 }
 
 /**
@@ -433,13 +396,15 @@ function keepInstructions(plan) {
  * @param {RunPlan} initialPlan
  * @param {any} deps the side effects, as `createRealDeps` returns them (log, error, onSignal, checkDocker, makeDirs, removeTmp,
  *   freePorts, startContainer, removeContainer, waitForDb, exec, buildDecision, buildConflict, registerRun, writeBuildStamp,
- *   startServer, waitForHealth, runPhases); the unit tests give fakes
+ *   freeAppPort, startServer, waitForHealth, verifyApp, runPhases); the unit tests give fakes
  * @returns {Promise<number>} the exit code
  */
 export async function runRelease(initialPlan, deps) {
   let plan = initialPlan;
-  /** @type {Array<{ name: string, undo: () => Promise<void> | void }>} */
+  /** @type {Array<{ name: string, undo: () => Promise<void> | void, hint?: () => string }>} */
   const undo = [];
+  /** Teardown steps that failed: said again in the last line, whatever the run's own result was. */
+  const leftovers = [];
   const abort = new AbortController();
   let received;
   const stopListening = deps.onSignal((signal) => {
@@ -467,7 +432,7 @@ export async function runRelease(initialPlan, deps) {
     });
     deps.log(`[e2e-release] run ${plan.runId}: tier ${plan.tier}${plan.listOnly ? " (list only)" : ""}; reports and server.log will be in ${plan.outputRoot}`);
 
-    undo.push({ name: "remove the temp directory", undo: () => deps.removeTmp(plan) });
+    undo.push({ name: "remove the temp directory", undo: () => deps.removeTmp(plan), hint: () => `rm -rf ${plan.tmpDir}` });
     await step("making the run's directories", () => deps.makeDirs(plan));
     madeDirs = true;
 
@@ -480,7 +445,7 @@ export async function runRelease(initialPlan, deps) {
     undo.push(
       plan.keep
         ? { name: "keep the database container", undo: () => keepInstructions(plan).forEach((line) => deps.log(line)) }
-        : { name: `remove the container ${plan.containerName}`, undo: () => deps.removeContainer(plan) },
+        : { name: `remove the container ${plan.containerName}`, undo: () => deps.removeContainer(plan), hint: () => `docker rm -f ${plan.containerName}` },
     );
     await step(`starting ${plan.image} as ${plan.containerName} on 127.0.0.1:${plan.ports.db}`, async () => {
       for (let attempt = 1; ; attempt += 1) {
@@ -514,13 +479,37 @@ export async function runRelease(initialPlan, deps) {
     } else {
       deps.log(`[e2e-release] build: building (${decision.reason})`);
       await exec("build", "building the app: npm run build -- --webpack (minutes)");
-      await deps.writeBuildStamp(plan);
+      // The hash of the inputs as they were BEFORE the build: an input changed during the build makes the next run build again.
+      await deps.writeBuildStamp(plan, decision.inputsHash);
     }
     run.setState("serving");
 
-    const server = await step(`starting the app on ${plan.baseUrl} (log: ${plan.serverLog})`, () => deps.startServer(plan));
-    undo.push({ name: "stop the app", undo: () => server.stop() });
-    await step("waiting for /api/v1/health", () => deps.waitForHealth(plan, server, ctx));
+    // The build took minutes: the app's port is probed again now, and a port that is taken between the probe and the bind (another run, any
+    // program) is a second try on another port, up to three, not a failed run.
+    for (let attempt = 1; ; attempt += 1) {
+      plan = await step("choosing the app's port (probed again, after the build)", async () =>
+        withPorts(plan, { app: await deps.freeAppPort(plan.ports.app, plan.ports.db), db: plan.ports.db }),
+      );
+      const server = await step(`starting the app on ${plan.baseUrl} (log: ${plan.serverLog})`, () => deps.startServer(plan));
+      const entry = {
+        name: "stop the app",
+        undo: () => server.stop(),
+        hint: () => `stop the process that listens on port ${plan.ports.app}: lsof -ti tcp:${plan.ports.app} | xargs kill`,
+      };
+      undo.push(entry);
+      try {
+        await step("waiting until the app is ready and /api/v1/health answers", () => deps.waitForHealth(plan, server, ctx));
+        const verdict = await step("checking the app's sign-in origin and providers", () => deps.verifyApp(plan, server, ctx));
+        if (!verdict.ok) throw new SetupError(verdict.message ?? "the app is not the one that was configured");
+        break;
+      } catch (error) {
+        const portTaken = error instanceof Error && /** @type {any} */ (error).portInUse === true;
+        if (!portTaken || attempt >= APP_START_ATTEMPTS || received) throw error;
+        deps.log(`[e2e-release] port ${plan.ports.app} was taken before the app could bind it (attempt ${attempt} of ${APP_START_ATTEMPTS}), choosing another`);
+        undo.splice(undo.indexOf(entry), 1);
+        await server.stop();
+      }
+    }
 
     code = await step(`running the ${plan.tier} tier${plan.listOnly ? " (list only)" : ""}: node scripts/e2e-phases.mjs ${plan.phasesArgv.join(" ")}`, () => deps.runPhases(plan, ctx));
   } catch (error) {
@@ -531,20 +520,53 @@ export async function runRelease(initialPlan, deps) {
     }
   } finally {
     while (undo.length > 0) {
-      const { name, undo: run } = undo.pop();
+      const { name, undo: run, hint } = undo.pop();
       deps.log(`[e2e-release] teardown: ${name}`);
       try {
         await run();
       } catch (error) {
-        deps.error(`[e2e-release] teardown: ${name} failed: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        deps.error(`[e2e-release] teardown: ${name} failed: ${message}`);
+        leftovers.push(`${name} failed (${message})${hint ? `: by hand, ${hint()}` : ""}`);
       }
     }
     stopListening();
   }
 
   const final = received ? exitCodeForSignal(received) : code;
-  deps.log(`[e2e-release] done: exit ${final}${received ? ` (${received})` : ""}${madeDirs ? `; reports and server.log: ${plan.outputRoot}` : ""}`);
+  deps.log(
+    `[e2e-release] done: exit ${final}${received ? ` (${received})` : ""}${madeDirs ? `; reports and server.log: ${plan.outputRoot}` : ""}` +
+      (leftovers.length > 0 ? `; TEARDOWN INCOMPLETE: ${leftovers.join("; ")} (leftovers of any run: docker ps -a --filter name=${CONTAINER_PREFIX})` : ""),
+  );
   return final;
+}
+
+/**
+ * Whether the app that answered is the one the run configured, judged from what Auth.js lists at `/api/auth/providers` (the sign-in and
+ * callback URLs it builds from its own AUTH_URL / NEXTAUTH_URL, and the providers that are switched on). A URL under another origin means
+ * an AUTH_URL of a `.env` or a shell got through; a Google provider means GOOGLE_CLIENT_ID did. Pure.
+ *
+ * @param {unknown} providers the parsed JSON
+ * @param {string} baseUrl the run's origin, `http://localhost:<port>`
+ * @returns {{ ok: true } | { ok: false, message: string }}
+ */
+export function judgeProviders(providers, baseUrl) {
+  if (!providers || typeof providers !== "object" || Array.isArray(providers) || Object.keys(providers).length === 0) {
+    return { ok: false, message: `the app's /api/auth/providers is not a list of providers (${JSON.stringify(providers)?.slice(0, 120)})` };
+  }
+  const entries = Object.entries(/** @type {Record<string, { signinUrl?: unknown, callbackUrl?: unknown }>} */ (providers));
+  if (entries.some(([id]) => id.toLowerCase() === "google")) {
+    return { ok: false, message: "the app offers Google sign-in: a GOOGLE_CLIENT_ID reached it, and the release run is checked with the seeded admin only" };
+  }
+  for (const [id, provider] of entries) {
+    for (const key of ["signinUrl", "callbackUrl"]) {
+      const url = provider?.[key];
+      if (typeof url !== "string" || !url.startsWith(`${baseUrl}/`)) {
+        return { ok: false, message: `the app's ${id} ${key} is "${String(url)}", not under ${baseUrl}: an AUTH_URL / NEXTAUTH_URL of the shell or a .env reached the app, and its logins would go to another server` };
+      }
+    }
+  }
+  return { ok: true };
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------------
@@ -563,12 +585,12 @@ const sleep = (ms, signal) =>
     signal?.addEventListener("abort", done, { once: true });
   });
 
-/** Whether nothing listens on `port` (any address): bound and released at once. */
-function isPortFree(port) {
+/** Whether `port` can be bound on `host` (every address when `host` is undefined): bound and released at once. */
+function canBind(port, host) {
   return new Promise((resolve) => {
     const server = net.createServer();
     server.once("error", () => resolve(false));
-    server.listen({ port }, () => server.close(() => resolve(true)));
+    server.listen(host === undefined ? { port } : { port, host }, () => server.close(() => resolve(true)));
   });
 }
 
@@ -581,6 +603,16 @@ function canConnect(host, port) {
     socket.once("timeout", () => (socket.destroy(), resolve(false)));
     socket.once("error", () => resolve(false));
   });
+}
+
+/**
+ * Whether nothing listens on `port` where the run will bind it: the app and the database container both bind 127.0.0.1. A bind of
+ * every address alone is not enough (on macOS it succeeds next to a listener on 127.0.0.1: found with a real probe), so a connection to
+ * loopback, a bind of 127.0.0.1 and a bind of every address must all say "free".
+ */
+async function isPortFree(port) {
+  if (await canConnect("127.0.0.1", port)) return false;
+  return (await canBind(port, "127.0.0.1")) && (await canBind(port, undefined));
 }
 
 const tail = (file, lines = 25) => {
@@ -598,25 +630,6 @@ const readJson = (file) => {
     return undefined;
   }
 };
-
-/** The newest modification time under `paths` (files and directories, node_modules skipped). */
-function newestMtime(paths) {
-  let newest = 0;
-  const visit = (entry) => {
-    let stat;
-    try {
-      stat = statSync(entry);
-    } catch {
-      return;
-    }
-    newest = Math.max(newest, stat.mtimeMs);
-    if (stat.isDirectory()) {
-      for (const name of readdirSync(entry)) if (name !== "node_modules") visit(path.join(entry, name));
-    }
-  };
-  paths.forEach(visit);
-  return newest;
-}
 
 /** The other runs of this checkout that are alive (a marker whose process is gone is removed). */
 function liveRuns(root, ownRunId) {
@@ -754,6 +767,13 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
       return { app, db: await take(ports.db, app) };
     },
 
+    /** The app's port alone (the database's is held by the running container): `preferred` when nothing listens on it now, else another free one. */
+    async freeAppPort(preferred, dbPort) {
+      let port = preferred;
+      for (let tries = 0; tries < 50 && (port === dbPort || !(await isPortFree(port))); tries += 1) port = pickPorts().app;
+      return port;
+    },
+
     async startContainer(plan) {
       live.container = plan.keep ? undefined : plan.containerName;
       const present = await capture("docker", ["image", "inspect", plan.image], { timeoutMs: 30_000 });
@@ -795,14 +815,9 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
       const nextDir = path.join(plan.root, ".next");
       const buildId = path.join(nextDir, "BUILD_ID");
       const hasBuild = existsSync(buildId);
-      return decideBuild({
-        reuseBuild: plan.reuseBuild,
-        hasBuild,
-        buildMtimeMs: hasBuild ? statSync(buildId).mtimeMs : 0,
-        sourceMtimeMs: newestMtime(["src", "public", "prisma/schema.prisma", "package.json", "package-lock.json", "next.config.ts"].map((p) => path.join(plan.root, p))),
-        stamp: readJson(path.join(nextDir, "e2e-release-build.json")),
-        fingerprint: plan.buildFingerprint,
-      });
+      // The hash of the inputs NOW, before anything is built: it is what the stamp of a build made by this run records.
+      const inputsHash = hashBuildInputs({ root: plan.root, env: plan.baseEnv });
+      return { ...decideBuild({ reuseBuild: plan.reuseBuild, hasBuild, stamp: readJson(path.join(nextDir, "e2e-release-build.json")), inputsHash }), inputsHash };
     },
     buildConflict: (plan, { willBuild }) => buildConflict(liveRuns(plan.root, plan.runId), { willBuild }),
     registerRun(plan, state) {
@@ -813,12 +828,19 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
       write(state);
       return { setState: write, unregister: () => rmSync(file, { force: true }) };
     },
-    writeBuildStamp(plan) {
-      writeFileSync(path.join(plan.root, ".next", "e2e-release-build.json"), JSON.stringify({ fingerprint: plan.buildFingerprint, mode: "webpack", runId: plan.runId, builtAt: new Date().toISOString() }));
+    /** Records the build's inputs, unless they changed while it was built (then the next run builds again, which is the safe side). */
+    writeBuildStamp(plan, inputsHash) {
+      if (hashBuildInputs({ root: plan.root, env: plan.baseEnv }) !== inputsHash) {
+        log("[e2e-release] build: an input changed while it was built; the build is not recorded for reuse");
+        return false;
+      }
+      writeFileSync(path.join(plan.root, ".next", "e2e-release-build.json"), JSON.stringify({ inputsHash, mode: "webpack", runId: plan.runId, builtAt: new Date().toISOString() }));
+      return true;
     },
 
     startServer(plan) {
       const spec = plan.commands.server;
+      const logOffset = existsSync(plan.serverLog) ? statSync(plan.serverLog).size : 0; // a retry appends to the log of the attempt before it
       const fd = openSync(plan.serverLog, "a");
       let child;
       try {
@@ -829,6 +851,8 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
       live.server = child;
       const server = {
         child,
+        logOffset,
+        startedAt: Date.now(),
         hasExited: false,
         exitCode: undefined,
         exited: new Promise((resolve) => {
@@ -852,25 +876,57 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
       return server;
     },
 
+    /**
+     * Waits until THIS app is ready and answers /api/v1/health. Its own "Ready" line comes first (an app that could not bind its port exits
+     * without it, and a health answer from another program on that port is not ours); an app that is still silent after READY_FALLBACK_MS
+     * but answers is trusted. A start that died because the port is taken throws an error with `portInUse`.
+     */
     async waitForHealth(plan, server, { signal }) {
       const url = `${plan.baseUrl}/api/v1/health`;
+      const ownLog = () => {
+        try {
+          return readFileSync(plan.serverLog, "utf8").slice(server.logOffset);
+        } catch {
+          return "";
+        }
+      };
       const deadline = Date.now() + HEALTH_TIMEOUT_MS;
       let last = "no answer";
       while (Date.now() < deadline) {
         if (signal.aborted) return;
         if (server.hasExited) {
-          throw new SetupError(`the app exited (code ${server.exitCode}${server.spawnError ? `, ${server.spawnError}` : ""}) before ${url} answered. Last lines of ${plan.serverLog}:\n${tail(plan.serverLog)}`);
+          const log = ownLog();
+          throw Object.assign(
+            new SetupError(`the app exited (code ${server.exitCode}${server.spawnError ? `, ${server.spawnError}` : ""}) before ${url} answered. Last lines of ${plan.serverLog}:\n${tail(plan.serverLog)}`),
+            { portInUse: /EADDRINUSE|address already in use/i.test(log) },
+          );
         }
-        try {
-          const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-          if (response.ok) return;
-          last = `HTTP ${response.status}`;
-        } catch (e) {
-          last = e instanceof Error ? e.message : String(e);
+        if (/\bReady in \d/.test(ownLog()) || Date.now() - server.startedAt > READY_FALLBACK_MS) {
+          try {
+            const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+            if (response.ok) return;
+            last = `HTTP ${response.status}`;
+          } catch (e) {
+            last = e instanceof Error ? e.message : String(e);
+          }
+        } else {
+          last = "the app has not printed Ready yet";
         }
-        await sleep(500, signal);
+        await sleep(300, signal);
       }
       throw new SetupError(`the app did not become healthy within ${HEALTH_TIMEOUT_MS / 1000} s (${url}: ${last}). Last lines of ${plan.serverLog}:\n${tail(plan.serverLog)}`);
+    },
+
+    /** Asks the app which sign-in URLs and providers it has (`judgeProviders`): a leaked AUTH_URL or GOOGLE_CLIENT_ID shows here. */
+    async verifyApp(plan, _server, { signal }) {
+      const url = `${plan.baseUrl}/api/auth/providers`;
+      try {
+        const response = await fetch(url, { signal: AbortSignal.any([AbortSignal.timeout(10_000), signal]) });
+        if (!response.ok) return { ok: false, message: `${url} answered HTTP ${response.status}` };
+        return judgeProviders(await response.json(), plan.baseUrl);
+      } catch (e) {
+        return { ok: false, message: `${url} did not answer: ${e instanceof Error ? e.message : String(e)}` };
+      }
     },
   };
 }
