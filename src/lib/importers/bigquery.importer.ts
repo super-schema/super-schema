@@ -75,7 +75,7 @@ function parseColumnLine(line: string): ParsedField | null {
   // Match: column_name TYPE [NOT NULL] [OPTIONS(...)]
   // Handle backtick-quoted column names
   const match = trimmed.match(
-    /^`?(\w+)`?\s+([\w<>,\s()]+?)(?:\s+(NOT\s+NULL))?(?:\s+OPTIONS\s*\(([^)]*)\))?\s*$/i
+    /^`?(\w+)`?\s+([\w<>,\s()]+?)(?:\s+(NOT\s+NULL))?(?:\s+OPTIONS\s*\((.*)\))?\s*$/i
   );
 
   if (!match) {
@@ -89,9 +89,10 @@ function parseColumnLine(line: string): ParsedField | null {
 
   // Extract description from OPTIONS
   let description: string | undefined;
-  const descMatch = optionsStr.match(/description\s*=\s*'([^']*)'/i);
+  // A string literal is single- or double-quoted (BigQuery writes its own DDL with double quotes), may hold a ")" and escapes a quote with a backslash.
+  const descMatch = optionsStr.match(/description\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/i);
   if (descMatch) {
-    description = descMatch[1];
+    description = (descMatch[1] ?? descMatch[2]).replace(/\\(.)/g, "$1");
   }
 
   // Resolve type

@@ -102,6 +102,27 @@ describe("BigQuery DDL Importer", () => {
 
       expect(result.data.fields[0].description).toBe("User email address");
     });
+
+    // BigQuery writes its own DDL (SHOW CREATE TABLE, INFORMATION_SCHEMA) with double-quoted strings, and a description may contain a ")".
+    it.each([
+      [`OPTIONS(description="User email address")`, "User email address"],
+      [`OPTIONS(description = "User email address" )`, "User email address"],
+      [`OPTIONS(description="Primary key (the order's id)")`, "Primary key (the order's id)"],
+      [`OPTIONS(description='Primary key (the order\\'s id)')`, "Primary key (the order's id)"],
+      [`OPTIONS(description="Says \\"hi\\"")`, 'Says "hi"'],
+      [`OPTIONS(description="User email address", labels=[("a", "b")])`, "User email address"],
+    ])("reads the description of %s", (options, expected) => {
+      const result = parseBigQueryDDL(`CREATE TABLE t (
+  email STRING NOT NULL ${options},
+  other INT64
+);`);
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data.fields.map((f) => f.name)).toEqual(["email", "other"]);
+      expect(result.data.fields[0].description).toBe(expected);
+      expect(result.data.fields[0].nullable).toBe(false);
+      expect(result.data.fields[1].description).toBeUndefined();
+    });
   });
 
   describe("table name extraction", () => {
