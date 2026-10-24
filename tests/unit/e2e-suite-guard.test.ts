@@ -12,6 +12,10 @@
  *      are listed, with their reasons, in RAW_TIMER_ALLOWED below;
  *   c. no `test.fixme` / `test.skip` that hides a test without a reason: a declarative one needs a bracketed reason of some substance in
  *      its title (`test.fixme("title [TRACKED: why]", fn)`), a conditional one (`test.skip(cond, "why")`) needs the reason string;
+ *   c2. a test that is EXPECTED to fail or is hidden (`test.fail(` / `test.fixme(` in its body, or a declarative `test.fail|fixme|skip("title", fn)`) names a
+ *      known defect in its title: `[KD-001 what is broken]`, and that id is an entry of docs/testing/known-defects.md; an entry
+ *      with `status: open` in that file is pinned by at least one such title (`no-test` and `dead-code` entries are documented
+ *      defects without a test, said explicitly), and every entry has a status;
  *   d. no `test.use({ navigationTimeout | actionTimeout | screenshot | trace | video })`: playwright.config.ts owns them;
  *   e. no local `createDomain` / `createProduct` (helpers/lifecycle.ts) and no local copy of the other shared helpers
  *      (`createEventFromMenu`, `RAW_DB_TEXT`: helpers/event-builder.ts) outside `helpers/`.
@@ -36,6 +40,10 @@ const CONFIG_OWNED_OPTIONS = ["navigationTimeout", "actionTimeout", "screenshot"
 /** Helpers that live in `helpers/` and must not be written again in a spec. */
 const SHARED_HELPER_NAMES = ["createDomain", "createProduct", "createEventFromMenu", "RAW_DB_TEXT"];
 
+/** A test that is expected to fail, or hidden, names its known defect in the title: `[KD-001 what is broken]`. */
+const KD_IN_TITLE = /\[(KD-\d{3})\b[^\]]*\]/;
+const KNOWN_DEFECTS_FILE = "docs/testing/known-defects.md";
+
 /** A reason in a skip/fixme title must be more than a placeholder: `[x]` and `[todo]` explain nothing. */
 const MIN_REASON_LENGTH = 6;
 
@@ -56,7 +64,7 @@ const RAW_TIMER_ALLOWED: ReadonlyArray<{ file: string; count: number; reason: st
   },
 ];
 
-type Kind = "untagged-test" | "bad-tiers" | "sleep" | "raw-timer" | "network-idle" | "hidden-test" | "config-owned-use" | "local-helper";
+type Kind = "untagged-test" | "bad-tiers" | "sleep" | "raw-timer" | "network-idle" | "hidden-test" | "defect-pin" | "config-owned-use" | "local-helper";
 
 interface Problem {
   kind: Kind;
@@ -106,6 +114,9 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
   const names = testNames(sf);
   const escaped = names.map((n) => n.replace(/[$]/g, "\\$&")).join("|");
   const skipOrFixme = new RegExp(`^(${escaped})(\\.describe)?\\.(skip|fixme)$`);
+  // In a test's body: `fail` / `fixme` (a conditional `skip(cond, "why")` is an environment's reason, not a defect: rule c). Declaratively: all three.
+  const markers = new RegExp(`^(${escaped})\\.(fail|fixme)$`);
+  const declarative = new RegExp(`^(${escaped})\\.(fail|fixme|skip)$`);
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
@@ -128,6 +139,24 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
             add("bad-tiers", node, `${titleOf(node)} is tagged @smoke and ${tags.filter((t) => NIGHTLY_ONLY_TAGS.includes(t)).join("/")}: smoke runs on every pull request, slow and external tests nightly only`);
           }
         }
+      }
+
+      // A test that is expected to fail or is hidden (in its body, or declaratively) is pinned to a known defect by its title.
+      if (names.includes(callee)) {
+        const body = node.arguments[node.arguments.length - 1];
+        const title = node.arguments[0] && isStringLike(node.arguments[0]) ? node.arguments[0].getText(sf) : "";
+        let marks = false;
+        const find = (inner: ts.Node): void => {
+          if (ts.isCallExpression(inner) && markers.test(inner.expression.getText(sf))) marks = true;
+          if (!ts.isFunctionLike(inner) || inner === body) ts.forEachChild(inner, find);
+        };
+        if (body && ts.isFunctionLike(body)) find(body);
+        if (marks && !KD_IN_TITLE.test(title)) {
+          add("defect-pin", node, `${titleOf(node)} is expected to fail or hidden: put its known defect in the title, [KD-001 what is broken] (${KNOWN_DEFECTS_FILE})`);
+        }
+      }
+      if (declarative.test(callee) && node.arguments[0] && isStringLike(node.arguments[0]) && !KD_IN_TITLE.test(node.arguments[0].getText(sf))) {
+        add("defect-pin", node, `${callee}(${titleOf(node)}) is expected to fail or hidden: put its known defect in the title, [KD-001 what is broken] (${KNOWN_DEFECTS_FILE})`);
       }
 
       if (/\.waitForTimeout$/.test(callee)) add("sleep", node, `${callee}(...): wait for a state of the page with a web-first assertion instead`);
@@ -170,6 +199,34 @@ function scanSource(file: string, source: string, insideHelpers = false): Proble
   };
   visit(sf);
   return problems;
+}
+
+/** The known-defect ids named by the titles of the tests of a source file (`test("... [KD-001 ...] ...", ...)`, `test.fail("[KD-002 ...]", ...)`). */
+function pinnedDefectIds(file: string, source: string): string[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, scriptKindOf(file));
+  const names = testNames(sf);
+  const callee = new RegExp(`^(${names.map((n) => n.replace(/[$]/g, "\\$&")).join("|")})(\\.(fail|fixme|skip))?$`);
+  const ids: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && callee.test(node.expression.getText(sf)) && node.arguments[0] && isStringLike(node.arguments[0])) {
+      const id = KD_IN_TITLE.exec(node.arguments[0].getText(sf))?.[1];
+      if (id) ids.push(id);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return ids;
+}
+
+/** The entries of docs/testing/known-defects.md: `## KD-001: title`, then a `- status: open | no-test | dead-code` line. */
+function knownDefects(markdown: string): Array<{ id: string; title: string; status: string | undefined }> {
+  const entries: Array<{ id: string; title: string; status: string | undefined }> = [];
+  for (const block of markdown.split(/^(?=## KD-\d{3}:)/m).slice(1)) {
+    const heading = /^## (KD-\d{3}): (.+)$/m.exec(block);
+    if (!heading) continue;
+    entries.push({ id: heading[1], title: heading[2].trim(), status: /^- status: (\S+)/m.exec(block)?.[1] });
+  }
+  return entries;
 }
 
 function listSource(dir: string): string[] {
@@ -246,15 +303,42 @@ describe("the browser suite scanner", () => {
   });
 
   it("flags a test that is hidden without a reason, or with a placeholder for one", () => {
-    expect(scan(`test.fixme("emit", async () => {});`)).toEqual(["hidden-test"]);
-    expect(scan(`test.skip("emit", async () => {});`)).toEqual(["hidden-test"]);
-    expect(scan(`test.fixme();`)).toEqual(["hidden-test"]);
-    expect(scan(`test.skip(!online);`)).toEqual(["hidden-test"]);
-    expect(scan(`test.describe.skip("group", () => {});`)).toEqual(["hidden-test"]);
-    expect(scan(`test.fixme("emit [x]", async () => {});`)).toEqual(["hidden-test"]);
-    expect(scan(`test.fixme("emit [todo]", async () => {});`)).toEqual(["hidden-test"]);
-    expect(scan(`test.fixme("emit [TRACKED: no UI yet]", async () => {});`)).toEqual([]);
-    expect(scan(`test.skip(!online, "the host is not reachable");`)).toEqual([]);
+    // (rule c only: that the title also names a known defect is rule c2, below)
+    const scanHidden = (src: string) => scan(src).filter((kind) => kind === "hidden-test");
+    expect(scanHidden(`test.fixme("emit", async () => {});`)).toEqual(["hidden-test"]);
+    expect(scanHidden(`test.skip("emit", async () => {});`)).toEqual(["hidden-test"]);
+    expect(scanHidden(`test.fixme();`)).toEqual(["hidden-test"]);
+    expect(scanHidden(`test.skip(!online);`)).toEqual(["hidden-test"]);
+    expect(scanHidden(`test.describe.skip("group", () => {});`)).toEqual(["hidden-test"]);
+    expect(scanHidden(`test.fixme("emit [x]", async () => {});`)).toEqual(["hidden-test"]);
+    expect(scanHidden(`test.fixme("emit [todo]", async () => {});`)).toEqual(["hidden-test"]);
+    expect(scanHidden(`test.fixme("emit [TRACKED: no UI yet]", async () => {});`)).toEqual([]);
+    expect(scanHidden(`test.skip(!online, "the host is not reachable");`)).toEqual([]);
+  });
+
+  it("flags a test that is expected to fail or hidden without a known defect in its title", () => {
+    const tagged = (title: string, body: string) => `test(${JSON.stringify(title)}, { tag: ["@regression"] }, async () => { ${body} });`;
+    expect(scan(tagged("a", `test.fail(true, "why");`))).toEqual(["defect-pin"]);
+    expect(scan(tagged("a [open defect]", `test.fail(true, "why");`))).toEqual(["defect-pin"]);
+    expect(scan(tagged("a [KD-1 short]", `test.fail(true, "why");`))).toEqual(["defect-pin"]);
+    expect(scan(tagged("a [KD-001 the thing is broken]", `test.fail(true, "why");`))).toEqual([]);
+    expect(scan(tagged("a", `test.fixme(true, "why");`))).toEqual(["defect-pin"]);
+    expect(scan(tagged("a [KD-012 not wired]", `test.fixme(true, "why");`))).toEqual([]);
+    expect(scan(`test.fail("a", async () => {});`)).toEqual(["defect-pin"]);
+    expect(scan(`test.fail("a [KD-002 broken]", async () => {});`)).toEqual([]);
+    expect(scan(`test.skip("emit [KD-003 no UI yet]", async () => {});`)).toEqual([]);
+    // A conditional skip is an environment's reason, not a defect: rule c asks for its reason string, nothing more.
+    expect(scan(tagged("needs a network", `test.skip(!online, "the host is not reachable");`))).toEqual([]);
+  });
+
+  it("reads the known-defect ids named by test titles, and the entries of the known-defects file", () => {
+    const source = `test("a [KD-001 x]", { tag: ["@regression"] }, async () => { test.fail(true, "why"); });\ntest.fail("b [KD-002 y]", async () => {});\ntest("c", { tag: ["@regression"] }, async () => {});`;
+    expect(pinnedDefectIds("x.spec.ts", source)).toEqual(["KD-001", "KD-002"]);
+    expect(knownDefects("# Known defects\n\n## KD-001: first\n- status: open\nmore\n\n## KD-002: second\n- status: no-test\n\n## KD-003: third\nno status here\n")).toEqual([
+      { id: "KD-001", title: "first", status: "open" },
+      { id: "KD-002", title: "second", status: "no-test" },
+      { id: "KD-003", title: "third", status: undefined },
+    ]);
   });
 
   it("flags per-spec copies of what the config owns", () => {
@@ -299,6 +383,33 @@ describe("tests/e2e follows the suite rules", () => {
 
   it("(c) no test.fixme / test.skip without a reason", () => {
     expect(scanSuite(["hidden-test"], allFiles)).toEqual([]);
+  });
+
+  describe("(c2) known defects", () => {
+    const entries = knownDefects(readFileSync(path.join(REPO_DIR, KNOWN_DEFECTS_FILE), "utf8"));
+    const pins = allFiles.flatMap((file) => pinnedDefectIds(file, readFileSync(file, "utf8")));
+
+    it("every test that is expected to fail or hidden names a known defect in its title", () => {
+      expect(scanSuite(["defect-pin"], allFiles)).toEqual([]);
+    });
+
+    it(`every id a test title names is an entry of ${KNOWN_DEFECTS_FILE}`, () => {
+      const ids = entries.map((entry) => entry.id);
+      for (const id of pins) expect(ids, `${id} is named by a test and is not an entry of ${KNOWN_DEFECTS_FILE}`).toContain(id);
+    });
+
+    it("every entry has a unique id and a status: open (pinned by a test), no-test or dead-code (said explicitly)", () => {
+      expect(new Set(entries.map((entry) => entry.id)).size).toBe(entries.length);
+      for (const entry of entries) {
+        expect(["open", "no-test", "dead-code"], `${entry.id} (${entry.title}) needs "- status: open | no-test | dead-code"`).toContain(entry.status);
+      }
+    });
+
+    it("every `open` entry is pinned by at least one test title", () => {
+      for (const entry of entries.filter((e) => e.status === "open")) {
+        expect(pins, `${entry.id} (${entry.title}) is open and no test names it: pin one with [${entry.id} ...] or give it status: no-test`).toContain(entry.id);
+      }
+    });
   });
 
   it("(d) timeouts, trace and screenshot are set in playwright.config.ts, not per spec", () => {
