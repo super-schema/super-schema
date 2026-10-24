@@ -115,3 +115,24 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   `src/lib/schema-targets/catalog.ts`.
 - cost to fix: map the catalog key to the mapping format (`openapi3` -> `openapi`), and write the JSON Schema and Java tables (or say on the page
   that the target has none).
+
+## KD-014: the Classifications tab keeps its levels in page state
+
+- status: open
+- symptom: Admin > Classifications lists four levels (PII, SENSITIVE, INTERNAL, PUBLIC) from constants. "Add Classification" adds a level to the
+  page, and a reload removes it: nothing is saved. The Edit and Delete buttons do nothing. The levels the field editor, the compliance filters
+  and the glossary offer are fixed lists in their own components, so a level made here would reach none of them.
+- where: `src/components/custom/admin/ClassificationList.tsx` (`useState(SYSTEM_CLASSIFICATION_DEFAULTS...)`). The persisted side exists and is
+  not used by the page: `classification-taxonomy.service.ts`, `src/server/api/routers/admin/classifications.ts`, `useAdminClassifications.ts`,
+  the seeded `classification_levels` rows.
+- pinned by: `admin.spec.ts`, "a level that was added is still listed after a reload".
+- cost to fix: server actions over the service for list / create / update / delete, the component reading them, then the pickers reading the
+  same list (the larger part: each has the four names in code, and `PolicyTemplateSchema` enumerates them).
+
+## KD-021: the Enabled toggle of an emitter and the Health tab's compiler and emitter statuses are not wired to anything
+
+- status: no-test (a product gap: nothing for a test to pin that is not the stub itself)
+- symptom: Admin > Emitters saves "Disabled", and every target still generates (the config is read by no emission path; the same for the
+  catalog's `enabledInSchemaTab`). Admin > Health shows "TypeSpec Compiler" and "Emitters" as healthy always: both checks return a constant.
+- where: `src/services/emitter-config.service.ts` (no caller outside the admin page), `src/services/health.service.ts` (`defaultCompilerCheck`,
+  `defaultEmitterCheck`).
