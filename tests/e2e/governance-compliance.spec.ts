@@ -811,19 +811,23 @@ test.describe("compliance tenants", () => {
   test.use({ workspaceEntities: [`${prefix}Home`] });
 
   // The Query and Gaps tabs read the fields of the tenant being viewed (the audit trail has no tenant column: KD-016).
-  test("the Query and Gaps tabs list the fields of this tenant and not those of another", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+  test("the Query and Gaps tabs list the fields of this tenant and not those of another", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
+    // `workspace` is asked for by name: a fixture that no test asks for is never made (the pinned test of KD-016 never made its home entity,
+    // and "failed" because the row was missing, not because the other tenant's was there).
+    const home = workspace.entities[0].name;
+    expect(home).toBe(`${prefix}Home`);
     const other = await createSecondTenant();
     try {
       await createEntityInTenant(other.tenantId, `${prefix}Away`);
       await openCompliance(page);
       await searchFor(page, prefix);
       // The entity of this tenant is listed (the query has answered), the one of the other tenant is not.
-      await expect(resultRows(page).filter({ hasText: `${prefix}Home` })).toHaveCount(1);
+      await expect(resultRows(page).filter({ hasText: home })).toHaveCount(1);
       await expect(resultRows(page).filter({ hasText: `${prefix}Away` })).toHaveCount(0);
 
       // Both entities have an unclassified field `id`: a gap for the tenant's, none for the other's.
       await complianceTab(page, "Gaps").click();
-      await expect(gapRows(page, `${prefix}Home`, '[data-gap="UNCLASSIFIED"]')).toHaveCount(1);
+      await expect(gapRows(page, home, '[data-gap="UNCLASSIFIED"]')).toHaveCount(1);
       await expect(gapRows(page, `${prefix}Away`)).toHaveCount(0);
     } finally {
       await deleteTenantWithDomain(other);
