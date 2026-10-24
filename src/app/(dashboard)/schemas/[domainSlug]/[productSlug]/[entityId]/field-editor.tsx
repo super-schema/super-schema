@@ -37,6 +37,7 @@ import {
 import { suggestType } from "@/lib/autocomplete/type-suggestion";
 import { FieldCard } from "./components/FieldCard";
 import type { ReferenceFieldControls } from "./components/ReferencePinControl";
+import { pluralize } from "@/lib/pluralize";
 
 interface FieldData {
   id: string;
@@ -363,7 +364,7 @@ export function FieldEditor({
         <div className="mb-space-4">
           <div className="flex items-center justify-between mb-space-1">
             <span className="text-caption text-muted-foreground">
-              {completeness.complete} of {completeness.total} fields complete
+              {completeness.complete} of {pluralize(completeness.total, "field")} complete
             </span>
             <span className="text-caption text-muted-foreground">
               {completeness.percentage}%
@@ -438,7 +439,7 @@ export function FieldEditor({
       {/* Filtered result count */}
       {hasActiveFilters && (
         <p className="text-caption text-muted-foreground mb-space-2">
-          Showing {filteredFields.length} of {fields.length} fields
+          Showing {filteredFields.length} of {pluralize(fields.length, "field")}
         </p>
       )}
 

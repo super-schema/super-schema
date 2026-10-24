@@ -19,6 +19,7 @@ import {
   updateUnionTypeAction,
   deleteUnionTypeAction,
 } from "../actions";
+import { pluralize } from "@/lib/pluralize";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -501,7 +502,7 @@ function EnumCard({ e, onDelete }: { e: SharedEnumData; onDelete: (name: string)
     <div className="rounded-lg border border-border/30 p-space-3 hover:border-border transition-colors group/enum">
       <div className="flex items-center gap-space-2 mb-1">
         <span className="font-mono text-body-small text-foreground font-medium">{e.name}</span>
-        <Badge variant="secondary" className="text-[10px] h-4 px-1">{values.length} values</Badge>
+        <Badge variant="secondary" className="text-[10px] h-4 px-1">{pluralize(values.length, "value")}</Badge>
         <button
           onClick={() => onDelete(e.name)}
           className="ml-auto opacity-0 group-hover/enum:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"

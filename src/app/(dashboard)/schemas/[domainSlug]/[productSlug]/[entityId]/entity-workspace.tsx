@@ -68,6 +68,7 @@ import type { ReferenceFieldControls } from "./components/ReferencePinControl";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import type { PickableEntity } from "@/lib/references/entity-reference";
 import type { DraftVersionState } from "@/lib/entity-versioning/draft-label";
+import { pluralize } from "@/lib/pluralize";
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api" | "deployments" | "typespec";
 type RightPanelTab = "field-edit" | "typespec-preview";
@@ -327,10 +328,10 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
       if (response.result) {
         const { summary } = response.result;
         if (summary.invalidCount === 0 && summary.warningCount === 0) {
-          toast.success(`Emitted to ${summary.totalTargets} targets — all valid`);
+          toast.success(`Emitted to ${pluralize(summary.totalTargets, "target")} — all valid`);
         } else if (summary.invalidCount === 0) {
           toast.warning(
-            `Emitted to ${summary.totalTargets} targets — ${summary.warningCount} warning${summary.warningCount !== 1 ? "s" : ""}`
+            `Emitted to ${pluralize(summary.totalTargets, "target")} — ${pluralize(summary.warningCount, "warning")}`
           );
         } else {
           toast.error(

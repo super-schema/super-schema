@@ -88,7 +88,7 @@ export function BulkImportReviewScreen({
           </span>
           {errors.length > 0 && (
             <span className="text-destructive ml-2">
-              {errors.length} errors
+              {pluralize(errors.length, "error")}
             </span>
           )}
         </div>
@@ -120,7 +120,7 @@ export function BulkImportReviewScreen({
             />
           </div>
           <p className="text-caption text-muted-foreground">
-            Creating {progress.current} of {progress.total} entities...
+            Creating {progress.current} of {pluralize(progress.total, "entity", "entities")}...
           </p>
         </div>
       )}

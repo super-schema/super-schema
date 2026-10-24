@@ -43,6 +43,7 @@ import {
 import { toast } from "sonner";
 import { useInvalidateDomainsTree } from "@/hooks/useDomainsTree";
 import { isReservedRenameNote } from "@/lib/reserved-field-names";
+import { pluralize } from "@/lib/pluralize";
 
 type ImportTab = "single" | "bulk" | "paste" | "build";
 type ImportPhase = "input" | "review" | "bulk-review" | "typespec-review";
@@ -196,7 +197,7 @@ export function ImportDialog({
         } else {
           items.push({
             type: "info",
-            message: `Detected ${result.data.result.parsedEntity.sourceFormat} format — ${result.data.result.parsedEntity.fields.length} fields found.`,
+            message: `Detected ${result.data.result.parsedEntity.sourceFormat} format — ${pluralize(result.data.result.parsedEntity.fields.length, "field")} found.`,
           });
         }
       } else {

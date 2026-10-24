@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { assetHref } from "@/lib/navigation/asset-href";
 import type { ComplianceFieldResult } from "@/types/schemas/compliance";
+import { pluralize } from "@/lib/pluralize";
 
 /** Entity route of a result row; null slugs are a tenant-level entity (assetHref handles it). */
 export function entityHref(field: ComplianceFieldResult): string {
@@ -78,7 +79,7 @@ export function ComplianceResultsTable({
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="compliance-results-table">
       {/* Result count */}
       <div className="px-space-4 py-space-2 text-body-small text-muted-foreground">
-        Showing {total > 0 ? `${from}-${to}` : "0"} of {total} fields matching
+        Showing {total > 0 ? `${from}-${to}` : "0"} of {pluralize(total, "field")} matching
         filters
       </div>
 
