@@ -7,6 +7,18 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Eye, EyeOff } from "lucide-react";
+import { safeCallbackUrl } from "@/lib/safe-callback-url";
+
+/**
+ * Where to go after signing in: the `callbackUrl` the middleware put on the address, when it is a path of this site (`safeCallbackUrl`),
+ * else the dashboard. Read from the address when the form is sent or Google is chosen, not while rendering: `useSearchParams` would
+ * make the page client-rendered behind a Suspense boundary, and the form would no longer be in the server's HTML.
+ */
+function requestedDestination(): string {
+  const asked = new URLSearchParams(window.location.search).getAll("callbackUrl");
+  // A repeated parameter is no destination.
+  return safeCallbackUrl(asked.length === 1 ? asked[0] : asked);
+}
 
 const subscribeNever = () => () => {};
 
@@ -60,7 +72,7 @@ export default function LoginPage() {
       setError("Invalid email or password");
       setShakeKey((k) => k + 1);
     } else {
-      router.push("/schemas");
+      router.push(requestedDestination());
       router.refresh();
     }
   }
@@ -84,7 +96,7 @@ export default function LoginPage() {
         <Button
           variant="outline"
           className="w-full gap-2 h-10"
-          onClick={() => signIn("google", { callbackUrl: "/schemas" })}
+          onClick={() => signIn("google", { callbackUrl: requestedDestination() })}
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24">
             <path
