@@ -1,40 +1,10 @@
-import { test as base, expect, type Page } from "@playwright/test";
-
 /**
- * E2E auth + fixtures.
+ * The login of the browser suite, kept under its old name so a spec written before the fixtures existed (`import { test, expect,
+ * unique } from "./helpers/auth"`) keeps working. New specs import from "./helpers/fixtures".
  *
- * PREREQS (cannot be auto-run in CI without these):
- *   - A reachable database (DB_PROVIDER=pglite works zero-config; postgres needs DATABASE_URL).
- *   - A seeded user. Set TEST_EMAIL / TEST_PASSWORD, or seed one via `npm run db:seed`.
- *   - `npx playwright install chromium` once.
- * Run: `npm run test:e2e` (playwright.config starts the app via `npm run build && npm start`).
+ *   - the credentials, the saved-session path and the UI `login()`: helpers/auth-state.ts (the `setup` project calls it once per run);
+ *   - `test` / `expect`: helpers/fixtures.ts. Its `authedPage` is the page of the saved session, it does not log in again;
+ *   - `unique`: helpers/unique.ts.
  */
-
-export const TEST_EMAIL = process.env.TEST_EMAIL ?? "admin@admin.com";
-export const TEST_PASSWORD = process.env.TEST_PASSWORD ?? "admin";
-
-export async function login(page: Page) {
-  await page.goto("/login");
-  await page.fill('input[name="email"]', TEST_EMAIL);
-  await page.fill('input[name="password"]', TEST_PASSWORD);
-  await page.getByRole("button", { name: /sign in|log in/i }).click();
-  // Success = we leave /login. (Surfaces a clear error if creds are wrong.)
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"), {
-    timeout: 15_000,
-  });
-}
-
-/** A unique suffix so repeated runs don't collide on names/slugs. */
-export function unique(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}`;
-}
-
-/** Authenticated-page fixture. */
-export const test = base.extend<{ authedPage: Page }>({
-  authedPage: async ({ page }, use) => {
-    await login(page);
-    await use(page);
-  },
-});
-
-export { expect };
+export { AUTH_STATE_PATH, TEST_EMAIL, TEST_PASSWORD, login } from "./auth-state";
+export { expect, test, unique } from "./fixtures";

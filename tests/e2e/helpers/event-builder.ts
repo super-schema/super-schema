@@ -6,8 +6,7 @@
  * Next leaves the streamed segment's hidden copy in <body>, so a bare `page.getByTestId(...)` can resolve to two elements and trip
  * strict mode. Toasts and dialogs render in portals outside the center panel and are queried on `page`.
  */
-import type { Locator, Page } from "@playwright/test";
-import { expect } from "./auth";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type { NavFixtures } from "./db";
 
 /** Text a user must never see: driver / Prisma / SQL internals. */

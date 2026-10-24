@@ -6,7 +6,7 @@
  */
 
 import { expect, type Locator, type Page } from "@playwright/test";
-import { unique } from "./auth";
+import { unique } from "./unique";
 import { fillWorkbenchPaste, expectDetailPanelText } from "./workbench";
 import { SCHEMA_TARGETS_FOR_TESTS } from "./targets";
 import { previewSignature, readPreviewFrom, settlePreview, type PreviewSource } from "./preview-text";

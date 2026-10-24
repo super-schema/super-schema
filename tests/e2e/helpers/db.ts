@@ -1,10 +1,10 @@
 /**
  * Direct-DB fixtures for E2E specs.
  *
- * Playwright runs in Node, so specs can create and delete rows themselves against
- * DATABASE_URL (from .env). This needs the PostgreSQL provider: the embedded PGlite
- * database is single-process, so a second process (this one) cannot share it with
- * the running app.
+ * Playwright runs in Node, so specs can create and delete rows themselves against a PostgreSQL database: `E2E_DATABASE_URL` (what the
+ * release runner provisions: a throwaway database, dropped at the end), else the developer's `DATABASE_URL` (the shell's, or `.env`;
+ * `.env` is not even read while `E2E_DATABASE_URL` is set). It needs the PostgreSQL provider: the embedded PGlite database is
+ * single-process, so a second process (this one) cannot share it with the running app.
  *
  * Why plain `pg` and not the generated PrismaClient: `src/generated/prisma/client.ts`
  * is ESM-only (`import.meta.url`), and Playwright loads spec code as CommonJS, so it
@@ -18,9 +18,8 @@
  * deleted explicitly.
  */
 
-import "dotenv/config";
 import { randomBytes } from "node:crypto";
-import { TEST_EMAIL } from "./auth";
+import { TEST_EMAIL } from "./auth-state";
 
 export interface PgPool {
   query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
@@ -31,12 +30,27 @@ const DEFAULT_TENANT_ID = "tenant_default";
 
 let pool: PgPool | undefined;
 
+type Env = Record<string, string | undefined>;
+
+/**
+ * The connection string the suite uses: `E2E_DATABASE_URL`; only when that is not set, `DATABASE_URL` (the shell's, else `.env`'s).
+ * `.env` is read here and nowhere earlier, so a run with `E2E_DATABASE_URL` never loads a developer's database settings.
+ */
+export function e2eDatabaseUrl(env: Env = process.env): string | undefined {
+  if (env.E2E_DATABASE_URL) return env.E2E_DATABASE_URL;
+  if (!env.DATABASE_URL) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded on demand, see above
+    (require("dotenv") as { config(options: { processEnv: Env; quiet: boolean }): void }).config({ processEnv: env, quiet: true });
+  }
+  return env.DATABASE_URL || undefined;
+}
+
 export function pg(): PgPool {
   if (!pool) {
-    const connectionString = process.env.DATABASE_URL;
+    const connectionString = e2eDatabaseUrl();
     if (!connectionString) {
       throw new Error(
-        "E2E fixtures need DATABASE_URL (PostgreSQL provider). Set it in .env; the embedded PGlite database cannot be shared with the running app."
+        "E2E fixtures need a PostgreSQL database: set E2E_DATABASE_URL (the release runner does), or DATABASE_URL in the shell or .env. The embedded PGlite database cannot be shared with the running app."
       );
     }
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- no @types/pg; see header
@@ -68,6 +82,14 @@ function newId() {
   return `e2e${randomBytes(10).toString("hex")}`;
 }
 
+/** The user that owns what the fixtures create: the seeded admin (TEST_EMAIL), else the oldest user. */
+export async function seededOwnerId(): Promise<string> {
+  const owner = await pg().query(`SELECT id FROM users ORDER BY (email = $1) DESC, "createdAt" ASC LIMIT 1`, [TEST_EMAIL]);
+  const ownerId = owner.rows[0]?.id as string | undefined;
+  if (!ownerId) throw new Error("E2E fixtures need a seeded user (npm run db:seed).");
+  return ownerId;
+}
+
 export interface NavFixtures {
   tenantId: string;
   domain: { id: string; name: string; slug: string };
@@ -82,12 +104,7 @@ export interface NavFixtures {
 export async function createNavFixtures(): Promise<NavFixtures> {
   const db = pg();
   const tenantId = await activeTenantId();
-  const owner = await db.query(
-    `SELECT id FROM users ORDER BY (email = $1) DESC, "createdAt" ASC LIMIT 1`,
-    [TEST_EMAIL]
-  );
-  const ownerId = owner.rows[0]?.id as string | undefined;
-  if (!ownerId) throw new Error("E2E fixtures need a seeded user (npm run db:seed).");
+  const ownerId = await seededOwnerId();
 
   const s = suffix();
   const domain = { id: newId(), name: `e2e-nav-dom-${s}`, slug: `e2e-nav-dom-${s}` };
@@ -174,6 +191,63 @@ export async function deleteSchemaReferencesForDomain(domainId: string): Promise
     [domainId]
   );
   return res.rows.length;
+}
+
+export interface WorkspaceRows {
+  tenantId: string;
+  domain: { id: string; name: string; slug: string };
+  product: { id: string; name: string; slug: string };
+  /** One per requested name: product-level, with one key field `id`. */
+  entities: Array<{ id: string; name: string; slug: string; fieldId: string }>;
+}
+
+/**
+ * A domain and a product under it, uniquely named, and one product-level entity (with one key field `id`) per name in `entityNames`.
+ * The rows behind the `workspace` fixture (helpers/fixtures.ts); `deleteWorkspaceRows` removes them. A name must be a plain TypeSpec
+ * identifier (letters and digits): it is the entity's name, and its slug is the lowercased name.
+ */
+export async function createWorkspaceRows(entityNames: readonly string[] = []): Promise<WorkspaceRows> {
+  const db = pg();
+  const tenantId = await activeTenantId();
+  const ownerId = await seededOwnerId();
+  const s = suffix();
+  const domain = { id: newId(), name: `e2e-ws-dom-${s}`, slug: `e2e-ws-dom-${s}` };
+  const product = { id: newId(), name: `e2e-ws-prod-${s}`, slug: `e2e-ws-prod-${s}` };
+  const entities = entityNames.map((name) => ({ id: newId(), name, slug: name.toLowerCase(), fieldId: newId() }));
+  const rows: WorkspaceRows = { tenantId, domain, product, entities };
+  try {
+    await db.query(`INSERT INTO domains (id, name, slug, "tenantId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [
+      domain.id, domain.name, domain.slug, tenantId,
+    ]);
+    await db.query(`INSERT INTO products (id, name, slug, "domainId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [
+      product.id, product.name, product.slug, domain.id,
+    ]);
+    for (const entity of entities) {
+      await db.query(
+        `INSERT INTO entities (id, name, slug, "tenantId", "domainId", "productId", "ownerId", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+        [entity.id, entity.name, entity.slug, tenantId, domain.id, product.id, ownerId]
+      );
+      await db.query(
+        `INSERT INTO fields (id, "entityId", name, slug, type, nullable, "isKey", "sortOrder", "updatedAt")
+         VALUES ($1, $2, 'id', 'id', 'string', false, true, 0, now())`,
+        [entity.fieldId, entity.id]
+      );
+    }
+  } catch (error) {
+    // Never leave a half-built workspace behind.
+    await deleteWorkspaceRows(rows);
+    throw error;
+  }
+  return rows;
+}
+
+/** Delete everything `createWorkspaceRows` made, and whatever a test created under its domain. Safe to call twice or on partial state. */
+export async function deleteWorkspaceRows(rows: WorkspaceRows | undefined): Promise<void> {
+  if (!rows) return;
+  // Edge rows have no FKs: remove them first, then the domain (cascades to the product, its entities, events and versions).
+  await deleteSchemaReferencesForDomain(rows.domain.id);
+  await pg().query(`DELETE FROM domains WHERE id = $1`, [rows.domain.id]);
 }
 
 /** A second product in a fixture domain (the consumer side of a cross-product reference). Removed with the domain. */

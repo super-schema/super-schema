@@ -8,8 +8,7 @@
  * `deleteNavFixtures` removes it (the domain delete cascades to entities and their versions).
  */
 import { randomBytes } from "node:crypto";
-import { TEST_EMAIL } from "./auth";
-import { pg, type NavFixtures } from "./db";
+import { pg, seededOwnerId, type NavFixtures } from "./db";
 
 export interface PublishedEntity {
   id: string;
@@ -29,9 +28,7 @@ const newId = () => `e2e${randomBytes(10).toString("hex")}`;
 export async function createPublishedEntity(f: NavFixtures, name: string, labels: readonly string[]): Promise<PublishedEntity> {
   if (labels.length === 0) throw new Error("createPublishedEntity needs at least one version label");
   const db = pg();
-  const owner = await db.query(`SELECT id FROM users ORDER BY (email = $1) DESC, "createdAt" ASC LIMIT 1`, [TEST_EMAIL]);
-  const ownerId = owner.rows[0]?.id as string | undefined;
-  if (!ownerId) throw new Error("E2E fixtures need a seeded user (npm run db:seed).");
+  const ownerId = await seededOwnerId();
 
   const entityId = newId();
   await db.query(
