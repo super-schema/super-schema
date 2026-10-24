@@ -20,8 +20,9 @@ import {
 import { requireId } from "@/services/events/service-guards";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
 import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
-import { TENANT_PLACEHOLDER, readFieldReference, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
+import { TENANT_PLACEHOLDER, readFieldReference, upgradeLegacyReference, writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
 import { loadReferenceClosure, type LegacyUpgrade, type ResolveMode } from "@/lib/references/closure";
+import { draftReferencedEntities, draftReferenceRefusal } from "@/lib/entity-versioning/schema-version-publishability";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import type { ClosureTargetResult } from "@/lib/emission/closure-generation";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
@@ -1642,66 +1643,112 @@ async function upgradeLegacyReferences(entityId: string, userId: string, upgrade
 
 /**
  * Publish a schema version (draft -> published).
+ *
+ * A stored version that resolved a REFERENCED entity at draft state (`draftReferencedEntities`: a version generated from the entity
+ * page is a preview of the saved draft of what it references) is refused: a published schema never contains draft content of a
+ * referenced entity. The refusal names those entities, says to publish them and regenerate in published mode, and carries
+ * `needsPublishedRegeneration` + `draftEntities` for the UI. A version regenerated in published mode, a stand-alone one (no
+ * references) and a DB / native one (no `resolution`) publish exactly as before.
+ *
+ * `opts.regenerateFromPublished === true` is the one-step way out of that refusal: the target is regenerated in published mode
+ * (`generateSchemaAction(..., { mode: "published" })`, which refuses naming any referenced entity that was never published or any pin
+ * that is gone) and the REGENERATED version is published, never the preview. It does nothing when the version is publishable as it is.
  */
 export async function publishSchemaAction(
   entityId: string,
   target: string,
-  version: number
+  version: number,
+  opts?: { regenerateFromPublished?: boolean }
 ) {
   const session = await auth();
   if (!session?.user?.id) return { error: "Not authenticated" };
 
   try {
-    const entity = await prisma.entity.findUnique({
-      where: { id: entityId },
-      select: { metadata: true, tenantId: true },
-    });
-    // Ownership: the entity must belong to the active tenant; anything else reads as missing.
-    if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
+    // At most two rounds: the second only runs after a regeneration from the published versions and publishes what that produced.
+    let publishing = version;
+    let regenerated = false;
+    for (;;) {
+      const entity = await prisma.entity.findUnique({
+        where: { id: entityId },
+        select: { metadata: true, tenantId: true },
+      });
+      // Ownership: the entity must belong to the active tenant; anything else reads as missing.
+      if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
-    const meta = (entity.metadata as Record<string, unknown>) ?? {};
-    const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
-    const targetVersions = schemaVersions[target];
-    if (!targetVersions) return { error: `No versions found for target "${target}"` };
+      const meta = (entity.metadata as Record<string, unknown>) ?? {};
+      const schemaVersions = (meta.schemaVersions as SchemaVersionsMap) ?? {};
+      const targetVersions = schemaVersions[target];
+      if (!targetVersions) return { error: `No versions found for target "${target}"` };
 
-    const idx = targetVersions.findIndex((v) => v.version === version);
-    if (idx === -1) return { error: `Version ${version} not found` };
-    if (targetVersions[idx].status !== "draft") {
-      return { error: `Version ${version} is not a draft (current: ${targetVersions[idx].status})` };
+      const idx = targetVersions.findIndex((v) => v.version === publishing);
+      if (idx === -1) return { error: `Version ${publishing} not found` };
+      if (targetVersions[idx].status !== "draft") {
+        return { error: `Version ${publishing} is not a draft (current: ${targetVersions[idx].status})` };
+      }
+
+      // A preview that used the saved draft of a referenced entity cannot be published as it is.
+      const draftReferences = draftReferencedEntities(targetVersions[idx].resolution, entityId);
+      if (draftReferences.length > 0) {
+        // (A version regenerated in published mode has no draft reference; `regenerated` only stops a loop that cannot happen.)
+        if (regenerated || opts?.regenerateFromPublished !== true) {
+          return {
+            error: draftReferenceRefusal(draftReferences),
+            code: "PREVIEW_NOT_PUBLISHABLE",
+            needsPublishedRegeneration: true,
+            draftEntities: draftReferences,
+          };
+        }
+        const result = await generateSchemaAction(entityId, target, { mode: "published" });
+        if ("error" in result && result.error) return { error: result.error, ...("code" in result && result.code ? { code: result.code } : {}) };
+        if ("needsInput" in result && result.needsInput) {
+          return { error: result.needsInput[0]?.message ?? "Regenerating from the published versions needs more input", code: "VALIDATION_ERROR" };
+        }
+        if ("needsReference" in result && result.needsReference) {
+          const { field, name, candidates } = result.needsReference;
+          return {
+            error: `Field "${field}" refers to "${name}", which matches ${candidates.length} entities. Choose the entity it means on that field, then publish again.`,
+            code: "AMBIGUOUS_REFERENCE",
+          };
+        }
+        if (!("schemaVersion" in result) || !result.schemaVersion) return { error: "Regenerating from the published versions failed" };
+        publishing = result.schemaVersion.version;
+        regenerated = true;
+        continue;
+      }
+
+      // Enforce single deployed version — un-deploy any existing deployed version
+      const updated = targetVersions.map((v) =>
+        (v.status === "published" || v.status === "deployed")
+          ? { ...v, status: "draft" as const }
+          : v
+      );
+      updated[idx] = {
+        ...updated[idx],
+        status: "published",
+        publishedAt: new Date().toISOString(),
+      };
+
+      const updatedMeta = {
+        ...meta,
+        schemaVersions: { ...schemaVersions, [target]: updated },
+      };
+
+      await withAudit({
+        action: "UPDATE",
+        entityType: "Entity",
+        entityId,
+        userId: session.user.id,
+        beforeState: { metadata: meta } as unknown as object,
+        fn: () =>
+          prisma.entity.update({
+            where: { id: entityId },
+            data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
+          }),
+      });
+
+      revalidatePath("/schemas");
+      return { success: true };
     }
-
-    // Enforce single deployed version — un-deploy any existing deployed version
-    const updated = targetVersions.map((v) =>
-      (v.status === "published" || v.status === "deployed")
-        ? { ...v, status: "draft" as const }
-        : v
-    );
-    updated[idx] = {
-      ...updated[idx],
-      status: "published",
-      publishedAt: new Date().toISOString(),
-    };
-
-    const updatedMeta = {
-      ...meta,
-      schemaVersions: { ...schemaVersions, [target]: updated },
-    };
-
-    await withAudit({
-      action: "UPDATE",
-      entityType: "Entity",
-      entityId,
-      userId: session.user.id,
-      beforeState: { metadata: meta } as unknown as object,
-      fn: () =>
-        prisma.entity.update({
-          where: { id: entityId },
-          data: { metadata: updatedMeta as unknown as Prisma.InputJsonValue },
-        }),
-    });
-
-    revalidatePath("/schemas");
-    return { success: true };
   } catch (e: unknown) {
     return { ...unexpectedFailure("publishSchemaAction", e) };
   }
