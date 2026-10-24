@@ -523,6 +523,8 @@ test.describe("the field studio and the right panel", () => {
 
     // The TypeSpec tab edits too: preview the change, then apply it (the page reloads with the new field).
     await page.getByTestId(ID.rightTab("typespec-preview")).click();
+    // The tab regenerates the preview when it is shown again; the editor starts from the text on show, so wait for it.
+    await expect(page.getByTestId(ID.typespecPreview)).toContainText("amount");
     await page.getByTestId(ID.typespecEditToggle).click();
     const editor = page.getByTestId(ID.typespecEditor);
     // The editor opens with the entity's source; it is typed over only once that is in.
