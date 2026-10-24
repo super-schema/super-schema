@@ -35,6 +35,7 @@ import {
 } from "@/lib/autocomplete/field-name-autocomplete";
 import { suggestType } from "@/lib/autocomplete/type-suggestion";
 import { FieldCard } from "./components/FieldCard";
+import type { ReferenceFieldControls } from "./components/ReferencePinControl";
 
 interface FieldData {
   id: string;
@@ -86,6 +87,8 @@ interface FieldEditorProps {
   onDeleteField: (id: string) => Promise<void>;
   onFieldSelect?: (fieldId: string) => void;
   selectedFieldId?: string | null;
+  /** The pin control of reference fields (published versions of the referenced entity, pin / unpin). Keep it referentially stable. */
+  referenceControls?: ReferenceFieldControls;
 }
 
 export function FieldEditor({
@@ -102,6 +105,7 @@ export function FieldEditor({
   onDeleteField,
   onFieldSelect,
   selectedFieldId,
+  referenceControls,
 }: FieldEditorProps) {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
@@ -434,6 +438,7 @@ export function FieldEditor({
                 onUpdateField={updateFieldStable}
                 onDeleteField={deleteFieldStable}
                 onNavigateStudio={navigateToFieldStudio}
+                referenceControls={referenceControls}
               />
             ))}
           </div>

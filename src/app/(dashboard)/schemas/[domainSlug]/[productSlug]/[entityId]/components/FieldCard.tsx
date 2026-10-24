@@ -11,6 +11,8 @@ import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo, isComplexType, formatComplexTypeDisplay } from "@/lib/data-types";
 import { getFieldCompleteness } from "@/lib/validation/field-completeness";
+import { readFieldReference } from "@/lib/references/entity-reference";
+import { ReferencePinControl, type ReferenceFieldControls } from "./ReferencePinControl";
 
 interface FieldData {
   id: string;
@@ -52,10 +54,17 @@ function getDecoratorSummary(decorators: Record<string, unknown>): string[] {
   return tags;
 }
 
-/** Render the type display for complex types */
+/**
+ * Render the type display for complex types. A reference that is stored fully qualified shows as `domain / product / entity`
+ * (everything the user sees about a reference does); a name-only (legacy) one keeps showing its name.
+ */
 function TypeDisplay({ type, decorators }: { type: string; decorators: Record<string, unknown> }) {
   if (!isComplexType(type)) return null;
-  const display = formatComplexTypeDisplay(type, decorators);
+  const reference = type === "reference" ? readFieldReference(decorators) : undefined;
+  const display =
+    reference && "entity" in reference
+      ? `ref(${reference.domain} / ${reference.product} / ${reference.entity})`
+      : formatComplexTypeDisplay(type, decorators);
   if (type === "reference") {
     return (
       <span className="font-mono text-[13px] text-info flex items-center gap-1">
@@ -77,6 +86,8 @@ interface FieldCardProps {
   onDeleteField: (id: string) => Promise<void>;
   onNavigateStudio: (fieldId: string) => void;
   entityNames?: { id: string; name: string }[];
+  /** Pin control of reference fields (published versions of the referenced entity, pin / unpin). Keep it referentially stable. */
+  referenceControls?: ReferenceFieldControls;
 }
 
 /**
@@ -93,6 +104,7 @@ export const FieldCard = memo(function FieldCard({
   onDeleteField,
   onNavigateStudio,
   entityNames,
+  referenceControls,
 }: FieldCardProps) {
   const [editingField, setEditingField] = useState(false);
 
@@ -121,6 +133,9 @@ export const FieldCard = memo(function FieldCard({
         ? `Missing: ${fc.missing.join(", ")}`
         : `Suggestions: ${fc.suggestions.join(", ")}`;
   const decoratorTags = getDecoratorSummary(field.decorators);
+  // The pin belongs to a reference that is stored qualified, with the id of what it references; a name-only one has nothing to pin yet.
+  const storedReference = field.type === "reference" ? readFieldReference(field.decorators) : undefined;
+  const pinnable = storedReference && "entity" in storedReference && storedReference.entityId ? storedReference : undefined;
   const fieldEvolution = (field.decorators?.evolution || {}) as Record<string, unknown>;
   const isFieldDeprecated = !!fieldEvolution.deprecated;
 
@@ -205,7 +220,19 @@ export const FieldCard = memo(function FieldCard({
         {/* Type + precision (left side, next to name) */}
         <div className="flex items-center gap-1 min-w-0">
           {isComplexType(field.type) ? (
-            <TypeDisplay type={field.type} decorators={field.decorators} />
+            <>
+              <TypeDisplay type={field.type} decorators={field.decorators} />
+              {pinnable?.entityId && (
+                <ReferencePinControl
+                  fieldId={field.id}
+                  referencedEntityId={pinnable.entityId}
+                  referenceLabel={`${pinnable.domain} / ${pinnable.product} / ${pinnable.entity}`}
+                  pinnedVersion={pinnable.pinnedVersion}
+                  controls={referenceControls}
+                  disabled={isReadOnly}
+                />
+              )}
+            </>
           ) : (
             <div className="shrink-0">
               <TypePicker

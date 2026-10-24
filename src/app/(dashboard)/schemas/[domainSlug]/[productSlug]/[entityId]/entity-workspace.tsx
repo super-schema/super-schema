@@ -17,6 +17,7 @@ import {
   getVersionHistoryAction,
   compareVersionsAction,
   getChangeHistoryAction,
+  setFieldReferenceAction,
 } from "./actions";
 import { deleteEntityAction } from "../../actions";
 import { SchemasTab } from "./components/SchemasTab";
@@ -63,6 +64,7 @@ import { EntityVersionList } from "./components/EntityVersionList";
 import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
 import { needsReferenceOf, type PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
 import { useReferencePick } from "./components/useReferencePick";
+import type { ReferenceFieldControls } from "./components/ReferencePinControl";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import type { DraftVersionState } from "@/lib/entity-versioning/draft-label";
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
@@ -268,6 +270,26 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     markDraftDirty();
     flashSaved();
   }, [flashSaved, markDraftDirty]);
+
+  // The pin control of reference fields: what can be pinned (the referenced entity's PUBLISHED versions) and the write (a pin, or null
+  // to remove it). A pin is a draft change like any other edit of the field.
+  const referenceControls = useMemo<ReferenceFieldControls>(
+    () => ({
+      listPublishedVersions: async (referencedEntityId) => {
+        const res = await listEntityVersionsAction(referencedEntityId);
+        return "error" in res ? { error: res.error } : { labels: res.versions.map((v) => v.label) };
+      },
+      setPin: async ({ fieldId, referencedEntityId, pinnedVersion }) => {
+        const res = await setFieldReferenceAction(entity.id, fieldId, { entityId: referencedEntityId, pinnedVersion });
+        if (!res.success) return { error: res.error.message };
+        setTypeSpecTrigger((n) => n + 1);
+        markDraftDirty();
+        flashSaved();
+        return undefined;
+      },
+    }),
+    [entity.id, markDraftDirty, flashSaved]
+  );
 
   // Override dialog state
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
@@ -735,6 +757,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 isReadOnly={readOnly_}
                 selectedFieldId={selectedFieldId}
                 onFieldSelect={handleFieldSelect}
+                referenceControls={referenceControls}
                 onAddField={async (name, type, opts) => {
                   const result = await addFieldAction(entity.id, name, type, opts);
                   setTypeSpecTrigger((n) => n + 1);
