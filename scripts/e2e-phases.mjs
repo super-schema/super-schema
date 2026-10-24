@@ -175,6 +175,7 @@ async function main() {
   const first = planPhases({ ...cli, authState: "x" }).phases[0];
   const auth = chooseAuthState({ env: process.env, firstPhaseRunsSetup: first.runsSetup, runId: `${process.pid}-${randomBytes(4).toString("hex")}` });
   const { phases, skipped } = planPhases({ ...cli, authState: auth.file });
+  console.log(`[e2e-phases] login: ${auth.file}${auth.ownedByThisRun ? " (this run's own, removed at the end)" : ""}`);
   for (const note of skipped) console.log(`[e2e-phases] ${note}`);
 
   let child;
@@ -218,7 +219,8 @@ async function main() {
   for (const phase of phases) {
     const result = results.find((r) => r.name === phase.name);
     const text = !result ? "not run" : result.refused ? "refused" : result.code === 0 ? "passed" : `failed (exit ${result.code})`;
-    console.log(`  ${phase.name}: ${text}   report: playwright-report/${phase.name}/index.html   results: test-results/${phase.name}/`);
+    const where = result && !result.refused ? `   report: playwright-report/${phase.name}/index.html   results: test-results/${phase.name}/` : "";
+    console.log(`  ${phase.name}: ${text}${where}`);
   }
   process.exit(results.find((r) => r.code !== 0)?.code ?? (interrupted ? 130 : 0));
 }

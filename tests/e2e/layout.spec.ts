@@ -1,12 +1,23 @@
+import type { Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
 
 // The shell is checked as the real, logged-in admin (the session the `setup` project saved), not with a made-up session cookie that
 // only gets past the middleware.
 
+/**
+ * Open /schemas at `width` and wait until the shell has settled. The explorer swaps its loading fallback for the loaded tree, and for a
+ * moment both are in the page (navigation.spec.ts waits for the same): a locator on the sidebar then matches twice and trips strict
+ * mode, which failed about half of the runs on a production build. One element is the state to wait for.
+ */
+async function openSchemas(page: Page, width = 1440): Promise<void> {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto("/schemas");
+  await expect(page.getByTestId("left-sidebar")).toHaveCount(1, { timeout: 15_000 });
+}
+
 test.describe("IDE Layout", () => {
   test("all 6 sections render at 1440px width", { tag: ["@smoke", "@regression"] }, async ({ authedPage: page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/schemas");
+    await openSchemas(page);
 
     await expect(page.getByTestId("topbar")).toBeVisible();
     await expect(page.getByTestId("activity-bar")).toBeVisible();
@@ -17,8 +28,7 @@ test.describe("IDE Layout", () => {
   });
 
   test("Activity Bar navigation switches routes", { tag: ["@smoke", "@regression"] }, async ({ authedPage: page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/schemas");
+    await openSchemas(page);
 
     await page.getByTestId("nav-lineage").click();
     await expect(page).toHaveURL(/\/lineage/);
@@ -37,8 +47,7 @@ test.describe("IDE Layout", () => {
   });
 
   test("sidebar collapses and expands via double-click", { tag: ["@regression"] }, async ({ authedPage: page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/schemas");
+    await openSchemas(page);
 
     const sidebar = page.getByTestId("left-sidebar");
     await expect(sidebar).toHaveAttribute("data-collapsed", "false");
@@ -53,8 +62,7 @@ test.describe("IDE Layout", () => {
   });
 
   test("panel widths persist after reload", { tag: ["@regression"] }, async ({ authedPage: page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/schemas");
+    await openSchemas(page);
 
     // Wait for sidebar to render
     await expect(page.getByTestId("left-sidebar")).toHaveAttribute(
@@ -71,6 +79,7 @@ test.describe("IDE Layout", () => {
 
     // Reload and verify sidebar still visible
     await page.reload();
+    await expect(page.getByTestId("left-sidebar")).toHaveCount(1, { timeout: 15_000 });
     await expect(page.getByTestId("left-sidebar")).toHaveAttribute(
       "data-collapsed",
       "false"
@@ -78,8 +87,7 @@ test.describe("IDE Layout", () => {
   });
 
   test("at 1200px, panels auto-collapse with warning", { tag: ["@regression"] }, async ({ authedPage: page }) => {
-    await page.setViewportSize({ width: 1200, height: 900 });
-    await page.goto("/schemas");
+    await openSchemas(page, 1200);
 
     await expect(page.getByTestId("responsive-warning")).toBeVisible();
     const sidebar = page.getByTestId("left-sidebar");
