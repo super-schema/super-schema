@@ -78,7 +78,7 @@ function parseWithFormat(
           "Supported formats are: avro, bigquery-ddl, protobuf, json-schema, typespec.",
       });
   }
-  return single.success ? ok({ parsedEntity: single.data, warnings: [] }) : single;
+  return single.success ? ok({ parsedEntity: single.data, warnings: [...(single.data.importWarnings ?? [])] }) : single;
 }
 
 // ---------------------------------------------------------------------------

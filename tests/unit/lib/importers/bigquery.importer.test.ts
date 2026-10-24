@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseBigQueryDDL } from "@/lib/importers/bigquery.importer";
+import { importSchema } from "@/services/import.service";
 
 describe("BigQuery DDL Importer", () => {
   describe("basic column types", () => {
@@ -171,6 +172,50 @@ describe("BigQuery DDL Importer", () => {
     it("an unterminated literal gives no description (and drops no column)", () => {
       expect(descriptionOf(`OPTIONS(description="never closed)`)).toBeUndefined();
     });
+
+    describe("what a description cannot hold in the database is not kept", () => {
+      it("a NUL (written \\0, \\000, \\x00, \\u0000, \\U00000000) is dropped: PostgreSQL text cannot store it", () => {
+        expect(descriptionOf(`OPTIONS(description="a\\000b\\x00c\\u0000d\\U00000000e")`)).toBe("abcde");
+        expect(descriptionOf(`OPTIONS(description="raw \u0000 in the text")`)).toBe("raw  in the text");
+      });
+
+      it("a lone surrogate (an escape of half a pair) becomes U+FFFD; a pair written as two escapes is the character", () => {
+        expect(descriptionOf(`OPTIONS(description="a\\ud800b")`)).toBe("a�b");
+        expect(descriptionOf(`OPTIONS(description="a\\udc00b")`)).toBe("a�b");
+        expect(descriptionOf(`OPTIONS(description="\\ud83d\\ude00")`)).toBe("😀");
+        expect(descriptionOf(`OPTIONS(description="\\ud83dx\\ude00")`)).toBe("�x�");
+      });
+    });
+
+    describe("it is one scan of the text (no restart at every quote)", () => {
+      const timed = (options: string) => {
+        const started = performance.now();
+        const result = parseBigQueryDDL(`CREATE TABLE t (\n  c STRING ${options},\n  d INT64\n);`);
+        const elapsed = performance.now() - started;
+        expect(result.success).toBe(true);
+        return { elapsed, result };
+      };
+
+      it.each([
+        ["20000 double quotes", `OPTIONS(description=${'"'.repeat(20000)})`],
+        ["20000 single quotes", `OPTIONS(description=${"'".repeat(20000)})`],
+        ["an unterminated literal followed by 20000 quotes", `OPTIONS(description="${"'".repeat(20000)})`],
+        ["20000 raw-string openers", `OPTIONS(${'r"'.repeat(20000)})`],
+        ["triple-quote openers that never close", `OPTIONS(${"'''x".repeat(5000)}${"'a".repeat(5000)})`],
+        ["an unterminated literal made of 20000 escaped quotes (each quote used to start a scan to the end)", `OPTIONS(a="${'\\"'.repeat(20000)})`],
+        ["20000 backslashes inside a literal", `OPTIONS(description="${"\\".repeat(20000)}")`],
+        ["20000 option separators", `OPTIONS(${"a=1,".repeat(5000)}description="x")`],
+      ])("%s finishes in under 100 ms", (_name, options) => {
+        const { elapsed } = timed(options);
+        expect(elapsed).toBeLessThan(100);
+      });
+
+      it("and still reads what it should, after text that looks like openers", () => {
+        const { result } = timed(`OPTIONS(labels=[("k", "'''")], description="after")`);
+        if (!result.success) throw new Error("did not parse");
+        expect(result.data.fields[0].description).toBe("after");
+      });
+    });
   });
 
   describe("precision and scale", () => {
@@ -201,6 +246,50 @@ describe("BigQuery DDL Importer", () => {
       expect(field.type).toBe("decimal");
       expect(field.precision).toBeUndefined();
       expect(field.scale).toBeUndefined();
+    });
+
+    describe("a declaration outside what the type allows is not kept: a plain decimal, and a warning of the import", () => {
+      const parsed = (type: string) => {
+        const result = parseBigQueryDDL(`CREATE TABLE t (\n  total ${type}\n);`);
+        expect(result.success).toBe(true);
+        if (!result.success) throw new Error("did not parse");
+        return result.data;
+      };
+
+      it.each([
+        ["NUMERIC(99999999999,2)", "decimal"],
+        ["NUMERIC(40, 2)", "decimal"], // above NUMERIC's 38 digits
+        ["NUMERIC(10, 10)", "decimal"], // a scale above NUMERIC's 9
+        ["NUMERIC(38, 0)", "decimal"], // 38 digits before the point (29 at most)
+        ["NUMERIC(5, 6)", "decimal"], // a scale above the precision
+        ["NUMERIC(0)", "decimal"],
+        ["BIGNUMERIC(77, 2)", "decimal128"],
+        ["BIGNUMERIC(76, 39)", "decimal128"],
+        [`NUMERIC(${"9".repeat(400)}, 2)`, "decimal"], // beyond a double
+      ])("%s", (type, logical) => {
+        const entity = parsed(type);
+        const field = entity.fields[0];
+        expect(field.type).toBe(logical);
+        expect(field.precision).toBeUndefined();
+        expect(field.scale).toBeUndefined();
+        expect(entity.importWarnings).toHaveLength(1);
+        expect(entity.importWarnings![0]).toContain('Field "total"');
+        expect(entity.importWarnings![0]).toContain("plain decimal");
+      });
+
+      it("a valid declaration, and a plain NUMERIC, raise none", () => {
+        expect(parsed("NUMERIC(38, 9)").importWarnings ?? []).toEqual([]);
+        expect(parsed("BIGNUMERIC(76, 38)").importWarnings ?? []).toEqual([]);
+        expect(parsed("NUMERIC").importWarnings ?? []).toEqual([]);
+      });
+
+      it("the single-entity import carries the warning to the review (importSchema)", () => {
+        const result = importSchema("CREATE TABLE t (\n  total NUMERIC(99999999999,2),\n  id STRING\n);", "bigquery-ddl");
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+        expect(result.data.warnings.filter((w) => w.includes("plain decimal"))).toHaveLength(1);
+        expect(result.data.parsedEntity.fields.map((f) => f.name)).toEqual(["total", "id"]);
+      });
     });
 
     it("no other type has any", () => {

@@ -17,6 +17,8 @@
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ParsedEntity, ParsedField, ImportConfidence } from "./types";
+import { sanitizeImportedText } from "./text-safety";
+import { BIGQUERY_BIGNUMERIC_LIMITS, BIGQUERY_NUMERIC_LIMITS, declaredDecimalFacts } from "./decimal-facts";
 
 // ---------------------------------------------------------------------------
 // BigQuery → Logical type mapping (reverse of bigquery.emitter.ts)
@@ -62,7 +64,8 @@ function extractTableName(line: string): string | null {
 // Parse a column definition line
 // ---------------------------------------------------------------------------
 
-function parseColumnLine(line: string): ParsedField | null {
+/** `warnings` collects what the import says about the column it reads (a declaration it did not keep). */
+function parseColumnLine(line: string, warnings: string[]): ParsedField | null {
   // Trim and remove trailing comma
   const trimmed = line.trim().replace(/,\s*$/, "");
   if (!trimmed || trimmed.startsWith("--") || trimmed === "(" || trimmed === ")") {
@@ -93,7 +96,11 @@ function parseColumnLine(line: string): ParsedField | null {
   const description = optionStringValue(optionsStr, "description");
 
   // Resolve type
-  const { type, confidence, originalType, precision, scale } = resolveBigQueryType(rawType);
+  const { type, confidence, originalType, precision, scale, problem } = resolveBigQueryType(rawType);
+  if (problem) {
+    const shown = originalType.length > 40 ? `${originalType.slice(0, 40)}…` : originalType;
+    warnings.push(`Field "${name}": ${shown} is outside what its type allows (${problem}) — imported as a plain decimal, without precision and scale.`);
+  }
 
   return {
     name,
@@ -186,9 +193,20 @@ function readStringLiteral(text: string, start: number): { value: string; end: n
   return null;
 }
 
+/** True when a string literal starts at `text[i]`: a quote, or a raw prefix (`r` / `R`) right before one. */
+function startsStringLiteral(text: string, i: number): boolean {
+  const ch = text[i];
+  if (ch === '"' || ch === "'") return true;
+  return (ch === "r" || ch === "R") && (text[i + 1] === '"' || text[i + 1] === "'");
+}
+
 /**
  * The string value of the option `name` in the text between the parentheses of OPTIONS(...): the option itself (at the top level, at the
  * start or after a comma), never text that only looks like it inside another option's string or brackets.
+ *
+ * ONE scan of the text, left to right: every literal is read once and the scan goes on after it; a literal that is not closed
+ * ends the scan (everything after its opening quote is inside it), so no quote of a pathological text starts a second scan to the
+ * end. The value is made storable (`sanitizeImportedText`: an escape can write a NUL or half a surrogate pair).
  */
 function optionStringValue(options: string, name: string): string | undefined {
   const key = new RegExp(`${name}\\s*=\\s*`, "iy");
@@ -203,10 +221,14 @@ function optionStringValue(options: string, name: string): string | undefined {
     if (atStart && depth === 0) {
       key.lastIndex = i;
       const found = key.exec(options);
-      if (found) return readStringLiteral(options, i + found[0].length)?.value;
+      if (found) {
+        const value = readStringLiteral(options, i + found[0].length);
+        return value ? sanitizeImportedText(value.value) : undefined;
+      }
     }
-    const literal = readStringLiteral(options, i);
-    if (literal) {
+    if (startsStringLiteral(options, i)) {
+      const literal = readStringLiteral(options, i);
+      if (!literal) return undefined; // not closed: the rest of the text is inside it
       i = literal.end;
       atStart = false;
       continue;
@@ -230,6 +252,8 @@ function resolveBigQueryType(rawType: string): {
   /** Declared by NUMERIC(p, s) and its aliases. */
   precision?: number;
   scale?: number;
+  /** Why a declared precision / scale was not kept (outside what the type allows). */
+  problem?: string;
 } {
   // Handle ARRAY<...>
   const arrayMatch = rawType.match(/^ARRAY\s*<\s*(.+)\s*>$/i);
@@ -255,13 +279,11 @@ function resolveBigQueryType(rawType: string): {
   if (numericMatch) {
     const baseType = numericMatch[1].toUpperCase();
     const mapped = BIGQUERY_TYPE_MAP[baseType];
-    const precision = numericMatch[2] !== undefined ? Number(numericMatch[2]) : undefined;
-    return {
-      type: mapped?.type || "decimal",
-      confidence: mapped?.confidence || "high",
-      originalType: rawType,
-      ...(precision !== undefined ? { precision, scale: Number(numericMatch[3] ?? 0) } : {}),
-    };
+    const base = { type: mapped?.type || "decimal", confidence: mapped?.confidence || "high", originalType: rawType };
+    if (numericMatch[2] === undefined) return base;
+    const limits = baseType === "BIGNUMERIC" || baseType === "BIGDECIMAL" ? BIGQUERY_BIGNUMERIC_LIMITS : BIGQUERY_NUMERIC_LIMITS;
+    const facts = declaredDecimalFacts(Number(numericMatch[2]), numericMatch[3] === undefined ? undefined : Number(numericMatch[3]), limits);
+    return facts.ok ? { ...base, precision: facts.precision, scale: facts.scale } : { ...base, problem: `${limits.what}: ${facts.reason}` };
   }
 
   // Direct lookup
@@ -359,9 +381,10 @@ export function parseBigQueryDDL(content: string): Result<ParsedEntity> {
   // Parse individual column lines
   const columnLines = columnContent.split("\n");
   const parsedFields: ParsedField[] = [];
+  const importWarnings: string[] = [];
 
   for (const line of columnLines) {
-    const field = parseColumnLine(line);
+    const field = parseColumnLine(line, importWarnings);
     if (field) {
       parsedFields.push(field);
     }
@@ -380,5 +403,6 @@ export function parseBigQueryDDL(content: string): Result<ParsedEntity> {
     fields: parsedFields,
     sourceFormat: "bigquery-ddl",
     originalContent: content,
+    ...(importWarnings.length > 0 ? { importWarnings } : {}),
   });
 }
