@@ -11,9 +11,7 @@
  */
 
 import type { Page } from "@playwright/test";
-import { test, expect, unique } from "./helpers/auth";
-
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000 });
+import { test, expect, unique } from "./helpers/fixtures";
 
 const NOT_FOUND_COPY = "This page could not be found";
 
@@ -57,19 +55,19 @@ async function expectLinkBackToDomains(page: Page) {
 }
 
 test.describe("dashboard not-found inside the shell", () => {
-  test("an unknown domain slug renders the 404 inside the shell, with a working way back to Domains", async ({
+  test("an unknown domain slug renders the 404 inside the shell, with a working way back to Domains", { tag: ["@regression"] }, async ({
     authedPage: page,
   }) => {
     test.setTimeout(180_000);
 
-    await page.goto(`/schemas/zzz-nope-${unique("dom")}`);
+    await page.goto(`/schemas/zzz-nope-${unique("dom-")}`);
 
     await expectNotFoundInsideShell(page);
     await expectTenantSwitcherOpens(page);
     await expectLinkBackToDomains(page);
   });
 
-  test("an unknown Enterprise trait renders the 404 inside the shell, with a working way back to Domains", async ({
+  test("an unknown Enterprise trait renders the 404 inside the shell, with a working way back to Domains", { tag: ["@regression"] }, async ({
     authedPage: page,
   }) => {
     test.setTimeout(180_000);

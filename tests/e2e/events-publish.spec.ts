@@ -19,15 +19,12 @@
  * (the read-only editor) and `used-by-panel`. If a step fails on a locator, adjust it there, not in the flow.
  */
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
 import { createPublishedEntity, type PublishedEntity } from "./helpers/entity-versions";
 import {
   addChannel, addMessage, addOperation, addServer, BUILDER_ID, centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf,
 } from "./helpers/event-builder";
-
-// First visits compile routes in dev, and publishing renders the payload with the real TypeSpec CLI and validates the result.
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const PUBLISH_TIMEOUT = 120_000;
 
@@ -97,7 +94,7 @@ test.describe("event publish end to end", () => {
   // The tests share the state `flow` carries: a failure in the first one makes the rest meaningless.
   test.describe.configure({ mode: "serial" });
 
-  test("build an event → Publish waits for Save → publish v1.0", async ({ authedPage: page }) => {
+  test("build an event → Publish waits for Save → publish v1.0", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(420_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -153,7 +150,7 @@ test.describe("event publish end to end", () => {
     expect(pageErrors, "uncaught browser exceptions").toEqual([]);
   });
 
-  test("edit the description → Save → Publish suggests MINOR and publishes v1.1", async ({ authedPage: page }) => {
+  test("edit the description → Save → Publish suggests MINOR and publishes v1.1", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(300_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -183,7 +180,7 @@ test.describe("event publish end to end", () => {
     });
   });
 
-  test("the Versions tab lists 1.1 and 1.0, and View shows each stored version's info.version", async ({ authedPage: page }) => {
+  test("the Versions tab lists 1.1 and 1.0, and View shows each stored version's info.version", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -218,7 +215,7 @@ test.describe("event publish end to end", () => {
     await expectNoRawDbText(page);
   });
 
-  test("the Used by tab says no other event references this one", async ({ authedPage: page }) => {
+  test("the Used by tab says no other event references this one", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -230,7 +227,7 @@ test.describe("event publish end to end", () => {
     await expectNoRawDbText(page);
   });
 
-  test("another payload entity suggests MAJOR and refuses the lower option; an unpinned payload lists a blocker", async ({ authedPage: page }) => {
+  test("another payload entity suggests MAJOR and refuses the lower option; an unpinned payload lists a blocker", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(420_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");

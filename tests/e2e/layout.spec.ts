@@ -1,17 +1,10 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./helpers/fixtures";
 
-// Layout tests need auth bypass - set a mock session cookie
-test.beforeEach(async ({ context }) => {
-  // Set session cookies to bypass auth middleware (both secure and non-secure variants)
-  await context.addCookies([
-    { name: "authjs.session-token", value: "test-session-token", domain: "localhost", path: "/" },
-    { name: "next-auth.session-token", value: "test-session-token", domain: "localhost", path: "/" },
-    { name: "__Secure-authjs.session-token", value: "test-session-token", domain: "localhost", path: "/", secure: true },
-  ]);
-});
+// The shell is checked as the real, logged-in admin (the session the `setup` project saved), not with a made-up session cookie that
+// only gets past the middleware.
 
 test.describe("IDE Layout", () => {
-  test("all 6 sections render at 1440px width", async ({ page }) => {
+  test("all 6 sections render at 1440px width", { tag: ["@smoke", "@regression"] }, async ({ authedPage: page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/schemas");
 
@@ -23,7 +16,7 @@ test.describe("IDE Layout", () => {
     await expect(page.getByTestId("status-bar")).toBeVisible();
   });
 
-  test("Activity Bar navigation switches routes", async ({ page }) => {
+  test("Activity Bar navigation switches routes", { tag: ["@smoke", "@regression"] }, async ({ authedPage: page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/schemas");
 
@@ -43,7 +36,7 @@ test.describe("IDE Layout", () => {
     ).toBeVisible();
   });
 
-  test("sidebar collapses and expands via double-click", async ({ page }) => {
+  test("sidebar collapses and expands via double-click", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/schemas");
 
@@ -59,23 +52,22 @@ test.describe("IDE Layout", () => {
     await expect(sidebar).toHaveAttribute("data-collapsed", "false");
   });
 
-  test("panel widths persist after reload", async ({ page }) => {
+  test("panel widths persist after reload", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/schemas");
 
-    // Wait for sidebar to render and localStorage to be populated
+    // Wait for sidebar to render
     await expect(page.getByTestId("left-sidebar")).toHaveAttribute(
       "data-collapsed",
       "false"
     );
 
-    // Give the effect time to write to localStorage
-    await page.waitForTimeout(500);
-
-    const stored = await page.evaluate(() =>
-      localStorage.getItem("panel-width-left-sidebar")
-    );
-    expect(stored).toBeTruthy();
+    // The layout effect writes the width to localStorage after the first render: poll for it (no fixed sleep).
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("panel-width-left-sidebar")), {
+        message: "the sidebar width was never stored",
+      })
+      .toBeTruthy();
 
     // Reload and verify sidebar still visible
     await page.reload();
@@ -85,7 +77,7 @@ test.describe("IDE Layout", () => {
     );
   });
 
-  test("at 1200px, panels auto-collapse with warning", async ({ page }) => {
+  test("at 1200px, panels auto-collapse with warning", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.goto("/schemas");
 

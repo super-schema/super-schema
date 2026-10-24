@@ -17,7 +17,7 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { canon, requiredOf } from "./helpers/artifact-text";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 import {
@@ -36,8 +36,6 @@ import {
   type Generated,
 } from "./helpers/lifecycle";
 import { VARIATIONS, type Variation } from "./fixtures/jsonschema-variations";
-
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const EVIDENCE = "/tmp/e2e-evidence/lifecycle";
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -229,7 +227,7 @@ test.describe("JSON Schema variations: full lifecycle through the UI", () => {
   });
 
   for (const v of VARIATIONS) {
-    test(`${v.id}: ${v.title}`, async ({ authedPage: page }) => {
+    test(`${v.id}: ${v.title}`, { tag: ["@regression", "@slow"] }, async ({ authedPage: page }) => {
       test.setTimeout(420_000);
       const results: StepResult[] = [];
       let fatal: unknown;

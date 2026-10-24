@@ -21,7 +21,7 @@
  */
 
 import type { APIRequestContext, Page } from "@playwright/test";
-import { test, expect, unique } from "./helpers/auth";
+import { test, expect, unique } from "./helpers/fixtures";
 import {
   createNavFixtures,
   deleteNavFixtures,
@@ -29,8 +29,6 @@ import {
   disconnectDb,
   type NavFixtures,
 } from "./helpers/db";
-
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000 });
 
 const NOT_FOUND_COPY = "This page could not be found";
 /** Present in the streamed document only when the route rendered Next's not-found boundary. */
@@ -147,8 +145,8 @@ test.describe("navigation", () => {
     tenantEntity: `/schemas/enterprise/entities/${fx.tenantEntity.slug}`,
   });
 
-  test("canary: both 404 detectors fire on a known-missing route", async ({ authedPage: page }) => {
-    const url = `/schemas/zzz-${unique("nope")}`;
+  test("canary: both 404 detectors fire on a known-missing route", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+    const url = `/schemas/zzz-${unique("nope-")}`;
 
     // Server side: the streamed body carries the not-found digest, and the health helper rejects it.
     const { body } = await getWithRetry(page.request, url);
@@ -163,7 +161,7 @@ test.describe("navigation", () => {
     await expect(expectNoNotFoundPage(page)).rejects.toThrow();
   });
 
-  test("every explorer node and breadcrumb resolves", async ({ authedPage: page }) => {
+  test("every explorer node and breadcrumb resolves", { tag: ["@regression", "@slow"] }, async ({ authedPage: page }) => {
     test.setTimeout(300_000);
     const p = paths();
 
@@ -252,7 +250,7 @@ test.describe("navigation", () => {
     );
   });
 
-  test("legacy links still land", async ({ authedPage: page }) => {
+  test("legacy links still land", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     const p = paths();
 
     // `?tab=types` is the legacy alias of the `data-types` tab.
@@ -281,7 +279,7 @@ test.describe("navigation", () => {
     });
   });
 
-  test("link crawl: no rendered href on workspace pages 404s", async ({ authedPage: page }) => {
+  test("link crawl: no rendered href on workspace pages 404s", { tag: ["@regression", "@slow"] }, async ({ authedPage: page }) => {
     test.setTimeout(900_000);
     const p = paths();
 
@@ -338,7 +336,7 @@ test.describe("navigation", () => {
     expect(seen.has(p.tenantEntity), `crawl never reached the tenant entity ${p.tenantEntity}`).toBe(true);
   });
 
-  test("tenant-level entity is reachable from the sidebar", async ({ authedPage: page }) => {
+  test("tenant-level entity is reachable from the sidebar", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     const name = unique("Ent");
 

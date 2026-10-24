@@ -19,7 +19,7 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { test, expect, unique } from "./helpers/auth";
+import { test, expect, unique } from "./helpers/fixtures";
 import { expectDetailPanelText, fillWorkbenchPaste } from "./helpers/workbench";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 
@@ -96,12 +96,12 @@ test.describe("schema lifecycle", () => {
     }
   });
 
-  test("create domain → product → all-types entity (real compiler) under product", async ({
+  test("create domain → product → all-types entity (real compiler) under product", { tag: ["@smoke", "@regression"] }, async ({
     authedPage: page,
   }) => {
-    const domain = unique("e2e-domain");
+    const domain = unique("e2e-domain-");
     createdDomains.push(domain);
-    const product = unique("e2e-product");
+    const product = unique("e2e-product-");
 
     // 1. Domain + product
     await createDomain(page, domain);

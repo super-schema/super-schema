@@ -15,11 +15,8 @@
  * table below, not the flow.
  */
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
-
-// First visits compile routes in dev.
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 /** Test ids (EditProductContactsDialog, ProductContactFields, MailboxChipInput, ProductContacts) and the toast copy. */
 const ID = {
@@ -104,7 +101,7 @@ async function addTeamAddress(dialog: Locator, address: string): Promise<void> {
 test.describe("edit a product's contacts", () => {
   test.describe.configure({ mode: "serial" });
 
-  test("a product without contacts shows none; the dialog adds a lead, a manager and team addresses, and a reload keeps them", async ({ authedPage: page }) => {
+  test("a product without contacts shows none; the dialog adds a lead, a manager and team addresses, and a reload keeps them", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openProduct(page);
     const main = centerPanel(page);
     await expect(main.getByTestId(ID.contacts)).toHaveCount(0);
@@ -131,7 +128,7 @@ test.describe("edit a product's contacts", () => {
     await expect(main.getByTestId(ID.shownTeam).getByRole("link", { name: "oncall@acme.com" })).toBeVisible();
   });
 
-  test("Edit contacts opens prefilled; changing the lead and the team addresses saves them, keeps the manager, and a reload shows them", async ({ authedPage: page }) => {
+  test("Edit contacts opens prefilled; changing the lead and the team addresses saves them, keeps the manager, and a reload shows them", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     const f = need(fixtures, "navigation");
     await openProduct(page);
     const main = centerPanel(page);
@@ -160,7 +157,7 @@ test.describe("edit a product's contacts", () => {
     await expect(main.getByRole("navigation", { name: "Breadcrumb" })).toContainText(f.product.name);
   });
 
-  test("an invalid address keeps the dialog open with the field's message; fixing it saves", async ({ authedPage: page }) => {
+  test("an invalid address keeps the dialog open with the field's message; fixing it saves", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openProduct(page);
     const dialog = await openDialog(page);
 
@@ -179,7 +176,7 @@ test.describe("edit a product's contacts", () => {
     await expect(centerPanel(page).getByTestId(ID.shownLead).getByRole("link", { name: "jane.doe@acme.com" })).toBeVisible();
   });
 
-  test("Cancel discards the edits", async ({ authedPage: page }) => {
+  test("Cancel discards the edits", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openProduct(page);
     const dialog = await openDialog(page);
 
@@ -192,7 +189,7 @@ test.describe("edit a product's contacts", () => {
     await expect(reopened.getByTestId(ID.lead)).toHaveValue("jane.doe@acme.com");
   });
 
-  test("clearing a field really clears it; clearing them all removes the contacts from the page", async ({ authedPage: page }) => {
+  test("clearing a field really clears it; clearing them all removes the contacts from the page", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openProduct(page);
     const main = centerPanel(page);
 

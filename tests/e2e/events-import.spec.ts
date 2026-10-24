@@ -23,13 +23,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, pg, type NavFixtures } from "./helpers/db";
 import { centerPanel, expectNoRawDbText, openNewEventDialog, productUrlOf } from "./helpers/event-builder";
 
 // The first preview starts the AsyncAPI parser, and first visits compile routes in dev.
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
-
 const FIXTURES = path.join(__dirname, "../fixtures/asyncapi-import");
 const STREETLIGHTS = path.join(FIXTURES, "streetlights-kafka.yaml");
 const ASYNCAPI_2X = path.join(FIXTURES, "negative-asyncapi-2x.yaml");
@@ -123,7 +121,7 @@ test.describe("importing an AsyncAPI document end to end", () => {
   // The tests share the product (and the event the first one imports).
   test.describe.configure({ mode: "serial" });
 
-  test("upload → review → import: the event opens with the imported document, and its entities are unpublished drafts", async ({ authedPage: page }) => {
+  test("upload → review → import: the event opens with the imported document, and its entities are unpublished drafts", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(300_000);
     const f = need(fixtures, "navigation");
     const main = centerPanel(page);
@@ -192,7 +190,7 @@ test.describe("importing an AsyncAPI document end to end", () => {
     expect(pageErrors, "uncaught browser exceptions").toEqual([]);
   });
 
-  test("importing the same file again renames the event and its entities instead of failing", async ({ authedPage: page }) => {
+  test("importing the same file again renames the event and its entities instead of failing", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(300_000);
     const f = need(fixtures, "navigation");
     const main = centerPanel(page);
@@ -227,7 +225,7 @@ test.describe("importing an AsyncAPI document end to end", () => {
     await expectNoRawDbText(page);
   });
 
-  test("an invalid file shows its diagnostics and creates nothing; an AsyncAPI 2.x file is refused next to the text", async ({ authedPage: page }) => {
+  test("an invalid file shows its diagnostics and creates nothing; an AsyncAPI 2.x file is refused next to the text", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(300_000);
     const f = need(fixtures, "navigation");
     const before = await inventory(f.product.id);

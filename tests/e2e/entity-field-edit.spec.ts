@@ -17,10 +17,8 @@
  */
 
 import type { Locator, Page } from "@playwright/test";
-import { test, expect, unique } from "./helpers/auth";
+import { test, expect, unique } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
-
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 /** A failed server action surfaces as an error toast (sonner). */
 const errorToast = (page: Page) => page.locator('[data-sonner-toast][data-type="error"]');
@@ -62,11 +60,11 @@ test.describe("entity field edit through the tenant-guarded actions", () => {
 
   // The fixture entity's own field: `createNavFixtures` inserts a key field named "id".
   const FIXTURE_FIELD = "id";
-  const renamed = unique("qa").replace(/-/g, "_");
-  const added = unique("qa_add").replace(/-/g, "_");
-  const description = `Described by the e2e field edit ${unique("d")}`;
+  const renamed = unique("qa_");
+  const added = unique("qa_add_");
+  const description = `Described by the e2e field edit ${unique("d-")}`;
 
-  test("Field Edit panel: describe a field, Save shows the success state, and the description survives a reload", async ({
+  test("Field Edit panel: describe a field, Save shows the success state, and the description survives a reload", { tag: ["@regression"] }, async ({
     authedPage: page,
   }) => {
     test.setTimeout(180_000);
@@ -96,7 +94,7 @@ test.describe("entity field edit through the tenant-guarded actions", () => {
     await expect(errorToast(page)).toHaveCount(0);
   });
 
-  test("inline rename: the new name is stored (trimmed) and survives a reload", async ({ authedPage: page }) => {
+  test("inline rename: the new name is stored (trimmed) and survives a reload", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     await openEntity(page);
 
@@ -119,7 +117,7 @@ test.describe("entity field edit through the tenant-guarded actions", () => {
     await expect(page.getByTitle(description, { exact: true })).toBeVisible();
   });
 
-  test("Add Field > Quick Create: the new field is added and survives a reload", async ({ authedPage: page }) => {
+  test("Add Field > Quick Create: the new field is added and survives a reload", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     await openEntity(page);
     await expect(page.getByRole("heading", { name: "Fields (1)" })).toBeVisible();

@@ -9,7 +9,7 @@
  * warning on PGlite.
  */
 
-import { test, expect, unique } from "./helpers/auth";
+import { test, expect, unique } from "./helpers/fixtures";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 
 type Page = import("@playwright/test").Page;
@@ -48,11 +48,11 @@ test.describe("JSON Schema import by URL", () => {
     }
   });
 
-  test("a blocked URL shows the sanitized error and the form stays usable", async ({ authedPage: page }) => {
-    const domain = unique("e2e-url-domain");
+  test("a blocked URL shows the sanitized error and the form stays usable", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+    const domain = unique("e2e-url-domain-");
     createdDomains.push(domain);
     await createDomain(page, domain);
-    const productUrl = await createProduct(page, domain, unique("e2e-url-product"));
+    const productUrl = await createProduct(page, domain, unique("e2e-url-product-"));
 
     await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
     await page.getByRole("button", { name: /import or build schema/i }).first().click();

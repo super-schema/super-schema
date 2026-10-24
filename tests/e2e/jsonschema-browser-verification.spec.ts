@@ -17,7 +17,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import {
   createEntityFromReview,
   createWorkspace,
@@ -30,8 +30,6 @@ import {
   ENABLED_TARGETS,
 } from "./helpers/lifecycle";
 import { fillWorkbenchPaste } from "./helpers/workbench";
-
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const SHOTS = "/tmp/e2e-evidence/A";
 mkdirSync(SHOTS, { recursive: true });
@@ -48,7 +46,7 @@ async function openUrlMode(page: import("@playwright/test").Page, productUrl: st
 }
 
 test.describe("A1: From URL", () => {
-  test("a successful import over the real https path ends in a created entity", async ({ authedPage: page }) => {
+  test("a successful import over the real https path ends in a created entity", { tag: ["@regression", "@external"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const online = await fetch(PUBLIC_SCHEMA_URL, { signal: AbortSignal.timeout(10_000) }).then((r) => r.ok, () => false);
     test.skip(!online, `${PUBLIC_SCHEMA_URL} is not reachable from this machine`);
@@ -71,7 +69,7 @@ test.describe("A1: From URL", () => {
     await shot(page, "A1-url-entity");
   });
 
-  test("restricted mode (default) refuses a git-host URL with the clear message", async ({ authedPage: page }) => {
+  test("restricted mode (default) refuses a git-host URL with the clear message", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(120_000);
     const { productUrl } = await createWorkspace(page, "a1r");
     await openUrlMode(page, productUrl);
@@ -92,7 +90,7 @@ test.describe("A1: git mode any (second server)", () => {
   test.skip(!anyBase, "set E2E_GIT_ANY_BASE_URL to a server started with SCHEMA_IMPORT_GIT_MODE=any");
   test.use({ baseURL: anyBase });
 
-  test("the refusal is gone: the server tries the fetch and fails on the host, not on the policy", async ({ authedPage: page }) => {
+  test("the refusal is gone: the server tries the fetch and fails on the host, not on the policy", { tag: ["@regression", "@external"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     const { productUrl } = await createWorkspace(page, "a1a");
     await openUrlMode(page, productUrl);
@@ -120,7 +118,7 @@ test.describe("A2: unresolved external $ref", () => {
     required: ["remitter_id"],
   });
 
-  test("dangling marker and low confidence on review, DRAFT + alert, $ref kept by JSON Schema and OpenAPI", async ({ authedPage: page }) => {
+  test("dangling marker and low confidence on review, DRAFT + alert, $ref kept by JSON Schema and OpenAPI", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const { productUrl } = await createWorkspace(page, "a2");
     await pasteAndReview(page, productUrl, SCHEMA);
@@ -173,7 +171,7 @@ test.describe("A3: primary-key prompt", () => {
     });
 
   for (const key of ["bigquery", "postgresql", "spanner"]) {
-    test(`${key}: dialog, choose a key, generation succeeds, the key is persisted`, async ({ authedPage: page }) => {
+    test(`${key}: dialog, choose a key, generation succeeds, the key is persisted`, { tag: ["@regression"] }, async ({ authedPage: page }) => {
       test.setTimeout(240_000);
       const { productUrl } = await createWorkspace(page, `a3${key.slice(0, 3)}`);
       const idField = "ledger_id";
@@ -229,7 +227,7 @@ test.describe("A4: x-securityClassification", () => {
     required: ["subscriber_id"],
   });
 
-  test("the level of every field is shown on the review and in the editor", async ({ authedPage: page }) => {
+  test("the level of every field is shown on the review and in the editor", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const { productUrl } = await createWorkspace(page, "a4");
     await pasteAndReview(page, productUrl, SCHEMA);
@@ -249,7 +247,7 @@ test.describe("A4: x-securityClassification", () => {
 });
 
 test.describe("A5: syntax-highlighted paste box", () => {
-  test("JSON is tokenised by CodeMirror and TypeSpec gets a coloured layer", async ({ authedPage: page }) => {
+  test("JSON is tokenised by CodeMirror and TypeSpec gets a coloured layer", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     const { productUrl } = await createWorkspace(page, "a5");
     await openWorkbench(page, productUrl);

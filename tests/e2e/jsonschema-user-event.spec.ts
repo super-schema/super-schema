@@ -12,7 +12,7 @@
  * is skipped with a warning and the domain stays.
  */
 
-import { test, expect, unique } from "./helpers/auth";
+import { test, expect, unique } from "./helpers/fixtures";
 import { expectDetailPanelText, fillWorkbenchPaste } from "./helpers/workbench";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 
@@ -88,10 +88,10 @@ test.describe("JSON Schema import: user event, end to end", () => {
     }
   });
 
-  test("paste -> review shows every detail -> name prompt -> create -> BigQuery asks for the key", async ({ authedPage: page }) => {
-    const domain = unique("e2e-ue-domain");
+  test("paste -> review shows every detail -> name prompt -> create -> BigQuery asks for the key", { tag: ["@smoke", "@regression"] }, async ({ authedPage: page }) => {
+    const domain = unique("e2e-ue-domain-");
     createdDomains.push(domain);
-    const product = unique("e2e-ue-product");
+    const product = unique("e2e-ue-product-");
     await createDomain(page, domain);
     const productUrl = await createProduct(page, domain, product);
 
@@ -157,12 +157,12 @@ test.describe("JSON Schema import: user event, end to end", () => {
     await expect(page.getByText(/created_time: declared reference; stored as STRING/)).toBeVisible();
   });
 
-  test("JSON Schema target generates for an entity with dangling references and keeps the raw $ref strings", async ({ authedPage: page }) => {
-    const domain = unique("e2e-ue-domain");
+  test("JSON Schema target generates for an entity with dangling references and keeps the raw $ref strings", { tag: ["@regression"] }, async ({ authedPage: page }) => {
+    const domain = unique("e2e-ue-domain-");
     createdDomains.push(domain);
     const productUrl = await (async () => {
       await createDomain(page, domain);
-      return createProduct(page, domain, unique("e2e-ue-product"));
+      return createProduct(page, domain, unique("e2e-ue-product-"));
     })();
     await page.goto(`${productUrl.replace(/\/+$/, "")}/new`);
     await page.getByRole("button", { name: /import or build schema/i }).first().click();

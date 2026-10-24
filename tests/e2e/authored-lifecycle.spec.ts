@@ -12,7 +12,7 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { canon } from "./helpers/artifact-text";
 import {
   ENABLED_TARGETS,
@@ -31,8 +31,6 @@ import {
   saveTypeSpecSource,
   type Generated,
 } from "./helpers/lifecycle";
-
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const EVIDENCE = "/tmp/e2e-evidence/authored";
 
@@ -133,7 +131,7 @@ const EXT_BOTH = (key: string, value: string) =>
   `@TypeSpec.JsonSchema.extension("${key}", "${value}")\n@TypeSpec.OpenAPI.extension("${key}", "${value}")`;
 
 test.describe("authored entities: full lifecycle through the UI", () => {
-  test("Start Blank: fields added in the wizard", async ({ authedPage: page }) => {
+  test("Start Blank: fields added in the wizard", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(420_000);
     const r = recorder("blank");
     let fatal: unknown;
@@ -173,7 +171,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     await r.finish(page, fatal);
   });
 
-  test("Build form: JSON Schema visual editor", async ({ authedPage: page }) => {
+  test("Build form: JSON Schema visual editor", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(420_000);
     const r = recorder("build-form");
     let fatal: unknown;
@@ -222,7 +220,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     await r.finish(page, fatal);
   });
 
-  test("TypeSpec pasted: decorators, an enum and an entity extension", async ({ authedPage: page }) => {
+  test("TypeSpec pasted: decorators, an enum and an entity extension", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(420_000);
     const r = recorder("typespec-paste");
     let fatal: unknown;
@@ -269,7 +267,7 @@ test.describe("authored entities: full lifecycle through the UI", () => {
     await r.finish(page, fatal);
   });
 
-  test("blank entity, TypeSpec source written by hand in the TypeSpec tab", async ({ authedPage: page }) => {
+  test("blank entity, TypeSpec source written by hand in the TypeSpec tab", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(420_000);
     const r = recorder("typespec-tab");
     let fatal: unknown;

@@ -15,10 +15,8 @@
  */
 import { randomBytes } from "node:crypto";
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, pg, type NavFixtures } from "./helpers/db";
-
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const ID = {
   outlineMessages: "outline-messages",
@@ -115,7 +113,7 @@ async function typeInto(page: Page, content: Locator, text: string): Promise<voi
 }
 
 test.describe("message examples against their payload schema", () => {
-  test("Generate from payload fills a valid example; a value of the wrong type is a warning with hover text; the draft still saves", async ({ authedPage: page }) => {
+  test("Generate from payload fills a valid example; a value of the wrong type is a warning with hover text; the draft still saves", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");

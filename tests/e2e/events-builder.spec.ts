@@ -19,11 +19,8 @@
  * about NewEventDialog / EventsList. If a step fails on a locator, adjust it here, not in the flow.
  */
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
-
-// First visits compile routes in dev, and the preview renders the payload with the real TypeSpec CLI.
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const NOT_FOUND_COPY = "This page could not be found";
 /** Text a user must never see: driver / Prisma / SQL internals. */
@@ -211,7 +208,7 @@ test.describe("event builder end to end", () => {
   // The tests share the state `flow` carries: a failure in the first one makes the rest meaningless.
   test.describe.configure({ mode: "serial" });
 
-  test("New Event → build a server, channel, message and operation → Save → the draft survives a reload", async ({ authedPage: page }) => {
+  test("New Event → build a server, channel, message and operation → Save → the draft survives a reload", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -280,7 +277,7 @@ test.describe("event builder end to end", () => {
     expect(pageErrors, "uncaught browser exceptions").toEqual([]);
   });
 
-  test("Docs renders the saved draft in the sandboxed AsyncAPI iframe", async ({ authedPage: page }) => {
+  test("Docs renders the saved draft in the sandboxed AsyncAPI iframe", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -312,7 +309,7 @@ test.describe("event builder end to end", () => {
     await expect(main.getByTestId(ID.outlineCount("operations"))).toHaveText("1");
   });
 
-  test("the product's Events list shows the event and opens it", async ({ authedPage: page }) => {
+  test("the product's Events list shows the event and opens it", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -329,7 +326,7 @@ test.describe("event builder end to end", () => {
     await expect(main.getByRole("heading", { name: flow.eventName })).toBeVisible({ timeout: 60_000 });
   });
 
-  test("old URLs redirect: /specs/<id> keeps the id, /messages, /channels and product /traits land on the Events list", async ({ authedPage: page }) => {
+  test("old URLs redirect: /specs/<id> keeps the id, /messages, /channels and product /traits land on the Events list", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
@@ -354,7 +351,7 @@ test.describe("event builder end to end", () => {
     }
   });
 
-  test("an unknown event id is the 404 page, also through the old /specs URL", async ({ authedPage: page }) => {
+  test("an unknown event id is the 404 page, also through the old /specs URL", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(180_000);
     const f = need(fixtures, "navigation");
     const productUrl = productUrlOf(f);

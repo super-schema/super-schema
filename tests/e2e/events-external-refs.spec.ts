@@ -20,11 +20,8 @@
  * test ids of `ExternalRefsCard` (`external-ref-*`) and `ExternalRefPicker` (`external-ref-picker`, `external-ref-search`, ...).
  */
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, createProductInDomain, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
-
-// First visits compile routes in dev, and the preview renders the payload with the real TypeSpec CLI.
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 /**
  * What a publish may take, from the click that opens its dialog to the dialog closing. The dialog first renders a preview of the publish
@@ -264,7 +261,7 @@ test.describe("external event references end to end", () => {
   // an event through the real TypeSpec CLI, so each gets 5 minutes (a publish alone may take PUBLISH_TIMEOUT).
   test.describe.configure({ mode: "serial", timeout: 300_000 });
 
-  test("A publishes the event 'orders' with the message OrderCreated", async ({ authedPage: page }) => {
+  test("A publishes the event 'orders' with the message OrderCreated", { tag: ["@regression", "@slow"] }, async ({ authedPage: page }) => {
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
     const pageErrors: string[] = [];
@@ -299,7 +296,7 @@ test.describe("external event references end to end", () => {
     expect(pageErrors, "uncaught browser exceptions").toEqual([]);
   });
 
-  test("B adds a message and a channel from 'orders', uses both in operations, saves with no problem and sees them in the Code panel", async ({ authedPage: page }) => {
+  test("B adds a message and a channel from 'orders', uses both in operations, saves with no problem and sees them in the Code panel", { tag: ["@regression", "@slow"] }, async ({ authedPage: page }) => {
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
     const pageErrors: string[] = [];
@@ -358,7 +355,7 @@ test.describe("external event references end to end", () => {
     expect(pageErrors, "uncaught browser exceptions").toEqual([]);
   });
 
-  test("A edits and publishes 2.0; B shows 'v1.0 → v2.0 available' on both references and can update them", async ({ authedPage: page }) => {
+  test("A edits and publishes 2.0; B shows 'v1.0 → v2.0 available' on both references and can update them", { tag: ["@regression", "@slow"] }, async ({ authedPage: page }) => {
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
 
@@ -393,7 +390,7 @@ test.describe("external event references end to end", () => {
     });
   });
 
-  test("A's delete is refused while billing references it; B's delete of its own event is allowed", async ({ authedPage: page }) => {
+  test("A's delete is refused while billing references it; B's delete of its own event is allowed", { tag: ["@regression", "@slow"] }, async ({ authedPage: page }) => {
     const main = centerPanel(page);
     const f = need(fixtures, "navigation");
 

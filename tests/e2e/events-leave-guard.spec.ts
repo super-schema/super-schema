@@ -23,12 +23,9 @@
  * If a step fails on a locator, adjust it here, not in the flow.
  */
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/auth";
+import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
 import { BUILDER_ID, centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf } from "./helpers/event-builder";
-
-// First visits compile routes in dev, and the first save validates the document.
-test.use({ navigationTimeout: 60_000, actionTimeout: 30_000, screenshot: "only-on-failure", trace: "retain-on-failure" });
 
 const SAVE_TIMEOUT = 60_000;
 /** A cancelled Back never commits: do not wait for it for long. */
@@ -90,7 +87,7 @@ test.describe("leave guard end to end", () => {
   // The tests share the event the first one creates.
   test.describe.configure({ mode: "serial" });
 
-  test("a clean page never asks; unsaved edits make the sidebar and Back ask, Stay keeps them, Discard & leave drops them", async ({ authedPage: page }) => {
+  test("a clean page never asks; unsaved edits make the sidebar and Back ask, Stay keeps them, Discard & leave drops them", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(300_000);
     const f = need(fixtures, "navigation");
     const pageErrors: string[] = [];
@@ -168,7 +165,7 @@ test.describe("leave guard end to end", () => {
     expect(pageErrors, `uncaught page errors:\n${pageErrors.join("\n")}`).toEqual([]);
   });
 
-  test("Save & leave saves the draft, then navigates", async ({ authedPage: page }) => {
+  test("Save & leave saves the draft, then navigates", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     await openEvent(page);
     const saved = `${flow.title} saved ${flow.s}`;
@@ -189,7 +186,7 @@ test.describe("leave guard end to end", () => {
     flow.title = saved;
   });
 
-  test("a save the server refuses keeps the user on the page, with the error visible and every edit kept", async ({ authedPage: page }) => {
+  test("a save the server refuses keeps the user on the page, with the error visible and every edit kept", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     await openEvent(page);
     await titleInput(page).fill(""); // the title is required: the draft can be saved, the server refuses it
@@ -225,7 +222,7 @@ test.describe("leave guard end to end", () => {
     });
   });
 
-  test("switching tabs and sections inside the page never asks, and keeps the edit", async ({ authedPage: page }) => {
+  test("switching tabs and sections inside the page never asks, and keeps the edit", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     await openEvent(page);
     const main = centerPanel(page);
