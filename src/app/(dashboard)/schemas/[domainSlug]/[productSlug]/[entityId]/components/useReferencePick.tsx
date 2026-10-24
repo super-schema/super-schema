@@ -42,17 +42,27 @@ export function pickRequestOf(result: unknown): ReferencePickRequest | undefined
   return { field: n.field, name: n.name, candidates: n.candidates as EntityRef[], entityId: n.entityId, fieldId: n.fieldId };
 }
 
+export interface ReferencePickOptions {
+  /**
+   * Where a pick is saved, instead of `setFieldReferenceAction`, which writes to a field row that already holds a reference. For a question
+   * about a field that has NO such row yet (the TypeSpec tab: the source being saved may add the field, or turn a string into a reference)
+   * the caller keeps the choice itself and carries it on its retry. Resolves to why the choice could not be kept (shown in the dialog,
+   * which stays open), or undefined when it was.
+   */
+  savePick?: (request: ReferencePickRequest, picked: EntityRef) => Promise<string | undefined> | string | undefined;
+}
+
 /**
  * The one hook that asks "which entity do you mean?" and saves the answer. Render `dialog` once in the component.
  *
  * - `pickReference(request)`: opens the dialog; the choice is saved with `setFieldReferenceAction(request.entityId, request.fieldId,
- *   { entityId: picked })` (never a version: only the pin control stores one). Resolves true once saved, false when the user cancelled.
- *   A save the server refuses is shown inside the dialog, which stays open.
+ *   { entityId: picked })` (never a version: only the pin control stores one), or with `options.savePick` when the caller gave one.
+ *   Resolves true once saved, false when the user cancelled. A save the server refuses is shown inside the dialog, which stays open.
  * - `resolveReferences(run)`: runs an operation and, while its result asks for a pick, asks, saves it and runs the operation again (one
  *   retry per pick). Resolves to the final result, or null when the user cancelled. A result that still asks for the SAME field after
  *   its pick was saved (or past `MAX_PICKS`) is returned as is, never asked again: it still carries `needsReference` and its own `error`.
  */
-export function useReferencePick() {
+export function useReferencePick(options: ReferencePickOptions = {}) {
   const [request, setRequest] = useState<ReferencePickRequest | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +101,8 @@ export function useReferencePick() {
         const result = await run();
         const needed = pickRequestOf(result);
         if (!needed) return result;
-        const key = `${needed.entityId}:${needed.fieldId}`;
+        // The field's name is part of the key: a field that has no row yet has an empty `fieldId`, and two of them are two questions.
+        const key = `${needed.entityId}:${needed.fieldId}:${needed.field}`;
         if (asked.has(key) || asked.size >= MAX_PICKS) return result;
         asked.add(key);
         if (!(await pickReference(needed))) return null;
@@ -109,6 +120,16 @@ export function useReferencePick() {
     setSaving(true);
     setError(null);
     try {
+      if (options.savePick) {
+        const failure = await options.savePick(request, picked);
+        if (failure) {
+          setError(failure);
+          setSaving(false);
+          return;
+        }
+        close(true);
+        return;
+      }
       const saved = await setFieldReferenceAction(request.entityId, request.fieldId, { entityId: picked.entityId });
       if (!saved.success) {
         setError(saved.error.message);

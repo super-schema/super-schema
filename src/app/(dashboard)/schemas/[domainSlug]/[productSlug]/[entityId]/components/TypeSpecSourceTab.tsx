@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Save, FileCode, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import {
   compileAndApplyTypeSpecSourceAction,
   type TypeSpecSourceSaveResult,
 } from "../actions";
+import { useReferencePick } from "./useReferencePick";
 
 interface TypeSpecSourceTabProps {
   entityId: string;
@@ -26,6 +27,18 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
   const [diagnostics, setDiagnostics] = useState<TypeSpecSourceSaveResult["diagnostics"]>([]);
   const [lastApplied, setLastApplied] = useState<TypeSpecSourceSaveResult["applied"] | null>(null);
   const [wasGenerated, setWasGenerated] = useState(false);
+
+  // A field typed with a name that several entities share is asked about (needsReference). The text may add that field, so there is no
+  // row to save the pick on: it is kept here, by field name, and goes with the retry of the save (the server accepts it only when it is
+  // one of the entities the name matches).
+  const picks = useRef<Record<string, string>>({});
+  const { resolveReferences, dialog: referenceDialog } = useReferencePick({
+    savePick: (request, picked) => {
+      if (!picked.entityId) return "This entity has no id, so the choice cannot be saved.";
+      picks.current = { ...picks.current, [request.field]: picked.entityId };
+      return undefined;
+    },
+  });
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -54,8 +67,12 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
   async function handleSave() {
     setIsSaving(true);
     setDiagnostics([]);
-    const result = await compileAndApplyTypeSpecSourceAction(entityId, source);
+    picks.current = {};
+    // `needsReference` is looked at before the result's own error: the dialog asks, the pick is kept, and the save runs once more.
+    const result = await resolveReferences(() => compileAndApplyTypeSpecSourceAction(entityId, source, picks.current));
     setIsSaving(false);
+    // Cancelled: nothing was saved and nothing went wrong.
+    if (result === null) return;
     setDiagnostics(result.diagnostics);
 
     if (!result.success) {
@@ -158,6 +175,8 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
           {lastApplied.removed.length > 0 ? `, ${lastApplied.removed.length} removed` : ""}.
         </p>
       )}
+
+      {referenceDialog}
     </div>
   );
 }
