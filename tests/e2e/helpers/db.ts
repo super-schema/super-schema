@@ -373,3 +373,213 @@ export async function countByNames(names: { domains?: string[]; entities?: strin
   }
   return total;
 }
+
+// ---------------------------------------------------------------------------
+// Rows for the admin, governance, compliance, discovery and glossary specs. Each `create*` has its own `delete*`, and a spec removes
+// what it made in a `finally` / `afterEach`: nothing here is shared between tests.
+// ---------------------------------------------------------------------------
+
+/** A user with no password (nobody signs in as them): the row the admin Users tab lists. Remove with `deleteUsersByEmail`. */
+export async function createUserRow(input: { email: string; name?: string | null }): Promise<{ id: string; email: string }> {
+  const id = newId();
+  await pg().query(`INSERT INTO users (id, email, name, "updatedAt") VALUES ($1, $2, $3, now())`, [id, input.email, input.name ?? null]);
+  return { id, email: input.email };
+}
+
+/** The role rows (`user_roles`) of a user: [{ role, domainId }]. */
+export async function rolesOfUser(userId: string): Promise<Array<{ role: string; domainId: string | null }>> {
+  const { rows } = await pg().query(`SELECT role, "domainId" FROM user_roles WHERE "userId" = $1 ORDER BY role`, [userId]);
+  return rows.map((row) => ({ role: row.role as string, domainId: (row.domainId as string | null) ?? null }));
+}
+
+export interface NotificationSeed {
+  type?: "APPROVAL_REQUEST" | "APPROVAL_DECISION" | "CHANGE_COMPLETE" | "DRIFT_ALERT" | "ANNOTATION_TAG" | "ANNOTATION_REPLY" | "COMPLIANCE_GAP";
+  title: string;
+  body?: string;
+  read?: boolean;
+  /** The route slugs of the entity it is about, as the app's own notification rows carry them (a JSON string in `entityId`). */
+  entityRef?: { entityId: string; entitySlug: string; domainSlug: string | null; productSlug: string | null };
+  /** Minutes ago; the newest row is listed first, so a spec that checks a page boundary gives each row its own minute. */
+  minutesAgo?: number;
+}
+
+/** Notifications of one user (rows of `notifications`). They go with the user (cascade) or with `deleteNotificationsByUser`. */
+export async function createNotifications(userId: string, seeds: readonly NotificationSeed[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const seed of seeds) {
+    const id = newId();
+    ids.push(id);
+    await pg().query(
+      `INSERT INTO notifications (id, "userId", type, title, body, "entityId", read, "createdAt")
+       VALUES ($1, $2, $3::"NotificationType", $4, $5, $6, $7, now() - ($8 || ' minutes')::interval)`,
+      [id, userId, seed.type ?? "CHANGE_COMPLETE", seed.title, seed.body ?? "", seed.entityRef ? JSON.stringify(seed.entityRef) : null, seed.read ?? false, String(seed.minutesAgo ?? 0)],
+    );
+  }
+  return ids;
+}
+
+export async function deleteNotificationsByUser(userId: string): Promise<void> {
+  await pg().query(`DELETE FROM notifications WHERE "userId" = $1`, [userId]);
+}
+
+/** The read flags of a user's notifications, by title. */
+export async function notificationReadFlags(userId: string): Promise<Record<string, boolean>> {
+  const { rows } = await pg().query(`SELECT title, read FROM notifications WHERE "userId" = $1`, [userId]);
+  return Object.fromEntries(rows.map((row) => [row.title as string, row.read as boolean]));
+}
+
+/** The id of a user by e-mail. */
+export async function userIdByEmail(email: string): Promise<string> {
+  const { rows } = await pg().query(`SELECT id FROM users WHERE email = $1`, [email]);
+  const id = rows[0]?.id as string | undefined;
+  if (!id) throw new Error(`no user ${email}`);
+  return id;
+}
+
+/**
+ * A governance request as the app writes it (`governance.service.createRequest`: no page or action of the product creates one yet, so
+ * the specs write the row). `entityName` is what the dashboard shows; make it unique. Remove with `deleteGovernanceRequestsByEntity`.
+ */
+export async function createGovernanceRequest(input: {
+  entityName: string;
+  status?: "PENDING" | "APPROVED" | "REJECTED" | "AUTO_APPROVED";
+  changeType?: string;
+  severity?: string;
+  summary?: string;
+  requestedBy?: string;
+  versionId?: string;
+}): Promise<{ id: string }> {
+  const id = newId();
+  const severity = input.severity ?? "high";
+  // Every part of an ImpactReport (src/types/schemas/governance.ts): the detail panel draws all of them.
+  const impactReport = {
+    summary: input.summary ?? `${input.entityName} drops a required field`,
+    changeClassification: { changeType: input.changeType ?? "breaking", severity, reasons: ["Removed required field"], perTarget: [] },
+    perTarget: [
+      { target: "bigquery", compatible: false, migrationRequired: true, migrationComplexity: "moderate", details: "column dropped" },
+      { target: "avro", compatible: true, migrationRequired: false, migrationComplexity: "trivial", details: "field optional in the schema" },
+    ],
+    affectedConsumers: [{ entityName: `${input.entityName}Consumer`, fieldName: "ref_id", relationship: "reference", ownerEmail: "owner@example.com" }],
+    migrationArtifactsSummary: { bigquery: "ALTER TABLE DROP COLUMN", avro: "new schema version", openapi: "no change" },
+  };
+  await pg().query(
+    `INSERT INTO governance_requests (id, "entityId", "entityName", "versionId", "changeType", severity, status, "impactReport", "requestedBy", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7::"GovernanceStatus", $8::jsonb, $9, now())`,
+    [id, newId(), input.entityName, input.versionId ?? "3", input.changeType ?? "breaking", severity, input.status ?? "PENDING", JSON.stringify(impactReport), input.requestedBy ?? "e2e-requester"],
+  );
+  return { id };
+}
+
+export async function deleteGovernanceRequestsByEntity(entityNames: readonly string[]): Promise<void> {
+  if (entityNames.length === 0) return;
+  // The approvals go with their request (cascade).
+  await pg().query(`DELETE FROM governance_requests WHERE "entityName" = ANY($1::text[])`, [[...entityNames]]);
+}
+
+/** The status of a governance request and the decisions recorded for it. */
+export async function governanceOutcome(requestId: string): Promise<{ status: string; decisions: Array<{ decision: string; comment: string | null }> }> {
+  const request = await pg().query(`SELECT status FROM governance_requests WHERE id = $1`, [requestId]);
+  const decisions = await pg().query(`SELECT decision, comment FROM governance_approvals WHERE "requestId" = $1 ORDER BY "decidedAt"`, [requestId]);
+  return {
+    status: request.rows[0]?.status as string,
+    decisions: decisions.rows.map((row) => ({ decision: row.decision as string, comment: (row.comment as string | null) ?? null })),
+  };
+}
+
+/** A second tenant with a domain in it: what the tenant switcher switches to. Remove with `deleteTenantWithDomain`. */
+export async function createSecondTenant(): Promise<{ tenantId: string; tenantName: string; domainId: string; domainName: string }> {
+  const s = suffix();
+  const ids = { tenantId: newId(), domainId: newId() };
+  const tenantName = `e2e-tenant-${s}`;
+  const domainName = `e2e-tenant-dom-${s}`;
+  const db = pg();
+  try {
+    await db.query(`INSERT INTO tenants (id, name, slug, "isActive", "updatedAt") VALUES ($1, $2, $3, true, now())`, [ids.tenantId, tenantName, tenantName]);
+    await db.query(`INSERT INTO domains (id, name, slug, "tenantId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [ids.domainId, domainName, domainName, ids.tenantId]);
+  } catch (error) {
+    await deleteTenantWithDomain({ tenantId: ids.tenantId });
+    throw error;
+  }
+  return { ...ids, tenantName, domainName };
+}
+
+/** The tenant row goes with its domains (cascade). Safe to call twice. */
+export async function deleteTenantWithDomain(tenant: { tenantId: string } | undefined): Promise<void> {
+  if (!tenant) return;
+  await pg().query(`DELETE FROM tenants WHERE id = $1`, [tenant.tenantId]);
+}
+
+/** Another field on an entity, with the classification and policy the compliance pages read. Goes with the entity. */
+export async function createFieldRow(
+  entityId: string,
+  input: {
+    name: string;
+    type?: string;
+    classification?: string | null;
+    policy?: { retention?: string; anonymization?: string; encryption?: string };
+    /** More decorators, as the app stores them (a reference field: `{ referencedEntityId, referencedEntityName }`). */
+    decorators?: Record<string, unknown>;
+    sortOrder?: number;
+  },
+): Promise<{ id: string }> {
+  const id = newId();
+  const decorators = { ...(input.policy ? { policy: input.policy } : {}), ...(input.decorators ?? {}) };
+  await pg().query(
+    `INSERT INTO fields (id, "entityId", name, slug, type, nullable, "isKey", "sortOrder", classification, decorators, "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, true, false, $6, $7, $8::jsonb, now())`,
+    [id, entityId, input.name, input.name.toLowerCase(), input.type ?? "string", input.sortOrder ?? 1, input.classification ?? null, JSON.stringify(decorators)],
+  );
+  return { id };
+}
+
+/** A reference from `fromEntityId` to `toEntity`, as a reference field the app would have written (what the lineage graph draws). */
+export async function createReferenceFieldRow(fromEntityId: string, toEntity: { id: string; name: string }, name = "target_ref"): Promise<{ id: string }> {
+  return createFieldRow(fromEntityId, { name, type: "reference", sortOrder: 5, decorators: { referencedEntityId: toEntity.id, referencedEntityName: toEntity.name } });
+}
+
+/** A glossary concept removed by its (unique) name; its links go with it (cascade). */
+export async function deleteConceptsByName(names: readonly string[]): Promise<void> {
+  if (names.length === 0) return;
+  await pg().query(`DELETE FROM business_concepts WHERE name = ANY($1::text[])`, [[...names]]);
+}
+
+/** Link a field to a concept (what the glossary's `linkFieldToConcept` writes). Goes with the field or the concept. */
+export async function linkFieldToConceptRow(fieldId: string, conceptName: string): Promise<void> {
+  const concept = await pg().query(`SELECT id FROM business_concepts WHERE name = $1`, [conceptName]);
+  const conceptId = concept.rows[0]?.id as string | undefined;
+  if (!conceptId) throw new Error(`no concept ${conceptName}`);
+  await pg().query(`INSERT INTO field_concept_links (id, "fieldId", "conceptId", confidence, "linkedBy") VALUES ($1, $2, $3, 0.9, 'e2e')`, [newId(), fieldId, conceptId]);
+}
+
+/** The id of the key field (`id`) the fixtures give every entity. */
+export async function keyFieldId(entityId: string): Promise<string> {
+  const { rows } = await pg().query(`SELECT id FROM fields WHERE "entityId" = $1 AND name = 'id'`, [entityId]);
+  return rows[0].id as string;
+}
+
+/** A tenant-level entity (no domain, no product) in ANOTHER tenant, with one field. Goes with the tenant (cascade). */
+export async function createEntityInTenant(tenantId: string, name: string): Promise<{ id: string; fieldId: string }> {
+  const ids = { id: newId(), fieldId: newId() };
+  const ownerId = await seededOwnerId();
+  await pg().query(
+    `INSERT INTO entities (id, name, slug, "tenantId", "domainId", "productId", "ownerId", "updatedAt") VALUES ($1, $2, $3, $4, NULL, NULL, $5, now())`,
+    [ids.id, name, name.toLowerCase(), tenantId, ownerId],
+  );
+  await pg().query(
+    `INSERT INTO fields (id, "entityId", name, slug, type, nullable, "isKey", "sortOrder", "updatedAt") VALUES ($1, $2, 'id', 'id', 'string', false, true, 0, now())`,
+    [ids.fieldId, ids.id],
+  );
+  return ids;
+}
+
+/** Set (or clear) the classification and policy decorators of a field, as the field editor stores them. */
+export async function setFieldGovernance(
+  fieldId: string,
+  governance: { classification?: string | null; policy?: { retention?: string; anonymization?: string; encryption?: string } },
+): Promise<void> {
+  await pg().query(`UPDATE fields SET classification = $2, decorators = $3::jsonb WHERE id = $1`, [
+    fieldId,
+    governance.classification ?? null,
+    JSON.stringify(governance.policy ? { policy: governance.policy } : {}),
+  ]);
+}
