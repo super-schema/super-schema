@@ -313,6 +313,10 @@ hidden: it is listed as flaky in all of the above. Old runs stay in `test-result
   one of the three above). The message names the setting; `server.log` has the app's side.
 - **A run is stuck after Ctrl-C**: the first Ctrl-C asks the step in progress to stop and runs the teardown; a second one kills the step
   at once (the teardown still runs). It never leaves the container behind unless you pass `--keep`.
+- **A run that never ends, with every Playwright worker idle** (the list shows the last test, no summary, no CPU, no sockets): seen four
+  times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, never on Node 20.19.4 or on the small probe specs that were tried.
+  Run the release runner with Node 20 or 22 (CI uses 22: `PATH=~/.nvm/versions/node/v22.../bin:$PATH npm run test:e2e:release ...`; the build
+  is made once per Node major, it is part of the reuse hash). Ctrl-C ends the run and the teardown removes its container as usual.
 - **Port conflicts**: ports are picked at random and checked when the run starts; if the database port is taken at that moment the runner
   picks another (three tries).
 
