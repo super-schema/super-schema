@@ -243,6 +243,10 @@ hidden: it is listed as flaky in all of the above. Old runs stay in `test-result
 
 ## Troubleshooting
 
+- **An assertion times out on a laptop but not in CI**: a web-first assertion waits 15 s (`expect.timeout` in `playwright.config.ts`; Playwright's
+  default is 5 s). The server is one Node process: its answer to a server action took 0.1 s with one worker (what CI runs) and about 4 s with
+  eight workers (the local default), so give a spec's own wait a reason (a state of the page), never a bigger number. A client form must not be
+  typed into before React has hydrated it: `waitForHydration(locator)` (`tests/e2e/helpers/hydration.ts`) waits for that, up to 30 s.
 - **"Docker is not running"**: start Docker Desktop (or the daemon, colima ...). The runner needs it and stops before doing anything else.
 - **Leftover containers** (the runner was killed with SIGKILL, the machine slept ...): `docker ps -a --filter name=ss-e2e-`, then
   `docker rm -f <name>`. They are named `ss-e2e-<id>` and carry the labels `ss-e2e=1` and `ss-e2e-run=<id>`. A run that was SIGKILLed can

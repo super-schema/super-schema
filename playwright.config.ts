@@ -77,6 +77,12 @@ export default defineConfig({
   // 60 s, not Playwright's 30: a test without its own `test.setTimeout` (the smoke ones) must not be on the default under the load of
   // Firefox / WebKit or a first compile. The long tests set their own.
   timeout: 60_000,
+  // 15 s for a web-first assertion (Playwright's default is 5 s): most of them wait for the server (a page render, a server action and
+  // the refresh of its page). Measured with the release runner: creating a domain takes 0.1 s with one worker (CI) and about 4 s when
+  // eight workers use the one server, which is what made specs fail now and then on a laptop with the 5 s default. An assertion that
+  // holds still returns at once; only a failing one waits longer. A page's hydration, a load, waits 30 s on its own
+  // (tests/e2e/helpers/hydration.ts).
+  expect: { timeout: 15_000 },
   fullyParallel: true,
   forbidOnly: CI,
   retries: CI ? 1 : 0,
