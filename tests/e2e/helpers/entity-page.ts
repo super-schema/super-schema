@@ -15,13 +15,18 @@ export const fieldRow = (page: Page, name: string): Locator => centerPanel(page)
 
 /**
  * Run `trigger` (a click, a keystroke) and resolve when the server action IT starts has been answered: for a save the page does not
- * announce (the entity's description). Navigating away before that would read the entity as it was. The first server action
- * REQUEST made after the trigger began is the one waited for, and its own response: an action that was already in flight when the
- * trigger ran sent its request earlier, so its answer is not taken for this one's. `action` narrows it to one action id (the
- * `Next-Action` header) when the trigger starts more than one.
+ * announce (the entity's description), or one whose indicator is gone with the refresh that follows it. Navigating away before that
+ * would read the entity as it was.
+ *
+ * The REQUEST that is waited for is the first server action request made after the trigger began whose body contains `body`: other
+ * server actions run all the time (the explorer's data, refreshed after every save), and one of them must not be taken for the save. Name
+ * what only the save's body holds (the id of the field it writes, the text typed). A request that was already in flight when the
+ * trigger ran was sent earlier, so its answer is never taken for this one's.
  */
-export async function afterServerAction(page: Page, trigger: () => Promise<void>, action?: string): Promise<void> {
-  const started = page.waitForRequest((request) => request.method() === "POST" && "next-action" in request.headers() && (!action || request.headers()["next-action"] === action));
+export async function afterServerAction(page: Page, trigger: () => Promise<void>, match: { body?: string } = {}): Promise<void> {
+  const started = page.waitForRequest(
+    (request) => request.method() === "POST" && "next-action" in request.headers() && (match.body === undefined || (request.postData() ?? "").includes(match.body)),
+  );
   await trigger();
   const request = await started;
   const response = await request.response();

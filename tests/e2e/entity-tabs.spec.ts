@@ -203,7 +203,7 @@ test.describe("Governance and Alerts", () => {
     await main.getByTestId(ID.addDescription).click();
     await main.getByTestId(ID.descriptionInput).fill("The general ledger of the company");
     // Nothing on the page says the description was saved: wait for the server's answer before leaving the page.
-    await afterServerAction(page, () => main.getByTestId(ID.descriptionSave).click());
+    await afterServerAction(page, () => main.getByTestId(ID.descriptionSave).click(), { body: "The general ledger of the company" });
     await expect(main.getByTestId("entity-description")).toHaveText("The general ledger of the company");
 
     // Three of the four are met, and that is what a fresh load says.
@@ -221,7 +221,7 @@ test.describe("Governance and Alerts", () => {
     await panel.getByPlaceholder("Add description...").fill("The key of the ledger entry");
     await page.keyboard.press("Enter");
     // The Save bar goes at once; the server's answer is what says the field is stored (a load before it would read the old field).
-    await afterServerAction(page, () => panel.getByTestId("field-save-btn").click());
+    await afterServerAction(page, () => panel.getByTestId("field-save-btn").click(), { body: "The key of the ledger entry" });
     await expect(panel.getByTestId("field-save-btn")).toHaveCount(0);
 
     await openEntityPage(page, ledger.url, ledger.name);
@@ -449,10 +449,10 @@ test.describe("the field studio and the right panel", () => {
     // Autosave: nothing says "Saved" until something is typed; the save is debounced and one request. (The page refreshes after it,
     // so what is waited for is the server's answer, not the indicator that is gone again with the refresh.)
     await expect(main.getByTestId(ID.studioStatus)).toHaveCount(0);
-    await afterServerAction(page, () => main.getByTestId(ID.studioName).fill("invoice_id"));
+    await afterServerAction(page, () => main.getByTestId(ID.studioName).fill("invoice_id"), { body: "invoice_id" });
     await expect(main.getByTestId(ID.studioName)).toHaveValue("invoice_id");
     await waitForHydration(main.getByTestId(ID.studioDefault));
-    await afterServerAction(page, () => main.getByTestId(ID.studioDefault).fill("INV-0"));
+    await afterServerAction(page, () => main.getByTestId(ID.studioDefault).fill("INV-0"), { body: "INV-0" });
     await expect(errorToast(page)).toHaveCount(0);
 
     // The address names the field by its id, so a rename (which changes the slug) does not take the page away; a reload shows both.
@@ -505,12 +505,12 @@ test.describe("the field studio and the right panel", () => {
     const sameNode = () => name.evaluate((input) => (input as HTMLElement & { __typedIn?: boolean }).__typedIn === true);
 
     // First save: the rename (the slug changes with the name).
-    await afterServerAction(page, () => name.fill("invoice_id"));
+    await afterServerAction(page, () => name.fill("invoice_id"), { body: "invoice_id" });
     await expect(name).toBeFocused();
     expect(await sameNode(), "the form was remounted by the first autosave").toBe(true);
 
     // Second save, typed after the first one has come back, with the keyboard into what has the focus.
-    await afterServerAction(page, () => page.keyboard.type("_x"));
+    await afterServerAction(page, () => page.keyboard.type("_x"), { body: "invoice_id_x" });
     await expect(name).toHaveValue("invoice_id_x");
     await expect(name).toBeFocused();
     expect(await sameNode(), "the form was remounted by the second autosave").toBe(true);
