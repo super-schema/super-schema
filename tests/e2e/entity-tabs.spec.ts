@@ -7,13 +7,13 @@
  * database by the `workspace` fixture and removed afterwards. Generation goes through the real emitters (the Schemas tab); everything
  * else is only the app.
  *
- * Affordances that exist in the code and cannot be reached in the UI (recorded in the task report, so they are not forgotten):
- *   - `TypeMappingOverrideDialog` is mounted by the entity workspace with `mappingContext={null}` and nothing ever opens it
- *     (`setOverrideDialogOpen(true)` is not called anywhere): the per-target override is reached through the Schemas tab's "Manual
- *     Override" table, which is what the type override test below drives;
- *   - `SchemaTargetChooser` and `TechnologyCard` are not rendered by any page (a unit test is their only user);
+ * Known defects and dead code this spec knows about are in docs/testing/known-defects.md, and a test that is expected to fail names its
+ * entry in its title (`[KD-nnn ...]`; tests/unit/e2e-suite-guard.test.ts):
+ *   - KD-001: a per-field type override was recorded and never applied by the emitters: the Manual Override table is not offered (the
+ *     type override test below says so);
+ *   - KD-004 / KD-005: `TypeMappingOverrideDialog`, `SchemaTargetChooser` and `TechnologyCard` can never be reached;
  *   - the right panel has the Field Edit and TypeSpec tabs only: there are no annotations or drift tabs. Change history is the
- *     Versions tab's Change Log, drift is the Deployments tab's "Check Drift".
+ *     Versions tab's Change Log (no diff between versions: KD-003), drift is the Deployments tab's "Check Drift".
  */
 import { test, expect, unique } from "./helpers/fixtures";
 import { centerPanel } from "./helpers/event-builder";
@@ -468,29 +468,56 @@ test.describe("the field studio and the right panel", () => {
     await expect(centerPanel(page).locator('span[title="id"]')).toHaveCount(0);
   });
 
-  // OPEN PRODUCT BUG (task-5-report.md, "Bugs open" 2): every autosave of the studio is followed by a refresh of the page that REMOUNTS
-  // the form: the input a user is typing in is replaced and the focus falls to <body>, so after a pause of half a second the next
-  // keystroke goes nowhere. Expected to fail (`test.fail`); when it passes, remove that line.
-  test("field studio [open defect: the form is remounted by the refresh after an autosave]: the name field keeps the focus", { tag: ["@regression"] }, async ({
+  test("field studio: an address that names the old slug is sent to the one that names the field's id, and the field is the same", { tag: ["@regression"] }, async ({
     authedPage: page,
     workspace,
   }) => {
-    test.fail(true, "the studio remounts after an autosave and loses the focus (task-5-report.md, Bugs open 2)");
+    const [invoice] = workspace.entities;
+    const main = centerPanel(page);
+    const field = await pg().query(`SELECT id FROM fields WHERE "entityId" = $1 AND name = 'id'`, [invoice.id]);
+    const fieldId = field.rows[0].id as string;
+
+    // The fixture's field has the slug `id`: the old, name-based address.
+    await page.goto(`${invoice.url}/fields/id`);
+    await expect(page).toHaveURL(`${invoice.url}/fields/${fieldId}`);
+    await expect(main.getByTestId(ID.studioName)).toHaveValue("id");
+
+    // The address with the id is the one that stays: a reload, and the entity's own link to the studio.
+    await page.reload();
+    await expect(page).toHaveURL(`${invoice.url}/fields/${fieldId}`);
+    await expect(main.getByTestId(ID.studioName)).toHaveValue("id");
+    await page.goto(`${invoice.url}/fields/no-such-field`);
+    await expect(page.getByText("This page could not be found.")).toBeVisible();
+  });
+
+  test("field studio: a rename and a second autosave keep the focus and the typed text (the form is not remounted by the refresh after a save)", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    workspace,
+  }) => {
     const [invoice] = workspace.entities;
     const main = centerPanel(page);
     await openEntityPage(page, invoice.url, invoice.name);
     await main.locator('[data-testid="field-card"][data-field="id"]').getByTestId(ID.openStudio).click();
-    await waitForHydration(main.getByTestId(ID.studioName));
-    // Mark the input that is typed in; the refresh after the save is over when that very node is gone from the page (with the defect
-    // it is within a moment of the answer; without it the node stays and this waits out its bound, which is the defect being gone).
-    await main.getByTestId(ID.studioName).evaluate((input) => ((input as HTMLElement & { __typedIn?: boolean }).__typedIn = true));
-    await afterServerAction(page, () => main.getByTestId(ID.studioName).fill("invoice_id"));
-    await page
-      .waitForFunction(() => !(document.querySelector('[data-testid="field-studio-name"]') as (HTMLElement & { __typedIn?: boolean }) | null)?.__typedIn, undefined, {
-        timeout: 5_000,
-      })
-      .catch(() => undefined);
-    await expect(main.getByTestId(ID.studioName)).toBeFocused({ timeout: 3_000 });
+    const name = main.getByTestId(ID.studioName);
+    await waitForHydration(name);
+    // The input that is typed in is marked: it must still be the same node after each save (a remount replaces it and the focus falls to <body>).
+    await name.evaluate((input) => ((input as HTMLElement & { __typedIn?: boolean }).__typedIn = true));
+    const sameNode = () => name.evaluate((input) => (input as HTMLElement & { __typedIn?: boolean }).__typedIn === true);
+
+    // First save: the rename (the slug changes with the name).
+    await afterServerAction(page, () => name.fill("invoice_id"));
+    await expect(name).toBeFocused();
+    expect(await sameNode(), "the form was remounted by the first autosave").toBe(true);
+
+    // Second save, typed after the first one has come back, with the keyboard into what has the focus.
+    await afterServerAction(page, () => page.keyboard.type("_x"));
+    await expect(name).toHaveValue("invoice_id_x");
+    await expect(name).toBeFocused();
+    expect(await sameNode(), "the form was remounted by the second autosave").toBe(true);
+
+    // And it all arrived: a reload shows the last text.
+    await page.reload();
+    await expect(main.getByTestId(ID.studioName)).toHaveValue("invoice_id_x");
   });
 
   test("right panel: the Field Edit tab waits for a field, the TypeSpec tab follows the entity and applies an edit", { tag: ["@regression"] }, async ({
@@ -627,69 +654,57 @@ test.describe("what a target needs and what can be overridden", () => {
     await expect(page.locator('[data-sonner-toast][data-type="success"]').filter({ hasText: /Spanner DDL schema generated/ })).toBeVisible({ timeout: 60_000 });
   });
 
-  test("type override: a target's data type is chosen per field, saved with the entity, marked overridden, kept after a reload, and shown by the Alerts tab and the matrix", { tag: ["@regression"] }, async ({
+  test("type override: no target offers the Manual Override table (no emitter applies it), and a stored override raises no alert", { tag: ["@regression"] }, async ({
     authedPage: page,
     workspace,
   }) => {
-    test.setTimeout(180_000);
+    test.setTimeout(120_000);
     const [invoice] = workspace.entities;
     const main = centerPanel(page);
+
+    // KD-001 (docs/testing/known-defects.md): a type override was saved and the toast said "schema regenerated", but the TypeSpec emitters
+    // never read it, so the DDL did not change. The table is not offered for a target whose generation does not apply overrides (all
+    // of them today), and nothing here says otherwise.
     await openEntityPage(page, invoice.url, invoice.name);
     await openSchemasTab(page);
-    const generated = await generateTarget(page, "BigQuery DDL");
-    expect(generated.error).toBeUndefined();
-    expect(generated.code).toMatch(/\bid\b\s+STRING\b(?!\()/);
-
-    await main.getByTestId(ID.schemaContentTab("overrides")).click();
-    const row = main.locator('[data-testid="override-row"][data-field="id"]');
-    await expect(row).toHaveAttribute("data-overridden", "false");
-    await row.getByTestId(ID.overrideTrigger).click();
-    await page.getByRole("option", { name: /^STRING\(36\)/ }).click();
-    await expect(successToast(page, "Override applied — schema regenerated")).toBeVisible({ timeout: 60_000 });
-    await expect(row).toHaveAttribute("data-overridden", "true");
-    await expect(row).toContainText("overridden");
-    await expect(row.getByTestId(ID.overrideTrigger)).toHaveText("STRING(36)");
-
-    // Kept: after a reload the table and the alert of the Alerts tab still know the override.
-    await openEntityPage(page, invoice.url, invoice.name);
-    await openSchemasTab(page);
-    await main.getByTestId(ID.schemaContentTab("overrides")).click();
-    const again = main.locator('[data-testid="override-row"][data-field="id"]');
-    await expect(again).toHaveAttribute("data-overridden", "true");
-    await expect(again.getByTestId(ID.overrideTrigger)).toHaveText("STRING(36)");
-    await main.getByTestId(ID.tab("alerts")).click();
-    await expect(main.locator('[data-testid="alert-card"][data-alert-id="target-bigquery-overrides"]')).toContainText("BigQuery DDL uses persisted field overrides");
-
-    // The mapping matrix lists the field against every target.
-    await main.getByTestId(ID.tab("schemas")).click();
+    for (const key of ["bigquery", "spanner", "postgresql", "avro", "openapi3"]) {
+      await main.getByTestId(ID.schemaTarget(key)).click();
+      await expect(main.getByTestId(ID.schemaTarget(key))).toHaveAttribute("aria-pressed", "true");
+      await expect(main.getByTestId(ID.schemaContentTab("schema")), key).toBeVisible();
+      await expect(main.getByTestId(ID.schemaContentTab("matrix")), key).toBeVisible();
+      await expect(main.getByTestId(ID.schemaContentTab("overrides")), key).toHaveCount(0);
+      await expect(main.getByText("Manual Override")).toHaveCount(0);
+    }
+    // The mapping matrix is still there: the field against every target.
     await main.getByTestId(ID.schemaContentTab("matrix")).click();
     await expect(main.getByRole("table")).toContainText("id");
-  });
 
-  // OPEN PRODUCT BUG (task-5-report.md, "Bugs open" 1): the Manual Override table says "Changes are saved immediately and regenerate this
-  // schema", the override is saved and the toast says "schema regenerated", but the DDL the TypeSpec emitter writes is the same as
-  // before: nothing in src/lib/typespec-official reads `schemaTargetTypeOverrides`. This test states what the page promises; it is
-  // expected to fail (`test.fail`), and when the emitters apply overrides it passes, which Playwright reports as a failure: remove
-  // the `test.fail` line then.
-  test("type override [open defect: the regenerated BigQuery DDL ignores the override]: the schema carries the chosen type", { tag: ["@regression"] }, async ({
-    authedPage: page,
-    workspace,
-  }) => {
-    test.fail(true, "Manual Override is saved but the TypeSpec emitters do not apply it (task-5-report.md, Bugs open 1)");
-    test.setTimeout(180_000);
-    const [invoice] = workspace.entities;
-    const main = centerPanel(page);
+    // An override stored earlier (written here straight into the entity, as the old Manual Override table did) stays in the data and
+    // makes no alert: the Alerts tab counts the four completeness requirements only.
+    const field = await pg().query(`SELECT id FROM fields WHERE "entityId" = $1 AND name = 'id'`, [invoice.id]);
+    const fieldId = field.rows[0].id as string;
+    const stored = {
+      bigquery: {
+        [fieldId]: {
+          fieldId,
+          fieldName: "id",
+          sourceType: "string",
+          target: "bigquery",
+          defaultMappedType: "STRING",
+          mappedType: "STRING(36)",
+          createdAt: "2026-04-07T10:00:00.000Z",
+          updatedAt: "2026-04-07T10:00:00.000Z",
+          comment: "SUPER SCHEMA TYPE OVERRIDE: logical string defaulted to STRING; user selected STRING(36).",
+        },
+      },
+    };
+    await pg().query(`UPDATE entities SET metadata = jsonb_build_object('schemaTargetTypeOverrides', $2::jsonb) WHERE id = $1`, [invoice.id, JSON.stringify(stored)]);
     await openEntityPage(page, invoice.url, invoice.name);
-    await openSchemasTab(page);
-    const generated = await generateTarget(page, "BigQuery DDL");
-    expect(generated.error).toBeUndefined();
-    await main.getByTestId(ID.schemaContentTab("overrides")).click();
-    const row = main.locator('[data-testid="override-row"][data-field="id"]');
-    await row.getByTestId(ID.overrideTrigger).click();
-    await page.getByRole("option", { name: /^STRING\(36\)/ }).click();
-    await expect(successToast(page, "Override applied — schema regenerated")).toBeVisible({ timeout: 60_000 });
-    await main.getByTestId(ID.schemaContentTab("schema")).click();
-    await expect.poll(() => readPreview(page), { message: "the regenerated BigQuery DDL", timeout: 8_000 }).toMatch(/\bid\b\s+STRING\(36\)/);
+    await expect(main.getByTestId(ID.tab("alerts"))).toHaveAttribute("data-alert-count", "4");
+    await main.getByTestId(ID.tab("alerts")).click();
+    await expect(main.locator('[data-testid="alert-card"][data-alert-id^="target-"]')).toHaveCount(0);
+    const kept = await pg().query(`SELECT metadata -> 'schemaTargetTypeOverrides' -> 'bigquery' -> $2 ->> 'mappedType' AS mapped FROM entities WHERE id = $1`, [invoice.id, fieldId]);
+    expect(kept.rows[0].mapped).toBe("STRING(36)");
   });
 
   test("staged emit: the dialog offers every target (all checked), counts the selection, and emits only the chosen ones", { tag: ["@regression"] }, async ({

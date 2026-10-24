@@ -5,6 +5,8 @@
  * what the page shows (the generated artifact text, the TypeSpec source, the toast), so one failing check names the step.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { unique } from "./unique";
 import { fillWorkbenchPaste, expectDetailPanelText } from "./workbench";
@@ -65,13 +67,42 @@ export async function pasteAndReview(page: Page, productUrl: string, text: strin
   await page.getByTestId("workbench-review-button").click();
 }
 
-/** Drop mode of the workbench: choose the file (the drop zone's own file input, as a user's drop or browse does), then open the review screen. */
-export async function dropFileAndReview(page: Page, productUrl: string, filePath: string): Promise<void> {
+/**
+ * Drop mode of the workbench, as a user's drop: the file is DROPPED on the drop zone (a `dragover` and a `drop` event whose
+ * `dataTransfer` carries a real `File`, which is what the zone's `onDrop` reads), then the review screen is opened. Resolves to what the workbench said of the file (its name and format) before the review.
+ */
+export async function dropFileAndReview(page: Page, productUrl: string, filePath: string): Promise<string> {
+  await openWorkbench(page, productUrl);
+  const zone = page.getByTestId("workbench-dropzone");
+  await expect(zone).toBeVisible();
+  const content = readFileSync(filePath, "utf8");
+  await zone.evaluate(
+    (element, file) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([file.content], file.name, { type: "application/octet-stream" }));
+      for (const type of ["dragenter", "dragover", "drop"]) {
+        element.dispatchEvent(new DragEvent(type, { dataTransfer: transfer, bubbles: true, cancelable: true }));
+      }
+    },
+    { name: path.basename(filePath), content },
+  );
+  const summary = page.getByTestId("workbench-import-summary");
+  await expect(summary).toBeVisible();
+  const text = await summary.innerText();
+  await page.getByTestId("workbench-review-button").click();
+  return text;
+}
+
+/** Drop mode of the workbench, by browsing: the file is chosen in the zone's own file input (what a click on the zone opens), then the review screen is opened. */
+export async function chooseFileAndReview(page: Page, productUrl: string, filePath: string): Promise<string> {
   await openWorkbench(page, productUrl);
   await expect(page.getByTestId("workbench-dropzone")).toBeVisible();
   await page.getByTestId("workbench-file-input").setInputFiles(filePath);
-  await expect(page.getByTestId("workbench-import-summary")).toBeVisible();
+  const summary = page.getByTestId("workbench-import-summary");
+  await expect(summary).toBeVisible();
+  const text = await summary.innerText();
   await page.getByTestId("workbench-review-button").click();
+  return text;
 }
 
 /**

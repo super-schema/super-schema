@@ -14,13 +14,18 @@ import { centerPanel } from "./event-builder";
 export const fieldRow = (page: Page, name: string): Locator => centerPanel(page).locator(`span[title="${name}"]`);
 
 /**
- * Run `trigger` (a click) and resolve when the server action it starts has been answered: for a save the page does not announce (the
- * entity's description). Navigating away before that would read the entity as it was.
+ * Run `trigger` (a click, a keystroke) and resolve when the server action IT starts has been answered: for a save the page does not
+ * announce (the entity's description). Navigating away before that would read the entity as it was. The first server action
+ * REQUEST made after the trigger began is the one waited for, and its own response: an action that was already in flight when the
+ * trigger ran sent its request earlier, so its answer is not taken for this one's. `action` narrows it to one action id (the
+ * `Next-Action` header) when the trigger starts more than one.
  */
-export async function afterServerAction(page: Page, trigger: () => Promise<void>): Promise<void> {
-  const answered = page.waitForResponse((response) => response.request().method() === "POST" && "next-action" in response.request().headers());
+export async function afterServerAction(page: Page, trigger: () => Promise<void>, action?: string): Promise<void> {
+  const started = page.waitForRequest((request) => request.method() === "POST" && "next-action" in request.headers() && (!action || request.headers()["next-action"] === action));
   await trigger();
-  await answered;
+  const request = await started;
+  const response = await request.response();
+  if (!response) throw new Error(`the server action ${request.headers()["next-action"]} got no response: ${request.failure()?.errorText ?? "unknown"}`);
 }
 
 /** A success toast (sonner) whose text matches. */

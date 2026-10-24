@@ -10,7 +10,8 @@
  *   OpenAPI     components.schemas with $ref and allOf                                          -> Java POJO
  *   BigQuery    CREATE TABLE with STRUCT / ARRAY / NUMERIC / TIMESTAMP and column descriptions   -> PostgreSQL DDL
  *   TypeSpec    two models in one file: the multi-entity review                                  -> OpenAPI 3
- *   JSON file   dropped on the Drop zone (JSON Schema with keywords the app ignores)             -> JSON Schema
+ *   JSON file   DROPPED on the Drop zone (JSON Schema with keywords the app ignores)             -> JSON Schema
+ *               (and a file CHOSEN in the zone's file input: a .tsp, up to its review)
  *   Standards   a template of the Standards Library                                              -> Spanner DDL
  *   Natural Language   AI is not configured on a release run: the page says so and nothing can be sent
  *
@@ -27,6 +28,7 @@ import { canon, requiredOf } from "./helpers/artifact-text";
 import {
   createEntityFromReview,
   createSingleEntity,
+  chooseFileAndReview,
   dropFileAndReview,
   generateTarget,
   openEntityFromProduct,
@@ -35,6 +37,8 @@ import {
   pasteAndReview,
 } from "./helpers/lifecycle";
 import { fillWorkbenchPaste } from "./helpers/workbench";
+import { pg } from "./helpers/db";
+import { saveTypeSpecSource, readTypeSpecSource, openEditor } from "./helpers/lifecycle";
 
 const SAMPLES = path.join(__dirname, "fixtures/importer-samples");
 const samplePath = (name: string) => path.join(SAMPLES, name);
@@ -115,9 +119,14 @@ test.describe("importers", () => {
     // A required field says so; the union with null is nullable (no "required" badge).
     await expect(review.getByTestId(ID.field("OrderPlaced", "orderId"))).toContainText("required");
     await expect(review.getByTestId(ID.field("OrderPlaced", "couponCode"))).not.toContainText("required");
+    // The decimal says what the schema declared: precision 12, scale 2 (in the row and in its details).
+    await expect(review.getByTestId(ID.field("OrderPlaced", "total"))).toContainText("(12,2)");
     // Every mapping states its confidence; the enum is reviewed with its symbols.
     await review.getByRole("button", { name: "Show details of OrderPlaced.placedAt" }).click();
     await expect(review.getByTestId(ID.fieldDetails("placedAt")).getByTestId(ID.fieldConfidence)).toContainText("High confidence");
+    await review.getByRole("button", { name: "Show details of OrderPlaced.total" }).click();
+    await expect(review.getByTestId(ID.fieldDetails("total"))).toContainText("Precision");
+    await expect(review.getByTestId(ID.fieldDetails("total"))).toContainText("Scale");
     await expect(review.getByTestId(ID.enum("OrderStatus"))).toContainText("NEW, PAID, SHIPPED");
 
     const entityUrl = await createEntityFromReview(page, workspace.productUrl, "OrderPlaced");
@@ -129,6 +138,14 @@ test.describe("importers", () => {
     // The array became repeated, the optional union stayed optional, the map a map.
     expect(protobuf.code).toMatch(/repeated\s+string\s+\w*[Ss]ku/);
     expect(protobuf.code).toMatch(/map<string,\s*string>\s+labels/);
+
+    // The decimal(12, 2) of the schema is the field's precision and scale in the database, and the DDL says what the column cannot
+    // (NUMERIC has no precision in PostgreSQL: the table comment names the declared one).
+    const decimal = await pg().query(`SELECT precision, scale FROM fields f JOIN entities e ON e.id = f."entityId" WHERE e.name = 'OrderPlaced' AND e."domainId" = $1 AND f.name = 'total'`, [workspace.domainId]);
+    expect(decimal.rows).toEqual([{ precision: 12, scale: 2 }]);
+    const postgres = await generateTarget(page, "PostgreSQL DDL");
+    expect(postgres.error).toBeUndefined();
+    expect(postgres.code).toMatch(/total: declared decimal\(12,\s?2\)/);
   });
 
   test("Protobuf: the message, its nested message, the enum, repeated, map and oneof are reviewed, created, and generate Avro", { tag: ["@regression"] }, async ({
@@ -251,7 +268,15 @@ test.describe("importers", () => {
     await expect(items).toContainText("Original type");
     await expect(items).toContainText("ARRAY<STRUCT<SKU STRING, QTY INT64>>");
 
+    // The decimal says what the DDL declared: NUMERIC(12, 2) is precision 12, scale 2; a plain NUMERIC says nothing of the kind.
+    await expect(rows.nth(2)).toContainText("(12,2)");
+    await expect(rows.nth(0)).not.toContainText(/\(\d+,\d+\)/);
+
     const entityUrl = await createSingleEntity(page, "orders");
+    const stored = () =>
+      pg().query(`SELECT precision, scale FROM fields f JOIN entities e ON e.id = f."entityId" WHERE e.name = 'orders' AND e."domainId" = $1 AND f.name = 'total'`, [workspace.domainId]);
+    expect((await stored()).rows).toEqual([{ precision: 12, scale: 2 }]);
+
     await openSchemasOf(page, entityUrl);
     const postgres = await generateTarget(page, "PostgreSQL DDL");
     expect(postgres.error).toBeUndefined();
@@ -260,26 +285,24 @@ test.describe("importers", () => {
     expect(postgres.code).toMatch(/\bplaced_at\b/);
     expect(postgres.code).toMatch(/\btotal\b\s+NUMERIC/i);
     expect(postgres.code).toMatch(/TIMESTAMP/i);
-    // The column descriptions are comments of the columns.
+    // The column descriptions are comments of the columns, and so is what the column cannot say: NUMERIC has no precision in PostgreSQL.
     expect(postgres.code).toContain("Primary identifier of the order");
-  });
+    expect(postgres.code).toMatch(/total: declared decimal\(12,\s?2\)/);
 
-  // OPEN PRODUCT GAP (task-5-report.md, "Bugs open" 3): the importers read NUMERIC(12, 2) (and Avro's decimal precision / scale) as a
-  // plain decimal: `ParsedField` has no precision or scale and the wizard creates every field with both null, so the generated DDL says
-  // NUMERIC. Expected to fail (`test.fail`); when it passes, remove that line.
-  test("BigQuery DDL [open defect: precision and scale of NUMERIC(12, 2) are dropped by the import]: the generated column keeps them", { tag: ["@regression"] }, async ({
-    authedPage: page,
-    workspace,
-  }) => {
-    test.fail(true, "importers drop the precision and scale of decimals (task-5-report.md, Bugs open 3)");
-    test.setTimeout(240_000);
-    await pasteAndReview(page, workspace.productUrl, sample("sales-orders.sql"));
-    await expect(centerPanel(page).getByTestId(ID.entityDetails)).toBeVisible({ timeout: 45_000 });
-    const entityUrl = await createSingleEntity(page, "orders");
-    await openSchemasOf(page, entityUrl);
-    const postgres = await generateTarget(page, "PostgreSQL DDL");
-    expect(postgres.error).toBeUndefined();
-    expect(postgres.code).toMatch(/NUMERIC\s*\(\s*12\s*,\s*2\s*\)/i);
+    // The TypeSpec source is canonical, and it cannot carry a precision: a Save of the TypeSpec tab (the fields are projected from it
+    // again) must leave the precision and scale of the column where they were.
+    const source = await readTypeSpecSource(page);
+    const edited = source.replace(/\}\s*$/, "  memo?: string;\n}");
+    expect(edited).not.toBe(source);
+    const saved = await saveTypeSpecSource(page, edited);
+    expect(saved.ok, saved.message).toBe(true);
+    expect((await stored()).rows).toEqual([{ precision: 12, scale: 2 }]);
+    await openEditor(page);
+    await openSchemasTab(page);
+    const again = await generateTarget(page, "PostgreSQL DDL");
+    expect(again.error).toBeUndefined();
+    expect(again.code).toMatch(/\bmemo\b/);
+    expect(again.code).toMatch(/total: declared decimal\(12,\s?2\)/);
   });
 
   test("TypeSpec with two models: the multi-entity review lists both, both become entities, and one generates OpenAPI 3", { tag: ["@regression"] }, async ({
@@ -329,7 +352,9 @@ test.describe("importers", () => {
   }) => {
     test.setTimeout(240_000);
     const main = centerPanel(page);
-    await dropFileAndReview(page, workspace.productUrl, samplePath("support-ticket.schema.json"));
+    const summary = await dropFileAndReview(page, workspace.productUrl, samplePath("support-ticket.schema.json"));
+    expect(summary).toContain("support-ticket.schema.json");
+    expect(summary).toContain("Format: json-schema");
 
     await expect(main.getByTestId(ID.entityDetails)).toBeVisible({ timeout: 45_000 });
     await expect(main.getByTestId(ID.sourceFormat)).toContainText("json-schema");
@@ -362,6 +387,22 @@ test.describe("importers", () => {
     expect(text).toContain('"format":"uuid"');
   });
 
+  test("a file chosen in the Drop zone's file input (browse): the file name and the format are shown, and the review lists both models", { tag: ["@regression"] }, async ({
+    authedPage: page,
+    workspace,
+  }) => {
+    test.setTimeout(120_000);
+    const main = centerPanel(page);
+    const summary = await chooseFileAndReview(page, workspace.productUrl, samplePath("catalog-models.tsp"));
+    expect(summary).toContain("catalog-models.tsp");
+    expect(summary).toContain("Format: typespec");
+
+    const review = main.getByTestId(ID.multiReview);
+    await expect(review).toBeVisible({ timeout: 60_000 });
+    await expect(review.getByTestId(ID.multiTitle)).toHaveText("Review TypeSpec Import");
+    await expect(review.getByTestId(ID.multiCounts)).toContainText("2 model(s)");
+  });
+
   test("Standards Library: a template is picked from the search, reviewed, created, and generates Spanner DDL", { tag: ["@regression"] }, async ({
     authedPage: page,
     workspace,
@@ -374,13 +415,11 @@ test.describe("importers", () => {
 
     // Search narrows the library to the template; its card says what it holds.
     await main.getByTestId(ID.standardsSearch).fill("Payment");
-    const card = main.getByTestId(ID.standardsTemplate).filter({ has: page.getByText("Payment", { exact: true }) });
     await expect(main.getByTestId(ID.standardsTemplate).first()).toBeVisible();
     const payment = main.locator('[data-testid="standards-template"][data-name="Payment"]');
     await expect(payment).toHaveCount(1);
     await expect(payment).toContainText("financial");
     await expect(payment).toContainText("A payment between parties");
-    expect(card).toBeTruthy();
     await payment.click();
 
     // The review of a template: its name, its fields with a classification where the standard gives one.
