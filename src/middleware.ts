@@ -12,19 +12,23 @@ import { hasValidSession } from "@/lib/session-cookie";
  *   `/api/auth/*`, the REST API under `/api/v1/*` (each handler checks an API key or the session itself, and the health probe is
  *   unauthenticated on purpose), and the preview iframe's static assets (a sandboxed iframe sends no cookie).
  * - A signed-in user on `/`, `/login` or `/register` goes to the dashboard.
+ * - A server action (a request with a `Next-Action` header) from a page whose session has gone gets a 401 JSON, not a redirect: the
+ *   browser would POST the redirect's target again.
  */
 
 /** `/api/` URLs that answer without a session (see above). Every other `/api/` URL needs one. */
 const PUBLIC_API_PREFIXES = ["/api/auth", "/api/v1", "/api/asyncapi-preview"];
 
-const isPublicApi = (pathname: string) =>
-  PUBLIC_API_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+/** A path is `prefix` itself or under it (`prefix/...`): `/login` and `/login/help`, not `/loginfoo` or `/login%2F..%2Fapi`. */
+const isUnder = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+const isPublicApi = (pathname: string) => PUBLIC_API_PREFIXES.some((prefix) => isUnder(pathname, prefix));
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  const isAuthPage = pathname.startsWith("/login") || pathname.startsWith("/register");
-  const isDevPage = process.env.NODE_ENV === "development" && pathname.startsWith("/dev");
+  const isAuthPage = isUnder(pathname, "/login") || isUnder(pathname, "/register");
+  const isDevPage = process.env.NODE_ENV === "development" && isUnder(pathname, "/dev");
   const isApi = pathname.startsWith("/api/");
 
   const signedIn = await hasValidSession(req.headers.get("cookie"));
@@ -35,6 +39,9 @@ export async function middleware(req: NextRequest) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
     if (isAuthPage || isDevPage) return NextResponse.next();
+    // A server action POSTed from a page whose session has gone: a redirect would be followed by the browser as another POST, to
+    // /login, where the action does not exist ("Server Action not found"). A 401 is an answer the client can show.
+    if (req.headers.has("next-action")) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
     const login = new URL("/login", req.url);
     if (pathname !== "/") {
