@@ -59,9 +59,10 @@ export function readFieldReference(decorators: unknown): EntityRef | { legacyNam
  */
 export function upgradeLegacyReference(decorators: Record<string, unknown>, resolved: EntityRef): Record<string, unknown> {
   const existingPin = ownString(decorators, "referencedEntityVersion");
-  const { pinnedVersion: _ignored, ...rest } = resolved;
-  void _ignored;
-  return writeFieldReference(decorators, existingPin ? { ...rest, pinnedVersion: existingPin } : rest);
+  const ref: EntityRef = { domain: resolved.domain, product: resolved.product, entity: resolved.entity };
+  if (resolved.entityId) ref.entityId = resolved.entityId;
+  if (existingPin) ref.pinnedVersion = existingPin;
+  return writeFieldReference(decorators, ref);
 }
 
 /** Returns a copy of `decorators` carrying `ref`; a stale version pin is dropped unless `ref` pins one. */

@@ -29,10 +29,10 @@ export function ReferencePickDialog({ candidates, onPick, onCancel }: ReferenceP
           </DialogDescription>
         </DialogHeader>
         <ul className="flex max-h-64 flex-col gap-space-2 overflow-y-auto">
-          {candidates.map((candidate) => {
+          {candidates.map((candidate, index) => {
             const label = `${candidate.domain} / ${candidate.product} / ${candidate.entity}`;
             return (
-              <li key={candidate.entityId ?? label}>
+              <li key={`${index}:${candidate.entityId ?? label}`}>
                 <button
                   type="button"
                   className="w-full rounded border border-border/50 px-space-2 py-space-1 text-left font-mono text-body-small hover:bg-accent/30"

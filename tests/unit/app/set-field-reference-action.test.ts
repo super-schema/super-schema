@@ -17,6 +17,9 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernance: vi.fn() }));
 
+const { getEffectiveRole } = vi.hoisted(() => ({ getEffectiveRole: vi.fn() }));
+vi.mock("@/services/rbac.service", () => ({ getEffectiveRole }));
+
 import { setFieldReferenceAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
 
 const ENTITIES: Record<string, unknown> = {
@@ -27,6 +30,7 @@ const ENTITIES: Record<string, unknown> = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getEffectiveRole.mockResolvedValue({ success: true, data: "AUTHOR" });
   mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
   mockPrisma.entity.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ENTITIES[where.id] ?? null);
   mockPrisma.field.findUnique.mockResolvedValue({
@@ -110,6 +114,25 @@ describe("setFieldReferenceAction", () => {
     mockPrisma.field.findUnique.mockResolvedValue({ id: "fld-1", entityId: "ent-1", type: "string", decorators: {}, entity: { tenantId: "tenant-1" } });
     const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2" });
     expect(r).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+  });
+
+  it("refuses a viewer (and an unassigned user) before reading or writing anything", async () => {
+    for (const role of [{ success: true, data: "VIEWER" }, { success: true, data: null }, { success: false, error: { code: "DB_ERROR", message: "x" } }]) {
+      getEffectiveRole.mockResolvedValue(role);
+      const r = await setFieldReferenceAction("ent-1", "fld-1", { entityId: "ent-2" });
+      expect(r).toMatchObject({ success: false, error: { code: "FORBIDDEN" } });
+    }
+    expect(mockPrisma.field.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("returns a validation Result for a non-string id instead of a Prisma throw", async () => {
+    for (const args of [[undefined, "fld-1", { entityId: "ent-2" }], ["ent-1", 5, { entityId: "ent-2" }], ["ent-1", "fld-1", { entityId: 7 }], ["ent-1", "fld-1", undefined]] as const) {
+      const r = await setFieldReferenceAction(...(args as unknown as Parameters<typeof setFieldReferenceAction>));
+      expect(r).toMatchObject({ success: false, error: { code: "VALIDATION_ERROR" } });
+    }
+    expect(mockPrisma.field.findUnique).not.toHaveBeenCalled();
   });
 
   it("returns a Result failure instead of throwing on a database error", async () => {

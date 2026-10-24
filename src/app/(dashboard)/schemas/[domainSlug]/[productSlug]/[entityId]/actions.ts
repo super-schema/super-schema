@@ -19,6 +19,7 @@ import {
 } from "@/lib/editable-fields";
 import { requireId } from "@/services/events/service-guards";
 import { err, ok, type Result, type ServiceError } from "@/types/result";
+import { ROLE_HIERARCHY, type Role } from "@/types/schemas/rbac";
 import { TENANT_PLACEHOLDER, writeFieldReference } from "@/lib/references/entity-reference";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import {
@@ -1344,6 +1345,15 @@ export async function setFieldReferenceAction(
   if (!session?.user?.id) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
   const notFound = (kind: string) => err({ code: "NOT_FOUND", message: `${kind} not found` });
   try {
+    for (const [value, label] of [[entityId, "Entity id"], [fieldId, "Field id"], [ref?.entityId, "Referenced entity id"]] as const) {
+      const id = requireId(value, label);
+      if (!id.success) return id;
+    }
+    // Re-pointing a reference is an edit: VIEWER (and an unassigned user, which resolves to VIEWER) is refused before anything is read.
+    const role = await resolveUserRole(session.user.id);
+    if (ROLE_HIERARCHY.indexOf(role as Role) < ROLE_HIERARCHY.indexOf("AUTHOR")) {
+      return err({ code: "FORBIDDEN", message: "You do not have permission to change this field's reference" });
+    }
     if (!(await inActiveTenant("entity", entityId))) return notFound("Entity");
     if (!ref || typeof ref.entityId !== "string" || !(await inActiveTenant("entity", ref.entityId))) return notFound("Referenced entity");
 
