@@ -37,6 +37,8 @@ describe("login page", () => {
 
     await waitFor(() => expect(screen.getByTestId("login-error").textContent).toBe("Invalid email or password"));
     expect(input("login-email").value).toBe("me@example.com");
+    // Only the password goes: a refused secret is not left in the field.
+    expect(input("login-password").value).toBe("");
     // A second refusal keeps it too (the shake restarts on every refusal).
     fireEvent.change(input("login-password"), { target: { value: "wrong-again" } });
     await act(async () => {
@@ -44,6 +46,7 @@ describe("login page", () => {
     });
     await waitFor(() => expect(signIn).toHaveBeenCalledTimes(2));
     expect(input("login-email").value).toBe("me@example.com");
+    await waitFor(() => expect(input("login-password").value).toBe(""));
   });
 });
 
