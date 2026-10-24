@@ -122,9 +122,13 @@ function path(ref: AssetRef): { path: string; query: Record<string, string> } {
   }
 }
 
+/** The search params of a Next page (`searchParams`): a key that appears twice is a list, a key without a value is `undefined`. */
+export type QueryParams = Record<string, string | readonly string[] | undefined>;
+
 export interface AssetHrefOptions {
   version?: string;
-  query?: Record<string, string>;
+  /** Extra query params, written in the order given; every value of a list is written, `undefined` and an empty list are left out. */
+  query?: QueryParams;
   /** `event` refs only (ignored for every other kind): the page tab, the builder section and the selected item key. A default or empty value is omitted. */
   tab?: EventTab;
   section?: BuilderSection;
@@ -142,7 +146,12 @@ function eventQuery(opts: AssetHrefOptions): Record<string, string> {
 
 export function assetHref(ref: AssetRef, opts: AssetHrefOptions = {}): string {
   const { path: p, query } = path(ref);
-  const qs = new URLSearchParams({ ...query, ...(ref.kind === "event" ? eventQuery(opts) : {}), ...(opts.query ?? {}) });
+  const qs = new URLSearchParams();
+  const merged: QueryParams = { ...query, ...(ref.kind === "event" ? eventQuery(opts) : {}), ...(opts.query ?? {}) };
+  for (const [key, value] of Object.entries(merged)) {
+    if (value === undefined) continue;
+    for (const item of typeof value === "string" ? [value] : value) qs.append(key, item);
+  }
   if (opts.version) qs.set("version", opts.version);
   const s = qs.toString();
   return s ? `${p}?${s}` : p;

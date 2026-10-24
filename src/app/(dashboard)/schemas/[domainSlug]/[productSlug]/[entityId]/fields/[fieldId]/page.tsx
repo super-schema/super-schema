@@ -3,15 +3,17 @@ import { notFound, redirect } from "next/navigation";
 import { FieldStudio } from "./field-studio";
 import { domainLabel } from "@/lib/entity-placement";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT, assetHref } from "@/lib/navigation/asset-href";
+import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT, assetHref, type QueryParams } from "@/lib/navigation/asset-href";
 import { findEntityInScope } from "../../load-entity-workspace";
 import { loadPickableEntities } from "@/lib/references/pickable-entities";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string; entityId: string; fieldId: string }>;
+  /** Next hands a page its query string; the redirect below hands it on (`?version=`, `?panel=`). */
+  searchParams?: Promise<QueryParams>;
 }
 
-export default async function FieldDetailPage({ params }: Props) {
+export default async function FieldDetailPage({ params, searchParams }: Props) {
   const { domainSlug, productSlug, entityId, fieldId } = await params;
   const activeTenantId = await getActiveTenantId();
 
@@ -72,16 +74,20 @@ export default async function FieldDetailPage({ params }: Props) {
 
   // The studio is addressed by the field's ID: a rename changes the slug, and every save revalidates the page behind this address, so
   // an address that names the slug would be a 404 at the next render. A link by the (old) name is sent to the id's address, and the
-  // page is rendered from there with the right segment from the first render.
+  // page is rendered from there with the right segment from the first render. The query string goes with the address (a link to
+  // `?version=1.2.0` still means that version).
   if (field.id !== fieldId) {
     redirect(
-      assetHref({
-        kind: "field",
-        entitySlug: entityId,
-        fieldId: field.id,
-        domainSlug: isTenantLevel ? null : domainSlug,
-        productSlug: isTenantLevel ? null : productSlug,
-      })
+      assetHref(
+        {
+          kind: "field",
+          entitySlug: entityId,
+          fieldId: field.id,
+          domainSlug: isTenantLevel ? null : domainSlug,
+          productSlug: isTenantLevel ? null : productSlug,
+        },
+        { query: (await searchParams) ?? {} }
+      )
     );
   }
 

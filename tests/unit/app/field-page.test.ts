@@ -263,6 +263,24 @@ describe("FieldDetailPage: the address names the field by its id", () => {
     );
   });
 
+  it("keeps the query string of the address it redirects (?version=, ?panel=, a repeated key), so the link still means what it said", async () => {
+    await expect(
+      FieldDetailPage({
+        params: params("payments", "checkout", "order", "ship-to"),
+        searchParams: Promise.resolve({ version: "1.2.0", panel: "governance", tag: ["a", "b"], gone: undefined }),
+      })
+    ).rejects.toThrow("redirect /schemas/payments/checkout/order/fields/f-checkout?version=1.2.0&panel=governance&tag=a&tag=b");
+    await expect(
+      FieldDetailPage({ params: params("enterprise", "entities", "customer", "email"), searchParams: Promise.resolve({ version: "2.0.0" }) })
+    ).rejects.toThrow("redirect /schemas/enterprise/entities/customer/fields/f-t1?version=2.0.0");
+  });
+
+  it("redirects with a bare address when there is no query string", async () => {
+    await expect(
+      FieldDetailPage({ params: params("payments", "checkout", "order", "ship-to"), searchParams: Promise.resolve({}) })
+    ).rejects.toThrow(/^redirect \/schemas\/payments\/checkout\/order\/fields\/f-checkout$/);
+  });
+
   it("renders at the id's address (no redirect, so no loop) and 404s for a field that is neither a slug nor an id of the entity", async () => {
     const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") });
     expect(element.props.field.id).toBe("f-checkout");
