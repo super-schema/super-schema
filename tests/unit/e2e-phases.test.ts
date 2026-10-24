@@ -4,7 +4,7 @@
  * first one's results and report, a shard that appends to the last command only, and a stale or missing login.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,7 +23,9 @@ import {
   playwrightCommand,
   runPhases,
   shardOf,
+  stallMessage,
 } from "../../scripts/e2e-phases.mjs";
+import { isSupportedNode } from "../../scripts/e2e-node.mjs";
 
 const AUTH = "/tmp/run/admin.json";
 const plan = (tier: string, extraArgs: string[] = [], noSerial = false) => planPhases({ tier, extraArgs, noSerial, authState: AUTH });
@@ -90,6 +92,7 @@ describe("planPhases", () => {
       PLAYWRIGHT_HTML_OUTPUT_DIR: path.join("playwright-report", "main"),
       PLAYWRIGHT_JUNIT_OUTPUT_FILE: path.join("test-results", "main", "junit.xml"),
       E2E_FLAKY_FILE: path.join("test-results", "main", "flaky-tests.json"),
+      E2E_HEARTBEAT_FILE: path.join("test-results", "main", "heartbeat"),
     });
     expect(serial.env.PLAYWRIGHT_HTML_OUTPUT_DIR).toBe(path.join("playwright-report", "serial"));
     expect(serial.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE).toBe(path.join("test-results", "serial", "junit.xml"));
@@ -107,6 +110,8 @@ describe("planPhases", () => {
       expect(phase.env.PLAYWRIGHT_HTML_OUTPUT_DIR).toBe(path.join("/runs/42", "playwright-report", phase.name));
       expect(phase.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "junit.xml"));
       expect(phase.env.E2E_FLAKY_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "flaky-tests.json"));
+      // The stall watchdog's heartbeat: a file of the phase's own, next to its junit file, outside the --output directory Playwright empties.
+      expect(phase.env.E2E_HEARTBEAT_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "heartbeat"));
       expect(phase.args).toContain(`--output=${path.join("/runs/42", "test-results", phase.name, "artifacts")}`);
     }
   });
@@ -334,8 +339,35 @@ describe("the browser of the phases (scripts/e2e-browser.cjs)", () => {
   });
 
   const script = path.resolve(__dirname, "../../scripts/e2e-phases.mjs");
+  // The Node the tests run on may be one the suite refuses (scripts/e2e-node.mjs): these runs are about the browser, so the hatch is open.
   const run = (args: string[], env: Record<string, string>) =>
-    spawnSync(process.execPath, [script, ...args], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv, timeout: 30_000 });
+    spawnSync(process.execPath, [script, ...args], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", E2E_ALLOW_UNSUPPORTED_NODE: "1", ...env } as unknown as NodeJS.ProcessEnv,
+      timeout: 30_000,
+    });
+
+  it("refuses an unsupported Node with exit 2 and the fix, before it decides a browser or makes a login (and, on a supported one, does not)", () => {
+    const result = spawnSync(process.execPath, [script, "smoke"], {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "", E2E_BROWSER_CHANNEL: "firefox" } as unknown as NodeJS.ProcessEnv, // fails right after the Node check, whatever Node this is
+      timeout: 30_000,
+    });
+    expect(result.status).toBe(2);
+    if (isSupportedNode(process.versions.node)) {
+      expect(result.stderr).toMatch(/E2E_BROWSER_CHANNEL must be "chrome" or "chromium"/);
+      expect(result.stderr).not.toMatch(/not supported by this suite/);
+    } else {
+      expect(result.stderr).toMatch(new RegExp(`Node ${process.versions.node.replace(/\./g, "\\.")} is not supported by this suite.*nvm use 22`));
+      expect(result.stderr).not.toMatch(/E2E_BROWSER_CHANNEL/);
+    }
+  });
+
+  it("refuses an E2E_STALL_MS that is not a positive whole number of milliseconds, with exit 2", () => {
+    const result = run(["smoke"], { E2E_STALL_MS: "soon" });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/E2E_STALL_MS must be a positive whole number of milliseconds \(got "soon"\)/);
+  });
 
   it("refuses a value of E2E_BROWSER_CHANNEL that is not a channel, with exit 2, before it does anything", () => {
     const result = run(["smoke"], { E2E_BROWSER_CHANNEL: "firefox" });
@@ -350,6 +382,53 @@ describe("the browser of the phases (scripts/e2e-browser.cjs)", () => {
     expect(result.stdout).toMatch(/\[e2e-phases\] main: playwright test/);
     expect(result.stdout).not.toMatch(/browser:/);
   }, 60_000);
+});
+
+describe("stallMessage", () => {
+  it("says what stalled, for how long, the likely cause and the Node, and that the phase ends with 124", () => {
+    expect(stallMessage({ phase: "main", idleMs: 300_000, ended: false, nodeVersion: "v26.3.1" })).toBe(
+      "[e2e-phases] main: stalled: no test finished for 5 min, workers idle, likely a Node/Playwright incompatibility (node v26.3.1); ending Playwright (exit 124)",
+    );
+  });
+
+  it("says that every test had finished when the reporter's last word was 'end' (the hang after the last test)", () => {
+    expect(stallMessage({ phase: "serial", idleMs: 20_000, ended: true, nodeVersion: "v26.3.1" })).toContain(
+      "stalled: every test had finished but Playwright did not exit for 20 s",
+    );
+  });
+});
+
+describe("a real hung Playwright is ended by the watchdog with exit 124", () => {
+  // The phases script runs `node <playwright cli>`; here the CLI is replaced by nothing real: the whole script is run with a limit of 2 s on
+  // a phase that never beats. `--list` phases have no watchdog, so this needs the Playwright of the checkout to START and hang: it is
+  // asked for a test file that waits forever through a config of its own.
+  it.skipIf(process.platform === "win32")("exit code 124 and the message, for a run that starts and never reports", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "ss-stall-"));
+    try {
+      const out = path.join(dir, "out");
+      // A Playwright config whose global setup never returns: the run begins, no test ever starts, no test ever ends.
+      writeFileSync(path.join(dir, "hang.config.cjs"), `module.exports = { testDir: ${JSON.stringify(dir)}, globalSetup: ${JSON.stringify(path.join(dir, "hang.setup.cjs"))}, reporter: [["list"], [${JSON.stringify(path.resolve(__dirname, "../e2e/reporters/heartbeat-reporter.ts"))}]] };\n`);
+      writeFileSync(path.join(dir, "hang.setup.cjs"), "module.exports = async () => new Promise(() => setInterval(() => {}, 1000));\n");
+      writeFileSync(path.join(dir, "a.spec.ts"), "import { test } from '@playwright/test'; test('never runs', async () => {});\n");
+      const result = spawnSync(process.execPath, [path.resolve(__dirname, "../../scripts/e2e-phases.mjs"), "nightly", "--config", path.join(dir, "hang.config.cjs")], {
+        encoding: "utf8",
+        cwd: path.resolve(__dirname, "../.."),
+        env: {
+          PATH: process.env.PATH ?? "",
+          E2E_ALLOW_UNSUPPORTED_NODE: "1",
+          E2E_BROWSER_CHANNEL: "chromium",
+          E2E_STALL_MS: "2000",
+          E2E_OUTPUT_ROOT: out,
+          E2E_AUTH_STATE: path.join(dir, "admin.json"),
+        } as unknown as NodeJS.ProcessEnv,
+        timeout: 60_000,
+      });
+      expect(result.stderr).toMatch(/\[e2e-phases\] main: stalled: no test finished for \d+ s, workers idle, likely a Node\/Playwright incompatibility \(node v/);
+      expect(result.status).toBe(124);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 90_000);
 });
 
 describe("exitCodeOf", () => {

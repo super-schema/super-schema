@@ -8,9 +8,14 @@
 // once to the child's whole group (the child, its workers, the browsers), and escalates to SIGKILL on a second signal or after a grace
 // period. Output still goes to the terminal (stdio is inherited); on Windows there are no groups and the child alone is signalled.
 //
+// The same module holds the STALL WATCHDOG (`watchForStall`, `stopStalledChild`): a child that stops making progress is ended whatever the
+// cause. A run of Playwright that never ends, with every worker idle, was seen on Node 26.3.1; the watchdog does not know why a run
+// hangs, only that nothing has finished for a long time (see `scripts/e2e-node.mjs` for the guard that keeps that Node away).
+//
 // Dependency-free, and unit tested (tests/unit/scripts/e2e-process.test.ts) with fake `kill` / timers / children.
 
 import { execFileSync, spawn } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 
 export const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 
@@ -108,6 +113,22 @@ export function descendantsOf(psOutput, pid) {
 }
 
 /**
+ * The pids below `pid` right now (`ps`), or none where `ps` cannot be read. Asked BEFORE the leader is ended: once it has gone its
+ * children are reparented and no longer found below it.
+ *
+ * @param {number} pid
+ * @param {{ listProcesses?: () => string, platform?: string }} [deps]
+ */
+export function treeBelow(pid, { listProcesses = () => execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 5000 }), platform = process.platform } = {}) {
+  if (platform === "win32") return [];
+  try {
+    return descendantsOf(listProcesses(), pid);
+  } catch {
+    return []; // no `ps`: the process alone
+  }
+}
+
+/**
  * SIGKILL for `pid` and everything below it, the deepest first. The last resort of a step that did not stop: a step that starts
  * children of its own, each the leader of its own group (the phases script and Playwright), is not ended by a signal to one group.
  * Never throws: a process that is already gone is what was wanted, and where `ps` cannot be read it kills the process alone.
@@ -115,15 +136,8 @@ export function descendantsOf(psOutput, pid) {
  * @param {number} pid
  * @param {{ listProcesses?: () => string, kill?: (pid: number, signal: string) => void, platform?: string }} [deps]
  */
-export function killTree(pid, { listProcesses = () => execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 5000 }), kill = process.kill, platform = process.platform } = {}) {
-  let below = [];
-  if (platform !== "win32") {
-    try {
-      below = descendantsOf(listProcesses(), pid);
-    } catch {
-      // no `ps`: the process alone
-    }
-  }
+export function killTree(pid, { listProcesses, kill = process.kill, platform = process.platform } = {}) {
+  const below = treeBelow(pid, { listProcesses, platform });
   for (const target of [...below.reverse(), pid]) {
     try {
       kill(target, "SIGKILL");
@@ -180,3 +194,104 @@ export function createInterrupt({ forward, force, graceMs = 30_000, debounceMs =
 
 /** The exit code for a run stopped by `signal`. */
 export const exitCodeForSignal = (signal) => SIGNAL_EXIT_CODE[signal] ?? 1;
+
+// ------------------------------------------------------------------------------------------------------------------------------------
+// The stall watchdog
+// ------------------------------------------------------------------------------------------------------------------------------------
+
+/** What `timeout(1)` answers for a command it had to end; the phases script exits with it when the watchdog ended Playwright. */
+export const STALL_EXIT_CODE = 124;
+
+/** No heartbeat for this long and the child is stalled (a test is at most 60 s, the setup a few seconds: 5 minutes is never a slow test). */
+export const DEFAULT_STALL_MS = 5 * 60 * 1000;
+
+/** How often the heartbeat is looked at. */
+export const POLL_MS = 15_000;
+
+/**
+ * A number of milliseconds from an environment value: undefined when it is not set (or empty), else a positive whole number. Anything else
+ * is an error that names the variable (a typo must not silently mean "no watchdog").
+ *
+ * @param {string} name
+ * @param {string | undefined} raw
+ * @returns {number | undefined}
+ */
+export function parseMillis(name, raw) {
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^[1-9]\d*$/.test(raw)) throw new Error(`${name} must be a positive whole number of milliseconds (got "${raw}")`);
+  return Number(raw);
+}
+
+/** How often to look for a heartbeat when a stall is `stallMs`: every 15 s, and often enough that a short limit (a test of the watchdog) is not overshot by much. */
+export const pollMsFor = (stallMs) => Math.max(250, Math.min(POLL_MS, Math.floor(stallMs / 4)));
+
+/** "20 s", "5 min", "1.5 min": for the message of a stall. */
+export function formatDuration(ms) {
+  return ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 6000) / 10} min`;
+}
+
+/**
+ * The heartbeat file as the watchdog reads it: its modification time and its text, or undefined when there is none (yet). Never throws.
+ *
+ * @param {string} file
+ * @param {{ stat?: (file: string) => { mtimeMs: number }, read?: (file: string) => string }} [deps]
+ * @returns {{ mtimeMs: number, text: string } | undefined}
+ */
+export function readHeartbeat(file, { stat = statSync, read = (f) => readFileSync(f, "utf8") } = {}) {
+  try {
+    return { mtimeMs: stat(file).mtimeMs, text: read(file) };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Looks at a heartbeat every `pollMs` and calls `onStall` once when the last sign of life (the heartbeat's modification time, or the
+ * moment the watch began while there is none) is `stallMs` old. The watch ends by itself after it fired; `stop()` ends it earlier (the
+ * child exited). It does NOT stop when the heartbeat says the run has ended: a run that hangs after its last test is the case it is for.
+ *
+ * @param {{ stallMs: number, pollMs?: number, readHeartbeat: () => ({ mtimeMs: number, text: string } | undefined),
+ *   onStall: (info: { idleMs: number, ended: boolean }) => void, now?: () => number, setTimer?: Function, clearTimer?: Function }} options
+ * @returns {{ stop: () => void, readonly stalled: boolean }}
+ */
+export function watchForStall({ stallMs, pollMs = POLL_MS, readHeartbeat: read, onStall, now = Date.now, setTimer = setInterval, clearTimer = clearInterval }) {
+  const startedAt = now();
+  let fired = false;
+  const timer = setTimer(() => {
+    if (fired) return;
+    const beat = read();
+    const idleMs = now() - Math.max(startedAt, beat?.mtimeMs ?? 0);
+    if (idleMs < stallMs) return;
+    fired = true;
+    clearTimer(timer);
+    onStall({ idleMs, ended: beat?.text.startsWith("end") ?? false });
+  }, pollMs);
+  timer?.unref?.();
+  return {
+    stop: () => clearTimer(timer),
+    get stalled() {
+      return fired;
+    },
+  };
+}
+
+/**
+ * Ends a stalled child and what it left behind: SIGTERM to its group (SIGKILL after `graceMs`), and SIGKILL for everything that was below
+ * it when this was called (workers and browsers are not all in the child's group, and a leader that dies on SIGTERM reparents them, so
+ * the tree is read first). Never rejects.
+ *
+ * @param {import("node:events").EventEmitter & { pid?: number, exitCode?: number | null, signalCode?: string | null }} child
+ * @param {{ graceMs?: number, listProcesses?: () => string, kill?: Function, platform?: string, setTimer?: Function, clearTimer?: Function }} [options]
+ * @returns {Promise<void>}
+ */
+export async function stopStalledChild(child, { graceMs = 5000, listProcesses, kill = process.kill, platform = process.platform, setTimer, clearTimer } = {}) {
+  const below = child.pid === undefined ? [] : treeBelow(child.pid, { listProcesses, platform });
+  await terminateGroup(child, { graceMs, kill, platform, setTimer, clearTimer });
+  for (const pid of below.reverse()) {
+    try {
+      kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}

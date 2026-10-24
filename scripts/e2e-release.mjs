@@ -37,8 +37,9 @@
 // `.next`: a run that would rebuild it under another run that serves from it refuses, and says so (`--reuse-build`). Two runs that
 // are given the same E2E_OUTPUT_ROOT share its server.log: give each its own.
 //
-// Exit codes: the phases script's (0 passed, 1 a test failed ...); 2 usage; 3 the environment could not be set up (Docker, database,
-// build, app); 128 + n when stopped by a signal.
+// Exit codes: the phases script's (0 passed, 1 a test failed ..., 124 Playwright stalled and the watchdog ended it); 2 usage (a Node
+// the suite does not support among it: scripts/e2e-node.mjs); 3 the environment could not be set up (Docker, database, build, app);
+// 128 + n when stopped by a signal.
 //
 // `planRun` (pure: arguments and environment in, a plan out) and `runRelease` (the steps, with every side effect behind `deps`) are
 // unit tested with fakes: tests/unit/scripts/e2e-release.test.ts. Dependency-free: node and docker.
@@ -53,9 +54,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { decideBrowser, describeBrowser, detectChrome, realProbes } from "./e2e-browser.cjs";
 import { hashBuildInputs } from "./e2e-build-inputs.mjs";
-import { appEnvironment, hermeticEnv, phasesEnvironment } from "./e2e-env.mjs";
+import { appEnvironment, hermeticEnv, phasesEnvironment, runnerKnobs } from "./e2e-env.mjs";
+import { describeNode, nodeProblem } from "./e2e-node.mjs";
 import { isEntryPoint, parseCli, planPhases } from "./e2e-phases.mjs";
-import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spawnGroup, terminateGroup } from "./e2e-process.mjs";
+import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, signalGroup, spawnGroup, terminateGroup } from "./e2e-process.mjs";
 
 /**
  * @typedef {{ command: string, args: string[], env: Record<string, string>, cwd: string }} CommandSpec
@@ -64,7 +66,7 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spa
  *   runId: string, containerName: string, image: string, dbPassword: string, authSecret: string,
  *   root: string, tmpDir: string, outputRoot: string, serverLog: string, authState: string,
  *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
- *   browser: import("./e2e-browser.cjs").BrowserDecision,
+ *   browser: import("./e2e-browser.cjs").BrowserDecision, nodeText: string, knobs: Record<string, string>,
  * }} FixedPlan the part of a plan that does not depend on the ports
  * @typedef {FixedPlan & {
  *   ports: { app: number, db: number }, databaseUrl: string, baseUrl: string,
@@ -235,7 +237,7 @@ export function withPorts(fixed, ports) {
   const databaseUrl = `postgresql://${DB_USER}:${fixed.dbPassword}@127.0.0.1:${ports.db}/${DB_NAME}`;
   const baseUrl = `http://localhost:${ports.app}`;
   const app = appEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, authSecret: fixed.authSecret, pgliteDir: path.join(fixed.tmpDir, "pglite-unused") });
-  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState, browserChannel: fixed.browser.channel });
+  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState, browserChannel: fixed.browser.channel, knobs: fixed.knobs });
   const node = process.execPath;
   return {
     ...fixed,
@@ -259,8 +261,9 @@ export function withPorts(fixed, ports) {
  *
  * @param {string[]} argv the arguments after the script name
  * @param {Record<string, string | undefined>} [env]
- * @param {{ root?: string, tmpdir?: string, bins?: { prisma: string, next: string }, randomHex?: (bytes: number) => string, randomPort?: () => number, chromePath?: string | undefined }} [options]
- *   `chromePath` is the Google Chrome of the machine (the key present with `undefined`: there is none); the machine is asked when it is not given
+ * @param {{ root?: string, tmpdir?: string, bins?: { prisma: string, next: string }, randomHex?: (bytes: number) => string, randomPort?: () => number, chromePath?: string | undefined, nodeVersions?: { node: string } }} [options]
+ *   `chromePath` is the Google Chrome of the machine (the key present with `undefined`: there is none); the machine is asked when it is not given.
+ *   `nodeVersions` is this process's `process.versions` unless a test says another Node
  * @returns {RunPlan}
  */
 export function planRun(argv, env = process.env, options = {}) {
@@ -271,6 +274,15 @@ export function planRun(argv, env = process.env, options = {}) {
   const outputRoot = path.resolve(args.outputRoot ?? env.E2E_OUTPUT_ROOT ?? path.join(root, "test-results", `run-${runId}`));
   const tmpDir = path.join(options.tmpdir ?? os.tmpdir(), `${CONTAINER_PREFIX}${runId}`);
   const baseEnv = hermeticEnv(env);
+  // The Node and the runner's knobs, before anything else is decided or provisioned. A listing runs no test and cannot stall: any Node may list.
+  const nodeVersions = options.nodeVersions ?? process.versions;
+  const problem = args.listOnly ? null : nodeProblem(nodeVersions, env);
+  if (problem) throw new UsageError(problem);
+  try {
+    for (const name of ["E2E_STALL_MS", "E2E_GLOBAL_TIMEOUT_MS"]) parseMillis(name, env[name]);
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
+  }
   // The browser is decided here, once, before anything is provisioned: an explicit chrome that this machine cannot give is a usage error
   // (not a run that fails at its last step), and every later step reads the same decision.
   let browser;
@@ -312,6 +324,8 @@ export function planRun(argv, env = process.env, options = {}) {
     bins: options.bins ?? resolveBins(root),
     phasesArgv,
     browser,
+    nodeText: describeNode(nodeVersions, env),
+    knobs: runnerKnobs(env),
   };
   return withPorts(fixed, pickPorts(options.randomPort));
 }
@@ -458,6 +472,7 @@ export async function runRelease(initialPlan, deps) {
     } catch (error) {
       browserText = `unknown (${error instanceof Error ? error.message : String(error)})`;
     }
+    deps.log(`[e2e-release] ${plan.nodeText}`);
     deps.log(`[e2e-release] browser: ${browserText}`);
 
     undo.push({ name: "remove the temp directory", undo: () => deps.removeTmp(plan), hint: () => `rm -rf ${plan.tmpDir}` });

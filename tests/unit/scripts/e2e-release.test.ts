@@ -49,7 +49,7 @@ const DEVELOPER = {
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 // No Chrome unless a test says so: the machine the tests run on must not decide what they see.
 const plan = (argv: string[] = ["--tier", "smoke"], env: Record<string, string> = DEVELOPER, options: Parameters<typeof planRun>[2] = {}) =>
-  planRun(argv, env, { root: "/repo", tmpdir: "/tmp", bins: BINS, chromePath: undefined, ...options });
+  planRun(argv, env, { root: "/repo", tmpdir: "/tmp", bins: BINS, chromePath: undefined, nodeVersions: { node: "22.12.0" }, ...options });
 
 describe("parseArgs", () => {
   it("reads the tier in both spellings, and the last one wins (an npm script's default can be overridden)", () => {
@@ -264,6 +264,45 @@ describe("planRun: the environment of every child", () => {
   it("keeps the rest of the environment (PATH, the browsers' cache)", () => {
     expect(p.env.phases.PATH).toBe("/usr/bin:/bin");
     expect(p.env.phases.PLAYWRIGHT_BROWSERS_PATH).toBe("/cache/ms-playwright");
+  });
+
+  describe("the Node (scripts/e2e-node.mjs) and the runner's knobs", () => {
+    it("refuses a Node the suite does not support with a usage error, before anything is provisioned, naming the fix", () => {
+      expect(() => plan(["--tier", "smoke"], DEVELOPER, { nodeVersions: { node: "26.3.1" } })).toThrow(UsageError);
+      expect(() => plan(["--tier", "smoke"], DEVELOPER, { nodeVersions: { node: "26.3.1" } })).toThrow(/Node 26\.3\.1 is not supported by this suite.*nvm use 22/);
+    });
+
+    it("accepts it with E2E_ALLOW_UNSUPPORTED_NODE=1, says so in its header text, and hands the hatch to the browser run", () => {
+      const p = plan(["--tier", "smoke"], { ...DEVELOPER, E2E_ALLOW_UNSUPPORTED_NODE: "1" }, { nodeVersions: { node: "26.3.1" } });
+      expect(p.nodeText).toBe("node v26.3.1 (unsupported, let through by E2E_ALLOW_UNSUPPORTED_NODE=1)");
+      expect(p.env.phases.E2E_ALLOW_UNSUPPORTED_NODE).toBe("1");
+    });
+
+    it("lets any Node list the tests (a listing runs nothing that can stall)", () => {
+      expect(() => plan(["--tier", "smoke", "--list-only"], DEVELOPER, { nodeVersions: { node: "26.3.1" } })).not.toThrow();
+    });
+
+    it("names a supported Node plainly, and does not hand the hatch (or any knob) to a run that did not set one", () => {
+      const p = plan();
+      expect(p.nodeText).toBe("node v22.12.0");
+      for (const name of ["E2E_ALLOW_UNSUPPORTED_NODE", "E2E_STALL_MS", "E2E_GLOBAL_TIMEOUT_MS"]) expect(p.env.phases, name).not.toHaveProperty(name);
+    });
+
+    it("hands the stall limit and the global timeout of the shell to the browser run, and to nothing else (the app never reads them)", () => {
+      const p = plan(["--tier", "smoke"], { ...DEVELOPER, E2E_STALL_MS: "120000", E2E_GLOBAL_TIMEOUT_MS: "3600000" });
+      expect(p.env.phases.E2E_STALL_MS).toBe("120000");
+      expect(p.env.phases.E2E_GLOBAL_TIMEOUT_MS).toBe("3600000");
+      for (const env of [p.env.app, p.env.db]) {
+        expect(env).not.toHaveProperty("E2E_STALL_MS");
+        expect(env).not.toHaveProperty("E2E_GLOBAL_TIMEOUT_MS");
+      }
+    });
+
+    it("refuses a stall limit or a global timeout that is not a positive whole number of milliseconds, before anything is provisioned", () => {
+      expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_STALL_MS: "5min" })).toThrow(UsageError);
+      expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_STALL_MS: "5min" })).toThrow(/E2E_STALL_MS must be a positive whole number of milliseconds/);
+      expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_GLOBAL_TIMEOUT_MS: "-1" })).toThrow(/E2E_GLOBAL_TIMEOUT_MS must be/);
+    });
   });
 
   describe("the browser (E2E_BROWSER_CHANNEL, scripts/e2e-browser.cjs)", () => {
@@ -562,7 +601,8 @@ describe("runRelease", () => {
     const p = plan();
     await runRelease(p, deps);
     const start = messages.findIndex((m) => m.includes(`run ${p.runId}: tier`));
-    expect(messages[start + 1]).toBe("[e2e-release] browser: Google Chrome 155.0.8059.85 [channel chrome: fake]");
+    expect(messages[start + 1]).toBe("[e2e-release] node v22.12.0");
+    expect(messages[start + 2]).toBe("[e2e-release] browser: Google Chrome 155.0.8059.85 [channel chrome: fake]");
     expect(messages.at(-1)).toMatch(/done: exit 0.*; browser: Google Chrome 155\.0\.8059\.85 \[channel chrome: fake\]$/);
   });
 

@@ -15,11 +15,14 @@
 //            reaches it (NODE_ENV is Next's, TEST_EMAIL is read by the browser run, which loads no `.env`);
 //   ALLOWED  read by the app and passed through from the shell on purpose, with the reason.
 //
-// A fifth group is for the browser run alone, which the app never sees:
+// Two more groups are for the browser run alone, which the app never sees:
 //
 //   BROWSER RUN  E2E_BROWSER_CHANNEL (`chrome` | `chromium`, scripts/e2e-browser.cjs). The shell's value is dropped like every E2E_ name
 //            (that prefix is the runner's); the runner decides the channel from it (an explicit value wins, CI forces the bundled
 //            Chromium, else Chrome when the machine has it) and sets its decision for the browser run only (`phasesEnvironment`).
+//   KNOBS    the runner's own settings (E2E_ALLOW_UNSUPPORTED_NODE, E2E_STALL_MS, E2E_GLOBAL_TIMEOUT_MS): read from the shell by the
+//            release runner, checked there, and handed to the browser run exactly as set (`runnerKnobs`, `phasesEnvironment`); the
+//            E2E_ prefix would otherwise drop them on the way, and the phases script and Playwright read them.
 
 /** The defaults of the classification importer (src/lib/importers/classification-config.ts; a unit test pins these to its constants). */
 export const CLASSIFICATION_DEFAULTS = {
@@ -130,6 +133,29 @@ export const HERMETIC_BROWSER_RUN_NAMES = Object.freeze({
   E2E_BROWSER_CHANNEL: "which browser the browser run uses, chrome or chromium: decided by the runner (scripts/e2e-browser.cjs) and set for the phases script and Playwright alone",
 });
 
+/** The runner's own settings: read from the shell, handed to the browser run when set. Never to the app (it reads none of them). */
+export const HERMETIC_RUNNER_KNOB_NAMES = Object.freeze({
+  E2E_ALLOW_UNSUPPORTED_NODE: "`1` lets a Node outside 20.9+ / 22 run the suite (scripts/e2e-node.mjs refuses it otherwise); the phases script checks it again",
+  E2E_STALL_MS: "how long the phases script waits for a sign of life from Playwright (the heartbeat file) before it ends it with exit 124; default 5 minutes",
+  E2E_GLOBAL_TIMEOUT_MS: "playwright.config.ts globalTimeout: a hard ceiling for the whole Playwright run (CI sets it); unset means none",
+});
+
+/**
+ * The knobs the shell has set (a name that is unset or empty is left out), for the browser run.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {Record<string, string>}
+ */
+export function runnerKnobs(env) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const name of Object.keys(HERMETIC_RUNNER_KNOB_NAMES)) {
+    const value = env[name];
+    if (value !== undefined && value !== "") out[name] = value;
+  }
+  return out;
+}
+
 /** Prefixes of the names the runner owns or the app reads: whatever the shell has under them is dropped (the unit test pins the groups above, these catch names added later). */
 const OWNED_PREFIXES = /^(PG[A-Z_]+|AUTH_[A-Z0-9_]+|NEXTAUTH_[A-Z0-9_]+|E2E_[A-Z0-9_]+|ASYNCAPI_PARSER_[A-Z_]+|AI_[A-Z_]+|SCHEMA_(IMPORT|CLASSIFICATION)_[A-Z_]+)$/;
 
@@ -169,15 +195,16 @@ export function appEnvironment(base, run) {
  * `.env` (a blank TEST_EMAIL would be the login "" and not the seeded admin).
  *
  * `run.browserChannel` is the runner's decision (`chrome` | `chromium`); the browser run gets it as E2E_BROWSER_CHANNEL, and gets nothing
- * when the runner decided nothing (the shell's own value was dropped from `base`).
+ * when the runner decided nothing (the shell's own value was dropped from `base`). `run.knobs` is `runnerKnobs(shell)`.
  *
  * @param {Record<string, string>} base
- * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string, browserChannel?: string }} run
+ * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string, browserChannel?: string, knobs?: Record<string, string> }} run
  * @returns {Record<string, string>}
  */
 export function phasesEnvironment(base, run) {
   return {
     ...base,
+    ...(run.knobs ?? {}),
     ...(run.browserChannel ? { E2E_BROWSER_CHANNEL: run.browserChannel } : {}),
     DB_PROVIDER: "postgresql",
     DATABASE_URL: run.databaseUrl,

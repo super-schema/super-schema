@@ -18,10 +18,12 @@ import {
   HERMETIC_BLANKED_NAMES,
   HERMETIC_BROWSER_RUN_NAMES,
   HERMETIC_DROPPED_NAMES,
+  HERMETIC_RUNNER_KNOB_NAMES,
   HERMETIC_SET_NAMES,
   appEnvironment,
   hermeticEnv,
   phasesEnvironment,
+  runnerKnobs,
   setValues,
 } from "../../../scripts/e2e-env.mjs";
 
@@ -77,8 +79,20 @@ describe("the groups", () => {
     for (const reason of Object.values(HERMETIC_BROWSER_RUN_NAMES)) expect(reason.length).toBeGreaterThan(10);
   });
 
+  it("pin the runner's own knobs: the Node hatch, the stall limit and the global timeout, each with a reason", () => {
+    expect(Object.keys(HERMETIC_RUNNER_KNOB_NAMES).sort()).toEqual(["E2E_ALLOW_UNSUPPORTED_NODE", "E2E_GLOBAL_TIMEOUT_MS", "E2E_STALL_MS"]);
+    for (const reason of Object.values(HERMETIC_RUNNER_KNOB_NAMES)) expect(reason.length).toBeGreaterThan(10);
+  });
+
   it("are disjoint: a name is in one group", () => {
-    const groups = [HERMETIC_SET_NAMES, HERMETIC_BLANKED_NAMES, Object.keys(HERMETIC_DROPPED_NAMES), Object.keys(HERMETIC_ALLOWED_NAMES), Object.keys(HERMETIC_BROWSER_RUN_NAMES)];
+    const groups = [
+      HERMETIC_SET_NAMES,
+      HERMETIC_BLANKED_NAMES,
+      Object.keys(HERMETIC_DROPPED_NAMES),
+      Object.keys(HERMETIC_ALLOWED_NAMES),
+      Object.keys(HERMETIC_BROWSER_RUN_NAMES),
+      Object.keys(HERMETIC_RUNNER_KNOB_NAMES),
+    ];
     const all = groups.flat();
     expect(all.filter((name, i) => all.indexOf(name) !== i)).toEqual([]);
   });
@@ -93,6 +107,26 @@ describe("the groups", () => {
       SCHEMA_CLASSIFICATION_LEVEL_FIELD: DEFAULT_CLASSIFICATION_LEVEL_FIELD,
       SCHEMA_CLASSIFICATION_CATEGORY_FIELD: DEFAULT_CLASSIFICATION_CATEGORY_FIELD,
     });
+  });
+});
+
+describe("the runner's knobs", () => {
+  it("runnerKnobs keeps the knobs the shell has set, drops the unset and the empty, and nothing else", () => {
+    expect(runnerKnobs({ E2E_STALL_MS: "1000", E2E_ALLOW_UNSUPPORTED_NODE: "", E2E_OUTPUT_ROOT: "/x", PATH: "/usr/bin" })).toEqual({ E2E_STALL_MS: "1000" });
+    expect(runnerKnobs({})).toEqual({});
+  });
+
+  it("the shell's knobs are dropped from the base environment (the E2E_ prefix), so they reach the browser run only through runnerKnobs", () => {
+    const base = hermeticEnv({ PATH: "/usr/bin", E2E_STALL_MS: "1000", E2E_ALLOW_UNSUPPORTED_NODE: "1", E2E_GLOBAL_TIMEOUT_MS: "5" });
+    expect(base).toEqual({ PATH: "/usr/bin" });
+    const phases = phasesEnvironment(base, { ...RUN, outputRoot: "/out", authState: "/a.json", knobs: { E2E_STALL_MS: "1000" } });
+    expect(phases.E2E_STALL_MS).toBe("1000");
+    expect(phases).not.toHaveProperty("E2E_ALLOW_UNSUPPORTED_NODE");
+  });
+
+  it("the run's own settings win over a knob of the same name (a knob cannot repoint the run)", () => {
+    const phases = phasesEnvironment({}, { ...RUN, outputRoot: "/out", authState: "/a.json", knobs: { E2E_BASE_URL: "http://elsewhere", E2E_STALL_MS: "9" } as Record<string, string> });
+    expect(phases.E2E_BASE_URL).toBe(RUN.baseUrl);
   });
 });
 

@@ -30,8 +30,16 @@
 // E2E_BROWSER_CHANNEL (playwright.config.ts reads it), and names the browser with its version at the start and in the summary. A listing
 // (`--list`) starts no browser and names none.
 //
+// The Node: the suite runs on Node 20.9+ or 22 (scripts/e2e-node.mjs): another Node is refused with exit 2 before anything is made,
+// unless E2E_ALLOW_UNSUPPORTED_NODE=1. The Node of the run is named in the header (`[e2e-phases] node: v22.12.0`).
+//
+// The stall watchdog: each phase gets a heartbeat file (E2E_HEARTBEAT_FILE, <results>/<phase>/heartbeat) that
+// tests/e2e/reporters/heartbeat-reporter.ts rewrites whenever a test starts or ends. A Playwright whose heartbeat is older than
+// E2E_STALL_MS (default 5 minutes) is ended (its group, then everything below it) and the phase's code is 124. It does not matter
+// why it hangs, nor that the reporter's last word was "end": the hang after the last test, with every worker idle, is the case this is for.
+//
 // Dependency-free on purpose: the release runner calls it, and the planner and the pieces around it (`planPhases`, `parseCli`,
-// `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `phaseEnvironment`, `isEntryPoint`) are unit tested
+// `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `phaseEnvironment`, `stallMessage`, `isEntryPoint`) are unit tested
 // (tests/unit/e2e-phases.test.ts) without running anything.
 
 import { randomBytes } from "node:crypto";
@@ -40,7 +48,23 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { browserEnv, decideForThisProcess, describeBrowser, realProbes } from "./e2e-browser.cjs";
-import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spawnGroup } from "./e2e-process.mjs";
+import { describeNode, nodeProblem } from "./e2e-node.mjs";
+import {
+  DEFAULT_STALL_MS,
+  SIGNALS,
+  STALL_EXIT_CODE,
+  createInterrupt,
+  exitCodeForSignal,
+  formatDuration,
+  killTree,
+  parseMillis,
+  pollMsFor,
+  readHeartbeat,
+  signalGroup,
+  spawnGroup,
+  stopStalledChild,
+  watchForStall,
+} from "./e2e-process.mjs";
 
 export const TIERS = ["smoke", "regression", "nightly", "serial"];
 
@@ -188,6 +212,7 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState, 
         PLAYWRIGHT_HTML_OUTPUT_DIR: report(step.name),
         PLAYWRIGHT_JUNIT_OUTPUT_FILE: path.join(results(step.name), "junit.xml"),
         E2E_FLAKY_FILE: path.join(results(step.name), "flaky-tests.json"),
+        E2E_HEARTBEAT_FILE: path.join(results(step.name), "heartbeat"),
       },
     });
   });
@@ -348,21 +373,54 @@ export function isEntryPoint(moduleUrl, argv1, realpath = realpathSync) {
 }
 
 /**
+ * What is said when the watchdog ends a phase. `ended` is true when the reporter's last word was "end": every test had been reported and
+ * Playwright still did not exit.
+ *
+ * @param {{ phase: string, idleMs: number, ended: boolean, nodeVersion: string }} input
+ */
+export function stallMessage({ phase, idleMs, ended, nodeVersion }) {
+  const what = ended ? "every test had finished but Playwright did not exit" : "no test finished";
+  return `[e2e-phases] ${phase}: stalled: ${what} for ${formatDuration(idleMs)}, workers idle, likely a Node/Playwright incompatibility (node ${nodeVersion}); ending Playwright (exit ${STALL_EXIT_CODE})`;
+}
+
+/**
  * @param {Phase} phase
  * @param {(child: import("node:child_process").ChildProcess) => void} onChild
  * @param {{ channel: "chrome" | "chromium" } | undefined} browser
+ * @param {number} stallMs how long without a heartbeat is a stall
  * @returns {Promise<number>}
  */
-function runPhase(phase, onChild, browser) {
+function runPhase(phase, onChild, browser, stallMs) {
   return new Promise((resolve) => {
     const { command, args } = playwrightCommand();
+    const heartbeat = phase.listOnly ? undefined : phase.env.E2E_HEARTBEAT_FILE;
+    if (heartbeat) {
+      // A heartbeat of an earlier run in the same directory must not look like a sign of life of this one.
+      mkdirSync(path.dirname(heartbeat), { recursive: true });
+      rmSync(heartbeat, { force: true });
+    }
     const child = spawnGroup(command, [...args, ...phase.args], { stdio: "inherit", env: phaseEnvironment(process.env, phase, browser) });
     onChild(child);
+    const watcher = heartbeat
+      ? watchForStall({
+          stallMs,
+          pollMs: pollMsFor(stallMs),
+          readHeartbeat: () => readHeartbeat(heartbeat),
+          onStall: ({ idleMs, ended }) => {
+            console.error(stallMessage({ phase: phase.name, idleMs, ended, nodeVersion: process.version }));
+            void stopStalledChild(child);
+          },
+        })
+      : undefined;
     child.on("error", (error) => {
+      watcher?.stop();
       console.error(`[e2e-phases] ${phase.name}: could not start playwright: ${error.message}`);
       resolve(1);
     });
-    child.on("exit", (code, signal) => resolve(code ?? (signal ? exitCodeForSignal(signal) : 1)));
+    child.on("exit", (code, signal) => {
+      watcher?.stop();
+      resolve(watcher?.stalled ? STALL_EXIT_CODE : (code ?? (signal ? exitCodeForSignal(signal) : 1)));
+    });
   });
 }
 
@@ -380,6 +438,16 @@ async function main() {
   const first = firstPlan.phases[0];
   if (!first) {
     console.error(`[e2e-phases] nothing to run: ${firstPlan.skipped.join("; ")}`);
+    process.exit(2);
+  }
+  // The Node and the watchdog's limit, before anything is made. A listing runs no test and cannot stall: any Node may list.
+  let stallMs = DEFAULT_STALL_MS;
+  try {
+    const problem = first.listOnly ? null : nodeProblem(process.versions, process.env);
+    if (problem) throw new Error(problem);
+    stallMs = parseMillis("E2E_STALL_MS", process.env.E2E_STALL_MS) ?? DEFAULT_STALL_MS;
+  } catch (error) {
+    console.error(`[e2e-phases] ${error instanceof Error ? error.message : String(error)}`);
     process.exit(2);
   }
   // The browser, before anything is made (a login file, a child): an explicit chrome without Chrome, or a value that is no channel, ends here.
@@ -402,6 +470,7 @@ async function main() {
   const auth = chooseAuthState({ env: process.env, firstPhaseRunsSetup: first.runsSetup, runId: `${process.pid}-${randomBytes(4).toString("hex")}` });
   const { phases, skipped } = planPhases({ ...cli, authState: auth.file, outputRoot });
   if (!first.listOnly) {
+    console.log(`[e2e-phases] ${describeNode(process.versions, process.env)}`);
     console.log(`[e2e-phases] browser: ${browserText}`);
     console.log(`[e2e-phases] login: ${auth.file}${auth.ownedByThisRun ? " (this run's own, removed at the end)" : ""}`);
   }
@@ -433,6 +502,7 @@ async function main() {
             if (interrupt.interrupted) signalGroup(c, interrupt.signal); // the signal came between two phases
           },
           browser,
+          stallMs,
         ),
       existsSync,
       statSync,

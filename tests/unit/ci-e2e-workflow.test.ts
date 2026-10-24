@@ -369,7 +369,8 @@ describe("e2e.yml: the tiers", () => {
     const bins = { prisma: "/repo/node_modules/prisma/build/index.js", next: "/repo/node_modules/next/dist/bin/next" };
     for (const id of Object.keys(workflow.jobs)) {
       for (const { leg, argv } of releaseInvocations(id)) {
-        const plan = planRun(argv, {}, { root: "/repo", tmpdir: "/tmp", bins });
+        // The plan is about the arguments, not about the Node the test happens to run on (scripts/e2e-node.mjs refuses some; CI's own is 22).
+        const plan = planRun(argv, {}, { root: "/repo", tmpdir: "/tmp", bins, nodeVersions: { node: "22.12.0" } });
         expect(plan.phasesArgv.length, `${id} ${leg}`).toBeGreaterThan(0);
       }
     }

@@ -22,7 +22,10 @@ Design and decisions: `docs/superpowers/specs/2026-10-23-release-ui-suite-design
   run in the Chromium Playwright downloads. Which one, and how to force the other: [The browser](#the-browser-google-chrome-or-the-bundled-chromium).
 - **macOS or Linux.** The runner puts each child in a process group of its own and signals the group (`kill(-pid)`, `ps` for the last
   resort); on Windows it signals the child alone and is not tested there.
-- Node and `npm ci`, as for the app. No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
+- **Node 20.9+ or 22** (`.nvmrc` says 22, CI runs 22; `engines` in `package.json` is `^20.9.0 || ^22.0.0`) and `npm ci`, as for the app:
+  `nvm install` (once) and `nvm use` in the checkout pick 22. The runner and the phases script refuse any other Node with exit code 2 before they provision
+  anything: on Node 26.3.1 a run stopped after its last test with every Playwright worker idle and never ended (see Troubleshooting).
+  `E2E_ALLOW_UNSUPPORTED_NODE=1` runs the suite on another Node anyway. No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
   app, the seed and prisma (Next, dotenv and prisma/load-env-file.ts load it), so the runner defines every name the app reads, below: a
   `.env` cannot change what a run tests.
 
@@ -85,8 +88,9 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
 
 `scripts/e2e-release.mjs`, in this order:
 
-1. Checks that Docker is running; decides the browser (above; an explicit `E2E_BROWSER_CHANNEL=chrome` that this machine cannot give is exit 2
-   before anything is provisioned) and names it with its version.
+1. Checks the Node (20.9+ or 22, else exit 2 with `nvm use 22`: above), that Docker is running, and decides the browser (above; an explicit
+   `E2E_BROWSER_CHANNEL=chrome` that this machine cannot give is exit 2 before anything is provisioned); names the Node and the browser with
+   its version.
 2. Picks a port for the app and one for the database (random, 20000-32000: below the ports Linux gives outgoing connections; never 3000,
    5432 or 5380-5410; checked free on loopback when the run starts, and the app's again after the build).
 3. `docker run -d --rm --name ss-e2e-<id> postgres:16`, bound to `127.0.0.1`, data on tmpfs, a random password; waits until it accepts connections.
@@ -98,7 +102,7 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
    are not under the run's own origin (an `AUTH_URL` got through) or Google sign-in is on (a `GOOGLE_CLIENT_ID` got through). The
    app's output goes to `<output root>/server.log`.
 7. `node scripts/e2e-phases.mjs <tier>` with `E2E_BASE_URL`, `E2E_DATABASE_URL`, `E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE` and `E2E_BROWSER_CHANNEL` of the run's own.
-   The exit code of the run is that command's.
+   The exit code of the run is that command's: 124 when its stall watchdog ended a Playwright that stopped making progress (below).
 8. Teardown, in the reverse order of the setup: the app is stopped (SIGTERM, SIGKILL after 10 s), the container is removed
    (`docker rm -f`), the temp directory (login file) is deleted. This happens in a `finally`, and on SIGINT, SIGTERM and SIGHUP. A teardown
    step that fails is said again in the last line (`TEARDOWN INCOMPLETE: ...` with the command to run by hand, e.g.
@@ -121,12 +125,13 @@ app reads is in exactly one group (`scripts/e2e-env.mjs`):
 | dropped | `NODE_ENV` (Next sets it), `PORT`, `HOSTNAME` (the app is started with `-p` and `-H`), `TEST_EMAIL`, `TEST_PASSWORD` (the browser run reads them and loads no `.env`; the seeded admin is the contract) | not defined |
 | allowed | `NEXT_PUBLIC_APP_URL` (baked into the build, so part of its hash), `NODE_OPTIONS` | passed through from your shell |
 | browser run | `E2E_BROWSER_CHANNEL` (`chrome` or `chromium`) | the runner's own decision (above), for the phases script and Playwright only; never the app, the migration, the seed or the build. Your shell's value is dropped like every `E2E_` name and read by the runner as rule 1 |
+| knobs | `E2E_ALLOW_UNSUPPORTED_NODE`, `E2E_STALL_MS`, `E2E_GLOBAL_TIMEOUT_MS` | the runner reads them from your shell, checks them (a stall limit or timeout that is not a positive whole number of milliseconds is exit 2), and hands them, as set, to the phases script and Playwright only; never the app. See "A run that stalls" |
 
 `AUTH_URL` and `AUTH_SECRET` are set, not blanked: Auth.js reads `AUTH_URL ?? NEXTAUTH_URL` and `AUTH_SECRET ?? NEXTAUTH_SECRET`, and an empty
 string is not nullish, so a blank `AUTH_URL` would switch the run's `NEXTAUTH_URL` off. Everything else in your shell is passed on;
 whatever your shell has under the prefixes `PG`, `AUTH_`, `NEXTAUTH_`, `E2E_`, `ASYNCAPI_PARSER_`, `AI_`, `SCHEMA_IMPORT_` or
 `SCHEMA_CLASSIFICATION_` is dropped. The browser run (Playwright) gets the same shell minus these, plus `E2E_BASE_URL`, `E2E_DATABASE_URL`,
-`E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE`, `E2E_BROWSER_CHANNEL`, `DATABASE_URL` and `DB_PROVIDER`; it blanks nothing.
+`E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE`, `E2E_BROWSER_CHANNEL`, `DATABASE_URL`, `DB_PROVIDER` and the knobs you set; it blanks nothing.
 
 **When the app starts to read a new environment name**, `tests/unit/scripts/e2e-env.test.ts` fails (it scans `src`, the seed,
 `prisma.config.ts`, `next.config.ts` and `scripts/db.ts`, and reads `src/env.ts`): put the name in one of the groups in
@@ -313,10 +318,20 @@ hidden: it is listed as flaky in all of the above. Old runs stay in `test-result
   one of the three above). The message names the setting; `server.log` has the app's side.
 - **A run is stuck after Ctrl-C**: the first Ctrl-C asks the step in progress to stop and runs the teardown; a second one kills the step
   at once (the teardown still runs). It never leaves the container behind unless you pass `--keep`.
-- **A run that never ends, with every Playwright worker idle** (the list shows the last test, no summary, no CPU, no sockets): seen four
-  times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, never on Node 20.19.4 or on the small probe specs that were tried.
-  Run the release runner with Node 20 or 22 (CI uses 22: `PATH=~/.nvm/versions/node/v22.../bin:$PATH npm run test:e2e:release ...`; the build
-  is made once per Node major, it is part of the reuse hash). Ctrl-C ends the run and the teardown removes its container as usual.
+- **"Node 26.3.1 is not supported by this suite ..."** (exit 2, before anything is provisioned): the Node of your shell is not 20.9+ or 22.
+  Run `nvm use 22` in the checkout (`.nvmrc`), or put a Node 20.9+/22 first on the path for one command:
+  `PATH="$HOME/.nvm/versions/node/v22.12.0/bin:$PATH" npm run test:e2e:release -- --tier smoke` (`ls ~/.nvm/versions/node` lists the ones you have;
+  the build is made once per Node major, it is part of the reuse hash). `E2E_ALLOW_UNSUPPORTED_NODE=1` overrides the refusal.
+- **A run that stalls**: a run that never ends, with every Playwright worker idle (the list shows the last test or no test at all, no summary, no
+  CPU, no sockets), was seen four times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, never on Node 20.19.4. The Node guard keeps
+  that Node away, and a watchdog covers whatever else makes a run hang: the phases script gives each phase a heartbeat file
+  (`<output root>/test-results/<phase>/heartbeat`, rewritten by `tests/e2e/reporters/heartbeat-reporter.ts` at every test start and end and at the
+  end of the run) and polls its modification time every 15 s. With no heartbeat for `E2E_STALL_MS` (5 minutes by default; the longest test is 60 s)
+  it prints `stalled: no test finished for N min, workers idle, likely a Node/Playwright incompatibility (node <version>)`, ends Playwright (SIGTERM to
+  its group, then SIGKILL for it and everything below it) and exits with **124**; the release runner then tears everything down as usual. It does not
+  stop at the reporter's last "end": a hang after the last test is what it is for (the message then says every test had finished).
+  `E2E_GLOBAL_TIMEOUT_MS` is Playwright's own `globalTimeout`, a hard ceiling on the whole run in milliseconds (unset: none; a CI job sets it).
+  Ctrl-C ends the run and the teardown removes its container as usual.
 - **Port conflicts**: ports are picked at random and checked when the run starts; if the database port is taken at that moment the runner
   picks another (three tries).
 

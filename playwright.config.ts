@@ -1,4 +1,4 @@
-import { defineConfig, devices } from "@playwright/test";
+import { defineConfig, devices, type ReporterDescription } from "@playwright/test";
 import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
 import { decideForThisProcess } from "./scripts/e2e-browser.cjs";
 
@@ -42,6 +42,10 @@ import { decideForThisProcess } from "./scripts/e2e-browser.cjs";
  * report has a Flaky filter, junit records it as a <flakyFailure> (`includeRetries`; without it junit shows a plain pass), and
  * tests/e2e/reporters/flaky-reporter.ts (on CI) prints a FLAKY block, writes a JSON list and raises a GitHub warning annotation.
  * `retries` is 1 on CI and 0 locally.
+ *
+ * A RUN THAT HANGS: scripts/e2e-phases.mjs sets `E2E_HEARTBEAT_FILE` for each phase, which adds tests/e2e/reporters/heartbeat-reporter.ts
+ * (a file rewritten at every test start / end); the script ends a Playwright whose heartbeat is older than `E2E_STALL_MS` (exit 124).
+ * `E2E_GLOBAL_TIMEOUT_MS` is Playwright's own `globalTimeout`, a hard ceiling for the whole run that a CI job sets; unset means none.
  */
 
 /**
@@ -67,6 +71,26 @@ const OWN_PROJECT = ["visual.spec.ts", "a11y.spec.ts"];
 const EXTERNAL_BASE_URL = process.env.E2E_BASE_URL;
 
 const CI = !!process.env.CI;
+
+/** `E2E_GLOBAL_TIMEOUT_MS`: unset or empty is no limit; anything but a positive whole number of milliseconds is an error (a typo is not "no limit"). */
+function globalTimeoutFromEnv(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return 0; // Playwright's "no limit"
+  if (!/^[1-9]\d*$/.test(raw)) throw new Error(`E2E_GLOBAL_TIMEOUT_MS must be a positive whole number of milliseconds (got "${raw}")`);
+  return Number(raw);
+}
+
+/** The reporters: the built-in ones, and the heartbeat of the stall watchdog when the phases script asked for one. */
+const REPORTERS: ReporterDescription[] = [
+  ...(CI
+    ? ([
+        ["list"],
+        ["html", { open: "never" }],
+        ["junit", { outputFile: "test-results/junit.xml", includeRetries: true }],
+        ["./tests/e2e/reporters/flaky-reporter.ts"],
+      ] satisfies ReporterDescription[])
+    : ([["list"]] satisfies ReporterDescription[])),
+  ...(process.env.E2E_HEARTBEAT_FILE ? ([["./tests/e2e/reporters/heartbeat-reporter.ts"]] satisfies ReporterDescription[]) : []),
+];
 
 /**
  * The browser of the projects that follow the channel (see THE BROWSER above). The runner and the phases script decide once and hand the
@@ -102,14 +126,8 @@ export default defineConfig({
   forbidOnly: CI,
   retries: CI ? 1 : 0,
   workers: CI ? 1 : undefined,
-  reporter: CI
-    ? [
-        ["list"],
-        ["html", { open: "never" }],
-        ["junit", { outputFile: "test-results/junit.xml", includeRetries: true }],
-        ["./tests/e2e/reporters/flaky-reporter.ts"],
-      ]
-    : [["list"]],
+  reporter: REPORTERS,
+  globalTimeout: globalTimeoutFromEnv(process.env.E2E_GLOBAL_TIMEOUT_MS),
   use: {
     baseURL: EXTERNAL_BASE_URL ?? "http://localhost:3000",
     // First visits compile routes in dev, and the preview renders the payload with the real TypeSpec CLI.
