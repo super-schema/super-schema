@@ -228,6 +228,8 @@
 
 ### Task 12: Corpus, e2e, docs, retire stopgaps
 
+**Also in scope (added from earlier reviews):** `tests/e2e/fixtures/jsonschema-variations.ts` (remove `MULTI_MODEL_KNOWN`/`knownSync` entries for `paypal-address-ref-allof`, `oneof-union`, `array-of-refs`: closures now resolve, the old `invalid-ref` failure no longer reproduces) and `tests/e2e/jsonschema-lifecycle.spec.ts` (known-defect branches at ~114-118, 139, 150, 168-171, 194-196, 207; re-establish the "output names the entity / not trivial" checks per file now that outputs are multi-file); corpus `validateJsonSchema` must not stub refs to SIBLING files in the output set (a ref to a missing or mismatched sibling must still fail; only genuinely external refs are stubbed) with a test; corpus `known-issues.ts` entries `multi-model-emission-gap` and `openapi-internal-ref-extension` are re-judged against the new closure emission.
+
 **Files:**
 - Modify: `tests/fixtures/corpus/manifest.ts`, `tests/fixtures/corpus/known-issues.ts`, `tests/helpers/corpus/run-case.ts` (~76-81), `tests/helpers/corpus/orchestrate.ts`, `src/lib/schema-targets/default-mappings.ts` (~251 protobuf `lossDescription`), `docs/superpowers/reports/2026-10-22-corpus-matrix.md`
 - Create: `tests/e2e/reference-lifecycle.spec.ts`
