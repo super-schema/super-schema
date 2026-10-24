@@ -78,14 +78,12 @@ async function expectNoNotFoundPage(page: Page) {
   await expect(notFoundHeading(page), `${where} rendered the 404 page`).toHaveCount(0);
 }
 
-/** Wait for the explorer tree to load (the skeleton has no "enterprise" row). */
+/** Wait for the explorer tree to load: the loading skeleton is `left-sidebar-fallback` and has no "enterprise" row. */
 async function openExplorer(page: Page) {
   await page.goto("/schemas");
   await expect(page.getByTestId("left-sidebar").getByTestId("enterprise")).toBeVisible({
     timeout: 30_000,
   });
-  // During the Suspense swap the fallback and the loaded explorer can briefly coexist.
-  await expect(page.getByTestId("left-sidebar")).toHaveCount(1, { timeout: 15_000 });
 }
 
 /**

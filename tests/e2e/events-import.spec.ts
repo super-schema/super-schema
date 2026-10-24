@@ -175,9 +175,9 @@ test.describe("importing an AsyncAPI document end to end", () => {
       expect(rows.map((r) => ({ name: r.name, status: r.status, latestVersionId: r.latestVersionId }))).toEqual(
         ENTITIES.map((name) => ({ name, status: "DRAFT", latestVersionId: null }))
       );
-      // A hard load shows the sidebar's fallback and then the real one, for a moment both: read rows from it only once there is one. The row
-      // is found by the entity's id (its testid), not by its text, which the event's own page and the dialog could repeat.
-      await expect(page.getByTestId("left-sidebar")).toHaveCount(1, { timeout: 30_000 });
+      // A hard load shows the sidebar's loading fallback (`left-sidebar-fallback`) and then the real one (`left-sidebar`): each row is
+      // waited for in the real one. A row is found by the entity's id (its testid), not by its text, which the event's own page and the
+      // dialog could repeat.
       const explorer = page.getByTestId("left-sidebar");
       for (const row of rows) await expect(explorer.getByTestId(`entity-${row.id}`), `explorer row ${row.name}`).toBeVisible({ timeout: 30_000 });
       const versions = await pg().query(`SELECT count(*) AS n FROM entity_versions ev JOIN entities e ON e.id = ev."entityId" WHERE e."productId" = $1`, [f.product.id]);

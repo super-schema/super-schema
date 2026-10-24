@@ -5,14 +5,13 @@ import { test, expect } from "./helpers/fixtures";
 // only gets past the middleware.
 
 /**
- * Open /schemas at `width` and wait until the shell has settled. The explorer swaps its loading fallback for the loaded tree, and for a
- * moment both are in the page (navigation.spec.ts waits for the same): a locator on the sidebar then matches twice and trips strict
- * mode, which failed about half of the runs on a production build. One element is the state to wait for.
+ * Open /schemas at `width` and wait until the shell has settled: the explorer (`left-sidebar`) is there. While it loads, the page shows a
+ * skeleton with a test id of its own (`left-sidebar-fallback`), so `left-sidebar` is never two elements and needs no count to wait for.
  */
 async function openSchemas(page: Page, width = 1440): Promise<void> {
   await page.setViewportSize({ width, height: 900 });
   await page.goto("/schemas");
-  await expect(page.getByTestId("left-sidebar")).toHaveCount(1, { timeout: 15_000 });
+  await expect(page.getByTestId("left-sidebar")).toBeAttached({ timeout: 15_000 });
 }
 
 test.describe("IDE Layout", () => {
@@ -77,12 +76,12 @@ test.describe("IDE Layout", () => {
       })
       .toBeTruthy();
 
-    // Reload and verify sidebar still visible
+    // Reload and verify sidebar still visible (the explorer replaces its loading fallback, which has another test id)
     await page.reload();
-    await expect(page.getByTestId("left-sidebar")).toHaveCount(1, { timeout: 15_000 });
     await expect(page.getByTestId("left-sidebar")).toHaveAttribute(
       "data-collapsed",
-      "false"
+      "false",
+      { timeout: 15_000 }
     );
   });
 

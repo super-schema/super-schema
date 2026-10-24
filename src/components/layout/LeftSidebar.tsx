@@ -80,14 +80,16 @@ export function LeftSidebar(props: LeftSidebarProps) {
   );
 }
 
+// The fallback has a test id of its own: `left-sidebar` is the loaded explorer, and a browser test waiting for it must never find two
+// elements while the Suspense boundary swaps one for the other.
 function LeftSidebarFallback({ width, isCollapsed }: LeftSidebarProps) {
   if (isCollapsed || width === 0) {
-    return <div data-testid="left-sidebar" data-collapsed="true" className="relative" />;
+    return <div data-testid="left-sidebar-fallback" data-collapsed="true" className="relative" />;
   }
 
   return (
     <div
-      data-testid="left-sidebar"
+      data-testid="left-sidebar-fallback"
       data-collapsed="false"
       className="relative surface-1 border-r border-border flex flex-col overflow-hidden"
       style={{ width, minWidth: width }}
