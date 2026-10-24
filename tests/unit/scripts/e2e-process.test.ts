@@ -5,7 +5,7 @@
  */
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { createInterrupt, exitCodeForSignal, signalGroup, spawnGroup, terminateGroup } from "../../../scripts/e2e-process.mjs";
+import { createInterrupt, descendantsOf, exitCodeForSignal, killTree, signalGroup, spawnGroup, terminateGroup } from "../../../scripts/e2e-process.mjs";
 
 describe("signalGroup", () => {
   it("signals the whole group (the negative pid) on POSIX", () => {
@@ -20,18 +20,23 @@ describe("signalGroup", () => {
     expect(kill).toHaveBeenCalledWith(4242, "SIGTERM");
   });
 
-  it("says false for a child that never started or is gone (ESRCH), and rethrows any other error", () => {
+  it("says false for a child that never started or is gone (ESRCH), or whose group only waits to be reaped (EPERM on macOS: it crashed the phases script's forced kill in the real SIGINT run)", () => {
     const kill = vi.fn();
     expect(signalGroup({}, "SIGINT", { kill })).toBe(false);
     expect(kill).not.toHaveBeenCalled();
-    const gone = vi.fn(() => {
-      throw Object.assign(new Error("no such process"), { code: "ESRCH" });
+    for (const code of ["ESRCH", "EPERM"]) {
+      const gone = vi.fn(() => {
+        throw Object.assign(new Error(code), { code });
+      });
+      expect(signalGroup({ pid: 1 }, "SIGINT", { kill: gone, platform: "linux" })).toBe(false);
+    }
+  });
+
+  it("rethrows any other error", () => {
+    const broken = vi.fn(() => {
+      throw Object.assign(new Error("invalid signal"), { code: "EINVAL" });
     });
-    expect(signalGroup({ pid: 1 }, "SIGINT", { kill: gone, platform: "linux" })).toBe(false);
-    const denied = vi.fn(() => {
-      throw Object.assign(new Error("not permitted"), { code: "EPERM" });
-    });
-    expect(() => signalGroup({ pid: 1 }, "SIGINT", { kill: denied, platform: "linux" })).toThrow("not permitted");
+    expect(() => signalGroup({ pid: 1 }, "SIGNOPE", { kill: broken, platform: "linux" })).toThrow("invalid signal");
   });
 });
 
@@ -79,15 +84,33 @@ describe("createInterrupt", () => {
     const forward = vi.fn();
     const force = vi.fn();
     const t = fakeTimers();
-    const interrupt = createInterrupt({ forward, force, ...t });
-    interrupt.handle("SIGINT");
-    interrupt.handle("SIGINT");
-    interrupt.handle("SIGHUP");
-    interrupt.handle("SIGTERM");
+    let clock = 0;
+    const interrupt = createInterrupt({ forward, force, now: () => clock, ...t });
+    for (const signal of ["SIGINT", "SIGINT", "SIGHUP", "SIGTERM"]) {
+      interrupt.handle(signal);
+      clock += 5000; // each one well after the debounce window of the one before
+    }
     expect(forward).toHaveBeenCalledTimes(1);
     expect(force).toHaveBeenCalledTimes(1);
     expect(t.timers[0].cleared).toBe(true);
     expect(interrupt.signal).toBe("SIGINT"); // the first one is what the run reports
+  });
+
+  it("counts a signal that follows the first within the debounce window as the same one (npm forwards the signal it got, the terminal had already sent it)", () => {
+    const forward = vi.fn();
+    const force = vi.fn();
+    let clock = 10_000;
+    const t = fakeTimers();
+    const interrupt = createInterrupt({ forward, force, debounceMs: 1000, now: () => clock, ...t });
+    interrupt.handle("SIGINT");
+    clock += 40; // npm's forward of the same Ctrl-C
+    interrupt.handle("SIGINT");
+    expect(force).not.toHaveBeenCalled();
+    expect(t.timers[0].cleared).toBe(false);
+    clock += 3000; // the user presses it again: that one means it
+    interrupt.handle("SIGINT");
+    expect(forward).toHaveBeenCalledTimes(1);
+    expect(force).toHaveBeenCalledTimes(1);
   });
 
   it("done() cancels the forced kill of a run that ended by itself", () => {
@@ -166,6 +189,38 @@ describe("terminateGroup", () => {
     const kill = vi.fn();
     await terminateGroup(Object.assign(new EventEmitter(), { pid: undefined }), { kill, ...fakeTimers() });
     expect(kill).not.toHaveBeenCalled();
+  });
+});
+
+describe("descendantsOf / killTree", () => {
+  // pid ppid, as `ps -A -o pid=,ppid=` prints them: 10 -> 11 -> 13, 10 -> 12, and an unrelated 20 -> 21
+  const ps = "   10     1\n   11    10\n   12    10\n   13    11\n   20     1\n   21    20\n";
+
+  it("lists the children, grandchildren ... of a process, whatever process group they are in", () => {
+    expect(descendantsOf(ps, 10).sort((a, b) => a - b)).toEqual([11, 12, 13]);
+    expect(descendantsOf(ps, 11)).toEqual([13]);
+    expect(descendantsOf(ps, 13)).toEqual([]);
+    expect(descendantsOf(ps, 99)).toEqual([]);
+  });
+
+  it("ignores a line that is not two numbers", () => {
+    expect(descendantsOf("PID PPID\n 10 1\n 11 10\n\n", 10)).toEqual([11]);
+  });
+
+  it("kills the deepest first and the process itself last, and never fails on one that is already gone", () => {
+    const killed: Array<[number, string]> = [];
+    const kill = (pid: number, signal: string) => {
+      killed.push([pid, signal]);
+      if (pid === 12) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+    };
+    killTree(10, { listProcesses: () => ps, kill, platform: "linux" });
+    expect(killed).toEqual([[13, "SIGKILL"], [12, "SIGKILL"], [11, "SIGKILL"], [10, "SIGKILL"]]);
+  });
+
+  it("falls back to the process alone when the process list cannot be read", () => {
+    const kill = vi.fn();
+    killTree(10, { listProcesses: () => { throw new Error("no ps"); }, kill, platform: "linux" });
+    expect(kill.mock.calls).toEqual([[10, "SIGKILL"]]);
   });
 });
 

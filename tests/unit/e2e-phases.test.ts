@@ -145,6 +145,56 @@ describe("planPhases", () => {
     expect(skipped).toEqual([]);
   });
 
+  describe("--project restricts the tier's projects (it does not add to them, as it would for a bare `playwright test`)", () => {
+    const projectsOf = (args: string[]) => args.filter((a) => a.startsWith("--project="));
+
+    it("keeps only the named projects of a tier that lists its own", () => {
+      const { phases } = plan("smoke", ["--project=firefox-smoke"]);
+      expect(projectsOf(phases[0].args)).toEqual(["--project=firefox-smoke"]);
+      expect(phases[0].args).toContain("--grep=@smoke"); // the tag filter still applies
+    });
+
+    it("reads the two-argument spelling, and keeps a project once", () => {
+      const { phases } = plan("smoke", ["--project", "chromium", "--project=chromium"]);
+      expect(projectsOf(phases[0].args)).toEqual(["--project=chromium"]);
+      expect(phases[0].args).not.toContain("chromium");
+    });
+
+    it("skips a phase none of whose projects were named, and says why", () => {
+      const { phases, skipped } = plan("regression", ["--project=chromium"]);
+      expect(phases.map((p) => p.name)).toEqual(["main"]);
+      expect(projectsOf(phases[0].args)).toEqual(["--project=chromium"]);
+      expect(skipped).toEqual([expect.stringMatching(/serial: skipped \(--project chromium/)]);
+    });
+
+    it("is the whole project list for a tier that has none (nightly runs everything)", () => {
+      expect(projectsOf(plan("nightly", ["--project=a11y"]).phases[0].args)).toEqual(["--project=a11y"]);
+    });
+
+    it("leaves no phase when no project fits", () => {
+      const result = plan("regression", ["--project=webkit-smoke"]);
+      expect(result.phases).toEqual([]);
+      expect(result.skipped).toHaveLength(2);
+    });
+  });
+
+  describe("--list", () => {
+    it("lists in every phase, and needs no login in any of them", () => {
+      const { phases } = plan("regression", ["--list"]);
+      expect(phases.map((p) => p.name)).toEqual(["main", "serial"]);
+      for (const phase of phases) {
+        expect(phase.args).toContain("--list");
+        expect(phase.args.filter((a) => a === "--list")).toHaveLength(1);
+        expect(phase.listOnly).toBe(true);
+        expect(phase.runsSetup).toBe(false);
+      }
+    });
+
+    it("is off for a normal run", () => {
+      expect(plan("smoke").phases[0].listOnly).toBe(false);
+    });
+  });
+
   it("a first phase run with --no-deps does not run the setup project", () => {
     const { phases } = plan("regression", ["--no-deps"]);
     expect(phases[0].noDeps).toBe(true);
@@ -329,6 +379,14 @@ describe("runPhases: the order of the login file's removal and the phases, with 
     const results = await runPhases({ phases: planPhases({ tier: "regression", authState: mine.file, extraArgs: [] }).phases, auth: mine, deps });
     expect(results.map((r: { code: number }) => r.code)).toEqual([1, 0]);
     expect(events.filter((e) => e.startsWith("rm"))).toEqual(["rm /runs/7/admin.json"]); // the one before the phase that logs in; none at the end
+  });
+
+  it("runs a --list phase without touching or checking the login", async () => {
+    const { events, deps } = harness();
+    const listing = planPhases({ tier: "regression", extraArgs: ["--list"], authState: login.file }).phases;
+    const results = await runPhases({ phases: listing, auth: { file: login.file, ownedByThisRun: false }, deps });
+    expect(results.map((r: { name: string; code: number }) => [r.name, r.code])).toEqual([["main", 0], ["serial", 0]]);
+    expect(events).toEqual(["run main", "run serial"]);
   });
 
   it("refuses a --no-deps phase when there is no login, without running it", async () => {

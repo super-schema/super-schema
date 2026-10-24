@@ -10,7 +10,7 @@
 //
 // Dependency-free, and unit tested (tests/unit/scripts/e2e-process.test.ts) with fake `kill` / timers / children.
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 export const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 
@@ -27,7 +27,8 @@ export function spawnGroup(command, args, options = {}) {
 
 /**
  * Sends `signal` to the child's whole group (the negative pid) on POSIX, to the child itself elsewhere. Returns false when there was
- * nobody left to signal (ESRCH) or the child never started; any other error is thrown.
+ * nobody left to signal or the child never started: ESRCH (no such process), and EPERM, which macOS answers for a group whose members
+ * have all exited and only wait to be reaped (a group of our own children cannot be one we may not signal). Any other error is thrown.
  *
  * @param {{ pid?: number }} child
  * @param {string} signal
@@ -39,7 +40,7 @@ export function signalGroup(child, signal, { kill = process.kill, platform = pro
     kill(hasProcessGroups(platform) ? -child.pid : child.pid, signal);
     return true;
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") return false;
+    if (error && typeof error === "object" && "code" in error && (error.code === "ESRCH" || error.code === "EPERM")) return false;
     throw error;
   }
 }
@@ -80,19 +81,78 @@ export function terminateGroup(child, { signal = "SIGTERM", graceMs = 10_000, ki
 }
 
 /**
- * What a script does with signals while it waits for a child: the FIRST one is forwarded (once) and starts a grace period after which
- * the child is forced; a SECOND one (the user presses Ctrl-C again) forces it at once; more are ignored. The script itself exits when
- * the child has, so its own cleanup (login file, container, server) still runs: this only decides what reaches the child.
+ * The pids below `pid` in the process tree (children, grandchildren ...), from the output of `ps -A -o pid=,ppid=`: whatever process
+ * group they are in, which a group signal does not follow (every child here leads a group of its own). Pure.
  *
- * @param {{ forward: (signal: string) => void, force: () => void, graceMs?: number, setTimer?: Function, clearTimer?: Function }} options
+ * @param {string} psOutput
+ * @param {number} pid
+ * @returns {number[]}
  */
-export function createInterrupt({ forward, force, graceMs = 30_000, setTimer = setTimeout, clearTimer = clearTimeout }) {
+export function descendantsOf(psOutput, pid) {
+  const children = new Map();
+  for (const line of psOutput.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!match) continue;
+    const [child, parent] = [Number(match[1]), Number(match[2])];
+    children.set(parent, [...(children.get(parent) ?? []), child]);
+  }
+  const found = [];
+  const queue = [pid];
+  while (queue.length > 0) {
+    for (const child of children.get(queue.shift()) ?? []) {
+      found.push(child);
+      queue.push(child);
+    }
+  }
+  return found;
+}
+
+/**
+ * SIGKILL for `pid` and everything below it, the deepest first. The last resort of a step that did not stop: a step that starts
+ * children of its own, each the leader of its own group (the phases script and Playwright), is not ended by a signal to one group.
+ * Never throws: a process that is already gone is what was wanted, and where `ps` cannot be read it kills the process alone.
+ *
+ * @param {number} pid
+ * @param {{ listProcesses?: () => string, kill?: (pid: number, signal: string) => void, platform?: string }} [deps]
+ */
+export function killTree(pid, { listProcesses = () => execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 5000 }), kill = process.kill, platform = process.platform } = {}) {
+  let below = [];
+  if (platform !== "win32") {
+    try {
+      below = descendantsOf(listProcesses(), pid);
+    } catch {
+      // no `ps`: the process alone
+    }
+  }
+  for (const target of [...below.reverse(), pid]) {
+    try {
+      kill(target, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
+ * What a script does with signals while it waits for a child: the FIRST one is forwarded (once) and starts a grace period after which
+ * the child is forced; a SECOND one forces it at once; more are ignored. A signal that follows another within `debounceMs` is the same
+ * one (a terminal's Ctrl-C reaches the script, and npm, which runs it, forwards the signal it got: two within milliseconds; Playwright
+ * debounces its SIGINT the same way), so only a deliberate second Ctrl-C escalates. The script itself exits when the child has, so its
+ * own cleanup (login file, container, server) still runs: this only decides what reaches the child.
+ *
+ * @param {{ forward: (signal: string) => void, force: () => void, graceMs?: number, debounceMs?: number, now?: () => number, setTimer?: Function, clearTimer?: Function }} options
+ */
+export function createInterrupt({ forward, force, graceMs = 30_000, debounceMs = 1000, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let count = 0;
   let first;
   let timer;
+  let last = Number.NEGATIVE_INFINITY;
   return {
     /** @param {string} signal */
     handle(signal) {
+      const at = now();
+      if (at - last < debounceMs) return;
+      last = at;
       count += 1;
       if (count === 1) {
         first = signal;

@@ -3,6 +3,10 @@
 //
 //   node scripts/e2e-phases.mjs <smoke|regression|nightly|serial> [--no-serial] [playwright arguments...]
 //
+// Two of the arguments are read by the planner and not just passed on: `--project <name>` NARROWS the tier to that project (a phase none of
+// whose projects it names is skipped; a bare `playwright test --project x` would add x to the tier's own), and `--list` lists the tests of
+// every phase instead of running them (no login, no server).
+//
 // Why a script and not one npm line (playwright.config.ts has the long version):
 //   - Playwright runs a project's dependencies in full whatever --grep says, so `serial-after` (which depends on `chromium`) cannot
 //     share a filtered command with `chromium`: the regression tier is two commands, the browser projects, then `serial-after --no-deps`;
@@ -30,7 +34,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SIGNALS, createInterrupt, exitCodeForSignal, signalGroup, spawnGroup } from "./e2e-process.mjs";
+import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spawnGroup } from "./e2e-process.mjs";
 
 export const TIERS = ["smoke", "regression", "nightly", "serial"];
 
@@ -41,7 +45,7 @@ const SLOW_OR_EXTERNAL = "@slow|@external";
 const DEFAULT_AUTH_STATE = path.join("playwright", ".auth", "admin.json");
 
 /**
- * @typedef {{ name: string, args: string[], env: Record<string, string>, runsSetup: boolean, noDeps: boolean }} Phase
+ * @typedef {{ name: string, args: string[], env: Record<string, string>, runsSetup: boolean, noDeps: boolean, listOnly: boolean }} Phase
  * @typedef {{ tier: string, noSerial: boolean, extraArgs: string[] }} Cli
  */
 
@@ -63,6 +67,26 @@ export function shardOf(args) {
     if (match) return { index: Number(match[1]), total: Number(match[2]) };
   }
   return undefined;
+}
+
+/** The names of the `--project` options of `args` (`--project=a`, `--project a`), each once, in order. */
+export function projectsOf(args) {
+  const names = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const name = args[i] === "--project" ? args[i + 1] : args[i].startsWith("--project=") ? args[i].slice("--project=".length) : undefined;
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/** `args` without their `--project` options. */
+function withoutProjects(args) {
+  const rest = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === "--project") i += 1;
+    else if (!args[i].startsWith("--project=")) rest.push(args[i]);
+  }
+  return rest;
 }
 
 /** Whether `args` carry a test-selecting option of their own for `playwright test` (so that `--no-deps` is the caller's choice). */
@@ -107,6 +131,11 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState, 
   const skipped = [];
   const shard = shardOf(extraArgs);
   const phases = [];
+  // `--project` narrows the tier (a bare `playwright test` would ADD the project to the ones of the tier), `--list` lists every phase
+  // instead of running it (no login, no server needed); both are read here and written into each phase's own arguments.
+  const wanted = projectsOf(extraArgs);
+  const list = extraArgs.includes("--list");
+  const callerArgs = withoutProjects(extraArgs).filter((a) => a !== "--list");
   // The caller's arguments (a spec file, --grep, --shard, --headed) belong to the phase that runs tests: the first one, except for tier
   // `serial`, whose first phase only logs in. Only a run whose arguments go to the first phase is a slice of a sharded run.
   const argsPhase = tier === "serial" ? plan.length - 1 : 0;
@@ -119,14 +148,35 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState, 
       skipped.push(`${step.name}: skipped (shard ${shard.index}/${shard.total}: it runs once, with shard 1/${shard.total})`);
       return;
     }
-    const args = ["test", ...step.args, `--output=${path.join(results(step.name), "artifacts")}`, ...(index === argsPhase ? extraArgs : [])];
+    let stepArgs = step.args;
+    if (wanted.length) {
+      const own = stepArgs.filter((a) => a.startsWith("--project="));
+      if (own.length === 0) {
+        stepArgs = [...stepArgs, ...wanted.map((name) => `--project=${name}`)];
+      } else {
+        const kept = own.filter((a) => wanted.includes(a.slice("--project=".length)));
+        if (kept.length === 0) {
+          skipped.push(`${step.name}: skipped (--project ${wanted.join(",")}: not one of its projects, ${own.map((a) => a.slice("--project=".length)).join(", ")})`);
+          return;
+        }
+        stepArgs = [...stepArgs.filter((a) => !a.startsWith("--project=")), ...kept];
+      }
+    }
+    const args = [
+      "test",
+      ...stepArgs,
+      `--output=${path.join(results(step.name), "artifacts")}`,
+      ...(index === argsPhase ? callerArgs : []),
+      ...(list ? ["--list"] : []),
+    ];
     const noDeps = hasNoDeps(args);
     phases.push({
       name: step.name,
       args,
       noDeps,
-      // `setup` runs when it is selected itself or comes as a dependency; a --no-deps phase leaves it out.
-      runsSetup: args.includes("--project=setup") || !noDeps,
+      listOnly: list,
+      // `setup` runs when it is selected itself or comes as a dependency; a --no-deps phase leaves it out; a listing runs nothing.
+      runsSetup: !list && (args.includes("--project=setup") || !noDeps),
       env: {
         E2E_AUTH_STATE: authState,
         PLAYWRIGHT_HTML_OUTPUT_DIR: report(step.name),
@@ -216,6 +266,11 @@ export async function runPhases({ phases, auth, deps }) {
   try {
     for (const phase of phases) {
       if (deps.interrupted()) break;
+      if (phase.listOnly) {
+        deps.log(`[e2e-phases] ${phase.name}: playwright ${phase.args.join(" ")}`);
+        results.push({ name: phase.name, code: await deps.runPhase(phase) });
+        continue;
+      }
       if (phase.runsSetup && !setupRanThisRun) {
         // The login is made by this run: whatever is at that path is from an earlier one and must not be mistaken for it.
         deps.rmSync(auth.file, { force: true });
@@ -263,7 +318,7 @@ export function isEntryPoint(moduleUrl, argv1, realpath = realpathSync) {
   const [run, me] = [real(argv1), real(self)];
   if (run === me) return true;
   if (path.basename(argv1) === path.basename(self)) {
-    throw new Error(`[e2e-phases] ${argv1} has this script's name but resolves to ${run}, not ${me}: refusing to exit 0 without running anything.`);
+    throw new Error(`[${path.basename(self)}] ${argv1} has this script's name but resolves to ${run}, not ${me}: refusing to exit 0 without running anything.`);
   }
   return false;
 }
@@ -292,16 +347,25 @@ async function main() {
   }
 
   const outputRoot = process.env.E2E_OUTPUT_ROOT || ".";
-  const first = planPhases({ ...cli, authState: "", outputRoot }).phases[0];
+  const firstPlan = planPhases({ ...cli, authState: "", outputRoot });
+  const first = firstPlan.phases[0];
+  if (!first) {
+    console.error(`[e2e-phases] nothing to run: ${firstPlan.skipped.join("; ")}`);
+    process.exit(2);
+  }
   const auth = chooseAuthState({ env: process.env, firstPhaseRunsSetup: first.runsSetup, runId: `${process.pid}-${randomBytes(4).toString("hex")}` });
   const { phases, skipped } = planPhases({ ...cli, authState: auth.file, outputRoot });
-  console.log(`[e2e-phases] login: ${auth.file}${auth.ownedByThisRun ? " (this run's own, removed at the end)" : ""}`);
+  if (!first.listOnly) console.log(`[e2e-phases] login: ${auth.file}${auth.ownedByThisRun ? " (this run's own, removed at the end)" : ""}`);
   for (const note of skipped) console.log(`[e2e-phases] ${note}`);
 
   let child;
   const interrupt = createInterrupt({
     forward: (signal) => child && signalGroup(child, signal),
-    force: () => child && signalGroup(child, "SIGKILL"),
+    force: () => {
+      if (!child) return;
+      if (child.pid !== undefined) killTree(child.pid);
+      signalGroup(child, "SIGKILL");
+    },
   });
   for (const signal of SIGNALS) process.on(signal, () => interrupt.handle(signal));
   // Last resort (a throw nobody foresaw, a process.exit elsewhere): the login must not outlive the run.
