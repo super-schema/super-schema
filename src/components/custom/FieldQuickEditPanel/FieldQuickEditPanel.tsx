@@ -14,6 +14,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TypePicker } from "@/components/custom/TypePicker";
 import { getTypeInfo } from "@/lib/data-types";
+import {
+  applyReferencePick,
+  holdsEntityReference,
+  readFieldReference,
+  withoutReferenceKeys,
+  type PickableEntity,
+  type ReferencePick,
+} from "@/lib/references/entity-reference";
 import { cn } from "@/lib/utils";
 
 // Studio-level panels
@@ -57,6 +65,19 @@ interface FieldQuickEditPanelProps {
   isReadOnly?: boolean;
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * The entities of the tenant a reference can point at (with their domain and product). When given, choosing the `reference` type asks
+   * for the target; the pick is saved with the panel's Save as a fully qualified reference. Without it `reference` is a plain type change.
+   */
+  referenceTargets?: PickableEntity[];
+}
+
+/** How a person reads what a reference field points at: `domain / product / entity`, or the name of a name-only reference. */
+function referenceLabel(pick: ReferencePick | null, decorators: Record<string, unknown>): string | undefined {
+  if (pick) return pick.referencedQualifiedName?.split("/").join(" / ") ?? pick.referencedEntityName;
+  const stored = readFieldReference(decorators);
+  if (!stored) return undefined;
+  return "legacyName" in stored ? stored.legacyName : `${stored.domain} / ${stored.product} / ${stored.entity}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +178,7 @@ export function FieldQuickEditPanel({
   isReadOnly = false,
   onUpdateField,
   onDirtyChange,
+  referenceTargets,
 }: FieldQuickEditPanelProps) {
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0]));
 
@@ -168,6 +190,8 @@ export function FieldQuickEditPanel({
   const [localDescription, setLocalDescription] = useState(field.description);
   const [localClassification, setLocalClassification] = useState<string | null>(field.classification);
   const [localFieldNumber, setLocalFieldNumber] = useState<number | null>(field.fieldNumber);
+  // The target picked for the `reference` type and not saved yet (applied on Save while the type is still `reference`).
+  const [localReference, setLocalReference] = useState<ReferencePick | null>(null);
 
   // TypeSpec decorators — single state object like Field Studio
   const existingTypespec = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
@@ -189,14 +213,14 @@ export function FieldQuickEditPanel({
   const currentRef = useRef({
     localName, localType, localNullable, localIsKey, localDescription,
     localClassification, localFieldNumber, localSecret, localFormat,
-    localDefaultValue, localSummary, typespec,
+    localDefaultValue, localSummary, typespec, localReference,
   });
 
   useEffect(() => {
     currentRef.current = {
       localName, localType, localNullable, localIsKey, localDescription,
       localClassification, localFieldNumber, localSecret, localFormat,
-      localDefaultValue, localSummary, typespec,
+      localDefaultValue, localSummary, typespec, localReference,
     };
   });
 
@@ -215,12 +239,13 @@ export function FieldQuickEditPanel({
     const origDefault = origTs.identity?.defaultValue != null ? String(origTs.identity.defaultValue) : "";
     if (localDefaultValue !== origDefault) return true;
     if (localSummary !== (origTs.documentation?.summary ?? "")) return true;
+    if (localReference !== null) return true;
     if (JSON.stringify(typespec) !== JSON.stringify(origTs)) return true;
     return false;
   }, [
     localName, localType, localNullable, localIsKey, localDescription,
     localClassification, localFieldNumber, localSecret, localFormat,
-    localDefaultValue, localSummary, typespec, field,
+    localDefaultValue, localSummary, typespec, localReference, field,
   ]);
 
   // Notify parent of dirty state changes
@@ -241,6 +266,7 @@ export function FieldQuickEditPanel({
     setLocalDescription(field.description);
     setLocalClassification(field.classification);
     setLocalFieldNumber(field.fieldNumber);
+    setLocalReference(null);
 
     const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
     setTypespec(ts);
@@ -270,6 +296,7 @@ export function FieldQuickEditPanel({
     setLocalDescription(field.description);
     setLocalClassification(field.classification);
     setLocalFieldNumber(field.fieldNumber);
+    setLocalReference(null);
     const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
     setTypespec(ts);
     setLocalSecret(!!ts.identity?.secret);
@@ -287,6 +314,7 @@ export function FieldQuickEditPanel({
     setLocalDescription(field.description);
     setLocalClassification(field.classification);
     setLocalFieldNumber(field.fieldNumber);
+    setLocalReference(null);
 
     const ts = (field.decorators?.typespec ?? {}) as TypeSpecDecorators;
     setTypespec(ts);
@@ -316,7 +344,11 @@ export function FieldQuickEditPanel({
     if (c.localSummary) documentation.summary = c.localSummary; else delete documentation.summary;
     mergedTypespec.documentation = documentation;
 
-    const decorators = { ...field.decorators, typespec: mergedTypespec };
+    let decorators: Record<string, unknown> = { ...field.decorators, typespec: mergedTypespec };
+    // The target picked for a reference goes in qualified (and the pin of a previous target out); a field that is no longer a reference
+    // (or an array / map of them) is saved without the reference it had (the server drops it as well).
+    if (c.localType === "reference" && c.localReference) decorators = applyReferencePick(decorators, c.localReference);
+    if (!holdsEntityReference(c.localType, decorators)) decorators = withoutReferenceKeys(decorators);
 
     try {
       await onUpdateField(field.id, {
@@ -355,7 +387,10 @@ export function FieldQuickEditPanel({
     setJustSaved(false); // new change invalidates saved state
     switch (sectionField) {
       case "name": setLocalName(value as string); break;
-      case "type": setLocalType(value as string); break;
+      case "type":
+        setLocalType(value as string);
+        setLocalReference(null); // a target picked for an earlier `reference` is not this type's (the prompt sets it again right after)
+        break;
       case "nullable": setLocalNullable(value as boolean); break;
       case "isKey": setLocalIsKey(value as boolean); break;
       case "secret": setLocalSecret(value as boolean); break;
@@ -472,6 +507,16 @@ export function FieldQuickEditPanel({
                 <TypePicker
                   value={localType}
                   onChange={(t) => handleHeaderChange("type", t)}
+                  entities={referenceTargets}
+                  promptTypes={["reference"]}
+                  onComplexTypeConfig={
+                    referenceTargets
+                      ? (_type, config) => {
+                          setJustSaved(false);
+                          setLocalReference(config);
+                        }
+                      : undefined
+                  }
                   disabled={isReadOnly}
                   className="h-9 rounded-lg border border-border/60 bg-background px-3 text-sm text-foreground"
                 />
@@ -492,6 +537,14 @@ export function FieldQuickEditPanel({
                 )}
               </div>
             </InspectorRow>
+
+            {localType === "reference" && referenceLabel(localReference, field.decorators) && (
+              <InspectorRow label="References" align="center">
+                <p data-testid="field-reference-target" className="truncate font-mono text-sm text-foreground">
+                  → {referenceLabel(localReference, field.decorators)}
+                </p>
+              </InspectorRow>
+            )}
 
             <InspectorRow label="Default" align="center">
               <Input

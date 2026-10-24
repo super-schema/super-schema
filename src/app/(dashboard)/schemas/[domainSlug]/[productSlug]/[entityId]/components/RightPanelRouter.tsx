@@ -5,6 +5,7 @@ import { FieldQuickEditPanel } from "@/components/custom/FieldQuickEditPanel";
 import { TypeSpecPreview } from "@/components/custom/TypeSpecPreview";
 import { useRightPanelContent } from "@/hooks/useRightPanelContent";
 import type { ExistingFieldSummary } from "@/lib/compiler/typespec-parser";
+import type { PickableEntity } from "@/lib/references/entity-reference";
 
 type RightPanelTab = "field-edit" | "typespec-preview";
 
@@ -39,6 +40,8 @@ interface RightPanelRouterProps {
   onDirtyChange?: (dirty: boolean) => void;
   fieldSaveRef?: MutableRefObject<(() => void) | null>;
   fieldDiscardRef?: MutableRefObject<(() => void) | null>;
+  /** The entities a reference can point at (with domain / product), for the selected-field panel's type picker. */
+  referenceTargets?: PickableEntity[];
 }
 
 const TABS: { id: RightPanelTab; label: string }[] = [
@@ -61,6 +64,7 @@ export function RightPanelRouter({
   onDirtyChange,
   fieldSaveRef,
   fieldDiscardRef,
+  referenceTargets,
 }: RightPanelRouterProps) {
   const { setContent: setRightPanelContent } = useRightPanelContent();
 
@@ -101,6 +105,7 @@ export function RightPanelRouter({
             isReadOnly={isReadOnly}
             onUpdateField={onUpdateField}
             onDirtyChange={onDirtyChange}
+            referenceTargets={referenceTargets}
           />
         );
       } else {
@@ -149,6 +154,7 @@ export function RightPanelRouter({
     existingFields,
     onTypeSpecApplied,
     onDirtyChange,
+    referenceTargets,
   ]);
 
   // This component renders nothing itself -- it pushes content into the layout's RightPanel via context

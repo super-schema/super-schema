@@ -662,6 +662,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         onDirtyChange={handleFieldDirtyChange}
         fieldSaveRef={fieldSaveRef}
         fieldDiscardRef={fieldDiscardRef}
+        referenceTargets={referenceTargets}
       />
 
       {/* View Tab Bar — definition tabs | action tabs */}
