@@ -10,6 +10,7 @@ import { unique } from "./unique";
 import { fillWorkbenchPaste, expectDetailPanelText } from "./workbench";
 import { SCHEMA_TARGETS_FOR_TESTS } from "./targets";
 import { previewSignature, readPreviewFrom, settlePreview, type PreviewSource } from "./preview-text";
+import { centerPanel } from "./event-builder";
 
 export { unique };
 
@@ -61,6 +62,15 @@ export async function pasteAndReview(page: Page, productUrl: string, text: strin
   await fillWorkbenchPaste(page, text);
   await page.getByTestId("workbench-load-button").click();
   await expectDetailPanelText(page, text);
+  await page.getByTestId("workbench-review-button").click();
+}
+
+/** Drop mode of the workbench: choose the file (the drop zone's own file input, as a user's drop or browse does), then open the review screen. */
+export async function dropFileAndReview(page: Page, productUrl: string, filePath: string): Promise<void> {
+  await openWorkbench(page, productUrl);
+  await expect(page.getByTestId("workbench-dropzone")).toBeVisible();
+  await page.getByTestId("workbench-file-input").setInputFiles(filePath);
+  await expect(page.getByTestId("workbench-import-summary")).toBeVisible();
   await page.getByTestId("workbench-review-button").click();
 }
 
@@ -268,7 +278,8 @@ export async function openSchemasTab(page: Page): Promise<void> {
 
 /** Open the TypeSpec tab and read the source. */
 export async function readTypeSpecSource(page: Page): Promise<string> {
-  await page.getByTestId("tab-typespec").click();
+  // In the center panel: right after a hard load the streamed segment's hidden copy holds a second `tab-typespec` (helpers/event-builder.ts).
+  await centerPanel(page).getByTestId("tab-typespec").click();
   const area = page.getByTestId("typespec-source-textarea");
   await expect(area).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/Compiling current fields/)).toHaveCount(0, { timeout: 60_000 });
@@ -279,6 +290,10 @@ export async function readTypeSpecSource(page: Page): Promise<string> {
 export async function saveTypeSpecSource(page: Page, source: string): Promise<{ ok: boolean; message: string }> {
   const area = page.getByTestId("typespec-source-textarea");
   const save = page.getByRole("button", { name: /^Save$/ });
+  // A toast of an earlier save must not be taken for this one's (a second save a few seconds after the first): let it go first.
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 15_000 }).catch(async () => {
+    await page.keyboard.press("Escape");
+  });
   // The tab can reload its source right after it was opened (a refresh of the page behind a just-finished edit) and put the saved text
   // back over what was typed: Save then stays disabled (not dirty) and the click waits for it in vain. Type and click as one unit that
   // is repeated until it goes through, instead of sleeping to see whether the text stayed.
