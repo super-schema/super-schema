@@ -45,8 +45,19 @@ vi.mock("@/services/entity.service", () => ({
 
 // Mock emission — every schema target is typespec-cli as of 2026-10-12;
 // mock the real-compiler shell-out boundary to keep this a fast, isolated unit test.
-vi.mock("@/lib/typespec-official/emitter.service", () => ({
+vi.mock("@/lib/typespec-official/emitter.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/typespec-official/emitter.service")>()),
   emitOfficialTypeSpecTargetFromData: vi.fn(),
+}));
+
+// The closure targets (JSON Schema, OpenAPI, Protobuf, Avro, Java) emit through `emitClosure`, the DB targets through the mock above;
+// both stand in for the real compiler here.
+vi.mock("@/lib/typespec-official/closure-emit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/typespec-official/closure-emit")>()),
+  emitClosure: vi.fn(async (_closure: unknown, key: string) => ({
+    success: true,
+    data: { files: [{ path: `${key}.out`, content: `mock output for ${key}`, target: key, entityId: "entity-1" }], warnings: [], entityFiles: {} },
+  })),
 }));
 
 // ---------------------------------------------------------------------------
@@ -92,6 +103,7 @@ function makeAuthenticatedRequest(
 
 const mockEntity = {
   id: "entity-1",
+  tenantId: "tenant-1",
   name: "Customer",
   description: "A customer entity",
   status: "ACTIVE",
@@ -120,6 +132,16 @@ const mockEntity = {
     },
   ],
 };
+
+/** The tenant index the reference closure of the closure targets reads: just the one entity. */
+function mockClosureIndex() {
+  vi.mocked(prisma.entity.findMany).mockResolvedValue([
+    {
+      id: "entity-1", name: "Customer", description: "", status: "ACTIVE", version: 1, domainId: "domain-1", metadata: {}, latestVersionId: null,
+      domain: { id: "domain-1", name: "Sales", slug: "sales" }, product: null,
+    },
+  ] as never);
+}
 
 // `emitOfficialTypeSpecTargetFromData` is called once per enabled catalog
 // target (see src/lib/schema-targets/catalog.ts) — the mock below returns a
@@ -368,6 +390,7 @@ describe("API v1", () => {
       vi.mocked(prisma.field.findMany).mockResolvedValue(
         mockEntity.fields as never
       );
+      mockClosureIndex();
       vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
         (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
       );
@@ -415,6 +438,7 @@ describe("API v1", () => {
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
+      mockClosureIndex();
       vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
         (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
       );
@@ -449,6 +473,7 @@ describe("API v1", () => {
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
+      mockClosureIndex();
       vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
         (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
       );
@@ -475,6 +500,7 @@ describe("API v1", () => {
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
+      mockClosureIndex();
       vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
         (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
       );
@@ -498,6 +524,7 @@ describe("API v1", () => {
         data: mockEntity as never,
       });
       vi.mocked(prisma.field.findMany).mockResolvedValue([] as never);
+      mockClosureIndex();
       vi.mocked(emitOfficialTypeSpecTargetFromData).mockImplementation(
         (_entity, _fields, targetKey) => Promise.resolve(mockTargetResult(targetKey))
       );

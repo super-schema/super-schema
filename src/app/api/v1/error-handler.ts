@@ -47,6 +47,11 @@ function mapErrorCodeToStatus(code: string): number {
     case "DUPLICATE":
       return 409;
     case "ENTITY_READ_ONLY":
+    // A reference closure that cannot be built: the request is understood but the entity's references must be fixed first.
+    case "AMBIGUOUS_REFERENCE":
+    case "PIN_NOT_FOUND":
+    case "NEVER_PUBLISHED":
+    case "CLOSURE_TOO_LARGE":
       return 422;
     default:
       return 500;

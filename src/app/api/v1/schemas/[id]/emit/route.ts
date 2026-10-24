@@ -5,6 +5,13 @@
  * now `runtime: "typespec-cli"` (real TypeSpec packages) as of 2026-10-12 —
  * the native registry `emitFromData()` used to loop is permanently empty, so
  * this route no longer calls it for per-target output.
+ *
+ * The closure targets (JSON Schema, OpenAPI 3, Protobuf, Avro, Java POJO) emit the entity together with everything it references,
+ * one file per entity, from the entity's current saved state (draft mode: `resolution.preview` is then true). A target result is
+ * `{ target, output, files?, validationStatus, warnings }`: `files` (path, content, target, entityId) is the structured form of
+ * `output`, which is their bundled `===== path =====` string; the DB targets emit one string and have no `files`. `data.files` is
+ * every file of the run in one list, each tagged by its target. A bare-name reference that matches several entities is not guessed:
+ * the whole request fails with 422 `AMBIGUOUS_REFERENCE` and `error.details` = `{ field, name, candidates, entityId, fieldId }`.
  */
 
 import { authenticateRequest } from "@/app/api/v1/middleware";
@@ -19,7 +26,7 @@ import { getEntityById } from "@/services/entity.service";
 import { prisma } from "@/lib/db";
 import { compileEntity } from "@/lib/compiler/compiler.service";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
-import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { emitTargetsForEntity } from "@/lib/emission/emission.service";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import type {
   PrismaEntityInput,
@@ -57,21 +64,20 @@ export async function POST(
       orderBy: { sortOrder: "asc" },
     });
 
-    const prismaEntity = entity as unknown as PrismaEntityInput;
+    const prismaEntity = entity as unknown as PrismaEntityInput & { tenantId: string };
     const prismaFields = fields as unknown as PrismaFieldInput[];
 
     const enabledTargets = getSchemaTargetCatalog().filter((t) => t.enabledInSchemaTab);
-    const results = await Promise.all(
-      enabledTargets.map(async (target) => {
-        const result = await emitOfficialTypeSpecTargetFromData(prismaEntity, prismaFields, target.key);
-        return {
-          target: target.key,
-          output: result.output,
-          validationStatus: result.validationStatus,
-          warnings: result.warnings,
-        };
-      })
-    );
+    // The closure stays inside the entity's own tenant; this route (unlike the entity page) does not scope the root to a session tenant.
+    const run = await emitTargetsForEntity(prisma, prismaEntity, prismaFields, enabledTargets, "draft");
+    if (run.refusal) return apiError(run.refusal);
+    const results = run.results.map(({ target, result }) => ({
+      target: target.key,
+      output: result.output,
+      ...(result.files ? { files: result.files } : {}),
+      validationStatus: result.validationStatus,
+      warnings: result.warnings,
+    }));
 
     const validCount = results.filter((r) => r.validationStatus === "VALID").length;
     const invalidCount = results.filter((r) => r.validationStatus === "INVALID").length;
@@ -84,6 +90,8 @@ export async function POST(
         version: entity.version,
         typespec: generateTypeSpec(compileEntity(prismaEntity, prismaFields)),
         targets: results,
+        files: run.results.flatMap(({ result }) => result.files ?? []),
+        ...(run.resolution ? { resolution: run.resolution } : {}),
       },
       `Emitted to ${results.length} targets — ${validCount} valid, ${warningCount} warnings, ${invalidCount} invalid`
     );
