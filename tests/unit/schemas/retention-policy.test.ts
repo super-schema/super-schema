@@ -165,6 +165,22 @@ describe("formatRetentionSummary", () => {
     expect(formatRetentionSummary(policy)).toBe("Delete after 90 days (created_at)");
   });
 
+  it.each([
+    [1, "days", "Delete after 1 day (created_at)"],
+    [1, "months", "Delete after 1 month (created_at)"],
+    [1, "years", "Delete after 1 year (created_at)"],
+    [2, "years", "Delete after 2 years (created_at)"],
+    [0, "days", "Delete after 0 days (created_at)"],
+  ] as const)("a period of %i %s reads singular only for exactly one: %s", (period, periodUnit, expected) => {
+    expect(formatRetentionSummary({ strategy: "age-based", period, periodUnit, referenceField: "created_at", action: "delete" })).toBe(expected);
+  });
+
+  it("a rolling window of one unit reads singular too", () => {
+    expect(formatRetentionSummary({ strategy: "rolling-window", period: 1, periodUnit: "months", referenceField: "event_date", action: "delete" })).toBe(
+      "Keep 1 month (event_date)",
+    );
+  });
+
   it("formats age-based with archive action", () => {
     const policy: RetentionPolicy = {
       strategy: "age-based",

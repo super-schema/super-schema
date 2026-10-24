@@ -118,6 +118,11 @@ const ACTION_LABELS: Record<RetentionAction, string> = {
   "notify-only": "Notify",
 };
 
+/** "1 day", "2 days": the unit is stored in the plural ("days"), and exactly one of it is singular. */
+function periodText(period: number, unit: string): string {
+  return `${period} ${period === 1 ? unit.replace(/s$/, "") : unit}`;
+}
+
 export function formatRetentionSummary(policy: RetentionPolicy): string {
   const action = ACTION_LABELS[policy.action] ?? policy.action;
 
@@ -126,7 +131,7 @@ export function formatRetentionSummary(policy: RetentionPolicy): string {
       const period = policy.period ?? 0;
       const unit = policy.periodUnit ?? "days";
       const ref = policy.referenceField ? ` (${policy.referenceField})` : "";
-      return `${action} after ${period} ${unit}${ref}`;
+      return `${action} after ${periodText(period, unit)}${ref}`;
     }
     case "condition-based": {
       const cond = policy.condition
@@ -140,7 +145,7 @@ export function formatRetentionSummary(policy: RetentionPolicy): string {
       const period = policy.period ?? 0;
       const unit = policy.periodUnit ?? "days";
       const ref = policy.referenceField ? ` (${policy.referenceField})` : "";
-      return `Keep ${period} ${unit}${ref}`;
+      return `Keep ${periodText(period, unit)}${ref}`;
     }
     case "indefinite":
       return "Retain indefinitely";
