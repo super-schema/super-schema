@@ -16,12 +16,13 @@ import {
   buildExportEntityDefinition,
   exportAll,
   exportEntity,
+  exportedTargetSummary,
   generateExportFiles,
   pickExportVersion,
   planGitExport,
   sanitizeExportFilePath,
   targetFileExtension,
-  type ExportEntityInput,
+  type GitExportEntityInput,
 } from "@/services/git.service";
 import { exportWithReview } from "@/services/git-pr.service";
 import { prisma } from "@/lib/db";
@@ -52,9 +53,10 @@ function file(target: string, path: string, content: string, entityId?: string):
 }
 
 const paths = (files: { path: string }[]) => files.map((f) => f.path);
+const dirOf = (path: string) => path.slice(0, path.lastIndexOf("/"));
 
 /** One entity's export input; `schemaVersions` is what `entity.metadata.schemaVersions` holds. */
-function entityInput(over: Partial<ExportEntityInput> & { name: string }): ExportEntityInput {
+function entityInput(over: Partial<GitExportEntityInput> & { name: string }): GitExportEntityInput {
   return { domainName: "Payments", productName: "Checkout", definition: { name: over.name }, ...over };
 }
 
@@ -122,15 +124,13 @@ describe("generateExportFiles reads schemaVersions", () => {
   it("writes every closure target with per-file paths under <domain>/<product>/<entity>/<target>/", () => {
     const warnings: string[] = [];
     const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, {
-      entityId: "e-order",
       productName: "Checkout",
       schemaVersions: closureVersions(),
       warnings,
     });
 
     const dir = "schemas/payments/checkout/order";
-    // The root's own files and the referenced Address files: Address is not among the entities being exported here, so its files
-    // sit under the root's folder (nothing lost).
+    // The root's full file set: its own files and those of the Address it references.
     expect(paths(files).sort()).toEqual(
       [
         `${dir}/order.superschema.json`,
@@ -158,7 +158,7 @@ describe("generateExportFiles reads schemaVersions", () => {
     for (const target of getSchemaTargetCatalog()) {
       schemaVersions[target.key] = [version({ version: 1, status: "published", output: `content of ${target.key}` })];
     }
-    const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { entityId: "e-order", productName: "Checkout", schemaVersions });
+    const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { productName: "Checkout", schemaVersions });
     for (const target of getSchemaTargetCatalog()) {
       const written = files.filter((f) => f.path.startsWith(`schemas/payments/checkout/order/${target.key}/`));
       expect(written, target.key).toHaveLength(1);
@@ -169,9 +169,10 @@ describe("generateExportFiles reads schemaVersions", () => {
   });
 
   it("falls back to the output string, one file named by the target's extension convention, when a version has no files", () => {
+    const warnings: string[] = [];
     const files = generateExportFiles(BASE, "Payments", "Order Item", { name: "Order Item" }, {}, {
-      entityId: "e1",
       productName: "Checkout",
+      warnings,
       schemaVersions: {
         postgresql: [version({ version: 1, status: "published", output: "CREATE TABLE a (id int);" })],
         spanner: [version({ version: 1, status: "published", output: "CREATE TABLE a (id INT64) PRIMARY KEY (id);" })],
@@ -190,11 +191,12 @@ describe("generateExportFiles reads schemaVersions", () => {
       ].sort()
     );
     expect(files.find((f) => f.path.endsWith("order-item.pg.sql"))?.content).toBe("CREATE TABLE a (id int);");
+    // Only the draft is worth a remark.
+    expect(warnings).toEqual(["Order Item: bigquery: exported draft v2"]);
   });
 
   it("uses the _tenant placeholder for a missing domain and a missing product", () => {
     const files = generateExportFiles(BASE, null, "Customer", { name: "Customer" }, {}, {
-      entityId: "e1",
       productName: null,
       schemaVersions: { avro: [version({ version: 1, status: "published", output: "{}" })] },
     });
@@ -208,7 +210,6 @@ describe("generateExportFiles reads schemaVersions", () => {
 
   it("an entity without any generated output exports its SuperSchema JSON inside its own folder, product and all", () => {
     const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, {
-      entityId: "e1",
       productName: "Checkout",
       schemaVersions: {},
     });
@@ -216,8 +217,8 @@ describe("generateExportFiles reads schemaVersions", () => {
   });
 
   it("two same-named entities in different products do not collide, in one bulk run or one at a time", () => {
-    const a = entityInput({ name: "Order", entityId: "e-a", productName: "Checkout", schemaVersions: { avro: [published("avro", 1, [file("avro", "acme.Order.avsc.json", "A", "e-a")])] } });
-    const b = entityInput({ name: "Order", entityId: "e-b", productName: "Billing", schemaVersions: { avro: [published("avro", 1, [file("avro", "acme.Order.avsc.json", "B", "e-b")])] } });
+    const a = entityInput({ name: "Order", productName: "Checkout", schemaVersions: { avro: [published("avro", 1, [file("avro", "acme.Order.avsc.json", "A", "e-a")])] } });
+    const b = entityInput({ name: "Order", productName: "Billing", schemaVersions: { avro: [published("avro", 1, [file("avro", "acme.Order.avsc.json", "B", "e-b")])] } });
     const plan = planGitExport(BASE, [a, b]);
     expect(plan.warnings).toEqual([]);
     expect(paths(plan.files).sort()).toEqual(
@@ -231,8 +232,41 @@ describe("generateExportFiles reads schemaVersions", () => {
     expect(plan.files.find((f) => f.path === "schemas/payments/checkout/order/avro/acme.Order.avsc.json")?.content).toBe("A");
     expect(plan.files.find((f) => f.path === "schemas/payments/billing/order/avro/acme.Order.avsc.json")?.content).toBe("B");
     // One at a time they land in the same two folders.
-    const oneA = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { entityId: "e-a", productName: "Checkout", schemaVersions: a.schemaVersions });
+    const oneA = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { productName: "Checkout", schemaVersions: a.schemaVersions });
     expect(paths(oneA).every((p) => p.startsWith("schemas/payments/checkout/order/"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Folder names
+// ---------------------------------------------------------------------------
+
+describe("folder names", () => {
+  const exportPaths = (domain: string | null, product: string | null, entity: string) =>
+    paths(generateExportFiles(BASE, domain, entity, {}, {}, { productName: product, schemaVersions: {} }));
+
+  it("never are a name Windows reserves for a device: a trailing underscore is added", () => {
+    expect(exportPaths("NUL", "Aux", "Con")).toEqual(["schemas/nul_/aux_/con_/con_.superschema.json"]);
+    expect(exportPaths("Payments", "COM1", "lpt9")).toEqual(["schemas/payments/com1_/lpt9_/lpt9_.superschema.json"]);
+    // Names that only start with one are fine.
+    expect(exportPaths("Console", "Communication", "Auxiliary")).toEqual(["schemas/console/communication/auxiliary/auxiliary.superschema.json"]);
+  });
+
+  it("are at most 100 characters, without a trailing hyphen", () => {
+    expect(exportPaths("Payments", "Checkout", "x".repeat(150))).toEqual([`schemas/payments/checkout/${"x".repeat(100)}/${"x".repeat(100)}.superschema.json`]);
+    const name = `${"a".repeat(99)} b`; // slug: 99 a, hyphen, b: cut at 100 leaves a trailing hyphen
+    expect(exportPaths("Payments", "Checkout", name)).toEqual([`schemas/payments/checkout/${"a".repeat(99)}/${"a".repeat(99)}.superschema.json`]);
+  });
+
+  it("are built from slugs only: a path-like name cannot leave the base (and a name without letters or digits is _unnamed)", () => {
+    const files = generateExportFiles(BASE, "../..", "../../etc/passwd", { name: "x" }, {}, {
+      productName: "..",
+      schemaVersions: { avro: [version({ version: 1, status: "published", output: "{}" })] },
+    });
+    expect(paths(files)).toEqual([
+      "schemas/_unnamed/_unnamed/etc-passwd/etc-passwd.superschema.json",
+      "schemas/_unnamed/_unnamed/etc-passwd/avro/etc-passwd.avro.json",
+    ]);
   });
 });
 
@@ -269,7 +303,6 @@ describe("pickExportVersion", () => {
 
   it("is what the export writes: the published files, not the newer draft's", () => {
     const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, {
-      entityId: "e1",
       productName: "Checkout",
       schemaVersions: {
         avro: [
@@ -279,6 +312,34 @@ describe("pickExportVersion", () => {
       },
     });
     expect(files.find((f) => f.path.includes("/avro/"))?.content).toBe("PUBLISHED");
+  });
+});
+
+describe("what the export tells about the version it picked", () => {
+  const warningsOf = (schemaVersions: SchemaVersionsMap): string[] => {
+    const warnings: string[] = [];
+    generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { productName: "Checkout", schemaVersions, warnings });
+    return warnings;
+  };
+
+  it("says that a newer draft was not exported", () => {
+    expect(
+      warningsOf({ avro: [version({ version: 3, status: "draft", output: "D" }), version({ version: 2, status: "published", output: "P" })] })
+    ).toEqual(["Order: avro: exported published v2; newer draft v3 not exported"]);
+  });
+
+  it("says nothing when the exported version is the newest published one", () => {
+    expect(warningsOf({ avro: [version({ version: 2, status: "published", output: "P" }), version({ version: 1, status: "published", output: "P" })] })).toEqual([]);
+    expect(warningsOf({ avro: [version({ version: 2, status: "deployed", output: "P" })] })).toEqual([]);
+  });
+
+  it("says that a draft was exported because nothing is published, and that it is a preview when it references drafts", () => {
+    expect(warningsOf({ avro: [version({ version: 1, status: "draft", output: "D" })] })).toEqual(["Order: avro: exported draft v1"]);
+    expect(
+      warningsOf({
+        avro: [version({ version: 2, status: "draft", output: "D", resolution: { mode: "draft", preview: true, entities: [] } })],
+      })
+    ).toEqual(["Order: avro: exported draft v2 (preview)"]);
   });
 });
 
@@ -300,7 +361,6 @@ describe("legacy entities that only have emittedOutputs", () => {
     expect(paths(plain)).toEqual(expected);
 
     const withOptions = generateExportFiles("schemas/", "Payments", "Transaction", { name: "Transaction" }, outputs, {
-      entityId: "e1",
       productName: "Checkout",
       schemaVersions: {},
     });
@@ -315,7 +375,6 @@ describe("legacy entities that only have emittedOutputs", () => {
 
   it("an entity with versions for some targets keeps its legacy output of a target that has none, in the new layout", () => {
     const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, { bigquery: legacyOutput("OLD BQ"), avro: legacyOutput("OLD AVRO") }, {
-      entityId: "e1",
       productName: "Checkout",
       schemaVersions: { avro: [published("avro", 1, [file("avro", "acme.Order.avsc.json", "NEW AVRO", "e1")])] },
     });
@@ -337,8 +396,16 @@ describe("sanitizeExportFilePath", () => {
     ["Order.json", "Order.json"],
     ["com/acme/payments/Order.java", "com/acme/payments/Order.java"],
     ["acme.payments.Order.avsc.json", "acme.payments.Order.avsc.json"],
+    ["com.acme.Order.avsc.json", "com.acme.Order.avsc.json"],
     ["com\\acme\\Order.java", "com/acme/Order.java"],
     ["a..b/c.json", "a..b/c.json"],
+    // Names that only look like a Windows device name.
+    ["console.json", "console.json"],
+    ["communication/x.json", "communication/x.json"],
+    ["com10.json", "com10.json"],
+    ["lpt.json", "lpt.json"],
+    // 127 two-byte characters are 254 bytes.
+    ["é".repeat(127), "é".repeat(127)],
   ])("accepts %j as %j", (raw, expected) => {
     expect(sanitizeExportFilePath(raw)).toEqual({ ok: true, path: expected });
   });
@@ -353,6 +420,8 @@ describe("sanitizeExportFilePath", () => {
     ["\\\\server\\share\\x.json", "absolute"],
     ["C:\\x.json", "drive letter"],
     ["c:x.json", "drive letter"],
+    ["a/b:c.json", "colon"],
+    ["a/x.json:stream", "colon"],
     ["a//b.json", "empty segment"],
     ["a/", "empty segment"],
     ["", "empty"],
@@ -361,7 +430,17 @@ describe("sanitizeExportFilePath", () => {
     [".git/hooks/pre-commit", "git"],
     ["a/.GIT/config", "git"],
     ["a/.git./config", "git"],
+    ["a/GIT~1/config", "git"],
+    ["a/.g\u200cit/config", "invisible"],
+    ["a/\ufeffb.json", "invisible"],
+    ["con", "device name"],
+    ["CON.json", "device name"],
+    ["a/Aux.java", "device name"],
+    ["a/b/com1.txt", "device name"],
+    ["LPT9", "device name"],
+    ["nul.tar.gz", "device name"],
     [`${"a".repeat(300)}.json`, "segment too long"],
+    [`${"é".repeat(130)}.json`, "segment too long"], // 130 characters, 266 bytes
     [`${"a/".repeat(300)}x.json`, "too long"],
   ])("rejects %j (%s)", (raw, reason) => {
     const result = sanitizeExportFilePath(raw);
@@ -379,7 +458,6 @@ describe("a hostile file path is skipped with a warning and the rest of the expo
   it("never writes outside the base path", () => {
     const warnings: string[] = [];
     const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, {
-      entityId: "e-order",
       productName: "Checkout",
       warnings,
       schemaVersions: {
@@ -410,126 +488,177 @@ describe("a hostile file path is skipped with a warning and the rest of the expo
     expect(warnings[0]).toContain("../../../etc/cron.d/x");
   });
 
-  it("a hostile path in an output fallback cannot happen: the path is built from slugs", () => {
-    const files = generateExportFiles(BASE, "../..", "../../etc/passwd", { name: "x" }, {}, {
-      entityId: "e1",
-      productName: "..",
-      schemaVersions: { avro: [version({ version: 1, status: "published", output: "{}" })] },
-    });
-    for (const f of files) {
-      expect(f.path.startsWith(BASE)).toBe(true);
-      expect(f.path.split("/")).not.toContain("..");
-    }
-  });
-
   it("a malformed schemaVersions value exports nothing for the target and does not throw", () => {
     const garbage: unknown[] = [null, "x", 3, [], { avro: "not a list", "java-pojo": [null, 7, { status: "published" }] }];
     for (const schemaVersions of garbage) {
-      const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { entityId: "e1", productName: "Checkout", schemaVersions });
+      const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { productName: "Checkout", schemaVersions });
       expect(paths(files)).toEqual(["schemas/payments/checkout/order/order.superschema.json"]);
     }
   });
 
-  it("two files that land on the same path keep the first and warn when their content differs", () => {
+  it("returns at most 50 warnings and counts the rest", () => {
+    const hostile = Array.from({ length: 60 }, (_, i) => file("avro", `../x${i}.json`, "evil"));
     const warnings: string[] = [];
     const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, {
-      entityId: "e1",
       productName: "Checkout",
       warnings,
-      schemaVersions: {
-        avro: [published("avro", 1, [file("avro", "x.avsc.json", "first", "e1"), file("avro", "x.avsc.json", "second", "e1"), file("avro", "same.json", "same", "e1"), file("avro", "same.json", "same", "e1")])],
-      },
+      schemaVersions: { avro: [published("avro", 1, hostile)] },
     });
+    expect(paths(files)).toEqual(["schemas/payments/checkout/order/order.superschema.json"]);
+    expect(warnings).toHaveLength(51);
+    expect(warnings[0]).toContain("../x0.json");
+    expect(warnings[49]).toContain("../x49.json");
+    expect(warnings[50]).toBe("and 10 more warnings");
+  });
+});
+
+describe("two files that cannot both be written", () => {
+  const exportAvro = (avroFiles: EmittedFile[]) => {
+    const warnings: string[] = [];
+    const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, {
+      productName: "Checkout",
+      warnings,
+      schemaVersions: { avro: [published("avro", 1, avroFiles)] },
+    });
+    return { files: files.filter((f) => f.path.includes("/avro/")), warnings };
+  };
+
+  it("on one path: the first is kept, and a warning says so when their content differs", () => {
+    const { files, warnings } = exportAvro([
+      file("avro", "x.avsc.json", "first"),
+      file("avro", "x.avsc.json", "second"),
+      file("avro", "same.json", "same"),
+      file("avro", "same.json", "same"),
+    ]);
     expect(files.filter((f) => f.path.endsWith("/avro/x.avsc.json")).map((f) => f.content)).toEqual(["first"]);
     expect(files.filter((f) => f.path.endsWith("/avro/same.json"))).toHaveLength(1);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("x.avsc.json");
   });
+
+  it("on paths that differ only by letter case: the first is kept, with a warning", () => {
+    const { files, warnings } = exportAvro([file("avro", "Order.avsc.json", "upper"), file("avro", "order.avsc.json", "lower")]);
+    expect(files.map((f) => [f.path, f.content])).toEqual([["schemas/payments/checkout/order/avro/Order.avsc.json", "upper"]]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("letter case");
+    expect(warnings[0]).toContain("order.avsc.json");
+  });
+
+  it("when one is a file and the other would be inside it, in either order", () => {
+    const fileFirst = exportAvro([file("avro", "x", "a file"), file("avro", "x/y.json", "inside")]);
+    expect(fileFirst.files.map((f) => f.content)).toEqual(["a file"]);
+    expect(fileFirst.warnings).toHaveLength(1);
+    expect(fileFirst.warnings[0]).toContain("x/y.json");
+
+    const directoryFirst = exportAvro([file("avro", "x/y.json", "inside"), file("avro", "x", "a file")]);
+    expect(directoryFirst.files.map((f) => f.content)).toEqual(["inside"]);
+    expect(directoryFirst.warnings).toHaveLength(1);
+    expect(directoryFirst.warnings[0]).toContain("directory");
+  });
+
+  it("across entities that share a folder (the first is kept)", () => {
+    const first = entityInput({ name: "Order", schemaVersions: { avro: [published("avro", 1, [file("avro", "x.json", "first")])] } });
+    const second = entityInput({ name: "order", schemaVersions: { avro: [published("avro", 1, [file("avro", "x.json", "second")])] } });
+    const plan = planGitExport(BASE, [first, second]);
+    expect(plan.files.filter((f) => f.path.endsWith("/avro/x.json")).map((f) => f.content)).toEqual(["first"]);
+    expect(plan.warnings.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Files of the other entities of a closure
+// The files of the entities a root references
 // ---------------------------------------------------------------------------
 
-describe("files of the other entities of a closure", () => {
-  const orderFiles = (): EmittedFile[] => [
-    file("avro", "acme.Address.avsc.json", "ADDRESS via order", "e-address"),
-    file("avro", "acme.Order.avsc.json", "ORDER", "e-order"),
-  ];
+describe("every entity folder holds the root's full file set", () => {
+  /** An Order whose JSON Schema and Avro files point at the files of Address and a Customer qualified by its domain. */
+  const orderVersions = (): SchemaVersionsMap => ({
+    "json-schema": [
+      published("json-schema", 1, [
+        file("json-schema", "Address.json", "{\"title\":\"Address\"}", "e-address"),
+        file("json-schema", "Billing.Customer.json", "{\"title\":\"Customer of Billing\"}", "e-customer-billing"),
+        file("json-schema", "Order.json", JSON.stringify({ title: "Order", properties: { a: { $ref: "Address.json" }, c: { $ref: "Billing.Customer.json" } } }), "e-order"),
+      ]),
+    ],
+    avro: [
+      published("avro", 1, [
+        file("avro", "acme.Address.avsc.json", "ADDRESS via order", "e-address"),
+        file("avro", "acme.Order.avsc.json", "ORDER", "e-order"),
+      ]),
+    ],
+  });
+  const addressVersions = (): SchemaVersionsMap => ({
+    "json-schema": [published("json-schema", 1, [file("json-schema", "Address.json", "{\"title\":\"Address\"}", "e-address")])],
+    // Another name for the same file, as happens when names collide in another root.
+    avro: [published("avro", 1, [file("avro", "Address.avsc.json", "ADDRESS own", "e-address")])],
+  });
 
-  it("go once under the owner's folder when the owner is exported too and has nothing of its own for that target", () => {
-    const order = entityInput({ name: "Order", entityId: "e-order", schemaVersions: { avro: [published("avro", 1, orderFiles())] } });
-    const address = entityInput({ name: "Address", entityId: "e-address", schemaVersions: {} });
+  const order = () => entityInput({ name: "Order", schemaVersions: orderVersions() });
+  const address = () => entityInput({ name: "Address", schemaVersions: addressVersions() });
 
-    const plan = planGitExport(BASE, [order, address]);
+  const filesUnder = (files: { path: string; content: string }[], dir: string) =>
+    files.filter((f) => f.path.startsWith(`${dir}/`)).map((f) => [f.path, f.content]);
 
-    expect(plan.warnings).toEqual([]);
-    expect(paths(plan.files).sort()).toEqual(
-      [
-        "schemas/payments/checkout/order/order.superschema.json",
-        "schemas/payments/checkout/order/avro/acme.Order.avsc.json",
-        "schemas/payments/checkout/address/address.superschema.json",
-        "schemas/payments/checkout/address/avro/acme.Address.avsc.json",
-      ].sort()
+  it("the target of every $ref of a file is in the same folder, whether Address is exported too or not", () => {
+    for (const run of [[order()], [order(), address()], [address(), order()]]) {
+      const plan = planGitExport(BASE, run);
+      const orderFile = plan.files.find((f) => f.path === "schemas/payments/checkout/order/json-schema/Order.json");
+      expect(orderFile).toBeDefined();
+      const refs = Object.values(JSON.parse(orderFile?.content ?? "{}").properties as Record<string, { $ref: string }>).map((p) => p.$ref);
+      expect(refs).toEqual(["Address.json", "Billing.Customer.json"]);
+      for (const ref of refs) expect(paths(plan.files)).toContain(`${dirOf(orderFile?.path ?? "")}/${ref}`);
+      expect(plan.warnings).toEqual([]);
+    }
+  });
+
+  it("an entity exports the same files in its folder alone (exportEntity) and in a bulk run (exportAll)", () => {
+    const alone = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, { productName: "Checkout", schemaVersions: orderVersions() });
+    const bulk = planGitExport(BASE, [order(), address()]).files;
+    const dir = "schemas/payments/checkout/order";
+    expect(filesUnder(bulk, dir)).toEqual(filesUnder(alone, dir));
+    expect(filesUnder(alone, dir).length).toBe(1 + 3 + 2);
+  });
+
+  it("holds the files of the entities it references under their qualified names and full names", () => {
+    const plan = planGitExport(BASE, [order(), address()]);
+    const dir = "schemas/payments/checkout/order";
+    expect(paths(plan.files)).toEqual(
+      expect.arrayContaining([
+        `${dir}/json-schema/Address.json`,
+        `${dir}/json-schema/Billing.Customer.json`,
+        `${dir}/json-schema/Order.json`,
+        `${dir}/avro/acme.Address.avsc.json`,
+        `${dir}/avro/acme.Order.avsc.json`,
+      ])
     );
-    expect(plan.files.find((f) => f.path.endsWith("address/avro/acme.Address.avsc.json"))?.content).toBe("ADDRESS via order");
+    // The referenced entity that is exported itself has its own folder with its own full set (content repeats across folders).
+    expect(filesUnder(plan.files, "schemas/payments/checkout/address")).toEqual([
+      ["schemas/payments/checkout/address/address.superschema.json", JSON.stringify({ name: "Address" }, null, 2)],
+      ["schemas/payments/checkout/address/avro/Address.avsc.json", "ADDRESS own"],
+      ["schemas/payments/checkout/address/json-schema/Address.json", "{\"title\":\"Address\"}"],
+    ]);
+    // Nothing of Order's set is dropped from its folder because Address is exported too.
+    expect(plan.files.find((f) => f.path === `${dir}/avro/acme.Address.avsc.json`)?.content).toBe("ADDRESS via order");
   });
 
-  it("are not duplicated when the owner exports its own version of the target (the owner's own files win)", () => {
-    const order = entityInput({ name: "Order", entityId: "e-order", schemaVersions: { avro: [published("avro", 1, orderFiles())] } });
-    const address = entityInput({
-      name: "Address",
-      entityId: "e-address",
-      // The same entity's file under another name, as happens when names collide in the other root.
-      schemaVersions: { avro: [published("avro", 1, [file("avro", "Address.avsc.json", "ADDRESS own", "e-address")])] },
-    });
-
-    const plan = paths(planGitExport(BASE, [order, address]).files);
-
-    expect(plan.filter((p) => p.includes("/address/avro/"))).toEqual(["schemas/payments/checkout/address/avro/Address.avsc.json"]);
-    expect(plan.some((p) => p.includes("/order/avro/acme.Address"))).toBe(false);
+  it("a protobuf cycle's file is in the folder of each member that has it, once", () => {
+    const shared = () => [file("protobuf", "cycle.proto", "A and B", "e-a")];
+    const a = entityInput({ name: "A", schemaVersions: { protobuf: [published("protobuf", 1, shared())] } });
+    const b = entityInput({ name: "B", schemaVersions: { protobuf: [published("protobuf", 1, shared())] } });
+    const plan = planGitExport(BASE, [a, b]);
+    expect(paths(plan.files).filter((p) => p.includes("/protobuf/")).sort()).toEqual(
+      ["schemas/payments/checkout/a/protobuf/cycle.proto", "schemas/payments/checkout/b/protobuf/cycle.proto"].sort()
+    );
+    expect(plan.warnings).toEqual([]);
   });
 
-  it("go under the root's folder when the owner is not among the exported entities", () => {
-    const order = entityInput({ name: "Order", entityId: "e-order", schemaVersions: { avro: [published("avro", 1, orderFiles())] } });
-    const other = entityInput({ name: "Other", entityId: "e-other", schemaVersions: {} });
-
-    const plan = paths(planGitExport(BASE, [order, other]).files);
-
-    expect(plan).toContain("schemas/payments/checkout/order/avro/acme.Address.avsc.json");
-    expect(plan).toContain("schemas/payments/checkout/order/avro/acme.Order.avsc.json");
-    expect(plan.some((p) => p.includes("/other/avro/"))).toBe(false);
-  });
-
-  it("go under the root's folder when the file has no entityId, and when the root has no id", () => {
-    const noId = entityInput({
-      name: "Order",
+  it("files without an entityId are in the folder too", () => {
+    const files = generateExportFiles(BASE, "Payments", "Order", { name: "Order" }, {}, {
+      productName: "Checkout",
       schemaVersions: { protobuf: [published("protobuf", 1, [file("protobuf", "shared.proto", "SHARED"), file("protobuf", "order.proto", "ORDER", "e-order")])] },
     });
-    const address = entityInput({ name: "Address", entityId: "e-address", schemaVersions: {} });
-    const plan = paths(planGitExport(BASE, [noId, address]).files);
-    expect(plan).toContain("schemas/payments/checkout/order/protobuf/shared.proto");
-    expect(plan).toContain("schemas/payments/checkout/order/protobuf/order.proto");
-  });
-
-  it("a protobuf cycle's second member has no file of its own: the shared file is exported once, under the member it is tagged with", () => {
-    const shared = () => [file("protobuf", "cycle.proto", "A and B", "e-a")];
-    const a = entityInput({ name: "A", entityId: "e-a", schemaVersions: { protobuf: [published("protobuf", 1, shared())] } });
-    const b = entityInput({ name: "B", entityId: "e-b", schemaVersions: { protobuf: [published("protobuf", 1, shared())] } });
-    const plan = planGitExport(BASE, [a, b]);
-    // B's version holds the file as a file of A, and A (exported too) has its own version of the target: A's folder carries it, once.
-    expect(paths(plan.files).filter((p) => p.includes("/protobuf/"))).toEqual(["schemas/payments/checkout/a/protobuf/cycle.proto"]);
-    expect(plan.warnings).toEqual([]);
-  });
-
-  it("two roots that both carry the owner's files contribute them once (the first root's copy)", () => {
-    const r1 = entityInput({ name: "R1", entityId: "e-r1", schemaVersions: { avro: [published("avro", 1, [file("avro", "R1.avsc.json", "R1", "e-r1"), file("avro", "Address.avsc.json", "FROM R1", "e-address")])] } });
-    const r2 = entityInput({ name: "R2", entityId: "e-r2", schemaVersions: { avro: [published("avro", 1, [file("avro", "R2.avsc.json", "R2", "e-r2"), file("avro", "ns.Address.avsc.json", "FROM R2", "e-address")])] } });
-    const address = entityInput({ name: "Address", entityId: "e-address", schemaVersions: {} });
-    const plan = planGitExport(BASE, [r1, r2, address]);
-    const addressFiles = plan.files.filter((f) => f.path.includes("/address/avro/"));
-    expect(addressFiles.map((f) => [f.path, f.content])).toEqual([["schemas/payments/checkout/address/avro/Address.avsc.json", "FROM R1"]]);
-    expect(plan.warnings).toEqual([]);
+    expect(paths(files)).toEqual(
+      expect.arrayContaining(["schemas/payments/checkout/order/protobuf/shared.proto", "schemas/payments/checkout/order/protobuf/order.proto"])
+    );
   });
 });
 
@@ -575,6 +704,46 @@ describe("targetFileExtension", () => {
   it("gives every catalog target an extension", () => {
     for (const target of getSchemaTargetCatalog()) expect(targetFileExtension(target.key), target.key).toMatch(/^\.[a-z.]+$/);
     expect(targetFileExtension("unknown-target")).toBe(".txt");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The target table of a PR
+// ---------------------------------------------------------------------------
+
+describe("exportedTargetSummary", () => {
+  it("lists the targets of the entity in catalog order with the picked version, its status and file count", () => {
+    const rows = exportedTargetSummary(entityInput({ name: "Order", schemaVersions: closureVersions() }));
+    expect(rows).toEqual([
+      { target: "avro", displayName: "Avro Schema", version: 1, status: "published", fileCount: 2 },
+      { target: "java-pojo", displayName: "Java POJO", version: 1, status: "published", fileCount: 2 },
+      { target: "openapi3", displayName: "OpenAPI 3 (TypeSpec)", version: 1, status: "published", fileCount: 2 },
+      { target: "json-schema", displayName: "JSON Schema (TypeSpec)", version: 1, status: "published", fileCount: 2 },
+      { target: "protobuf", displayName: "Protobuf (TypeSpec)", version: 1, status: "published", fileCount: 2 },
+    ]);
+  });
+
+  it("reports the version the export writes (published over a newer draft), a preview, and the output fallback as one file", () => {
+    const rows = exportedTargetSummary(
+      entityInput({
+        name: "Order",
+        schemaVersions: {
+          avro: [version({ version: 3, status: "draft", output: "D" }), version({ version: 2, status: "published", output: "P" })],
+          postgresql: [version({ version: 1, status: "draft", output: "DDL", resolution: { mode: "draft", preview: true, entities: [] } })],
+          "json-schema": [published("json-schema", 1, [file("json-schema", "../evil.json", "x"), file("json-schema", "A.json", "a"), file("json-schema", "A.json", "a")])],
+        },
+      })
+    );
+    expect(rows).toEqual([
+      { target: "avro", displayName: "Avro Schema", version: 2, status: "published", fileCount: 1 },
+      { target: "postgresql", displayName: "PostgreSQL DDL", version: 1, status: "draft", fileCount: 1, preview: true },
+      { target: "json-schema", displayName: "JSON Schema (TypeSpec)", version: 1, status: "published", fileCount: 1 },
+    ]);
+  });
+
+  it("is empty for an entity without versions", () => {
+    expect(exportedTargetSummary(entityInput({ name: "Order" }))).toEqual([]);
+    expect(exportedTargetSummary(entityInput({ name: "Order", schemaVersions: "garbage" }))).toEqual([]);
   });
 });
 
@@ -642,14 +811,19 @@ describe("entry points export file sets", () => {
     }
   });
 
-  it("exportAll exports same-named entities of different products side by side and puts a closure member's files with its owner", async () => {
+  it("exportAll gives every entity its own full folder, same-named ones of different products side by side", async () => {
     vi.mocked(prisma.entity.findMany).mockResolvedValue([
       entityRow({
         id: "e-order",
         product: { name: "Checkout" },
         metadata: { schemaVersions: { avro: [published("avro", 1, [file("avro", "Order.avsc.json", "O1", "e-order"), file("avro", "Address.avsc.json", "A1", "e-address")])] } },
       }),
-      entityRow({ id: "e-address", name: "Address", product: { name: "Checkout" }, metadata: {} }),
+      entityRow({
+        id: "e-address",
+        name: "Address",
+        product: { name: "Checkout" },
+        metadata: { schemaVersions: { avro: [published("avro", 1, [file("avro", "Address.avsc.json", "A1", "e-address")])] } },
+      }),
       entityRow({
         id: "e-order-2",
         product: { name: "Billing" },
@@ -662,11 +836,14 @@ describe("entry points export file sets", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.success).toBe(true);
-      // 3 SuperSchema JSON + Order.avsc + Address.avsc (under Address, once) + the other Order.avsc.
-      expect(result.data.filesExported).toBe(6);
+      // Order (Checkout): JSON + Order.avsc + Address.avsc; Address: JSON + Address.avsc; Order (Billing): JSON + Order.avsc.
+      expect(result.data.filesExported).toBe(3 + 2 + 2);
       expect(result.data.warnings).toBeUndefined();
     }
-    expect(vi.mocked(prisma.entity.findMany).mock.calls[0][0]).toMatchObject({ include: { domain: true, product: true } });
+    const query = vi.mocked(prisma.entity.findMany).mock.calls[0][0];
+    expect(query).toMatchObject({ include: { domain: true, product: true } });
+    // A fixed order, so two runs write the same files.
+    expect(query).toMatchObject({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
   });
 
   it("exportWithReview (direct push) exports the file set too", async () => {
@@ -679,7 +856,7 @@ describe("entry points export file sets", () => {
     }
   });
 
-  it("exportWithReview (PR) exports the file set too", async () => {
+  it("exportWithReview (PR) exports the file set too, and the PR body lists the targets it adds", async () => {
     vi.mocked(prisma.gitConfig.findFirst).mockResolvedValue({
       id: "gc-1",
       basePath: "schemas/",

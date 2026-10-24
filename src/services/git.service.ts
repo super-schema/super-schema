@@ -99,13 +99,17 @@ export function slugify(value: string): string {
 //   <base>/<domain|_tenant>/<product|_tenant>/<entity>/<target>/<file path of the stored version>
 //
 // Rulings (multi-entity emission, Task 10):
-// - Version: per target, the latest PUBLISHED (or deployed) version, else the latest version (see `pickExportVersion`).
+// - Version: per target, the latest PUBLISHED (or deployed) version, else the latest version (see `pickExportVersion`). A warning
+//   says when a newer draft was not exported, or when the exported version is a draft (a preview, when it references drafts).
 // - Files: the version's `files` (path as stored); a version without `files` writes its `output` as one file named
 //   `<entity><extension of the target>`.
+// - Every entity folder is SELF-CONTAINED: it holds the root's FULL file set, i.e. every file of the picked version whatever its
+//   `entityId` (the referenced entities' files included), so the references between the files (`$ref: "Address.json"`, qualified
+//   names such as `Billing.Customer.json`, Protobuf imports, Avro full names) resolve inside the folder. An entity that is exported
+//   too has its own folder with its own full set: content repeats across folders on purpose (a folder is a deployable unit).
 // - A file whose path is unsafe (see `sanitizeExportFilePath`) is SKIPPED with a warning; the rest of the export goes ahead.
-// - A file of another entity of the closure goes once under its owner's folder when the owner is exported in the same run and has
-//   no version of that target of its own; otherwise under the root's folder (never duplicated, never dropped).
-// - Two files on one path: the first is kept, and a warning says so when their content differs.
+// - Two files on one path: the first is kept, and a warning says so when their content differs. Paths that differ only by letter
+//   case, or that would be a file and a directory of the same name, are not both written (the first is kept, with a warning).
 // - An entity with NO generated version and only the legacy `emittedOutputs` keeps the old flat layout, exactly as before.
 // ---------------------------------------------------------------------------
 
@@ -115,12 +119,27 @@ export interface ExportFile {
   content: string;
 }
 
-/** Longest relative path of a stored file, and longest segment of one (a file system's limit). */
+/** Longest relative path of a stored file, and longest segment of one in UTF-8 bytes (a file system's limit). */
 const MAX_EXPORT_PATH_LENGTH = 512;
-const MAX_EXPORT_SEGMENT_LENGTH = 255;
+const MAX_EXPORT_SEGMENT_BYTES = 255;
+
+/** Longest folder name made of a name (domain, product, entity). */
+const MAX_FOLDER_SLUG_LENGTH = 100;
+
+/** Warnings returned by one export; the rest is counted ("and N more warnings"). */
+const MAX_EXPORT_WARNINGS = 50;
 
 /** Folder for a domain, product or entity whose name has no letters or digits to slug. */
 const UNNAMED_SEGMENT = "_unnamed";
+
+/** Names Windows reserves for devices, with or without an extension (`con`, `CON.txt`, `lpt1.log`). */
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/**
+ * Code points HFS+ ignores when it compares names (zero-width and bidirectional marks, the BOM, the soft hyphen): `.g<U+200C>it`
+ * is `.git` there. A stored path has no use for them.
+ */
+const INVISIBLE_CODE_POINTS = /[­​-‏‪-‮⁠-⁯﻿]/;
 
 /** The legacy `emittedOutputs` emitters that were exported, and the format (extension) each one used. */
 const LEGACY_EMITTER_FORMATS: ReadonlyMap<string, ExportFormat> = new Map([
@@ -166,50 +185,95 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const hasOwn = (object: object, key: string): boolean => Object.prototype.hasOwnProperty.call(object, key);
 
+/** Windows reads `con`, `con.txt` and `CON.tar.gz` alike: the part before the first dot decides, and trailing spaces are dropped. */
+function isReservedDeviceName(segment: string): boolean {
+  return WINDOWS_RESERVED_NAME.test(segment.split(".")[0].replace(/ +$/, ""));
+}
+
 export type SanitizedExportPath = { ok: true; path: string } | { ok: false; reason: string };
 
 /**
  * Checks the path of a stored file before it is joined to the base path: relative, forward slashes (backslashes are converted),
- * no control characters, no drive letter, no empty / `.` / `..` / dots-only segment, no `.git` segment (a file there would
- * write into the repository's own metadata), bounded length. The value comes from stored JSON, so it is not trusted.
+ * no control or invisible characters, no drive letter or colon, no empty / `.` / `..` / dots-only segment, no `.git` segment (a file
+ * there would write into the repository's own metadata) and no Windows device name, bounded length (a segment by its UTF-8 bytes).
+ * The value comes from stored JSON, so it is not trusted.
  */
 export function sanitizeExportFilePath(raw: unknown): SanitizedExportPath {
   if (typeof raw !== "string" || raw === "") return { ok: false, reason: "empty path" };
   if (/[\u0000-\u001f\u007f]/.test(raw)) return { ok: false, reason: "control character in path" };
+  if (INVISIBLE_CODE_POINTS.test(raw)) return { ok: false, reason: "invisible character in path" };
   const path = raw.replace(/\\/g, "/");
   if (path.startsWith("/")) return { ok: false, reason: "absolute path" };
   if (/^[A-Za-z]:/.test(path)) return { ok: false, reason: "drive letter in path" };
   if (path.length > MAX_EXPORT_PATH_LENGTH) return { ok: false, reason: "path too long" };
   for (const segment of path.split("/")) {
     if (segment === "") return { ok: false, reason: "empty segment in path" };
-    if (segment.length > MAX_EXPORT_SEGMENT_LENGTH) return { ok: false, reason: "segment too long" };
+    if (new TextEncoder().encode(segment).length > MAX_EXPORT_SEGMENT_BYTES) return { ok: false, reason: "segment too long" };
+    if (segment.includes(":")) return { ok: false, reason: "colon in path" };
     // `.`, `..` and, on Windows, names that read as them once trailing dots and spaces are dropped.
     if (/^[. ]+$/.test(segment)) return { ok: false, reason: "dot segment in path" };
-    if (segment.replace(/[. ]+$/, "").toLowerCase() === ".git") return { ok: false, reason: "git metadata directory in path" };
+    // `.git`, also as Windows reads it (trailing dots and spaces dropped) and as its NTFS short name `git~1`.
+    const bare = segment.replace(/[. ]+$/, "").toLowerCase();
+    if (bare === ".git" || /^git~\d+$/.test(bare)) return { ok: false, reason: "git metadata directory in path" };
+    if (isReservedDeviceName(segment)) return { ok: false, reason: "reserved device name in path" };
   }
   return { ok: true, path };
 }
 
 const versionNumber = (version: SchemaVersion): number => (typeof version.version === "number" ? version.version : 0);
 
+const isPublishedVersion = (version: SchemaVersion): boolean => version.status === "published" || version.status === "deployed";
+
+/** The version with the highest number (the first of equals). */
+const latestOf = (list: SchemaVersion[]): SchemaVersion | undefined =>
+  list.reduce<SchemaVersion | undefined>((best, version) => (best === undefined || versionNumber(version) > versionNumber(best) ? version : best), undefined);
+
+/** The version to export and the newest version of any status; a list entry that is not an object is ignored. */
+function selectVersion(versions: readonly SchemaVersion[]): { version: SchemaVersion; newest: SchemaVersion } | undefined {
+  const usable = versions.filter((version): version is SchemaVersion => isRecord(version));
+  const newest = latestOf(usable);
+  if (newest === undefined) return undefined;
+  return { version: latestOf(usable.filter(isPublishedVersion)) ?? newest, newest };
+}
+
 /**
  * The version of a target the export writes: the latest PUBLISHED (or deployed) one, else the latest of any status. "Latest" is
  * the highest version number, so the order of the list does not matter. A list entry that is not an object is ignored.
  */
 export function pickExportVersion(versions: readonly SchemaVersion[]): SchemaVersion | undefined {
-  const usable = versions.filter((version): version is SchemaVersion => isRecord(version));
-  const latest = (list: SchemaVersion[]) =>
-    list.reduce<SchemaVersion | undefined>((best, version) => (best === undefined || versionNumber(version) > versionNumber(best) ? version : best), undefined);
-  return latest(usable.filter((version) => version.status === "published" || version.status === "deployed")) ?? latest(usable);
+  return selectVersion(versions)?.version;
+}
+
+/** For every catalog target the entity has versions of, in catalog order: the version to export and the newest one. */
+function selectedVersions(schemaVersions: unknown): Array<{ target: string; version: SchemaVersion; newest: SchemaVersion }> {
+  const byTarget = isRecord(schemaVersions) ? schemaVersions : {};
+  const selected: Array<{ target: string; version: SchemaVersion; newest: SchemaVersion }> = [];
+  for (const { key } of getSchemaTargetCatalog()) {
+    const versions = hasOwn(byTarget, key) ? byTarget[key] : undefined;
+    if (!Array.isArray(versions)) continue;
+    const choice = selectVersion(versions as SchemaVersion[]);
+    if (choice) selected.push({ target: key, ...choice });
+  }
+  return selected;
 }
 
 /** A stored file of a version, its path checked. */
-type StoredFile = { path: string; content: string; entityId?: string };
+type StoredFile = { path: string; content: string };
+
+/**
+ * The folder name of a domain, product or entity: its slug, at most 100 characters, never a Windows device name (`con` is `con_`),
+ * `_unnamed` when the name has no letters or digits.
+ */
+function folderSlug(name: string): string {
+  const slug = slugify(name).slice(0, MAX_FOLDER_SLUG_LENGTH).replace(/-+$/, "");
+  if (slug === "") return UNNAMED_SEGMENT;
+  return isReservedDeviceName(slug) ? `${slug}_` : slug;
+}
 
 /** The domain / product folder: the `_tenant` placeholder for no domain or product, else the slug of the name. */
 function placeSegment(name: string | null | undefined): string {
   if (typeof name !== "string" || name.trim() === "") return TENANT_PLACEHOLDER;
-  return slugify(name) || UNNAMED_SEGMENT;
+  return folderSlug(name);
 }
 
 /** The files of a version: `files` when it has any, else its `output` as one file. Unsafe or malformed entries are skipped, with a warning. */
@@ -227,7 +291,7 @@ function storedFilesOfVersion(version: SchemaVersion, target: string, entitySlug
         skip(`file ${JSON.stringify(raw.path.slice(0, 120))}`, checked.reason);
         continue;
       }
-      stored.push({ path: checked.path, content: raw.content, ...(typeof raw.entityId === "string" ? { entityId: raw.entityId } : {}) });
+      stored.push({ path: checked.path, content: raw.content });
     }
     return stored;
   }
@@ -238,8 +302,7 @@ function storedFilesOfVersion(version: SchemaVersion, target: string, entitySlug
 }
 
 /** What the export reads of one entity. `schemaVersions` and `emittedOutputs` are `entity.metadata`'s keys of those names. */
-export interface ExportEntityInput {
-  entityId?: string;
+export interface GitExportEntityInput {
   name: string;
   /** `null` / absent: a tenant-level entity (folder `_tenant`). */
   domainName?: string | null;
@@ -254,36 +317,68 @@ export interface ExportEntityInput {
 
 export interface ExportPlan {
   files: ExportFile[];
-  /** What was skipped or kept apart, for the person who exports; the export itself went ahead. */
+  /** What was skipped, kept apart or not exported (at most 50, then a count), for the person who exports; the export itself went ahead. */
   warnings: string[];
 }
 
+/** One row of the PR body's target table: what the export writes of a target. */
+export interface ExportedTargetSummary {
+  target: string;
+  displayName: string;
+  version: number;
+  status: SchemaVersion["status"];
+  /** Files written for the target in the entity's folder (distinct paths). */
+  fileCount: number;
+  /** The version references unpublished drafts. */
+  preview?: boolean;
+}
+
+/** The targets an export of the entity writes, in catalog order, each with the version picked by {@link pickExportVersion}. */
+export function exportedTargetSummary(input: GitExportEntityInput): ExportedTargetSummary[] {
+  const entitySlug = folderSlug(input.name);
+  return selectedVersions(input.schemaVersions).map(({ target, version }) => {
+    const files = storedFilesOfVersion(version, target, entitySlug, input.name, []);
+    return {
+      target,
+      displayName: getSchemaTargetDefinition(target)?.displayName ?? target,
+      version: versionNumber(version),
+      status: version.status,
+      fileCount: new Set(files.map((file) => file.path)).size,
+      ...(version.resolution?.preview === true ? { preview: true } : {}),
+    };
+  });
+}
+
 interface PlannedEntity {
-  input: ExportEntityInput;
+  input: GitExportEntityInput;
   /** `<base><domain>/<product>/<entity>` (no trailing slash). */
   dir: string;
   entitySlug: string;
-  /** Per target with a version, the files of the picked version (catalog order). */
+  /** Per target with a version, the FULL file set of the picked version (catalog order). */
   selected: Map<string, StoredFile[]>;
-  /** The files of `selected` that belong under this entity's folder, by target; filled by the closure pass. */
-  own: Map<string, StoredFile[]>;
-  /** Files other roots carry for this entity, by target, for a target this entity has no version of. */
-  contributed: Map<string, StoredFile[]>;
   /** Legacy `emittedOutputs` that the old export knew, as `[emitter, format, content]`. */
   legacy: Array<[string, ExportFormat, string]>;
 }
 
-function planEntity(base: string, input: ExportEntityInput, warnings: string[]): PlannedEntity {
-  const entitySlug = slugify(input.name) || UNNAMED_SEGMENT;
+/** What to tell about the version picked for a target: a newer draft left out, or a draft exported because nothing is published. */
+function versionNote(version: SchemaVersion, newest: SchemaVersion): string | undefined {
+  if (isPublishedVersion(version)) {
+    return versionNumber(newest) > versionNumber(version)
+      ? `exported published v${versionNumber(version)}; newer draft v${versionNumber(newest)} not exported`
+      : undefined;
+  }
+  return `exported draft v${versionNumber(version)}${version.resolution?.preview === true ? " (preview)" : ""}`;
+}
+
+function planEntity(base: string, input: GitExportEntityInput, warnings: string[]): PlannedEntity {
+  const entitySlug = folderSlug(input.name);
   const dir = `${base}${placeSegment(input.domainName)}/${placeSegment(input.productName)}/${entitySlug}`;
 
-  const schemaVersions = isRecord(input.schemaVersions) ? input.schemaVersions : {};
   const selected = new Map<string, StoredFile[]>();
-  for (const { key } of getSchemaTargetCatalog()) {
-    const versions = hasOwn(schemaVersions, key) ? schemaVersions[key] : undefined;
-    if (!Array.isArray(versions)) continue;
-    const version = pickExportVersion(versions as SchemaVersion[]);
-    if (version) selected.set(key, storedFilesOfVersion(version, key, entitySlug, input.name, warnings));
+  for (const { target, version, newest } of selectedVersions(input.schemaVersions)) {
+    selected.set(target, storedFilesOfVersion(version, target, entitySlug, input.name, warnings));
+    const note = versionNote(version, newest);
+    if (note !== undefined) warnings.push(`${input.name}: ${target}: ${note}`);
   }
 
   const legacy: PlannedEntity["legacy"] = [];
@@ -294,66 +389,72 @@ function planEntity(base: string, input: ExportEntityInput, warnings: string[]):
     }
   }
 
-  return { input, dir, entitySlug, selected, own: new Map(), contributed: new Map(), legacy };
+  return { input, dir, entitySlug, selected, legacy };
+}
+
+/**
+ * Remembers the paths of an export. A path is refused (and a warning says why) when it was taken already, when it differs from a
+ * taken one only by letter case (the two would overwrite each other on a case-insensitive file system), or when it would be a file
+ * and a directory of the same name.
+ */
+function createPathClaims(warnings: string[]): (path: string, content: string) => ExportFile | undefined {
+  const files = new Map<string, ExportFile>();
+  const directories = new Set<string>();
+  return (path, content) => {
+    const key = path.toLowerCase();
+    const kept = files.get(key);
+    if (kept !== undefined) {
+      if (kept.path !== path) warnings.push(`${path}: differs only by letter case from ${kept.path}, which was kept; this file was skipped`);
+      else if (kept.content !== content) warnings.push(`${path}: two files were exported to this path with different content; the first one was kept`);
+      return undefined;
+    }
+    const segments = key.split("/");
+    const prefixes = segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join("/"));
+    const blocking = prefixes.map((prefix) => files.get(prefix)).find((file) => file !== undefined);
+    if (blocking !== undefined) {
+      warnings.push(`${path}: ${blocking.path} is a file, so this path cannot be inside it; this file was skipped`);
+      return undefined;
+    }
+    if (directories.has(key)) {
+      warnings.push(`${path}: a directory of this name is already exported; this file was skipped`);
+      return undefined;
+    }
+    const file = { path, content };
+    files.set(key, file);
+    for (const prefix of prefixes) directories.add(prefix);
+    return file;
+  };
+}
+
+/** The first 50 warnings, then a line that counts the rest. */
+function capWarnings(warnings: string[]): string[] {
+  if (warnings.length <= MAX_EXPORT_WARNINGS) return warnings;
+  return [...warnings.slice(0, MAX_EXPORT_WARNINGS), `and ${warnings.length - MAX_EXPORT_WARNINGS} more warnings`];
 }
 
 /**
  * The files to write for a run that exports `entities` (see the layout above). Pure: nothing is read or written here.
- * Files come out per entity in the order given: its SuperSchema JSON, then its targets in catalog order.
+ * Files come out per entity in the order given: its SuperSchema JSON, then its targets in catalog order. Each entity's folder holds
+ * the full file set of its versions on its own: the entities are planned independently, so one entity exports the same way alone
+ * (`generateExportFiles`) and in a bulk run.
  */
-export function planGitExport(basePath: string, entities: readonly ExportEntityInput[]): ExportPlan {
+export function planGitExport(basePath: string, entities: readonly GitExportEntityInput[]): ExportPlan {
   const base = basePath.endsWith("/") ? basePath : `${basePath}/`;
   const warnings: string[] = [];
   const planned = entities.map((entity) => planEntity(base, entity, warnings));
 
-  const indexById = new Map<string, number>();
-  planned.forEach((entity, index) => {
-    const id = entity.input.entityId;
-    if (id !== undefined && !indexById.has(id)) indexById.set(id, index);
-  });
-
-  // Closure pass. A file tagged with another entity that is exported in this run goes to that entity, unless the owner has a version
-  // of the target itself (its own files are written then) or an earlier root already contributed files of the target for it.
-  for (const root of planned) {
-    for (const [target, files] of root.selected) {
-      const mine: StoredFile[] = [];
-      const foreign = new Map<number, StoredFile[]>();
-      for (const file of files) {
-        const owner = file.entityId !== undefined && file.entityId !== root.input.entityId ? indexById.get(file.entityId) : undefined;
-        if (owner === undefined) {
-          mine.push(file);
-          continue;
-        }
-        const list = foreign.get(owner);
-        if (list) list.push(file);
-        else foreign.set(owner, [file]);
-      }
-      root.own.set(target, mine);
-      for (const [owner, ownerFiles] of foreign) {
-        const ownerPlan = planned[owner];
-        if (!ownerPlan.selected.has(target) && !ownerPlan.contributed.has(target)) ownerPlan.contributed.set(target, ownerFiles);
-      }
-    }
-  }
-
   const files: ExportFile[] = [];
-  const claimed = new Map<string, string>();
+  const claim = createPathClaims(warnings);
   const add = (path: string, content: string) => {
-    const kept = claimed.get(path);
-    if (kept === undefined) {
-      claimed.set(path, content);
-      files.push({ path, content });
-    } else if (kept !== content) {
-      warnings.push(`${path}: two files were exported to this path with different content; the first one was kept`);
-    }
+    const file = claim(path, content);
+    if (file !== undefined) files.push(file);
   };
 
-  const targetKeys = getSchemaTargetCatalog().map((target) => target.key);
   for (const entity of planned) {
     const { input, dir, entitySlug } = entity;
     const superschema = JSON.stringify(input.definition, null, 2);
 
-    if (entity.selected.size === 0 && entity.contributed.size === 0 && entity.legacy.length > 0) {
+    if (entity.selected.size === 0 && entity.legacy.length > 0) {
       // Legacy layout, exactly as before file sets: <base>/<domain>/<entity><extension of the format>.
       const domainSlug = slugify(input.domainName ?? domainLabel(null));
       const legacySlug = slugify(input.name);
@@ -363,22 +464,19 @@ export function planGitExport(basePath: string, entities: readonly ExportEntityI
     }
 
     add(`${dir}/${entitySlug}${FORMAT_EXTENSIONS.superschema}`, superschema);
-    for (const key of targetKeys) {
-      for (const file of [...(entity.own.get(key) ?? []), ...(entity.contributed.get(key) ?? [])]) {
-        add(`${dir}/${key}/${file.path}`, file.content);
-      }
+    for (const [target, targetFiles] of entity.selected) {
+      for (const file of targetFiles) add(`${dir}/${target}/${file.path}`, file.content);
     }
     // A legacy output of a target the entity has no version of is kept, as the single file the output fallback would write.
     for (const [emitter, format, content] of entity.legacy) {
-      if (!entity.selected.has(emitter) && !entity.contributed.has(emitter)) add(`${dir}/${emitter}/${entitySlug}${FORMAT_EXTENSIONS[format]}`, content);
+      if (!entity.selected.has(emitter)) add(`${dir}/${emitter}/${entitySlug}${FORMAT_EXTENSIONS[format]}`, content);
     }
   }
 
-  return { files, warnings };
+  return { files, warnings: capWarnings(warnings) };
 }
 
 export interface GenerateExportFilesOptions {
-  entityId?: string;
   /** `null` / absent: a product-less (tenant-level) entity. */
   productName?: string | null;
   /** `entity.metadata.schemaVersions`. Without it the entity exports through `emittedOutputs` only. */
@@ -389,14 +487,14 @@ export interface GenerateExportFilesOptions {
 
 /**
  * The files to export for one entity (`planGitExport` with that one entity). Returns an array of { path, content } objects.
- * Files of other entities of its closure go under its own folder, since no other entity is exported with it here.
+ * The entity's folder holds the full file set of its versions, the files of the entities it references included.
  *
  * @param basePath - Repository base path
  * @param domainName - Domain display name; `null` for a tenant-level entity
  * @param entityName - Entity display name
  * @param entityDefinition - The full entity definition JSON object
  * @param emittedOutputs - Legacy map of emitter name to target output
- * @param options - The entity's id and product and its `schemaVersions` (what the file sets are read from)
+ * @param options - The entity's product and its `schemaVersions` (what the file sets are read from)
  * @returns Array of files to write
  */
 export function generateExportFiles(
@@ -409,7 +507,6 @@ export function generateExportFiles(
 ): ExportFile[] {
   const plan = planGitExport(basePath, [
     {
-      entityId: options.entityId,
       name: entityName,
       domainName,
       productName: options.productName,
@@ -424,7 +521,6 @@ export function generateExportFiles(
 
 /** What `buildExportEntityDefinition` and `toExportEntityInput` read of an entity row (a Prisma `Entity` with its domain, product and fields). */
 export interface ExportableEntity {
-  id?: string;
   name: string;
   description: string;
   status: string;
@@ -467,10 +563,9 @@ export function buildExportEntityDefinition(entity: ExportableEntity, version: n
 }
 
 /** An entity row as the input of {@link planGitExport}. */
-export function toExportEntityInput(entity: ExportableEntity, version: number): ExportEntityInput {
+export function toExportEntityInput(entity: ExportableEntity, version: number): GitExportEntityInput {
   const metadata = isRecord(entity.metadata) ? entity.metadata : {};
   return {
-    entityId: entity.id,
     name: entity.name,
     domainName: entity.domain?.name ?? null,
     productName: entity.product?.name ?? null,
@@ -742,6 +837,8 @@ export async function exportAll(
 
   try {
     const entities = await prisma.entity.findMany({
+      // A fixed order, so two runs over the same data write the same files (the oldest entity keeps a contested path).
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       include: {
         domain: true,
         product: true,
