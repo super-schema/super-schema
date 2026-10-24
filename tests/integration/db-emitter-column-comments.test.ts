@@ -2,10 +2,14 @@
  * Column comments through the REAL Spanner, PostgreSQL and BigQuery emitters (built with the sibling write.ts patch:
  * the comment goes after the column's separator, `col TYPE, -- text`, and BigQuery escapes `\` and `'` itself).
  *
- * The DDL is asserted line by line: every column line ends with `,` BEFORE any comment (the last column too: the emitters
- * write a comma after every column, then the key / the closing parenthesis), so no comment can swallow a separator or the
- * next column. PostgreSQL runs on PGlite, a real engine. Spanner and BigQuery have no local engine: their text is asserted
- * and the argument is in the comments (a `--` comment runs to the end of its line, and we write no line break into it).
+ * The DDL is asserted line by line: on Spanner and PostgreSQL every column line ends with `,` BEFORE any comment (the last
+ * column too: the emitter writes a comma after every column, then the key / the closing parenthesis), so no comment can
+ * swallow a separator or the next column. BigQuery puts the key INSIDE the column list as its last entry
+ * (`PRIMARY KEY (...) NOT ENFORCED`, no comma, then `);`), so there too every column line carries its comma; its description
+ * is an `OPTIONS(description='...')` clause inside the line, not a trailing `--` comment, so a separator cannot be swallowed
+ * and the comma is accepted but not required (the emitter refuses a table with no key, so a column is always followed by one).
+ * PostgreSQL runs on PGlite, a real engine. Spanner and BigQuery have no local engine: their text is asserted and the
+ * argument is in the comments (a `--` comment runs to the end of its line, and we write no line break into it).
  */
 import { describe, it, expect } from "vitest";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
@@ -44,8 +48,11 @@ function columnLines(output: string): string[] {
 /** The comment a column line carries (null when none), asserting the line is `  <name> <type>[ NOT NULL],[ -- <comment>]`. */
 function columnComment(target: Target, line: string, name: string): string | null {
   if (target === "bigquery") {
-    const match = line.match(new RegExp(`^  ${name} [A-Z0-9_()<>]+(?: NOT NULL)?(?: OPTIONS\\(description='(.*)'\\))?,$`));
-    expect(match, withHint(`not a BigQuery column line for ${name}: ${JSON.stringify(line)}`)).not.toBeNull();
+    // The comma is optional: the last column of a table has none when nothing (no key line) follows it. The description is an
+    // OPTIONS clause inside the line, so there is no separator for it to swallow either way. (No sibling-patch hint: the shape of
+    // a column line does not depend on the patch.)
+    const match = line.match(new RegExp(`^  ${name} [A-Z0-9_()<>]+(?: NOT NULL)?(?: OPTIONS\\(description='(.*)'\\))?,?$`));
+    expect(match, `not a BigQuery column line for ${name}: ${JSON.stringify(line)}`).not.toBeNull();
     return match?.[1] === undefined ? null : match[1];
   }
   const match = line.match(new RegExp(`^  ${name} [A-Z0-9_()<>\\[\\] ]+?(?: NOT NULL)?,(?: -- (.*))?$`));
@@ -119,13 +126,15 @@ describe.each(TARGETS)("%s: a column description is a comment the DDL keeps whol
         "",
       ]);
     } else {
-      expect(table, withHint("bigquery table text")).toEqual([
+      // BigQuery DDL: the key is the last entry of the column list (no comma), and the list closes on its own line.
+      // (No sibling-patch hint: a mismatch here is a change of the BigQuery table layout, not a missing patch.)
+      expect(table, "bigquery table text").toEqual([
         "CREATE TABLE payments.transaction (",
         "  transaction_id STRING NOT NULL OPTIONS(description='the key; see -- below'),",
         "  middle STRING,",
         "  last_one STRING OPTIONS(description='last */ column'),",
-        ")",
-        "PRIMARY KEY (transaction_id) NOT ENFORCED;",
+        "  PRIMARY KEY (transaction_id) NOT ENFORCED",
+        ");",
         "",
       ]);
     }
