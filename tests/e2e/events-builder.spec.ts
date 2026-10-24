@@ -21,10 +21,9 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
+import { centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf } from "./helpers/event-builder";
 
 const NOT_FOUND_COPY = "This page could not be found";
-/** Text a user must never see: driver / Prisma / SQL internals. */
-const RAW_DB_TEXT = /prisma|violates|duplicate key|\bP20\d\d\b|ECONNREFUSED|invalid input syntax|relation ".*" does not exist|unique constraint/i;
 
 /** Test ids and labels. */
 const ID = {
@@ -61,8 +60,7 @@ const ID = {
   operationActionSend: "operation-action-send",
   operationChannel: "operation-channel",
   operationMessageOption: (messageKey: string) => `operation-messages-option-${messageKey}`,
-  // B5a (CreateDropdown, NewEventDialog, EventsList): GUESSES.
-  moreOptions: "More options", // the header menu trigger's title (unchanged from the old flow)
+  // B5a (EventsList): GUESS.
   eventsTab: "events-tab", // kept by the plan
 };
 
@@ -100,43 +98,13 @@ const need = <T>(value: T | undefined, what: string): T => {
   return value;
 };
 
-/*
- * Page content is queried inside the center panel. A hard load (`page.goto` / `reload`) streams the page behind its loading.tsx and
- * Next leaves the streamed segment's hidden copy in <body>, so a bare `page.getByTestId(...)` can resolve to two elements and trip
- * strict mode. Toasts and dialogs render in portals outside the center panel and are queried on `page`.
- */
-const centerPanel = (page: Page): Locator => page.getByTestId("center-panel");
-
-const productUrlOf = (f: NavFixtures) => `/schemas/${f.domain.slug}/${f.product.slug}`;
-
-/** Raw driver / Prisma text must never reach a rendered page. */
-async function expectNoRawDbText(page: Page) {
-  const text = await page.locator("body").innerText();
-  expect(text, `a rendered page leaked internal error text (${page.url()})`).not.toMatch(RAW_DB_TEXT);
-}
+// `centerPanel`, `productUrlOf`, `expectNoRawDbText` and `createEventFromMenu` come from helpers/event-builder.ts (page content is queried
+// inside the center panel: see the note at the top of that file).
 
 /** The rendered 404 page (a streamed `notFound()` still answers 200, so the DOM is the truth). */
 async function expectNotFoundPage(page: Page) {
   await expect(centerPanel(page).getByText(NOT_FOUND_COPY), `${page.url()} should render the 404 page`).toBeVisible({ timeout: 30_000 });
   await expectNoRawDbText(page);
-}
-
-/** Header New menu → New Event → name → Create; lands on the Event page and returns the new event's id. */
-async function createEventFromMenu(page: Page, productUrl: string, name: string): Promise<string> {
-  const main = centerPanel(page);
-  await page.goto(productUrl);
-  await main.getByTitle(ID.moreOptions).click();
-  await main.getByRole("menuitem", { name: /New Event/ }).click();
-
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("textbox", { name: /name/i }).fill(name);
-  await dialog.getByRole("button", { name: /^create/i }).click();
-
-  await expect(page).toHaveURL(/\/events\/[^/?]+/, { timeout: 60_000 });
-  const id = new URL(page.url()).pathname.split("/events/")[1];
-  await expect(main.getByRole("heading", { name })).toBeVisible();
-  return id;
 }
 
 /** Move focus out of the item's form (to nothing), which is what commits the generated identifier. */

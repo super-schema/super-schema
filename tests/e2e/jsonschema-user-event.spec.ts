@@ -15,6 +15,7 @@
 import { test, expect, unique } from "./helpers/fixtures";
 import { expectDetailPanelText, fillWorkbenchPaste } from "./helpers/workbench";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
+import { createDomain, createProduct } from "./helpers/lifecycle";
 
 const USER_EVENT = JSON.stringify({
   type: "object",
@@ -51,29 +52,6 @@ const USER_EVENT = JSON.stringify({
   },
   required: ["user_links", "created_time", "tenant"],
 });
-
-type Page = import("@playwright/test").Page;
-
-async function createDomain(page: Page, name: string) {
-  await page.goto("/schemas");
-  await page.getByRole("button", { name: /create domain/i }).first().click();
-  await page.getByPlaceholder(/Customer, Payment/i).fill(name);
-  await page.getByRole("button", { name: /^create$/i }).click();
-  await expect(page.getByText(name).first()).toBeVisible();
-}
-
-async function createProduct(page: Page, domain: string, name: string): Promise<string> {
-  await page.goto("/schemas");
-  await page.getByText(domain).first().click();
-  await expect(page).toHaveURL(/\/schemas\/[^/]+/);
-  await page.getByRole("button", { name: /new product/i }).first().click();
-  await page.getByPlaceholder(/OneSCM, Bank/i).fill(name);
-  await page.getByRole("button", { name: /^create$/i }).click();
-  await expect(page.getByText(name).first()).toBeVisible();
-  await page.getByText(name).first().click();
-  await expect(page).toHaveURL(/\/schemas\/[^/]+\/[^/]+/);
-  return page.url();
-}
 
 test.describe("JSON Schema import: user event, end to end", () => {
   const createdDomains: string[] = [];

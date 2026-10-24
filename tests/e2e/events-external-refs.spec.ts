@@ -22,6 +22,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, createProductInDomain, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
+import { centerPanel, createEventFromMenu, expectNoRawDbText } from "./helpers/event-builder";
 
 /**
  * What a publish may take, from the click that opens its dialog to the dialog closing. The dialog first renders a preview of the publish
@@ -30,9 +31,6 @@ import { createNavFixtures, createProductInDomain, deleteNavFixtures, disconnect
  * runs this file after the other specs, alone, but a publish is still the slowest thing here and is waited for, not failed.
  */
 const PUBLISH_TIMEOUT = 90_000;
-
-/** Text a user must never see: driver / Prisma / SQL internals. */
-const RAW_DB_TEXT = /prisma|violates|duplicate key|\bP20\d\d\b|ECONNREFUSED|invalid input syntax|relation ".*" does not exist|unique constraint/i;
 
 const ID = {
   outline: (section: "metadata" | "servers" | "channels" | "messages" | "operations") => `outline-${section}`,
@@ -116,30 +114,9 @@ const need = <T>(value: T | undefined, what: string): T => {
   return value;
 };
 
-/* Page content is queried inside the center panel (see events-builder.spec.ts for why); dialogs and toasts are portals, queried on `page`. */
-const centerPanel = (page: Page): Locator => page.getByTestId("center-panel");
+/* `centerPanel`, `expectNoRawDbText` and `createEventFromMenu` come from helpers/event-builder.ts (page content is queried inside the center panel; dialogs and toasts are portals, queried on `page`). */
 const productUrlA = (f: NavFixtures) => `/schemas/${f.domain.slug}/${f.product.slug}`;
 const productUrlB = (f: NavFixtures) => `/schemas/${f.domain.slug}/${flow.productB.slug}`;
-
-async function expectNoRawDbText(page: Page) {
-  const text = await page.locator("body").innerText();
-  expect(text, `a rendered page leaked internal error text (${page.url()})`).not.toMatch(RAW_DB_TEXT);
-}
-
-/** Header New menu -> New Event -> name -> Create; lands on the Event page and returns the new event's id. */
-async function createEventFromMenu(page: Page, productUrl: string, name: string): Promise<string> {
-  const main = centerPanel(page);
-  await page.goto(productUrl);
-  await main.getByTitle("More options").click();
-  await main.getByRole("menuitem", { name: /New Event/ }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("textbox", { name: /name/i }).fill(name);
-  await dialog.getByRole("button", { name: /^create/i }).click();
-  await expect(page).toHaveURL(/\/events\/[^/?]+/, { timeout: 60_000 });
-  await expect(main.getByRole("heading", { name })).toBeVisible();
-  return new URL(page.url()).pathname.split("/events/")[1];
-}
 
 /** Move focus out of the item's form (to nothing), which is what commits a generated identifier. */
 async function leaveForm(page: Page): Promise<void> {

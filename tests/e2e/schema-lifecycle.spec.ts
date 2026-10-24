@@ -1,19 +1,17 @@
 /**
- * Schema lifecycle E2E — the full flow the user asked for:
+ * Schema lifecycle E2E — the creation half of the flow the user asked for:
  *
  *   1. Create a domain, then a product under it.
  *   2. Create an entity under that product from an all-data-types schema
  *      (pasted TypeSpec) — exercising the real @typespec/compiler import.
- *   3. Emit implementation versions (Avro / OpenAPI / DDL) from the reference
- *      super schema and verify each target renders.
- *   4. Round-trip: feed an emitted version schema back in to create a new super
- *      schema — verifying import↔emit compatibility both ways.
+ *
+ * (Emitting the versions and the emit/import round-trip are covered elsewhere: see the note at the end of this file.)
  *
  * Type-mapping correctness for ALL data types is covered headlessly + fast in
  * tests/unit/type-mapping/all-types-coverage.test.ts and
  * tests/integration/all-types-roundtrip.test.ts. This spec verifies the UI flows.
  *
- * PREREQS: see helpers/auth.ts. Selectors use roles/labels + known test-ids;
+ * PREREQS: see helpers/auth-state.ts. Selectors use roles/labels + known test-ids;
  * adjust if the UI copy changes. Run: `npm run test:e2e`.
  */
 
@@ -22,34 +20,12 @@ import path from "node:path";
 import { test, expect, unique } from "./helpers/fixtures";
 import { expectDetailPanelText, fillWorkbenchPaste } from "./helpers/workbench";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
+import { createDomain, createProduct } from "./helpers/lifecycle";
 
 const ALL_TYPES_TSP = readFileSync(
   path.join(__dirname, "fixtures/all-types.tsp"),
   "utf8"
 );
-
-async function createDomain(page: import("@playwright/test").Page, name: string) {
-  await page.goto("/schemas");
-  await page.getByRole("button", { name: /create domain/i }).first().click();
-  await expect(page.getByText(/create new domain/i)).toBeVisible();
-  await page.getByPlaceholder(/Customer, Payment/i).fill(name);
-  await page.getByRole("button", { name: /^create$/i }).click();
-  await expect(page.getByText(name).first()).toBeVisible();
-}
-
-async function openDomain(page: import("@playwright/test").Page, name: string) {
-  await page.goto("/schemas");
-  await page.getByText(name).first().click();
-  await expect(page).toHaveURL(/\/schemas\/[^/]+/);
-}
-
-async function createProduct(page: import("@playwright/test").Page, name: string) {
-  await page.getByRole("button", { name: /new product/i }).first().click();
-  await expect(page.getByText(/create new product/i)).toBeVisible();
-  await page.getByPlaceholder(/OneSCM, Bank/i).fill(name);
-  await page.getByRole("button", { name: /^create$/i }).click();
-  await expect(page.getByText(name).first()).toBeVisible();
-}
 
 async function importEntityFromTsp(page: import("@playwright/test").Page, productUrl: string, tsp: string) {
   // Go straight to the wizard off the resolved product URL (avoids ambiguous
@@ -103,13 +79,9 @@ test.describe("schema lifecycle", () => {
     createdDomains.push(domain);
     const product = unique("e2e-product-");
 
-    // 1. Domain + product
+    // 1. Domain + product (helpers/lifecycle.ts: through the real UI; resolves to the product URL)
     await createDomain(page, domain);
-    await openDomain(page, domain);
-    await createProduct(page, product);
-    await page.getByText(product).first().click();
-    await expect(page).toHaveURL(/\/schemas\/[^/]+\/[^/]+/);
-    const productUrl = page.url();
+    const productUrl = await createProduct(page, domain, product);
 
     // 2. All-types import through the real @typespec/compiler server action.
     //    The review screen rendering "AllTypes" (inside importEntityFromTsp) already
@@ -126,13 +98,12 @@ test.describe("schema lifecycle", () => {
     await expect(page.getByRole("heading", { name: /AllTypes/i })).toBeVisible();
   });
 
-  // Emit versions + round-trip via the UI are NOT wired here: the entity workspace
-  // doesn't render emission output (EmissionPreviewPanel exists but is unmounted;
-  // emit is keyboard-only Ctrl+E and toast-only). Emit for every data type AND the
-  // emit↔import round-trip are covered headlessly in
-  // tests/integration/all-types-roundtrip.test.ts (Avro + real TypeSpec) and
-  // tests/unit/type-mapping/all-types-coverage.test.ts. Panel test-ids
-  // (emission-preview-panel, emit-tab-*, emit-output-*) are in place for when the
-  // panel gets mounted.
-  test.fixme("emit versions + round-trip through the UI", async () => {});
+  // Steps 3 and 4 of the header (emit versions, round-trip) are not tests of this spec, and the `test.fixme` that stood here for them
+  // is gone (a fixme must carry a tracked reason, tests/unit/e2e-suite-guard.test.ts; this one's reason, that the workspace showed no
+  // emission output, no longer holds):
+  //   - emitting through the UI is covered by authored-lifecycle.spec.ts and jsonschema-lifecycle.spec.ts, which generate EVERY
+  //     target on the entity's Schemas tab and read each artifact back;
+  //   - the emit<->import round-trip for every data type is covered headlessly in tests/integration/all-types-roundtrip.test.ts (Avro
+  //     + real TypeSpec) and tests/unit/type-mapping/all-types-coverage.test.ts; pasting a generated artifact back into the
+  //     workbench belongs to the importers spec of the release UI suite plan (Task 5), not here.
 });

@@ -70,32 +70,33 @@ interface WorkerFixtures {
   closeDbPool: void;
 }
 
+// A fixture's second parameter is called `provide`, not Playwright's usual `use`: eslint's react-hooks/rules-of-hooks takes `use(...)`
+// for a React hook and rejects it here.
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   workspaceEntities: [[], { option: true }],
 
-  authedPage: async ({ page }, use) => {
+  authedPage: async ({ page }, provide) => {
     const cookies = await page.context().cookies();
     if (!cookies.some((cookie) => /session-token/.test(cookie.name))) {
       throw new Error(
         "authedPage has no session: the `setup` project did not run (`--no-deps` skips it: run `--project=setup` first), or this spec opted out of storageState. Use `page` for a logged-out test.",
       );
     }
-    await use(page);
+    await provide(page);
   },
 
-  workspace: async ({ workspaceEntities }, use) => {
+  workspace: async ({ workspaceEntities }, provide) => {
     const workspace = await createWorkspace(workspaceEntities);
     try {
-      await use(workspace);
+      await provide(workspace);
     } finally {
       await workspace.cleanup();
     }
   },
 
   closeDbPool: [
-    // eslint-disable-next-line no-empty-pattern -- Playwright reads a fixture's needs from this destructuring: it needs none
-    async ({}, use) => {
-      await use();
+    async ({}, provide) => {
+      await provide();
       await disconnectDb();
     },
     { scope: "worker", auto: true },

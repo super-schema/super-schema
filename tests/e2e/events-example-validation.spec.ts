@@ -15,8 +15,9 @@
  */
 import { randomBytes } from "node:crypto";
 import type { Locator, Page } from "@playwright/test";
-import { test, expect } from "./helpers/fixtures";
+import { test, expect, unique } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, pg, type NavFixtures } from "./helpers/db";
+import { centerPanel, createEventFromMenu, productUrlOf } from "./helpers/event-builder";
 
 const ID = {
   outlineMessages: "outline-messages",
@@ -81,23 +82,6 @@ const need = <T>(value: T | undefined, what: string): T => {
   return value;
 };
 
-// Page content is queried inside the center panel (a hard load leaves a hidden streamed copy in <body>; see events-builder.spec.ts).
-const centerPanel = (page: Page): Locator => page.getByTestId("center-panel");
-
-/** Header New menu → New Event → name → Create; lands on the Event page. */
-async function createEventFromMenu(page: Page, productUrl: string, name: string): Promise<void> {
-  const main = centerPanel(page);
-  await page.goto(productUrl);
-  await main.getByTitle("More options").click();
-  await main.getByRole("menuitem", { name: /New Event/ }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("textbox", { name: /name/i }).fill(name);
-  await dialog.getByRole("button", { name: /^create/i }).click();
-  await expect(page).toHaveURL(/\/events\/[^/?]+/, { timeout: 60_000 });
-  await expect(main.getByRole("heading", { name })).toBeVisible();
-}
-
 /** The example's payload editor once CodeMirror has taken over from the textarea, and its content as the editor holds it. */
 async function payloadEditor(main: Locator): Promise<{ wrapper: Locator; content: Locator }> {
   const wrapper = main.getByTestId(ID.payloadEditor);
@@ -122,7 +106,7 @@ test.describe("message examples against their payload schema", () => {
     page.on("pageerror", (error) => pageErrors.push(error.message));
 
     await test.step("a new event with a message that pins the Order entity", async () => {
-      await createEventFromMenu(page, `/schemas/${f.domain.slug}/${f.product.slug}`, `example-events-${Date.now().toString(36)}`);
+      await createEventFromMenu(page, productUrlOf(f), unique("example-events-"));
       await main.getByTestId(ID.outlineMessages).click();
       await main.getByRole("button", { name: "Add message" }).click();
       await main.getByTestId(ID.messageTitle).fill("Order created");
