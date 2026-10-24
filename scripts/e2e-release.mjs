@@ -2,7 +2,7 @@
 // The release check of the browser suite, as one command: it makes a database and an app of its own, runs a tier of the suite against
 // them, and removes everything again, whether the run passed, failed, was interrupted or crashed.
 //
-//   node scripts/e2e-release.mjs --tier smoke|regression|nightly [--keep] [--reuse-build] [--shard i/n] [--project name]
+//   node scripts/e2e-release.mjs --tier smoke|regression|nightly|serial [--keep] [--reuse-build] [--shard i/n] [--project name]
 //                                [--list-only] [--output-root dir] [-- playwright arguments...]
 //
 //   npm run test:e2e:release             --tier nightly (everything)
@@ -68,7 +68,10 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spa
  * }} RunPlan
  */
 
-export const RELEASE_TIERS = ["smoke", "regression", "nightly"];
+// `serial` is the phases script's tier of the same name: a login, then the `serial-after` project alone (--no-deps), with the caller's
+// arguments for that last phase. It exists for the one thing the other tiers cannot select: the @slow / @external specs of
+// `serial-after` without Playwright running all of `chromium` first as its dependency (the release workflow's nightly job).
+export const RELEASE_TIERS = ["smoke", "regression", "nightly", "serial"];
 
 /** 0 passed (the phases script's own codes pass through), 2 bad arguments, 3 the environment could not be set up. */
 export const EXIT = { ok: 0, usage: 2, setup: 3 };
@@ -106,7 +109,7 @@ class Interrupted extends Error {}
 
 export const USAGE = `usage: node scripts/e2e-release.mjs --tier <${RELEASE_TIERS.join("|")}> [options] [-- playwright arguments...]
 
-  --tier <name>        smoke (pull requests), regression (every functional spec, Chromium), nightly (everything)
+  --tier <name>        smoke (pull requests), regression (every functional spec, Chromium), nightly (everything), serial (the serial-after specs alone)
   --shard <i/n>        run slice i of n (regression is run as 4 slices in CI)
   --project <name>     narrow the tier to a Playwright project (repeatable): chromium, firefox-smoke, a11y ...
   --reuse-build        skip \`next build\` when .next was built by this runner from the same inputs (sources, config, lockfile, public/, NEXT_PUBLIC_ values)

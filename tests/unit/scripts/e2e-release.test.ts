@@ -109,6 +109,18 @@ describe("planRun: the arguments of the phases script", () => {
     expect(phases[0].args.some((a: string) => a.startsWith("--grep") || a.startsWith("--project"))).toBe(false);
   });
 
+  it("serial is the serial specs alone (a login, then serial-after without its dependencies): the CI job for the slow and external ones uses it", () => {
+    expect(parseArgs(["--tier", "serial"]).tier).toBe("serial");
+    expect(RELEASE_TIERS).toContain("serial");
+    const p = plan(["--tier", "serial", "--", "--grep", "@slow|@external"]);
+    expect(p.phasesArgv).toEqual(["serial", "--grep", "@slow|@external"]);
+    // The caller's arguments go to the serial phase, not to the login phase, and only the login phase runs the setup project.
+    const { phases } = planPhases({ ...parseCli(p.phasesArgv), authState: "/x/admin.json" });
+    expect(phases.map((ph: { name: string }) => ph.name)).toEqual(["setup", "serial"]);
+    expect(phases[0].args).not.toContain("--grep");
+    expect(phases[1].args).toEqual(expect.arrayContaining(["--project=serial-after", "--no-deps", "--grep", "@slow|@external"]));
+  });
+
   it("refuses before it provisions anything when no phase is left (a --project that is none of the tier's)", () => {
     expect(() => plan(["--tier", "smoke", "--project", "nope"])).toThrow(UsageError);
     expect(() => plan(["--tier", "smoke", "--project", "nope"])).toThrow(/nothing to run.*--project nope/);
