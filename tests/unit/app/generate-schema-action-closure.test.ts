@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Task 7: generateSchemaAction for a closure target (JSON Schema, OpenAPI, Protobuf, Avro, Java) loads the entity's reference
 // closure (draft or published mode), emits it as one file per entity, stores `files` + `resolution` on the schema version and, after
@@ -350,6 +350,7 @@ describe("generateSchemaAction: legacy reference upgrade", () => {
     ];
     vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
+  afterEach(() => vi.restoreAllMocks());
 
   it("writes the qualified form after a successful emission: id and qualified name added, other keys kept, no version", async () => {
     const result = await actions.generateSchemaAction("a", "json-schema");
