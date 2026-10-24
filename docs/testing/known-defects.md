@@ -149,6 +149,23 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - cost to fix: the routes take the active tenant (`getActiveTenantId`) and the two queries filter `entity: { tenantId }`; the audit trail needs the
   tenant of the audited row (a join by entity type, or a column).
 
+## KD-017: the glossary's detail panel never lists the linked fields
+
+- status: open
+- symptom: a concept's card says "1 field linked"; its detail panel says "Linked Fields (0 fields across 0 entities)" and "No fields linked to
+  this concept yet.".
+- where: `src/features/glossary/GlossaryBrowser.tsx` (`getConceptUsage` returns `fields: []`); `getConceptById` (service) has the field, entity
+  and domain names the panel draws.
+- pinned by: `glossary-lineage.spec.ts`, "the detail panel lists the field a concept is linked to".
+- cost to fix: a server action over `getConceptById`, called by the panel.
+
+## KD-018: the glossary's domain tabs are the domains of what is listed
+
+- status: no-test (cosmetic)
+- symptom: with Finance chosen, the other domain tabs disappear until All is chosen again: the tabs are derived from the concepts of the current
+  list, which is already filtered by the tab and the search.
+- where: `src/features/glossary/GlossaryBrowser.tsx` (`allDomains` from `concepts`).
+
 ## KD-021: the Enabled toggle of an emitter and the Health tab's compiler and emitter statuses are not wired to anything
 
 - status: no-test (a product gap: nothing for a test to pin that is not the stub itself)
