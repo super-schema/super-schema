@@ -1,5 +1,11 @@
 import { setOwn } from "@/lib/event-specs/own-property";
 
+/**
+ * How a field holds an entity reference: it IS one (`direct`, type `reference`), it is an array of them (`array`, `arrayElementType:
+ * "reference"`) or a map of them (`map`, `mapValueType: "reference"`). The `referenced*` keys sit on the field's decorators in every shape.
+ */
+export type ReferenceShape = "direct" | "array" | "map";
+
 /** Placeholder segment for a reference target that has no domain / product. */
 export const TENANT_PLACEHOLDER = "_tenant";
 

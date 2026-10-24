@@ -2181,11 +2181,17 @@ export async function compileAndApplyTypeSpecSourceAction(
   }
 }
 
-/** The message of a built-in type name given to something the source declares, or null (the same names TypeSpec itself resolves without a declaration). */
-function stdTypeNameMessage(kind: string, name: string): string | null {
-  return TYPESPEC_STD_TYPE_NAMES.has(name)
-    ? `${kind} "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this ${kind.toLowerCase()} instead of the built-in. Choose another name.`
-    : null;
+/**
+ * The message of a built-in type name given to something the source declares, or null (the same names TypeSpec itself resolves without a
+ * declaration). `own`: the model is the entity's own (the first model of the source), which is named after the ENTITY: the way out is to
+ * rename the entity (or the model in the text). The lowercase built-ins people do not think of are named, since an entity called `Url` or
+ * `duration` is an easy way to meet this.
+ */
+function stdTypeNameMessage(kind: string, name: string, own = false): string | null {
+  if (!TYPESPEC_STD_TYPE_NAMES.has(name)) return null;
+  const noun = kind.toLowerCase();
+  const wayOut = own ? "The model is named after the entity: rename the entity, or the model in the source." : `Rename the ${noun}.`;
+  return `${kind} "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this ${noun} instead of the built-in. ${wayOut} (Lowercase names such as url, duration, float and decimal are TypeSpec built-ins too.)`;
 }
 
 async function compileAndApplyTypeSpecSource(
@@ -2223,12 +2229,16 @@ async function compileAndApplyTypeSpecSource(
   // and checks the rest of the source with an empty stand-in for each: the stand-ins live in a separate file of that one compile and are
   // never stored or emitted.
   const result = await compileTypeSpecWithGovernance(source, {
-    externalModels: async (written) => {
+    externalModels: async (written, unionOnly) => {
       const refs = await loadRefs();
       if (!refs.success) return new Set<string>();
       const resolve = createNameResolver(refs.data);
       const storedNames = storedReferenceNames(await loadFieldRows());
-      return new Set(written.slice(0, MAX_WRITTEN_NAMES).filter((name) => storedNames.has(name) || resolve(name) !== undefined));
+      // A name some field already refers to may stay (its entity is gone or renamed), unless it is only ever a union member: a union
+      // member is no reference, so a stored reference licenses nothing there and the tenant must have the name.
+      return new Set(
+        written.slice(0, MAX_WRITTEN_NAMES).filter((name) => (!unionOnly.has(name) && storedNames.has(name)) || resolve(name) !== undefined),
+      );
     },
   });
   if (!result.success) {
@@ -2270,7 +2280,9 @@ async function compileAndApplyTypeSpecSource(
 
   // A model, enum, scalar or union NAMED like a TypeSpec built-in (`model string`, `enum int32`) takes the name over: every field typed with
   // the built-in is then read as that declaration, or the declaration as the built-in. The save is refused rather than silently mistyped.
-  for (const [kind, name] of [["Model", model.name], ...result.document.models.slice(1).map((m) => ["Model", m.name]), ...declaredNames]) {
+  const builtInOwn = stdTypeNameMessage("Model", model.name, true);
+  if (builtInOwn !== null) return { success: false, diagnostics: result.diagnostics, error: builtInOwn };
+  for (const [kind, name] of [...result.document.models.slice(1).map((m) => ["Model", m.name]), ...declaredNames]) {
     const builtIn = stdTypeNameMessage(kind, name);
     if (builtIn !== null) return { success: false, diagnostics: result.diagnostics, error: builtIn };
   }
@@ -2279,7 +2291,10 @@ async function compileAndApplyTypeSpecSource(
   // entity itself (its own model's name). Resolved with the closure's resolver; several matches are asked about, nothing is written.
   const typeNames = result.fieldTypeNames ?? [];
   const external = result.externalModels ?? new Set<string>();
-  const candidates = typeNames.filter((n) => external.has(n.written) || n.written === model.name);
+  // A member of a field's union is not stored as a reference (a union holds member NAMES): it only had to compile.
+  const candidates = typeNames.flatMap((n) =>
+    n.shape !== "union" && (external.has(n.written) || n.written === model.name) ? [{ field: n.field, written: n.written, shape: n.shape }] : [],
+  );
   let references: ReadonlyMap<string, SourceReference> | undefined;
   if (candidates.length > 0) {
     const refs = await loadRefs();

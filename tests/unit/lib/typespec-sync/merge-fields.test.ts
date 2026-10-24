@@ -354,32 +354,32 @@ describe("a name the source typed a field with that resolved to an entity of the
   const QUALIFIED = (r: typeof BILLING) => ({ referencedEntityId: r.entityId, referencedEntityName: r.entity, referencedQualifiedName: `${r.domain}/${r.product}/${r.entity}` });
 
   it("a new field becomes a reference: id, name and qualified name, and NO version", () => {
-    const m = mergeSyncedField(null, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    const m = mergeSyncedField(null, src({ type: "Address" }), { reference: { ref: BILLING, shape: "direct" } });
 
     expect(m.type).toBe("reference");
     expect(m.decorators).toEqual(QUALIFIED(BILLING));
   });
 
   it("an array element: an array whose element is a reference, the target on the field", () => {
-    const m = mergeSyncedField(null, src({ type: "array", arrayElementType: "Address" }), { reference: { ref: SALES, element: true } });
+    const m = mergeSyncedField(null, src({ type: "array", arrayElementType: "Address" }), { reference: { ref: SALES, shape: "array" } });
 
     expect(m.type).toBe("array");
     expect(m.decorators).toEqual({ arrayElementType: "reference", ...QUALIFIED(SALES) });
   });
 
   it("the pin tag of the source is the only version: stored with the reference, otherwise none (a stale pin goes)", () => {
-    const pinned = mergeSyncedField(null, src({ type: "Address", decorators: { referencedEntityVersion: "1.2" } }), { reference: { ref: BILLING, element: false } });
+    const pinned = mergeSyncedField(null, src({ type: "Address", decorators: { referencedEntityVersion: "1.2" } }), { reference: { ref: BILLING, shape: "direct" } });
     expect(pinned.decorators).toEqual({ ...QUALIFIED(BILLING), referencedEntityVersion: "1.2" });
 
     const existing = row({ type: "reference", decorators: { ...QUALIFIED(BILLING), referencedEntityVersion: "1.0" } });
-    const unpinned = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    const unpinned = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, shape: "direct" } });
     expect(unpinned.decorators).toEqual(QUALIFIED(BILLING));
   });
 
   it("a legacy name-only reference written as the same name is upgraded in place; other decorators survive", () => {
     const existing = row({ type: "reference", decorators: { referencedEntityName: "Address", governance: { dataCategory: "c" } } });
 
-    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, shape: "direct" } });
 
     expect(m.type).toBe("reference");
     expect(m.decorators).toEqual({ ...QUALIFIED(BILLING), governance: { dataCategory: "c" } });
@@ -389,14 +389,14 @@ describe("a name the source typed a field with that resolved to an entity of the
   it("retargeting replaces the whole target, the id and the qualified name included", () => {
     const existing = row({ type: "reference", decorators: { ...QUALIFIED(BILLING), referencedEntityVersion: "1.0", keep: 1 } });
 
-    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: SALES, element: false } });
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: SALES, shape: "direct" } });
 
     expect(m.decorators).toEqual({ ...QUALIFIED(SALES), keep: 1 });
   });
 
   it("a field that was a string and is now a reference loses what was bound to the old type", () => {
     const m = mergeSyncedField(row({ type: "string", decorators: { enumName: "E", typespec: { validation: { maxLength: 5 } } } }), src({ type: "Address" }), {
-      reference: { ref: BILLING, element: false },
+      reference: { ref: BILLING, shape: "direct" },
     });
 
     expect(m.type).toBe("reference");
@@ -407,7 +407,7 @@ describe("a name the source typed a field with that resolved to an entity of the
   it("a dangling field (a raw $ref) typed with a name that resolved is a resolved reference: the marker goes", () => {
     const existing = row({ type: "reference", decorators: { referencedEntityName: "Address", danglingRef: { ref: "common/address.json", reason: "r" } } });
 
-    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, shape: "direct" } });
 
     expect(m.decorators).not.toHaveProperty("danglingRef");
     expect(m.decorators).toMatchObject(QUALIFIED(BILLING));
@@ -416,22 +416,78 @@ describe("a name the source typed a field with that resolved to an entity of the
   it("re-saving the same resolved reference changes nothing", () => {
     const existing = row({ type: "reference", decorators: { ...QUALIFIED(BILLING) } });
 
-    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, shape: "direct" } });
 
     expect(fieldNeedsUpdate(existing, m, src({ type: "Address" }))).toBe(false);
   });
 
   it("an id-less reference (a name only) is written without an id, never with a made-up one", () => {
-    const m = mergeSyncedField(null, src({ type: "Address" }), { reference: { ref: { domain: "Billing", product: "Payments", entity: "Address" }, element: false } });
+    const m = mergeSyncedField(null, src({ type: "Address" }), { reference: { ref: { domain: "Billing", product: "Payments", entity: "Address" }, shape: "direct" } });
 
     expect(m.decorators).not.toHaveProperty("referencedEntityId");
     expect(m.decorators.referencedQualifiedName).toBe("Billing/Payments/Address");
   });
 
+  it("a map shape: the field is a map whose values are references (mapValueType reference, the target on the field, the pin tag the only version)", () => {
+    const fresh = mergeSyncedField(null, src({ type: "map" }), { reference: { ref: BILLING, shape: "map" } });
+    expect(fresh.type).toBe("map");
+    expect(fresh.decorators).toEqual({ mapValueType: "reference", ...QUALIFIED(BILLING) });
+
+    const pinned = mergeSyncedField(null, src({ type: "map", decorators: { referencedEntityVersion: "2.0" } }), { reference: { ref: BILLING, shape: "map" } });
+    expect(pinned.decorators).toEqual({ mapValueType: "reference", ...QUALIFIED(BILLING), referencedEntityVersion: "2.0" });
+
+    const was = row({ type: "map", decorators: { mapValueType: "string", mapKeyType: "string" } });
+    const retyped = mergeSyncedField(was, src({ type: "map" }), { reference: { ref: SALES, shape: "map" } });
+    expect(retyped.decorators).toEqual({ mapKeyType: "string", mapValueType: "reference", ...QUALIFIED(SALES) });
+  });
+
+  describe("keep: the field already stores that reference and the text names it again", () => {
+    const stored = (over: Record<string, unknown> = {}) => ({ ...QUALIFIED(BILLING), referencedEntityVersion: "1.0", keep: 1, ...over });
+
+    it("every stored key stays, whatever the spelling in the text (a name that is not the stored one reads as the reference, not a retype)", () => {
+      const existing = row({ type: "reference", decorators: { ...QUALIFIED(BILLING), referencedEntityName: "Order Item", referencedEntityVersion: "1.0" } });
+
+      const m = mergeSyncedField(existing, src({ type: "Order_Item", decorators: { referencedEntityVersion: "1.0" } }), { reference: { keep: true, shape: "direct" } });
+
+      expect(m.type).toBe("reference");
+      expect(m.decorators).toEqual(existing.decorators);
+      expect(fieldNeedsUpdate(existing, m, src({ type: "Order_Item" }))).toBe(false);
+    });
+
+    it("an array and a map of references the same", () => {
+      const array = row({ type: "array", decorators: { arrayElementType: "reference", ...QUALIFIED(BILLING), referencedEntityName: "Order Item" } });
+      const kept = mergeSyncedField(array, src({ type: "array", arrayElementType: "Order_Item" }), { reference: { keep: true, shape: "array" } });
+      expect(kept.type).toBe("array");
+      expect(kept.decorators).toEqual(array.decorators);
+
+      const map = row({ type: "map", decorators: { mapValueType: "reference", ...QUALIFIED(BILLING), referencedEntityName: "Order Item" } });
+      const keptMap = mergeSyncedField(map, src({ type: "map" }), { reference: { keep: true, shape: "map" } });
+      expect(keptMap.type).toBe("map");
+      expect(keptMap.decorators).toEqual(map.decorators);
+    });
+
+    it("the pin follows the text as always: gone from the tag, gone from the row", () => {
+      const existing = row({ type: "reference", decorators: stored() });
+
+      const m = mergeSyncedField(existing, src({ type: "Address" }), { reference: { keep: true, shape: "direct" } });
+
+      expect(m.decorators).toEqual({ ...QUALIFIED(BILLING), keep: 1 });
+    });
+
+    it("a legacy reference whose entity is gone is kept as it is", () => {
+      const existing = row({ type: "reference", decorators: { referencedEntityName: "Gone Thing" } });
+
+      const m = mergeSyncedField(existing, src({ type: "Gone_Thing" }), { reference: { keep: true, shape: "direct" } });
+
+      expect(m.type).toBe("reference");
+      expect(m.decorators).toEqual({ referencedEntityName: "Gone Thing" });
+    });
+  });
+
   it("the input is not modified", () => {
     const stored = { referencedEntityName: "Address" };
     const existing = row({ type: "reference", decorators: stored });
-    mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, element: false } });
+    mergeSyncedField(existing, src({ type: "Address" }), { reference: { ref: BILLING, shape: "direct" } });
     expect(stored).toEqual({ referencedEntityName: "Address" });
   });
 });

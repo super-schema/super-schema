@@ -29,7 +29,7 @@ import type { FieldGovernanceInfo } from "@/lib/compiler/typespec-compiler";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { isConstraintWithheld, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { refToEntityName } from "@/lib/importers/jsonschema.importer";
-import { writeFieldReference, type EntityRef } from "@/lib/references/entity-reference";
+import { writeFieldReference, type EntityRef, type ReferenceShape } from "@/lib/references/entity-reference";
 
 type Rec = Record<string, unknown>;
 
@@ -73,11 +73,13 @@ export interface MergeOptions {
    */
   enums?: ReadonlyMap<string, readonly string[]>;
   /**
-   * The entity of the tenant the source's type name for this field resolved to (see `@/lib/references/source-reference`). The field is then
-   * a reference (an array of references when `element`) to it: its id, name and qualified name are written, a stale target and pin go,
-   * and the pin tag of the source is the only thing that stores a version. Absent: the field is merged as the text says.
+   * What the source's type name for this field resolved to (see `@/lib/references/source-reference`). `ref`: an entity of the tenant. The
+   * field is then a reference of that `shape` (a reference, an array or a map of references) to it: its id, name and qualified name are
+   * written, a stale target and pin go, and the pin tag of the source is the only thing that stores a version. `keep`: the field already
+   * stores that reference and the text names it again (possibly spelled another way): it stays a reference of that shape with every
+   * stored key as it is. Absent: the field is merged as the text says.
    */
-  reference?: { ref: EntityRef; element: boolean };
+  reference?: { ref: EntityRef; shape: ReferenceShape } | { keep: true; shape: ReferenceShape };
 }
 
 export const GENERIC_DANGLING_REASON = "unresolved reference";
@@ -245,9 +247,11 @@ function resolvedTargetAsStored(existing: SyncExistingField | null, source: Sync
   return unchanged;
 }
 
-/** The source field as a reference to an entity the text named: `reference`, or an array whose element is one. */
-function asResolvedReference(source: SyncSourceField, element: boolean): SyncSourceField {
-  return element ? { ...source, type: "array", arrayElementType: "reference" } : { ...source, type: "reference" };
+/** The source field as a reference to an entity the text named: `reference`, an array whose element is one, or a map whose values are. */
+function asResolvedReference(source: SyncSourceField, shape: ReferenceShape): SyncSourceField {
+  if (shape === "array") return { ...source, type: "array", arrayElementType: "reference" };
+  if (shape === "map") return { ...source, type: "map" };
+  return { ...source, type: "reference" };
 }
 
 /** A field (or array element) typed with an enum the source declares, read as `enum` / array of `enum`. */
@@ -270,7 +274,12 @@ function enumAsDeclared(
 /** The field row the source text means, given the stored row (null for a field the source adds). Pure; never mutates its inputs. */
 export function mergeSyncedField(existing: SyncExistingField | null, rawSource: SyncSourceField, opts: MergeOptions = {}): MergedField {
   const enumTyped = enumAsDeclared(rawSource, opts.enums);
-  const { source, matched } = resolvedTargetAsStored(existing, opts.reference ? asResolvedReference(enumTyped.source, opts.reference.element) : enumTyped.source);
+  const { source, matched: storedMatched } = resolvedTargetAsStored(
+    existing,
+    opts.reference ? asResolvedReference(enumTyped.source, opts.reference.shape) : enumTyped.source,
+  );
+  // A reference the field keeps is, by definition, written as the target it stores (whatever its spelling).
+  const matched = storedMatched || (opts.reference !== undefined && "keep" in opts.reference);
   const out: Rec = isRec(existing?.decorators) ? cloneJson(existing.decorators as Rec) : {};
   const mapped = mapSourceField(source);
   const typeChanged = existing !== null && existing.type !== mapped.type;
@@ -311,7 +320,7 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
   const isReferenceResult =
     mapped.type === "reference" ||
     (mapped.type === "array" && mapped.arrayElementType === "reference") ||
-    (mapped.type === "map" && isRec(existing?.decorators) && (existing.decorators as Rec).mapValueType === "reference");
+    (mapped.type === "map" && (opts.reference?.shape === "map" || (isRec(existing?.decorators) && (existing.decorators as Rec).mapValueType === "reference")));
   if (typeof sourcePin === "string" && sourcePin !== "" && !isReferenceResult) setOwn(mapped.extensions, PIN_EXTENSION_KEY, sourcePin);
 
   const extBucket: Rec = isRec(typespec.extensions) ? (typespec.extensions as Rec) : {};
@@ -398,8 +407,9 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
 
   // --- the entity the written name resolved to: stored as the qualified reference; the pin of the source (if any) is the only version ---
   let decorators = out;
-  if (opts.reference && isReferenceResult) {
+  if (opts.reference && "ref" in opts.reference && isReferenceResult) {
     const pin = typeof out.referencedEntityVersion === "string" && out.referencedEntityVersion !== "" ? out.referencedEntityVersion : undefined;
+    if (opts.reference.shape === "map") setOwn(out, "mapValueType", "reference");
     decorators = writeFieldReference(out, { ...opts.reference.ref, ...(pin ? { pinnedVersion: pin } : {}) });
   }
 

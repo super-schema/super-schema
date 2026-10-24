@@ -9,9 +9,10 @@ vi.setConfig({ testTimeout: 60_000 });
 vi.mock("server-only", () => ({}));
 
 let compileTypeSpecWithGovernance: typeof import("@/lib/compiler/typespec-compiler").compileTypeSpecWithGovernance;
+let isInStandInFile: typeof import("@/lib/compiler/typespec-compiler").isInStandInFile;
 
 beforeAll(async () => {
-  ({ compileTypeSpecWithGovernance } = await import("@/lib/compiler/typespec-compiler"));
+  ({ compileTypeSpecWithGovernance, isInStandInFile } = await import("@/lib/compiler/typespec-compiler"));
 });
 
 const model = (...fields: string[]) => `model Customer {\n  @key id: string;\n${fields.map((f) => `  ${f}\n`).join("")}}\n`;
@@ -27,15 +28,15 @@ describe("without the option nothing changes", () => {
     if (!good.success) return;
     expect(good.externalModels.size).toBe(0);
     expect(good.fieldTypeNames).toEqual([
-      { field: "id", written: "string", element: false },
-      { field: "tags", written: "string", element: true },
-      { field: "owner", written: "Customer", element: false },
+      { field: "id", written: "string", shape: "direct" },
+      { field: "tags", written: "string", shape: "array" },
+      { field: "owner", written: "Customer", shape: "direct" },
     ]);
   });
 });
 
 describe("externalModels", () => {
-  it("is asked once, about the names of the FIRST model's fields the compiler could not find, as written (bare, qualified, an array's element), each once", async () => {
+  it("is asked once, about the names of the FIRST model's fields the compiler could not find, as written, each once", async () => {
     const ask = accepting();
     const source = [
       "model Local { x: string; }",
@@ -44,8 +45,8 @@ describe("externalModels", () => {
       "  a: Address;",
       "  b: Billing.Payments.Address[];",
       "  c: Local;",
-      "  d: Record<Nowhere>;",
-      "  e: Address | string;",
+      "  d: Record<Pair>;",
+      "  e: Mixed | string;",
       "  f: Address;",
       "}",
       "model Other {",
@@ -56,13 +57,46 @@ describe("externalModels", () => {
     await compileTypeSpecWithGovernance(source, { externalModels: ask });
     expect(ask).not.toHaveBeenCalled();
 
-    const entityFirst = ["model Customer {", "  @key id: string;", "  a: Address;", "  b: Billing.Payments.Address[];", "  c: Record<Nowhere>;", "  d: Mixed | string;", "  e: Address;", "}", "model Other {", "  z: Zip;", "}"].join("\n");
+    const entityFirst = [
+      "model Customer {",
+      "  @key id: string;",
+      "  a: Address;",
+      "  b: Billing.Payments.Address[];",
+      "  d: Record<Pair>;",
+      "  e: Mixed | string;",
+      "  f: Address;",
+      "}",
+      "model Other {",
+      "  z: Zip;",
+      "}",
+    ].join("\n");
     const res = await compileTypeSpecWithGovernance(entityFirst, { externalModels: ask });
 
-    // `Record<Nowhere>`, `Mixed | string` (not plain names) and `Zip` (not a field of the first model) are never offered.
+    // The shapes of a field's type: Name, Name[], Record<Name>, a member of the field's own union. `Zip` is a field of the second model.
     expect(res.success).toBe(false);
     expect(ask).toHaveBeenCalledTimes(1);
-    expect(ask.mock.calls[0][0].sort()).toEqual(["Address", "Billing.Payments.Address"]);
+    expect(ask.mock.calls[0][0].sort()).toEqual(["Address", "Billing.Payments.Address", "Mixed", "Pair"]);
+    // `Mixed` is only ever a union member (not stored as a reference); the others are references
+    expect([...((ask.mock.calls[0] as unknown[])[1] as ReadonlySet<string>)]).toEqual(["Mixed"]);
+  });
+
+  it("every shape is read from the syntax tree: the field type names list says how each name is held", async () => {
+    const res = await compileTypeSpecWithGovernance(model("a: Address;", "b: Address[];", "c: Record<Address>;", "d: Card | Bank;", "e: string[];"), {
+      externalModels: accepting("Address", "Card", "Bank"),
+    });
+
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.fieldTypeNames).toEqual([
+      { field: "id", written: "string", shape: "direct" },
+      { field: "a", written: "Address", shape: "direct" },
+      { field: "b", written: "Address", shape: "array" },
+      { field: "c", written: "Address", shape: "map" },
+      { field: "d", written: "Card", shape: "union" },
+      { field: "d", written: "Bank", shape: "union" },
+      { field: "e", written: "string", shape: "array" },
+    ]);
+    expect(res.document.models.map((m) => m.name)).toEqual(["Customer"]);
   });
 
   it("accepted names compile, and are returned with the field type names; the stand-ins are not part of the document", async () => {
@@ -75,9 +109,9 @@ describe("externalModels", () => {
     expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
     expect([...res.externalModels].sort()).toEqual(["Address", "Billing.Payments.Address"]);
     expect(res.fieldTypeNames).toEqual([
-      { field: "id", written: "string", element: false },
-      { field: "a", written: "Address", element: false },
-      { field: "b", written: "Billing.Payments.Address", element: true },
+      { field: "id", written: "string", shape: "direct" },
+      { field: "a", written: "Address", shape: "direct" },
+      { field: "b", written: "Billing.Payments.Address", shape: "array" },
     ]);
     expect(res.document.models.map((m) => m.name)).toEqual(["Customer"]);
     expect(res.document.models[0].fields.map((f) => [f.name, f.type, f.arrayElementType])).toEqual([
@@ -89,6 +123,24 @@ describe("externalModels", () => {
     expect(res.diagnostics.filter((d) => /Address/.test(d.message))).toEqual([]);
   });
 
+  it("a Record<Name>, and the members of a field's own union, get a stand-in too; the stand-ins are not in the document", async () => {
+    const res = await compileTypeSpecWithGovernance(model("byKey: Record<Address>;", "payment: Card | Bank;", "qualified: Record<Billing.Payments.Address>;"), {
+      externalModels: accepting("Address", "Card", "Bank", "Billing.Payments.Address"),
+    });
+
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(res.document.models.map((m) => m.name)).toEqual(["Customer"]);
+    expect(res.document.models[0].fields.map((f) => [f.name, f.type])).toEqual([
+      ["id", "string"],
+      ["byKey", "map"],
+      ["payment", "Card | Bank"],
+      ["qualified", "map"],
+    ]);
+    expect(res.diagnostics.filter((d) => /Address|Card|Bank/.test(d.message))).toEqual([]);
+  });
+
   it("a name the caller does not accept stays the compiler's error; the accepted ones no longer are", async () => {
     const res = await compileTypeSpecWithGovernance(model("a: Address;", "b: Nowhere;"), { externalModels: accepting("Address") });
 
@@ -96,7 +148,7 @@ describe("externalModels", () => {
     if (!res.success) expect(res.diagnostics).toHaveLength(1);
   });
 
-  it("is not asked when the source compiles, and not for a name in another position (extends, spread, a map value)", async () => {
+  it("is not asked when the source compiles, and not for a name that is only used outside the type of a field", async () => {
     const compiles = accepting("Address");
     expect((await compileTypeSpecWithGovernance(model("a: string;"), { externalModels: compiles })).success).toBe(true);
     expect(compiles).not.toHaveBeenCalled();
@@ -104,7 +156,12 @@ describe("externalModels", () => {
     for (const text of [
       "model Customer extends Address {\n  @key id: string;\n}\n",
       "model Customer {\n  @key id: string;\n  ...Address;\n}\n",
-      model("m: Record<Address>;"),
+      `${model("a: string;")}alias Other = Address;\n`,
+      `${model("a: string;")}union Payment {\n  Address,\n  string,\n}\n`,
+      `${model("a: string;")}model Wrapper<T> {\n  v: T;\n}\nmodel Holder {\n  w: Wrapper<Address>;\n}\n`,
+      model("a: Record<Address[]>;"),
+      model("a: Record<Address | string>;"),
+      model("a: (Address | string)[];"),
     ]) {
       const ask = accepting("Address");
       const res = await compileTypeSpecWithGovernance(text, { externalModels: ask });
@@ -113,16 +170,33 @@ describe("externalModels", () => {
     }
   });
 
-  it("a name that is ALSO used somewhere that is not the type of a field (a spread, extends, a map value) is not given a stand-in: that use stays an error", async () => {
+  it("a name that is ALSO used somewhere that is not part of the type of a field is not given a stand-in: every use stays an error", async () => {
+    const names = accepting("Address", "Billing.Payments.Address", "Card");
     for (const text of [
       "model Customer {\n  @key id: string;\n  ...Address;\n  a: Address;\n}\n",
-      "model Customer {\n  @key id: string;\n  a: Address;\n  m: Record<Address>;\n}\n",
-      "model Customer {\n  @key id: string;\n  a: Billing.Payments.Address;\n  m: Record<Billing.Payments.Address>;\n}\n",
+      "model Customer extends Address {\n  @key id: string;\n  a: Address;\n}\n",
+      "model Customer {\n  @key id: string;\n  a: Address;\n  r: Record<Address[]>;\n}\n",
+      `${model("a: Address;", "m: Record<Address>;")}alias Other = Address;\n`,
+      `${model("a: Billing.Payments.Address;")}alias Other = Billing.Payments.Address;\n`,
+      `${model("p: Card | Bank;")}union Payment {\n  Card,\n  string,\n}\n`,
+      `${model("p: Card | string;")}model Wrapper<T> {\n  v: T;\n}\nmodel Holder {\n  w: Wrapper<Card>;\n}\n`,
     ]) {
-      const res = await compileTypeSpecWithGovernance(text, { externalModels: accepting("Address", "Billing.Payments.Address") });
+      const res = await compileTypeSpecWithGovernance(text, { externalModels: names });
       expect(res.success, text).toBe(false);
       expect(res.diagnostics.some((d) => d.code === "invalid-ref"), text).toBe(true);
     }
+  });
+
+  it("the stand-in file is recognised by its FULL path, never by its name: a stubs.tsp somewhere else is not filtered", () => {
+    const mine = "/work/job-1/stubs.tsp";
+    const at = (path: string) => ({ target: { file: { path, text: "" }, pos: 0, end: 0 } }) as unknown as Parameters<typeof isInStandInFile>[0];
+
+    expect(isInStandInFile(at(mine), new Set([mine]))).toBe(true);
+    expect(isInStandInFile(at("/work/job-2/stubs.tsp"), new Set([mine]))).toBe(false);
+    expect(isInStandInFile(at("/node_modules/@typespec/some-lib/lib/stubs.tsp"), new Set([mine]))).toBe(false);
+    expect(isInStandInFile(at("/work/job-1/main.tsp"), new Set([mine]))).toBe(false);
+    // a diagnostic with no usable target is never taken for the stand-in's
+    expect(isInStandInFile({ target: undefined } as unknown as Parameters<typeof isInStandInFile>[0], new Set([mine]))).toBe(false);
   });
 
   it("works in a source with a file-level namespace, a using and a library import", async () => {

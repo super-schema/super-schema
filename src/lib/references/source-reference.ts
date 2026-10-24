@@ -10,9 +10,11 @@
  *  - several -> nothing is decided: the caller asks the author, and the answer comes back as `picks` (field name -> entity id, which must be
  *    one of the candidates, so a pick can never point outside what the name matches in the tenant);
  *  - none -> not a reference of the tenant (the compile reports an unknown name, as it always did);
- *  - the entity's OWN model name is the entity itself (a self-reference), whatever else the tenant calls that.
- * A reference the field already stores keeps meaning what it stored: written as the same name, a qualified one is left alone (its id is
- * the key, so a name the tenant now shares does not matter) and a legacy name-only one is upgraded when the name has one match.
+ *  - the entity's OWN model name is the entity itself (a self-reference), but only for a field that does not already store a reference:
+ *    what a field stores wins (below), and a legacy name-only reference named like the entity is asked about like any shared name.
+ * A reference the field already stores keeps meaning what it stored: written as the same name (as it is, as the identifier it is spelled
+ * as, or as its Domain.Product.Entity), a qualified one is LEFT ALONE (its id is the key, so a name the tenant now shares, or the
+ * entity's own name, does not matter) and a legacy name-only one is upgraded when the name has one match.
  *
  * Pure: no I/O, nothing throws, user-controlled keys are read as own properties only.
  */
@@ -20,19 +22,26 @@
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { createRefResolver, type RefResolution } from "@/lib/references/closure";
-import { holdsEntityReference, parseQualifiedName, type EntityRef } from "@/lib/references/entity-reference";
+import { holdsEntityReference, parseQualifiedName, type EntityRef, type ReferenceShape } from "@/lib/references/entity-reference";
 
 /** At most this many different written names are looked at in one save; a source with more cannot be told apart from an attack. */
 export const MAX_WRITTEN_NAMES = 500;
 
-/** A field of the entity's model whose type is a plain name: the name as written (`Address` / `Billing.Payments.Address`), and whether it is the ELEMENT of an array. */
-export type WrittenFieldType = { field: string; written: string; element: boolean };
+/**
+ * A field of the entity's model whose type is, or is made of, a plain name: the name as written (`Address` / `Billing.Payments.Address`)
+ * and how the field holds it (`direct`: `Address`, `array`: `Address[]`, `map`: `Record<Address>`).
+ */
+export type WrittenFieldType = { field: string; written: string; shape: ReferenceShape };
 
 /** A stored field row, as far as the resolution reads it. */
 export type StoredFieldRow = { id: string; name: string; type: string; decorators: unknown };
 
-/** What a field of the source resolves to; `element` says the reference is the element of an array field. */
-export type SourceReference = { ref: EntityRef; element: boolean };
+/**
+ * What a field of the source resolves to. `ref`: the entity the field becomes a reference to (the pin tag of the source is the only
+ * version). `keep`: the field already stores that reference and the text names it again (by the name it stores, or as another spelling of
+ * it): it is left as it is, but still a reference of that `shape`, so the merge does not read the spelling as a retype.
+ */
+export type SourceReference = { ref: EntityRef; shape: ReferenceShape } | { keep: true; shape: ReferenceShape };
 
 export type SourceReferenceOutcome =
   | {
@@ -82,6 +91,9 @@ export function createNameResolver(refs: readonly EntityRef[]): (written: string
   };
 }
 
+/** The field type of each shape: a reference field is `reference`, an array of references `array`, a map of references `map`. */
+const SHAPE_TYPE: Record<ReferenceShape, string> = { direct: "reference", array: "array", map: "map" };
+
 /** The `Domain.Product.Entity` spelling (segments as identifiers) of the qualified name a row stores (`Domain/Product/Entity`), if it stores one. */
 function dottedSpelling(decorators: unknown): string | undefined {
   const qualified = ownString(decorators, "referencedQualifiedName");
@@ -93,10 +105,10 @@ function dottedSpelling(decorators: unknown): string | undefined {
  * The target a stored row's reference carries: its name, its dotted spelling when it is qualified, and whether it is name-only (legacy).
  * Undefined when the row is not a reference of that shape.
  */
-function storedTarget(row: StoredFieldRow | undefined, element: boolean): { name: string; dotted?: string; legacy: boolean } | undefined {
+function storedTarget(row: StoredFieldRow | undefined, shape: ReferenceShape): { name: string; dotted?: string; legacy: boolean } | undefined {
   if (!row || typeof row.type !== "string") return undefined;
   if (!holdsEntityReference(row.type, row.decorators)) return undefined;
-  if (element ? row.type !== "array" : row.type !== "reference") return undefined;
+  if (row.type !== SHAPE_TYPE[shape]) return undefined;
   const name = ownString(row.decorators, "referencedEntityName");
   if (name === undefined) return undefined;
   const dotted = dottedSpelling(row.decorators);
@@ -104,8 +116,8 @@ function storedTarget(row: StoredFieldRow | undefined, element: boolean): { name
 }
 
 /**
- * The names of the references the rows store (the name, and for a qualified one its `Domain.Product.Entity` spelling), for the compile
- * gate: a name the entity ALREADY refers to may stay in the source even when the tenant no longer has it (its entity was deleted or
+ * The names of the references the rows store (the name, as the identifier the generator spells it as, and for a qualified one its
+ * `Domain.Product.Entity` spelling), for the compile gate: a name the entity ALREADY refers to may stay in the source even when the tenant no longer has it (its entity was deleted or
  * renamed: the field keeps its id and stays as it is, and the entity is not stuck). A row that carries a dangling marker (its target is a
  * raw `$ref`, not an entity) is not counted: its name licenses nothing.
  */
@@ -115,7 +127,10 @@ export function storedReferenceNames(rows: readonly StoredFieldRow[]): Set<strin
     if (!row || typeof row.type !== "string" || !holdsEntityReference(row.type, row.decorators)) continue;
     if (activeDanglingRef(row.type, isRec(row.decorators) ? row.decorators : null) !== undefined) continue;
     const name = ownString(row.decorators, "referencedEntityName");
-    if (name !== undefined) names.add(name);
+    if (name !== undefined) {
+      names.add(name);
+      names.add(sanitizeIdentifier(name));
+    }
     const dotted = dottedSpelling(row.decorators);
     if (dotted !== undefined) names.add(dotted);
   }
@@ -136,8 +151,8 @@ function readPicks(picks: unknown): Map<string, string> {
 /**
  * What each candidate field of the entity's model means. `fields` are the fields whose written type names a model the source does not
  * declare (an entity of the tenant) or the entity's own model; `stored` are the entity's rows by field name; `refs` the tenant's entities.
- * Fields that resolve to nothing, and stored qualified references written as the same name, have no entry (the merge leaves them as they are);
- * of those, a field that did NOT already refer to the name is also listed in `unresolved`.
+ * A field that already stores a reference and is written as that same name is `keep` (a qualified one always; a legacy one when its name
+ * has no match at all); a name no entity has on any other field is listed in `unresolved`.
  * The first field (in `fields` order) whose bare name has several matches and no valid pick stops the resolution: `ambiguous`.
  */
 export function resolveSourceReferences(input: {
@@ -158,34 +173,42 @@ export function resolveSourceReferences(input: {
     const parsed = parseWrittenName(f.written);
     const bare = parsed && "bare" in parsed ? parsed.bare : undefined;
 
-    // The entity's own model is the entity: nothing to choose, whatever the tenant calls that.
-    if (bare !== undefined && bare === input.self.modelName && selfRef) {
-      references.set(f.field, { ref: selfRef, element: f.element });
+    // Written as the reference the field ALREADY stores (the name it stores, that name as an identifier, or its Domain.Product.Entity),
+    // a qualified reference is the same reference and is left alone: its id is the key, so neither a name the tenant now shares nor the
+    // entity's own name changes what it points at. A legacy (name-only) one falls through: upgraded when the name has exactly one
+    // match, asked about when it has several (the entity itself among them when it is named so), left dangling when it has none.
+    const target = storedTarget(row, f.shape);
+    const sameName =
+      target !== undefined &&
+      ((bare !== undefined && (target.name === bare || sanitizeIdentifier(target.name) === bare)) || (target.dotted !== undefined && target.dotted === f.written));
+    if (sameName && target !== undefined && !target.legacy) {
+      references.set(f.field, { keep: true, shape: f.shape });
       continue;
     }
 
-    // Written as the name the field already refers to, a qualified reference is the same reference (its id is the key, so a name the
-    // tenant now shares does not matter). A legacy one falls through: upgraded when the name has exactly one match, asked about when it
-    // has several, left dangling when it has none.
-    const target = storedTarget(row, f.element);
-    const sameName = target !== undefined && ((bare !== undefined && target.name === bare) || (target.dotted !== undefined && target.dotted === f.written));
-    if (sameName && target !== undefined && !target.legacy) continue;
+    // The entity's own model is the entity: nothing to choose, whatever the tenant calls that. Only for a field that does not already
+    // refer to that name (handled above and below): what a field stores is not overwritten by a self-reference.
+    if (!sameName && bare !== undefined && bare === input.self.modelName && selfRef) {
+      references.set(f.field, { ref: selfRef, shape: f.shape });
+      continue;
+    }
 
     const resolution = resolve(f.written);
     if (!resolution) {
-      // Nothing is named so, and the field is not one that already refers to that name (a deleted entity's reference is kept as it is):
-      // the name stays unknown. (It compiled only because ANOTHER field's stored reference licensed the name.)
-      if (!sameName) unresolved.push(f);
+      // Nothing is named so. A legacy reference to that very name stays as it is (its entity is gone: it stays dangling); on any other
+      // field the name stays unknown. (It compiled only because ANOTHER field's stored reference licensed the name.)
+      if (sameName) references.set(f.field, { keep: true, shape: f.shape });
+      else unresolved.push(f);
       continue;
     }
 
     if ("target" in resolution) {
-      references.set(f.field, { ref: resolution.target, element: f.element });
+      references.set(f.field, { ref: resolution.target, shape: f.shape });
       continue;
     }
     const picked = resolution.ambiguous.find((c) => c.entityId !== undefined && c.entityId === picks.get(f.field));
     if (picked) {
-      references.set(f.field, { ref: picked, element: f.element });
+      references.set(f.field, { ref: picked, shape: f.shape });
       continue;
     }
     return { ok: false, ambiguous: { field: f.field, name: f.written, candidates: resolution.ambiguous, fieldId: row?.id ?? "" } };

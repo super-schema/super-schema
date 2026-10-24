@@ -152,19 +152,135 @@ describe("an entity whose source references another entity's model can be saved 
     nothingWritten();
   });
 
-  it("a name the tenant has in a position that is not the type of a field (extends, a spread, a map value, a union) is still an error", async () => {
+  it("a name the tenant has in a position that is not part of the type of a field (extends, a spread) is still an error", async () => {
     tenant(ADDRESS_BILLING);
     for (const text of [
       "model Customer extends Address {\n  @key id: string;\n}\n",
       "model Customer {\n  @key id: string;\n  ...Address;\n}\n",
-      model("byKey: Record<Address>;"),
-      model("maybe: Address | string;"),
       // the same name ALSO as a field type does not make the other use acceptable
       "model Customer {\n  @key id: string;\n  ...Address;\n  home: Address;\n}\n",
     ]) {
       const res = await save(text);
       expect(res, text).toMatchObject({ success: false });
       expect(res.diagnostics.map((d) => d.code), text).toContain("invalid-ref");
+    }
+    nothingWritten();
+  });
+});
+
+describe("a map of references and a union of entities: the other shapes the generator writes for a field of that kind", () => {
+  const CARD: Tenant = { id: "card-1", name: "Card", domain: "Billing", product: "Payments" };
+  const BANK: Tenant = { id: "bank-1", name: "Bank", domain: "Billing", product: "Payments" };
+  const qualifiedAddress = { referencedEntityId: "addr-1", referencedEntityName: "Address", referencedQualifiedName: "Billing/Payments/Address" };
+
+  it("Record<Address> on a NEW field is a map of references: mapValueType reference, id, qualified name, no version", async () => {
+    tenant(ADDRESS_BILLING);
+
+    const res = await save(model("byKey: Record<Address>;"));
+
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(res.success).toBe(true);
+    expect(created("byKey")?.type).toBe("map");
+    expect(created("byKey")?.decorators).toMatchObject({ mapValueType: "reference", ...qualifiedAddress });
+    expect(created("byKey")?.decorators).not.toHaveProperty("referencedEntityVersion");
+  });
+
+  it("a qualified name works inside Record<...> too", async () => {
+    tenant(ADDRESS_BILLING, ADDRESS_SALES);
+
+    const res = await save(model("byKey: Record<Sales.Shipping.Address>;"));
+
+    expect(res.success).toBe(true);
+    expect(created("byKey")?.decorators).toMatchObject({ mapValueType: "reference", referencedEntityId: "addr-2" });
+  });
+
+  it("a stored map of references, saved as the text the generator writes, is unchanged (qualified), upgraded (legacy, one match) or asked about (several)", async () => {
+    tenant(ADDRESS_BILLING);
+    stored(
+      { id: "f-id", name: "id", type: "string", isKey: true },
+      { id: "f-map", name: "byKey", type: "map", decorators: { mapValueType: "reference", ...qualifiedAddress } },
+    );
+    expect(await save(model("byKey: Record<Address>;"))).toMatchObject({ success: true, applied: { added: 0, updated: 0 } });
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+
+    stored(
+      { id: "f-id", name: "id", type: "string", isKey: true },
+      { id: "f-map", name: "byKey", type: "map", decorators: { mapValueType: "reference", referencedEntityName: "Address" } },
+    );
+    expect((await save(model("byKey: Record<Address>;"))).success).toBe(true);
+    expect(updated("f-map")?.type).toBe("map");
+    expect(updated("f-map")?.decorators).toMatchObject({ mapValueType: "reference", ...qualifiedAddress });
+
+    tenant(ADDRESS_BILLING, ADDRESS_SALES);
+    mockPrisma.field.update.mockClear();
+    const asked = (await save(model("byKey: Record<Address>;"))) as { success: boolean; needsReference?: { field: string; fieldId: string } };
+    expect(asked.success).toBe(false);
+    expect(asked.needsReference).toMatchObject({ field: "byKey", fieldId: "f-map" });
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
+  it("an ambiguous Record<Address> on a new field asks, and the pick comes back with the retry", async () => {
+    tenant(ADDRESS_BILLING, ADDRESS_SALES);
+
+    expect(((await save(model("byKey: Record<Address>;"))) as { needsReference?: unknown }).needsReference).toMatchObject({ field: "byKey", fieldId: "" });
+    const res = await save(model("byKey: Record<Address>;"), { byKey: "addr-2" });
+
+    expect(res.success).toBe(true);
+    expect(created("byKey")?.decorators).toMatchObject({ mapValueType: "reference", referencedEntityId: "addr-2" });
+  });
+
+  it("a union written as its members (Card | Bank) compiles and saves; the union is stored as the union text it has always been, no member becomes a reference", async () => {
+    tenant(CARD, BANK);
+
+    const res = await save(model("payment: Card | Bank;"));
+
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(res.success).toBe(true);
+    expect(created("payment")?.type).toBe("Card | Bank");
+    expect(created("payment")?.decorators).not.toHaveProperty("referencedEntityId");
+    expect(mockPrisma.entity.update).toHaveBeenCalledWith({ where: { id: "ent-1" }, data: { typespecSource: model("payment: Card | Bank;"), hasUnpublishedChanges: true } });
+  });
+
+  it("a stored reference to a deleted entity does not license that name as a member of a union (a union member is no reference): the name is unknown there", async () => {
+    tenant();
+    stored(
+      { id: "f-id", name: "id", type: "string", isKey: true },
+      { id: "f-x", name: "x", type: "reference", decorators: { referencedEntityName: "Gone" } },
+    );
+
+    const res = await save(model("x: Gone | string;"));
+
+    expect(res.success).toBe(false);
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([expect.objectContaining({ code: "invalid-ref", message: "Unknown identifier Gone" })]);
+    nothingWritten();
+  });
+
+  it("a union member the tenant does not have stays an error", async () => {
+    tenant(CARD);
+
+    const res = await save(model("payment: Card | Nowhere;"));
+
+    expect(res.success).toBe(false);
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([expect.objectContaining({ code: "invalid-ref", message: "Unknown identifier Nowhere" })]);
+    nothingWritten();
+  });
+
+  it("a name that is also used where only a field's type may carry it stays an error: extends, a spread, an alias, a union declaration, a template argument elsewhere", async () => {
+    tenant(ADDRESS_BILLING, CARD, BANK);
+    const field = "  home: Address;\n";
+    for (const text of [
+      `model Customer extends Address {\n  @key id: string;\n${field}}\n`,
+      `model Customer {\n  @key id: string;\n  ...Address;\n${field}}\n`,
+      `${model("home: Address;")}alias Other = Address;\n`,
+      `${model("home: Address;")}union Payment {\n  Address,\n  string,\n}\n`,
+      `${model("home: Address;")}model Wrapper<T> {\n  v: T;\n}\nmodel Holder {\n  w: Wrapper<Address>;\n}\n`,
+      model("home: Address;", "byKey: Record<Address[]>;"),
+      model("home: Address;", "pairs: Record<Address | string>;"),
+      `${model("payment: Card | Bank;")}model Wrapper<T> {\n  v: T;\n}\nmodel Holder {\n  w: Wrapper<Card>;\n}\n`,
+    ]) {
+      const res = await save(text);
+      expect(res.success, text).toBe(false);
+      expect(res.diagnostics.some((d) => d.code === "invalid-ref"), text).toBe(true);
     }
     nothingWritten();
   });
@@ -345,6 +461,25 @@ describe("a reference the entity already stores", () => {
     }
   });
 
+  it("a stored reference to an entity whose name is not an identifier (`Order Item`), saved as the text the generator writes (`Order_Item`), is left exactly as it is", async () => {
+    const decorators = { referencedEntityId: "item-1", referencedEntityName: "Order Item", referencedQualifiedName: "Billing & Co/Order Lines/Order Item" };
+    for (const entityStillThere of [true, false]) {
+      vi.clearAllMocks();
+      mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: null });
+      mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+      mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+      if (entityStillThere) tenant({ id: "item-1", name: "Order Item", domain: "Billing & Co", product: "Order Lines" });
+      else tenant();
+      stored({ id: "f-id", name: "id", type: "string", isKey: true }, { id: "f-item", name: "item", type: "reference", decorators });
+
+      const res = await save(model("item: Order_Item;"));
+
+      expect(res, String(entityStillThere)).toMatchObject({ success: true, applied: { added: 0, updated: 0 } });
+      expect(mockPrisma.field.update, String(entityStillThere)).not.toHaveBeenCalled();
+    }
+  });
+
   it("a stored reference to an entity that no longer exists stays as it is and the save goes through (the entity is not stuck)", async () => {
     tenant();
     stored(
@@ -475,6 +610,133 @@ describe("a self-reference", () => {
     expect(res.success).toBe(true);
     expect(created("parent")?.decorators).toMatchObject({ referencedEntityId: "ent-1" });
   });
+
+  describe("a field that already stores a reference to ANOTHER entity of the same name is not turned into a self-reference", () => {
+    const RIVAL: Tenant = { id: "cust-2", name: "Customer", domain: "Marketing", product: "Leads" };
+    const rivalDecorators = { referencedEntityId: "cust-2", referencedEntityName: "Customer", referencedQualifiedName: "Marketing/Leads/Customer" };
+
+    it("a stored qualified reference to Marketing/Leads/Customer, saved as the text the generator writes (`rival: Customer;`), is left exactly as it is (id and qualified name)", async () => {
+      tenant(RIVAL);
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-rival", name: "rival", type: "reference", decorators: rivalDecorators },
+      );
+
+      const res = await save(model("rival: Customer;"));
+
+      expect(res).toMatchObject({ success: true, applied: { added: 0, updated: 0, removed: [] } });
+      expect(mockPrisma.field.update).not.toHaveBeenCalled();
+      expect(mockPrisma.field.create).not.toHaveBeenCalled();
+    });
+
+    it("the same when the reference is pinned: the text the generator writes carries the pin tag, so id, qualified name and pin all stay", async () => {
+      tenant(RIVAL);
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-rival", name: "rival", type: "reference", decorators: { ...rivalDecorators, referencedEntityVersion: "1.0" } },
+      );
+      const pinned = `import "@typespec/openapi";\n\nmodel Customer {\n  @key id: string;\n  @TypeSpec.OpenAPI.extension("x-super-schema-pin", "1.0")\n  rival: Customer;\n}\n`;
+
+      const res = await save(pinned);
+
+      expect(res).toMatchObject({ success: true, applied: { added: 0, updated: 0 } });
+      expect(mockPrisma.field.update).not.toHaveBeenCalled();
+    });
+
+    it("the same for an array of references", async () => {
+      tenant(RIVAL);
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-rivals", name: "rivals", type: "array", decorators: { arrayElementType: "reference", ...rivalDecorators } },
+      );
+
+      const res = await save(model("rivals: Customer[];"));
+
+      expect(res).toMatchObject({ success: true, applied: { added: 0, updated: 0 } });
+      expect(mockPrisma.field.update).not.toHaveBeenCalled();
+    });
+
+    it("a stored qualified self-reference stays a self-reference", async () => {
+      tenant(RIVAL);
+      const selfDecorators = { referencedEntityId: "ent-1", referencedEntityName: "Customer", referencedQualifiedName: "Sales/Orders/Customer" };
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-parent", name: "parent", type: "reference", decorators: selfDecorators },
+      );
+
+      const res = await save(model("parent: Customer;"));
+
+      expect(res).toMatchObject({ success: true, applied: { updated: 0 } });
+      expect(mockPrisma.field.update).not.toHaveBeenCalled();
+    });
+
+    it("a LEGACY name-only reference named like the entity is asked about, the entity itself among the candidates, never guessed", async () => {
+      tenant(RIVAL);
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-rival", name: "rival", type: "reference", decorators: { referencedEntityName: "Customer" } },
+      );
+
+      const res = (await save(model("rival: Customer;"))) as { success: boolean; needsReference?: { field: string; fieldId: string; candidates: Array<{ entityId?: string }> } };
+
+      expect(res.success).toBe(false);
+      expect(res.needsReference).toMatchObject({ field: "rival", fieldId: "f-rival" });
+      expect(res.needsReference?.candidates.map((c) => c.entityId).sort()).toEqual(["cust-2", "ent-1"]);
+      nothingWritten();
+    });
+
+    it("the pick of a legacy same-name reference is honoured either way: the rival, or the entity itself", async () => {
+      tenant(RIVAL);
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-rival", name: "rival", type: "reference", decorators: { referencedEntityName: "Customer" } },
+      );
+
+      expect((await save(model("rival: Customer;"), { rival: "cust-2" })).success).toBe(true);
+      expect(updated("f-rival")?.decorators).toMatchObject({ referencedEntityId: "cust-2", referencedQualifiedName: "Marketing/Leads/Customer" });
+
+      vi.clearAllMocks();
+      mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: null });
+      mockPrisma.field.update.mockResolvedValue({ id: "upd" });
+      mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+      mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+      tenant(RIVAL);
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-rival", name: "rival", type: "reference", decorators: { referencedEntityName: "Customer" } },
+      );
+      expect((await save(model("rival: Customer;"), { rival: "ent-1" })).success).toBe(true);
+      expect(updated("f-rival")?.decorators).toMatchObject({ referencedEntityId: "ent-1", referencedQualifiedName: "Sales/Orders/Customer" });
+    });
+
+    it("a legacy name-only reference named like the entity, when the entity is the ONLY one of that name, is upgraded to the self-reference", async () => {
+      tenant();
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-parent", name: "parent", type: "reference", decorators: { referencedEntityName: "Customer" } },
+      );
+
+      const res = await save(model("parent: Customer;"));
+
+      expect(res.success).toBe(true);
+      expect(updated("f-parent")?.decorators).toMatchObject({ referencedEntityId: "ent-1", referencedQualifiedName: "Sales/Orders/Customer" });
+    });
+
+    it("a field the text adds, or a field that was not a reference, typed with the entity's own name IS a self-reference (nothing to protect)", async () => {
+      tenant(RIVAL);
+      stored(
+        { id: "f-id", name: "id", type: "string", isKey: true },
+        { id: "f-plain", name: "plain", type: "string" },
+      );
+
+      const res = await save(model("plain: Customer;", "fresh: Customer;"));
+
+      expect(res.success).toBe(true);
+      expect(updated("f-plain")?.decorators).toMatchObject({ referencedEntityId: "ent-1" });
+      expect(created("fresh")?.decorators).toMatchObject({ referencedEntityId: "ent-1" });
+    });
+  });
 });
 
 describe("a model the source declares itself keeps meaning that model", () => {
@@ -494,13 +756,18 @@ describe("a model the source declares itself keeps meaning that model", () => {
 describe("a model named like a TypeSpec built-in type is refused, not silently mistyped", () => {
   // The compiler itself fails loudly (`ambiguous-symbol`) when the document USES the built-in a global declaration shares its name with.
   // The cases below are the ones that compile: the name is declared and the built-in is not used, so nothing else would object.
-  it.each(["string", "int32", "utcDateTime", "boolean", "bytes", "decimal128"])("model %s", async (name) => {
+  const BUILT_IN_NOTE = "(Lowercase names such as url, duration, float and decimal are TypeSpec built-ins too.)";
+  // The first model of the source is named after the ENTITY, so the way out is to rename the entity (or the model in the text).
+  const ownModelMessage = (name: string) =>
+    `Model "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this model instead of the built-in. The model is named after the entity: rename the entity, or the model in the source. ${BUILT_IN_NOTE}`;
+  const declaredMessage = (kind: string, name: string) =>
+    `${kind} "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this ${kind.toLowerCase()} instead of the built-in. Rename the ${kind.toLowerCase()}. ${BUILT_IN_NOTE}`;
+
+  it.each(["string", "int32", "utcDateTime", "boolean", "bytes", "decimal128", "url", "duration", "float", "decimal"])("model %s", async (name) => {
     const res = await save(`model ${name} {\n  @key id: int64;\n}\n`);
 
     expect(res.success).toBe(false);
-    expect(res.error).toBe(
-      `Model "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this model instead of the built-in. Choose another name.`,
-    );
+    expect(res.error).toBe(ownModelMessage(name));
     nothingWritten();
   });
 
@@ -529,9 +796,7 @@ describe("a model named like a TypeSpec built-in type is refused, not silently m
       ["Union", "utcDateTime", "union utcDateTime {\n  int32,\n  boolean,\n}\n"],
     ]) {
       const res = await save(`${entity}${declared}`);
-      expect(res.error, kind).toBe(
-        `${kind} "${name}" is named like a TypeSpec built-in type: a field typed "${name}" would mean this ${kind.toLowerCase()} instead of the built-in. Choose another name.`,
-      );
+      expect(res.error, kind).toBe(declaredMessage(kind, name));
     }
     nothingWritten();
   });

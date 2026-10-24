@@ -30,8 +30,8 @@ import {
   type LinterRuleSet,
 } from "@typespec/compiler";
 import { SyntaxKind } from "@typespec/compiler/ast";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { mkdtemp, writeFile, rm, mkdir, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { mapTypeSpecType } from "./typespec-parser";
 import { createLibraryOnlyHost } from "./library-only-host";
 import { isPlainIdentifier, quoteIdentifier } from "./typespec-identifiers";
@@ -100,19 +100,26 @@ async function compileSource(
      */
     stubs?: string;
   }
-): Promise<{ program: Program; mainPath: string }> {
+): Promise<{ program: Program; mainPath: string; stubPaths: ReadonlySet<string> }> {
   const { text } = assertTypeSpecImportsAllowed(source);
   await mkdir(WORK_DIR, { recursive: true });
   const dir = await mkdtemp(join(WORK_DIR, "job-"));
   const mainPath = join(dir, "main.tsp");
-  if (options?.stubs !== undefined) await writeFile(join(dir, STUBS_FILE), options.stubs, "utf8");
+  // This job's stand-in file, as the compiler may name it: the path it was written to, and its real path (the compiler may resolve an import).
+  const stubPaths = new Set<string>();
+  if (options?.stubs !== undefined) {
+    const stubsPath = join(dir, STUBS_FILE);
+    await writeFile(stubsPath, options.stubs, "utf8");
+    stubPaths.add(stubsPath);
+    stubPaths.add(await realpath(stubsPath).catch(() => stubsPath));
+  }
   await writeFile(mainPath, options?.stubs !== undefined ? STUBS_IMPORT + text : text, "utf8");
   try {
     const program = await compile(libraryOnlyHost(), mainPath, {
       noEmit: true,
       ...(options?.linterRuleSet ? { linterRuleSet: options.linterRuleSet } : {}),
     });
-    return { program, mainPath };
+    return { program, mainPath, stubPaths };
   } finally {
     // Best-effort cleanup; the program is already in memory.
     void rm(dir, { recursive: true, force: true }).catch(() => {});
@@ -571,14 +578,16 @@ export interface ModelGovernanceInfo {
 }
 
 /**
- * A field of the entity's model (its first model) whose type is a plain NAME: `Address`, `Billing.Payments.Address`, or the same as the
- * element of an array (`element`). Read from the syntax tree, so a qualified name is as written (the semantic type only knows the model's
- * short name). A template instance (`Record<Address>`), a union, an inline model and the like are not plain names and are not listed.
+ * A plain NAME (`Address`, `Billing.Payments.Address`) that the type of a field of the entity's model (its first model) is, or is made
+ * of, and how: `direct` (`Address`), `array` (`Address[]`), `map` (`Record<Address>`), `union` (`Card | Bank`: one entry per member,
+ * the union being the field's own type). Read from the syntax tree, so a qualified name is as written (the semantic type only knows the
+ * model's short name). Anything else (a template instance other than `Record<Name>`, an array of a union, an inline model, a name inside
+ * a nested expression) is not listed: a name only there is never offered for a stand-in.
  */
 export interface FieldTypeName {
   field: string;
   written: string;
-  element: boolean;
+  shape: "direct" | "array" | "map" | "union";
 }
 
 export type CompileWithGovernanceResult =
@@ -606,9 +615,13 @@ export interface CompileWithGovernanceOptions {
    * could not find (as written: `Address` or `Billing.Payments.Address`), this is asked which of them the caller resolves (an entity of
    * the tenant); the source is compiled once more with an empty stand-in model for each name it accepts, so the rest of the source is
    * still checked for real. The stand-ins live in a separate file: they are not in the document read back, so nothing of them is stored
-   * or emitted. A name in any other position (extends, a spread, `Record<T>`, a union) is never offered: it stays an error.
+   * or emitted. A name is offered only when every use of it is part of the type of a field of that model (see {@link FieldTypeName}: `Name`,
+   * `Name[]`, `Record<Name>`, a member of the field's own union); a name used anywhere else (extends, a spread, an alias, a union
+   * declaration, a decorator argument, a template argument) is never offered: all its uses stay errors. `unionOnly` are the offered
+   * names that are ONLY ever a member of a field's union (those are not stored as references, so the caller may hold them to a stricter
+   * licence).
    */
-  externalModels?: (written: string[]) => Promise<ReadonlySet<string>> | ReadonlySet<string>;
+  externalModels?: (written: string[], unionOnly: ReadonlySet<string>) => Promise<ReadonlySet<string>> | ReadonlySet<string>;
 }
 
 const GOVERNANCE_RULE_SET: LinterRuleSet = {
@@ -661,7 +674,19 @@ function plainTypeName(node: unknown): string | undefined {
   return segments.join(".");
 }
 
-/** {@link FieldTypeName}s of the first model of the source (the entity's model; the same one `compileTypeSpecDocumentFromProgram` lists first). */
+/** `Name` when `node` is exactly `Record<Name>` (the std string-keyed map; the generator's spelling of a map), else undefined. */
+function recordValueName(node: unknown): string | undefined {
+  const ref = node as { kind?: SyntaxKind; target?: { kind?: SyntaxKind; sv?: string }; arguments?: readonly { argument?: unknown }[] } | undefined;
+  if (ref?.kind !== SyntaxKind.TypeReference || ref.target?.kind !== SyntaxKind.Identifier || ref.target.sv !== "Record") return undefined;
+  if (ref.arguments?.length !== 1) return undefined;
+  return plainTypeName(ref.arguments[0].argument);
+}
+
+/**
+ * {@link FieldTypeName}s of the first model of the source (the entity's model; the same one `compileTypeSpecDocumentFromProgram` lists first).
+ * An array of a union (`(A | B)[]`) is not listed on purpose: the reader reports the element of such an array as `string`, so a save would
+ * overwrite the row with an array of strings.
+ */
 function entityFieldTypeNames(program: Program, mainPath: string): FieldTypeName[] {
   const found: { model?: Model } = {};
   navigateProgram(program, {
@@ -674,14 +699,23 @@ function entityFieldTypeNames(program: Program, mainPath: string): FieldTypeName
   const names: FieldTypeName[] = [];
   if (!found.model) return names;
   for (const [, prop] of found.model.properties) {
-    const node = prop.node as { kind?: SyntaxKind; value?: { kind?: SyntaxKind; elementType?: unknown } } | undefined;
+    const node = prop.node as { kind?: SyntaxKind; value?: { kind?: SyntaxKind; elementType?: unknown; options?: readonly unknown[] } } | undefined;
     if (node?.kind !== SyntaxKind.ModelProperty || !node.value) continue;
+    const push = (written: string, shape: FieldTypeName["shape"]) => names.push({ field: prop.name, written, shape });
     const direct = plainTypeName(node.value);
     if (direct !== undefined) {
-      names.push({ field: prop.name, written: direct, element: false });
+      push(direct, "direct");
     } else if (node.value.kind === SyntaxKind.ArrayExpression) {
       const element = plainTypeName(node.value.elementType);
-      if (element !== undefined) names.push({ field: prop.name, written: element, element: true });
+      if (element !== undefined) push(element, "array");
+    } else if (node.value.kind === SyntaxKind.UnionExpression) {
+      for (const option of node.value.options ?? []) {
+        const member = plainTypeName(option);
+        if (member !== undefined) push(member, "union");
+      }
+    } else {
+      const value = recordValueName(node.value);
+      if (value !== undefined) push(value, "map");
     }
   }
   return names;
@@ -712,7 +746,9 @@ export async function compileTypeSpecWithGovernance(
 
   const unresolved = [...new Set(typed.map((n) => n.written))].filter(onlyAsFieldType);
   if (unresolved.length === 0) return first.result;
-  const accepted = await options.externalModels(unresolved);
+  // Names that are only ever a member of a field's union: not stored as references, so the caller may hold them to a stricter licence.
+  const unionOnly = new Set(unresolved.filter((written) => typed.every((n) => n.written !== written || n.shape === "union")));
+  const accepted = await options.externalModels(unresolved, unionOnly);
   const standIns = unresolved.filter((written) => accepted.has(written));
   if (standIns.length === 0) return first.result;
   return (await governanceCompile(source, standInDeclarations(standIns), new Set(standIns))).result;
@@ -723,7 +759,7 @@ async function governanceCompile(
   standIns?: string,
   externalModels: ReadonlySet<string> = new Set()
 ): Promise<{ result: CompileWithGovernanceResult; program?: Program; mainPath: string }> {
-  let compiled: { program: Program; mainPath: string };
+  let compiled: { program: Program; mainPath: string; stubPaths: ReadonlySet<string> };
   try {
     compiled = await compileSource(source, { linterRuleSet: GOVERNANCE_RULE_SET, ...(standIns !== undefined ? { stubs: standIns } : {}) });
   } catch (e) {
@@ -734,11 +770,11 @@ async function governanceCompile(
     }
     throw e;
   }
-  const { program, mainPath } = compiled;
+  const { program, mainPath, stubPaths } = compiled;
 
-  // A diagnostic raised inside the stand-in file is about the stand-in (a lint on an empty model), never about the user's source.
+  // A diagnostic raised inside THIS job's stand-in file is about the stand-in (a lint on an empty model), never about the user's source.
   const allDiagnostics: GovernanceDiagnostic[] = (program.diagnostics ?? [])
-    .filter((d: Diagnostic) => standIns === undefined || !isInStandInFile(d))
+    .filter((d: Diagnostic) => standIns === undefined || !isInStandInFile(d, stubPaths))
     .map((d: Diagnostic) => ({
       severity: d.severity === "error" ? "error" : "warning",
       code: d.code,
@@ -830,10 +866,14 @@ function describeDiagnosticTarget(d: Diagnostic, mainPath?: string, prefix = 0):
   }
 }
 
-function isInStandInFile(d: Diagnostic): boolean {
+/**
+ * Whether a diagnostic is raised inside one of `stubPaths`: the full path of THIS job's stand-in file, never a file of the same name
+ * somewhere else (an installed library may well have a `stubs.tsp` of its own). Exported for tests.
+ */
+export function isInStandInFile(d: Pick<Diagnostic, "target">, stubPaths: ReadonlySet<string>): boolean {
   try {
     const loc = getSourceLocation(d.target as Parameters<typeof getSourceLocation>[0]);
-    return loc?.file?.path !== undefined && basename(loc.file.path) === STUBS_FILE;
+    return loc?.file?.path !== undefined && stubPaths.has(loc.file.path);
   } catch {
     return false;
   }
