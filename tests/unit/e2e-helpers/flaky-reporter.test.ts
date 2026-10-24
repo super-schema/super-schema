@@ -27,6 +27,7 @@ describe("FlakyReporter", () => {
   beforeEach(() => {
     out = path.join(mkdtempSync(path.join(os.tmpdir(), "flaky-reporter-")), "nested", "flaky-tests.json");
     written = [];
+    vi.stubEnv("E2E_FLAKY_FILE", "");
     vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
       written.push(String(chunk));
       return true;
@@ -65,6 +66,16 @@ describe("FlakyReporter", () => {
         attempts: 2,
       },
     ]);
+  });
+
+  it("writes to E2E_FLAKY_FILE when it is set (each phase of a run has a file of its own)", () => {
+    const phaseFile = path.join(path.dirname(out), "serial", "flaky-tests.json");
+    vi.stubEnv("E2E_FLAKY_FILE", phaseFile);
+    const reporter = new FlakyReporter({ outputFile: out });
+    reporter.onTestEnd(fakeTest("flaky"));
+    reporter.onEnd();
+    expect(existsSync(phaseFile)).toBe(true);
+    expect(existsSync(out)).toBe(false);
   });
 
   it("raises a GitHub warning annotation only on GitHub Actions", () => {

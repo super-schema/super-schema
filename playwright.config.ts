@@ -6,16 +6,18 @@ import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
  * reporters, the login.
  *
  * TIERS are tags on the tests (`test(name, { tag: ["@smoke"] }, fn)`; tests/unit/e2e-suite-guard.test.ts fails a test without one),
- * selected by the npm scripts:
+ * selected by the npm scripts, which call scripts/e2e-phases.mjs (it plans the `playwright test` commands of a tier, one per phase):
  *   - `npm run test:e2e:smoke`       `--grep @smoke`: login, the basic create flows, one generate; on Chromium, Firefox and WebKit;
- *   - `npm run test:e2e:regression`  `--grep-invert "@slow|@external"`: every functional spec, Chromium;
+ *   - `npm run test:e2e:regression`  `--grep-invert "@slow|@external"`: every functional spec, Chromium; two phases (see below);
  *   - `npm run test:e2e:nightly`     everything: adds @slow (the JSON Schema matrix, external refs, the navigation crawl) and @external
  *                                    (a test that needs the network or a second server).
  *
  * PROJECTS:
- *   - `setup`          one UI login per run, saved to AUTH_STATE_PATH (playwright/.auth/admin.json, git-ignored). Every browser project
- *                      depends on it, so a run never starts from a stale login. Running a project with `--no-deps` skips it: run
- *                      `--project=setup` first then, or the missing file fails the first test with ENOENT.
+ *   - `setup`          one UI login per run, saved to AUTH_STATE_PATH (playwright/.auth/admin.json, ignored by version control;
+ *                      `E2E_AUTH_STATE` names another file, which concurrent runs need). Every browser project depends on it, so a
+ *                      run never starts from a stale login. Running a project with `--no-deps` skips it: run `--project=setup` first
+ *                      then, or the missing file fails the first test with ENOENT (scripts/e2e-phases.mjs refuses a file that is
+ *                      missing or older than 6 hours).
  *   - `chromium`       the functional specs (minus the ones below);
  *   - `firefox-smoke`, `webkit-smoke`   only the @smoke tests, on the other two engines (`npx playwright install firefox webkit`);
  *   - `serial-after`   the specs that cannot run next to the others (below);
@@ -24,13 +26,16 @@ import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
  *
  * FILTERS AND DEPENDENCIES: Playwright runs a project's dependencies (`setup`, and `chromium` for `serial-after`) IN FULL, whatever
  * `--grep` / `--grep-invert` say, as soon as a project that depends on them has a matching test (verified with `--list`: `--grep @slow
- * --project=serial-after` lists every chromium test). So a tier run never selects `serial-after` together with `chromium`: the npm
- * scripts run `chromium` (and the others) first, then `serial-after --no-deps` as its own command, after `setup` has written the login.
+ * --project=serial-after` lists every chromium test). So a tier run never selects `serial-after` together with `chromium`:
+ * scripts/e2e-phases.mjs runs `chromium` (and the others) first, then `serial-after --no-deps` as its own `playwright test`, and gives
+ * each phase its own report locations (a second `playwright test` clears `test-results/` and replaces the html report of the first).
+ * The reporters below read their locations from the environment first (`PLAYWRIGHT_HTML_OUTPUT_DIR`, `PLAYWRIGHT_JUNIT_OUTPUT_FILE`,
+ * `E2E_FLAKY_FILE`), the output directory comes from `--output`.
  *
  * A test that passes only on a retry does not fail the run, and is never hidden: `list` prints "N flaky" with the names, the html
- * report has a Flaky filter, and tests/e2e/reporters/flaky-reporter.ts (on CI) prints a FLAKY block, writes
- * test-results/flaky-tests.json and raises a GitHub warning annotation. (junit alone would hide it: verified with `retries: 1`, it
- * records a test that passed on the retry as a plain pass.) `retries` is 1 on CI and 0 locally.
+ * report has a Flaky filter, junit records it as a <flakyFailure> (`includeRetries`; without it junit shows a plain pass), and
+ * tests/e2e/reporters/flaky-reporter.ts (on CI) prints a FLAKY block, writes a JSON list and raises a GitHub warning annotation.
+ * `retries` is 1 on CI and 0 locally.
  */
 
 /**
@@ -57,11 +62,21 @@ const EXTERNAL_BASE_URL = process.env.E2E_BASE_URL;
 
 const CI = !!process.env.CI;
 
+/**
+ * E2E_DATABASE_URL (what the release runner provisions) is the database of the server this config starts, not just of the fixtures:
+ * the app is told so explicitly, so a DATABASE_URL / DB_PROVIDER of the developer's shell or `.env` can never be the one it uses, and
+ * a server that is already running on :3000 (it might use that other database) is never reused.
+ */
+const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL;
+
 /** Every project but `setup` starts logged in as the admin. A spec that needs the login form opts out with `test.use({ storageState: { cookies: [], origins: [] } })`. */
 const loggedIn = { storageState: AUTH_STATE_PATH };
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // 60 s, not Playwright's 30: a test without its own `test.setTimeout` (the smoke ones) must not be on the default under the load of
+  // Firefox / WebKit or a first compile. The long tests set their own.
+  timeout: 60_000,
   fullyParallel: true,
   forbidOnly: CI,
   retries: CI ? 1 : 0,
@@ -70,7 +85,7 @@ export default defineConfig({
     ? [
         ["list"],
         ["html", { open: "never" }],
-        ["junit", { outputFile: "test-results/junit.xml" }],
+        ["junit", { outputFile: "test-results/junit.xml", includeRetries: true }],
         ["./tests/e2e/reporters/flaky-reporter.ts"],
       ]
     : [["list"]],
@@ -134,6 +149,9 @@ export default defineConfig({
     : {
         command: "npm run build && npm start",
         url: "http://localhost:3000",
-        reuseExistingServer: !CI,
+        reuseExistingServer: !CI && !E2E_DATABASE_URL,
+        ...(E2E_DATABASE_URL
+          ? { env: { ...process.env, DATABASE_URL: E2E_DATABASE_URL, DB_PROVIDER: "postgresql" } as Record<string, string> }
+          : {}),
       },
 });

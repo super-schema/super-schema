@@ -1,17 +1,19 @@
 /**
  * Makes a flaky test (one that failed and then passed on a retry) impossible to miss: the run stays green, but every such test is
- * printed in a block of its own, written to `test-results/flaky-tests.json` and, on GitHub Actions, raised as a warning annotation.
+ * printed in a block of its own, written to a JSON list (`E2E_FLAKY_FILE`, default `test-results/flaky-tests.json`) and, on GitHub
+ * Actions, raised as a warning annotation.
  *
- * Why not rely on the built-in reporters alone: `list` prints "N flaky" and the html report has a Flaky filter, but the junit file
- * records a flaky test as a plain pass (checked with `retries: 1`: no flakyFailure element, only an attachment path in system-out), so
- * anything that reads the junit file, or the CI job summary, would not see it.
+ * Why next to the built-in reporters: `list` prints "N flaky" and the html report has a Flaky filter, but they are for a person reading
+ * the log or the report. Playwright's junit file records a flaky test as a plain pass unless `includeRetries` is on (the config turns
+ * it on: a <flakyFailure> element, checked with `retries: 1`), and a CI job summary or a script wants a short machine-readable list of
+ * exactly these tests, which is the JSON file.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Reporter, TestCase } from "@playwright/test/reporter";
 
 interface Options {
-  /** Where the JSON list goes; default `test-results/flaky-tests.json`. Nothing is written when no test was flaky. */
+  /** Where the JSON list goes (`E2E_FLAKY_FILE` overrides it); default `test-results/flaky-tests.json`. Nothing is written when no test was flaky. */
   outputFile?: string;
 }
 
@@ -20,7 +22,8 @@ export default class FlakyReporter implements Reporter {
   private readonly outputFile: string;
 
   constructor(options: Options = {}) {
-    this.outputFile = options.outputFile ?? "test-results/flaky-tests.json";
+    // Like Playwright's own reporters, the environment wins over the option: scripts/e2e-phases.mjs gives each phase a file of its own.
+    this.outputFile = process.env.E2E_FLAKY_FILE || options.outputFile || "test-results/flaky-tests.json";
   }
 
   printsToStdio(): boolean {
