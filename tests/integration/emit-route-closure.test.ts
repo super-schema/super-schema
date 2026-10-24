@@ -19,7 +19,7 @@ vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: async () => ({ 
 vi.mock("@/app/api/v1/rate-limit", () => ({ checkRateLimit: () => null }));
 vi.mock("@/lib/db", () => ({
   prisma: {
-    entity: { findMany: h.findMany },
+    entity: { findMany: h.findMany, findUnique: async () => ({ metadata: {} }) },
     field: {
       findMany: async ({ where }: { where: { entityId: string } }) =>
         ((h.rows as EntityRow[]).find((r) => r.id === where.entityId)?.fields ?? []).map((f, i) => ({
@@ -127,6 +127,8 @@ describe("POST /api/v1/schemas/:id/emit", () => {
     expect(response.status).toBe(200);
     expect(h.findMany).toHaveBeenCalledTimes(1);
     expect(h.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-1" } }));
+    // The tenant index is read on every request: it must not carry the (large) metadata with every stored schema version.
+    expect(h.findMany.mock.calls[0][0].select).not.toHaveProperty("metadata");
   }, 120_000);
 
   it("answers an ambiguous bare-name reference with a structured error listing the candidates, and emits no closure target", async () => {

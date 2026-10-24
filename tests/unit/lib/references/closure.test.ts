@@ -13,7 +13,11 @@ type EntityRow = {
   fields: FieldRow[];
   versions: VersionRow[];
   latest?: string; // version id
+  metadata?: unknown; // read per member by `entity.findUnique`, never by the tenant index
 };
+
+/** What the last `fakeDb` was asked: the tenant index query and the per-member metadata reads. */
+const queries = { findMany: [] as Array<{ where: unknown; select: Record<string, unknown> }>, findUnique: [] as Array<{ where: { id: string }; select: unknown }> };
 
 const toField = (f: FieldRow, i: number) => ({
   id: f.id,
@@ -33,11 +37,15 @@ const toField = (f: FieldRow, i: number) => ({
 
 function fakeDb(rows: EntityRow[]) {
   const versions = rows.flatMap((r) => r.versions);
+  queries.findMany = [];
+  queries.findUnique = [];
   return {
     entity: {
-      findMany: async ({ where }: { where: { tenantId: string } }) =>
-        rows
-          .filter((r) => r.tenantId === where.tenantId)
+      // Like Prisma: only what `select` names is returned (the index must not name `metadata`, which can hold every schema version).
+      findMany: async (args: { where: { tenantId: string }; select: Record<string, unknown> }) => {
+        queries.findMany.push(args);
+        return rows
+          .filter((r) => r.tenantId === args.where.tenantId)
           .map((r) => ({
             id: r.id,
             name: r.name,
@@ -46,11 +54,17 @@ function fakeDb(rows: EntityRow[]) {
             version: 1,
             domainId: r.domain ? `d-${r.domain}` : null,
             productId: r.product ? `p-${r.product}` : null,
-            metadata: null,
+            ...(args.select.metadata ? { metadata: r.metadata ?? null } : {}),
             latestVersionId: r.latest ?? null,
             domain: r.domain ? { id: `d-${r.domain}`, name: r.domain, slug: `${r.domain}-slug` } : null,
             product: r.product ? { name: r.product } : null,
-          })),
+          }));
+      },
+      findUnique: async (args: { where: { id: string }; select: unknown }) => {
+        queries.findUnique.push(args);
+        const row = rows.find((r) => r.id === args.where.id);
+        return row ? { metadata: row.metadata ?? null } : null;
+      },
     },
     field: {
       findMany: async ({ where }: { where: { entityId: string } }) =>
@@ -381,4 +395,63 @@ describe("loadReferenceClosure: ambiguity owner and legacy resolutions", () => {
     expect(published.success).toBe(true);
     expect(published.success && published.data.upgrades).toEqual([]);
   });
+});
+
+// Task 7 fix round 1: the tenant index must stay small, and a missing tenant must not mean "every tenant".
+describe("loadReferenceClosure: what it reads", () => {
+  const bulky = { schemaVersions: { json: [{ version: 1, output: "x".repeat(1000), files: [{ path: "a.json", content: "y".repeat(1000) }] }] } };
+
+  it("does not select `metadata` in the tenant index, and reads it only for the members that are in the closure", async () => {
+    const db = fakeDb([
+      ent("a", { metadata: { tags: ["t"], ...bulky } }, [["b", ref("B")]]),
+      ent("b", { metadata: bulky }),
+      ent("u1", { metadata: bulky }),
+      ent("u2", { metadata: bulky }),
+      ent("u3", { metadata: bulky }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success && names(r.data)).toEqual(["A", "B"]);
+    expect(queries.findMany).toHaveLength(1);
+    expect(queries.findMany[0].select).not.toHaveProperty("metadata");
+    // One read per member (2), not one per entity of the tenant (5); each selects only the metadata.
+    expect(queries.findUnique.map((q) => q.where.id).sort()).toEqual(["a", "b"]);
+    expect(queries.findUnique.every((q) => JSON.stringify(q.select) === JSON.stringify({ metadata: true }))).toBe(true);
+  });
+
+  it("keeps what emission reads of the metadata and drops the schema versions, in draft and in published mode", async () => {
+    const meta = { tags: ["t"], custom: { extensions: { "x-a": 1 } }, retentionPolicy: { days: 3 }, ...bulky };
+    const draft = await loadReferenceClosure(fakeDb([ent("a", { metadata: meta })]), "t1", "a", "draft");
+    expect(draft.success && draft.data.root.entity.metadata).toEqual({ tags: ["t"], custom: { extensions: { "x-a": 1 } }, retentionPolicy: { days: 3 } });
+    const published = await loadReferenceClosure(
+      fakeDb([ent("a", { metadata: meta, versions: [version("a", 1, 0, [])], latest: "a-v1.0" })]),
+      "t1",
+      "a",
+      "published"
+    );
+    expect(published.success && published.data.root.entity.metadata).toEqual({ tags: ["t"], custom: { extensions: { "x-a": 1 } }, retentionPolicy: { days: 3 } });
+  });
+
+  it("passes a null or non-object metadata through unchanged", async () => {
+    const db = fakeDb([ent("a"), ent("b", { metadata: ["not", "an", "object"] })]);
+    const none = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(none.success && none.data.root.entity.metadata).toBeNull();
+    const odd = await loadReferenceClosure(db, "t1", "b", "draft");
+    expect(odd.success && odd.data.root.entity.metadata).toEqual(["not", "an", "object"]);
+  });
+
+  it("does not mutate what the database returned", async () => {
+    const meta = { tags: ["t"], ...bulky };
+    await loadReferenceClosure(fakeDb([ent("a", { metadata: meta })]), "t1", "a", "draft");
+    expect(meta).toHaveProperty("schemaVersions");
+  });
+
+  it.each([["empty string", ""], ["blank", "   "], ["undefined", undefined], ["null", null], ["a number", 5]])(
+    "refuses %s as the tenant before querying (Prisma would read an undefined filter as no filter at all)",
+    async (_label, tenantId) => {
+      const db = fakeDb([ent("a")]);
+      const r = await loadReferenceClosure(db, tenantId as never, "a", "draft");
+      expect(r).toEqual({ success: false, error: { code: "CROSS_TENANT" } });
+      expect(queries.findMany).toHaveLength(0);
+    }
+  );
 });

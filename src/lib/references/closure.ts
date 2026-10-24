@@ -61,7 +61,6 @@ type IndexedEntity = {
   status: string;
   version: number;
   domainId: string | null;
-  metadata: unknown;
   latestVersionId: string | null;
   domain: { id: string; name: string; slug: string } | null;
   product: { name: string } | null;
@@ -77,6 +76,11 @@ function compareStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/**
+ * The tenant's entities, as light as possible: this is read on EVERY generate / emit / validate call for the whole tenant, so it
+ * deliberately does not select `metadata` (it holds every stored schema version, `files` and `output` per target). A member's metadata
+ * is read by `loadMemberMetadata` for the entities that end up in the closure only.
+ */
 async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<string, IndexedEntity>> {
   const rows = await db.entity.findMany({
     where: { tenantId },
@@ -87,7 +91,6 @@ async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<stri
       status: true,
       version: true,
       domainId: true,
-      metadata: true,
       latestVersionId: true,
       domain: { select: { id: true, name: true, slug: true } },
       product: { select: { name: true } },
@@ -116,7 +119,7 @@ async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<stri
  * fields and the version number (`sequence`) are frozen. Identity (id, qualified-name segments) is live by design: the
  * id is the key and the qualified name is refreshed from it (spec decision 4).
  */
-function toEntityInput(e: IndexedEntity, version?: number): PrismaEntityInput {
+function toEntityInput(e: IndexedEntity, metadata: unknown, version?: number): PrismaEntityInput {
   return {
     id: e.id,
     name: e.name,
@@ -124,9 +127,28 @@ function toEntityInput(e: IndexedEntity, version?: number): PrismaEntityInput {
     status: e.status,
     version: version ?? e.version,
     domainId: e.domainId,
-    metadata: e.metadata,
+    metadata,
     domain: e.domain ? { id: e.domain.id, name: e.domain.name, slug: e.domain.slug } : null,
   };
+}
+
+/**
+ * `metadata` without `schemaVersions`: the stored generated schemas (every version's `output` and `files`, per target) are bookkeeping
+ * the emitters never read (`compileEntity` takes tags, relationships, deprecation, custom and the retention policy), and they can be
+ * large. Anything that is not a plain object is returned as it is. The input is not modified.
+ */
+export function withoutSchemaVersions(metadata: unknown): unknown {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return metadata;
+  if (!Object.prototype.hasOwnProperty.call(metadata, "schemaVersions")) return metadata;
+  const rest = { ...(metadata as Record<string, unknown>) };
+  delete rest.schemaVersions;
+  return rest;
+}
+
+/** The metadata of one closure member (see {@link withoutSchemaVersions}); one primary-key read. A vanished row reads as no metadata. */
+async function loadMemberMetadata(db: DbClient, entityId: string): Promise<unknown> {
+  const row = await db.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
+  return withoutSchemaVersions(row?.metadata ?? null);
 }
 
 /**
@@ -253,6 +275,9 @@ export async function loadReferenceClosure(
   opts?: { maxEntities?: number }
 ): Promise<Result<ReferenceClosure, ClosureError>> {
   const limit = opts?.maxEntities ?? DEFAULT_MAX_CLOSURE_ENTITIES;
+  // Fail closed: Prisma reads `where: { tenantId: undefined }` as "no filter", i.e. every tenant. A caller without a tenant gets the
+  // same answer as a root outside it.
+  if (typeof tenantId !== "string" || tenantId.trim() === "") return { success: false, error: { code: "CROSS_TENANT" } };
   const index = await loadTenantIndex(db, tenantId);
   const rootIndexed = index.get(rootEntityId);
   if (!rootIndexed) return { success: false, error: { code: "CROSS_TENANT" } };
@@ -265,13 +290,14 @@ export async function loadReferenceClosure(
   const add = async (e: IndexedEntity, pin: string | undefined, field: string): Promise<Result<Loaded, ClosureError>> => {
     const loaded = await loadContent(db, e, mode, pin, field);
     if (!loaded.success) return loaded;
+    const metadata = await loadMemberMetadata(db, e.id);
     entities.push({
       entityId: e.id,
       ref: e.ref,
       source: loaded.data.source,
       ...(loaded.data.version ? { version: loaded.data.version } : {}),
       fields: loaded.data.fields,
-      entity: toEntityInput(e, loaded.data.sequence),
+      entity: toEntityInput(e, metadata, loaded.data.sequence),
     });
     return loaded;
   };

@@ -381,7 +381,7 @@ describe("generateSchemaAction: legacy reference upgrade", () => {
     expect(p.field.update).not.toHaveBeenCalled();
   });
 
-  it("never writes when the emission failed or a reference is ambiguous", async () => {
+  it("never writes when the emission failed", async () => {
     h.emitClosure.mockResolvedValue({ success: false, error: { code: "EMISSION_INVALID", message: "x", details: { errors: ["bad"], warnings: [] } } });
     await actions.generateSchemaAction("a", "json-schema");
     expect(p.field.update).not.toHaveBeenCalled();
@@ -392,7 +392,8 @@ describe("generateSchemaAction: legacy reference upgrade", () => {
     const result = await actions.generateSchemaAction("a", "json-schema");
     expect(result).toMatchObject({ success: true });
     expect(storedVersion("a", "json-schema")).toBeDefined();
-    expect(console.error).toHaveBeenCalled();
+    // The log names the field that failed (the entity and the field row), so it can be found.
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("entity a, field a.cust"), expect.any(Error));
   });
 
   it("does not skip the rest when one upgrade fails", async () => {

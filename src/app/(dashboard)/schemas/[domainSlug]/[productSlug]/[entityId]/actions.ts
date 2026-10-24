@@ -1635,7 +1635,7 @@ async function upgradeLegacyReferences(entityId: string, userId: string, upgrade
         fn: () => prisma.field.update({ where: { id: field.id }, data: { decorators: decorators as Prisma.InputJsonValue } }),
       });
     } catch (e: unknown) {
-      console.error("[generateSchemaAction] legacy reference upgrade failed", e);
+      console.error(`[generateSchemaAction] legacy reference upgrade failed (entity ${upgrade.entityId}, field ${upgrade.fieldId})`, e);
     }
   }
 }

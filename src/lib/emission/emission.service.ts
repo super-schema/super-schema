@@ -13,7 +13,7 @@ import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import type { EmissionResult, TargetOutput } from "./emission.types";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 import { getSchemaTargetCatalog, type SchemaTargetDefinition } from "@/lib/schema-targets/catalog";
-import { loadReferenceClosure, type ReferenceClosure, type ResolveMode } from "@/lib/references/closure";
+import { loadReferenceClosure, withoutSchemaVersions, type ReferenceClosure, type ResolveMode } from "@/lib/references/closure";
 import type { ServiceError } from "@/types/result";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 import { closureFailure, describeResolution, emitClosureTarget, type ClosureTargetResult } from "./closure-generation";
@@ -50,6 +50,10 @@ export interface EntityTargetsEmission {
  * loaded here, tenant-scoped to the entity's own tenant, and write one file per entity of it; the DB targets keep today's path (the
  * entity alone, a reference stays a plain column) and ignore `mode`.
  *
+ * Which inputs are read by whom: a closure target reads NOTHING of `entity` / `fields` except `entity.id` and `entity.tenantId` (the root
+ * and the tenant of the closure): the root and every member are read from the database by the closure, in `mode`. `entity` and `fields`
+ * are the stand-alone input of the DB targets only (and are not read at all when only closure targets are asked for).
+ *
  * `mode` decides what an unpinned reference resolves to: `draft` the latest saved definition (the output is a preview), `published`
  * the latest published version (never a draft). Loading and emitting never write: a legacy name-only reference that resolved is not
  * upgraded here. Never throws for a domain failure.
@@ -72,7 +76,9 @@ export async function emitTargetsForEntity(
   const results = await Promise.all(
     targets.map(async (target): Promise<TargetEmission> => {
       if (!target.closureEmission) {
-        return { target, result: await emitOfficialTypeSpecTargetFromData(entity, fields, target.key) };
+        // The stored schema versions are never emission input (and can be large): the DB target gets the entity without them.
+        const standalone = { ...entity, metadata: withoutSchemaVersions(entity.metadata) };
+        return { target, result: await emitOfficialTypeSpecTargetFromData(standalone, fields, target.key) };
       }
       if (!closure) {
         const message = refusal?.message ?? "The reference closure could not be built.";

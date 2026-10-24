@@ -36,7 +36,7 @@ function fakeDb(rows: Row[]) {
         }))
   );
   const db = {
-    entity: { findMany },
+    entity: { findMany, findUnique: async () => ({ metadata: null }) },
     field: {
       findMany: async ({ where }: { where: { entityId: string } }) =>
         (rows.find((r) => r.id === where.entityId)?.refs ?? []).map(([name, decorators], i) => ({
@@ -88,6 +88,14 @@ describe("emitTargetsForEntity", () => {
     expect(h.emitStandalone).toHaveBeenCalledWith(ENTITY, [], "bigquery");
     expect(run.results[0].result).toEqual({ output: "DDL", validationStatus: "VALID", warnings: [], errors: [] });
     expect(run.resolution).toBeUndefined();
+  });
+
+  it("does not hand the stored schema versions of the entity to a DB target (emission never reads them)", async () => {
+    const { db } = fakeDb([{ id: "a", name: "A" }]);
+    const withVersions = { ...ENTITY, metadata: { tags: ["t"], schemaVersions: { bigquery: [{ version: 1, output: "x" }] } } } as typeof ENTITY;
+    await emitTargetsForEntity(db, withVersions, [], [target("bigquery")], "draft");
+    expect(h.emitStandalone).toHaveBeenCalledWith({ ...ENTITY, metadata: { tags: ["t"] } }, [], "bigquery");
+    expect(withVersions.metadata).toHaveProperty("schemaVersions"); // the caller's entity is untouched
   });
 
   it("refuses an ambiguous reference: closure targets are INVALID with the message, the DB target still emits, the refusal is structured", async () => {
