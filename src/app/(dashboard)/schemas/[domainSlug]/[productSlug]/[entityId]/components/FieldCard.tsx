@@ -148,6 +148,8 @@ export const FieldCard = memo(function FieldCard({
       ref={setNodeRef}
       style={style}
       {...attributes}
+      data-testid="field-card"
+      data-field={field.name}
       className={`surface-glass rounded-lg border transition-colors group cursor-pointer ${
         isSelected
           ? "border-primary ring-1 ring-primary/30"

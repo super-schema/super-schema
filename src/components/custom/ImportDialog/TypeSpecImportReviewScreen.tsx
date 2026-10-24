@@ -276,6 +276,9 @@ export function TypeSpecImportReviewScreen({
                   <button
                     type="button"
                     onClick={() => toggleModelExpand(index)}
+                    data-testid={`import-model-toggle-${model.name}`}
+                    aria-expanded={expandedModels.has(index)}
+                    aria-label={`${expandedModels.has(index) ? "Hide" : "Show"} fields of ${model.name}`}
                     className="p-0.5 rounded hover:bg-accent mt-0.5"
                   >
                     {expandedModels.has(index) ? (

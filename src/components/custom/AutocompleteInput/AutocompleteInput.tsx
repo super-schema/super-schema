@@ -123,6 +123,7 @@ export function AutocompleteInput({
       {isOpen && suggestions.length > 0 && (
         <div
           ref={listRef}
+          data-testid="autocomplete-suggestions"
           className="absolute z-50 top-full mt-1 w-full max-h-[160px] overflow-y-auto rounded-xl border border-border bg-popover shadow-lg pointer-events-auto"
         >
           {suggestions.map((suggestion, i) => (

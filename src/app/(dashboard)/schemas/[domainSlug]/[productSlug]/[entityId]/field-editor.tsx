@@ -474,7 +474,7 @@ export function FieldEditor({
 
       {/* Inline quick-create dialog */}
       {!isReadOnly && showCreateDialog && (
-        <div className="mt-space-3 surface-glass rounded-xl border border-primary/20 p-space-4 space-y-space-3">
+        <div data-testid="new-field-form" className="mt-space-3 surface-glass rounded-xl border border-primary/20 p-space-4 space-y-space-3">
           <div className="flex items-center justify-between">
             <h4 className="text-body-small text-foreground font-medium">
               New Field
@@ -564,6 +564,7 @@ export function FieldEditor({
       {!isReadOnly && !showCreateDialog && (
         <button
           onClick={() => setShowCreateDialog(true)}
+          data-testid="field-add-button"
           className="mt-space-3 w-full flex items-center justify-center gap-2 py-space-3 rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-body-small"
         >
           <Plus className="w-4 h-4" />
