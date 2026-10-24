@@ -66,4 +66,6 @@ next-env.d.ts
 /.tgrep
 /test-results
 /playwright-report
+# the browser suite's saved admin login (tests/e2e/auth.setup.ts): rewritten by every run, never committed
+/playwright/.auth/
 
