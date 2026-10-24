@@ -129,6 +129,26 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - cost to fix: server actions over the service for list / create / update / delete, the component reading them, then the pickers reading the
   same list (the larger part: each has the four names in code, and `PolicyTemplateSchema` enumerates them).
 
+## KD-015: a refused governance decision is not explained
+
+- status: open
+- symptom: a user who is not a Steward or an Admin presses Approve or Reject and confirms: the request stays pending and the page says nothing.
+  The service answers "Only Steward or Admin roles can approve governance requests"; the page drops it.
+- where: `src/app/(dashboard)/governance/page.tsx` (`handleApprove` / `handleReject`: `if ("success" in result)` and no else).
+- pinned by: `governance-compliance.spec.ts`, "a user who may not decide is told so".
+- cost to fix: show the error (a toast, or under the card) and, better, not offer the buttons to a user who cannot use them.
+
+## KD-016: the compliance pages read the fields of every tenant
+
+- status: open
+- symptom: the Query tab lists, the Gaps tab counts and the Audit Trail tab lists the rows of ALL tenants (a field of another tenant's entity
+  appears in the table of the tenant being viewed). The Lineage Graph and the command palette's fields did the same (the graph is fixed: it reads
+  the active tenant; the palette is KD-020).
+- where: `src/services/compliance.service.ts` (`queryFields`, `detectGaps`: no tenant in the where clause; `audit_log` has no tenant column).
+- pinned by: `governance-compliance.spec.ts`, "an entity of another tenant is not listed".
+- cost to fix: the routes take the active tenant (`getActiveTenantId`) and the two queries filter `entity: { tenantId }`; the audit trail needs the
+  tenant of the audited row (a join by entity type, or a column).
+
 ## KD-021: the Enabled toggle of an emitter and the Health tab's compiler and emitter statuses are not wired to anything
 
 - status: no-test (a product gap: nothing for a test to pin that is not the stub itself)
