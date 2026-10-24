@@ -337,4 +337,37 @@ describe("TechnologyCard publish refusal (Task 8)", () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(toast.error).not.toHaveBeenCalled();
   });
+
+  it("regenerate-from-published: an ambiguous reference met while regenerating asks first, saves the pick and runs the same regenerate again", async () => {
+    const needsReference = {
+      field: "addr",
+      name: "Address",
+      candidates: [
+        { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+        { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+      ],
+      entityId: "member-1",
+      fieldId: "fld-9",
+    };
+    publishSchemaActionMock
+      .mockResolvedValueOnce(PREVIEW_REFUSAL)
+      .mockResolvedValueOnce({ error: 'Field "addr" refers to "Address", which matches 2 entities.', code: "AMBIGUOUS_REFERENCE", needsReference })
+      .mockResolvedValueOnce({ success: true });
+    setFieldReferenceActionMock.mockResolvedValue({ success: true, data: undefined });
+    render(<TechnologyCard {...baseProps} entityVersion={2} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /mark deployed/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    (vi.mocked(toast.error).mock.calls[0] as unknown as [string, { action: { onClick: () => void } }])[1].action.onClick();
+
+    const candidates = await screen.findAllByTestId("reference-pick-candidate");
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    fireEvent.click(candidates[0]);
+
+    await waitFor(() => expect(publishSchemaActionMock).toHaveBeenCalledTimes(3));
+    expect(publishSchemaActionMock.mock.calls[1]).toEqual(["entity-1", "bigquery", 1, { regenerateFromPublished: true }]);
+    expect(publishSchemaActionMock.mock.calls[2]).toEqual(publishSchemaActionMock.mock.calls[1]);
+    expect(setFieldReferenceActionMock).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x1" });
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/published versions/)));
+  });
 });

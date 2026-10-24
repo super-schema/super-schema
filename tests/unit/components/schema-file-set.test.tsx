@@ -178,7 +178,9 @@ describe("SchemaFileSet download all", () => {
     await waitFor(() => expect(clicked).toHaveLength(2));
     expect(clicked.map((c) => c.download)).toEqual(["Sales_Crm_Customer.json", "Sales_Crm_Address.json"]);
     expect(createObjectURL).toHaveBeenCalledTimes(2);
-    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    // the blob URLs outlive the clicks (a browser reads them after the click returns) and are released afterwards
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledTimes(2), { timeout: 3000 });
   });
 
   it("keeps two files whose flattened names collide apart", async () => {

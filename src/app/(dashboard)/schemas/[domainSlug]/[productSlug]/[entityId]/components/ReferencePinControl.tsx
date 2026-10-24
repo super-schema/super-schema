@@ -103,7 +103,8 @@ export function ReferencePinControl({ fieldId, referencedEntityId, referenceLabe
           data-testid="reference-pin-open"
           onClick={() => void handleOpen()}
           className="rounded px-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={`${pin ? "Change the pin of" : "Pin a version of"} ${name}`}
+          // The accessible name STARTS with the visible text ("Pin version" / "Change pin") and says which reference it is about.
+          aria-label={`${pin ? "Change pin" : "Pin version"} of ${name}`}
           title="Pin a published version of the referenced entity"
         >
           {pin ? "Change pin" : "Pin version"}
@@ -111,7 +112,12 @@ export function ReferencePinControl({ fieldId, referencedEntityId, referenceLabe
       )}
       {open && (
         <span className="inline-flex flex-wrap items-center gap-1">
-          {versions.state === "loading" && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-label="Loading versions" />}
+          {versions.state === "loading" && (
+            <span role="status" className="inline-flex items-center">
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-hidden="true" />
+              <span className="sr-only">Loading versions</span>
+            </span>
+          )}
           {versions.state === "failed" && (
             <span role="alert" className="text-[10px] text-destructive">
               {versions.message}

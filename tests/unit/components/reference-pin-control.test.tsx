@@ -41,6 +41,33 @@ describe("ReferencePinControl", () => {
     expect(listPublishedVersions).not.toHaveBeenCalled();
   });
 
+  it("the open button's accessible name starts with its visible text and says which reference it is about", () => {
+    const { rerender } = mount();
+    const open = screen.getByTestId("reference-pin-open");
+    expect(open.textContent).toBe("Pin version");
+    expect(open.getAttribute("aria-label")).toBe("Pin version of Billing / Core / Address");
+
+    rerender(<ReferencePinControl fieldId="fld-1" referencedEntityId="ent-addr" referenceLabel="Billing / Core / Address" controls={controls} pinnedVersion="1.0" />);
+    expect(screen.getByTestId("reference-pin-open").textContent).toBe("Change pin");
+    expect(screen.getByTestId("reference-pin-open").getAttribute("aria-label")).toBe("Change pin of Billing / Core / Address");
+  });
+
+  it("announces the loading of the versions as a status, with the icon hidden from assistive technology", async () => {
+    let finish: (v: { labels: string[] }) => void = () => {};
+    listPublishedVersions.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    mount();
+
+    fireEvent.click(screen.getByTestId("reference-pin-open"));
+
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toBe("Loading versions");
+    expect(status.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+
+    finish({ labels: ["1.0"] });
+    await screen.findByTestId("reference-pin-control");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("offers the referenced entity's published versions and 'Latest published (no pin)', and nothing else", async () => {
     mount();
 

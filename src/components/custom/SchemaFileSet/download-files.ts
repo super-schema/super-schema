@@ -11,6 +11,9 @@ export interface DownloadableFile {
 /** Pause between two downloads, so a browser does not fold them into one blocked burst. */
 export const DOWNLOAD_GAP_MS = 100;
 
+/** How long a file's blob URL stays valid after its download was started. */
+export const REVOKE_DELAY_MS = 1000;
+
 /**
  * One file name per path: directory separators become `_` (a browser would do so anyway, silently), and a name an earlier file already
  * took gets `-2`, `-3`, ... before its extension, so no file overwrites another.
@@ -43,7 +46,8 @@ export async function downloadFilesSequentially(files: ReadonlyArray<Downloadabl
     anchor.href = url;
     anchor.download = names[i];
     anchor.click();
-    URL.revokeObjectURL(url);
+    // Not at once: a browser starts reading the blob after the click returns, and a URL revoked before that yields an empty download.
+    setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
     if (i < files.length - 1) await new Promise<void>((resolve) => setTimeout(resolve, gapMs));
   }
 }

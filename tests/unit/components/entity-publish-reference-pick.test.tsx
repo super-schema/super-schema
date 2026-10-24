@@ -134,6 +134,35 @@ describe("the publish preview names an ambiguous reference", () => {
     expect(await screen.findByTestId("reference-pick-dialog")).toBeDefined();
   });
 
+  it("Escape in the pick dialog closes only the pick dialog: the publish dialog and its blocker stay", async () => {
+    mocks.getPreview.mockResolvedValue({ success: true, preview: BLOCKED_PREVIEW });
+    render(<EntityWorkspace {...props()} />);
+
+    fireEvent.click(screen.getByTestId("publish-entity-button"));
+    const dialog = await screen.findByTestId("reference-pick-dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByTestId("reference-pick-dialog")).toBeNull());
+    expect(screen.getByTestId("confirm-publish")).toBeDefined();
+    expect(screen.getByText(AMBIGUOUS_BLOCKER.message)).toBeDefined();
+    // and it can be asked again from the publish dialog
+    expect(screen.getByTestId("publish-pick-reference")).toBeDefined();
+  });
+
+  it("a click inside the pick dialog (not on a candidate) does not dismiss the publish dialog", async () => {
+    mocks.getPreview.mockResolvedValue({ success: true, preview: BLOCKED_PREVIEW });
+    render(<EntityWorkspace {...props()} />);
+
+    fireEvent.click(screen.getByTestId("publish-entity-button"));
+    const dialog = await screen.findByTestId("reference-pick-dialog");
+    fireEvent.pointerDown(within(dialog).getByText("Choose the referenced entity"));
+    fireEvent.mouseDown(within(dialog).getByText("Choose the referenced entity"));
+    fireEvent.click(within(dialog).getByText("Choose the referenced entity"));
+
+    expect(screen.getByTestId("reference-pick-dialog")).toBeDefined();
+    expect(screen.getByTestId("confirm-publish")).toBeDefined();
+  });
+
   it("offers no pick button for a blocker that is not an ambiguous reference", async () => {
     mocks.getPreview.mockResolvedValue({
       success: true,

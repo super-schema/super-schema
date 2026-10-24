@@ -309,4 +309,35 @@ describe("SchemasTab: an ambiguous reference opens the pick dialog", () => {
     await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("JSON Schema v1 marked as deployed"));
     expect(toastMock.error).not.toHaveBeenCalled();
   });
+
+  it("regenerate-from-published: an ambiguous reference met while regenerating asks first, saves the pick and runs the SAME regenerate again", async () => {
+    getVersions.mockResolvedValue({
+      success: true,
+      schemaVersions: { "json-schema": [closureVersion([{ ref: ROOT, source: "draft" }, { ref: ADDRESS, source: "draft" }])] },
+    });
+    publish
+      .mockResolvedValueOnce({ error: "This schema version is a preview and cannot be published.", code: "PREVIEW_NOT_PUBLISHABLE", needsPublishedRegeneration: true })
+      .mockResolvedValueOnce({ error: 'Field "addr" refers to "Address", which matches 2 entities.', code: "AMBIGUOUS_REFERENCE", needsReference: NEEDS_REFERENCE })
+      .mockResolvedValueOnce({ success: true });
+    setReference.mockResolvedValue({ success: true, data: undefined });
+    render(<SchemasTab {...baseProps} />);
+
+    fireEvent.click(await screen.findByText("Mark Deployed"));
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+    const [, options] = toastMock.error.mock.calls[0] as [string, { action: { label: string; onClick: () => void } }];
+    expect(options.action.label).toBe("Regenerate from published and publish");
+    options.action.onClick();
+
+    const dialog = await screen.findByTestId("reference-pick-dialog");
+    // the second refusal is a question, not an error toast
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(dialog).getAllByTestId("reference-pick-candidate")[1]);
+
+    await waitFor(() => expect(publish).toHaveBeenCalledTimes(3));
+    expect(publish.mock.calls[1]).toEqual(["entity-1", "json-schema", 1, { regenerateFromPublished: true }]);
+    expect(publish.mock.calls[2]).toEqual(publish.mock.calls[1]);
+    expect(setReference).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x2" });
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("JSON Schema regenerated from the published versions and published"));
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+  });
 });
