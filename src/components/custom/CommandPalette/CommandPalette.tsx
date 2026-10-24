@@ -239,6 +239,7 @@ export function CommandPalette({
       >
         <Command className="bg-transparent" loop>
           <CommandInput
+            autoFocus
             placeholder="Search entities, fields, actions..."
             className="h-12 text-body border-b border-border"
           />
