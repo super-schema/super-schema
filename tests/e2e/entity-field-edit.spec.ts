@@ -19,12 +19,17 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect, unique } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
+import { centerPanel } from "./helpers/event-builder";
 
 /** A failed server action surfaces as an error toast (sonner). */
 const errorToast = (page: Page) => page.locator('[data-sonner-toast][data-type="error"]');
 
-/** The row of a field in the editor list (the name cell carries `title=<name>`). */
-const fieldName = (page: Page, name: string): Locator => page.locator(`span[title="${name}"]`);
+/**
+ * The row of a field in the editor list (the name cell carries `title=<name>`). Queried inside the center panel: a hard load streams the
+ * page behind its loading.tsx and Next leaves the streamed segment's hidden copy in <body>, so a bare `page.locator(...)` finds every
+ * row twice on a production build and trips strict mode (helpers/event-builder.ts).
+ */
+const fieldName = (page: Page, name: string): Locator => centerPanel(page).locator(`span[title="${name}"]`);
 
 test.describe("entity field edit through the tenant-guarded actions", () => {
   // Serial: the rename relies on the field the previous test described, and the add on the renamed field list.
@@ -72,7 +77,7 @@ test.describe("entity field edit through the tenant-guarded actions", () => {
     await expect(page.getByRole("heading", { name: "Fields (1)" })).toBeVisible();
 
     // Select the field by its row number (a non-interactive area of the row opens the Field Edit panel).
-    await page.getByLabel("Row 1", { exact: true }).click();
+    await centerPanel(page).getByLabel("Row 1", { exact: true }).click();
     const panel = page.getByTestId("field-edit-panel");
     await expect(panel).toBeVisible({ timeout: 30_000 });
 
@@ -90,7 +95,7 @@ test.describe("entity field edit through the tenant-guarded actions", () => {
 
     // Persisted: a fresh load of the page shows the description on the field row.
     await openEntity(page);
-    await expect(page.getByTitle(description, { exact: true })).toBeVisible();
+    await expect(centerPanel(page).getByTitle(description, { exact: true })).toBeVisible();
     await expect(errorToast(page)).toHaveCount(0);
   });
 
@@ -114,7 +119,7 @@ test.describe("entity field edit through the tenant-guarded actions", () => {
     await expect(fieldName(page, renamed)).toBeVisible();
     await expect(fieldName(page, FIXTURE_FIELD)).toHaveCount(0);
     // The description set by the previous test is still on the (renamed) row.
-    await expect(page.getByTitle(description, { exact: true })).toBeVisible();
+    await expect(centerPanel(page).getByTitle(description, { exact: true })).toBeVisible();
   });
 
   test("Add Field > Quick Create: the new field is added and survives a reload", { tag: ["@regression"] }, async ({ authedPage: page }) => {
