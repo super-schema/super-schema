@@ -114,21 +114,6 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
   const domainHref = entity.domainSlug
     ? assetHref({ kind: "domain", domainSlug: entity.domainSlug })
     : assetHref({ kind: "enterprise" });
-  // The studio is opened by the field's slug (the entity's field list links it), and the slug follows the name: renaming the field here
-  // would make this address a 404 at the next render (every save revalidates the page behind it). The id never changes, so as soon as
-  // the studio is on screen its address names the id (the query string stays).
-  const canonicalPath = assetHref({
-    kind: "field",
-    entitySlug: entity.slug,
-    fieldId: field.id,
-    domainSlug: entity.domainSlug,
-    productSlug: entity.productSlug,
-  });
-  useEffect(() => {
-    if (window.location.pathname !== canonicalPath) {
-      window.history.replaceState(null, "", `${canonicalPath}${window.location.search}${window.location.hash}`);
-    }
-  }, [canonicalPath]);
   const [fieldName, setFieldName] = useState(field.name);
   const [fieldType, setFieldType] = useState(field.type);
   const [isOptional, setIsOptional] = useState(field.nullable);

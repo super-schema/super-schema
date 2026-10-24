@@ -45,6 +45,9 @@ vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => {
     throw new Error("not found");
   }),
+  redirect: vi.fn((url: string) => {
+    throw new Error(`redirect ${url}`);
+  }),
 }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/fields/[fieldId]/field-studio", () => ({
   FieldStudio: () => null,
@@ -112,7 +115,7 @@ describe("FieldDetailPage for an Enterprise (tenant-level) entity", () => {
   });
 
   it("resolves the active tenant's tenant-level entity even when other entities share the slug", async () => {
-    const element = await FieldDetailPage({ params: params(...ENTERPRISE, "customer", "email") });
+    const element = await FieldDetailPage({ params: params(...ENTERPRISE, "customer", "f-t1") });
 
     expect(element.props.field.id).toBe("f-t1");
     // Tenant-level: null slugs (not the URL's "enterprise"/"entities" segments), so the
@@ -163,7 +166,7 @@ describe("FieldDetailPage for a product entity", () => {
   });
 
   it("scopes the entity lookup to the URL's product", async () => {
-    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "email") });
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") });
 
     expect(element.props.field.id).toBe("f-checkout");
     expect(element.props.entity).toMatchObject({ id: "ent-checkout", domainSlug: "payments", productSlug: "checkout" });
@@ -173,7 +176,7 @@ describe("FieldDetailPage for a product entity", () => {
   });
 
   it("falls back to the entity id within the same product", async () => {
-    const element = await FieldDetailPage({ params: params("payments", "checkout", "ent-checkout", "email") });
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "ent-checkout", "f-checkout") });
 
     expect(element.props.entity.id).toBe("ent-checkout");
   });
@@ -208,7 +211,7 @@ describe("FieldDetailPage: the entities a reference can point at (for the type p
   it("hands the field studio the entities with their domain and product names, read for the ENTITY'S tenant (not the active one)", async () => {
     mocks.entityFindMany.mockResolvedValue([{ id: "e-addr", name: "Address", domain: { name: "Billing" }, product: { name: "Core" } }]);
 
-    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "email") });
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") });
 
     expect(element.props.field.id).toBe("f-checkout");
     expect(element.props.referenceTargets).toEqual([{ id: "e-addr", name: "Address", domain: "Billing", product: "Core" }]);
@@ -221,10 +224,48 @@ describe("FieldDetailPage: the entities a reference can point at (for the type p
     mocks.entityFindMany.mockRejectedValue(new Error("db down"));
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "email") });
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") });
 
     expect(element.props.field.id).toBe("f-checkout");
     expect(element.props.referenceTargets).toEqual([]);
     spy.mockRestore();
+  });
+});
+
+describe("FieldDetailPage: the address names the field by its id", () => {
+  // The slug follows the field's name, and every save revalidates the page behind its address: an address that names the slug is a 404
+  // after a rename. A link by the slug (the old way, a bookmark) is sent to the id's address, and a page at the id's address renders.
+  beforeEach(() => {
+    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-1" }];
+    db.products = [{ id: "prod-1", slug: "checkout", domainId: "dom-1" }];
+    db.entities = [
+      { id: "ent-checkout", slug: "order", tenantId: "tenant-1", domainId: "dom-1", productId: "prod-1", name: "Order" },
+      { id: "ent-t1", slug: "customer", tenantId: "tenant-1", domainId: null, productId: null, name: "Customer" },
+    ];
+    db.fields = [fieldRow("f-checkout", "ent-checkout", "ship-to"), fieldRow("f-t1", "ent-t1", "email")];
+  });
+
+  it("redirects an address that names the slug to the one that names the id", async () => {
+    await expect(FieldDetailPage({ params: params("payments", "checkout", "order", "ship-to") })).rejects.toThrow(
+      "redirect /schemas/payments/checkout/order/fields/f-checkout"
+    );
+  });
+
+  it("keeps the entity segment as it was typed (its id too)", async () => {
+    await expect(FieldDetailPage({ params: params("payments", "checkout", "ent-checkout", "ship-to") })).rejects.toThrow(
+      "redirect /schemas/payments/checkout/ent-checkout/fields/f-checkout"
+    );
+  });
+
+  it("redirects the Enterprise address too", async () => {
+    await expect(FieldDetailPage({ params: params("enterprise", "entities", "customer", "email") })).rejects.toThrow(
+      "redirect /schemas/enterprise/entities/customer/fields/f-t1"
+    );
+  });
+
+  it("renders at the id's address (no redirect, so no loop) and 404s for a field that is neither a slug nor an id of the entity", async () => {
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "f-checkout") });
+    expect(element.props.field.id).toBe("f-checkout");
+    await expect(FieldDetailPage({ params: params("payments", "checkout", "order", "nope") })).rejects.toThrow("not found");
   });
 });

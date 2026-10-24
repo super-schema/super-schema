@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { FieldStudio } from "./field-studio";
 import { domainLabel } from "@/lib/entity-placement";
 import { getActiveTenantId } from "@/lib/active-tenant";
@@ -68,6 +68,13 @@ export default async function FieldDetailPage({ params }: Props) {
 
   if (!field || field.entityId !== entity.id) {
     notFound();
+  }
+
+  // The studio is addressed by the field's ID: a rename changes the slug, and every save revalidates the page behind this address, so
+  // an address that names the slug would be a 404 at the next render. A link by the (old) name is sent to the id's address, and the
+  // page is rendered from there with the right segment from the first render.
+  if (field.id !== fieldId) {
+    redirect(`/schemas/${encodeURIComponent(domainSlug)}/${encodeURIComponent(productSlug)}/${encodeURIComponent(entityId)}/fields/${encodeURIComponent(field.id)}`);
   }
 
   // Tenant-level entities have no domain and therefore no domain policy.
