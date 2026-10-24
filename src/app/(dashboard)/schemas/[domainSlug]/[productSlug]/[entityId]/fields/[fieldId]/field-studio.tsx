@@ -19,6 +19,14 @@ import {
 import { getTypeInfo } from "@/lib/data-types";
 import { assetHref } from "@/lib/navigation/asset-href";
 import { updateFieldAction } from "../../actions";
+import {
+  applyReferencePick,
+  holdsEntityReference,
+  readFieldReference,
+  withoutReferenceKeys,
+  type PickableEntity,
+  type ReferencePick,
+} from "@/lib/references/entity-reference";
 import type { TypeSpecDecorators } from "@/types/schemas/typespec-decorator.schema";
 import { IdentityPanel } from "./panels/IdentityPanel";
 import { ValidationPanel } from "./panels/ValidationPanel";
@@ -58,6 +66,36 @@ interface FieldStudioProps {
     name: string;
     policy: Record<string, unknown> | null;
   };
+  /**
+   * The entities of the tenant a reference can point at (with their domain and product). When given, choosing the `reference` type asks
+   * for the target and the autosave writes it as a fully qualified reference. Without it `reference` is a plain type change.
+   */
+  referenceTargets?: PickableEntity[];
+}
+
+/**
+ * The decorators a save writes: the field's own plus the studio's typespec, the target picked for a `reference` written qualified (and
+ * the pin of a previous target dropped), and, for a field that is no longer a reference (or an array / map of them), without the
+ * reference it had (the server drops it as well).
+ */
+function decoratorsToSave(
+  stored: Record<string, unknown>,
+  typespec: TypeSpecDecorators,
+  type: string,
+  reference: ReferencePick | null,
+): Record<string, unknown> {
+  let decorators: Record<string, unknown> = { ...stored, typespec };
+  if (type === "reference" && reference) decorators = applyReferencePick(decorators, reference);
+  if (!holdsEntityReference(type, decorators)) decorators = withoutReferenceKeys(decorators);
+  return decorators;
+}
+
+/** How a person reads what a reference field points at: `domain / product / entity`, or the name of a name-only reference. */
+function referenceLabel(pick: ReferencePick | null, decorators: Record<string, unknown>): string | undefined {
+  if (pick) return pick.referencedQualifiedName?.split("/").join(" / ") ?? pick.referencedEntityName;
+  const stored = readFieldReference(decorators);
+  if (!stored) return undefined;
+  return "legacyName" in stored ? stored.legacyName : `${stored.domain} / ${stored.product} / ${stored.entity}`;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -65,7 +103,7 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 const PANEL_STORAGE_KEY = (fieldId: string) =>
   `field-studio-panels-${fieldId}`;
 
-export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
+export function FieldStudio({ field, entity, domain, referenceTargets }: FieldStudioProps) {
   const router = useRouter();
   const entityHref = assetHref({
     kind: "entity",
@@ -95,8 +133,10 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
   const savingRef = useRef(false);
 
   // Refs to track current values for save (fixes stale closure P1 + P2)
-  const currentRef = useRef({ fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification });
-  currentRef.current = { fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification };
+  // The target picked for the `reference` type (written by the next save while the type is still `reference`).
+  const [reference, setReference] = useState<ReferencePick | null>(null);
+  const currentRef = useRef({ fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification, reference });
+  currentRef.current = { fieldName, fieldType, isOptional, typespec, fieldNumber, fieldClassification, reference };
 
   // Panel state from localStorage — loaded after mount to keep SSR and hydration identical.
   const [expandedPanels, setExpandedPanels] = useState<number[]>([0]);
@@ -135,8 +175,8 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
     setSaveStatus("saving");
     pendingRef.current = false;
 
-    const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls } = currentRef.current;
-    const decorators = { ...field.decorators, typespec: ts };
+    const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls, reference: picked } = currentRef.current;
+    const decorators = decoratorsToSave(field.decorators, ts, type, picked);
 
     const result = await updateFieldAction(field.id, {
       name,
@@ -206,8 +246,8 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
         clearTimeout(saveTimeoutRef.current);
       }
       if (pendingRef.current) {
-        const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls } = currentRef.current;
-        const decorators = { ...field.decorators, typespec: ts };
+        const { fieldName: name, fieldType: type, isOptional: nullable, typespec: ts, fieldNumber: fn, fieldClassification: cls, reference: picked } = currentRef.current;
+        const decorators = decoratorsToSave(field.decorators, ts, type, picked);
         updateFieldAction(field.id, { name, type, nullable, fieldNumber: fn, classification: cls, decorators });
       }
     };
@@ -242,6 +282,8 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
     }
 
     setFieldType(newType);
+    // A target picked for an earlier `reference` is not this type's (the prompt sets it again right after, before the save fires).
+    setReference(null);
     scheduleSave();
   }
 
@@ -331,7 +373,25 @@ export function FieldStudio({ field, entity, domain }: FieldStudioProps) {
             onChange={(e) => handleNameChange(e.target.value)}
             className="h-9 w-64 font-mono text-display text-foreground bg-transparent border-transparent hover:border-border focus:border-border transition-colors"
           />
-          <TypePicker value={fieldType} onChange={handleTypeChange} />
+          <TypePicker
+            value={fieldType}
+            onChange={handleTypeChange}
+            entities={referenceTargets}
+            promptTypes={["reference"]}
+            onComplexTypeConfig={
+              referenceTargets
+                ? (_type, config) => {
+                    setReference(config);
+                    scheduleSave();
+                  }
+                : undefined
+            }
+          />
+          {fieldType === "reference" && referenceLabel(reference, field.decorators) && (
+            <span data-testid="field-reference-target" className="font-mono text-body-small text-muted-foreground">
+              → {referenceLabel(reference, field.decorators)}
+            </span>
+          )}
           <Badge variant={isOptional ? "secondary" : "warning"}>
             {isOptional ? "optional" : "required"}
           </Badge>

@@ -5,6 +5,7 @@ import { domainLabel } from "@/lib/entity-placement";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { ENTERPRISE_ENTITIES_SEGMENT, ENTERPRISE_ROUTE_SEGMENT } from "@/lib/navigation/asset-href";
 import { findEntityInScope } from "../../load-entity-workspace";
+import { loadPickableEntities } from "@/lib/references/pickable-entities";
 
 interface Props {
   params: Promise<{ domainSlug: string; productSlug: string; entityId: string; fieldId: string }>;
@@ -75,8 +76,12 @@ export default async function FieldDetailPage({ params }: Props) {
     (domain as { policyTemplate?: Record<string, unknown> } | null)
       ?.policyTemplate ?? null;
 
+  // The entities of the entity's own tenant a reference can point at, for the type picker (fail-soft: a typed name still works).
+  const referenceTargets = await loadPickableEntities(prisma, field.entity.tenantId);
+
   return (
     <FieldStudio
+      referenceTargets={referenceTargets}
       field={{
         id: field.id,
         name: field.name,

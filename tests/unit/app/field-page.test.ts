@@ -25,6 +25,7 @@ function findFirst(rows: () => Row[]) {
 
 const mocks = vi.hoisted(() => ({
   entityFindFirst: vi.fn(),
+  entityFindMany: vi.fn(),
   fieldFindFirst: vi.fn(),
   fieldFindUnique: vi.fn(),
   domainFindFirst: vi.fn(),
@@ -33,7 +34,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/db", () => ({
   prisma: {
-    entity: { findFirst: mocks.entityFindFirst },
+    entity: { findFirst: mocks.entityFindFirst, findMany: mocks.entityFindMany },
     field: { findFirst: mocks.fieldFindFirst, findUnique: mocks.fieldFindUnique },
     domain: { findFirst: mocks.domainFindFirst },
     product: { findFirst: mocks.productFindFirst },
@@ -84,6 +85,7 @@ beforeEach(() => {
   db.domains = [];
   db.products = [];
   mocks.entityFindFirst.mockImplementation(findFirst(() => db.entities));
+  mocks.entityFindMany.mockResolvedValue([]);
   mocks.domainFindFirst.mockImplementation(findFirst(() => db.domains));
   mocks.productFindFirst.mockImplementation(findFirst(() => db.products));
   mocks.fieldFindFirst.mockImplementation(findFirst(() => db.fields));
@@ -189,5 +191,34 @@ describe("FieldDetailPage for a product entity", () => {
     await expect(
       FieldDetailPage({ params: params("nope", "checkout", "order", "email") })
     ).rejects.toThrow("not found");
+  });
+});
+
+describe("FieldDetailPage: the entities a reference can point at (for the type picker)", () => {
+  beforeEach(() => {
+    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-1" }];
+    db.products = [{ id: "prod-1", slug: "checkout", domainId: "dom-1" }];
+    db.entities = [{ id: "ent-checkout", slug: "order", tenantId: "tenant-1", domainId: "dom-1", productId: "prod-1", name: "Order" }];
+    db.fields = [fieldRow("f-checkout", "ent-checkout")];
+  });
+
+  it("hands the field studio the tenant's entities with their domain and product names, read for the ENTITY'S tenant", async () => {
+    mocks.entityFindMany.mockResolvedValue([{ id: "e-addr", name: "Address", domain: { name: "Billing" }, product: { name: "Core" } }]);
+
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "email") });
+
+    expect(element.props.referenceTargets).toEqual([{ id: "e-addr", name: "Address", domain: "Billing", product: "Core" }]);
+    expect(mocks.entityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-1" } }));
+  });
+
+  it("a failing lookup does not take the page down", async () => {
+    mocks.entityFindMany.mockRejectedValue(new Error("db down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "email") });
+
+    expect(element.props.field.id).toBe("f-checkout");
+    expect(element.props.referenceTargets).toEqual([]);
+    spy.mockRestore();
   });
 });
