@@ -1,214 +1,185 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { getUsers, getUserById, updateUser } from "@/services/user.service";
+import type { ServiceContext } from "@/types/service-context";
 
 // ---------------------------------------------------------------------------
-// In-memory store for the Prisma mock (used by rbac.service)
+// A small stateful stand-in for the three Prisma delegates the service reads: `user`, `userRole`, and the `domain` a role names.
+// It keeps its rows in this module (the "database"), not in the service: a service that held its own store would fail these tests.
 // ---------------------------------------------------------------------------
-let roleStore: Array<{
+interface UserRow {
+  id: string;
+  name: string | null;
+  email: string;
+  image: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+interface RoleRow {
   id: string;
   userId: string;
   role: string;
   domainId: string | null;
   createdAt: Date;
-}> = [];
-let idCounter = 0;
+}
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
-    userRole: {
-      findMany: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
-        if (args?.where?.userId) {
-          return roleStore.filter((r) => r.userId === args.where!.userId);
-        }
-        return [...roleStore];
-      }),
-      findFirst: vi.fn(
-        async (args: { where: { userId: string; role: string; domainId: string | null } }) => {
-          return (
-            roleStore.find(
-              (r) =>
-                r.userId === args.where.userId &&
-                r.role === args.where.role &&
-                r.domainId === args.where.domainId
-            ) ?? null
-          );
-        }
-      ),
-      findUnique: vi.fn(async (args: { where: { id: string } }) => {
-        return roleStore.find((r) => r.id === args.where.id) ?? null;
-      }),
-      create: vi.fn(
-        async (args: {
-          data: { userId: string; role: string; domainId: string | null };
-        }) => {
-          const row = {
-            id: `role-${++idCounter}`,
-            userId: args.data.userId,
-            role: args.data.role,
-            domainId: args.data.domainId,
-            createdAt: new Date(),
-          };
-          roleStore.push(row);
-          return row;
-        }
-      ),
-      delete: vi.fn(async (args: { where: { id: string } }) => {
-        const idx = roleStore.findIndex((r) => r.id === args.where.id);
-        if (idx !== -1) roleStore.splice(idx, 1);
-      }),
-      deleteMany: vi.fn(async () => {
-        roleStore = [];
-        idCounter = 0;
-      }),
-      count: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
-        if (args?.where?.role) {
-          return roleStore.filter((r) => r.role === args.where!.role).length;
-        }
-        return roleStore.length;
-      }),
-    },
+let users: UserRow[] = [];
+let roles: RoleRow[] = [];
+let domains: Array<{ id: string; name: string }> = [];
+
+type Where = { userId?: { in: string[] } | string; id?: string };
+
+const fakePrisma = {
+  user: {
+    findMany: vi.fn(async (args?: { orderBy?: { createdAt: "asc" | "desc" } }) => {
+      const rows = [...users];
+      if (args?.orderBy?.createdAt === "asc") rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      return rows;
+    }),
+    findUnique: vi.fn(async (args: { where: { id: string } }) => users.find((u) => u.id === args.where.id) ?? null),
+    update: vi.fn(async (args: { where: { id: string }; data: { name?: string } }) => {
+      const row = users.find((u) => u.id === args.where.id);
+      if (!row) throw Object.assign(new Error("Record to update not found."), { code: "P2025" });
+      if (args.data.name !== undefined) row.name = args.data.name;
+      row.updatedAt = new Date();
+      return row;
+    }),
   },
-}));
-
-import {
-  getUsers,
-  getUserById,
-  updateUser,
-  _resetUserStore,
-  _seedUsers,
-  type UserRecord,
-} from "@/services/user.service";
-import { assignRole, _resetRoleStore } from "@/services/rbac.service";
-import type { ServiceContext } from "@/types/service-context";
-
-const adminCtx: ServiceContext = {
-  userId: "admin-1",
-  userRole: "ADMIN",
-  prisma: null as unknown as ServiceContext["prisma"],
+  userRole: {
+    findMany: vi.fn(async (args: { where: Where }) => {
+      const wanted = args.where.userId;
+      const matches = roles.filter((r) =>
+        typeof wanted === "string" ? r.userId === wanted : wanted ? wanted.in.includes(r.userId) : true,
+      );
+      return matches.map((r) => ({ ...r, domain: r.domainId ? { name: domains.find((d) => d.id === r.domainId)?.name ?? "" } : null }));
+    }),
+  },
 };
 
-const viewerCtx: ServiceContext = {
-  userId: "viewer-1",
-  userRole: "VIEWER",
-  prisma: null as unknown as ServiceContext["prisma"],
-};
+const adminCtx: ServiceContext = { userId: "admin-1", userRole: "ADMIN", prisma: fakePrisma as unknown as ServiceContext["prisma"] };
+const viewerCtx: ServiceContext = { userId: "viewer-1", userRole: "VIEWER", prisma: fakePrisma as unknown as ServiceContext["prisma"] };
 
-const testUsers: UserRecord[] = [
-  {
-    id: "user-1",
-    name: "Alice",
-    email: "alice@example.com",
-    image: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    lastLogin: null,
-    status: "active",
-  },
-  {
-    id: "user-2",
-    name: "Bob",
-    email: "bob@example.com",
-    image: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    lastLogin: null,
-    status: "active",
-  },
-];
+const row = (id: string, name: string | null, email: string, createdAt: string): UserRow => ({
+  id,
+  name,
+  email,
+  image: null,
+  createdAt: new Date(createdAt),
+  updatedAt: new Date(createdAt),
+});
 
 describe("User Service", () => {
-  beforeEach(async () => {
-    _resetUserStore();
-    await _resetRoleStore();
-    _seedUsers(testUsers);
+  beforeEach(() => {
+    vi.clearAllMocks();
+    users = [row("user-2", "Bob", "bob@example.com", "2026-01-02"), row("user-1", "Alice", "alice@example.com", "2026-01-01")];
+    domains = [{ id: "dom-1", name: "Payments" }];
+    roles = [
+      { id: "role-1", userId: "user-1", role: "VIEWER", domainId: "dom-1", createdAt: new Date("2026-01-03") },
+      { id: "role-2", userId: "user-1", role: "ADMIN", domainId: null, createdAt: new Date("2026-01-04") },
+    ];
   });
 
   describe("getUsers", () => {
-    it("returns all users with roles (Admin only)", async () => {
-      await assignRole(
-        { userId: "user-1", role: "VIEWER", domainId: "dom-1" },
-        adminCtx
-      );
-
+    it("lists the users of the database (oldest first) with their roles and the name of each role's domain", async () => {
       const result = await getUsers(adminCtx);
       expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toHaveLength(2);
-        const alice = result.data.find((u) => u.id === "user-1");
-        expect(alice).toBeDefined();
-        expect(alice!.roles).toHaveLength(1);
-        expect(alice!.roles[0].role).toBe("VIEWER");
-      }
+      if (!result.success) return;
+      expect(result.data.map((u) => u.email)).toEqual(["alice@example.com", "bob@example.com"]);
+      const alice = result.data.find((u) => u.id === "user-1")!;
+      expect(alice.roles).toEqual([
+        { id: "role-1", role: "VIEWER", domainId: "dom-1", domainName: "Payments" },
+        { id: "role-2", role: "ADMIN", domainId: null, domainName: undefined },
+      ]);
+      expect(result.data.find((u) => u.id === "user-2")!.roles).toEqual([]);
+    });
+
+    it("sees a user that was added to the database after an earlier call (no store of its own)", async () => {
+      await getUsers(adminCtx);
+      users.push(row("user-3", null, "carol@example.com", "2026-02-01"));
+      const result = await getUsers(adminCtx);
+      expect(result.success && result.data.map((u) => u.email)).toContain("carol@example.com");
+    });
+
+    it("asks the role table only for the listed users", async () => {
+      await getUsers(adminCtx);
+      expect(fakePrisma.userRole.findMany).toHaveBeenCalledTimes(1);
+      expect(fakePrisma.userRole.findMany.mock.calls[0][0].where).toEqual({ userId: { in: ["user-1", "user-2"] } });
+    });
+
+    it("never selects the password hash", async () => {
+      await getUsers(adminCtx);
+      const select = (fakePrisma.user.findMany.mock.calls[0][0] as { select: Record<string, boolean> }).select;
+      expect(select).toBeDefined();
+      expect(select.password).toBeUndefined();
+      expect(Object.keys(select).sort()).toEqual(["createdAt", "email", "id", "image", "name"]);
     });
 
     it("rejects non-Admin users", async () => {
       const result = await getUsers(viewerCtx);
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("FORBIDDEN");
-      }
+      if (!result.success) expect(result.error.code).toBe("FORBIDDEN");
+      expect(fakePrisma.user.findMany).not.toHaveBeenCalled();
     });
   });
 
   describe("getUserById", () => {
-    it("returns single user with roles", async () => {
+    it("returns the single user with roles", async () => {
       const result = await getUserById("user-1", adminCtx);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.id).toBe("user-1");
         expect(result.data.name).toBe("Alice");
         expect(result.data.email).toBe("alice@example.com");
+        expect(result.data.roles.map((r) => r.role)).toEqual(["VIEWER", "ADMIN"]);
+        expect(result.data.roles[0].domainName).toBe("Payments");
       }
     });
 
-    it("returns NOT_FOUND for missing user", async () => {
+    it("returns NOT_FOUND for a missing user", async () => {
       const result = await getUserById("nonexistent", adminCtx);
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("NOT_FOUND");
-      }
+      if (!result.success) expect(result.error.code).toBe("NOT_FOUND");
     });
 
     it("rejects non-Admin users", async () => {
       const result = await getUserById("user-1", viewerCtx);
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("FORBIDDEN");
-      }
+      if (!result.success) expect(result.error.code).toBe("FORBIDDEN");
     });
   });
 
   describe("updateUser", () => {
-    it("updates user name", async () => {
-      const result = await updateUser(
-        { id: "user-1", name: "Alice Updated" },
-        adminCtx
-      );
+    it("writes the name to the database", async () => {
+      const result = await updateUser({ id: "user-1", name: "Alice Updated" }, adminCtx);
       expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.name).toBe("Alice Updated");
-      }
+      if (result.success) expect(result.data.name).toBe("Alice Updated");
+      expect(users.find((u) => u.id === "user-1")!.name).toBe("Alice Updated");
+      const again = await getUserById("user-1", adminCtx);
+      expect(again.success && again.data.name).toBe("Alice Updated");
     });
 
-    it("returns NOT_FOUND for missing user", async () => {
-      const result = await updateUser(
-        { id: "nonexistent", name: "Test" },
-        adminCtx
-      );
+    it("returns NOT_FOUND for a missing user", async () => {
+      const result = await updateUser({ id: "nonexistent", name: "Test" }, adminCtx);
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("NOT_FOUND");
-      }
+      if (!result.success) expect(result.error.code).toBe("NOT_FOUND");
     });
 
-    it("rejects non-Admin users", async () => {
-      const result = await updateUser(
-        { id: "user-1", name: "Hacked" },
-        viewerCtx
-      );
+    it("rejects an empty name", async () => {
+      const result = await updateUser({ id: "user-1", name: "" }, adminCtx);
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error.code).toBe("FORBIDDEN");
-      }
+      if (!result.success) expect(result.error.code).toBe("VALIDATION_ERROR");
+      expect(fakePrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects non-Admin users and writes nothing", async () => {
+      const result = await updateUser({ id: "user-1", name: "Hacked" }, viewerCtx);
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.code).toBe("FORBIDDEN");
+      expect(users.find((u) => u.id === "user-1")!.name).toBe("Alice");
+    });
+
+    it("passes an unrelated database error on as a failure, never as NOT_FOUND", async () => {
+      fakePrisma.user.update.mockRejectedValueOnce(Object.assign(new Error("connection lost"), { code: "P1001" }));
+      await expect(updateUser({ id: "user-1", name: "X" }, adminCtx)).rejects.toThrow("connection lost");
     });
   });
 });

@@ -1,7 +1,8 @@
 /**
- * User Management Service — Admin-only user CRUD with role data.
+ * User Management Service — Admin-only user reads and name edits, with role data.
  *
- * For MVP, uses an in-memory store that can be seeded for testing.
+ * Users and their roles live in the database (`users`, `user_roles`) and are read through `ctx.prisma`; the service keeps no
+ * state of its own, so what the Admin page lists is what the database holds, across requests and restarts.
  * All service functions return Result<T>.
  */
 
@@ -9,13 +10,10 @@ import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
 import type { UserWithRoles } from "@/types/schemas/rbac";
+import type { Role } from "@/types/schemas/rbac";
 import { UpdateUserInputSchema, type UpdateUserInput } from "@/types/schemas/user";
-import { _getRoleStore } from "./rbac.service";
 
-// ---------------------------------------------------------------------------
-// In-memory user store (MVP)
-// ---------------------------------------------------------------------------
-
+/** The columns a user row exposes here. Never the password hash. */
 export interface UserRecord {
   id: string;
   name: string | null;
@@ -23,25 +21,44 @@ export interface UserRecord {
   image: string | null;
   createdAt: Date;
   updatedAt: Date;
-  lastLogin: Date | null;
-  status: "active" | "inactive";
 }
 
-let userStore: UserRecord[] = [];
+const USER_SELECT = { id: true, name: true, email: true, image: true, createdAt: true } as const;
 
-/** Reset store — for testing only */
-export function _resetUserStore(): void {
-  userStore = [];
+type RoleRow = { id: string; userId: string; role: string; domainId: string | null; domain: { name: string } | null };
+
+const forbidden = () =>
+  err({
+    code: "FORBIDDEN",
+    message: "Requires ADMIN role",
+    suggestedFix: "Contact your administrator",
+  });
+
+const userNotFound = (id: string) =>
+  err({
+    code: "NOT_FOUND",
+    message: `User with ID "${id}" not found`,
+    suggestedFix: "Verify the user ID and try again.",
+  });
+
+function toRoles(rows: RoleRow[]): UserWithRoles["roles"] {
+  return rows.map((r) => ({
+    id: r.id,
+    role: r.role as Role,
+    domainId: r.domainId,
+    // A system-level role has no domain, so no name.
+    domainName: r.domain?.name,
+  }));
 }
 
-/** Seed users — for testing only */
-export function _seedUsers(users: UserRecord[]): void {
-  userStore = [...users];
-}
-
-/** Get raw store — for testing only */
-export function _getUserStore(): UserRecord[] {
-  return userStore;
+/** The role rows of the given users, with the name of the domain a role is scoped to. */
+async function loadRoles(ctx: ServiceContext, userIds: string[]): Promise<RoleRow[]> {
+  if (userIds.length === 0) return [];
+  return ctx.prisma.userRole.findMany({
+    where: { userId: { in: userIds } },
+    include: { domain: { select: { name: true } } },
+    orderBy: { createdAt: "asc" },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -51,32 +68,24 @@ export function _getUserStore(): UserRecord[] {
 export async function getUsers(
   ctx: ServiceContext
 ): Promise<Result<UserWithRoles[]>> {
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Requires ADMIN role",
-      suggestedFix: "Contact your administrator",
-    });
-  }
+  if (ctx.userRole !== "ADMIN") return forbidden();
 
-  const roles = await _getRoleStore();
-  const usersWithRoles: UserWithRoles[] = userStore.map((u) => ({
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    image: u.image,
-    createdAt: u.createdAt,
-    roles: roles
-      .filter((r) => r.userId === u.id)
-      .map((r) => ({
-        id: r.id,
-        role: r.role,
-        domainId: r.domainId,
-        domainName: r.domainName,
-      })),
-  }));
+  const users = await ctx.prisma.user.findMany({ select: USER_SELECT, orderBy: { createdAt: "asc" } });
+  const roles = await loadRoles(
+    ctx,
+    users.map((u) => u.id)
+  );
 
-  return ok(usersWithRoles);
+  return ok(
+    users.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      image: u.image,
+      createdAt: u.createdAt,
+      roles: toRoles(roles.filter((r) => r.userId === u.id)),
+    }))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -87,38 +96,19 @@ export async function getUserById(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<UserWithRoles>> {
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Requires ADMIN role",
-      suggestedFix: "Contact your administrator",
-    });
-  }
+  if (ctx.userRole !== "ADMIN") return forbidden();
 
-  const user = userStore.find((u) => u.id === id);
-  if (!user) {
-    return err({
-      code: "NOT_FOUND",
-      message: `User with ID "${id}" not found`,
-      suggestedFix: "Verify the user ID and try again.",
-    });
-  }
+  const user = await ctx.prisma.user.findUnique({ where: { id }, select: USER_SELECT });
+  if (!user) return userNotFound(id);
 
-  const roles = await _getRoleStore();
+  const roles = await loadRoles(ctx, [user.id]);
   return ok({
     id: user.id,
     name: user.name,
     email: user.email,
     image: user.image,
     createdAt: user.createdAt,
-    roles: roles
-      .filter((r) => r.userId === user.id)
-      .map((r) => ({
-        id: r.id,
-        role: r.role,
-        domainId: r.domainId,
-        domainName: r.domainName,
-      })),
+    roles: toRoles(roles),
   });
 }
 
@@ -130,13 +120,7 @@ export async function updateUser(
   input: UpdateUserInput,
   ctx: ServiceContext
 ): Promise<Result<UserRecord>> {
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Requires ADMIN role",
-      suggestedFix: "Contact your administrator",
-    });
-  }
+  if (ctx.userRole !== "ADMIN") return forbidden();
 
   const parsed = UpdateUserInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -147,22 +131,16 @@ export async function updateUser(
     });
   }
 
-  const userIndex = userStore.findIndex((u) => u.id === parsed.data.id);
-  if (userIndex === -1) {
-    return err({
-      code: "NOT_FOUND",
-      message: `User with ID "${parsed.data.id}" not found`,
-      suggestedFix: "Verify the user ID and try again.",
+  try {
+    const updated = await ctx.prisma.user.update({
+      where: { id: parsed.data.id },
+      data: parsed.data.name !== undefined ? { name: parsed.data.name } : {},
+      select: { ...USER_SELECT, updatedAt: true },
     });
+    return ok(updated);
+  } catch (e: unknown) {
+    // P2025: "an operation failed because it depends on one or more records that were required but not found".
+    if (typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2025") return userNotFound(parsed.data.id);
+    throw e;
   }
-
-  if (parsed.data.name !== undefined) {
-    userStore[userIndex] = {
-      ...userStore[userIndex],
-      name: parsed.data.name,
-      updatedAt: new Date(),
-    };
-  }
-
-  return ok(userStore[userIndex]);
 }

@@ -1,10 +1,18 @@
 /**
  * Domain Admin Service — domain workspace management with policy templates.
  *
- * Handles domain CRUD for admin panel, policy template application,
- * and inheritance tracking. Uses in-memory store for MVP.
+ * Handles domain CRUD for the admin panel, policy template application, and inheritance tracking. Domains are the rows of the
+ * `domains` table, read and written through `ctx.prisma`: the very rows the explorer sidebar and the Domains page list, in the tenant
+ * the user is viewing. The service keeps no state of its own, so a domain made here is there after a restart.
  */
 
+import { Prisma } from "@/generated/prisma/client";
+import { getActiveTenantId } from "@/lib/active-tenant";
+import { AuditUserMissingError, withAudit } from "@/lib/audit";
+import { domainDeleteBlocker } from "@/lib/domain-deletion";
+import { ensureDefaultTenantId } from "@/lib/org-defaults";
+import { EVENTS_ASSET_COUNT_SELECT } from "@/lib/product-deletion";
+import { generateSlug, isReservedSchemaRouteSlug } from "@/lib/slug";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -19,10 +27,6 @@ import {
   type UpdateDomainAdminInput,
 } from "@/types/schemas/domain-policy";
 
-// ---------------------------------------------------------------------------
-// In-memory domain store (MVP)
-// ---------------------------------------------------------------------------
-
 export interface DomainRecord {
   id: string;
   name: string;
@@ -33,75 +37,131 @@ export interface DomainRecord {
   updatedAt: Date;
 }
 
-let domainStore: DomainRecord[] = [];
-let entityCountMap: Map<string, number> = new Map();
-let nextId = 1;
-
-export function _resetDomainAdminStore(): void {
-  domainStore = [];
-  entityCountMap = new Map();
-  nextId = 1;
+interface DomainRow {
+  id: string;
+  name: string;
+  description: string;
+  policyTemplate: Prisma.JsonValue | null;
+  isSystem: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export function _seedDomainAdminStore(domains: DomainRecord[]): void {
-  domainStore = [...domains];
+const forbidden = () =>
+  err({
+    code: "FORBIDDEN",
+    message: "Requires ADMIN role",
+    suggestedFix: "Contact your administrator",
+  });
+
+const domainNotFound = (id: string) =>
+  err({
+    code: "NOT_FOUND",
+    message: `Domain with ID "${id}" not found`,
+    suggestedFix: "Verify the domain ID.",
+  });
+
+const duplicateName = (name: string) =>
+  err({
+    code: "DUPLICATE",
+    message: `A domain named "${name}" already exists`,
+    suggestedFix: "Choose a different domain name.",
+  });
+
+const isPrismaCode = (e: unknown, code: string): boolean =>
+  typeof e === "object" && e !== null && (e as { code?: unknown }).code === code;
+
+/** A stored template that is not a template (hand-edited JSON) reads as no template, not as a crash on every page load. */
+function parseTemplate(value: Prisma.JsonValue | null): PolicyTemplate | null {
+  if (value === null) return null;
+  const parsed = PolicyTemplateSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
-export function _setEntityCount(domainId: string, count: number): void {
-  entityCountMap.set(domainId, count);
+function toRecord(row: DomainRow): DomainRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    policyTemplate: parseTemplate(row.policyTemplate),
+    isSystem: row.isSystem,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
-export function _getDomainAdminStore(): DomainRecord[] {
-  return domainStore;
+/** The slug a name gets (the URL of the domain), or an error when it has none or names a utility page of /schemas. */
+function slugFor(name: string): Result<string> {
+  const slug = generateSlug(name);
+  if (slug === "") {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: "Domain name must contain at least one letter or digit",
+      suggestedFix: "Use a name with letters or digits.",
+    });
+  }
+  if (isReservedSchemaRouteSlug(slug)) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: `"${slug}" is reserved for a schemas utility page`,
+      suggestedFix: "Choose a different domain name.",
+    });
+  }
+  return ok(slug);
 }
+
+/** The audit trail of a mutation names the acting user; a session whose user no longer exists is told to sign in again. */
+const staleSession = () =>
+  err({
+    code: "UNAUTHORIZED",
+    message: "Your session is stale. Sign out and sign in again, then retry.",
+    suggestedFix: "Sign out and sign in again.",
+  });
 
 // ---------------------------------------------------------------------------
-// getDomains — fetch all domains with stats (Admin only)
+// getDomains — fetch all domains of the active tenant with stats (Admin only)
 // ---------------------------------------------------------------------------
 
 export async function getDomainsAdmin(
   ctx: ServiceContext
 ): Promise<Result<DomainWithStats[]>> {
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Requires ADMIN role",
-      suggestedFix: "Contact your administrator",
-    });
-  }
+  if (ctx.userRole !== "ADMIN") return forbidden();
 
-  const results: DomainWithStats[] = domainStore.map((d) => ({
-    id: d.id,
-    name: d.name,
-    description: d.description,
-    policyTemplate: d.policyTemplate,
-    policyTemplateStatus: d.policyTemplate ? "Configured" : "No template",
-    entityCount: entityCountMap.get(d.id) ?? 0,
-    isSystem: d.isSystem,
-    createdAt: d.createdAt,
-    updatedAt: d.updatedAt,
-  }));
+  const rows = await ctx.prisma.domain.findMany({
+    where: { tenantId: await getActiveTenantId() },
+    orderBy: [{ isSystem: "desc" }, { name: "asc" }],
+    include: { _count: { select: { entities: true } } },
+  });
 
-  return ok(results);
+  return ok(
+    rows.map((row) => {
+      const policyTemplate = parseTemplate(row.policyTemplate);
+      return {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        policyTemplate,
+        policyTemplateStatus: policyTemplate ? ("Configured" as const) : ("No template" as const),
+        entityCount: row._count.entities,
+        isSystem: row.isSystem,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      };
+    })
+  );
 }
 
 // ---------------------------------------------------------------------------
-// getDomainById
+// getDomainById — a domain of the active tenant; any other reads as missing
 // ---------------------------------------------------------------------------
 
 export async function getDomainAdminById(
   id: string,
-  _ctx: ServiceContext
+  ctx: ServiceContext
 ): Promise<Result<DomainRecord>> {
-  const domain = domainStore.find((d) => d.id === id);
-  if (!domain) {
-    return err({
-      code: "NOT_FOUND",
-      message: `Domain with ID "${id}" not found`,
-      suggestedFix: "Verify the domain ID.",
-    });
-  }
-  return ok(domain);
+  const row = await ctx.prisma.domain.findFirst({ where: { id, tenantId: await getActiveTenantId() } });
+  if (!row) return domainNotFound(id);
+  return ok(toRecord(row));
 }
 
 // ---------------------------------------------------------------------------
@@ -112,13 +172,7 @@ export async function createDomainAdmin(
   input: CreateDomainAdminInput,
   ctx: ServiceContext
 ): Promise<Result<DomainRecord>> {
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Requires ADMIN role",
-      suggestedFix: "Contact your administrator",
-    });
-  }
+  if (ctx.userRole !== "ADMIN") return forbidden();
 
   const parsed = CreateDomainAdminInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -129,42 +183,48 @@ export async function createDomainAdmin(
     });
   }
 
-  // Validate policy template if provided
-  if (parsed.data.policyTemplate) {
-    const ptResult = PolicyTemplateSchema.safeParse(parsed.data.policyTemplate);
-    if (!ptResult.success) {
-      return err({
-        code: "VALIDATION_ERROR",
-        message: "Invalid policy template structure",
-        suggestedFix: "Ensure policyTemplate matches the expected schema.",
-      });
-    }
+  const name = parsed.data.name.trim();
+  if (name === "") {
+    return err({ code: "VALIDATION_ERROR", message: "Domain name is required", suggestedFix: "Check the domain input fields." });
   }
+  const slug = slugFor(name);
+  if (!slug.success) return slug;
 
-  // Enforce unique name (case-insensitive)
-  const duplicate = domainStore.find(
-    (d) => d.name.toLowerCase() === parsed.data.name.toLowerCase()
-  );
-  if (duplicate) {
-    return err({
-      code: "DUPLICATE",
-      message: `A domain named "${parsed.data.name}" already exists`,
-      suggestedFix: "Choose a different domain name.",
+  // New domains belong to the tenant the user is currently viewing; a fresh install has none until the default one is made.
+  await ensureDefaultTenantId(ctx.prisma);
+  const tenantId = await getActiveTenantId();
+
+  // Unique name per tenant, case-insensitively (the database's own unique index is case-sensitive).
+  const duplicate = await ctx.prisma.domain.findFirst({
+    where: { tenantId, name: { equals: name, mode: "insensitive" } },
+    select: { id: true },
+  });
+  if (duplicate) return duplicateName(name);
+
+  try {
+    const created = await withAudit({
+      action: "CREATE",
+      entityType: "Domain",
+      entityId: "pending",
+      userId: ctx.userId,
+      fn: () =>
+        ctx.prisma.domain.create({
+          data: {
+            name,
+            slug: slug.data,
+            description: parsed.data.description ?? "",
+            tenantId,
+            ...(parsed.data.policyTemplate ? { policyTemplate: parsed.data.policyTemplate as Prisma.InputJsonValue } : {}),
+          },
+        }),
     });
+    return ok(toRecord(created));
+  } catch (e: unknown) {
+    if (e instanceof AuditUserMissingError) return staleSession();
+    // The same slug from another spelling ("Order Data" / "order-data") is caught by the unique index, not by the name check.
+    if (isPrismaCode(e, "P2002")) return duplicateName(name);
+    throw e;
   }
-
-  const domain: DomainRecord = {
-    id: `domain-${nextId++}`,
-    name: parsed.data.name,
-    description: parsed.data.description ?? "",
-    policyTemplate: parsed.data.policyTemplate ?? null,
-    isSystem: false,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-
-  domainStore.push(domain);
-  return ok(domain);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,13 +235,7 @@ export async function updateDomainAdmin(
   input: UpdateDomainAdminInput,
   ctx: ServiceContext
 ): Promise<Result<DomainRecord>> {
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Requires ADMIN role",
-      suggestedFix: "Contact your administrator",
-    });
-  }
+  if (ctx.userRole !== "ADMIN") return forbidden();
 
   const parsed = UpdateDomainAdminInputSchema.safeParse(input);
   if (!parsed.success) {
@@ -192,81 +246,104 @@ export async function updateDomainAdmin(
     });
   }
 
-  const domainIndex = domainStore.findIndex((d) => d.id === parsed.data.id);
-  if (domainIndex === -1) {
-    return err({
-      code: "NOT_FOUND",
-      message: `Domain with ID "${parsed.data.id}" not found`,
-      suggestedFix: "Verify the domain ID.",
-    });
-  }
+  const tenantId = await getActiveTenantId();
+  const existing = await ctx.prisma.domain.findFirst({ where: { id: parsed.data.id, tenantId } });
+  if (!existing) return domainNotFound(parsed.data.id);
 
-  // If name changed, enforce uniqueness
-  if (parsed.data.name) {
-    const duplicate = domainStore.find(
-      (d) =>
-        d.id !== parsed.data.id &&
-        d.name.toLowerCase() === parsed.data.name!.toLowerCase()
-    );
-    if (duplicate) {
+  const data: Prisma.DomainUpdateInput = {};
+
+  const newName = parsed.data.name?.trim();
+  if (newName !== undefined && newName !== existing.name) {
+    // A system domain keeps its name: the app finds "Public" and "Playground" by it.
+    if (existing.isSystem) {
       return err({
-        code: "DUPLICATE",
-        message: `A domain named "${parsed.data.name}" already exists`,
-        suggestedFix: "Choose a different domain name.",
+        code: "CONFLICT",
+        message: "System domains cannot be renamed",
+        suggestedFix: "Change the description or the policy template instead.",
       });
     }
+    const slug = slugFor(newName);
+    if (!slug.success) return slug;
+    const duplicate = await ctx.prisma.domain.findFirst({
+      where: { tenantId, id: { not: existing.id }, name: { equals: newName, mode: "insensitive" } },
+      select: { id: true },
+    });
+    if (duplicate) return duplicateName(newName);
+    // The slug is the name's address (a create derives it the same way), so it follows the name.
+    data.name = newName;
+    data.slug = slug.data;
   }
+  if (parsed.data.description !== undefined) data.description = parsed.data.description;
+  if (parsed.data.policyTemplate !== undefined) data.policyTemplate = parsed.data.policyTemplate as Prisma.InputJsonValue;
 
-  const existing = domainStore[domainIndex];
-  domainStore[domainIndex] = {
-    ...existing,
-    name: parsed.data.name ?? existing.name,
-    description: parsed.data.description ?? existing.description,
-    policyTemplate: parsed.data.policyTemplate !== undefined
-      ? parsed.data.policyTemplate ?? null
-      : existing.policyTemplate,
-    updatedAt: new Date(),
-  };
-
-  return ok(domainStore[domainIndex]);
+  try {
+    const updated = await withAudit({
+      action: "UPDATE",
+      entityType: "Domain",
+      entityId: existing.id,
+      userId: ctx.userId,
+      beforeState: existing as unknown as object,
+      fn: () => ctx.prisma.domain.update({ where: { id: existing.id }, data }),
+    });
+    return ok(toRecord(updated));
+  } catch (e: unknown) {
+    if (e instanceof AuditUserMissingError) return staleSession();
+    if (isPrismaCode(e, "P2002")) return duplicateName(newName ?? existing.name);
+    if (isPrismaCode(e, "P2025")) return domainNotFound(parsed.data.id);
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------------------
-// deleteDomain — Admin only, blocked if entities exist
+// deleteDomain — Admin only; never a system domain; blocked while it owns entities or events assets
 // ---------------------------------------------------------------------------
 
 export async function deleteDomainAdmin(
   id: string,
   ctx: ServiceContext
 ): Promise<Result<void>> {
-  if (ctx.userRole !== "ADMIN") {
-    return err({
-      code: "FORBIDDEN",
-      message: "Requires ADMIN role",
-      suggestedFix: "Contact your administrator",
-    });
-  }
+  if (ctx.userRole !== "ADMIN") return forbidden();
 
-  const domainIndex = domainStore.findIndex((d) => d.id === id);
-  if (domainIndex === -1) {
-    return err({
-      code: "NOT_FOUND",
-      message: `Domain with ID "${id}" not found`,
-      suggestedFix: "Verify the domain ID.",
-    });
-  }
+  const domain = await ctx.prisma.domain.findFirst({
+    where: { id, tenantId: await getActiveTenantId() },
+    include: { _count: { select: { entities: true, ...EVENTS_ASSET_COUNT_SELECT } } },
+  });
+  if (!domain) return domainNotFound(id);
 
-  const entityCount = entityCountMap.get(id) ?? 0;
-  if (entityCount > 0) {
+  if (domain.isSystem) {
     return err({
       code: "CONFLICT",
-      message: `Cannot delete domain with ${entityCount} entities. Reassign or delete entities first.`,
-      suggestedFix: "Remove all entities from this domain before deleting it.",
+      message: "System domains cannot be deleted",
+      suggestedFix: "Only domains you created can be deleted.",
     });
   }
 
-  domainStore.splice(domainIndex, 1);
-  entityCountMap.delete(id);
+  const blocker = domainDeleteBlocker(domain._count);
+  if (blocker) {
+    return err({
+      code: "CONFLICT",
+      message: blocker,
+      suggestedFix: "Remove all entities and events from this domain before deleting it.",
+    });
+  }
+
+  try {
+    await withAudit({
+      action: "DELETE",
+      entityType: "Domain",
+      entityId: domain.id,
+      userId: ctx.userId,
+      beforeState: domain as unknown as object,
+      fn: async () => {
+        await ctx.prisma.domain.delete({ where: { id: domain.id } });
+        return null;
+      },
+    });
+  } catch (e: unknown) {
+    if (e instanceof AuditUserMissingError) return staleSession();
+    if (isPrismaCode(e, "P2025")) return domainNotFound(id);
+    throw e;
+  }
   return ok(undefined);
 }
 
