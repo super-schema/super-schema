@@ -817,7 +817,16 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         )}
 
         {activeTab === "typespec" && (
-          <TypeSpecSourceTab entityId={entity.id} entityName={entity.name} readOnly={readOnly_} onSaved={markDraftDirty} />
+          <TypeSpecSourceTab
+            entityId={entity.id}
+            entityName={entity.name}
+            readOnly={readOnly_}
+            onSaved={() => {
+              markDraftDirty();
+              // The saved source changed the fields: the right panel's TypeSpec preview regenerates from them.
+              setTypeSpecTrigger((n) => n + 1);
+            }}
+          />
         )}
 
         {activeTab === "versions" && (
