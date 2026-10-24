@@ -15,6 +15,7 @@ import {
 import {
   getNotificationsForUser,
   markAllAsRead,
+  markAsRead,
   getUnreadCount,
 } from "@/services/notification.service";
 import type { NotificationFilter } from "@/types/schemas/notification";
@@ -85,6 +86,14 @@ export async function POST(request: Request) {
   try {
     const url = new URL(request.url);
     const action = url.searchParams.get("action");
+
+    if (action === "mark-read") {
+      const id = url.searchParams.get("id");
+      if (!id) return apiError({ code: "VALIDATION_ERROR", message: "Notification id is required" });
+      const result = await markAsRead(id, authResult.context);
+      if (!result.success) return apiError(result.error);
+      return apiSuccess({ marked: true });
+    }
 
     if (action === "mark-all-read") {
       const result = await markAllAsRead(
