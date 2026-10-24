@@ -24,7 +24,7 @@ import { StatusBadge } from "./SchemaVersionList";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import { publishRefusalToast } from "./publish-refusal";
 import { SchemaVersionList } from "./SchemaVersionList";
-import { SchemaCodePreview } from "./SchemaCodePreview";
+import { SchemaVersionOutput } from "./SchemaVersionOutput";
 import type { SchemaTargetFieldMappingRow } from "@/lib/schema-targets/field-type-overrides";
 import type {
   TargetTypeCatalogEntry,
@@ -632,8 +632,9 @@ export function TechnologyCard({
                 />
               )}
 
-              <SchemaCodePreview
-                code={displayVersion.output}
+              <SchemaVersionOutput
+                version={displayVersion}
+                entityId={entityId}
                 language={targetInfo.key === "avro" ? "json" : targetInfo.key === "openapi" ? "yaml" : "sql"}
                 onCopy={() => toast.success("Schema copied to clipboard")}
               />

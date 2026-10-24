@@ -27,20 +27,32 @@ const describeRef = (ref: EntityRef): string => qualifiedName(ref).split("/").jo
 const MAX_NAMED = 5;
 
 /**
- * The entities, other than `rootEntityId`, that `resolution` records at draft state: what makes a stored version a preview that
- * cannot be published. The root is the entry carrying its id, or (when none does) the first entry, which is the root by construction.
+ * Every entity `resolution` records OTHER than the root, as recorded (its `source` and `version`): what the version used of what it
+ * references. The root is the entry carrying `rootEntityId`, or (when none does) the first entry, which is the root by construction.
+ * Entries that are not the expected shape are skipped, never thrown on.
  */
-export function draftReferencedEntities(resolution: SchemaVersionResolution | undefined, rootEntityId: string): EntityRef[] {
+export function referencedResolutionEntries(
+  resolution: SchemaVersionResolution | undefined,
+  rootEntityId: string
+): SchemaVersionResolution["entities"] {
   if (!isRecord(resolution) || !Array.isArray(resolution.entities)) return [];
   const entries = (resolution.entities as unknown[]).flatMap((entry) => {
     if (!isRecord(entry) || !isRecord(entry.ref)) return [];
     const { domain, product, entity } = entry.ref;
     if (typeof domain !== "string" || typeof product !== "string" || typeof entity !== "string") return [];
-    return [{ ref: entry.ref as unknown as EntityRef, source: entry.source }];
+    return [entry as unknown as SchemaVersionResolution["entities"][number]];
   });
   const rootIndex = entries.findIndex((entry) => entry.ref.entityId === rootEntityId);
-  return entries
-    .filter((entry, index) => index !== (rootIndex === -1 ? 0 : rootIndex) && entry.source === "draft")
+  return entries.filter((_, index) => index !== (rootIndex === -1 ? 0 : rootIndex));
+}
+
+/**
+ * The entities, other than `rootEntityId`, that `resolution` records at draft state: what makes a stored version a preview that
+ * cannot be published.
+ */
+export function draftReferencedEntities(resolution: SchemaVersionResolution | undefined, rootEntityId: string): EntityRef[] {
+  return referencedResolutionEntries(resolution, rootEntityId)
+    .filter((entry) => entry.source === "draft")
     .map((entry) => entry.ref);
 }
 

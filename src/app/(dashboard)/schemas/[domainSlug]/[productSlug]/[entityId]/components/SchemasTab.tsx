@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { getSchemaVersionsAction, publishSchemaAction, saveSchemaFieldTypeOverrideAction } from "../actions";
 import type { SchemaVersionsMap, SchemaVersion, FieldTypeMapping } from "@/types/schema-version";
-import { SchemaCodePreview } from "./SchemaCodePreview";
+import { SchemaVersionOutput } from "./SchemaVersionOutput";
 import { useGenerateWithInputs } from "./useGenerateWithInputs";
 import { publishRefusalToast } from "./publish-refusal";
 import { generationWarningToast, stagedWarningToast } from "./generate-warnings";
@@ -693,8 +693,10 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
               {/* Schema content */}
               {contentTab === "schema" && (
                 displayVersion ? (
-                  <SchemaCodePreview
-                    code={displayVersion.output}
+                  <SchemaVersionOutput
+                    version={displayVersion}
+                    entityId={entityId}
+                    entityName={entityName}
                     language={selected.language}
                     onCopy={() => toast.success("Copied to clipboard")}
                   />
