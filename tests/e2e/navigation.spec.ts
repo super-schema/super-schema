@@ -63,10 +63,17 @@ async function expectResolves(request: APIRequestContext, url: string, from = "t
   expect(bodyIsNotFound(body), `${url} (linked from ${from}) rendered the 404 page`).toBe(false);
 }
 
-/** Client-side health: the current document shows no 404 page. */
+/**
+ * Client-side health: the current document shows no 404 page.
+ *
+ * A route streams behind its loading.tsx (a PageSkeleton) and a `notFound()` thrown after that replaces the skeleton, so "no 404 copy"
+ * only means something once the skeleton is gone. That is what is waited for (a web-first assertion, retried until it holds or fails
+ * loudly), instead of a guess that the network went quiet.
+ */
 async function expectNoNotFoundPage(page: Page) {
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
   const where = page.url();
+  await expect(page.getByTestId("center-panel"), `${where} never rendered the shell`).toBeVisible();
+  await expect(page.locator('[data-testid^="skeleton-"]:visible'), `${where} is still on its loading skeleton`).toHaveCount(0);
   await expect(notFoundCopy(page), `${where} rendered the 404 page`).toHaveCount(0);
   await expect(notFoundHeading(page), `${where} rendered the 404 page`).toHaveCount(0);
 }
@@ -155,7 +162,6 @@ test.describe("navigation", () => {
 
     // Client side: the rendered 404 page is detected by the same locators the health checks use.
     await page.goto(url);
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
     await expect(notFoundCopy(page)).toHaveCount(1);
     await expect(notFoundHeading(page)).toHaveCount(1);
     await expect(expectNoNotFoundPage(page)).rejects.toThrow();

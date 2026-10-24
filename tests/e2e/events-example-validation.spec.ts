@@ -4,8 +4,9 @@
  * the editor (a mismatch is a warning squiggle with hover text, never a blocker), and "Generate from payload" fills in an example the
  * schema accepts.
  *
- * Flow: New Event → Messages → add a message pinning the Order entity → Examples → add an example → Generate from payload → the
- * generated JSON has no squiggle → a value of the wrong type gets one, with the schema's message on hover → the draft still saves.
+ * Flow: New Event → Messages → add a message pinning the Order entity → Examples → add an example → Generate from payload → a value of
+ * the wrong type gets a squiggle, with the schema's message on hover → Generate again (asks first) replaces it with an example that has no
+ * squiggle → the draft still saves.
  *
  * The entity is never published (a publish writes immutable audit rows that cannot be deleted): the message pins it unpinned, so the
  * schema is rendered from the entity's current draft, with the real TypeSpec CLI (the first render can take a while).
@@ -122,15 +123,13 @@ test.describe("message examples against their payload schema", () => {
       await expect(main.getByTestId(ID.payloadGenerate)).toHaveText("Generate from payload");
     });
 
-    await test.step("Generate from payload: an example the schema accepts, so no squiggle", async () => {
-      const { wrapper, content } = await payloadEditor(main);
+    await test.step("Generate from payload fills in an example with the entity's fields", async () => {
+      const { content } = await payloadEditor(main);
       await main.getByTestId(ID.payloadGenerate).click();
       await expect(content).toContainText('"orderId"');
       await expect(content).toContainText('"quantity"');
-      // The linter runs 250 ms after the last change; look for a squiggle after that, not just before.
-      await page.waitForTimeout(1_000);
-      await expect(wrapper.locator(WARNING_RANGE)).toHaveCount(0);
-      await expect(wrapper.locator(ERROR_RANGE)).toHaveCount(0);
+      // That the schema accepts it is asserted in the last Generate step below, not here: the editor lints 250 ms after the last change
+      // and has no "lint finished" signal, so "no squiggle yet" right after the click would prove nothing (and a sleep is no proof either).
     });
 
     await test.step("edit a value to the wrong type: a squiggle, and the schema's own words on hover", async () => {
@@ -144,14 +143,16 @@ test.describe("message examples against their payload schema", () => {
       await expect(main.getByTestId("message-examples-0-payload-validation")).toHaveCount(0);
     });
 
-    await test.step("Generate again asks before it replaces what is there", async () => {
+    await test.step("Generate again asks before it replaces what is there, and writes an example the schema accepts", async () => {
       await main.getByTestId(ID.payloadGenerate).click();
       await expect(main.getByTestId(ID.replaceConfirm)).toContainText("Replace the current example?");
       await main.getByTestId(ID.replace).click();
       const { wrapper, content } = await payloadEditor(main);
       await expect(content).toContainText('"orderId": "string"');
-      await page.waitForTimeout(1_000);
+      // The squiggle of the step above is on screen until the editor has dropped it, so this assertion waits for that instead of for a
+      // fixed time (assertions retry). A lint pass still pending when it returns would go unseen: there is no "lint finished" signal.
       await expect(wrapper.locator(WARNING_RANGE)).toHaveCount(0);
+      await expect(wrapper.locator(ERROR_RANGE)).toHaveCount(0);
     });
 
     await test.step("a warning never blocks a save", async () => {

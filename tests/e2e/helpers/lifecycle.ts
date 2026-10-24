@@ -182,23 +182,22 @@ export async function generateTarget(
   let askedForKey = false;
   const deadline = Date.now() + timeout;
   for (;;) {
-    if (await dialog.isVisible().catch(() => false)) {
-      askedForKey = true;
-      if (opts.primaryKey) {
-        for (const name of opts.primaryKey) {
-          const box = dialog.locator("label", { hasText: new RegExp(`^${name}$`) }).locator("input");
-          if (!(await box.isChecked())) await box.check();
-        }
-      } else if ((await dialog.locator("input:checked").count()) === 0) {
-        await dialog.locator("input[type=checkbox]").first().check();
+    // The primary-key dialog or the result toast, whichever the page shows first: one web-first wait, not a polling sleep.
+    await expect(dialog.or(toasts.first()).first(), `${displayName}: no result toast within ${timeout} ms`).toBeVisible({
+      timeout: Math.max(deadline - Date.now(), 1),
+    });
+    if (!(await dialog.isVisible().catch(() => false))) break;
+    askedForKey = true;
+    if (opts.primaryKey) {
+      for (const name of opts.primaryKey) {
+        const box = dialog.locator("label", { hasText: new RegExp(`^${name}$`) }).locator("input");
+        if (!(await box.isChecked())) await box.check();
       }
-      await dialog.getByRole("button", { name: /save key and generate/i }).click();
-      await expect(dialog).toBeHidden({ timeout: 60_000 });
-      continue;
+    } else if ((await dialog.locator("input:checked").count()) === 0) {
+      await dialog.locator("input[type=checkbox]").first().check();
     }
-    if ((await toasts.count()) > 0) break;
-    if (Date.now() > deadline) throw new Error(`${displayName}: no result toast within ${timeout} ms`);
-    await page.waitForTimeout(200);
+    await dialog.getByRole("button", { name: /save key and generate/i }).click();
+    await expect(dialog).toBeHidden({ timeout: 60_000 });
   }
   const toast = toasts.last();
   const type = await toast.getAttribute("data-type");
@@ -213,10 +212,17 @@ export async function generateTarget(
     previousSignature,
     read: () => readPreview(page),
     signature: () => previewSignature(previewSourceOf(page)),
-    wait: (ms) => page.waitForTimeout(ms),
+    wait: pollEvery,
   });
   return { code, warning: type === "warning" ? toastText : undefined, askedForKey };
 }
+
+/**
+ * The cadence of `settlePreview`'s bounded poll (what `expect.poll` does with its `intervals`): the gap between two cheap reads of the
+ * preview while it is being replaced, not a sleep before an assertion. `settlePreview` takes it as a parameter so its unit test needs no
+ * clock.
+ */
+const pollEvery = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A documented, accepted open defect: generating the target must fail with an error matching `match`. */
 export interface KnownTargetFailure {
@@ -274,14 +280,12 @@ export async function saveTypeSpecSource(page: Page, source: string): Promise<{ 
   const area = page.getByTestId("typespec-source-textarea");
   const save = page.getByRole("button", { name: /^Save$/ });
   // The tab can reload its source right after it was opened (a refresh of the page behind a just-finished edit) and put the saved text
-  // back over what was typed: Save then stays disabled (not dirty). Type again until the text stays.
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  // back over what was typed: Save then stays disabled (not dirty) and the click waits for it in vain. Type and click as one unit that
+  // is repeated until it goes through, instead of sleeping to see whether the text stayed.
+  await expect(async () => {
     await area.fill(source);
-    await page.waitForTimeout(400);
-    if (await save.isEnabled().catch(() => false)) break;
-    await page.waitForTimeout(1_000);
-  }
-  await save.click();
+    await save.click({ timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
   const ok = page.locator('[data-sonner-toast][data-type="success"]').filter({ hasText: /TypeSpec compiled and applied/ }).first();
   const bad = page.locator('[data-sonner-toast][data-type="error"]').last();
   await expect(ok.or(bad)).toBeVisible({ timeout: 90_000 });
