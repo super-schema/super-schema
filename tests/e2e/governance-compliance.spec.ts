@@ -804,10 +804,8 @@ test.describe("compliance tenants", () => {
   const prefix = unique("CompIso");
   test.use({ workspaceEntities: [`${prefix}Home`] });
 
-  // KD-016: the compliance service reads every field of the database; the active tenant is not consulted.
-  test.fail("[KD-016 the compliance Query tab lists the fields of every tenant] an entity of another tenant is not listed", { tag: ["@regression"] }, async ({
-    authedPage: page,
-  }) => {
+  // The Query and Gaps tabs read the fields of the tenant being viewed (the audit trail has no tenant column: KD-016).
+  test("the Query and Gaps tabs list the fields of this tenant and not those of another", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     const other = await createSecondTenant();
     try {
       await createEntityInTenant(other.tenantId, `${prefix}Away`);
@@ -816,6 +814,11 @@ test.describe("compliance tenants", () => {
       // The entity of this tenant is listed (the query has answered), the one of the other tenant is not.
       await expect(resultRows(page).filter({ hasText: `${prefix}Home` })).toHaveCount(1);
       await expect(resultRows(page).filter({ hasText: `${prefix}Away` })).toHaveCount(0);
+
+      // Both entities have an unclassified field `id`: a gap for the tenant's, none for the other's.
+      await complianceTab(page, "Gaps").click();
+      await expect(gapRows(page, `${prefix}Home`, '[data-gap="UNCLASSIFIED"]')).toHaveCount(1);
+      await expect(gapRows(page, `${prefix}Away`)).toHaveCount(0);
     } finally {
       await deleteTenantWithDomain(other);
     }

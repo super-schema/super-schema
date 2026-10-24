@@ -62,6 +62,60 @@ describe("Compliance Service", () => {
     vi.clearAllMocks();
   });
 
+  // The Query and Gaps tabs show the tenant being viewed: a field has no tenant of its own, its entity does. (The audit trail has no
+  // tenant column: KD-016.)
+  describe("tenant scope", () => {
+    const inTenant: ServiceContext = { ...mockCtx, tenantId: "tenant-a" };
+
+    it("queryFields asks for the fields of entities of the tenant, for the count and for the page", async () => {
+      vi.mocked(prisma.field.count).mockResolvedValue(0);
+      vi.mocked(prisma.field.findMany).mockResolvedValue([]);
+
+      await queryFields({}, undefined, inTenant);
+
+      expect(vi.mocked(prisma.field.count).mock.calls[0][0]).toEqual({ where: { entity: { tenantId: "tenant-a" } } });
+      expect(vi.mocked(prisma.field.findMany).mock.calls[0][0]?.where).toEqual({ entity: { tenantId: "tenant-a" } });
+    });
+
+    it("queryFields keeps the domain filter and the tenant together", async () => {
+      vi.mocked(prisma.field.count).mockResolvedValue(0);
+      vi.mocked(prisma.field.findMany).mockResolvedValue([]);
+
+      await queryFields({ domains: ["dom-1"], classifications: ["PII"] }, undefined, inTenant);
+
+      expect(vi.mocked(prisma.field.findMany).mock.calls[0][0]?.where).toEqual({
+        classification: { in: ["PII"] },
+        entity: { domainId: { in: ["dom-1"] }, tenantId: "tenant-a" },
+      });
+    });
+
+    it("queryFields without a tenant (not a page) filters nothing, as before", async () => {
+      vi.mocked(prisma.field.count).mockResolvedValue(0);
+      vi.mocked(prisma.field.findMany).mockResolvedValue([]);
+
+      await queryFields({}, undefined, mockCtx);
+
+      expect(vi.mocked(prisma.field.findMany).mock.calls[0][0]?.where).toEqual({});
+    });
+
+    it("detectGaps reads only the fields of the tenant, alone and with a domain filter", async () => {
+      vi.mocked(prisma.field.findMany).mockResolvedValue([]);
+
+      await detectGaps({}, inTenant);
+      await detectGaps({ domains: ["dom-1"] }, inTenant);
+      await detectGaps({}, mockCtx);
+
+      const wheres = vi.mocked(prisma.field.findMany).mock.calls.map((call) => call[0]?.where);
+      expect(wheres).toEqual([{ entity: { tenantId: "tenant-a" } }, { entity: { domainId: { in: ["dom-1"] }, tenantId: "tenant-a" } }, {}]);
+    });
+
+    it("the role gate is the same in a tenant: a viewer is refused before anything is read", async () => {
+      const result = await queryFields({}, undefined, { ...unauthorizedCtx, tenantId: "tenant-a" });
+      expect(!result.success && result.error.code).toBe("FORBIDDEN");
+      expect(prisma.field.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   // ============================================================
   // Story 6.1 — queryFields
   // ============================================================

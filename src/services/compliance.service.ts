@@ -69,6 +69,9 @@ export async function queryFields(
       where.classification = { in: filters.classifications };
     }
 
+    // The tenant being viewed (a field has no tenant of its own: its entity does)
+    if (ctx.tenantId !== undefined) entityWhere.tenantId = ctx.tenantId;
+
     // Entity-level filters
     if (Object.keys(entityWhere).length > 0) {
       where.entity = { ...where.entity, ...entityWhere };
@@ -259,9 +262,11 @@ export async function detectGaps(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
 
-    if (filters.domains && filters.domains.length > 0) {
-      where.entity = { domainId: { in: filters.domains } };
-    }
+    const entityWhere: Record<string, unknown> = {};
+    if (filters.domains && filters.domains.length > 0) entityWhere.domainId = { in: filters.domains };
+    // The tenant being viewed (a field has no tenant of its own: its entity does)
+    if (ctx.tenantId !== undefined) entityWhere.tenantId = ctx.tenantId;
+    if (Object.keys(entityWhere).length > 0) where.entity = entityWhere;
     if (filters.entities && filters.entities.length > 0) {
       where.entityId = { in: filters.entities };
     }

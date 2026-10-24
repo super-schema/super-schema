@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { getEffectiveRole } from "@/services/rbac.service";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -14,5 +15,6 @@ export async function resolveContext(): Promise<
   let userRole = "VIEWER";
   const roleResult = await getEffectiveRole(userId, null, { userId, userRole, prisma });
   if (roleResult.success && roleResult.data) userRole = roleResult.data;
-  return { ok: true, ctx: { userId, userRole, prisma } };
+  // The compliance pages show the tenant being viewed (the fields and gaps; the audit trail has no tenant column: KD-016).
+  return { ok: true, ctx: { userId, userRole, tenantId: await getActiveTenantId(), prisma } };
 }
