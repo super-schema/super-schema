@@ -1,8 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockEntityFindFirst } = vi.hoisted(() => ({ mockEntityFindFirst: vi.fn() }));
+const { mockEntityFindFirst, mockEntityFindUnique, mockEntityFindMany } = vi.hoisted(() => ({
+  mockEntityFindFirst: vi.fn(),
+  mockEntityFindUnique: vi.fn(),
+  mockEntityFindMany: vi.fn(),
+}));
 
-vi.mock("@/lib/db", () => ({ prisma: { entity: { findFirst: mockEntityFindFirst } } }));
+vi.mock("@/lib/db", () => ({
+  prisma: { entity: { findFirst: mockEntityFindFirst, findUnique: mockEntityFindUnique, findMany: mockEntityFindMany } },
+}));
 
 import { loadEntityWorkspace } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/load-entity-workspace";
 
@@ -153,6 +159,45 @@ describe("loadEntityWorkspace", () => {
     const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
 
     expect(data?.props.entity).toMatchObject({ latestVersionLabel: "2.1", hasUnpublishedChanges: true });
+  });
+
+  describe("stale references (Task 8)", () => {
+    const customerRef = { entityId: "cust", domain: "Payments", product: "Checkout", entity: "Customer" };
+
+    it("carries the references of the latest published version that have fallen behind, for the alerts", async () => {
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow({ latestVersion: { major: 1, minor: 0 } }));
+      mockEntityFindUnique.mockResolvedValueOnce({
+        tenantId: "tenant-1",
+        latestVersion: { compatReport: { referencedVersions: [{ ref: customerRef, version: "1.0", pinned: false }] } },
+      });
+      mockEntityFindMany.mockResolvedValueOnce([{ id: "cust", latestVersion: { major: 1, minor: 2 } }]);
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(mockEntityFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "ent-1" } }));
+      expect(data?.props.referenceStaleness).toEqual([{ ref: customerRef, recorded: "1.0", latest: "1.2" }]);
+    });
+
+    it("is empty when nothing is stale", async () => {
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow());
+      mockEntityFindUnique.mockResolvedValueOnce({ tenantId: "tenant-1", latestVersion: null });
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(data?.props.referenceStaleness).toEqual([]);
+    });
+
+    it("a failing staleness lookup does not take the page down", async () => {
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow());
+      mockEntityFindUnique.mockRejectedValueOnce(new Error("db down"));
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(data?.props.entity.id).toBe("ent-1");
+      expect(data?.props.referenceStaleness).toEqual([]);
+      spy.mockRestore();
+    });
   });
 
   it("reports a never-published entity", async () => {

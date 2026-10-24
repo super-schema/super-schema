@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { domainLabel } from "@/lib/entity-placement";
 import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
+import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
+import { loadReferenceStaleness } from "@/services/entity-version.service";
 import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import type { EntityWorkspaceProps } from "./entity-workspace";
 
@@ -84,6 +86,20 @@ async function loadReplacementEntity(
 }
 
 /**
+ * The references of the entity's latest published version that have fallen behind (feeds the alerts). A lookup that fails is logged and
+ * reads as none: an alert is never worth the entity page.
+ */
+async function loadStaleReferences(entityId: string): Promise<ReferenceStaleness[]> {
+  try {
+    const stale = await loadReferenceStaleness(prisma, entityId);
+    return stale.success ? stale.data : [];
+  } catch (e: unknown) {
+    console.error("[loadEntityWorkspace] reference staleness lookup failed", e);
+    return [];
+  }
+}
+
+/**
  * Load everything EntityWorkspace renders for one entity, resolved through
  * `findEntityInScope`. Returns `null` when nothing matches, so callers decide how to 404.
  */
@@ -100,9 +116,11 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
       ?.policyTemplate ?? null;
 
   const replacementEntity = await loadReplacementEntity(entity, where.tenantId);
+  const referenceStaleness = await loadStaleReferences(entity.id);
 
   return {
     props: {
+      referenceStaleness,
       level: productId === null ? "TENANT" : "PRODUCT",
       entity: {
         id: entity.id,

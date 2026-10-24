@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   generateEntityAlerts,
+  generateReferenceStalenessAlerts,
   generateTargetDriftAlerts,
   DEFAULT_COMPLETENESS_REQUIREMENTS,
   type AlertEntityInput,
@@ -298,6 +299,44 @@ describe("unresolved references alert", () => {
     expect(generateEntityAlerts(makeEntity(), [makeField()]).some((a) => a.id === "entity-unresolved-references")).toBe(false);
     const one = generateEntityAlerts(makeEntity(), [dangling("a", "a.json")]).find((a) => a.id === "entity-unresolved-references");
     expect(one?.title).toBe("1 unresolved reference: a.json");
+  });
+});
+
+describe("stale references alert (Task 8)", () => {
+  const stale = (entity: string, recorded: string, latest: string) => ({
+    ref: { entityId: `id-${entity}`, domain: "Sales", product: "Orders", entity },
+    recorded,
+    latest,
+  });
+
+  it("is absent when nothing is stale", () => {
+    expect(generateReferenceStalenessAlerts([])).toEqual([]);
+  });
+
+  it("names the entity, the version recorded and the one published since, and says how to fix it", () => {
+    const alerts = generateReferenceStalenessAlerts([stale("Customer", "1.0", "1.2")]);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ id: "entity-stale-references", severity: "warning", category: "entity", action: "Review references" });
+    expect(alerts[0].title).toBe("1 referenced entity has a newer published version: Customer 1.0 to 1.2");
+    expect(alerts[0].description).toContain("Publish this entity again");
+    expect(alerts[0].description).toMatch(/pin/i);
+  });
+
+  it("lists several in the given order, plural", () => {
+    const alerts = generateReferenceStalenessAlerts([stale("Customer", "1.0", "1.2"), stale("Address", "2.0", "3.0")]);
+    expect(alerts[0].title).toBe("2 referenced entities have a newer published version: Customer 1.0 to 1.2, Address 2.0 to 3.0");
+  });
+
+  it("names at most five, then +N more", () => {
+    const many = Array.from({ length: 8 }, (_, i) => stale(`E${i}`, "1.0", "1.1"));
+    const [alert] = generateReferenceStalenessAlerts(many);
+    expect(alert.title).toBe(
+      "8 referenced entities have a newer published version: E0 1.0 to 1.1, E1 1.0 to 1.1, E2 1.0 to 1.1, E3 1.0 to 1.1, E4 1.0 to 1.1 +3 more"
+    );
+  });
+
+  it("is a separate list from the completeness alerts: generateEntityAlerts never reports it", () => {
+    expect(generateEntityAlerts(makeEntity(), [makeField()]).some((a) => a.id === "entity-stale-references")).toBe(false);
   });
 });
 

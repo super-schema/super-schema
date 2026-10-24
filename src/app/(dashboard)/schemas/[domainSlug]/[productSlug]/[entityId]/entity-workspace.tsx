@@ -48,8 +48,10 @@ import {
 } from "@/types/schemas/retention-policy.schema";
 import {
   generateEntityAlerts,
+  generateReferenceStalenessAlerts,
   generateTargetDriftAlerts,
 } from "@/lib/validation/entity-alerts";
+import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 import type { CompletenessRequirements } from "@/types/schemas/domain-policy";
 import { AlertsTab } from "./components/AlertsTab";
 import { ApiTab, type ApiOperationData } from "./components/ApiTab";
@@ -124,9 +126,14 @@ export interface EntityWorkspaceProps {
    * loader. null when none is named or it cannot be found in the tenant.
    */
   replacementEntity?: ReplacementEntityLink | null;
+  /**
+   * The unpinned references of the latest published version whose entity has published a newer version since (Task 8), computed by the
+   * loader from what the publish recorded. Optional so loaders and tests that predate it still compile; absent reads as none.
+   */
+  referenceStaleness?: ReferenceStaleness[];
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity, referenceStaleness }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -239,9 +246,10 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     const completenessReqs = (domainPolicy?.completenessRequirements as CompletenessRequirements) ?? undefined;
     return [
       ...generateEntityAlerts(entity, fields, completenessReqs),
+      ...generateReferenceStalenessAlerts(referenceStaleness ?? []),
       ...generateTargetDriftAlerts(entity, fields),
     ];
-  }, [entity, fields, domainPolicy]);
+  }, [entity, fields, domainPolicy, referenceStaleness]);
 
   const alertCount = entityAlerts.length;
 

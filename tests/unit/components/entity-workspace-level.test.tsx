@@ -149,3 +149,26 @@ describe("EntityWorkspace draft + publish header", () => {
     expect(screen.queryByTestId("publish-entity-button")).toBeNull();
   });
 });
+
+describe("EntityWorkspace stale references (Task 8)", () => {
+  // The completeness defaults (owner, description, retention) alert on this bare entity; a stale reference adds one more.
+  const alertsLabel = () => screen.getByText(/^Alerts/).textContent;
+  const stale = { ref: { entityId: "cust", domain: "Payments", product: "Checkout", entity: "Address" }, recorded: "1.0", latest: "1.1" };
+
+  it("adds one alert to the Alerts tab when a referenced entity has a newer published version", () => {
+    render(<EntityWorkspace {...props({})} />);
+    const without = Number(/\((\d+)\)/.exec(alertsLabel() ?? "")?.[1]);
+    expect(without).toBeGreaterThan(0);
+    cleanup();
+    render(<EntityWorkspace {...props({ referenceStaleness: [stale] })} />);
+    expect(alertsLabel()).toBe(`Alerts (${without + 1})`);
+  });
+
+  it("an empty list changes nothing", () => {
+    render(<EntityWorkspace {...props({})} />);
+    const without = alertsLabel();
+    cleanup();
+    render(<EntityWorkspace {...props({ referenceStaleness: [] })} />);
+    expect(alertsLabel()).toBe(without);
+  });
+});

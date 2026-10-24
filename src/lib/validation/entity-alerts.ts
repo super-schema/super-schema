@@ -13,6 +13,7 @@ import {
   toFieldOverridePolicies,
 } from "@/lib/schema-targets/field-type-overrides";
 import { getSchemaTargetDefinition } from "@/lib/schema-targets/catalog";
+import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -222,6 +223,29 @@ export function generateEntityAlerts(
   }
 
   return alerts;
+}
+
+/**
+ * The alert for references that have fallen behind (Task 8): the entity's latest published version used version X of an entity that
+ * has since published a newer one. `staleness` is `referenceStaleness(...)` of that version (unpinned references only, a pin is never
+ * stale). One alert, bounded like the unresolved-references one; absent when nothing is stale.
+ */
+export function generateReferenceStalenessAlerts(staleness: ReadonlyArray<ReferenceStaleness>): EntityAlert[] {
+  if (staleness.length === 0) return [];
+  const listed = staleness.slice(0, MAX_REFS_IN_TITLE).map((s) => `${s.ref.entity} ${s.recorded} to ${s.latest}`);
+  const more = staleness.length > MAX_REFS_IN_TITLE ? ` +${staleness.length - MAX_REFS_IN_TITLE} more` : "";
+  const plural = staleness.length !== 1;
+  return [
+    {
+      id: "entity-stale-references",
+      severity: "warning",
+      category: "entity",
+      title: `${staleness.length} referenced ${plural ? "entities have" : "entity has"} a newer published version: ${listed.join(", ")}${more}`,
+      description:
+        "The latest published version of this entity was published against older versions of these entities. Publish this entity again to use the newer versions, or pin a reference to the version you want to keep.",
+      action: "Review references",
+    },
+  ];
 }
 
 export function generateTargetDriftAlerts(
