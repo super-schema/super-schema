@@ -2300,6 +2300,16 @@ async function compileAndApplyTypeSpecSource(
         error: `Field "${field}" refers to "${name}", which matches ${matches.length} entities. Choose the entity it means on that field, then save again.`,
       };
     }
+    // A name that compiled only because ANOTHER field already refers to it (and its entity is gone) is still unknown on this field.
+    if (resolved.unresolved.length > 0) {
+      return {
+        success: false,
+        diagnostics: [
+          ...result.diagnostics,
+          ...resolved.unresolved.map((f) => ({ severity: "error" as const, code: "invalid-ref", message: `Unknown identifier ${f.written}` })),
+        ],
+      };
+    }
     references = resolved.references;
   }
 

@@ -615,13 +615,16 @@ const GOVERNANCE_RULE_SET: LinterRuleSet = {
   extends: ["@superschema/typespec-enterprise/recommended"],
 };
 
-/** The identifiers the compiler reports as unknown (`Unknown identifier Address`; for `A.B.C` the first segment it could not find). */
-function unknownIdentifiers(diagnostics: readonly GovernanceDiagnostic[]): Set<string> {
-  const names = new Set<string>();
+/**
+ * The identifiers the compiler reports as unknown (`Unknown identifier Address`; for `A.B.C` the first segment it could not find), with how
+ * many times each was reported: one report per use.
+ */
+function unknownIdentifiers(diagnostics: readonly GovernanceDiagnostic[]): Map<string, number> {
+  const names = new Map<string, number>();
   for (const d of diagnostics) {
     if (d.severity !== "error" || d.code !== "invalid-ref") continue;
     const m = /^Unknown identifier (.+)$/.exec(d.message);
-    if (m) names.add(m[1]);
+    if (m) names.set(m[1], (names.get(m[1]) ?? 0) + 1);
   }
   return names;
 }
@@ -695,9 +698,19 @@ export async function compileTypeSpecWithGovernance(
   // not find are offered, and only when written as the type of a field (or of an array's element) of the entity's model.
   const unknown = unknownIdentifiers(first.result.diagnostics);
   if (unknown.size === 0) return first.result;
-  const unresolved = [...new Set(entityFieldTypeNames(first.program, first.mainPath).map((n) => n.written))].filter((written) =>
-    unknown.has(written.split(".")[0])
-  );
+  const typed = entityFieldTypeNames(first.program, first.mainPath).filter((n) => unknown.has(n.written.split(".")[0]));
+
+  // The compiler reports an unknown name once per use. A name used anywhere BESIDES as the type of a field (extends, a spread, a map value,
+  // a decorator argument) has more reports than field types: a stand-in would silently satisfy that use too (a spread of an empty model),
+  // so such a name gets none and every use of it stays an error.
+  const typedUses = new Map<string, number>();
+  for (const n of typed) typedUses.set(n.written.split(".")[0], (typedUses.get(n.written.split(".")[0]) ?? 0) + 1);
+  const onlyAsFieldType = (written: string) => {
+    const head = written.split(".")[0];
+    return typedUses.get(head) === unknown.get(head);
+  };
+
+  const unresolved = [...new Set(typed.map((n) => n.written))].filter(onlyAsFieldType);
   if (unresolved.length === 0) return first.result;
   const accepted = await options.externalModels(unresolved);
   const standIns = unresolved.filter((written) => accepted.has(written));

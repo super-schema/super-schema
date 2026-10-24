@@ -26,6 +26,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: vi.fn().mockResolvedValue("tenant-1") }));
 
 import { compileAndApplyTypeSpecSourceAction } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions";
+import { compileEntity, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
+import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 
 type Tenant = { id: string; name: string; domain?: string; product?: string };
 
@@ -157,6 +159,8 @@ describe("an entity whose source references another entity's model can be saved 
       "model Customer {\n  @key id: string;\n  ...Address;\n}\n",
       model("byKey: Record<Address>;"),
       model("maybe: Address | string;"),
+      // the same name ALSO as a field type does not make the other use acceptable
+      "model Customer {\n  @key id: string;\n  ...Address;\n  home: Address;\n}\n",
     ]) {
       const res = await save(text);
       expect(res, text).toMatchObject({ success: false });
@@ -321,6 +325,26 @@ describe("a reference the entity already stores", () => {
     expect(mockPrisma.field.create).not.toHaveBeenCalled();
   });
 
+  it("the entity was renamed after the text was written: the stale name (bare or Domain.Product.Entity) still saves, the id keeps the reference", async () => {
+    tenant({ id: "addr-1", name: "Location", domain: "Billing", product: "Payments" });
+    const decorators = { referencedEntityId: "addr-1", referencedEntityName: "Address", referencedQualifiedName: "Billing/Payments/Address" };
+
+    for (const written of ["Address", "Billing.Payments.Address"]) {
+      vi.clearAllMocks();
+      mockPrisma.entity.update.mockResolvedValue({ id: "ent-1" });
+      mockPrisma.entity.findUnique.mockResolvedValue({ id: "ent-1", typespecSource: null, tenantId: "tenant-1", metadata: null });
+      mockPrisma.$transaction.mockImplementation(async (ops: unknown[]) => Promise.all(ops));
+      mockPrisma.auditLog.create.mockResolvedValue({ id: "audit-1" });
+      tenant({ id: "addr-1", name: "Location", domain: "Billing", product: "Payments" });
+      stored({ id: "f-id", name: "id", type: "string", isKey: true }, { id: "f-address", name: "address", type: "reference", decorators });
+
+      const res = await save(model(`address: ${written};`));
+
+      expect(res, written).toMatchObject({ success: true, applied: { added: 0, updated: 0 } });
+      expect(mockPrisma.field.update, written).not.toHaveBeenCalled();
+    }
+  });
+
   it("a stored reference to an entity that no longer exists stays as it is and the save goes through (the entity is not stuck)", async () => {
     tenant();
     stored(
@@ -333,6 +357,22 @@ describe("a reference the entity already stores", () => {
     expect(res.success).toBe(true);
     expect(mockPrisma.field.update).not.toHaveBeenCalled();
     expect(created("note")).toBeDefined();
+  });
+
+  it("the name of a deleted entity kept on one field does not make that name acceptable on another, new field", async () => {
+    tenant();
+    stored(
+      { id: "f-id", name: "id", type: "string", isKey: true },
+      { id: "f-address", name: "address", type: "reference", decorators: { referencedEntityName: "Address" } },
+    );
+
+    const res = await save(model("address: Address;", "other: Address;"));
+
+    expect(res.success).toBe(false);
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([
+      expect.objectContaining({ code: "invalid-ref", message: "Unknown identifier Address" }),
+    ]);
+    nothingWritten();
   });
 
   it("the reference pin tag still means a pin: stored with the reference, and only then", async () => {
@@ -361,6 +401,57 @@ describe("a reference the entity already stores", () => {
     const decorators = updated("f-ref")?.decorators;
     expect(decorators).toMatchObject({ referencedEntityId: "note-1", referencedEntityName: "Note", referencedQualifiedName: "Sales/Orders/Note" });
     expect(decorators).not.toHaveProperty("referencedEntityVersion");
+  });
+});
+
+describe("the text the tab itself shows for an entity that references another entity can be saved (the earlier defect, end to end)", () => {
+  const entity = { id: "ent-1", name: "Customer", description: "", status: "DRAFT", version: 1, domainId: "dom-Sales", metadata: null, domain: { id: "dom-Sales", name: "Sales", slug: "sales" } };
+  const input = (id: string, name: string, type: string, decorators: Record<string, unknown>, sortOrder: number): PrismaFieldInput => ({
+    id, name, type, precision: null, scale: null, nullable: false, isKey: sortOrder === 0, fieldNumber: null, description: "", classification: null,
+    aliases: [], decorators, sortOrder,
+  });
+  /** The source `getTypeSpecSourceAction` generates for these rows, and the same rows as the database holds them. */
+  const shown = (rows: PrismaFieldInput[]) => {
+    stored(...rows.map((r) => ({ id: r.id, name: r.name, type: r.type, isKey: r.isKey, decorators: r.decorators as Record<string, unknown> })));
+    return generateTypeSpec(compileEntity(entity, rows));
+  };
+
+  it("a legacy name-only reference: the text names the entity, the save succeeds and upgrades the field to the qualified reference", async () => {
+    tenant(ADDRESS_BILLING);
+    const text = shown([input("f-id", "id", "string", {}, 0), input("f-address", "address", "reference", { referencedEntityName: "Address" }, 1)]);
+    expect(text).toContain("address: Address;");
+
+    const res = await save(text);
+
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(res.success).toBe(true);
+    expect(updated("f-address")?.decorators).toMatchObject({ referencedEntityId: "addr-1", referencedQualifiedName: "Billing/Payments/Address" });
+  });
+
+  it("a qualified reference to one of two entities of that name: saving the shown text changes nothing and asks nothing", async () => {
+    tenant(ADDRESS_BILLING, ADDRESS_SALES);
+    const decorators = { referencedEntityId: "addr-2", referencedEntityName: "Address", referencedQualifiedName: "Sales/Shipping/Address" };
+    const text = shown([input("f-id", "id", "string", {}, 0), input("f-address", "address", "reference", decorators, 1)]);
+
+    const res = await save(text);
+
+    expect(res).toMatchObject({ success: true, applied: { added: 0, updated: 0, removed: [] } });
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
+  it("an array of references, and a self-reference, in the shown text", async () => {
+    tenant(ADDRESS_BILLING);
+    const text = shown([
+      input("f-id", "id", "string", {}, 0),
+      input("f-homes", "homes", "array", { arrayElementType: "reference", referencedEntityName: "Address" }, 1),
+      input("f-parent", "parent", "reference", { referencedEntityName: "Customer" }, 2),
+    ]);
+
+    const res = await save(text);
+
+    expect(res.success).toBe(true);
+    expect(updated("f-homes")?.decorators).toMatchObject({ arrayElementType: "reference", referencedEntityId: "addr-1" });
+    expect(updated("f-parent")?.decorators).toMatchObject({ referencedEntityId: "ent-1", referencedQualifiedName: "Sales/Orders/Customer" });
   });
 });
 

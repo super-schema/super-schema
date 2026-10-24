@@ -1039,6 +1039,9 @@ function resolveTypeSpecType(
       return `Record<unknown>`;
     }
     case "reference": {
+      // The canonical (stand-alone) text names the entity by its own name, qualified or not: it stays readable, and the qualified identity
+      // (id, domain / product / entity) lives in the stored reference, which the Source tab save keeps while the text still says that name
+      // (see `@/lib/references/source-reference`). A reader may also write `Domain.Product.Entity` there.
       const refName = field.complexType?.referencedEntityName;
       if (ctx.referenceType && field.complexType?.reference) return ctx.referenceType(field) ?? "unknown";
       if (refName) {

@@ -71,6 +71,7 @@ describe("resolveSourceReferences", () => {
 
     expect(out).toEqual({
       ok: true,
+      unresolved: [],
       references: new Map([
         ["note", { ref: NOTE, element: false }],
         ["home", { ref: ADDRESS_BILLING, element: false }],
@@ -83,7 +84,17 @@ describe("resolveSourceReferences", () => {
     const twin = ref("cust-2", "Marketing", "Leads", "Customer");
     const out = resolveSourceReferences({ fields: [field("parent", "Customer")], stored: new Map(), self, refs: [...TENANT, twin] });
 
-    expect(out).toEqual({ ok: true, references: new Map([["parent", { ref: SELF, element: false }]]) });
+    expect(out).toEqual({ ok: true, unresolved: [], references: new Map([["parent", { ref: SELF, element: false }]]) });
+  });
+
+  it("a name no entity has is listed as unresolved, unless the field already refers to that very name (a deleted entity's reference is kept)", () => {
+    const gone = [row("f-1", "kept", "reference", { referencedEntityName: "Gone" })];
+
+    expect(resolveFields([field("kept", "Gone"), field("fresh", "Gone"), field("fresh2", "Missing.Product.Thing")], gone)).toEqual({
+      ok: true,
+      references: new Map(),
+      unresolved: [field("fresh", "Gone"), field("fresh2", "Missing.Product.Thing")],
+    });
   });
 
   it("a name with several matches stops at the first such field, naming the row that holds it (empty for a field with no row)", () => {
@@ -100,6 +111,7 @@ describe("resolveSourceReferences", () => {
   it("a pick must be one of the candidates; anything else is ignored and the question is asked again", () => {
     expect(resolveFields([field("address", "Address")], [], { address: "addr-2" })).toEqual({
       ok: true,
+      unresolved: [],
       references: new Map([["address", { ref: ADDRESS_SALES, element: false }]]),
     });
     for (const picks of [{ address: "note-1" }, { address: "ent-1" }, { address: "" }, { address: 7 }, { other: "addr-1" }, null, "addr-1", ["addr-1"], undefined]) {
@@ -113,6 +125,7 @@ describe("resolveSourceReferences", () => {
     // own keys named like Object.prototype members DO work as picks for a field of that name
     expect(resolveFields([field("constructor", "Address")], [], picks)).toEqual({
       ok: true,
+      unresolved: [],
       references: new Map([["constructor", { ref: ADDRESS_BILLING, element: false }]]),
     });
   });
@@ -121,27 +134,49 @@ describe("resolveSourceReferences", () => {
     it("a qualified one, written as the same name, is left alone (the id is the key): no entry, no question even though the name is shared", () => {
       const stored = [row("f-1", "address", "reference", qualified(ADDRESS_SALES))];
 
-      expect(resolveFields([field("address", "Address")], stored)).toEqual({ ok: true, references: new Map() });
+      expect(resolveFields([field("address", "Address")], stored)).toEqual({ ok: true, references: new Map(), unresolved: [] });
+    });
+
+    it("a qualified one, written as the Domain.Product.Entity it stored, is left alone too (even when that entity has since been renamed: the id is the key)", () => {
+      const stored = [row("f-1", "address", "reference", qualified(ADDRESS_SALES))];
+
+      expect(resolveFields([field("address", "Sales.Shipping.Address")], stored)).toEqual({ ok: true, references: new Map(), unresolved: [] });
+      // the entity was renamed: neither spelling is found any more, and neither is a question or an unknown name
+      const renamed = resolveSourceReferences({
+        fields: [field("address", "Sales.Shipping.Address"), field("address", "Address")],
+        stored: new Map(stored.map((s) => [s.name, s])),
+        self,
+        refs: [SELF, { ...ADDRESS_SALES, entity: "Location" }],
+      });
+      expect(renamed).toEqual({ ok: true, references: new Map(), unresolved: [] });
     });
 
     it("the same for an array of references", () => {
       const stored = [row("f-1", "addresses", "array", { arrayElementType: "reference", ...qualified(ADDRESS_SALES) })];
 
-      expect(resolveFields([field("addresses", "Address", true)], stored)).toEqual({ ok: true, references: new Map() });
+      expect(resolveFields([field("addresses", "Address", true)], stored)).toEqual({ ok: true, references: new Map(), unresolved: [] });
     });
 
     it("a legacy name-only one is upgraded when the name has one match, asked about when it has several, left alone when it has none", () => {
       const legacy = (name: string) => [row("f-1", "x", "reference", { referencedEntityName: name })];
 
-      expect(resolveFields([field("x", "Note")], legacy("Note"))).toEqual({ ok: true, references: new Map([["x", { ref: NOTE, element: false }]]) });
+      expect(resolveFields([field("x", "Note")], legacy("Note"))).toEqual({
+        ok: true,
+        unresolved: [],
+        references: new Map([["x", { ref: NOTE, element: false }]]),
+      });
       expect(resolveFields([field("x", "Address")], legacy("Address"))).toMatchObject({ ok: false, ambiguous: { fieldId: "f-1" } });
-      expect(resolveFields([field("x", "Gone")], legacy("Gone"))).toEqual({ ok: true, references: new Map() });
+      expect(resolveFields([field("x", "Gone")], legacy("Gone"))).toEqual({ ok: true, references: new Map(), unresolved: [] });
     });
 
     it("another name is a new reference: the stored one does not decide it", () => {
       const stored = [row("f-1", "x", "reference", qualified(ADDRESS_BILLING))];
 
-      expect(resolveFields([field("x", "Note")], stored)).toEqual({ ok: true, references: new Map([["x", { ref: NOTE, element: false }]]) });
+      expect(resolveFields([field("x", "Note")], stored)).toEqual({
+        ok: true,
+        unresolved: [],
+        references: new Map([["x", { ref: NOTE, element: false }]]),
+      });
     });
 
     it("a stored reference of the other shape (a direct one for an array's element, an array for a direct name) does not count as the same", () => {
@@ -154,14 +189,15 @@ describe("resolveSourceReferences", () => {
 });
 
 describe("storedReferenceNames", () => {
-  it("lists the target name of every stored reference (direct, or an array's elements), qualified or legacy", () => {
+  it("lists the target name of every stored reference (direct, or an array's elements), qualified or legacy, and the dotted spelling of a qualified one", () => {
     expect([
       ...storedReferenceNames([
         row("1", "a", "reference", qualified(ADDRESS_SALES)),
         row("2", "b", "reference", { referencedEntityName: "Legacy" }),
         row("3", "c", "array", { arrayElementType: "reference", referencedEntityName: "Item" }),
+        row("4", "d", "reference", qualified(ORDER_ITEM)),
       ]),
-    ].sort()).toEqual(["Address", "Item", "Legacy"]);
+    ].sort()).toEqual(["Address", "Billing___Co.Order_Lines.Order_Item", "Item", "Legacy", "Order Item", "Sales.Shipping.Address"]);
   });
 
   it("does not list a field that is not a reference, a stale name left on a retyped field, or a dangling raw $ref", () => {

@@ -56,10 +56,10 @@ describe("externalModels", () => {
     await compileTypeSpecWithGovernance(source, { externalModels: ask });
     expect(ask).not.toHaveBeenCalled();
 
-    const entityFirst = ["model Customer {", "  @key id: string;", "  a: Address;", "  b: Billing.Payments.Address[];", "  c: Record<Nowhere>;", "  d: Address | string;", "  e: Address;", "}", "model Other {", "  z: Zip;", "}"].join("\n");
+    const entityFirst = ["model Customer {", "  @key id: string;", "  a: Address;", "  b: Billing.Payments.Address[];", "  c: Record<Nowhere>;", "  d: Mixed | string;", "  e: Address;", "}", "model Other {", "  z: Zip;", "}"].join("\n");
     const res = await compileTypeSpecWithGovernance(entityFirst, { externalModels: ask });
 
-    // `Record<Nowhere>`, `Address | string` (not plain names) and `Zip` (not a field of the first model) are never offered.
+    // `Record<Nowhere>`, `Mixed | string` (not plain names) and `Zip` (not a field of the first model) are never offered.
     expect(res.success).toBe(false);
     expect(ask).toHaveBeenCalledTimes(1);
     expect(ask.mock.calls[0][0].sort()).toEqual(["Address", "Billing.Payments.Address"]);
@@ -111,6 +111,27 @@ describe("externalModels", () => {
       expect(res.success, text).toBe(false);
       expect(ask.mock.calls.flatMap((c) => c[0]), text).toEqual([]);
     }
+  });
+
+  it("a name that is ALSO used somewhere that is not the type of a field (a spread, extends, a map value) is not given a stand-in: that use stays an error", async () => {
+    for (const text of [
+      "model Customer {\n  @key id: string;\n  ...Address;\n  a: Address;\n}\n",
+      "model Customer {\n  @key id: string;\n  a: Address;\n  m: Record<Address>;\n}\n",
+      "model Customer {\n  @key id: string;\n  a: Billing.Payments.Address;\n  m: Record<Billing.Payments.Address>;\n}\n",
+    ]) {
+      const res = await compileTypeSpecWithGovernance(text, { externalModels: accepting("Address", "Billing.Payments.Address") });
+      expect(res.success, text).toBe(false);
+      expect(res.diagnostics.some((d) => d.code === "invalid-ref"), text).toBe(true);
+    }
+  });
+
+  it("works in a source with a file-level namespace, a using and a library import", async () => {
+    const source = 'import "@typespec/openapi";\nusing TypeSpec.OpenAPI;\n\nnamespace Sales;\n\nmodel Customer {\n  @key id: string;\n  a: Address;\n}\n';
+
+    const res = await compileTypeSpecWithGovernance(source, { externalModels: accepting("Address") });
+
+    expect(res.success).toBe(true);
+    if (res.success) expect(res.document.models.map((m) => m.name)).toEqual(["Customer"]);
   });
 
   it("another blocking error in the source is reported as it is, whatever the stand-ins accepted", async () => {

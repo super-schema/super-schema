@@ -20,7 +20,7 @@
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { createRefResolver, type RefResolution } from "@/lib/references/closure";
-import { holdsEntityReference, type EntityRef } from "@/lib/references/entity-reference";
+import { holdsEntityReference, parseQualifiedName, type EntityRef } from "@/lib/references/entity-reference";
 
 /** At most this many different written names are looked at in one save; a source with more cannot be told apart from an attack. */
 export const MAX_WRITTEN_NAMES = 500;
@@ -35,7 +35,12 @@ export type StoredFieldRow = { id: string; name: string; type: string; decorator
 export type SourceReference = { ref: EntityRef; element: boolean };
 
 export type SourceReferenceOutcome =
-  | { ok: true; references: Map<string, SourceReference> }
+  | {
+      ok: true;
+      references: Map<string, SourceReference>;
+      /** Fields whose name no entity has and that do not already store a reference to that name: the name is unknown, as the compiler would have said. */
+      unresolved: WrittenFieldType[];
+    }
   | { ok: false; ambiguous: { field: string; name: string; candidates: EntityRef[]; fieldId: string } };
 
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -77,20 +82,32 @@ export function createNameResolver(refs: readonly EntityRef[]): (written: string
   };
 }
 
-/** The target name a stored row's reference carries, and whether it is name-only (legacy). Undefined when the row is not a reference of that shape. */
-function storedTarget(row: StoredFieldRow | undefined, element: boolean): { name: string; legacy: boolean } | undefined {
+/** The `Domain.Product.Entity` spelling (segments as identifiers) of the qualified name a row stores (`Domain/Product/Entity`), if it stores one. */
+function dottedSpelling(decorators: unknown): string | undefined {
+  const qualified = ownString(decorators, "referencedQualifiedName");
+  const parsed = qualified === undefined ? undefined : parseQualifiedName(qualified);
+  return parsed ? [parsed.domain, parsed.product, parsed.entity].map(sanitizeIdentifier).join(".") : undefined;
+}
+
+/**
+ * The target a stored row's reference carries: its name, its dotted spelling when it is qualified, and whether it is name-only (legacy).
+ * Undefined when the row is not a reference of that shape.
+ */
+function storedTarget(row: StoredFieldRow | undefined, element: boolean): { name: string; dotted?: string; legacy: boolean } | undefined {
   if (!row || typeof row.type !== "string") return undefined;
   if (!holdsEntityReference(row.type, row.decorators)) return undefined;
   if (element ? row.type !== "array" : row.type !== "reference") return undefined;
   const name = ownString(row.decorators, "referencedEntityName");
   if (name === undefined) return undefined;
-  return { name, legacy: ownString(row.decorators, "referencedQualifiedName") === undefined };
+  const dotted = dottedSpelling(row.decorators);
+  return { name, ...(dotted !== undefined ? { dotted } : {}), legacy: ownString(row.decorators, "referencedQualifiedName") === undefined };
 }
 
 /**
- * The names of the references the rows store, for the compile gate: a bare name the entity ALREADY refers to may stay in the source even
- * when the tenant no longer has it (its entity was deleted: the field stays as it is, dangling, and the entity is not stuck). A row that
- * carries a dangling marker (its target is a raw `$ref`, not an entity) is not counted: its name licenses nothing.
+ * The names of the references the rows store (the name, and for a qualified one its `Domain.Product.Entity` spelling), for the compile
+ * gate: a name the entity ALREADY refers to may stay in the source even when the tenant no longer has it (its entity was deleted or
+ * renamed: the field keeps its id and stays as it is, and the entity is not stuck). A row that carries a dangling marker (its target is a
+ * raw `$ref`, not an entity) is not counted: its name licenses nothing.
  */
 export function storedReferenceNames(rows: readonly StoredFieldRow[]): Set<string> {
   const names = new Set<string>();
@@ -99,6 +116,8 @@ export function storedReferenceNames(rows: readonly StoredFieldRow[]): Set<strin
     if (activeDanglingRef(row.type, isRec(row.decorators) ? row.decorators : null) !== undefined) continue;
     const name = ownString(row.decorators, "referencedEntityName");
     if (name !== undefined) names.add(name);
+    const dotted = dottedSpelling(row.decorators);
+    if (dotted !== undefined) names.add(dotted);
   }
   return names;
 }
@@ -117,7 +136,8 @@ function readPicks(picks: unknown): Map<string, string> {
 /**
  * What each candidate field of the entity's model means. `fields` are the fields whose written type names a model the source does not
  * declare (an entity of the tenant) or the entity's own model; `stored` are the entity's rows by field name; `refs` the tenant's entities.
- * Fields that resolve to nothing, and stored qualified references written as the same name, have no entry (the merge leaves them as they are).
+ * Fields that resolve to nothing, and stored qualified references written as the same name, have no entry (the merge leaves them as they are);
+ * of those, a field that did NOT already refer to the name is also listed in `unresolved`.
  * The first field (in `fields` order) whose bare name has several matches and no valid pick stops the resolution: `ambiguous`.
  */
 export function resolveSourceReferences(input: {
@@ -131,6 +151,7 @@ export function resolveSourceReferences(input: {
   const selfRef = input.refs.find((r) => r.entityId === input.self.entityId);
   const picks = readPicks(input.picks);
   const references = new Map<string, SourceReference>();
+  const unresolved: WrittenFieldType[] = [];
 
   for (const f of input.fields) {
     const row = input.stored.get(f.field);
@@ -147,10 +168,16 @@ export function resolveSourceReferences(input: {
     // tenant now shares does not matter). A legacy one falls through: upgraded when the name has exactly one match, asked about when it
     // has several, left dangling when it has none.
     const target = storedTarget(row, f.element);
-    if (bare !== undefined && target !== undefined && target.name === bare && !target.legacy) continue;
+    const sameName = target !== undefined && ((bare !== undefined && target.name === bare) || (target.dotted !== undefined && target.dotted === f.written));
+    if (sameName && target !== undefined && !target.legacy) continue;
 
     const resolution = resolve(f.written);
-    if (!resolution) continue;
+    if (!resolution) {
+      // Nothing is named so, and the field is not one that already refers to that name (a deleted entity's reference is kept as it is):
+      // the name stays unknown. (It compiled only because ANOTHER field's stored reference licensed the name.)
+      if (!sameName) unresolved.push(f);
+      continue;
+    }
 
     if ("target" in resolution) {
       references.set(f.field, { ref: resolution.target, element: f.element });
@@ -163,5 +190,5 @@ export function resolveSourceReferences(input: {
     }
     return { ok: false, ambiguous: { field: f.field, name: f.written, candidates: resolution.ambiguous, fieldId: row?.id ?? "" } };
   }
-  return { ok: true, references };
+  return { ok: true, references, unresolved };
 }

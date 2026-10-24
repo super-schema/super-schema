@@ -140,7 +140,10 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
       <p className="text-caption text-muted-foreground">
         This is the entity&apos;s real, captured TypeSpec document — not a preview. Edits here
         compile through the real TypeSpec compiler and the governance decorator package
-        before being applied; changes made through the visual field editor appear here too.
+        before being applied; changes made through the visual field editor appear here too. A
+        field can be typed with the name of another entity of this tenant (<code>Address</code>, or
+        <code> Domain.Product.Entity</code> to say which one when several share a name); it is saved
+        as a reference to that entity.
       </p>
 
       <textarea
