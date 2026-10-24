@@ -324,6 +324,13 @@ export async function deleteDomainsByName(names: readonly string[]): Promise<num
   return res.rows.length;
 }
 
+/** Delete users by exact e-mail address (their sessions, accounts and role assignments cascade). Returns rows deleted. */
+export async function deleteUsersByEmail(emails: readonly string[]): Promise<number> {
+  if (emails.length === 0) return 0;
+  const res = await pg().query(`DELETE FROM users WHERE email = ANY($1::text[]) RETURNING id`, [[...emails]]);
+  return res.rows.length;
+}
+
 /** Delete tenant-level entities by exact name. Returns rows deleted. */
 export async function deleteTenantEntitiesByName(names: readonly string[]): Promise<number> {
   if (names.length === 0) return 0;
