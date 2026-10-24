@@ -505,7 +505,7 @@ export function DomainWorkspace({
         }}
       >
         {deleteConfirm ? (
-          <DialogContent showCloseButton={!isDeletingEntity}>
+          <DialogContent showCloseButton={!isDeletingEntity} data-testid="delete-entity-dialog">
             <DialogHeader>
               <DialogTitle>Delete &ldquo;{deleteConfirm.name}&rdquo;?</DialogTitle>
               <DialogDescription>
@@ -515,7 +515,7 @@ export function DomainWorkspace({
             </DialogHeader>
             <DialogFooter>
               <DialogClose
-                render={<Button variant="outline" size="sm" />}
+                render={<Button variant="outline" size="sm" data-testid="delete-entity-cancel" />}
                 disabled={isDeletingEntity}
               >
                 Cancel
@@ -525,6 +525,7 @@ export function DomainWorkspace({
                 size="sm"
                 onClick={() => handleDeleteEntity(deleteConfirm.id)}
                 disabled={isDeletingEntity}
+                data-testid="delete-entity-confirm"
               >
                 {isDeletingEntity ? "Deleting..." : "Delete"}
               </Button>
@@ -977,6 +978,7 @@ export function DomainWorkspace({
             {/* Start Blank */}
             <button
               onClick={() => router.push(newEntityHref)}
+              data-testid="entity-empty-start-blank"
               className="surface-glass rounded-xl border border-border/50 hover:border-primary/40 p-space-5 text-left transition-all hover:shadow-md group"
             >
               <FilePlus2 className="w-8 h-8 text-muted-foreground mb-space-3 group-hover:text-foreground group-hover:scale-110 transition-all" />

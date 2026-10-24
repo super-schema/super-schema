@@ -56,6 +56,7 @@ export default function AdminLayout({
                 key={tab.id}
                 role="tab"
                 aria-selected={isActive}
+                data-testid={`admin-tab-${tab.id}`}
                 onClick={() => router.push(tab.href)}
                 className={cn(
                   "flex items-center gap-space-2 px-space-3 py-space-2 rounded-md text-body-small transition-colors",

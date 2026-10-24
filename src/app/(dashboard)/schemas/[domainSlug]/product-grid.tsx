@@ -193,12 +193,13 @@ export function ProductGrid({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search products..."
+            data-testid="product-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
           />
         </div>
-        <Button onClick={() => setShowCreate(true)} className="gap-2">
+        <Button onClick={() => setShowCreate(true)} className="gap-2" data-testid="new-product-button">
           <Plus className="w-4 h-4" />
           New Product
         </Button>
@@ -206,7 +207,7 @@ export function ProductGrid({
 
       {/* Create form */}
       {showCreate && (
-        <div className="surface-glass rounded-xl border border-primary/20 p-space-6 mb-space-6">
+        <div className="surface-glass rounded-xl border border-primary/20 p-space-6 mb-space-6" data-testid="create-product-form">
           <h3 className="text-heading-2 text-foreground mb-space-4">
             Create New Product
           </h3>
@@ -222,6 +223,7 @@ export function ProductGrid({
                 maxLength={64}
                 autoFocus
                 className="h-9"
+                data-testid="product-name-input"
               />
             </div>
             <div>
@@ -233,6 +235,7 @@ export function ProductGrid({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Brief description of this product"
                 className="h-9"
+                data-testid="product-description-input"
               />
             </div>
             <div className="flex gap-space-4 flex-wrap">
@@ -273,13 +276,13 @@ export function ProductGrid({
               disabled={isCreating}
             />
             {createError && (
-              <p className="text-body-small text-destructive">{createError}</p>
+              <p className="text-body-small text-destructive" data-testid="create-product-error">{createError}</p>
             )}
             <div className="flex gap-space-2">
-              <Button onClick={handleCreate} disabled={isCreating}>
+              <Button onClick={handleCreate} disabled={isCreating} data-testid="create-product-submit">
                 {isCreating ? "Creating..." : "Create"}
               </Button>
-              <Button type="button" variant="outline" onClick={resetCreate}>
+              <Button type="button" variant="outline" onClick={resetCreate} data-testid="create-product-cancel">
                 Cancel
               </Button>
             </div>
@@ -314,6 +317,8 @@ export function ProductGrid({
             return (
               <div
                 key={product.id}
+                data-testid="product-card"
+                data-product-slug={product.slug}
                 className="group relative surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/40 hover:shadow-lg"
               >
                 <Link
@@ -373,6 +378,7 @@ export function ProductGrid({
                     onClick={() => handleDelete(product)}
                     disabled={!canDelete}
                     aria-label={`Delete product ${product.name}`}
+                    data-testid="product-card-delete"
                     title={canDelete ? `Delete ${product.name}` : (blocker ?? undefined)}
                     className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
                   >

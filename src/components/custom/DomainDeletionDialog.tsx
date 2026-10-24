@@ -83,6 +83,7 @@ export function DomainDeletionDialog({
     >
       <DialogContent
         showCloseButton={!isDeleting}
+        data-testid="domain-deletion-dialog"
         className="gap-0 overflow-hidden bg-background p-0 sm:max-w-md"
       >
         <DialogHeader className="border-b border-border p-space-5">
@@ -116,7 +117,7 @@ export function DomainDeletionDialog({
               </p>
             </div>
           ) : (
-            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-space-3">
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-space-3" data-testid="domain-deletion-warning">
               <p className="text-body-small text-foreground">
                 {populatedAssets.length > 0
                   ? "The domain, its products, and every asset listed below (including product-level Data Types and APIs) will be permanently deleted."
@@ -133,10 +134,11 @@ export function DomainDeletionDialog({
               <p className="mb-space-2 text-caption font-medium text-muted-foreground">
                 Current contents
               </p>
-              <ul className="grid grid-cols-1 gap-space-2 sm:grid-cols-2">
+              <ul className="grid grid-cols-1 gap-space-2 sm:grid-cols-2" data-testid="domain-deletion-impact">
                 {populatedAssets.map((item) => (
                   <li
                     key={item.key}
+                    data-testid={`domain-deletion-impact-${item.key}`}
                     className="rounded-md border border-border/70 bg-muted/30 px-space-3 py-space-2"
                   >
                     <span className="text-caption text-foreground">
@@ -167,7 +169,7 @@ export function DomainDeletionDialog({
 
         <DialogFooter className="mx-0 mb-0 rounded-none border-t border-border bg-muted/30 p-space-4">
           <DialogClose
-            render={<Button type="button" variant="outline" />}
+            render={<Button type="button" variant="outline" data-testid="domain-deletion-cancel" />}
             disabled={isDeleting}
           >
             Cancel
@@ -177,6 +179,7 @@ export function DomainDeletionDialog({
             variant="destructive"
             onClick={onConfirm}
             disabled={isDeleting || blockingParts.length > 0}
+            data-testid="domain-deletion-confirm"
           >
             {isDeleting ? "Deleting..." : "Delete Domain"}
           </Button>

@@ -34,6 +34,8 @@ export function DomainCard({
 
   return (
     <div
+      data-testid="domain-card"
+      data-domain-slug={slug}
       className={`group relative surface-glass rounded-xl border transition-all duration-200 hover:shadow-lg hover:border-primary/40 ${
         isPublic
           ? "border-primary/30"
@@ -92,6 +94,7 @@ export function DomainCard({
           onClick={onRequestDelete}
           disabled={!canDelete}
           aria-label={`Delete domain ${name}`}
+          data-testid="domain-card-delete"
           title={
             canDelete
               ? `Delete ${name}`

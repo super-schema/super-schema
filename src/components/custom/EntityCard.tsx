@@ -53,7 +53,11 @@ export function EntityCard({
         : "bg-muted-foreground";
 
   return (
-    <div className="group relative surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/30 hover:shadow-lg">
+    <div
+      data-testid="entity-card"
+      data-entity-slug={slug}
+      className="group relative surface-glass rounded-xl border border-border p-space-6 transition-all duration-200 hover:border-primary/30 hover:shadow-lg"
+    >
       {onDelete && (
         <button
           type="button"
@@ -61,6 +65,7 @@ export function EntityCard({
           className="absolute right-space-6 top-space-6 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
           title={`Delete entity ${name}`}
           aria-label={`Delete entity ${name}`}
+          data-testid="entity-card-delete"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>

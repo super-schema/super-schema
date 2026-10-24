@@ -176,6 +176,7 @@ export function FieldPreview({
           <label htmlFor={nameInputId} className="text-caption text-muted-foreground mb-1 block">Entity Name</label>
           <Input
             id={nameInputId}
+            data-testid="wizard-entity-name"
             value={entityName}
             onChange={(e) => onEntityNameChange(e.target.value)}
             className={`h-9 font-mono ${needsName ? "border-warning ring-1 ring-warning/50" : ""}`}
@@ -194,6 +195,7 @@ export function FieldPreview({
           <label htmlFor={descriptionInputId} className="text-caption text-muted-foreground mb-1 block">Description</label>
           <Input
             id={descriptionInputId}
+            data-testid="wizard-entity-description"
             value={entityDescription}
             onChange={(e) => onEntityDescriptionChange(e.target.value)}
             className="h-9"
@@ -233,7 +235,7 @@ export function FieldPreview({
           <tbody>
             {fields.map((field) => (
               <Fragment key={field.tempId}>
-              <tr className="border-b border-border/50 hover:bg-accent/20 transition-colors group">
+              <tr className="border-b border-border/50 hover:bg-accent/20 transition-colors group" data-testid="wizard-field-row">
                 <td className="px-space-3 py-space-2">
                   <div className="flex items-center gap-1">
                     {field.parsed && (
@@ -253,6 +255,7 @@ export function FieldPreview({
                     )}
                     <Input
                       value={field.name}
+                      data-testid="wizard-field-name"
                       onChange={(e) => updateField(field.tempId, { name: e.target.value })}
                       className="h-7 font-mono text-body-small border-transparent hover:border-border focus:border-primary/40"
                     />
@@ -321,6 +324,7 @@ export function FieldPreview({
                 <td className="px-space-3 py-space-2">
                   <Input
                     ref={nameInputRef}
+                    data-testid="wizard-new-field-name"
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     className="h-7 font-mono text-body-small"
@@ -391,6 +395,7 @@ export function FieldPreview({
             }
           }}
           disabled={showAddRow && !newName.trim()}
+          data-testid="wizard-add-field"
           className="w-full flex items-center justify-center gap-2 py-space-2 border-t border-dashed border-border hover:border-primary/40 hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors text-caption disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <Plus className="w-3.5 h-3.5" />
@@ -398,7 +403,7 @@ export function FieldPreview({
         </button>
       </div>
 
-      {error && <p className="text-body-small text-destructive">{error}</p>}
+      {error && <p className="text-body-small text-destructive" data-testid="wizard-error">{error}</p>}
 
       {/* Actions */}
       <div className="flex items-center justify-between">
@@ -410,6 +415,7 @@ export function FieldPreview({
           onClick={onConfirm}
           disabled={!entityName.trim() || needsName || isCreating}
           className="gap-2"
+          data-testid="wizard-create-entity"
         >
           <CheckCircle2 className="w-4 h-4" />
           {isCreating ? "Creating..." : "Create Entity"}

@@ -57,6 +57,7 @@ export function TemplateSelector({ onSelect, hiddenMethods = [] }: TemplateSelec
         return (
           <button
             key={method.id}
+            data-testid={`creation-method-${method.id}`}
             onClick={() => onSelect(method.id)}
             className={`surface-glass rounded-xl border border-border/50 p-space-6 text-left transition-all ${method.borderColor} hover:bg-accent/20 group cursor-pointer`}
           >

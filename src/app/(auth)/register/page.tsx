@@ -34,6 +34,9 @@ export default function RegisterPage() {
     RegisterState | undefined,
     FormData
   >(registerAction, undefined);
+  // Controlled, like the passwords: React resets a `<form action>` once its action has answered, which would empty an uncontrolled
+  // e-mail field after every refusal (the user has to fix the password, not retype the address).
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -96,7 +99,10 @@ export default function RegisterPage() {
 
       {/* General error */}
       {state?.error && (
-        <div className="flex items-center gap-2 bg-destructive/10 text-destructive text-body-small p-space-3 rounded-lg mb-space-4 border border-destructive/20">
+        <div
+          data-testid="register-error"
+          className="flex items-center gap-2 bg-destructive/10 text-destructive text-body-small p-space-3 rounded-lg mb-space-4 border border-destructive/20"
+        >
           <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4a.75.75 0 011.5 0v3a.75.75 0 01-1.5 0V5zm.75 6.25a.75.75 0 100-1.5.75.75 0 000 1.5z" />
           </svg>
@@ -105,7 +111,7 @@ export default function RegisterPage() {
       )}
 
       {/* Form */}
-      <form action={formAction} className="space-y-space-4">
+      <form action={formAction} data-testid="register-form" className="space-y-space-4">
         {/* Email */}
         <div>
           <label className="text-body-small text-foreground mb-space-1 block font-medium">
@@ -119,9 +125,12 @@ export default function RegisterPage() {
             autoComplete="email"
             className="h-10"
             aria-invalid={!!state?.fieldErrors?.email}
+            data-testid="register-email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
           />
           {state?.fieldErrors?.email && (
-            <p className="text-caption text-destructive mt-space-1">
+            <p className="text-caption text-destructive mt-space-1" data-testid="register-email-error">
               {state.fieldErrors.email}
             </p>
           )}
@@ -144,10 +153,13 @@ export default function RegisterPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               aria-invalid={!!state?.fieldErrors?.password}
+              data-testid="register-password"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              data-testid="register-password-toggle"
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               tabIndex={-1}
             >
@@ -159,7 +171,7 @@ export default function RegisterPage() {
             </button>
           </div>
           {state?.fieldErrors?.password && (
-            <p className="text-caption text-destructive mt-space-1">
+            <p className="text-caption text-destructive mt-space-1" data-testid="register-password-error">
               {state.fieldErrors.password}
             </p>
           )}
@@ -180,6 +192,7 @@ export default function RegisterPage() {
                 ))}
               </div>
               <p
+                data-testid="register-password-strength"
                 className={`text-caption mt-space-1 ${
                   strength.score <= 1
                     ? "text-destructive"
@@ -216,10 +229,13 @@ export default function RegisterPage() {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               aria-invalid={passwordsMismatch || !!state?.fieldErrors?.confirmPassword}
+              data-testid="register-confirm-password"
             />
             <button
               type="button"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+              data-testid="register-confirm-password-toggle"
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               tabIndex={-1}
             >
@@ -251,13 +267,13 @@ export default function RegisterPage() {
             </div>
           )}
           {state?.fieldErrors?.confirmPassword && (
-            <p className="text-caption text-destructive mt-space-1">
+            <p className="text-caption text-destructive mt-space-1" data-testid="register-confirm-password-error">
               {state.fieldErrors.confirmPassword}
             </p>
           )}
         </div>
 
-        <Button type="submit" className="w-full h-10" disabled={isPending}>
+        <Button type="submit" className="w-full h-10" disabled={isPending} data-testid="register-submit">
           {isPending ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -273,6 +289,7 @@ export default function RegisterPage() {
         Already have an account?{" "}
         <Link
           href="/login"
+          data-testid="register-login-link"
           className="text-primary hover:text-primary/80 font-medium transition-colors"
         >
           Sign in

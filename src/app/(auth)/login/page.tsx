@@ -10,6 +10,9 @@ import { Loader2, Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
+  // The e-mail is state of this component (above the re-keyed card below), so a refused login does not empty it: the user mistyped the
+  // password, not the address. The password is left to the browser and is cleared with the card.
+  const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -21,7 +24,6 @@ export default function LoginPage() {
     setIsPending(true);
 
     const formData = new FormData(e.currentTarget);
-    const email = formData.get("email") as string;
     const password = formData.get("password") as string;
 
     const result = await signIn("credentials", {
@@ -97,7 +99,10 @@ export default function LoginPage() {
 
       {/* Error */}
       {error && (
-        <div className="flex items-center gap-2 bg-destructive/10 text-destructive text-body-small p-space-3 rounded-lg mb-space-4 border border-destructive/20">
+        <div
+          data-testid="login-error"
+          className="flex items-center gap-2 bg-destructive/10 text-destructive text-body-small p-space-3 rounded-lg mb-space-4 border border-destructive/20"
+        >
           <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 4a.75.75 0 011.5 0v3a.75.75 0 01-1.5 0V5zm.75 6.25a.75.75 0 100-1.5.75.75 0 000 1.5z" />
           </svg>
@@ -106,7 +111,7 @@ export default function LoginPage() {
       )}
 
       {/* Form */}
-      <form onSubmit={handleSubmit} className="space-y-space-4">
+      <form onSubmit={handleSubmit} data-testid="login-form" className="space-y-space-4">
         <div>
           <label className="text-body-small text-foreground mb-space-1 block font-medium">
             Email
@@ -118,6 +123,9 @@ export default function LoginPage() {
             required
             autoComplete="email"
             className="h-10"
+            data-testid="login-email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
           />
         </div>
 
@@ -132,10 +140,13 @@ export default function LoginPage() {
               required
               autoComplete="current-password"
               className="h-10 pr-10"
+              data-testid="login-password"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              data-testid="login-password-toggle"
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               tabIndex={-1}
             >
@@ -148,7 +159,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <Button type="submit" className="w-full h-10" disabled={isPending}>
+        <Button type="submit" className="w-full h-10" disabled={isPending} data-testid="login-submit">
           {isPending ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -164,6 +175,7 @@ export default function LoginPage() {
         Don&apos;t have an account?{" "}
         <Link
           href="/register"
+          data-testid="login-register-link"
           className="text-primary hover:text-primary/80 font-medium transition-colors"
         >
           Create one

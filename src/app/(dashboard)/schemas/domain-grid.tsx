@@ -128,6 +128,7 @@ export function DomainGrid({ domains, canDeleteDomains = false }: DomainGridProp
           <Button
             onClick={() => setShowCreate(true)}
             className="gap-2"
+            data-testid="create-domain-button"
           >
             <Plus className="w-4 h-4" />
             Create Domain
@@ -141,6 +142,7 @@ export function DomainGrid({ domains, canDeleteDomains = false }: DomainGridProp
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search domains..."
+            data-testid="domain-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -150,7 +152,7 @@ export function DomainGrid({ domains, canDeleteDomains = false }: DomainGridProp
 
       {/* Create Domain Dialog (inline) */}
       {showCreate && (
-        <div className="surface-glass rounded-xl border border-primary/20 p-space-6 mb-space-6">
+        <div className="surface-glass rounded-xl border border-primary/20 p-space-6 mb-space-6" data-testid="create-domain-form">
           <h3 className="text-heading-2 text-foreground mb-space-4">
             Create New Domain
           </h3>
@@ -166,6 +168,7 @@ export function DomainGrid({ domains, canDeleteDomains = false }: DomainGridProp
                 maxLength={64}
                 autoFocus
                 className="h-9"
+                data-testid="domain-name-input"
               />
             </div>
             <div>
@@ -176,18 +179,20 @@ export function DomainGrid({ domains, canDeleteDomains = false }: DomainGridProp
                 name="description"
                 placeholder="Brief description of this domain"
                 className="h-9"
+                data-testid="domain-description-input"
               />
             </div>
             {createError && (
-              <p className="text-body-small text-destructive">{createError}</p>
+              <p className="text-body-small text-destructive" data-testid="create-domain-error">{createError}</p>
             )}
             <div className="flex gap-space-2">
-              <Button type="submit" disabled={isCreating}>
+              <Button type="submit" disabled={isCreating} data-testid="create-domain-submit">
                 {isCreating ? "Creating..." : "Create"}
               </Button>
               <Button
                 type="button"
                 variant="outline"
+                data-testid="create-domain-cancel"
                 onClick={() => {
                   setShowCreate(false);
                   setCreateError(null);

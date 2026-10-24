@@ -63,7 +63,11 @@ export function TopBar() {
         </Link>
 
         <DropdownMenu>
-          <DropdownMenuTrigger className="p-1.5 rounded-lg hover:bg-accent animate-field-hover outline-none">
+          <DropdownMenuTrigger
+            aria-label="User menu"
+            data-testid="user-menu"
+            className="p-1.5 rounded-lg hover:bg-accent animate-field-hover outline-none"
+          >
             {session?.user?.email ? (
               <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center">
                 <span className="text-xs text-primary-foreground font-medium">
@@ -96,6 +100,7 @@ export function TopBar() {
             <DropdownMenuItem
               onClick={() => signOut({ callbackUrl: "/login" })}
               className="text-destructive"
+              data-testid="sign-out"
             >
               <LogOut className="w-4 h-4 mr-2" />
               Sign Out
