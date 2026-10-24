@@ -254,6 +254,20 @@ describe("updateFieldAction drops the reference (target, id, pin) of a field tha
     expect(written().decorators).toMatchObject({ referencedEntityId: "e-money" });
   });
 
+  it("re-pointing a pinned ARRAY of references (or a map) drops the carried pin at the action level too", async () => {
+    const list = {
+      ...OWN_FIELD,
+      type: "array",
+      decorators: { arrayElementType: "reference", referencedEntityId: "e-addr", referencedEntityName: "Address", referencedQualifiedName: "Billing/Core/Address", referencedEntityVersion: "1.2" },
+    };
+    mockPrisma.field.findUnique.mockResolvedValue(list);
+    await update("fld-1", {
+      decorators: { ...list.decorators, referencedEntityId: "e-money", referencedEntityName: "Money", referencedQualifiedName: "Billing/Core/Money" },
+    });
+    expect(written().decorators).not.toHaveProperty("referencedEntityVersion");
+    expect(written().decorators).toMatchObject({ arrayElementType: "reference", referencedEntityId: "e-money" });
+  });
+
   it("an edit that leaves a pinned reference alone keeps its pin", async () => {
     mockPrisma.field.findUnique.mockResolvedValue(PINNED);
     await update("fld-1", { decorators: { ...PINNED.decorators, semantics: { description: "new" } } });

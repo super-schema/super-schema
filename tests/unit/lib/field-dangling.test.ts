@@ -139,6 +139,38 @@ describe("a field that stops being a reference (decoratorsAfterFieldEdit)", () =
     expect(repinned).toMatchObject({ referencedEntityVersion: "3.0" });
   });
 
+  it("an ARRAY of references whose element target changes drops the pin the edit carried along; one that keeps its target keeps the pin", () => {
+    const list = { type: "array", decorators: { arrayElementType: "reference", ...REFERENCE_KEYS } };
+    const retargeted = { arrayElementType: "reference", ...REFERENCE_KEYS, referencedEntityId: "e-money", referencedEntityName: "Money", referencedQualifiedName: "Billing/Core/Money" };
+
+    const cleared = decoratorsAfterFieldEdit(list, { decorators: retargeted });
+    expect(cleared).not.toHaveProperty("referencedEntityVersion");
+    expect(cleared).toMatchObject({ arrayElementType: "reference", referencedEntityId: "e-money" });
+
+    const kept = { arrayElementType: "reference", ...REFERENCE_KEYS, description: "d" };
+    expect(decoratorsAfterFieldEdit(list, { decorators: kept })).toBe(kept);
+    expect(decoratorsAfterFieldEdit(list, { decorators: { ...retargeted, referencedEntityVersion: "3.0" } })).toMatchObject({ referencedEntityVersion: "3.0" });
+  });
+
+  it("a MAP of references whose value target changes drops the pin as well", () => {
+    const map = { type: "map", decorators: { mapKeyType: "string", mapValueType: "reference", ...REFERENCE_KEYS } };
+
+    const cleared = decoratorsAfterFieldEdit(map, {
+      decorators: { mapKeyType: "string", mapValueType: "reference", ...REFERENCE_KEYS, referencedEntityId: "e-money", referencedEntityName: "Money", referencedQualifiedName: "Billing/Core/Money" },
+    });
+
+    expect(cleared).not.toHaveProperty("referencedEntityVersion");
+    expect(cleared).toMatchObject({ mapValueType: "reference", referencedEntityId: "e-money" });
+  });
+
+  it("an array of references retargeted by NAME only (a name-only reference) drops the pin too", () => {
+    const list = { type: "array", decorators: { arrayElementType: "reference", referencedEntityName: "Address", referencedEntityVersion: "1.0" } };
+
+    expect(
+      decoratorsAfterFieldEdit(list, { decorators: { arrayElementType: "reference", referencedEntityName: "Money", referencedEntityVersion: "1.0" } }),
+    ).not.toHaveProperty("referencedEntityVersion");
+  });
+
   it("a name-only (legacy) reference retargeted by name drops a pin as well", () => {
     const existing = { type: "reference", decorators: { referencedEntityName: "Address", referencedEntityVersion: "1.0" } };
 

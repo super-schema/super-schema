@@ -195,20 +195,26 @@ describe("FieldDetailPage for a product entity", () => {
 });
 
 describe("FieldDetailPage: the entities a reference can point at (for the type picker)", () => {
+  // The ENTITY's tenant differs from the ACTIVE tenant (a stale tenant cookie: the page tolerates it and resolves the URL's own domain),
+  // so a query read for the wrong one would show.
   beforeEach(() => {
-    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-1" }];
+    db.activeTenantId = "tenant-active";
+    db.domains = [{ id: "dom-1", slug: "payments", tenantId: "tenant-entity" }];
     db.products = [{ id: "prod-1", slug: "checkout", domainId: "dom-1" }];
-    db.entities = [{ id: "ent-checkout", slug: "order", tenantId: "tenant-1", domainId: "dom-1", productId: "prod-1", name: "Order" }];
+    db.entities = [{ id: "ent-checkout", slug: "order", tenantId: "tenant-entity", domainId: "dom-1", productId: "prod-1", name: "Order" }];
     db.fields = [fieldRow("f-checkout", "ent-checkout")];
   });
 
-  it("hands the field studio the tenant's entities with their domain and product names, read for the ENTITY'S tenant", async () => {
+  it("hands the field studio the entities with their domain and product names, read for the ENTITY'S tenant (not the active one)", async () => {
     mocks.entityFindMany.mockResolvedValue([{ id: "e-addr", name: "Address", domain: { name: "Billing" }, product: { name: "Core" } }]);
 
     const element = await FieldDetailPage({ params: params("payments", "checkout", "order", "email") });
 
+    expect(element.props.field.id).toBe("f-checkout");
     expect(element.props.referenceTargets).toEqual([{ id: "e-addr", name: "Address", domain: "Billing", product: "Core" }]);
-    expect(mocks.entityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-1" } }));
+    expect(mocks.entityFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.entityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-entity" } }));
+    expect(mocks.entityFindMany).not.toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-active" } }));
   });
 
   it("a failing lookup does not take the page down", async () => {
