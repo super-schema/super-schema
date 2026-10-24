@@ -18,6 +18,9 @@ import {
   isBoolean, isInt, isIntOrNull, isPlainObject, isString, isStringArray, isStringOrNull, pickEditable,
 } from "@/lib/editable-fields";
 import { requireId } from "@/services/events/service-guards";
+import { err, ok, type Result, type ServiceError } from "@/types/result";
+import { TENANT_PLACEHOLDER, writeFieldReference } from "@/lib/references/entity-reference";
+import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
 import {
   buildSchemaTargetFieldMappings,
   parseSchemaTargetTypeOverrides,
@@ -1323,6 +1326,83 @@ export async function setEntityPrimaryKeyAction(entityId: string, fieldNames: st
     return { success: true as const, primaryKey: [...fieldNames] };
   } catch (e: unknown) {
     return { ...unexpectedFailure("setEntityPrimaryKeyAction", e) };
+  }
+}
+
+/**
+ * The explicit pick action: points a reference field at one entity, storing the fully qualified reference
+ * (`domain/product/entity` + `referencedEntityId`). No version is stored unless `pinnedVersion` is given, and a pin must
+ * name a PUBLISHED version of the target (`null` / omitted clears any earlier pin). Source entity, field and target must all
+ * be in the active tenant.
+ */
+export async function setFieldReferenceAction(
+  entityId: string,
+  fieldId: string,
+  ref: { entityId: string; pinnedVersion?: string | null }
+): Promise<Result<void, ServiceError>> {
+  const session = await auth();
+  if (!session?.user?.id) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
+  const notFound = (kind: string) => err({ code: "NOT_FOUND", message: `${kind} not found` });
+  try {
+    if (!(await inActiveTenant("entity", entityId))) return notFound("Entity");
+    if (!ref || typeof ref.entityId !== "string" || !(await inActiveTenant("entity", ref.entityId))) return notFound("Referenced entity");
+
+    const field = await prisma.field.findUnique({
+      where: { id: fieldId },
+      select: { id: true, entityId: true, type: true, decorators: true },
+    });
+    if (!field || field.entityId !== entityId) return notFound("Field");
+    if (field.type !== "reference") return err({ code: "VALIDATION_ERROR", message: "Only a reference field can point at an entity" });
+
+    const target = await prisma.entity.findUnique({
+      where: { id: ref.entityId },
+      select: { id: true, name: true, domain: { select: { name: true } }, product: { select: { name: true } } },
+    });
+    if (!target) return notFound("Referenced entity");
+
+    let pinnedVersion: string | undefined;
+    if (ref.pinnedVersion !== undefined && ref.pinnedVersion !== null) {
+      const parsed = parseVersionLabel(ref.pinnedVersion);
+      if (!parsed.success) return err({ code: "VALIDATION_ERROR", message: `"${ref.pinnedVersion}" is not a published version label` });
+      // Every EntityVersion row is a published version; a draft has no row, so it cannot be pinned.
+      const published = await prisma.entityVersion.findUnique({
+        where: { entityId_major_minor: { entityId: target.id, major: parsed.data.major, minor: parsed.data.minor } },
+      });
+      if (!published) {
+        return err({ code: "VALIDATION_ERROR", message: `${target.name} has no published version ${formatVersionLabel(parsed.data)}` });
+      }
+      pinnedVersion = formatVersionLabel(parsed.data);
+    }
+
+    const current = field.decorators && typeof field.decorators === "object" && !Array.isArray(field.decorators)
+      ? (field.decorators as Record<string, unknown>)
+      : {};
+    const decorators = writeFieldReference(current, {
+      entityId: target.id,
+      domain: target.domain?.name ?? TENANT_PLACEHOLDER,
+      product: target.product?.name ?? TENANT_PLACEHOLDER,
+      entity: target.name,
+      ...(pinnedVersion ? { pinnedVersion } : {}),
+    });
+
+    await withAudit({
+      action: "UPDATE",
+      entityType: "Field",
+      entityId: fieldId,
+      userId: session.user.id,
+      beforeState: field as unknown as object,
+      fn: () =>
+        prisma.$transaction([
+          prisma.field.update({ where: { id: fieldId }, data: { decorators: decorators as Prisma.InputJsonValue } }),
+          prisma.$executeRawUnsafe(MARK_DRAFT_CHANGED_SQL, entityId),
+        ]),
+    });
+
+    revalidatePath("/schemas");
+    return ok(undefined);
+  } catch (e: unknown) {
+    const failure = unexpectedFailure("setFieldReferenceAction", e);
+    return err({ code: failure.code, message: failure.error });
   }
 }
 

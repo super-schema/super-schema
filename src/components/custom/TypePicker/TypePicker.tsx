@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/popover";
 import { getTypesByCategory, getTypeInfo, isComplexType, type DataType } from "@/lib/data-types";
 import { TypeGrid } from "./TypeGrid";
-import { ComplexTypePrompt, type ComplexTypeConfig } from "./ComplexTypePrompt";
+import { ComplexTypePrompt, type ComplexTypeConfig, type PickableEntity } from "./ComplexTypePrompt";
 
 interface TypePickerProps {
   value: string;
@@ -29,7 +29,7 @@ interface TypePickerProps {
   /** If true, hide complex types from selection */
   excludeComplex?: boolean;
   /** Available entities for reference type picker */
-  entities?: { id: string; name: string }[];
+  entities?: PickableEntity[];
   /** Disable the picker */
   disabled?: boolean;
 }
@@ -58,7 +58,7 @@ function TypePickerBody({
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
   excludeComplex?: boolean;
-  entities?: { id: string; name: string }[];
+  entities?: PickableEntity[];
   onSelect: (typeId: string) => void;
   onComplexConfirm: (config: ComplexTypeConfig) => void;
   onComplexBack: () => void;

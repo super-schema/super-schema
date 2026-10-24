@@ -53,6 +53,17 @@ export function readFieldReference(decorators: unknown): EntityRef | { legacyNam
   return legacyName ? { legacyName } : undefined;
 }
 
+/**
+ * Upgrades a name-only (legacy) reference to the qualified form once it resolved to exactly one entity. Other decorator
+ * keys are kept; a version is never added, and a pin the decorators already carry is preserved.
+ */
+export function upgradeLegacyReference(decorators: Record<string, unknown>, resolved: EntityRef): Record<string, unknown> {
+  const existingPin = ownString(decorators, "referencedEntityVersion");
+  const { pinnedVersion: _ignored, ...rest } = resolved;
+  void _ignored;
+  return writeFieldReference(decorators, existingPin ? { ...rest, pinnedVersion: existingPin } : rest);
+}
+
 /** Returns a copy of `decorators` carrying `ref`; a stale version pin is dropped unless `ref` pins one. */
 export function writeFieldReference(decorators: Record<string, unknown>, ref: EntityRef): Record<string, unknown> {
   const out: Record<string, unknown> = {};

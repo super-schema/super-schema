@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { TypeGrid } from "./TypeGrid";
+import { qualifiedName } from "@/lib/references/entity-reference";
 
 export interface ComplexTypeConfig {
   /** For array: the element type */
@@ -16,6 +17,10 @@ export interface ComplexTypeConfig {
   mapValueType?: string;
   /** For reference: entity name */
   referencedEntityName?: string;
+  /** For reference: the picked entity's id (absent when only a name was typed) */
+  referencedEntityId?: string;
+  /** For reference: `domain/product/entity` of the picked entity */
+  referencedQualifiedName?: string;
   /** For reference: cardinality */
   referenceCardinality?: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
   /** For enum: list of values */
@@ -26,8 +31,14 @@ interface ComplexTypePromptProps {
   complexType: "array" | "map" | "reference" | "enum";
   onConfirm: (config: ComplexTypeConfig) => void;
   onBack: () => void;
-  entities?: { id: string; name: string }[];
+  entities?: PickableEntity[];
 }
+
+/** A tenant entity the reference picker can offer; domain / product make its qualified name. */
+export type PickableEntity = { id: string; name: string; domain?: string; product?: string };
+
+const qualifiedOf = (e: PickableEntity) =>
+  e.domain && e.product ? qualifiedName({ domain: e.domain, product: e.product, entity: e.name }) : undefined;
 
 export function ComplexTypePrompt({
   complexType,
@@ -152,9 +163,10 @@ function ReferencePrompt({
   entities,
 }: {
   onConfirm: (config: ComplexTypeConfig) => void;
-  entities: { id: string; name: string }[];
+  entities: PickableEntity[];
 }) {
   const [entityName, setEntityName] = useState("");
+  const [picked, setPicked] = useState<PickableEntity | undefined>();
   const [cardinality, setCardinality] = useState<ComplexTypeConfig["referenceCardinality"]>("many-to-one");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -180,6 +192,7 @@ function ReferencePrompt({
           onChange={(e) => {
             setSearchQuery(e.target.value);
             setEntityName(e.target.value);
+            setPicked(undefined);
           }}
           placeholder="Search or type entity name..."
           className="h-7 text-body-small"
@@ -192,10 +205,11 @@ function ReferencePrompt({
                 onClick={() => {
                   setEntityName(e.name);
                   setSearchQuery(e.name);
+                  setPicked(e);
                 }}
                 className="w-full text-left px-2 py-1 text-caption hover:bg-accent/30 transition-colors"
               >
-                {e.name}
+                {qualifiedOf(e) ?? e.name}
               </button>
             ))}
           </div>
@@ -228,6 +242,7 @@ function ReferencePrompt({
         onClick={() =>
           onConfirm({
             referencedEntityName: entityName.trim(),
+            ...(picked && { referencedEntityId: picked.id, referencedQualifiedName: qualifiedOf(picked) }),
             referenceCardinality: cardinality,
           })
         }
