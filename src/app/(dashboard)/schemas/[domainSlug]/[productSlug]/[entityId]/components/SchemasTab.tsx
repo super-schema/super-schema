@@ -387,7 +387,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [contentTab, setContentTab] = useState<ContentTab>("schema");
   const [isGenerating, setIsGenerating] = useState(false);
-  const { generate, dialog } = useGenerateWithInputs(entityId);
+  const { generate, resolveReferences, dialog } = useGenerateWithInputs(entityId);
   const [isPublishing, setIsPublishing] = useState(false);
   const [stagedOpen, setStagedOpen] = useState(false);
   // Local override state (not yet saved until regeneration)
@@ -449,7 +449,9 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   async function handleRegenerateAndPublish(targetKey: string, version: number) {
     setIsPublishing(true);
     try {
-      const result = await publishSchemaAction(entityId, targetKey, version, { regenerateFromPublished: true });
+      // An ambiguous reference met while regenerating is asked first (the pick is saved, the publish runs once more), before any error.
+      const result = await resolveReferences(() => publishSchemaAction(entityId, targetKey, version, { regenerateFromPublished: true }));
+      if (!result) return; // the user declined to choose
       if (result.error) { toast.error(result.error); return; }
       toast.success(`${getTargetMeta(targetKey).displayName} regenerated from the published versions and published`);
       await loadVersions();
@@ -460,7 +462,9 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
   async function handlePublish(targetKey: string, version: number) {
     setIsPublishing(true);
     try {
-      const result = await publishSchemaAction(entityId, targetKey, version);
+      // A publish blocked by an ambiguous reference answers the pick beside its error: ask it, save it, publish once more.
+      const result = await resolveReferences(() => publishSchemaAction(entityId, targetKey, version));
+      if (!result) return; // the user declined to choose
       if (result.error) {
         const refusal = publishRefusalToast(result, () => void handleRegenerateAndPublish(targetKey, version));
         if (refusal.options) toast.error(refusal.message, refusal.options);

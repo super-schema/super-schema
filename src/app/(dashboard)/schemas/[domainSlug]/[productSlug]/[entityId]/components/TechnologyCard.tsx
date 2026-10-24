@@ -416,7 +416,7 @@ export function TechnologyCard({
 }: TechnologyCardProps) {
   const [expanded, setExpanded] = useState(versions.length > 0);
   const [isGenerating, setIsGenerating] = useState(false);
-  const { generate, dialog } = useGenerateWithInputs(entityId);
+  const { generate, resolveReferences, dialog } = useGenerateWithInputs(entityId);
   const [viewingVersion, setViewingVersion] = useState<number | null>(null);
   const [actionPending, setActionPending] = useState<string | null>(null);
   const [mappingRows, setMappingRows] = useState<SchemaTargetFieldMappingRow[]>([]);
@@ -504,7 +504,9 @@ export function TechnologyCard({
     async (version: number) => {
       setActionPending(`publish-${version}`);
       try {
-        const result = await publishSchemaAction(entityId, targetInfo.key, version, { regenerateFromPublished: true });
+        // An ambiguous reference met while regenerating is asked first (the pick is saved, the publish runs once more), before any error.
+        const result = await resolveReferences(() => publishSchemaAction(entityId, targetInfo.key, version, { regenerateFromPublished: true }));
+        if (!result) return; // the user declined to choose
         if (result.error) {
           toast.error(result.error);
           return;
@@ -518,14 +520,16 @@ export function TechnologyCard({
         setActionPending(null);
       }
     },
-    [entityId, targetInfo, onVersionsChange]
+    [entityId, targetInfo, onVersionsChange, resolveReferences]
   );
 
   const handlePublish = useCallback(
     async (version: number) => {
       setActionPending(`publish-${version}`);
       try {
-        const result = await publishSchemaAction(entityId, targetInfo.key, version);
+        // A publish blocked by an ambiguous reference answers the pick beside its error: ask it, save it, publish once more.
+        const result = await resolveReferences(() => publishSchemaAction(entityId, targetInfo.key, version));
+        if (!result) return; // the user declined to choose
         if (result.error) {
           const refusal = publishRefusalToast(result, () => void handleRegenerateAndPublish(version));
           if (refusal.options) toast.error(refusal.message, refusal.options);
@@ -540,7 +544,7 @@ export function TechnologyCard({
         setActionPending(null);
       }
     },
-    [entityId, targetInfo, onVersionsChange, handleRegenerateAndPublish]
+    [entityId, targetInfo, onVersionsChange, handleRegenerateAndPublish, resolveReferences]
   );
 
   const handleDeploy = useCallback(

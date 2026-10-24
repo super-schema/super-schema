@@ -8,11 +8,13 @@ vi.mock("sonner", () => ({ toast: toastMock }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions", () => ({
   generateSchemaAction: vi.fn(),
   setEntityPrimaryKeyAction: vi.fn(),
+  setFieldReferenceAction: vi.fn(),
 }));
 
 const actions = await import("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions");
 const generate = actions.generateSchemaAction as unknown as ReturnType<typeof vi.fn>;
 const setKey = actions.setEntityPrimaryKeyAction as unknown as ReturnType<typeof vi.fn>;
+const setReference = actions.setFieldReferenceAction as unknown as ReturnType<typeof vi.fn>;
 
 const NEEDS = {
   needsInput: [
@@ -80,27 +82,47 @@ describe("generating a target that needs a primary key", () => {
     expect(toastMock.error).not.toHaveBeenCalled();
   });
 
-  it("reports a reference that matches several entities as an error, never as a generation that happened", async () => {
-    generate.mockResolvedValueOnce({
-      needsReference: {
-        field: "addr",
-        name: "Address",
-        candidates: [
-          { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
-          { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
-        ],
-        entityId: "ent-1",
-        fieldId: "fld-1",
-      },
-    });
+  const NEEDS_REFERENCE = {
+    field: "addr",
+    name: "Address",
+    candidates: [
+      { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+      { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+    ],
+    entityId: "ent-1",
+    fieldId: "fld-1",
+  };
+
+  it("asks which entity a reference means (never an error, never a generation that silently did not happen), saves the pick and generates", async () => {
+    generate.mockResolvedValueOnce({ needsReference: NEEDS_REFERENCE }).mockResolvedValueOnce(GENERATED);
+    setReference.mockResolvedValue({ success: true, data: undefined });
     const onGenerated = mount();
 
     fireEvent.click(screen.getByTestId("generate-selected-schema"));
+    expect(await screen.findByTestId("reference-pick-dialog")).toBeDefined();
+    expect(onGenerated).not.toHaveBeenCalled();
+    expect(toastMock.error).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getAllByTestId("reference-pick-candidate")[0]);
+
+    await waitFor(() => expect(onGenerated).toHaveBeenCalled());
+    expect(setReference).toHaveBeenCalledWith("ent-1", "fld-1", { entityId: "x1" });
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+
+  it("a pick the server still finds ambiguous is reported as an error, not asked again", async () => {
+    generate.mockResolvedValue({ needsReference: NEEDS_REFERENCE });
+    setReference.mockResolvedValue({ success: true, data: undefined });
+    const onGenerated = mount();
+
+    fireEvent.click(screen.getByTestId("generate-selected-schema"));
+    fireEvent.click((await screen.findAllByTestId("reference-pick-candidate"))[0]);
 
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
     expect(String(toastMock.error.mock.calls[0][0])).toContain('Field "addr" refers to "Address", which matches 2 entities');
     expect(onGenerated).not.toHaveBeenCalled();
     expect(toastMock.success).not.toHaveBeenCalled();
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 });

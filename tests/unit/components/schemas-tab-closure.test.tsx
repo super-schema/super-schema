@@ -188,3 +188,125 @@ describe("SchemasTab: the Preview badge and the versions the references used", (
     expect(screen.queryByTestId("schema-preview-badge")).toBeNull();
   });
 });
+
+const NEEDS_REFERENCE = {
+  field: "addr",
+  name: "Address",
+  candidates: [
+    { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+    { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+  ],
+  entityId: "member-1",
+  fieldId: "fld-9",
+};
+const GENERATED = { success: true, schemaVersion: { version: 1 }, validationStatus: "VALID", warnings: [], errors: [] };
+
+describe("SchemasTab: an ambiguous reference opens the pick dialog", () => {
+  async function generateFirstTarget() {
+    getVersions.mockResolvedValue({ success: true, schemaVersions: {} });
+    render(<SchemasTab {...baseProps} />);
+    fireEvent.click(await screen.findByText("Generate"));
+  }
+
+  it("on Generate: lists the candidates as domain / product / entity, saves the pick on the field's owner and retries once", async () => {
+    generate.mockResolvedValueOnce({ needsReference: NEEDS_REFERENCE }).mockResolvedValueOnce(GENERATED);
+    setReference.mockResolvedValue({ success: true, data: undefined });
+    await generateFirstTarget();
+
+    const dialog = await screen.findByTestId("reference-pick-dialog");
+    const candidates = within(dialog).getAllByTestId("reference-pick-candidate").map((el) => el.textContent);
+    expect(candidates).toEqual(["d1 / p1 / Address", "d2 / p2 / Address"]);
+    // nothing is generated or written before the person picks
+    expect(setReference).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(within(dialog).getAllByTestId("reference-pick-candidate")[1]);
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    // the pick is written where the ambiguous field IS (a closure member), never as a version
+    expect(setReference).toHaveBeenCalledTimes(1);
+    expect(setReference).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x2" });
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("JSON Schema schema generated (Draft)"));
+    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("reference-pick-dialog")).toBeNull();
+  });
+
+  it("Cancel leaves everything as it was: no save, no retry, no error toast", async () => {
+    generate.mockResolvedValueOnce({ needsReference: NEEDS_REFERENCE });
+    await generateFirstTarget();
+
+    fireEvent.click(await within(await screen.findByTestId("reference-pick-dialog")).findByRole("button", { name: /cancel/i }));
+
+    await waitFor(() => expect(screen.queryByTestId("reference-pick-dialog")).toBeNull());
+    expect(setReference).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("a refused save is shown in the dialog, which stays open; nothing is retried", async () => {
+    generate.mockResolvedValueOnce({ needsReference: NEEDS_REFERENCE });
+    setReference.mockResolvedValue({ success: false, error: { code: "FORBIDDEN", message: "You do not have permission to change this field's reference" } });
+    await generateFirstTarget();
+
+    fireEvent.click((await screen.findAllByTestId("reference-pick-candidate"))[0]);
+
+    expect((await screen.findByRole("alert")).textContent).toBe("You do not have permission to change this field's reference");
+    expect(screen.getByTestId("reference-pick-dialog")).toBeDefined();
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a second ambiguous field met after the first pick asks again (one retry per pick)", async () => {
+    generate
+      .mockResolvedValueOnce({ needsReference: NEEDS_REFERENCE })
+      .mockResolvedValueOnce({ needsReference: { ...NEEDS_REFERENCE, field: "ship", fieldId: "fld-10" } })
+      .mockResolvedValueOnce(GENERATED);
+    setReference.mockResolvedValue({ success: true, data: undefined });
+    await generateFirstTarget();
+
+    fireEvent.click((await screen.findAllByTestId("reference-pick-candidate"))[0]);
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    fireEvent.click((await screen.findAllByTestId("reference-pick-candidate"))[1]);
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+    expect(setReference.mock.calls.map((c) => [c[1], c[2].entityId])).toEqual([["fld-9", "x1"], ["fld-10", "x2"]]);
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("JSON Schema schema generated (Draft)"));
+  });
+
+  it("the same field still ambiguous after its pick is saved is reported, not asked again forever", async () => {
+    generate.mockResolvedValue({ needsReference: NEEDS_REFERENCE });
+    setReference.mockResolvedValue({ success: true, data: undefined });
+    await generateFirstTarget();
+
+    fireEvent.click((await screen.findAllByTestId("reference-pick-candidate"))[0]);
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledTimes(1));
+    expect(String(toastMock.error.mock.calls[0][0])).toContain('Field "addr" refers to "Address", which matches 2 entities');
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("reference-pick-dialog")).toBeNull();
+  });
+
+  it("on Mark Deployed: asks BEFORE any error toast (the refusal carries the pick), saves it and publishes once more", async () => {
+    getVersions.mockResolvedValue({
+      success: true,
+      schemaVersions: { "json-schema": [closureVersion([{ ref: ROOT, source: "draft" }])] },
+    });
+    publish
+      .mockResolvedValueOnce({ error: 'Field "addr" refers to "Address", which matches 2 entities.', code: "AMBIGUOUS_REFERENCE", needsReference: NEEDS_REFERENCE })
+      .mockResolvedValueOnce({ success: true });
+    setReference.mockResolvedValue({ success: true, data: undefined });
+    render(<SchemasTab {...baseProps} />);
+
+    fireEvent.click(await screen.findByText("Mark Deployed"));
+    const dialog = await screen.findByTestId("reference-pick-dialog");
+    expect(toastMock.error).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getAllByTestId("reference-pick-candidate")[0]);
+
+    await waitFor(() => expect(publish).toHaveBeenCalledTimes(2));
+    expect(setReference).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x1" });
+    expect(publish.mock.calls[1]).toEqual(publish.mock.calls[0]);
+    await waitFor(() => expect(toastMock.success).toHaveBeenCalledWith("JSON Schema v1 marked as deployed"));
+    expect(toastMock.error).not.toHaveBeenCalled();
+  });
+});

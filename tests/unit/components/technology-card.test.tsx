@@ -13,15 +13,18 @@ const {
   deploySchemaActionMock,
   getSchemaTargetFieldMappingsActionMock,
   saveSchemaFieldTypeOverrideActionMock,
+  setFieldReferenceActionMock,
 } = vi.hoisted(() => ({
   generateSchemaActionMock: vi.fn(),
   publishSchemaActionMock: vi.fn(),
   deploySchemaActionMock: vi.fn(),
   getSchemaTargetFieldMappingsActionMock: vi.fn(),
   saveSchemaFieldTypeOverrideActionMock: vi.fn(),
+  setFieldReferenceActionMock: vi.fn(),
 }));
 
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions", () => ({
+  setFieldReferenceAction: setFieldReferenceActionMock,
   generateSchemaAction: generateSchemaActionMock,
   publishSchemaAction: publishSchemaActionMock,
   deploySchemaAction: deploySchemaActionMock,
@@ -304,5 +307,34 @@ describe("TechnologyCard publish refusal (Task 8)", () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(2));
     expect(toast.error).toHaveBeenLastCalledWith("Sales / Orders / Customer has never been published, so a published schema cannot use it.");
+  });
+
+  it("a publish blocked by an ambiguous reference opens the pick dialog before any error toast, saves the pick and publishes once more", async () => {
+    const needsReference = {
+      field: "addr",
+      name: "Address",
+      candidates: [
+        { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+        { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+      ],
+      entityId: "member-1",
+      fieldId: "fld-9",
+    };
+    publishSchemaActionMock
+      .mockResolvedValueOnce({ error: 'Field "addr" refers to "Address", which matches 2 entities.', code: "AMBIGUOUS_REFERENCE", needsReference })
+      .mockResolvedValueOnce({ success: true });
+    setFieldReferenceActionMock.mockResolvedValue({ success: true, data: undefined });
+    render(<TechnologyCard {...baseProps} entityVersion={2} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /mark deployed/i }));
+    const candidates = await screen.findAllByTestId("reference-pick-candidate");
+    expect(toast.error).not.toHaveBeenCalled();
+
+    fireEvent.click(candidates[1]);
+
+    await waitFor(() => expect(publishSchemaActionMock).toHaveBeenCalledTimes(2));
+    expect(setFieldReferenceActionMock).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x2" });
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
