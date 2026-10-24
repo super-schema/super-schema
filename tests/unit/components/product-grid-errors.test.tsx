@@ -85,6 +85,7 @@ describe("ProductGrid create / delete when the server action fails", () => {
     deleteProductActionMock.mockRejectedValue(new Error("Failed to fetch"));
     renderGrid();
     fireEvent.click(screen.getByRole("button", { name: /Delete product Checkout/i }));
+    fireEvent.click(screen.getByTestId("delete-product-confirm"));
     await waitFor(() => expect(toastErrorMock).toHaveBeenCalledWith(GENERIC_ACTION_ERROR));
     expect(toastSuccessMock).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
@@ -94,7 +95,10 @@ describe("ProductGrid create / delete when the server action fails", () => {
     deleteProductActionMock.mockResolvedValue({ error: "Product is in use" });
     renderGrid();
     fireEvent.click(screen.getByRole("button", { name: /Delete product Checkout/i }));
+    fireEvent.click(screen.getByTestId("delete-product-confirm"));
     await waitFor(() => expect(toastErrorMock).toHaveBeenCalledWith("Product is in use"));
     expect(refreshMock).not.toHaveBeenCalled();
+    // The confirmation stays open after a refusal, so the user can read the toast and Cancel.
+    expect(screen.getByTestId("delete-product-dialog")).toBeTruthy();
   });
 });

@@ -82,10 +82,43 @@ describe("ProductGrid delete", () => {
     expect(deleteProductActionMock).not.toHaveBeenCalled();
   });
 
-  it("still deletes an empty product", async () => {
+  it("asks first: the trash button opens a confirmation that names the product, and deletes nothing", () => {
     renderGrid([product()]);
     fireEvent.click(screen.getByRole("button", { name: /Delete product Checkout/i }));
+
+    const dialog = screen.getByTestId("delete-product-dialog");
+    expect(dialog.textContent).toContain("Delete \u201cCheckout\u201d?");
+    expect(dialog.textContent).toContain("This permanently deletes this product. This action cannot be undone.");
+    expect(deleteProductActionMock).not.toHaveBeenCalled();
+  });
+
+  it("Cancel closes the confirmation and the product is not deleted", async () => {
+    renderGrid([product()]);
+    fireEvent.click(screen.getByRole("button", { name: /Delete product Checkout/i }));
+    fireEvent.click(screen.getByTestId("delete-product-cancel"));
+
+    await waitFor(() => expect(screen.queryByTestId("delete-product-dialog")).toBeNull());
+    expect(deleteProductActionMock).not.toHaveBeenCalled();
+    expect(refreshMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes an empty product only after the confirmation", async () => {
+    renderGrid([product()]);
+    fireEvent.click(screen.getByRole("button", { name: /Delete product Checkout/i }));
+    expect(deleteProductActionMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("delete-product-confirm"));
     await waitFor(() => expect(deleteProductActionMock).toHaveBeenCalledWith("prd-1"));
-    expect(refreshMock).toHaveBeenCalled();
+    expect(deleteProductActionMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(refreshMock).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId("delete-product-dialog")).toBeNull());
+  });
+
+  it("never opens the confirmation for a product that cannot be deleted", () => {
+    renderGrid([product({ entityCount: 1 })]);
+    const button = screen.getByRole("button", { name: /Delete product Checkout/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(screen.queryByTestId("delete-product-dialog")).toBeNull();
   });
 });

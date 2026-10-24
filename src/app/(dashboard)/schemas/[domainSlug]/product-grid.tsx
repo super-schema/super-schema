@@ -7,6 +7,15 @@ import { Package, Plus, Search, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { formatDateOnly } from "@/lib/date-format";
 import { assetHref } from "@/lib/navigation/asset-href";
@@ -99,6 +108,9 @@ export function ProductGrid({
   const [contactErrors, setContactErrors] = useState<ProductContactErrors>({});
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  // The product whose deletion is waiting for the user's confirmation (a delete is irreversible: one click must not do it).
+  const [deleteTarget, setDeleteTarget] = useState<ProductGridItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -164,36 +176,88 @@ export function ProductGrid({
     }
   }
 
+  /** The trash button: ask first. The server guard (`deleteBlocker`: only an empty product) is checked again when the user confirms. */
+  function requestDelete(product: ProductGridItem) {
+    const blocker = deleteBlocker(product);
+    if (blocker) {
+      toast.error(blocker);
+      return;
+    }
+    setDeleteTarget(product);
+  }
+
   async function handleDelete(product: ProductGridItem) {
     const blocker = deleteBlocker(product);
     if (blocker) {
       toast.error(blocker);
       return;
     }
+    setIsDeleting(true);
     try {
       const result = await deleteProductAction(product.id);
       if (result.error) {
+        // The dialog stays open: the user reads the toast and cancels, or tries again.
         toast.error(result.error);
         return;
       }
       toast.success(`"${product.name}" deleted`);
       void invalidateDomainsTree();
+      setDeleteTarget(null);
       router.refresh();
     } catch (e: unknown) {
       console.error("[product-grid] delete product failed", e);
       toast.error(GENERIC_ACTION_ERROR);
+    } finally {
+      setIsDeleting(false);
     }
   }
 
   return (
     <div>
+      {/* Product delete confirmation dialog (same pattern as the entity delete one) */}
+      <Dialog
+        open={deleteTarget !== null}
+        modal
+        disablePointerDismissal={isDeleting}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setDeleteTarget(null);
+        }}
+      >
+        {deleteTarget ? (
+          <DialogContent showCloseButton={!isDeleting} data-testid="delete-product-dialog">
+            <DialogHeader>
+              <DialogTitle>Delete &ldquo;{deleteTarget.name}&rdquo;?</DialogTitle>
+              <DialogDescription>
+                This permanently deletes this product. This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose
+                render={<Button variant="outline" size="sm" data-testid="delete-product-cancel" />}
+                disabled={isDeleting}
+              >
+                Cancel
+              </DialogClose>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => handleDelete(deleteTarget)}
+                disabled={isDeleting}
+                data-testid="delete-product-confirm"
+              >
+                {isDeleting ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+
       {/* Toolbar (the domain header lives above the tabs in DomainTabs) */}
       <div className="flex items-center justify-between gap-space-4 mb-space-6">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search products..."
-            data-testid="product-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -375,7 +439,7 @@ export function ProductGrid({
                 {!product.isSystem && (
                   <button
                     type="button"
-                    onClick={() => handleDelete(product)}
+                    onClick={() => requestDelete(product)}
                     disabled={!canDelete}
                     aria-label={`Delete product ${product.name}`}
                     data-testid="product-card-delete"
