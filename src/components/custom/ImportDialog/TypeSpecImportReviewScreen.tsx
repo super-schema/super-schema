@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { pluralize } from "@/lib/pluralize";
 import {
   CheckCircle2,
   Box,
@@ -287,7 +288,7 @@ export function TypeSpecImportReviewScreen({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-body-small font-medium text-foreground">{model.name}</span>
                       <Badge variant="secondary" className="text-[10px] h-4">
-                        {model.fields.length} fields
+                        {pluralize(model.fields.length, "field")}
                       </Badge>
                       {model.recommendedAsEntity && (
                         <Badge variant="outline" className="text-[10px] h-4">

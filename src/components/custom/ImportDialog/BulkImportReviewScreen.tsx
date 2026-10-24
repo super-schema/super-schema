@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { pluralize } from "@/lib/pluralize";
 import {
   ChevronDown,
   ChevronRight,
@@ -80,10 +81,10 @@ export function BulkImportReviewScreen({
       <div className="flex items-center justify-between">
         <div className="text-body-small">
           <span className="text-foreground font-medium">
-            {activeCount} entities
+            {pluralize(activeCount, "entity", "entities")}
           </span>
           <span className="text-muted-foreground">
-            , {totalFields} fields total
+            , {pluralize(totalFields, "field")} total
           </span>
           {errors.length > 0 && (
             <span className="text-destructive ml-2">
@@ -184,7 +185,7 @@ export function BulkImportReviewScreen({
                   {entity.name}
                 </span>
                 <span className="text-caption text-muted-foreground">
-                  {entity.fields.length} fields
+                  {pluralize(entity.fields.length, "field")}
                 </span>
                 <span className="text-caption bg-muted px-1.5 py-0.5 rounded">
                   {entity.sourceFormat}
@@ -259,7 +260,7 @@ export function BulkImportReviewScreen({
         >
           {isConfirming
             ? "Importing..."
-            : `Confirm Import (${activeCount} entities)`}
+            : `Confirm Import (${pluralize(activeCount, "entity", "entities")})`}
         </button>
       </div>
     </div>

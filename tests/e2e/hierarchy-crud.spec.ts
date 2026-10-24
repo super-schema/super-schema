@@ -251,7 +251,7 @@ test.describe("create a domain, a product and an entity", () => {
     await expect(page).toHaveURL((url) => url.pathname === productPath);
     const eCard = entityCard(page, entityName);
     await expect(eCard).toBeVisible();
-    await expect(eCard).toContainText("1 fields");
+    await expect(eCard).toContainText("1 field");
     await expect(explorerEntity(page, entityName)).toBeVisible();
 
     // Its page shows the name and the field.
@@ -558,6 +558,6 @@ test.describe("enterprise entity", () => {
     await expect(main.getByRole("heading", { name: "Enterprise", level: 1 })).toBeVisible();
     const card = entityCard(page, entityName);
     await expect(card).toBeVisible();
-    await expect(card).toContainText("1 fields");
+    await expect(card).toContainText("1 field");
   });
 });

@@ -6,6 +6,7 @@ import { Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatDateOnly } from "@/lib/date-format";
 import { assetHref } from "@/lib/navigation/asset-href";
+import { pluralize } from "@/lib/pluralize";
 interface EntityCardProps {
   id: string;
   name: string;
@@ -128,7 +129,7 @@ export function EntityCard({
 
         {/* Footer */}
         <div className="flex items-center gap-space-3 text-caption text-muted-foreground">
-          <span>{fieldCount} fields</span>
+          <span>{pluralize(fieldCount, "field")}</span>
           <span>v{version}</span>
           <span className="ml-auto">{formatDateOnly(updatedAt)}</span>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { pluralize } from "@/lib/pluralize";
 import { Search, ArrowLeft } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -114,7 +115,7 @@ export function StandardsBrowser({ onSelect, onBack }: StandardsBrowserProps) {
                 {template.description}
               </p>
               <span className="text-caption text-muted-foreground/60">
-                {template.fields.length} fields
+                {pluralize(template.fields.length, "field")}
               </span>
             </button>
           ))}

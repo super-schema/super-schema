@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { pluralize } from "@/lib/pluralize";
 import { Trash2 } from "lucide-react";
 import type { ParsedEntity, ParsedField } from "@/lib/importers/types";
 import { ConfidenceBadge } from "./ConfidenceBadge";
@@ -106,7 +107,7 @@ export function ImportReviewScreen({
           {parsedEntity.sourceFormat}
         </span>
         <span className="text-caption text-muted-foreground">
-          {fields.length} fields
+          {pluralize(fields.length, "field")}
         </span>
       </div>
 

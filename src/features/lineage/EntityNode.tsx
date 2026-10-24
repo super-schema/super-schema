@@ -3,6 +3,7 @@
 import { memo, useState, useCallback } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Badge } from "@/components/ui/badge";
+import { pluralize } from "@/lib/pluralize";
 import { useRouter } from "next/navigation";
 import { assetHref } from "@/lib/navigation/asset-href";
 
@@ -86,7 +87,7 @@ function EntityNodeInner({ data, id }: NodeProps) {
         {/* Field count + Classification badges */}
         <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
           <Badge variant="outline" className="text-[11px] h-4 px-1.5">
-            {nodeData.fieldCount} fields
+            {pluralize(nodeData.fieldCount, "field")}
           </Badge>
           {nodeData.piiCount > 0 && (
             <Badge variant="pii" className="text-[11px] h-4 px-1.5">

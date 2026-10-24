@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Box, ChevronDown, ChevronRight, Plus, Trash2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { pluralize } from "@/lib/pluralize";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -117,7 +118,7 @@ export function DomainModelsTab({ models }: DomainModelsTabProps) {
                 {model.name}
               </span>
               <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-                {model.fieldCount} fields
+                {pluralize(model.fieldCount, "field")}
               </Badge>
               {model.extendsModelName && (
                 <Badge variant="outline" className="text-[10px] h-4 px-1.5 font-mono">
