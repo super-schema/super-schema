@@ -266,13 +266,18 @@ function findCycles(graph: Map<string, string[]>, label: (id: string) => string)
  * latest saved rows. A pin on a reference names a published version and overrides both. A reference to a deleted or
  * other-tenant entity is dangling: the field is simply absent from the closure. Bounded by `maxEntities`; never throws
  * for domain failures.
+ *
+ * `opts.rootAtDraft`: the root is read from its current saved rows whatever `mode` says, while every member still resolves by
+ * `mode`. This is the closure a PUBLISH of the root is judged against: the root is the draft being frozen (it may never have been
+ * published, so it has no published version to read) and what it references must be a published version, never a draft. The root
+ * is then the only entity of the closure that can be at draft state.
  */
 export async function loadReferenceClosure(
   db: DbClient,
   tenantId: string,
   rootEntityId: string,
   mode: ResolveMode,
-  opts?: { maxEntities?: number }
+  opts?: { maxEntities?: number; rootAtDraft?: boolean }
 ): Promise<Result<ReferenceClosure, ClosureError>> {
   const limit = opts?.maxEntities ?? DEFAULT_MAX_CLOSURE_ENTITIES;
   // Fail closed: Prisma reads `where: { tenantId: undefined }` as "no filter", i.e. every tenant. A caller without a tenant gets the
@@ -287,8 +292,13 @@ export async function loadReferenceClosure(
   const seen = new Set<string>();
   const upgrades: LegacyUpgrade[] = [];
 
-  const add = async (e: IndexedEntity, pin: string | undefined, field: string): Promise<Result<Loaded, ClosureError>> => {
-    const loaded = await loadContent(db, e, mode, pin, field);
+  const add = async (
+    e: IndexedEntity,
+    pin: string | undefined,
+    field: string,
+    contentMode: ResolveMode = mode
+  ): Promise<Result<Loaded, ClosureError>> => {
+    const loaded = await loadContent(db, e, contentMode, pin, field);
     if (!loaded.success) return loaded;
     const metadata = await loadMemberMetadata(db, e.id);
     entities.push({
@@ -302,8 +312,8 @@ export async function loadReferenceClosure(
     return loaded;
   };
 
-  // The root is never pinned by anything: resolve it by the mode.
-  const rootLoaded = await add(rootIndexed, undefined, "");
+  // The root is never pinned by anything: resolve it by the mode, or (a publish of the root) from its current saved rows.
+  const rootLoaded = await add(rootIndexed, undefined, "", opts?.rootAtDraft ? "draft" : mode);
   if (!rootLoaded.success) return rootLoaded;
   seen.add(rootIndexed.id);
 

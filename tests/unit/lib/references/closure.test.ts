@@ -455,3 +455,68 @@ describe("loadReferenceClosure: what it reads", () => {
     }
   );
 });
+
+describe("loadReferenceClosure: rootAtDraft (the closure a PUBLISH of the root is judged against)", () => {
+  // A is being published, so it has no published version to read (or an older one): its CURRENT rows are what is frozen. What it
+  // references must still be a PUBLISHED version, never a draft.
+  const world = () =>
+    fakeDb([
+      ent("a", {}, [["cust", qref("b", "_tenant/_tenant/B")]]),
+      ent("b", { versions: [version("b", 1, 0, ["C"])], latest: "b-v1.0" }, [["draft-only", ref("D")]]),
+      ent("c", { versions: [version("c", 1, 0, [])], latest: "c-v1.0" }),
+      ent("d"),
+    ]);
+
+  it("loads the root from its saved rows and every member from its latest published version", async () => {
+    const r = await loadReferenceClosure(world(), "t1", "a", "published", { rootAtDraft: true });
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
+      ["A", "draft", undefined],
+      ["B", "published", "1.0"],
+      ["C", "published", "1.0"],
+    ]);
+    // B's saved draft references D, B's published 1.0 does not: D is not part of a published closure.
+    expect(names(r.data)).not.toContain("D");
+    expect(r.data.draftEntities.map((e) => e.entity)).toEqual(["A"]);
+  });
+
+  it("a root that was never published is not NEVER_PUBLISHED, but a never-published member still is", async () => {
+    const db = fakeDb([ent("a", {}, [["cust", qref("b", "_tenant/_tenant/B")]]), ent("b")]);
+    const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatchObject({ code: "NEVER_PUBLISHED", ref: { entity: "B" } });
+  });
+
+  it("without the option the same never-published root is refused (published mode reads the root's published version too)", async () => {
+    const db = fakeDb([ent("a"), ent("b")]);
+    const r = await loadReferenceClosure(db, "t1", "a", "published");
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatchObject({ code: "NEVER_PUBLISHED", ref: { entity: "A" } });
+  });
+
+  it("a member that refers back to the root does not load the root a second time", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["cust", qref("b", "_tenant/_tenant/B")]]),
+      ent("b", { versions: [version("b", 1, 0, ["A"])], latest: "b-v1.0" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
+    expect(r.success && r.data.entities.map((e) => [e.ref.entity, e.source])).toEqual([["A", "draft"], ["B", "published"]]);
+    expect(r.success && r.data.cycles).toEqual([["_tenant/_tenant/A", "_tenant/_tenant/B"]]);
+  });
+
+  it("a pin on a member still wins", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["cust", qref("b", "_tenant/_tenant/B", "1.0")]]),
+      ent("b", { versions: [version("b", 1, 0, []), version("b", 1, 1, ["C"])], latest: "b-v1.1" }),
+      ent("c", { versions: [version("c", 1, 0, [])], latest: "c-v1.0" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "published", { rootAtDraft: true });
+    expect(r.success && r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
+      ["A", "draft", undefined],
+      ["B", "pinned", "1.0"],
+    ]);
+  });
+});
