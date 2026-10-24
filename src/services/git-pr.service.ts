@@ -18,7 +18,13 @@ import type { GitPrResult, GitPrStatus } from "@/types/schemas/git-pr";
 import type { ChangeRecord } from "@/services/version-history/version.types";
 import type { MigrationArtifacts } from "@/lib/migration/migration.types";
 import type { TargetOutput } from "@/lib/emission/emission.types";
-import { slugify, planGitExport, toExportEntityInput } from "./git.service";
+import {
+  slugify,
+  planGitExport,
+  toExportEntityInput,
+  exportedTargetSummary,
+  type ExportedTargetSummary,
+} from "./git.service";
 import { domainLabel } from "@/lib/entity-placement";
 
 // ---------------------------------------------------------------------------
@@ -52,7 +58,13 @@ export interface PrBodyInput {
   entity: EntityForPr;
   version: VersionForPr;
   changeInfo: ChangeRecordWithClassification;
+  /** Legacy: the first emission pipeline's outputs. Listed only when `exportedTargets` is absent or empty. */
   emittedOutputs: Record<string, TargetOutput>;
+  /**
+   * The targets the export writes (`exportedTargetSummary`): the Compatibility Report lists them with version, status and file count
+   * (a target has no valid/invalid verdict in a stored version).
+   */
+  exportedTargets?: ExportedTargetSummary[];
   migrationArtifacts?: MigrationArtifacts;
   governanceStatus?: string;
   appUrl?: string;
@@ -144,6 +156,7 @@ export function buildPrBody(input: PrBodyInput): string {
     version,
     changeInfo,
     emittedOutputs,
+    exportedTargets = [],
     migrationArtifacts,
     governanceStatus,
     appUrl,
@@ -180,7 +193,18 @@ export function buildPrBody(input: PrBodyInput): string {
   sections.push("");
 
   const targetNames = Object.keys(emittedOutputs);
-  if (targetNames.length === 0) {
+  if (exportedTargets.length > 0) {
+    // The generated targets of the entity (schemaVersions): what the PR adds. A stored version has no valid/invalid verdict.
+    sections.push("| Target | Version | Status | Files | Details |");
+    sections.push("|--------|---------|--------|-------|---------|");
+    for (const target of exportedTargets) {
+      const details =
+        [target.status === "draft" ? "draft" : "", target.preview ? "preview" : ""].filter(Boolean).join(", ") || "-";
+      sections.push(
+        `| ${target.displayName} | v${target.version} | ${target.status} | ${target.fileCount} | ${details} |`
+      );
+    }
+  } else if (targetNames.length === 0) {
     sections.push("No emission targets configured.");
   } else {
     sections.push("| Target | Status | Details |");
@@ -372,12 +396,14 @@ export async function exportWithReview(
 
     const emittedOutputs =
       (metadata.emittedOutputs as Record<string, TargetOutput>) ?? {};
+    const exportInput = toExportEntityInput(entity, version);
 
     const prBody = buildPrBody({
       entity: { ...entity, domain: entity.domain ?? { name: domainLabel(null) } },
       version: { id: versionId, version },
       changeInfo,
       emittedOutputs,
+      exportedTargets: exportedTargetSummary(exportInput),
       appUrl: process.env.NEXT_PUBLIC_APP_URL,
     });
 
@@ -415,7 +441,7 @@ export async function exportWithReview(
       },
     });
 
-    const plan = planGitExport(config.basePath, [toExportEntityInput(entity, version)]);
+    const plan = planGitExport(config.basePath, [exportInput]);
     const files = plan.files;
 
     return ok({

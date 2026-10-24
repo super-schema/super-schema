@@ -322,6 +322,38 @@ describe("Git PR Service — Pure Helpers", () => {
       expect(body).toContain("No emission targets configured.");
     });
 
+    describe("exported targets (schemaVersions)", () => {
+      const exportedTargets: PrBodyInput["exportedTargets"] = [
+        { target: "avro", displayName: "Avro Schema", version: 2, status: "published", fileCount: 3 },
+        { target: "json-schema", displayName: "JSON Schema (TypeSpec)", version: 4, status: "draft", fileCount: 2 },
+        { target: "protobuf", displayName: "Protobuf (TypeSpec)", version: 1, status: "draft", fileCount: 1, preview: true },
+        { target: "openapi3", displayName: "OpenAPI 3 (TypeSpec)", version: 5, status: "deployed", fileCount: 4, preview: true },
+      ];
+
+      it("lists the targets the PR adds with version, status, file count and a note for a draft or a preview", () => {
+        const body = buildPrBody({ ...baseInput, emittedOutputs: {}, exportedTargets });
+        expect(body).toContain("| Target | Version | Status | Files | Details |");
+        expect(body).toContain("| Avro Schema | v2 | published | 3 | - |");
+        expect(body).toContain("| JSON Schema (TypeSpec) | v4 | draft | 2 | draft |");
+        expect(body).toContain("| Protobuf (TypeSpec) | v1 | draft | 1 | draft, preview |");
+        expect(body).toContain("| OpenAPI 3 (TypeSpec) | v5 | deployed | 4 | preview |");
+        expect(body).not.toContain("No emission targets configured.");
+      });
+
+      it("does not print a valid/invalid verdict: a stored version has none", () => {
+        const body = buildPrBody({ ...baseInput, emittedOutputs: {}, exportedTargets });
+        expect(body).not.toMatch(/\bValid\b|\bInvalid\b/);
+      });
+
+      it("keeps the legacy table when exportedTargets is absent or empty", () => {
+        const legacy = buildPrBody(baseInput);
+        expect(legacy).toContain("| Target | Status | Details |");
+        expect(legacy).toContain("| bigquery | Valid | No issues |");
+        expect(buildPrBody({ ...baseInput, exportedTargets: [] })).toBe(legacy);
+        expect(buildPrBody({ ...baseInput, emittedOutputs: {}, exportedTargets: [] })).toContain("No emission targets configured.");
+      });
+    });
+
     it("handles no governance status", () => {
       const inputNoGov: PrBodyInput = {
         ...baseInput,

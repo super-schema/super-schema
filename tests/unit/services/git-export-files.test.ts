@@ -871,6 +871,12 @@ describe("entry points export file sets", () => {
     if (result.success) {
       expect(result.data.pr).toBeDefined();
       expect(result.data.filesExported).toBe(1 + 10);
+      const body = (result.data as { prBody?: string }).prBody ?? "";
+      expect(body).toContain("| Target | Version | Status | Files | Details |");
+      expect(body).toContain("| Avro Schema | v1 | published | 2 | - |");
+      expect(body).toContain("| Protobuf (TypeSpec) | v1 | published | 2 | - |");
+      expect(body).not.toContain("No emission targets configured.");
+      expect(body).not.toContain("Invalid");
     }
   });
 });
