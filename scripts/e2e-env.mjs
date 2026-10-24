@@ -14,6 +14,12 @@
 //   DROPPED  removed from the shell and left undefined: where "" would mean something other than the default, or no loader of a `.env`
 //            reaches it (NODE_ENV is Next's, TEST_EMAIL is read by the browser run, which loads no `.env`);
 //   ALLOWED  read by the app and passed through from the shell on purpose, with the reason.
+//
+// A fifth group is for the browser run alone, which the app never sees:
+//
+//   BROWSER RUN  E2E_BROWSER_CHANNEL (`chrome` | `chromium`, scripts/e2e-browser.cjs). The shell's value is dropped like every E2E_ name
+//            (that prefix is the runner's); the runner decides the channel from it (an explicit value wins, CI forces the bundled
+//            Chromium, else Chrome when the machine has it) and sets its decision for the browser run only (`phasesEnvironment`).
 
 /** The defaults of the classification importer (src/lib/importers/classification-config.ts; a unit test pins these to its constants). */
 export const CLASSIFICATION_DEFAULTS = {
@@ -119,6 +125,11 @@ export const HERMETIC_ALLOWED_NAMES = Object.freeze({
   NODE_OPTIONS: "the developer's Node flags (memory limits, proxies' CA); not an app setting",
 });
 
+/** Read by the browser run only (never the app, the migration, the seed or the build), and set from the runner's own decision, not passed through. */
+export const HERMETIC_BROWSER_RUN_NAMES = Object.freeze({
+  E2E_BROWSER_CHANNEL: "which browser the browser run uses, chrome or chromium: decided by the runner (scripts/e2e-browser.cjs) and set for the phases script and Playwright alone",
+});
+
 /** Prefixes of the names the runner owns or the app reads: whatever the shell has under them is dropped (the unit test pins the groups above, these catch names added later). */
 const OWNED_PREFIXES = /^(PG[A-Z_]+|AUTH_[A-Z0-9_]+|NEXTAUTH_[A-Z0-9_]+|E2E_[A-Z0-9_]+|ASYNCAPI_PARSER_[A-Z_]+|AI_[A-Z_]+|SCHEMA_(IMPORT|CLASSIFICATION)_[A-Z_]+)$/;
 
@@ -157,13 +168,17 @@ export function appEnvironment(base, run) {
  * The environment of the browser run: the shell's rest and what points it at the run. No name is blanked here: the browser run loads no
  * `.env` (a blank TEST_EMAIL would be the login "" and not the seeded admin).
  *
+ * `run.browserChannel` is the runner's decision (`chrome` | `chromium`); the browser run gets it as E2E_BROWSER_CHANNEL, and gets nothing
+ * when the runner decided nothing (the shell's own value was dropped from `base`).
+ *
  * @param {Record<string, string>} base
- * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string }} run
+ * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string, browserChannel?: string }} run
  * @returns {Record<string, string>}
  */
 export function phasesEnvironment(base, run) {
   return {
     ...base,
+    ...(run.browserChannel ? { E2E_BROWSER_CHANNEL: run.browserChannel } : {}),
     DB_PROVIDER: "postgresql",
     DATABASE_URL: run.databaseUrl,
     E2E_DATABASE_URL: run.databaseUrl,

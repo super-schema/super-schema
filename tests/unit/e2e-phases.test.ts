@@ -14,8 +14,10 @@ import {
   authStateProblem,
   chooseAuthState,
   exitCodeOf,
+  browserSummaryLine,
   isEntryPoint,
   parseCli,
+  phaseEnvironment,
   phaseSummaryLine,
   planPhases,
   playwrightCommand,
@@ -306,6 +308,48 @@ describe("phaseSummaryLine", () => {
     expect(phaseSummaryLine({ phase, result: undefined, exists: () => true })).toBe("  main: not run");
     expect(phaseSummaryLine({ phase, result: { name: "main", code: 1, refused: true }, exists: () => true })).toBe("  main: refused");
   });
+});
+
+describe("the browser of the phases (scripts/e2e-browser.cjs)", () => {
+  const phase = plan("smoke").phases[0];
+  const decision = (channel: "chrome" | "chromium") => ({ channel, source: "env", reason: `E2E_BROWSER_CHANNEL=${channel}`, chromePath: undefined });
+
+  it("hands the channel it decided to Playwright, over whatever the shell had, with the phase's own variables and the shell's rest", () => {
+    const env = phaseEnvironment({ PATH: "/usr/bin", E2E_BROWSER_CHANNEL: "chromium" }, phase, decision("chrome"));
+    expect(env.E2E_BROWSER_CHANNEL).toBe("chrome");
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.E2E_AUTH_STATE).toBe(AUTH);
+    expect(env.PLAYWRIGHT_HTML_OUTPUT_DIR).toBe(phase.env.PLAYWRIGHT_HTML_OUTPUT_DIR);
+    expect(phaseEnvironment({}, phase, decision("chromium")).E2E_BROWSER_CHANNEL).toBe("chromium");
+  });
+
+  it("does not change the phase's own plan (the plan stays pure: no browser in it)", () => {
+    expect(phase.env).not.toHaveProperty("E2E_BROWSER_CHANNEL");
+  });
+
+  it("is named in a line of the summary", () => {
+    expect(browserSummaryLine("Google Chrome 155.0.8059.85 [channel chrome: E2E_BROWSER_CHANNEL=chrome]")).toBe(
+      "  browser: Google Chrome 155.0.8059.85 [channel chrome: E2E_BROWSER_CHANNEL=chrome]",
+    );
+  });
+
+  const script = path.resolve(__dirname, "../../scripts/e2e-phases.mjs");
+  const run = (args: string[], env: Record<string, string>) =>
+    spawnSync(process.execPath, [script, ...args], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv, timeout: 30_000 });
+
+  it("refuses a value of E2E_BROWSER_CHANNEL that is not a channel, with exit 2, before it does anything", () => {
+    const result = run(["smoke"], { E2E_BROWSER_CHANNEL: "firefox" });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/E2E_BROWSER_CHANNEL must be "chrome" or "chromium"/);
+    expect(result.stdout).not.toMatch(/login:/);
+  });
+
+  it("lists the tests without naming a browser (a listing starts none)", () => {
+    const result = run(["smoke", "--list"], { E2E_BROWSER_CHANNEL: "chromium" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/\[e2e-phases\] main: playwright test/);
+    expect(result.stdout).not.toMatch(/browser:/);
+  }, 60_000);
 });
 
 describe("exitCodeOf", () => {

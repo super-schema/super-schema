@@ -18,6 +18,8 @@ Design and decisions: `docs/superpowers/specs/2026-10-23-release-ui-suite-design
 - **Playwright browsers**: `npx playwright install chromium` is enough for `--project chromium`. The smoke tier on three browsers runs
   Firefox and WebKit as well, and fails for those projects when they are not installed: `npx playwright install firefox webkit` (add
   `--with-deps` on a Linux CI machine).
+- **Google Chrome** (optional). When the machine has it, the `chromium`, `serial-after` and `a11y` projects run in it; without it they
+  run in the Chromium Playwright downloads. Which one, and how to force the other: [The browser](#the-browser-google-chrome-or-the-bundled-chromium).
 - **macOS or Linux.** The runner puts each child in a process group of its own and signals the group (`kill(-pid)`, `ps` for the last
   resort); on Windows it signals the child alone and is not tested there.
 - Node and `npm ci`, as for the app. No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
@@ -41,11 +43,50 @@ A tier is more than one `playwright test` command (Playwright runs a project's d
 command clears its output directory), so `scripts/e2e-phases.mjs` runs the phases of a tier one after the other, each with reports of its
 own, and the release runner calls it. You can call it yourself against a server you started: `E2E_BASE_URL=http://localhost:3107 npm run test:e2e:smoke`.
 
+## The browser: Google Chrome or the bundled Chromium
+
+The `chromium`, `serial-after` and `a11y` projects run in **Google Chrome** (Playwright's `channel: "chrome"`) when the machine has it, and in
+the Chromium that Playwright downloads when it has not. The project names do not change (`--project chromium` is still `chromium`);
+`playwright.config.ts` adds `use.channel` to those three. The choice is made once per run by `scripts/e2e-browser.cjs`, the same code for
+`playwright.config.ts`, `scripts/e2e-phases.mjs` and the release runner, in this order:
+
+| | Rule | Browser |
+| --- | --- | --- |
+| 1 | `E2E_BROWSER_CHANNEL=chrome` or `=chromium` (any case) | what it says, over everything below, CI included. `chrome` on a machine without Chrome stops the run with exit code 2 (it is not quietly replaced by another browser); any other value is refused the same way |
+| 2 | `CI` is set | the bundled Chromium: what CI has always run (the workflow installs Playwright's browsers, not Chrome) |
+| 3 | Chrome is installed | Chrome |
+| 4 | otherwise | the bundled Chromium |
+
+Chrome is looked for at `/Applications/Google Chrome.app` on macOS, and on Linux as `google-chrome` or `google-chrome-stable` on the `PATH`
+(then `/opt/google/chrome/chrome`, the file Playwright itself launches for `channel: "chrome"`). Other platforms always get the bundled Chromium.
+
+```bash
+npm run test:e2e:release:smoke                                   # Chrome if it is installed, else the bundled Chromium
+E2E_BROWSER_CHANNEL=chromium npm run test:e2e:release:smoke      # force the bundled Chromium on a machine that has Chrome
+E2E_BROWSER_CHANNEL=chrome npm run test:e2e:release:smoke        # insist on Chrome (exit 2 when there is none)
+```
+
+The run names its browser, with the version the browser reports for itself (`<browser> --version`), at its start and in its last line:
+
+```
+[e2e-release] browser: Google Chrome 155.0.8059.85 [channel chrome: Google Chrome found at /Applications/Google Chrome.app/Contents/MacOS/Google Chrome]
+[e2e-release] done: exit 0; reports and server.log: ...; browser: Google Chrome 155.0.8059.85 [channel chrome: ...]
+```
+
+and `scripts/e2e-phases.mjs` (called alone, against a server you started) prints `[e2e-phases] browser: ...` at its start and `browser: ...` in
+its summary. A listing (`--list`) starts no browser and names none. `CI=true` also turns on CI's reporters, one retry and one worker, so a
+local run that wants Chrome *and* those passes `E2E_BROWSER_CHANNEL=chrome` explicitly (rule 1 beats rule 2).
+
+**Visual snapshots are always taken in the bundled Chromium.** The `visual` project never takes the channel: its screenshots are pixels, and
+they are generated and compared in the bundled Chromium of the Playwright Docker image, so no Chrome (any version, any operating system) ever
+decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit-smoke`) are not affected either.
+
 ## What the runner does
 
 `scripts/e2e-release.mjs`, in this order:
 
-1. Checks that Docker is running.
+1. Checks that Docker is running; decides the browser (above; an explicit `E2E_BROWSER_CHANNEL=chrome` that this machine cannot give is exit 2
+   before anything is provisioned) and names it with its version.
 2. Picks a port for the app and one for the database (random, 20000-32000: below the ports Linux gives outgoing connections; never 3000,
    5432 or 5380-5410; checked free on loopback when the run starts, and the app's again after the build).
 3. `docker run -d --rm --name ss-e2e-<id> postgres:16`, bound to `127.0.0.1`, data on tmpfs, a random password; waits until it accepts connections.
@@ -56,7 +97,7 @@ own, and the release runner calls it. You can call it yourself against a server 
    the meantime is a new port and a second start, up to three), then asks `/api/auth/providers` and stops the run when the sign-in URLs
    are not under the run's own origin (an `AUTH_URL` got through) or Google sign-in is on (a `GOOGLE_CLIENT_ID` got through). The
    app's output goes to `<output root>/server.log`.
-7. `node scripts/e2e-phases.mjs <tier>` with `E2E_BASE_URL`, `E2E_DATABASE_URL`, `E2E_OUTPUT_ROOT` and `E2E_AUTH_STATE` of the run's own.
+7. `node scripts/e2e-phases.mjs <tier>` with `E2E_BASE_URL`, `E2E_DATABASE_URL`, `E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE` and `E2E_BROWSER_CHANNEL` of the run's own.
    The exit code of the run is that command's.
 8. Teardown, in the reverse order of the setup: the app is stopped (SIGTERM, SIGKILL after 10 s), the container is removed
    (`docker rm -f`), the temp directory (login file) is deleted. This happens in a `finally`, and on SIGINT, SIGTERM and SIGHUP. A teardown
@@ -79,12 +120,13 @@ app reads is in exactly one group (`scripts/e2e-env.mjs`):
 | blanked | `GOOGLE_CLIENT_ID` / `_SECRET`, `AI_PROVIDER` / `AI_BASE_URL` / `AI_MODEL`, `API_KEY`, `DIRECT_URL`, `SHADOW_DATABASE_URL`, `SCHEMA_IMPORT_GIT_MODE` / `_SCOPES` (empty = restricted, the default), `SCHEMA_CLASSIFICATION_VALUE_MAP`, `HEALTH_DB_DEGRADED_MS` / `HEALTH_DB_TIMEOUT_MS` (the health probe's thresholds), every `ASYNCAPI_PARSER_*` the code reads (`ASYNCAPI_PARSER_IN_PROCESS=1` would move the parser into the server), `AUTH_REDIRECT_PROXY_URL`, `AUTH_SECRET_1`..`3`, the libpq names (`PGHOST`, `PGPASSWORD`, `PGSSLMODE` ...) | `""`, for the app, `prisma migrate`, the seed and the build: the app reads "" as "not configured" |
 | dropped | `NODE_ENV` (Next sets it), `PORT`, `HOSTNAME` (the app is started with `-p` and `-H`), `TEST_EMAIL`, `TEST_PASSWORD` (the browser run reads them and loads no `.env`; the seeded admin is the contract) | not defined |
 | allowed | `NEXT_PUBLIC_APP_URL` (baked into the build, so part of its hash), `NODE_OPTIONS` | passed through from your shell |
+| browser run | `E2E_BROWSER_CHANNEL` (`chrome` or `chromium`) | the runner's own decision (above), for the phases script and Playwright only; never the app, the migration, the seed or the build. Your shell's value is dropped like every `E2E_` name and read by the runner as rule 1 |
 
 `AUTH_URL` and `AUTH_SECRET` are set, not blanked: Auth.js reads `AUTH_URL ?? NEXTAUTH_URL` and `AUTH_SECRET ?? NEXTAUTH_SECRET`, and an empty
 string is not nullish, so a blank `AUTH_URL` would switch the run's `NEXTAUTH_URL` off. Everything else in your shell is passed on;
 whatever your shell has under the prefixes `PG`, `AUTH_`, `NEXTAUTH_`, `E2E_`, `ASYNCAPI_PARSER_`, `AI_`, `SCHEMA_IMPORT_` or
 `SCHEMA_CLASSIFICATION_` is dropped. The browser run (Playwright) gets the same shell minus these, plus `E2E_BASE_URL`, `E2E_DATABASE_URL`,
-`E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE`, `DATABASE_URL` and `DB_PROVIDER`; it blanks nothing.
+`E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE`, `E2E_BROWSER_CHANNEL`, `DATABASE_URL` and `DB_PROVIDER`; it blanks nothing.
 
 **When the app starts to read a new environment name**, `tests/unit/scripts/e2e-env.test.ts` fails (it scans `src`, the seed,
 `prisma.config.ts`, `next.config.ts` and `scripts/db.ts`, and reads `src/env.ts`): put the name in one of the groups in

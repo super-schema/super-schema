@@ -16,6 +16,7 @@ import {
   CLASSIFICATION_DEFAULTS,
   HERMETIC_ALLOWED_NAMES,
   HERMETIC_BLANKED_NAMES,
+  HERMETIC_BROWSER_RUN_NAMES,
   HERMETIC_DROPPED_NAMES,
   HERMETIC_SET_NAMES,
   appEnvironment,
@@ -40,6 +41,7 @@ const DEVELOPER = {
   SCHEMA_IMPORT_GIT_MODE: "any",
   ASYNCAPI_PARSER_IN_PROCESS: "1",
   TEST_EMAIL: "dev@example.com",
+  E2E_BROWSER_CHANNEL: "chromium",
 };
 
 describe("the groups", () => {
@@ -70,8 +72,13 @@ describe("the groups", () => {
     );
   });
 
+  it("pin the names only the browser run reads: the browser channel, which the runner decides and sets for it alone", () => {
+    expect(Object.keys(HERMETIC_BROWSER_RUN_NAMES)).toEqual(["E2E_BROWSER_CHANNEL"]);
+    for (const reason of Object.values(HERMETIC_BROWSER_RUN_NAMES)) expect(reason.length).toBeGreaterThan(10);
+  });
+
   it("are disjoint: a name is in one group", () => {
-    const groups = [HERMETIC_SET_NAMES, HERMETIC_BLANKED_NAMES, Object.keys(HERMETIC_DROPPED_NAMES), Object.keys(HERMETIC_ALLOWED_NAMES)];
+    const groups = [HERMETIC_SET_NAMES, HERMETIC_BLANKED_NAMES, Object.keys(HERMETIC_DROPPED_NAMES), Object.keys(HERMETIC_ALLOWED_NAMES), Object.keys(HERMETIC_BROWSER_RUN_NAMES)];
     const all = groups.flat();
     expect(all.filter((name, i) => all.indexOf(name) !== i)).toEqual([]);
   });
@@ -132,6 +139,29 @@ describe("a fake developer environment never reaches a child", () => {
     expect(phases.E2E_AUTH_STATE).toBe("/tmp/ss-e2e-x/admin.json");
     expect(phases.DATABASE_URL).toBe(RUN.databaseUrl);
     expect(phases.PATH).toBe("/usr/bin");
+  });
+
+  describe("the browser channel (E2E_BROWSER_CHANNEL)", () => {
+    const run = { ...RUN, outputRoot: "/out", authState: "/tmp/ss-e2e-x/admin.json" };
+
+    it("is the runner's decision in the browser run's environment, whatever the developer's shell says", () => {
+      expect(phasesEnvironment(base, { ...run, browserChannel: "chrome" }).E2E_BROWSER_CHANNEL).toBe("chrome");
+      expect(phasesEnvironment(base, { ...run, browserChannel: "chromium" }).E2E_BROWSER_CHANNEL).toBe("chromium");
+    });
+
+    it("is not defined for the browser run when the runner decided nothing (the shell's own value does not slip through)", () => {
+      expect(base.E2E_BROWSER_CHANNEL).toBeUndefined();
+      expect(phases.E2E_BROWSER_CHANNEL).toBeUndefined();
+    });
+
+    it("never reaches the app, the migration, the seed or the build: the app has no use for it, and a run's server is the same for both browsers", () => {
+      expect(app.E2E_BROWSER_CHANNEL).toBeUndefined();
+      expect(Object.keys(app).filter((name) => name.includes("BROWSER"))).toEqual([]);
+    });
+
+    it("is dropped from the shell like every other E2E_ name (the runner's decision is the only way in)", () => {
+      expect(hermeticEnv({ E2E_BROWSER_CHANNEL: "chrome", KEEP_ME: "y" })).toEqual({ KEEP_ME: "y" });
+    });
   });
 
   it("drops a name added later under a prefix the runner owns", () => {

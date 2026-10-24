@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
+import { decideForThisProcess } from "./scripts/e2e-browser.cjs";
 
 /**
  * The browser suite (tests/e2e). Everything that every spec used to repeat lives here, once: timeouts, trace / screenshot / video,
@@ -23,6 +24,11 @@ import { AUTH_STATE_PATH } from "./tests/e2e/helpers/auth-state";
  *   - `serial-after`   the specs that cannot run next to the others (below);
  *   - `visual`, `a11y` Chromium-only screenshot comparisons / axe scans of a few pages (visual.spec.ts, a11y.spec.ts). Both are kept
  *                      out of `chromium` so they run once, where they are meant to (visual snapshots only in the Playwright Docker image).
+ *
+ * THE BROWSER of `chromium`, `serial-after` and `a11y` is the Google Chrome of the machine (`channel: "chrome"`) or the Chromium
+ * Playwright downloads, decided by scripts/e2e-browser.cjs (docs/testing/e2e.md): `E2E_BROWSER_CHANNEL=chrome|chromium` says it; without it
+ * CI runs the bundled Chromium, and anywhere else Chrome is used when it is installed. `visual` ignores the channel: its snapshots are
+ * pixels, taken in the bundled Chromium of the Playwright Docker image. The project names do not change with the browser.
  *
  * FILTERS AND DEPENDENCIES: Playwright runs a project's dependencies (`setup`, and `chromium` for `serial-after`) IN FULL, whatever
  * `--grep` / `--grep-invert` say, as soon as a project that depends on them has a matching test (verified with `--list`: `--grep @slow
@@ -61,6 +67,15 @@ const OWN_PROJECT = ["visual.spec.ts", "a11y.spec.ts"];
 const EXTERNAL_BASE_URL = process.env.E2E_BASE_URL;
 
 const CI = !!process.env.CI;
+
+/**
+ * The browser of the projects that follow the channel (see THE BROWSER above). The runner and the phases script decide once and hand the
+ * answer on as E2E_BROWSER_CHANNEL; a bare `npx playwright test` decides here, the same way. An explicit `chrome` on a machine without
+ * Chrome stops here with the reason, before a test is started.
+ */
+const BROWSER = decideForThisProcess(process.env);
+if (BROWSER.problem) throw new Error(BROWSER.problem);
+const channelUse = BROWSER.channel === "chrome" ? { channel: "chrome" as const } : {};
 
 /**
  * E2E_DATABASE_URL (what the release runner provisions) is the database of the server this config starts, not just of the fixtures:
@@ -111,7 +126,7 @@ export default defineConfig({
     },
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"], ...loggedIn },
+      use: { ...devices["Desktop Chrome"], ...channelUse, ...loggedIn },
       testIgnore: [...RUN_ALONE_AFTER_THE_REST, ...OWN_PROJECT],
       dependencies: ["setup"],
     },
@@ -131,7 +146,7 @@ export default defineConfig({
     },
     {
       name: "serial-after",
-      use: { ...devices["Desktop Chrome"], ...loggedIn },
+      use: { ...devices["Desktop Chrome"], ...channelUse, ...loggedIn },
       testMatch: RUN_ALONE_AFTER_THE_REST,
       fullyParallel: false,
       workers: 1,
@@ -139,13 +154,14 @@ export default defineConfig({
     },
     {
       name: "visual",
+      // No channel, whatever the run uses elsewhere: the snapshots are of the bundled Chromium in the Playwright Docker image.
       use: { ...devices["Desktop Chrome"], ...loggedIn },
       testMatch: "visual.spec.ts",
       dependencies: ["setup"],
     },
     {
       name: "a11y",
-      use: { ...devices["Desktop Chrome"], ...loggedIn },
+      use: { ...devices["Desktop Chrome"], ...channelUse, ...loggedIn },
       testMatch: "a11y.spec.ts",
       dependencies: ["setup"],
     },

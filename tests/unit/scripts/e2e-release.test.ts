@@ -20,6 +20,7 @@ import {
   pickPorts,
   planRun,
   runRelease,
+  withPorts,
 } from "../../../scripts/e2e-release.mjs";
 
 const BINS = { prisma: "/repo/node_modules/prisma/build/index.js", next: "/repo/node_modules/next/dist/bin/next" };
@@ -45,8 +46,10 @@ const DEVELOPER = {
   PLAYWRIGHT_BROWSERS_PATH: "/cache/ms-playwright",
   NEXT_PUBLIC_APP_URL: "https://app.example",
 };
+const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+// No Chrome unless a test says so: the machine the tests run on must not decide what they see.
 const plan = (argv: string[] = ["--tier", "smoke"], env: Record<string, string> = DEVELOPER, options: Parameters<typeof planRun>[2] = {}) =>
-  planRun(argv, env, { root: "/repo", tmpdir: "/tmp", bins: BINS, ...options });
+  planRun(argv, env, { root: "/repo", tmpdir: "/tmp", bins: BINS, chromePath: undefined, ...options });
 
 describe("parseArgs", () => {
   it("reads the tier in both spellings, and the last one wins (an npm script's default can be overridden)", () => {
@@ -263,6 +266,48 @@ describe("planRun: the environment of every child", () => {
     expect(p.env.phases.PLAYWRIGHT_BROWSERS_PATH).toBe("/cache/ms-playwright");
   });
 
+  describe("the browser (E2E_BROWSER_CHANNEL, scripts/e2e-browser.cjs)", () => {
+    it("is Chrome when the machine has it and nothing says otherwise, and the browser run is told so", () => {
+      const withChrome = plan(["--tier", "smoke"], DEVELOPER, { chromePath: CHROME });
+      expect(withChrome.browser).toMatchObject({ channel: "chrome", source: "auto", chromePath: CHROME });
+      expect(withChrome.env.phases.E2E_BROWSER_CHANNEL).toBe("chrome");
+    });
+
+    it("is the bundled Chromium without Chrome, and the browser run is told that too (the runner always decides)", () => {
+      const without = plan();
+      expect(without.browser).toMatchObject({ channel: "chromium", source: "auto" });
+      expect(without.env.phases.E2E_BROWSER_CHANNEL).toBe("chromium");
+    });
+
+    it("is the bundled Chromium on CI even when Chrome is installed", () => {
+      const ci = plan(["--tier", "smoke"], { ...DEVELOPER, CI: "true" }, { chromePath: CHROME });
+      expect(ci.browser).toMatchObject({ channel: "chromium", source: "ci" });
+      expect(ci.env.phases.E2E_BROWSER_CHANNEL).toBe("chromium");
+    });
+
+    it("takes the shell's explicit value over CI and over what is installed", () => {
+      expect(plan(["--tier", "smoke"], { ...DEVELOPER, E2E_BROWSER_CHANNEL: "chromium" }, { chromePath: CHROME }).env.phases.E2E_BROWSER_CHANNEL).toBe("chromium");
+      expect(plan(["--tier", "smoke"], { ...DEVELOPER, E2E_BROWSER_CHANNEL: "chrome", CI: "true" }, { chromePath: CHROME }).env.phases.E2E_BROWSER_CHANNEL).toBe("chrome");
+    });
+
+    it("refuses, before anything is provisioned, an explicit chrome with no Chrome here, and a value that is not a channel", () => {
+      expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_BROWSER_CHANNEL: "chrome" })).toThrow(UsageError);
+      expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_BROWSER_CHANNEL: "chrome" })).toThrow(/Google Chrome was not found/);
+      expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_BROWSER_CHANNEL: "firefox" })).toThrow(UsageError);
+      expect(() => plan(["--tier", "smoke"], { ...DEVELOPER, E2E_BROWSER_CHANNEL: "firefox" })).toThrow(/E2E_BROWSER_CHANNEL/);
+    });
+
+    it("keeps the channel out of the app, the migration, the seed and the build", () => {
+      const withChrome = plan(["--tier", "smoke"], DEVELOPER, { chromePath: CHROME });
+      for (const env of [withChrome.env.app, withChrome.env.db]) expect(env.E2E_BROWSER_CHANNEL).toBeUndefined();
+    });
+
+    it("keeps its decision when the ports change (a port that was taken)", () => {
+      const withChrome = plan(["--tier", "smoke"], DEVELOPER, { chromePath: CHROME });
+      expect(withPorts(withChrome, { app: 31000, db: 31001 }).env.phases.E2E_BROWSER_CHANNEL).toBe("chrome");
+    });
+  });
+
   it("starts the app with next's own bin under node, on the run's port, on loopback only", () => {
     expect(p.commands.server.command).toBe(process.execPath);
     expect(p.commands.server.args).toEqual([BINS.next, "start", "-p", String(p.ports.app), "-H", "127.0.0.1"]);
@@ -386,6 +431,8 @@ function fakeDeps(
     /** The first n starts of the app find the port taken (the app exits with EADDRINUSE before it is ready). */
     appPortTaken?: number;
     verify?: { ok: boolean; message?: string };
+    /** What the browser probe says; "throw" makes it fail. */
+    browser?: string;
   } = {},
 ) {
   const events: string[] = [];
@@ -411,6 +458,11 @@ function fakeDeps(
     checkDocker: async () => {
       events.push("check docker");
       return options.docker ?? { ok: true };
+    },
+    // Not an event of the run's steps (FULL_RUN pins their order): it only reads `--version` of a browser.
+    describeBrowser: async () => {
+      if (options.browser === "throw") throw new Error("spawn ENOENT");
+      return options.browser ?? "Google Chrome 155.0.8059.85 [channel chrome: fake]";
     },
     makeDirs: async () => record("make dirs"),
     removeTmp: async () => record("remove tmp"),
@@ -503,6 +555,27 @@ describe("runRelease", () => {
     const { deps, events } = fakeDeps();
     expect(await runRelease(plan(), deps)).toBe(0);
     expect(events).toEqual([...FULL_RUN, "stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
+  });
+
+  it("says which browser the run uses, at the start and in the last line", async () => {
+    const { deps, messages } = fakeDeps({ browser: "Google Chrome 155.0.8059.85 [channel chrome: fake]" });
+    const p = plan();
+    await runRelease(p, deps);
+    const start = messages.findIndex((m) => m.includes(`run ${p.runId}: tier`));
+    expect(messages[start + 1]).toBe("[e2e-release] browser: Google Chrome 155.0.8059.85 [channel chrome: fake]");
+    expect(messages.at(-1)).toMatch(/done: exit 0.*; browser: Google Chrome 155\.0\.8059\.85 \[channel chrome: fake\]$/);
+  });
+
+  it("does not fail a run because the browser's version cannot be read: it says so", async () => {
+    const { deps, messages } = fakeDeps({ browser: "throw" });
+    expect(await runRelease(plan(), deps)).toBe(0);
+    expect(messages.join("\n")).toContain("[e2e-release] browser: unknown (spawn ENOENT)");
+  });
+
+  it("does not ask for the browser of a run that stopped at Docker (nothing to run in)", async () => {
+    const { deps, messages } = fakeDeps({ docker: { ok: false, message: "Docker is not running" } });
+    expect(await runRelease(plan(), deps)).toBe(EXIT.setup);
+    expect(messages.join("\n")).not.toContain("browser:");
   });
 
   it("returns a failing run's code as it is, and still tears down", async () => {

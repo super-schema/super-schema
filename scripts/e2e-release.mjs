@@ -22,7 +22,10 @@
 //      its log in <output root>/server.log; waits until it is ready and `/api/v1/health` answers, then checks that its sign-in URL is
 //      under the run's own origin and that Google sign-in is off (a leaked AUTH_URL or GOOGLE_CLIENT_ID stops the run);
 //   6. `scripts/e2e-phases.mjs <tier>` with E2E_BASE_URL pointing at that app, E2E_DATABASE_URL at that database, and an output root and
-//      a login file of the run's own: the exit code of the run is that script's;
+//      a login file of the run's own: the exit code of the run is that script's. The browser is decided before anything is provisioned
+//      (scripts/e2e-browser.cjs: an explicit E2E_BROWSER_CHANNEL=chrome|chromium; else Chromium on CI; else Google Chrome when the machine has
+//      it, else Playwright's Chromium), handed to the phases script as E2E_BROWSER_CHANNEL, and named, with its version, at the start of
+//      the run and in its last line;
 //   7. teardown, in the reverse order of the setup: the app (SIGTERM, SIGKILL after a grace period), the run's marker, the container
 //      (`docker rm -f`; --keep leaves it and says how to connect), the temp directory. It runs in a `finally`, and on SIGINT / SIGTERM /
 //      SIGHUP (exit code 128 + the signal's number).
@@ -48,6 +51,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { decideBrowser, describeBrowser, detectChrome, realProbes } from "./e2e-browser.cjs";
 import { hashBuildInputs } from "./e2e-build-inputs.mjs";
 import { appEnvironment, hermeticEnv, phasesEnvironment } from "./e2e-env.mjs";
 import { isEntryPoint, parseCli, planPhases } from "./e2e-phases.mjs";
@@ -60,6 +64,7 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spa
  *   runId: string, containerName: string, image: string, dbPassword: string, authSecret: string,
  *   root: string, tmpDir: string, outputRoot: string, serverLog: string, authState: string,
  *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
+ *   browser: import("./e2e-browser.cjs").BrowserDecision,
  * }} FixedPlan the part of a plan that does not depend on the ports
  * @typedef {FixedPlan & {
  *   ports: { app: number, db: number }, databaseUrl: string, baseUrl: string,
@@ -230,7 +235,7 @@ export function withPorts(fixed, ports) {
   const databaseUrl = `postgresql://${DB_USER}:${fixed.dbPassword}@127.0.0.1:${ports.db}/${DB_NAME}`;
   const baseUrl = `http://localhost:${ports.app}`;
   const app = appEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, authSecret: fixed.authSecret, pgliteDir: path.join(fixed.tmpDir, "pglite-unused") });
-  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState });
+  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState, browserChannel: fixed.browser.channel });
   const node = process.execPath;
   return {
     ...fixed,
@@ -254,7 +259,8 @@ export function withPorts(fixed, ports) {
  *
  * @param {string[]} argv the arguments after the script name
  * @param {Record<string, string | undefined>} [env]
- * @param {{ root?: string, tmpdir?: string, bins?: { prisma: string, next: string }, randomHex?: (bytes: number) => string, randomPort?: () => number }} [options]
+ * @param {{ root?: string, tmpdir?: string, bins?: { prisma: string, next: string }, randomHex?: (bytes: number) => string, randomPort?: () => number, chromePath?: string | undefined }} [options]
+ *   `chromePath` is the Google Chrome of the machine (the key present with `undefined`: there is none); the machine is asked when it is not given
  * @returns {RunPlan}
  */
 export function planRun(argv, env = process.env, options = {}) {
@@ -265,6 +271,15 @@ export function planRun(argv, env = process.env, options = {}) {
   const outputRoot = path.resolve(args.outputRoot ?? env.E2E_OUTPUT_ROOT ?? path.join(root, "test-results", `run-${runId}`));
   const tmpDir = path.join(options.tmpdir ?? os.tmpdir(), `${CONTAINER_PREFIX}${runId}`);
   const baseEnv = hermeticEnv(env);
+  // The browser is decided here, once, before anything is provisioned: an explicit chrome that this machine cannot give is a usage error
+  // (not a run that fails at its last step), and every later step reads the same decision.
+  let browser;
+  try {
+    browser = decideBrowser({ env, ci: Boolean(env.CI), chromePath: "chromePath" in options ? options.chromePath : detectChrome() });
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
+  }
+  if (browser.problem) throw new UsageError(browser.problem);
   const phasesArgv = [
     args.tier,
     ...(args.shard ? [`--shard=${args.shard}`] : []),
@@ -296,6 +311,7 @@ export function planRun(argv, env = process.env, options = {}) {
     baseEnv,
     bins: options.bins ?? resolveBins(root),
     phasesArgv,
+    browser,
   };
   return withPorts(fixed, pickPorts(options.randomPort));
 }
@@ -399,7 +415,7 @@ function keepInstructions(plan) {
  * @param {RunPlan} initialPlan
  * @param {any} deps the side effects, as `createRealDeps` returns them (log, error, onSignal, checkDocker, makeDirs, removeTmp,
  *   freePorts, startContainer, removeContainer, waitForDb, exec, buildDecision, buildConflict, registerRun, writeBuildStamp,
- *   freeAppPort, startServer, waitForHealth, verifyApp, runPhases); the unit tests give fakes
+ *   freeAppPort, startServer, waitForHealth, verifyApp, runPhases, describeBrowser); the unit tests give fakes
  * @returns {Promise<number>} the exit code
  */
 export async function runRelease(initialPlan, deps) {
@@ -428,12 +444,21 @@ export async function runRelease(initialPlan, deps) {
 
   let code = EXIT.setup;
   let madeDirs = false;
+  /** Which browser the run uses, with its version: named at the start and in the last line (undefined until it is asked for). */
+  let browserText;
   try {
     await step("checking that Docker is running", async () => {
       const docker = await deps.checkDocker();
       if (!docker.ok) throw new SetupError(docker.message ?? "Docker is not running");
     });
     deps.log(`[e2e-release] run ${plan.runId}: tier ${plan.tier}${plan.listOnly ? " (list only)" : ""}; reports and server.log will be in ${plan.outputRoot}`);
+    // Never fails the run: a browser whose `--version` cannot be read is said so, and Playwright says the rest when it launches it.
+    try {
+      browserText = await deps.describeBrowser(plan);
+    } catch (error) {
+      browserText = `unknown (${error instanceof Error ? error.message : String(error)})`;
+    }
+    deps.log(`[e2e-release] browser: ${browserText}`);
 
     undo.push({ name: "remove the temp directory", undo: () => deps.removeTmp(plan), hint: () => `rm -rf ${plan.tmpDir}` });
     await step("making the run's directories", () => deps.makeDirs(plan));
@@ -538,7 +563,7 @@ export async function runRelease(initialPlan, deps) {
 
   const final = received ? exitCodeForSignal(received) : code;
   deps.log(
-    `[e2e-release] done: exit ${final}${received ? ` (${received})` : ""}${madeDirs ? `; reports and server.log: ${plan.outputRoot}` : ""}` +
+    `[e2e-release] done: exit ${final}${received ? ` (${received})` : ""}${madeDirs ? `; reports and server.log: ${plan.outputRoot}` : ""}${browserText ? `; browser: ${browserText}` : ""}` +
       (leftovers.length > 0 ? `; TEARDOWN INCOMPLETE: ${leftovers.join("; ")} (leftovers of any run: docker ps -a --filter name=${CONTAINER_PREFIX})` : ""),
   );
   return final;
@@ -813,6 +838,7 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
 
     exec: (_label, spec) => runStep(spec),
     runPhases: (plan) => runStep(plan.commands.phases),
+    describeBrowser: (plan) => describeBrowser(plan.browser, realProbes()),
 
     buildDecision(plan) {
       const nextDir = path.join(plan.root, ".next");

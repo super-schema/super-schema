@@ -25,15 +25,21 @@
 // (scripts/e2e-process.mjs): a SIGINT / SIGTERM / SIGHUP to this script is forwarded to that group once, a second one kills it, and the
 // login file is removed on the way out either way.
 //
+// The browser: the phases script decides it once (scripts/e2e-browser.cjs: an explicit E2E_BROWSER_CHANNEL=chrome|chromium wins; else
+// Chromium on CI; else Google Chrome when the machine has it, else Playwright's Chromium), gives every Playwright it starts that answer as
+// E2E_BROWSER_CHANNEL (playwright.config.ts reads it), and names the browser with its version at the start and in the summary. A listing
+// (`--list`) starts no browser and names none.
+//
 // Dependency-free on purpose: the release runner calls it, and the planner and the pieces around it (`planPhases`, `parseCli`,
-// `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `isEntryPoint`) are unit tested (tests/unit/e2e-phases.test.ts)
-// without running anything.
+// `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `phaseEnvironment`, `isEntryPoint`) are unit tested
+// (tests/unit/e2e-phases.test.ts) without running anything.
 
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { browserEnv, decideForThisProcess, describeBrowser, realProbes } from "./e2e-browser.cjs";
 import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, signalGroup, spawnGroup } from "./e2e-process.mjs";
 
 export const TIERS = ["smoke", "regression", "nightly", "serial"];
@@ -249,6 +255,24 @@ export function phaseSummaryLine({ phase, result, exists = existsSync }) {
   return `  ${phase.name}: ${text}${where.map((w) => `   ${w}`).join("")}`;
 }
 
+/** The line of the summary that names the browser of the run (`describeBrowser`'s text: name, version, channel, why). */
+export function browserSummaryLine(text) {
+  return `  browser: ${text}`;
+}
+
+/**
+ * The environment of a phase's Playwright: the process's own, the phase's (reports, login), and the browser that was decided (over
+ * whatever E2E_BROWSER_CHANNEL the shell had: the decision already took it into account).
+ *
+ * @param {Record<string, string | undefined>} env
+ * @param {Phase} phase
+ * @param {{ channel: "chrome" | "chromium" } | undefined} browser undefined for a listing, which decides nothing: the environment is then the phase's own
+ * @returns {Record<string, string | undefined>}
+ */
+export function phaseEnvironment(env, phase, browser) {
+  return { ...env, ...phase.env, ...(browser ? browserEnv(browser) : {}) };
+}
+
 /**
  * Runs the phases in order and returns their results. Everything it touches comes in through `deps`, so the order of the login file's
  * removal and of the phases is unit tested with fakes. A phase that fails does not stop the next one; an interrupt (`deps.interrupted()`)
@@ -323,11 +347,16 @@ export function isEntryPoint(moduleUrl, argv1, realpath = realpathSync) {
   return false;
 }
 
-/** @param {Phase} phase @param {(child: import("node:child_process").ChildProcess) => void} onChild @returns {Promise<number>} */
-function runPhase(phase, onChild) {
+/**
+ * @param {Phase} phase
+ * @param {(child: import("node:child_process").ChildProcess) => void} onChild
+ * @param {{ channel: "chrome" | "chromium" } | undefined} browser
+ * @returns {Promise<number>}
+ */
+function runPhase(phase, onChild, browser) {
   return new Promise((resolve) => {
     const { command, args } = playwrightCommand();
-    const child = spawnGroup(command, [...args, ...phase.args], { stdio: "inherit", env: { ...process.env, ...phase.env } });
+    const child = spawnGroup(command, [...args, ...phase.args], { stdio: "inherit", env: phaseEnvironment(process.env, phase, browser) });
     onChild(child);
     child.on("error", (error) => {
       console.error(`[e2e-phases] ${phase.name}: could not start playwright: ${error.message}`);
@@ -353,9 +382,29 @@ async function main() {
     console.error(`[e2e-phases] nothing to run: ${firstPlan.skipped.join("; ")}`);
     process.exit(2);
   }
+  // The browser, before anything is made (a login file, a child): an explicit chrome without Chrome, or a value that is no channel, ends here.
+  /** @type {import("./e2e-browser.cjs").BrowserDecision | undefined} */
+  let browser;
+  let browserText = "";
+  if (!first.listOnly) {
+    try {
+      browser = decideForThisProcess(process.env);
+    } catch (error) {
+      console.error(`[e2e-phases] ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(2);
+    }
+    if (browser.problem) {
+      console.error(`[e2e-phases] ${browser.problem}`);
+      process.exit(2);
+    }
+    browserText = describeBrowser(browser, realProbes());
+  }
   const auth = chooseAuthState({ env: process.env, firstPhaseRunsSetup: first.runsSetup, runId: `${process.pid}-${randomBytes(4).toString("hex")}` });
   const { phases, skipped } = planPhases({ ...cli, authState: auth.file, outputRoot });
-  if (!first.listOnly) console.log(`[e2e-phases] login: ${auth.file}${auth.ownedByThisRun ? " (this run's own, removed at the end)" : ""}`);
+  if (!first.listOnly) {
+    console.log(`[e2e-phases] browser: ${browserText}`);
+    console.log(`[e2e-phases] login: ${auth.file}${auth.ownedByThisRun ? " (this run's own, removed at the end)" : ""}`);
+  }
   for (const note of skipped) console.log(`[e2e-phases] ${note}`);
 
   let child;
@@ -377,10 +426,14 @@ async function main() {
     deps: {
       interrupted: () => interrupt.interrupted,
       runPhase: (phase) =>
-        runPhase(phase, (c) => {
-          child = c;
-          if (interrupt.interrupted) signalGroup(c, interrupt.signal); // the signal came between two phases
-        }),
+        runPhase(
+          phase,
+          (c) => {
+            child = c;
+            if (interrupt.interrupted) signalGroup(c, interrupt.signal); // the signal came between two phases
+          },
+          browser,
+        ),
       existsSync,
       statSync,
       rmSync,
@@ -393,6 +446,7 @@ async function main() {
   interrupt.done();
 
   console.log("[e2e-phases] summary:");
+  if (browserText) console.log(browserSummaryLine(browserText));
   for (const phase of phases) console.log(phaseSummaryLine({ phase, result: results.find((r) => r.name === phase.name) }));
   process.exit(exitCodeOf(results, interrupt.signal));
 }
