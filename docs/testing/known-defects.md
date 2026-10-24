@@ -104,3 +104,14 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `tests/e2e/jsonschema-lifecycle.spec.ts` and `tests/e2e/fixtures/jsonschema-variations.ts` (`MULTI_MODEL_KNOWN`, `knownSync`).
 - to remove: multi-entity Task 12 drops the stale `MULTI_MODEL_KNOWN` / `knownSync` entries and adds a protobuf nested-array expectation for
   array-of-refs. That task deletes this entry with them.
+## KD-013: the Type Mapping Reference has no row for OpenAPI 3, JSON Schema and the Java POJO
+
+- status: no-test (a design question: the page tabulates "the technologies that have a mapping table", and these have none under their catalog key)
+- symptom: `/schemas/type-mappings` has five rows (BigQuery, Avro, Spanner, PostgreSQL, Protobuf) while the Schemas tab offers eight targets. The
+  OpenAPI mappings exist (31 entries in `default-mappings.ts`) under the format name `openapi`, and the catalog's key for the target is
+  `openapi3`, so the page's filter (`getMappingsForTarget(target.key)`) never finds them. JSON Schema and the Java POJO have no mapping table
+  at all.
+- where: `src/app/(dashboard)/schemas/type-mappings/type-mapping-reference.tsx` (`TARGETS`), `src/lib/type-mapping/default-mappings.ts`,
+  `src/lib/schema-targets/catalog.ts`.
+- cost to fix: map the catalog key to the mapping format (`openapi3` -> `openapi`), and write the JSON Schema and Java tables (or say on the page
+  that the target has none).
