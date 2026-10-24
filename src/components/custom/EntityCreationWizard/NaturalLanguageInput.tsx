@@ -42,7 +42,7 @@ export function NaturalLanguageInput({
       </div>
 
       {!isAiConfigured && (
-        <div className="flex items-start gap-space-3 p-space-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
+        <div data-testid="nl-ai-not-configured" role="status" className="flex items-start gap-space-3 p-space-4 rounded-lg border border-amber-500/30 bg-amber-500/5">
           <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
           <div>
             <p className="text-body-small text-foreground font-medium">
@@ -58,6 +58,7 @@ export function NaturalLanguageInput({
       )}
 
       <textarea
+        data-testid="nl-description"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
         placeholder={`Example: "A customer entity for an e-commerce platform with name, email, shipping address, phone number, account creation date, and loyalty tier (bronze, silver, gold, platinum)"`}
@@ -71,6 +72,7 @@ export function NaturalLanguageInput({
       )}
 
       <Button
+        data-testid="nl-generate"
         onClick={() => onSubmit(description)}
         disabled={!description.trim() || !isAiConfigured || isLoading || description.trim().length < 10}
         className="gap-2"

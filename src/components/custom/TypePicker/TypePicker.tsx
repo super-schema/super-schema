@@ -268,6 +268,7 @@ export function TypePicker({
       <PopoverTrigger
         ref={triggerRef}
         disabled={disabled}
+        data-testid="type-picker-trigger"
         className={`flex items-center gap-1 bg-transparent text-body-small outline-none cursor-pointer hover:text-foreground transition-colors ${
           compact ? "text-muted-foreground" : "h-7 bg-muted rounded px-2 text-muted-foreground w-full justify-between"
         } ${disabled ? "opacity-50 cursor-not-allowed" : ""} ${className ?? ""}`}

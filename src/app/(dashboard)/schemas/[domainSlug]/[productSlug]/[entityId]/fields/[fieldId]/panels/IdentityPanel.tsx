@@ -151,6 +151,7 @@ export function IdentityPanel({
                 update({ defaultValue: val });
               }
             }}
+            data-testid="field-default-value"
             placeholder="No default"
             className="h-7 text-body-small font-mono w-48"
           />

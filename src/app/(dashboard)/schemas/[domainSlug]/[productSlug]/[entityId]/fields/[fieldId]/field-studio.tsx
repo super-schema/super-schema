@@ -307,19 +307,19 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
     switch (saveStatus) {
       case "saving":
         return (
-          <span className="flex items-center gap-1 text-caption text-muted-foreground">
+          <span data-testid="field-studio-save-status" data-status="saving" className="flex items-center gap-1 text-caption text-muted-foreground">
             <Loader2 className="w-3 h-3 animate-spin" /> Saving…
           </span>
         );
       case "saved":
         return (
-          <span className="flex items-center gap-1 text-caption text-success">
+          <span data-testid="field-studio-save-status" data-status="saved" className="flex items-center gap-1 text-caption text-success">
             <Check className="w-3 h-3" /> Saved
           </span>
         );
       case "error":
         return (
-          <span className="flex items-center gap-1 text-caption text-destructive">
+          <span data-testid="field-studio-save-status" data-status="error" className="flex items-center gap-1 text-caption text-destructive">
             <AlertCircle className="w-3 h-3" /> Error saving
           </span>
         );
@@ -355,7 +355,7 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
             {fieldName}
           </span>
         </nav>
-        <Button onClick={handleDone} className="gap-1.5">
+        <Button onClick={handleDone} className="gap-1.5" data-testid="field-studio-done">
           <CheckCircle2 className="w-4 h-4" />
           Done &mdash; Back to Entity
         </Button>
@@ -369,6 +369,7 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
             tooltipContent={validationTooltip}
           />
           <Input
+            data-testid="field-studio-name"
             value={fieldName}
             onChange={(e) => handleNameChange(e.target.value)}
             className="h-9 w-64 font-mono text-display text-foreground bg-transparent border-transparent hover:border-border focus:border-border transition-colors"

@@ -28,7 +28,7 @@ export function AlertsTab({ alerts, onNavigateToField, onNavigateToTab }: Alerts
   // --- Empty state ---
   if (alerts.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
+      <div data-testid="alerts-empty" className="flex flex-col items-center justify-center py-16 text-center">
         <CheckCircle2 className="w-10 h-10 text-green-500 mb-space-3" />
         <h3 className="text-heading-3 text-foreground mb-space-1">No alerts</h3>
         <p className="text-body-small text-muted-foreground">
@@ -41,7 +41,7 @@ export function AlertsTab({ alerts, onNavigateToField, onNavigateToTab }: Alerts
   return (
     <div className="space-y-space-6">
       {/* Summary bar */}
-      <div className="flex items-center gap-space-4 rounded-lg border border-border/50 px-space-4 py-space-3 bg-muted/30">
+      <div data-testid="alerts-summary" className="flex items-center gap-space-4 rounded-lg border border-border/50 px-space-4 py-space-3 bg-muted/30">
         {errorCount > 0 && (
           <span className="flex items-center gap-1 text-body-small font-medium text-red-500">
             <AlertCircle className="w-4 h-4" />
@@ -118,7 +118,12 @@ function AlertCard({ alert, onAction }: { alert: EntityAlert; onAction: () => vo
   const isError = alert.severity === "error";
 
   return (
-    <div className="flex items-start gap-space-3 rounded-lg border border-border/50 px-space-4 py-space-3">
+    <div
+      data-testid="alert-card"
+      data-alert-id={alert.id}
+      data-severity={alert.severity}
+      className="flex items-start gap-space-3 rounded-lg border border-border/50 px-space-4 py-space-3"
+    >
       {/* Severity icon */}
       {isError ? (
         <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
@@ -135,6 +140,7 @@ function AlertCard({ alert, onAction }: { alert: EntityAlert; onAction: () => vo
       {/* Action button */}
       <button
         onClick={onAction}
+        data-testid="alert-action"
         className="shrink-0 px-space-3 py-1 rounded-md text-caption font-medium text-primary hover:bg-primary/10 transition-colors"
       >
         {alert.action}

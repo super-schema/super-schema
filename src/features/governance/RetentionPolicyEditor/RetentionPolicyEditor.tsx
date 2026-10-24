@@ -123,7 +123,7 @@ export function RetentionPolicyEditor({
     <div className="space-y-space-4" data-testid="retention-policy-editor">
       <div className="flex items-center justify-between">
         <h3 className="text-heading-3 text-foreground">{entityName}</h3>
-        <Badge variant="secondary" className="text-caption">
+        <Badge variant="secondary" className="text-caption" data-testid="retention-badge">
           {preview}
         </Badge>
       </div>
@@ -137,6 +137,9 @@ export function RetentionPolicyEditor({
           {STRATEGIES.map((s) => (
             <button
               key={s.value}
+              type="button"
+              data-testid={`retention-strategy-${s.value}`}
+              aria-pressed={strategy === s.value}
               onClick={() => setStrategy(s.value)}
               className={`flex items-start gap-2 p-space-3 rounded-lg border text-left transition-colors ${
                 strategy === s.value
@@ -166,11 +169,13 @@ export function RetentionPolicyEditor({
                 <Input
                   type="number"
                   min={1}
+                  data-testid="retention-period"
                   value={period}
                   onChange={(e) => setPeriod(parseInt(e.target.value) || 1)}
                   className="h-8 w-20"
                 />
                 <select
+                  data-testid="retention-period-unit"
                   value={periodUnit}
                   onChange={(e) => setPeriodUnit(e.target.value as PeriodUnit)}
                   className="h-8 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
@@ -187,6 +192,7 @@ export function RetentionPolicyEditor({
                 Reference Field
               </label>
               <select
+                data-testid="retention-reference-field"
                 value={referenceField}
                 onChange={(e) => setReferenceField(e.target.value)}
                 className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
@@ -213,6 +219,7 @@ export function RetentionPolicyEditor({
             SQL Condition
           </label>
           <textarea
+            data-testid="retention-condition"
             value={condition}
             onChange={(e) => setCondition(e.target.value)}
             placeholder="status = 'DELETED' AND created_at < NOW() - INTERVAL 1 YEAR"
@@ -243,6 +250,9 @@ export function RetentionPolicyEditor({
           {ACTIONS.map((a) => (
             <button
               key={a.value}
+              type="button"
+              data-testid={`retention-action-${a.value}`}
+              aria-pressed={action === a.value}
               onClick={() => setAction(a.value)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-caption transition-colors ${
                 action === a.value
@@ -263,6 +273,7 @@ export function RetentionPolicyEditor({
           Description (optional)
         </label>
         <Input
+          data-testid="retention-description"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="e.g., GDPR compliance — delete PII after account closure"
@@ -273,9 +284,9 @@ export function RetentionPolicyEditor({
       {/* Preview + Save */}
       <div className="flex items-center justify-between pt-space-2 border-t border-border/50">
         <div className="text-caption text-muted-foreground">
-          Preview: <span className="text-foreground font-medium">{preview}</span>
+          Preview: <span data-testid="retention-preview" className="text-foreground font-medium">{preview}</span>
         </div>
-        <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5">
+        <Button onClick={handleSave} disabled={isSaving} size="sm" className="gap-1.5" data-testid="retention-save">
           {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           Save Policy
         </Button>

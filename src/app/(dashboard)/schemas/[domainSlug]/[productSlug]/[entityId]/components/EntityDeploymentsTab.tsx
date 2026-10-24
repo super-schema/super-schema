@@ -63,7 +63,7 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
   }
 
   return (
-    <div className="space-y-space-4">
+    <div className="space-y-space-4" data-testid="deployments-tab">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-space-2">
           <Rocket className="w-5 h-5 text-muted-foreground" />
@@ -80,6 +80,7 @@ export function EntityDeploymentsTab({ entityId, entityName }: EntityDeployments
           className="gap-1.5"
           disabled={isLoading}
           onClick={() => void load()}
+          data-testid="deployments-refresh"
         >
           <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
           Refresh

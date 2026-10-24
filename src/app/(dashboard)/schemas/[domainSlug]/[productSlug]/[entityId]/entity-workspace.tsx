@@ -679,6 +679,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
             data-testid={`tab-${tab}`}
+            data-alert-count={tab === "alerts" ? alertCount : undefined}
           >
             {tab === "editor" ? "Editor" : tab === "versions" ? "Versions" : tab === "governance" ? "Governance" : `Alerts${alertCount > 0 ? ` (${alertCount})` : ""}`}
           </button>
@@ -820,7 +821,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         )}
 
         {activeTab === "versions" && (
-          <div className="space-y-space-6">
+          <div className="space-y-space-6" data-testid="versions-tab">
             <div className="flex items-center justify-between">
               <h2 className="text-heading-2 text-foreground">Published Versions</h2>
               {!readOnly_ && (
@@ -902,7 +903,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         )}
 
         {activeTab === "governance" && (
-          <div className="space-y-space-6">
+          <div className="space-y-space-6" data-testid="governance-tab">
             <h2 className="text-heading-2 text-foreground">Governance</h2>
             <RetentionPolicyEditor
               entityId={entity.id}
@@ -931,7 +932,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         )}
 
         {activeTab === "alerts" && (
-          <div className="space-y-space-6">
+          <div className="space-y-space-6" data-testid="alerts-tab">
             <h2 className="text-heading-2 text-foreground">Alerts</h2>
             <AlertsTab
               alerts={entityAlerts}

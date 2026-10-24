@@ -151,6 +151,7 @@ function TargetTypePicker({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
+        data-testid="override-type-trigger"
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1 h-7 w-full rounded-lg border border-border bg-popover px-2 text-[11px] font-mono text-primary hover:border-primary/40 transition-colors"
       >
@@ -239,7 +240,7 @@ function TypeOverrideTable({
               const currentType = localType ?? storedType ?? defaultType ?? field.type;
               const isOverridden = (localType && localType !== defaultType) || (storedType && storedType !== defaultType);
               return (
-                <tr key={field.id} className={`${i % 2 === 0 ? "" : "bg-muted/10"} ${isOverridden ? "bg-primary/5" : ""}`}>
+                <tr key={field.id} data-testid="override-row" data-field={field.name} data-overridden={isOverridden ? "true" : "false"} className={`${i % 2 === 0 ? "" : "bg-muted/10"} ${isOverridden ? "bg-primary/5" : ""}`}>
                   <td className="px-3 py-1.5 font-mono text-foreground">
                     {field.name}
                     {isOverridden && <Badge variant="outline" className="text-[8px] h-3 px-1 ml-1">overridden</Badge>}
@@ -570,6 +571,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
             <button
               key={target.key}
               type="button"
+              data-testid={`schema-target-${target.key}`}
+              aria-pressed={selectedTarget === target.key}
               onClick={() => { setSelectedTarget(target.key); setContentTab((current) => current === "matrix" ? "matrix" : "schema"); }}
               className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg text-body-small transition-colors ${
                 selectedTarget === target.key
@@ -597,6 +600,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                 <div className="flex gap-1">
                   <button
                     type="button"
+                    data-testid="schema-content-tab-schema"
+                    aria-pressed={contentTab === "schema"}
                     onClick={() => setContentTab("schema")}
                     className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
                       contentTab === "schema" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
@@ -606,6 +611,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                   </button>
                   <button
                     type="button"
+                    data-testid="schema-content-tab-overrides"
+                    aria-pressed={contentTab === "overrides"}
                     onClick={() => setContentTab("overrides")}
                     className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
                       contentTab === "overrides" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
@@ -615,6 +622,8 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                   </button>
                   <button
                     type="button"
+                    data-testid="schema-content-tab-matrix"
+                    aria-pressed={contentTab === "matrix"}
                     onClick={() => setContentTab("matrix")}
                     className={`px-3 py-1.5 text-body-small font-medium border-b-2 -mb-px transition-colors ${
                       contentTab === "matrix" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
@@ -631,6 +640,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                     className="gap-1.5"
                     disabled={isGenerating || fields.length === 0}
                     onClick={() => handleGenerate(selected.key)}
+                    data-testid="schema-generate"
                   >
                     {isGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
                     {latestVersion ? "Regenerate" : "Generate"}
@@ -641,6 +651,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                     className="gap-1.5"
                     disabled={isGenerating || fields.length === 0 || allTargets.length === 0}
                     onClick={() => setStagedOpen(true)}
+                    data-testid="schema-stage-emit"
                   >
                     <Layers className="w-3.5 h-3.5" />
                     Stage Emit
@@ -655,6 +666,9 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                     <button
                       type="button"
                       key={v.version}
+                      data-testid="schema-version-button"
+                      data-version={v.version}
+                      data-status={v.status}
                       onClick={() => setViewingVersionIdx(idx)}
                       className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-caption transition-colors ${
                         viewingVersionIdx === idx
@@ -679,6 +693,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                       variant="outline"
                       className="gap-1.5 ml-auto"
                       disabled={isPublishing}
+                      data-testid="schema-mark-deployed"
                       onClick={() => handlePublish(selected.key, displayVersion.version)}
                     >
                       {isPublishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
@@ -686,7 +701,7 @@ export function SchemasTab({ entityId, entityName, fields, entity }: SchemasTabP
                     </Button>
                   )}
                   {displayVersion?.status !== "draft" && (
-                    <Badge variant="success" className="text-[10px] h-5 ml-auto">
+                    <Badge variant="success" className="text-[10px] h-5 ml-auto" data-testid="schema-deployed-badge">
                       <Check className="w-3 h-3 mr-0.5" />
                       Deployed
                     </Badge>

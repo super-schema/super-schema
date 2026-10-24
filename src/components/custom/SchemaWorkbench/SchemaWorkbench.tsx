@@ -409,6 +409,7 @@ export function SchemaWorkbench({
           <button
             key={m.id}
             type="button"
+            data-testid={`workbench-mode-${m.id}`}
             onClick={() => selectMode(m.id)}
             aria-pressed={mode === m.id}
             className={cn(

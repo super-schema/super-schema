@@ -180,6 +180,7 @@ export function EntityHeader({
           <button
             onClick={() => !readOnly && setStatusDropdownOpen(!statusDropdownOpen)}
             disabled={readOnly}
+            data-testid="entity-status-trigger"
             className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-body-small transition-colors hover:bg-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ color: currentStatus.color }}
           >
@@ -196,6 +197,7 @@ export function EntityHeader({
                   key={opt.value}
                   onClick={() => handleStatusSelect(opt.value)}
                   disabled={opt.value === entity.status}
+                  data-testid={`entity-status-option-${opt.value.toLowerCase()}`}
                   className="flex items-center gap-2 w-full px-3 py-1.5 text-body-small text-left hover:bg-accent/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <span
@@ -222,7 +224,7 @@ export function EntityHeader({
 
         {/* Saved flash indicator */}
         {showSaved && (
-          <span className="flex items-center gap-1 text-caption text-success animate-auth-fade-up">
+          <span data-testid="entity-saved-flash" className="flex items-center gap-1 text-caption text-success animate-auth-fade-up">
             <Check className="w-3 h-3" /> Saved
           </span>
         )}
@@ -241,20 +243,21 @@ export function EntityHeader({
 
       {/* Status transition error */}
       {statusError && (
-        <div className="mb-space-4 rounded-lg border border-destructive/50 bg-destructive/10 px-space-4 py-space-2 text-body-small text-destructive">
+        <div data-testid="entity-status-error" className="mb-space-4 rounded-lg border border-destructive/50 bg-destructive/10 px-space-4 py-space-2 text-body-small text-destructive">
           {statusError}
         </div>
       )}
 
       {/* Deprecation inline form */}
       {showDeprecationForm && (
-        <div className="mb-space-4 rounded-xl border px-space-4 py-space-4 space-y-space-3" style={{ borderColor: "#e88a3b", backgroundColor: "rgba(232,138,59,0.08)" }}>
+        <div data-testid="deprecation-form" className="mb-space-4 rounded-xl border px-space-4 py-space-4 space-y-space-3" style={{ borderColor: "#e88a3b", backgroundColor: "rgba(232,138,59,0.08)" }}>
           <h4 className="text-body-small font-medium text-foreground">Deprecation Details</h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-3">
             <div>
               <label className="text-caption text-muted-foreground mb-1 block">Deprecated Since</label>
               <Input
                 type="date"
+                data-testid="deprecation-since"
                 value={depSince}
                 onChange={(e) => setDepSince(e.target.value)}
                 className="h-8 text-body-small"
@@ -263,6 +266,7 @@ export function EntityHeader({
             <div>
               <label className="text-caption text-muted-foreground mb-1 block">Replacement Entity ID</label>
               <Input
+                data-testid="deprecation-replacement"
                 value={depReplacementEntityId}
                 onChange={(e) => setDepReplacementEntityId(e.target.value)}
                 placeholder="Entity ID (optional)"
@@ -273,6 +277,7 @@ export function EntityHeader({
           <div>
             <label className="text-caption text-muted-foreground mb-1 block">Migration Notes</label>
             <textarea
+              data-testid="deprecation-notes"
               value={depMigrationNotes}
               onChange={(e) => setDepMigrationNotes(e.target.value)}
               placeholder="Optional migration guidance..."
@@ -283,6 +288,7 @@ export function EntityHeader({
           <div className="flex items-center gap-space-2">
             <Button
               size="sm"
+              data-testid="deprecation-submit"
               onClick={handleDeprecationSubmit}
               disabled={isPending}
             >
@@ -291,6 +297,7 @@ export function EntityHeader({
             <Button
               size="sm"
               variant="outline"
+              data-testid="deprecation-cancel"
               onClick={() => setShowDeprecationForm(false)}
             >
               Cancel

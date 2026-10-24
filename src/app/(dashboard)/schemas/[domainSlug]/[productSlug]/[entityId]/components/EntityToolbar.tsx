@@ -17,6 +17,7 @@ export function EntityToolbar({ onDelete }: EntityToolbarProps) {
         <Button
           variant="outline"
           onClick={onDelete}
+          data-testid="entity-delete-button"
           className="gap-1.5 text-muted-foreground hover:text-destructive hover:border-destructive/50"
           title="Delete entity"
         >
@@ -27,6 +28,7 @@ export function EntityToolbar({ onDelete }: EntityToolbarProps) {
       <Button
         variant="outline"
         onClick={togglePanel}
+        data-testid="right-panel-toggle"
         className="gap-1.5"
         title={isCollapsed ? "Open side panel" : "Close side panel"}
       >

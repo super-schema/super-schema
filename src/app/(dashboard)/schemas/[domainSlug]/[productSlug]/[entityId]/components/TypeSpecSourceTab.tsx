@@ -124,12 +124,12 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5" data-testid="typespec-export">
             <Download className="w-3.5 h-3.5" />
             Export .tsp
           </Button>
           {!readOnly && (
-            <Button size="sm" onClick={handleSave} disabled={isSaving || !isDirty} className="gap-1.5">
+            <Button size="sm" onClick={handleSave} disabled={isSaving || !isDirty} className="gap-1.5" data-testid="typespec-save">
               {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               {isSaving ? "Compiling…" : "Save"}
             </Button>
@@ -156,7 +156,7 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
       />
 
       {diagnostics.length > 0 && (
-        <div className="space-y-1">
+        <div className="space-y-1" data-testid="typespec-diagnostics">
           {errors.map((d, i) => (
             <div key={`e${i}`} className="text-body-small text-destructive flex gap-2">
               <span className="font-mono text-caption shrink-0">[{d.code}]</span>
@@ -173,7 +173,7 @@ export function TypeSpecSourceTab({ entityId, entityName, readOnly, onSaved }: T
       )}
 
       {lastApplied && diagnostics.length === 0 && (
-        <p className="text-caption text-success">
+        <p className="text-caption text-success" data-testid="typespec-compiled-clean">
           Compiled clean — {lastApplied.added} added, {lastApplied.updated} updated
           {lastApplied.removed.length > 0 ? `, ${lastApplied.removed.length} removed` : ""}.
         </p>

@@ -207,10 +207,10 @@ export function TypeSpecImportReviewScreen({
   return (
     <div className="space-y-space-4" data-testid="typespec-import-review">
       <div>
-        <h3 className="text-heading-3 text-foreground">
+        <h3 className="text-heading-3 text-foreground" data-testid="import-review-title">
           Review {FORMAT_LABEL[importResult.sourceFormat ?? "typespec"]} Import
         </h3>
-        <p className="text-caption text-muted-foreground mt-1">
+        <p className="text-caption text-muted-foreground mt-1" data-testid="import-review-counts">
           {importResult.models.length} model(s), {importResult.sharedEnums.length} enum(s),{" "}
           {importResult.customScalars.length} scalar(s), {importResult.unions.length} union(s),{" "}
           {importResult.services.length} API service(s), {importResult.decoratorDefinitions.length} decorator definition(s)
@@ -250,7 +250,7 @@ export function TypeSpecImportReviewScreen({
       )}
 
       {importResult.warnings.length > 0 && (
-        <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 space-y-1">
+        <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 space-y-1" data-testid="import-review-warnings">
           {importResult.warnings.map((warning, index) => (
             <p key={index} className="text-caption text-muted-foreground">
               {warning}
@@ -542,6 +542,7 @@ export function TypeSpecImportReviewScreen({
           <Button
             size="sm"
             onClick={handleConfirm}
+            data-testid="import-review-confirm"
             disabled={!selectedDomainId || totalSelected === 0 || needsEntityName}
             className="gap-1.5"
           >

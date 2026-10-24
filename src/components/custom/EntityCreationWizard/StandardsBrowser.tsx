@@ -65,6 +65,7 @@ export function StandardsBrowser({ onSelect, onBack }: StandardsBrowserProps) {
           <input
             type="text"
             placeholder="Search standards..."
+            data-testid="standards-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="bg-transparent text-body-small text-foreground placeholder:text-muted-foreground outline-none w-full"
@@ -100,6 +101,9 @@ export function StandardsBrowser({ onSelect, onBack }: StandardsBrowserProps) {
           {templates.map((template) => (
             <button
               key={`${template.source}-${template.entityName}`}
+              data-testid="standards-template"
+              data-name={template.entityName}
+              data-source={template.source}
               onClick={() => onSelect(template)}
               className="surface-glass rounded-lg border border-border/50 p-space-4 text-left hover:border-primary/40 hover:bg-accent/20 transition-all cursor-pointer"
             >

@@ -32,6 +32,7 @@ export function DeprecationBanner({ metadata, replacementEntity }: DeprecationBa
 
   return (
     <div
+      data-testid="deprecation-banner"
       className="flex items-start gap-space-3 rounded-xl border px-space-4 py-space-3 mb-space-4"
       style={{
         backgroundColor: "rgba(229,169,59,0.15)",

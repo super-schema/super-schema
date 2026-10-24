@@ -78,6 +78,8 @@ export function RightPanelRouter({
         {TABS.map((tab) => (
           <button
             key={tab.id}
+            data-testid={`right-panel-tab-${tab.id}`}
+            aria-pressed={rightPanelTab === tab.id}
             onClick={() => onTabChange(tab.id)}
             className={`px-space-2 py-space-2.5 text-body-small font-medium transition-colors border-b-2 -mb-px ${
               rightPanelTab === tab.id

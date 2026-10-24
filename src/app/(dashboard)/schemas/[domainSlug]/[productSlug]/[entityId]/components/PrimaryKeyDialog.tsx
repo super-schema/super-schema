@@ -66,6 +66,8 @@ export function PrimaryKeyDialog({ requirement, onConfirm, onCancel }: PrimaryKe
             <label key={name} className="flex items-center gap-space-2 text-body-small">
               <input
                 type="checkbox"
+                data-testid="primary-key-option"
+                data-field={name}
                 checked={selected.includes(name)}
                 onChange={(event) => toggle(name, event.target.checked)}
               />
@@ -79,10 +81,10 @@ export function PrimaryKeyDialog({ requirement, onConfirm, onCancel }: PrimaryKe
           </p>
         )}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
+          <Button type="button" variant="outline" onClick={onCancel} disabled={pending} data-testid="primary-key-cancel">
             Cancel
           </Button>
-          <Button type="button" onClick={() => void confirm()} disabled={pending || selected.length === 0}>
+          <Button type="button" onClick={() => void confirm()} disabled={pending || selected.length === 0} data-testid="primary-key-confirm">
             {pending && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
             Save key and generate
           </Button>

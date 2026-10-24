@@ -36,7 +36,7 @@ export function DeploymentPanel({
       </h4>
 
       {deploymentStatuses.length === 0 && (
-        <p className="text-caption text-muted-foreground">
+        <p data-testid="deployment-empty" className="text-caption text-muted-foreground">
           No emission targets configured. Add targets to track deployments.
         </p>
       )}
@@ -44,6 +44,8 @@ export function DeploymentPanel({
       {deploymentStatuses.map((target) => (
         <div
           key={target.targetId}
+          data-testid="deployment-target"
+          data-target={target.targetFormat}
           className="border border-border rounded-lg overflow-hidden"
         >
           {/* Target header */}
@@ -64,6 +66,7 @@ export function DeploymentPanel({
                   disabled={isChecking}
                   className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50"
                   title="Check Drift"
+                  data-testid="deployment-check-drift"
                 >
                   <RefreshCw
                     className={`w-3 h-3 ${isChecking ? "animate-spin" : ""}`}
@@ -81,6 +84,7 @@ export function DeploymentPanel({
                   }
                   className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
                   title="Mark as Deployed"
+                  data-testid="deployment-mark-deployed"
                 >
                   <Rocket className="w-3 h-3" />
                 </button>
@@ -94,6 +98,8 @@ export function DeploymentPanel({
               {target.environments.map((env) => (
                 <div
                   key={env.name}
+                  data-testid="deployment-environment"
+                  data-environment={env.name}
                   className="flex items-center gap-space-2 px-space-3 py-1.5"
                 >
                   <span className="text-caption text-muted-foreground w-24">
@@ -117,7 +123,7 @@ export function DeploymentPanel({
             </div>
           ) : (
             <div className="px-space-3 py-1.5">
-              <span className="text-caption text-muted-foreground">
+              <span data-testid="deployment-untracked" className="text-caption text-muted-foreground">
                 Not tracked in any environment
               </span>
             </div>

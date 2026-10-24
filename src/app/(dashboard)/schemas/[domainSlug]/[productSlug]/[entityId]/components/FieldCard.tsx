@@ -307,6 +307,7 @@ export const FieldCard = memo(function FieldCard({
             onClick={() => onNavigateStudio(field.slug || field.id)}
             className="p-1 text-muted-foreground/50 hover:text-foreground transition-colors rounded"
             title="Open Field Studio"
+            data-testid="field-open-studio"
           >
             <Settings2 className="w-3.5 h-3.5" />
           </button>

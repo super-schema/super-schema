@@ -60,13 +60,13 @@ export function PublishEntityForm({
   return (
     <div className="space-y-space-4">
       {blocked && (
-        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-space-3">
+        <div role="alert" data-testid="publish-blockers" className="rounded-lg border border-destructive/30 bg-destructive/5 p-space-3">
           <p className="flex items-center gap-1.5 text-body-small font-medium text-destructive">
             <AlertTriangle className="size-4" aria-hidden="true" /> Cannot publish yet
           </p>
           <ul className="mt-space-1 list-disc pl-5 text-caption text-foreground">
             {preview.blockers.map((b, i) => (
-              <li key={`${b.kind}-${i}`}>{b.message}</li>
+              <li key={`${b.kind}-${i}`} data-testid="publish-blocker" data-kind={b.kind}>{b.message}</li>
             ))}
           </ul>
           {onPickReference && (
@@ -102,13 +102,13 @@ export function PublishEntityForm({
       )}
 
       {preview.isFirstPublish ? (
-        <p className="text-body-small text-foreground">
+        <p data-testid="publish-first" className="text-body-small text-foreground">
           First publish of <span className="font-mono">{entityName}</span>. It becomes{" "}
           <strong>v{preview.initialLabel}</strong>.
         </p>
       ) : (
         <div className="space-y-space-2">
-          <p className="text-body-small text-foreground">
+          <p data-testid="publish-latest" className="text-body-small text-foreground">
             Latest published: <strong>v{preview.latestLabel}</strong> · suggested bump:{" "}
             <strong>{preview.suggestedBump}</strong>
           </p>
@@ -133,12 +133,12 @@ export function PublishEntityForm({
             })}
           </div>
           {preview.suggestedBump === "MAJOR" && (
-            <p className="text-caption text-muted-foreground">
+            <p data-testid="publish-breaking-note" className="text-caption text-muted-foreground">
               These changes are breaking, so they can only be published as a major version.
             </p>
           )}
           {preview.reasons.length > 0 && (
-            <ul className="max-h-32 list-disc overflow-y-auto pl-5 text-caption text-muted-foreground">
+            <ul data-testid="publish-reasons" className="max-h-32 list-disc overflow-y-auto pl-5 text-caption text-muted-foreground">
               {preview.reasons.map((reason, i) => (
                 <li key={`${i}-${reason}`}>{reason}</li>
               ))}
@@ -150,6 +150,7 @@ export function PublishEntityForm({
       <label className="block">
         <span className="mb-1 block text-caption text-muted-foreground">Change summary (optional)</span>
         <Textarea
+          data-testid="publish-change-summary"
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
           rows={2}
@@ -159,7 +160,7 @@ export function PublishEntityForm({
       </label>
 
       {publishError && (
-        <p role="alert" className="text-body-small text-destructive">
+        <p role="alert" data-testid="publish-error" className="text-body-small text-destructive">
           {publishError}
         </p>
       )}
@@ -172,7 +173,7 @@ export function PublishEntityForm({
       )}
 
       <div className="flex justify-end gap-space-2">
-        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={isPublishing}>
+        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={isPublishing} data-testid="publish-cancel">
           Cancel
         </Button>
         <Button
@@ -239,7 +240,7 @@ export function PublishEntityDialog({
         if (!isPublishing) onOpenChange(next);
       }}
     >
-      <DialogContent showCloseButton={!isPublishing} className="bg-background sm:max-w-md">
+      <DialogContent showCloseButton={!isPublishing} className="bg-background sm:max-w-md" data-testid="publish-dialog">
         <DialogHeader>
           <DialogTitle className="text-heading-3 text-foreground">Publish {entityName}</DialogTitle>
           <DialogDescription className="text-body-small text-muted-foreground">

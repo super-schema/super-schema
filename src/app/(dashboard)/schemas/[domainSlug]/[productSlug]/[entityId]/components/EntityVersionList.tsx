@@ -22,12 +22,14 @@ export function EntityVersionList({ versions }: EntityVersionListProps) {
       {versions.map((v) => (
         <li
           key={v.id}
+          data-testid="entity-version-item"
+          data-label={v.label}
           className="flex items-center justify-between gap-space-3 rounded-lg border border-border/50 px-space-4 py-space-3"
         >
           <div className="flex min-w-0 items-center gap-space-3">
-            <span className="font-mono text-body-small font-medium text-foreground">v{v.label}</span>
-            <Badge variant="secondary">{v.changeKind}</Badge>
-            {v.changeSummary && <span className="truncate text-caption text-muted-foreground">{v.changeSummary}</span>}
+            <span data-testid="entity-version-label" className="font-mono text-body-small font-medium text-foreground">v{v.label}</span>
+            <Badge data-testid="entity-version-change-kind" variant="secondary">{v.changeKind}</Badge>
+            {v.changeSummary && <span data-testid="entity-version-summary" className="truncate text-caption text-muted-foreground">{v.changeSummary}</span>}
           </div>
           <span className="shrink-0 text-caption text-muted-foreground">
             {v.publishedByName ?? "Unknown"} · {formatDateTime(v.publishedAt)}

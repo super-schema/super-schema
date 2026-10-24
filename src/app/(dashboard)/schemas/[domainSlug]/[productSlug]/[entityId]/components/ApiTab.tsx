@@ -320,6 +320,7 @@ export function ApiTab({
             size="sm"
             className="gap-1.5"
             disabled={isAdding}
+            data-testid="api-add-operation"
           >
             <Plus className="w-3.5 h-3.5" />
             Add Operation
@@ -337,6 +338,7 @@ export function ApiTab({
               <Input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
+                data-testid="api-op-name"
                 placeholder="getUser"
                 className="h-8 font-mono"
                 autoFocus
@@ -345,6 +347,7 @@ export function ApiTab({
             <div>
               <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Method</label>
               <select
+                data-testid="api-op-method"
                 value={newMethod}
                 onChange={(e) => setNewMethod(e.target.value)}
                 className="h-8 w-full rounded-lg border border-border bg-popover px-2 text-body-small text-foreground"
@@ -359,6 +362,7 @@ export function ApiTab({
             <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Path</label>
             <Input
               value={newPath}
+              data-testid="api-op-path"
               onChange={(e) => setNewPath(e.target.value)}
               placeholder="/users/{id}"
               className="h-8 font-mono"
@@ -368,6 +372,7 @@ export function ApiTab({
             <label className="text-[10px] text-muted-foreground/60 uppercase tracking-wider block mb-0.5">Description</label>
             <Input
               value={newDesc}
+              data-testid="api-op-description"
               onChange={(e) => setNewDesc(e.target.value)}
               placeholder="Retrieve a user by ID"
               className="h-8"
@@ -375,7 +380,7 @@ export function ApiTab({
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setIsAdding(false)}>Cancel</Button>
-            <Button size="sm" onClick={addOperation} disabled={!newName.trim()}>
+            <Button size="sm" onClick={addOperation} disabled={!newName.trim()} data-testid="api-op-create">
               Create Operation
             </Button>
           </div>
@@ -384,7 +389,7 @@ export function ApiTab({
 
       {/* Operation list */}
       {operations.length === 0 && !isAdding && (
-        <div className="text-center py-12 text-muted-foreground">
+        <div data-testid="api-empty" className="text-center py-12 text-muted-foreground">
           <Globe className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
           <p className="text-body-small">No API operations defined yet</p>
           <p className="text-caption mt-1">Add operations to define REST endpoints for this entity</p>
@@ -396,7 +401,7 @@ export function ApiTab({
         const methodColor = METHOD_COLORS[op.httpMethod] ?? METHOD_COLORS.GET;
 
         return (
-          <div key={op.id} className="rounded-lg border border-border/50 overflow-hidden">
+          <div key={op.id} data-testid="api-operation" data-name={op.name} className="rounded-lg border border-border/50 overflow-hidden">
             {/* Operation header */}
             <button
               onClick={() => setExpandedOp(isExpanded ? null : op.id)}

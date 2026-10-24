@@ -108,6 +108,9 @@ export function StagedEmitDialog({
             return (
               <div
                 key={t.target}
+                data-testid="staged-emit-target"
+                data-target={t.target}
+                data-selected={isSelected ? "true" : "false"}
                 className={`flex items-center gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
                   isSelected
                     ? "border-primary/50 bg-primary/5"
@@ -178,7 +181,7 @@ export function StagedEmitDialog({
 
         {/* Footer */}
         <div className="p-5 border-t border-border flex items-center justify-between">
-          <span className="text-caption text-muted-foreground">
+          <span data-testid="staged-emit-count" className="text-caption text-muted-foreground">
             {selected.size} of {targets.length} target
             {targets.length !== 1 ? "s" : ""} selected
           </span>
@@ -186,6 +189,7 @@ export function StagedEmitDialog({
             <button
               type="button"
               onClick={onClose}
+              data-testid="staged-emit-cancel"
               className="px-4 py-2 rounded text-caption font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               Cancel
@@ -193,6 +197,7 @@ export function StagedEmitDialog({
             <button
               type="button"
               onClick={handleEmit}
+              data-testid="staged-emit-submit"
               disabled={selected.size === 0}
               className="px-5 py-2 rounded text-caption font-medium text-white transition-colors disabled:opacity-50"
               style={{
