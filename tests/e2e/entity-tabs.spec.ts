@@ -490,7 +490,7 @@ test.describe("the field studio and the right panel", () => {
         timeout: 5_000,
       })
       .catch(() => undefined);
-    await expect(main.getByTestId(ID.studioName)).toBeFocused();
+    await expect(main.getByTestId(ID.studioName)).toBeFocused({ timeout: 3_000 });
   });
 
   test("right panel: the Field Edit tab waits for a field, the TypeSpec tab follows the entity and applies an edit", { tag: ["@regression"] }, async ({
@@ -687,7 +687,7 @@ test.describe("what a target needs and what can be overridden", () => {
     await page.getByRole("option", { name: /^STRING\(36\)/ }).click();
     await expect(successToast(page, "Override applied — schema regenerated")).toBeVisible({ timeout: 60_000 });
     await main.getByTestId(ID.schemaContentTab("schema")).click();
-    await expect.poll(() => readPreview(page), { message: "the regenerated BigQuery DDL", timeout: 20_000 }).toMatch(/\bid\b\s+STRING\(36\)/);
+    await expect.poll(() => readPreview(page), { message: "the regenerated BigQuery DDL", timeout: 8_000 }).toMatch(/\bid\b\s+STRING\(36\)/);
   });
 
   test("staged emit: the dialog offers every target (all checked), counts the selection, and emits only the chosen ones", { tag: ["@regression"] }, async ({
