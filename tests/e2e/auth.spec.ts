@@ -418,7 +418,7 @@ test.describe("a visitor with a forged or stale session cookie", () => {
     request,
   }) => {
     // The matcher used to leave out static files by the look of the address (`.png`); `/schemas/foo.png` is a page (`[domainSlug]`),
-    // and an action POSTed there skipped the door. Now only a GET / HEAD of a static file does.
+    // and an action POSTed there skipped the door. Now only a GET / HEAD of a listed public asset (the favicon) does.
     for (const path of ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg"]) {
       for (const cookie of [undefined, `authjs.session-token=${FORGED}`]) {
         const response = await request.post(path, {
@@ -447,6 +447,22 @@ test.describe("a visitor with a forged or stale session cookie", () => {
         expect(new URL(response.headers()["location"], "http://localhost").pathname).toBe("/login");
       }
     }
+  });
+
+  test("a GET of a page address that ends like an image (/schemas/foo.png) meets the door: no session, no page; the favicon is public", { tag: ["@regression"] }, async ({
+    request,
+  }) => {
+    for (const path of ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/schemas/foo.PNG"]) {
+      for (const cookie of [undefined, `authjs.session-token=${FORGED}`]) {
+        const response = await request.get(path, { headers: cookie ? { cookie } : {}, maxRedirects: 0, failOnStatusCode: false });
+        expect(response.status(), `${path} with ${cookie ?? "no cookie"}`).toBe(307);
+        expect(new URL(response.headers()["location"], "http://localhost").pathname).toBe("/login");
+      }
+    }
+    // The one listed public asset is served without a session (it is what the login page's tab shows).
+    const favicon = await request.get("/favicon.ico", { maxRedirects: 0, failOnStatusCode: false });
+    expect(favicon.status()).toBe(200);
+    expect(favicon.headers()["content-type"]).toMatch(/image\//);
   });
 
   test("odd spellings of the endpoint's address (//api, /API, an encoded letter, an encoded slash under /login) serve no data without a session", { tag: ["@regression"] }, async ({

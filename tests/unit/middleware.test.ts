@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 import { encode } from "next-auth/jwt";
 import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
 import { config, middleware } from "@/middleware";
+import { PUBLIC_ASSET_PATHS } from "@/lib/public-assets";
 
 const SECRET = "unit-test-secret-of-the-middleware-0123456789";
 const PLAIN = "authjs.session-token";
@@ -260,22 +261,26 @@ describe("the matcher and the shapes of an address", () => {
     ["/login%2F..%2Fapi%2Fdomains-tree", "redirect /login"],
     ["/api%2Fdomains-tree", "redirect /login"],
     ["/api/v1/../domains-tree", "401"],
-    // Static files are not the middleware's business: the matcher leaves out `_next/static` and `_next/image`, and a GET / HEAD of a
-    // file with an image extension is let through by the middleware itself (they carry no data of the app).
+    // Static files are not the middleware's business: the matcher leaves out `_next/static` and `_next/image`, and a GET / HEAD of one of the
+    // listed public assets (src/lib/public-assets.ts) is let through by the middleware itself. An address that only ENDS like an image is a
+    // page address (`/schemas/[domainSlug]` is `/schemas/foo.png`): it meets the door like any other.
     ["/_next/static/x", "not matched"],
     ["/_next/image", "not matched"],
     ["/favicon.ico", "pass"],
-    ["/a.png", "pass"],
+    ["/a.png", "redirect /login"],
+    ["/schemas/foo.png", "redirect /login"],
   ])("%s -> %s", async (path, expected) => {
     expect(await outcome(path)).toBe(expected);
   });
 
-  describe("only a GET or HEAD of a static file skips the door: any other request runs the whole session logic", () => {
-    // `/schemas/foo.png` is a page address (it matches `[domainSlug]`) whose last segment merely ends like an image. A server action is
-    // POSTed to a page address: with a `Next-Action` header, or (progressive enhancement, a form posted before React hydrated)
-    // as a multipart form whose body names the action and which carries NO such header. Neither may skip the middleware by the
-    // look of the address, so the matcher excludes only `_next/static` and `_next/image` (never actions), and the middleware
-    // lets a request through unchecked only when its method is GET / HEAD and its path is a static file.
+  describe("only a GET or HEAD of a listed public asset skips the door: any other request runs the whole session logic", () => {
+    // `/schemas/foo.png` is a page address (it matches `[domainSlug]`) whose last segment merely ends like an image. A GET of it is a page
+    // request (the dashboard's pages have no check of their own, and a layout's `auth()` is not run again for a segment the client
+    // already holds), and a server action is POSTed to such an address: with a `Next-Action` header, or (progressive enhancement, a form
+    // posted before React hydrated) as a multipart form whose body names the action and which carries NO such header. None of them may skip
+    // the middleware by the look of the address: the matcher excludes only `_next/static` and `_next/image` (never pages, never
+    // actions), and the middleware lets a request through unchecked only when its method is GET / HEAD and its path is one of
+    // PUBLIC_ASSET_PATHS, an explicit list.
     const matches = (path: string, headers?: Record<string, string>) => unstable_doesMiddlewareMatch({ config, url: url(path), headers });
     const multipart = () => {
       const body = new FormData();
@@ -284,20 +289,23 @@ describe("the matcher and the shapes of an address", () => {
     };
     const post = (path: string, init: { headers?: Record<string, string>; multipart?: boolean; method?: string } = {}) =>
       new NextRequest(url(path), { method: init.method ?? "POST", headers: init.headers, ...(init.multipart ? { body: multipart() } : {}) });
+    const imageLike = ["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/a.png", "/x.webp", "/schemas/foo.PNG", "/schemas/foo.gif", "/logo.png"];
 
-    it.each(["/schemas/foo.png", "/schemas/billing/foo.svg", "/a.png", "/favicon.ico", "/x/y.webp", "/schemas/foo.PNG", "/schemas", "/", "/api/domains-tree"])(
-      "%s is matched, with or without the Next-Action header",
-      (path) => {
-        expect(matches(path), path).toBe(true);
-        expect(matches(path, { "next-action": "40abc" }), path).toBe(true);
-      },
-    );
+    it("the public assets are listed explicitly: the favicon, and no image of public/ (none is used by the app)", () => {
+      expect([...PUBLIC_ASSET_PATHS]).toEqual(["/favicon.ico"]);
+      for (const path of PUBLIC_ASSET_PATHS) expect(path.startsWith("/") && !path.includes("*"), path).toBe(true);
+    });
 
-    it.each(["/_next/static/x.js", "/_next/image"])("%s is left out (it is never an action)", (path) => {
+    it.each([...imageLike, "/favicon.ico", "/schemas", "/", "/api/domains-tree"])("%s is matched, with or without the Next-Action header", (path) => {
+      expect(matches(path), path).toBe(true);
+      expect(matches(path, { "next-action": "40abc" }), path).toBe(true);
+    });
+
+    it.each(["/_next/static/x.js", "/_next/image"])("%s is left out (it is never a page or an action)", (path) => {
       expect(matches(path), path).toBe(false);
     });
 
-    it.each(["/schemas/foo.png", "/schemas/billing/foo.svg", "/schemas/a/b/c.jpg", "/a.png", "/favicon.ico", "/x.webp", "/schemas/foo.PNG", "/schemas/foo.gif"])(
+    it.each([...imageLike, "/favicon.ico"])(
       "a visitor without a session who POSTs to %s is refused: a Next-Action request gets 401, a multipart form is sent to /login",
       async (path) => {
         const action = await middleware(post(path, { headers: { "next-action": "40abc" } }));
@@ -309,17 +317,17 @@ describe("the matcher and the shapes of an address", () => {
       },
     );
 
-    it.each(["POST", "PUT", "PATCH", "DELETE"])("%s to an image-like address runs the session logic", async (method) => {
-      for (const path of ["/schemas/foo.png", "/favicon.ico"]) {
+    it.each(["POST", "PUT", "PATCH", "DELETE"])("%s to a listed public asset's address runs the session logic", async (method) => {
+      for (const path of PUBLIC_ASSET_PATHS) {
         const response = await middleware(post(path, { method, multipart: method === "POST" }));
         expect(response.status, `${method} ${path}`).toBe(307);
         expect(new URL(response.headers.get("location")!).pathname).toBe("/login");
       }
     });
 
-    it("lets a GET or a HEAD of a static file through (no session: logo, favicon)", async () => {
+    it("lets a GET or a HEAD of each listed public asset through, without a session", async () => {
       for (const method of ["GET", "HEAD"]) {
-        for (const path of ["/logo.png", "/favicon.ico", "/a/b/c.svg", "/x.jpg", "/x.jpeg", "/x.gif", "/x.webp"]) {
+        for (const path of PUBLIC_ASSET_PATHS) {
           const response = await middleware(new NextRequest(url(path), { method }));
           expect(response.status, `${method} ${path}`).toBe(200);
           expect(response.headers.get("location"), `${method} ${path}`).toBeNull();
@@ -327,16 +335,30 @@ describe("the matcher and the shapes of an address", () => {
       }
     });
 
-    it("does not extend that to a spelling it does not know (.PNG is no static file here): a GET of it meets the door", async () => {
-      const response = await middleware(new NextRequest(url("/logo.PNG")));
-      expect(new URL(response.headers.get("location")!).pathname).toBe("/login");
+    it.each(imageLike)("a GET or HEAD of %s (an address that ends like an image, not a listed asset) meets the door: no session means /login", async (path) => {
+      for (const method of ["GET", "HEAD"]) {
+        const response = await middleware(new NextRequest(url(path), { method }));
+        expect(response.status, `${method} ${path}`).toBe(307);
+        expect(new URL(response.headers.get("location")!).pathname, `${method} ${path}`).toBe("/login");
+      }
     });
 
-    it("lets a POST through for a visitor WITH a session", async () => {
+    it("does not let a look-alike of a listed asset through: another case, a suffix, a path under it, a query that names it", async () => {
+      for (const path of ["/Favicon.ico", "/favicon.ico.png", "/favicon.icox", "/x/favicon.ico", "/favicon.ico/x", "/%66avicon.ico"]) {
+        const response = await middleware(new NextRequest(url(path)));
+        expect(response.headers.get("location"), path).not.toBeNull();
+      }
+      const query = await middleware(new NextRequest(url("/schemas?x=/favicon.ico")));
+      expect(new URL(query.headers.get("location")!).pathname).toBe("/login");
+    });
+
+    it("lets a request through for a visitor WITH a session: a POST to an image-like page address, and a GET of one", async () => {
       const cookie = `${PLAIN}=${await token()}`;
-      const response = await middleware(post("/schemas/foo.png", { multipart: true, headers: { cookie } }));
-      expect(response.status).toBe(200);
-      expect(response.headers.get("location")).toBeNull();
+      const posted = await middleware(post("/schemas/foo.png", { multipart: true, headers: { cookie } }));
+      expect(posted.status).toBe(200);
+      expect(posted.headers.get("location")).toBeNull();
+      const got = await middleware(new NextRequest(url("/schemas/foo.png"), { headers: { cookie } }));
+      expect(got.status).toBe(200);
     });
   });
 

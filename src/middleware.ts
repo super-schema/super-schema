@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { hasValidSession } from "@/lib/session-cookie";
+import { PUBLIC_ASSET_PATHS } from "@/lib/public-assets";
 
 /**
  * The door of the app: runs before every page and every `/api/` endpoint (the matcher below leaves out only Next's own static assets,
- * and a GET or HEAD of an image is let through at once).
+ * and a GET or HEAD of a listed public asset, the favicon, is let through at once).
  *
  * - A visitor needs a VALID session (the cookie is decrypted and verified, `hasValidSession`; a cookie that merely has a session's
  *   name is no session). Without one a page redirects to `/login?callbackUrl=<the page asked for>` (the login page returns there
@@ -26,7 +27,7 @@ const isUnder = (pathname: string, prefix: string) => pathname === prefix || pat
 const isPublicApi = (pathname: string) => PUBLIC_API_PREFIXES.some((prefix) => isUnder(pathname, prefix));
 
 export async function middleware(req: NextRequest) {
-  if (isStaticFileRequest(req)) return NextResponse.next();
+  if (isPublicAssetRequest(req)) return NextResponse.next();
   const { pathname } = req.nextUrl;
 
   const isAuthPage = isUnder(pathname, "/login") || isUnder(pathname, "/register");
@@ -65,14 +66,13 @@ export async function middleware(req: NextRequest) {
 }
 
 /**
- * Only a GET or HEAD of a static file is let through unchecked: `/favicon.ico` and a path ending in an image extension. The address
- * alone never decides for another method: a server action is POSTed to a PAGE address (a dynamic segment can end in `.png`:
- * `/schemas/foo.png` is `[domainSlug]`), either with a `Next-Action` header or, as a progressive-enhancement form, as a multipart
+ * Only a GET or HEAD of one of the listed public assets (`/favicon.ico`, src/lib/public-assets.ts) is let through unchecked. The address
+ * alone never decides for anything else: a page address can end like a file (`/schemas/foo.png` is `[domainSlug]`), a GET of it is a
+ * page request, and a server action is POSTed to it, with a `Next-Action` header or, as a progressive-enhancement form, as a multipart
  * body that names the action and carries no such header.
  */
-const STATIC_FILE = /\.(?:svg|png|jpg|jpeg|gif|webp)$/;
-const isStaticFileRequest = (req: NextRequest) =>
-  (req.method === "GET" || req.method === "HEAD") && (req.nextUrl.pathname === "/favicon.ico" || STATIC_FILE.test(req.nextUrl.pathname));
+const PUBLIC_ASSETS: ReadonlySet<string> = new Set(PUBLIC_ASSET_PATHS);
+const isPublicAssetRequest = (req: NextRequest) => (req.method === "GET" || req.method === "HEAD") && PUBLIC_ASSETS.has(req.nextUrl.pathname);
 
 export const config = {
   // Everything but `_next/static` and `_next/image`: they are served by Next itself and are never an action.
