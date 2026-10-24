@@ -249,17 +249,61 @@ test.describe("a visitor without a session", () => {
     await expect(page.getByTestId(ID.topbar)).toHaveCount(0);
   });
 
-  test("lands on /schemas after login, not on the page that was asked for (the app keeps no callbackUrl)", { tag: ["@regression"] }, async ({ page }) => {
+  test("lands on /schemas after login, not on the page that was asked for (the login page does not use callbackUrl yet)", { tag: ["@regression"] }, async ({ page }) => {
     await page.goto("/admin/settings");
     await expect(page).toHaveURL((url) => url.pathname === "/login");
-    // What the redirect carries: nothing about where the visitor was going.
-    expect(new URL(page.url()).searchParams.has("callbackUrl")).toBe(false);
+    // What the redirect carries: where the visitor was going.
+    expect(new URL(page.url()).searchParams.get("callbackUrl")).toBe("/admin/settings");
     await waitForHydration(page.getByTestId(ID.loginForm));
 
     await submitLogin(page, TEST_EMAIL, TEST_PASSWORD);
 
     await expectLandedOnSchemas(page);
     await expect(page.getByRole("heading", { name: "Domains", level: 1 })).toBeVisible();
+  });
+});
+
+test.describe("a visitor with a forged or stale session cookie", () => {
+  /** What a hand-made cookie looks like to the middleware, which only checks that one of these names is present. */
+  const FORGED = "forged.not-a-valid-jwt.value";
+  const COOKIE_NAMES = ["authjs.session-token", "next-auth.session-token"] as const;
+
+  for (const name of COOKIE_NAMES) {
+    test(`${name}=<garbage> does not open the dashboard: no data is served and the visitor ends on /login`, { tag: ["@regression"] }, async ({
+      page,
+      request,
+      baseURL,
+    }) => {
+      // The server's answer, without following redirects: nothing of the dashboard (the system domains of the seed) in any answer.
+      const raw = await request.get("/schemas", { headers: { cookie: `${name}=${FORGED}` }, maxRedirects: 0 });
+      const body = await raw.text();
+      expect(body, `a forged ${name} got dashboard data (HTTP ${raw.status()})`).not.toMatch(/Playground|Shared domain for general-purpose/);
+      expect(raw.status(), "a forged cookie must be answered with a redirect to the login").toBeGreaterThanOrEqual(300);
+      expect(raw.status()).toBeLessThan(400);
+
+      // The browser: it ends on /login with the form (not on a redirect loop, not on the dashboard), and no dashboard is on screen.
+      await page.context().addCookies([{ name, value: FORGED, url: baseURL! }]);
+      await page.goto("/schemas");
+      await expect(page).toHaveURL((url) => url.pathname === "/login");
+      await expect(page.getByTestId(ID.loginForm)).toBeVisible();
+      await expect(page.getByTestId(ID.topbar)).toHaveCount(0);
+      await expect(page.getByText("Playground")).toHaveCount(0);
+    });
+  }
+
+  test("the app's own JSON endpoints answer 401 without a valid session, and the explorer's data is not served", { tag: ["@regression"] }, async ({
+    request,
+  }) => {
+    const requests: Array<Record<string, string>> = [{}, { cookie: `authjs.session-token=${FORGED}` }, { cookie: `next-auth.session-token=${FORGED}` }];
+    for (const headers of requests) {
+      const tree = await request.get("/api/domains-tree", { headers, maxRedirects: 0 });
+      expect(tree.status(), `/api/domains-tree with ${JSON.stringify(headers)}`).toBe(401);
+      expect(await tree.text()).not.toMatch(/Playground|Public/);
+      const tenants = await request.get("/api/tenants", { headers, maxRedirects: 0 });
+      expect(tenants.status(), `/api/tenants with ${JSON.stringify(headers)}`).toBe(401);
+    }
+    // What stays public on purpose: the health probe.
+    expect((await request.get("/api/v1/health", { maxRedirects: 0 })).status()).toBe(200);
   });
 });
 
