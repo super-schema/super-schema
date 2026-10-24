@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AlertTriangle, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,6 +35,8 @@ interface PublishEntityFormProps {
   publishError: string | null;
   /** Every blocker of a publish the server refused, listed under `publishError` (the plan changed after the preview). */
   publishBlockers?: ReadonlyArray<{ kind: string; message: string }>;
+  /** Set when a blocker is an ambiguous reference: a button under the blockers asks which entity it means. */
+  onPickReference?: () => void;
   onCancel: () => void;
   onConfirm: (input: PublishInput) => void | Promise<void>;
 }
@@ -46,6 +48,7 @@ export function PublishEntityForm({
   isPublishing,
   publishError,
   publishBlockers = [],
+  onPickReference,
   onCancel,
   onConfirm,
 }: PublishEntityFormProps) {
@@ -66,6 +69,19 @@ export function PublishEntityForm({
               <li key={`${b.kind}-${i}`}>{b.message}</li>
             ))}
           </ul>
+          {onPickReference && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-space-2"
+              onClick={onPickReference}
+              disabled={isPublishing}
+              data-testid="publish-pick-reference"
+            >
+              Choose the referenced entity
+            </Button>
+          )}
         </div>
       )}
 
@@ -189,6 +205,13 @@ interface PublishEntityDialogProps {
   isPublishing: boolean;
   publishError: string | null;
   publishBlockers?: ReadonlyArray<{ kind: string; message: string }>;
+  /** Set when a blocker is an ambiguous reference: see `PublishEntityForm`. */
+  onPickReference?: () => void;
+  /**
+   * A dialog that opens over this one (the reference pick dialog). Rendered INSIDE this dialog so it is a nested dialog: clicking in it
+   * or pressing Escape does not dismiss this one.
+   */
+  nested?: ReactNode;
   onOpenChange: (open: boolean) => void;
   onConfirm: (input: PublishInput) => void | Promise<void>;
 }
@@ -202,6 +225,8 @@ export function PublishEntityDialog({
   isPublishing,
   publishError,
   publishBlockers,
+  onPickReference,
+  nested,
   onOpenChange,
   onConfirm,
 }: PublishEntityDialogProps) {
@@ -237,10 +262,12 @@ export function PublishEntityDialog({
             isPublishing={isPublishing}
             publishError={publishError}
             publishBlockers={publishBlockers}
+            onPickReference={onPickReference}
             onCancel={() => onOpenChange(false)}
             onConfirm={onConfirm}
           />
         )}
+        {nested}
       </DialogContent>
     </Dialog>
   );

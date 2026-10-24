@@ -61,7 +61,8 @@ import { getPublishPreviewAction, publishEntityAction, listEntityVersionsAction 
 import { PublishEntityDialog } from "./components/PublishEntityDialog";
 import { EntityVersionList } from "./components/EntityVersionList";
 import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
-import type { PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
+import { needsReferenceOf, type PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
+import { useReferencePick } from "./components/useReferencePick";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import type { DraftVersionState } from "@/lib/entity-versioning/draft-label";
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
@@ -209,6 +210,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const [publishLoadError, setPublishLoadError] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  // "Which entity do you mean?" for an ambiguous bare-name reference that blocks the publish (opens over the publish dialog).
+  const { pickReference, resolveReferences, dialog: referenceDialog } = useReferencePick();
 
   // Right panel state
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
@@ -334,6 +337,34 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     setVersionsLoaded(true);
   }, [entity.id]);
 
+  // Loads the publish preview. An ambiguous reference that blocks it is asked right away (the pick dialog opens over the publish dialog,
+  // the pick is saved on the entity + field that hold the reference, often a member of the closure) and the preview is loaded again.
+  // Cancelling leaves the blocker listed, with a button to choose.
+  const loadPublishPreview = useCallback(async () => {
+    setPublishLoadError(null);
+    const asked = new Set<string>();
+    try {
+      for (;;) {
+        const res = await getPublishPreviewAction(entity.id);
+        if ("error" in res) {
+          setPublishLoadError(res.error);
+          return;
+        }
+        setPublishPreview(res.preview);
+        const needs = needsReferenceOf(res.preview.blockers);
+        if (!needs) return;
+        // A pick that was saved and still blocks is not asked again (the blocker stays listed).
+        const key = `${needs.entityId}:${needs.fieldId}`;
+        if (asked.has(key)) return;
+        asked.add(key);
+        if (!(await pickReference(needs))) return;
+      }
+    } catch (e) {
+      // Without this the dialog would spin on "Checking changes…" forever.
+      setPublishLoadError(`Could not load the publish preview: ${errorMessage(e)}`);
+    }
+  }, [entity.id, pickReference]);
+
   const handleOpenPublish = useCallback(async () => {
     if (fieldDirtyRef.current) {
       const confirmed = window.confirm("You have unsaved field edits. Publish the last saved draft without them?");
@@ -341,23 +372,17 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     }
     setPublishOpen(true);
     setPublishPreview(null);
-    setPublishLoadError(null);
     setPublishError(null);
-    try {
-      const res = await getPublishPreviewAction(entity.id);
-      if ("error" in res) setPublishLoadError(res.error);
-      else setPublishPreview(res.preview);
-    } catch (e) {
-      // Without this the dialog would spin on "Checking changes…" forever.
-      setPublishLoadError(`Could not load the publish preview: ${errorMessage(e)}`);
-    }
-  }, [entity.id]);
+    await loadPublishPreview();
+  }, [loadPublishPreview]);
 
   const handleConfirmPublish = useCallback(async (input: PublishInput) => {
     setIsPublishing(true);
     setPublishError(null);
     try {
-      const res = await publishEntityAction(entity.id, input);
+      // A publish refused for an ambiguous reference answers the pick beside its error: ask it first, save it, publish once more.
+      const res = await resolveReferences(() => publishEntityAction(entity.id, input));
+      if (!res) return; // the user declined to choose: nothing was published, the dialog stays as it was
       if ("error" in res) {
         setPublishError(res.error);
         return;
@@ -372,7 +397,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     } finally {
       setIsPublishing(false);
     }
-  }, [entity.id, entity.name, router]);
+  }, [entity.id, entity.name, router, resolveReferences]);
 
   const handleCompare = useCallback(async (versionA: number, versionB: number) => {
     const response = await compareVersionsAction(entity.id, versionA, versionB);
@@ -909,6 +934,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         loadError={publishLoadError}
         isPublishing={isPublishing}
         publishError={publishError}
+        onPickReference={publishPreview && needsReferenceOf(publishPreview.blockers) ? () => void loadPublishPreview() : undefined}
+        nested={referenceDialog}
         onOpenChange={setPublishOpen}
         onConfirm={handleConfirmPublish}
       />
