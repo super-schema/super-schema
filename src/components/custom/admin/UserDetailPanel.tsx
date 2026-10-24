@@ -35,12 +35,18 @@ export function UserDetailPanel({ user, onClose, onChanged }: UserDetailPanelPro
   }
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-background border-l border-border shadow-lg z-50 flex flex-col animate-panel-expand">
+    <div
+      data-testid="user-detail-panel"
+      data-email={user.email}
+      className="fixed inset-y-0 right-0 w-96 bg-background border-l border-border shadow-lg z-50 flex flex-col animate-panel-expand"
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-space-4 py-space-3 border-b border-border">
         <h3 className="text-heading-4 text-foreground">User Details</h3>
         <button
           onClick={onClose}
+          data-testid="user-detail-close"
+          aria-label="Close user details"
           className="p-1 rounded-md hover:bg-accent text-muted-foreground"
         >
           <X className="w-4 h-4" />
@@ -66,19 +72,27 @@ export function UserDetailPanel({ user, onClose, onChanged }: UserDetailPanelPro
             <div className="flex items-center gap-space-2">
               <input
                 type="text"
+                data-testid="user-name-input"
+                aria-label="Name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="flex-1 bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none focus:ring-1 focus:ring-primary"
               />
               <button
                 onClick={handleSaveName}
+                data-testid="user-name-save"
+                aria-label="Save name"
                 disabled={saving || name === (user.name ?? "")}
                 className="p-1.5 rounded-md bg-primary text-primary-foreground disabled:opacity-50"
               >
                 <Save className="w-3.5 h-3.5" />
               </button>
             </div>
-            {error && <p className="text-caption text-destructive">{error}</p>}
+            {error && (
+              <p role="alert" data-testid="user-name-error" className="text-caption text-destructive">
+                {error}
+              </p>
+            )}
           </div>
         </section>
 

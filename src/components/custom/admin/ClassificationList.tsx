@@ -56,6 +56,7 @@ export function ClassificationList() {
       <div className="flex justify-end">
         <button
           onClick={() => setShowCreate(true)}
+          data-testid="classification-add-open"
           className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small"
         >
           <Plus className="w-4 h-4" />
@@ -65,12 +66,14 @@ export function ClassificationList() {
 
       {/* Create dialog */}
       {showCreate && (
-        <div className="border border-border rounded-lg p-space-4 space-y-space-3 bg-muted/30">
+        <div data-testid="classification-form" className="border border-border rounded-lg p-space-4 space-y-space-3 bg-muted/30">
           <h4 className="text-heading-4 text-foreground">New Classification Level</h4>
           <div className="grid grid-cols-2 gap-space-3">
             <div className="space-y-space-1">
-              <label className="text-caption text-muted-foreground">Name</label>
+              <label htmlFor="classification-name" className="text-caption text-muted-foreground">Name</label>
               <input
+                id="classification-name"
+                data-testid="classification-name"
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -96,8 +99,10 @@ export function ClassificationList() {
               </div>
             </div>
             <div className="space-y-space-1">
-              <label className="text-caption text-muted-foreground">Description</label>
+              <label htmlFor="classification-description" className="text-caption text-muted-foreground">Description</label>
               <input
+                id="classification-description"
+                data-testid="classification-description"
                 type="text"
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
@@ -128,10 +133,15 @@ export function ClassificationList() {
               {newName.toUpperCase() || "PREVIEW"}
             </span>
           </div>
-          {error && <p className="text-caption text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" data-testid="classification-error" className="text-caption text-destructive">
+              {error}
+            </p>
+          )}
           <div className="flex gap-space-2">
             <button
               onClick={handleCreate}
+              data-testid="classification-create"
               disabled={!newName.trim()}
               className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50"
             >
@@ -152,6 +162,9 @@ export function ClassificationList() {
         {levels.map((level, i) => (
           <div
             key={level.id}
+            data-testid="classification-row"
+            data-name={level.name}
+            data-system={level.isSystem ? "true" : "false"}
             className={`flex items-center justify-between p-space-4 ${
               i < levels.length - 1 ? "border-b border-border" : ""
             }`}

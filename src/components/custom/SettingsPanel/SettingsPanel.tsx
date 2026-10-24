@@ -34,6 +34,7 @@ function ThemeCard({
   return (
     <button
       data-testid={`theme-${value}`}
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         "flex flex-col items-center gap-space-2 rounded-lg border-2 p-space-4 transition-colors cursor-pointer",
@@ -80,6 +81,7 @@ function FontScaleButton({
   return (
     <button
       data-testid={`font-${value}`}
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         "flex items-center gap-space-3 rounded-lg border-2 px-space-4 py-space-3 transition-colors cursor-pointer flex-1 min-w-[120px]",

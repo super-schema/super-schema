@@ -59,7 +59,7 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
   }
 
   return (
-    <div className="space-y-space-3">
+    <div className="space-y-space-3" data-testid="roles-editor">
       {/* Current roles list */}
       {roles.length === 0 ? (
         <p className="text-body-small text-muted-foreground">No roles assigned</p>
@@ -70,6 +70,9 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
             return (
               <div
                 key={r.id}
+                data-testid="role-item"
+                data-role={r.role}
+                data-domain-id={r.domainId ?? ""}
                 className="flex items-center justify-between p-space-2 rounded-md bg-muted/50"
               >
                 <div className="flex items-center gap-space-2">
@@ -94,6 +97,7 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleRemoveRole(r.id)}
+                      data-testid="role-remove-confirm"
                       className="text-caption text-destructive px-2 py-0.5 rounded hover:bg-destructive/10"
                     >
                       Confirm
@@ -108,8 +112,10 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
                 ) : (
                   <button
                     onClick={() => setConfirmRemove(r.id)}
+                    data-testid="role-remove"
                     className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                     title="Remove role"
+                    aria-label={`Remove role ${r.role}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -122,15 +128,19 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
 
       {/* Error display */}
       {error && (
-        <p className="text-caption text-destructive">{error}</p>
+        <p role="alert" data-testid="role-error" className="text-caption text-destructive">
+          {error}
+        </p>
       )}
 
       {/* Add role form */}
       {showAddForm ? (
-        <div className="p-space-3 rounded-md border border-border space-y-space-3">
+        <div data-testid="role-add-form" className="p-space-3 rounded-md border border-border space-y-space-3">
           <div className="space-y-space-2">
-            <label className="block text-caption text-muted-foreground">Role</label>
+            <label htmlFor="role-add-select" className="block text-caption text-muted-foreground">Role</label>
             <select
+              id="role-add-select"
+              data-testid="role-add-select"
               value={newRole}
               onChange={(e) => setNewRole(e.target.value as Role)}
               className="w-full bg-muted rounded-md px-space-3 py-1.5 text-body-small text-foreground outline-none"
@@ -143,8 +153,10 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
 
           {!isSystemRole && (
             <div className="space-y-space-2">
-              <label className="block text-caption text-muted-foreground">Domain</label>
+              <label htmlFor="role-add-domain" className="block text-caption text-muted-foreground">Domain</label>
               <input
+                id="role-add-domain"
+                data-testid="role-add-domain"
                 type="text"
                 placeholder="Domain ID"
                 value={newDomainId}
@@ -163,6 +175,7 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
           <div className="flex items-center gap-space-2">
             <button
               onClick={handleAddRole}
+              data-testid="role-add-submit"
               disabled={busy}
               className="px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50 inline-flex items-center gap-1"
             >
@@ -180,6 +193,7 @@ export function RolesEditor({ userId, roles, onChanged }: RolesEditorProps) {
       ) : (
         <button
           onClick={() => setShowAddForm(true)}
+          data-testid="role-add-open"
           className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md text-body-small text-primary hover:bg-primary/10 transition-colors"
         >
           <Plus className="w-4 h-4" />

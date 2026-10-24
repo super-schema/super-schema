@@ -114,6 +114,7 @@ export function HealthDashboard() {
         <button
           onClick={refresh}
           disabled={loading}
+          data-testid="health-run-check"
           className="flex items-center gap-space-2 px-space-3 py-1.5 rounded-md bg-primary text-primary-foreground text-body-small disabled:opacity-50"
         >
           <Activity className="w-4 h-4" />
@@ -144,7 +145,13 @@ export function HealthDashboard() {
               message: loading ? "Checking\u2026" : "Unknown",
             };
             return (
-              <div key={key} className="border border-border rounded-lg p-space-4">
+              <div
+                key={key}
+                data-testid="health-service"
+                data-service={key}
+                data-status={comp.status}
+                className="border border-border rounded-lg p-space-4"
+              >
                 <div className="flex items-center justify-between mb-space-2">
                   <div className="flex items-center gap-space-2">
                     <Icon className="w-5 h-5 text-muted-foreground" />
@@ -167,7 +174,7 @@ export function HealthDashboard() {
         <h3 className="text-heading-4 text-foreground mb-space-3">Usage Metrics</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-space-4">
           {usageCards.map(({ label, value, icon: Icon }) => (
-            <div key={label} className="border border-border rounded-lg p-space-4 text-center">
+            <div key={label} data-testid="health-usage" data-metric={label} className="border border-border rounded-lg p-space-4 text-center">
               <Icon className="w-5 h-5 text-muted-foreground mx-auto mb-space-2" />
               <p className="text-heading-2 text-foreground">{value}</p>
               <p className="text-caption text-muted-foreground">{label}</p>

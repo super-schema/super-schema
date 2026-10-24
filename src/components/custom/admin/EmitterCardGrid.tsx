@@ -123,6 +123,9 @@ export function EmitterCardGrid() {
           {emitters.map((emitter) => (
             <div
               key={emitter.emitterName}
+              data-testid="emitter-card"
+              data-emitter={emitter.emitterName}
+              data-enabled={emitter.enabled ? "true" : "false"}
               className="border border-border rounded-lg p-space-4"
             >
               {/* Header */}
@@ -140,6 +143,7 @@ export function EmitterCardGrid() {
 
                 {/* Toggle */}
                 <button
+                  data-testid="emitter-toggle"
                   onClick={() => toggleEmitter(emitter.emitterName, !emitter.enabled)}
                   disabled={busy === emitter.emitterName}
                   className={`relative w-10 h-5 rounded-full transition-colors disabled:opacity-50 ${
@@ -171,6 +175,7 @@ export function EmitterCardGrid() {
               {/* Status badge */}
               <div className="mt-space-3 flex items-center justify-between">
                 <span
+                  data-testid="emitter-status"
                   className={`inline-flex px-2 py-0.5 rounded-full text-caption ${
                     emitter.enabled
                       ? "bg-success/20 text-success"

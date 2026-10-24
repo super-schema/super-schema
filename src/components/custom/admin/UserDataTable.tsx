@@ -73,6 +73,8 @@ export function UserDataTable() {
           <Search className="w-4 h-4 text-muted-foreground shrink-0" />
           <input
             type="text"
+            data-testid="user-filter"
+            aria-label="Filter users"
             placeholder="Filter by name or email..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -92,7 +94,7 @@ export function UserDataTable() {
 
       {/* Table */}
       <div className="border border-border rounded-lg overflow-hidden">
-        <table className="w-full text-body-small">
+        <table className="w-full text-body-small" data-testid="user-table">
           <thead>
             <tr className="border-b border-border bg-muted/50">
               <th className="text-left px-space-4 py-space-3 text-muted-foreground font-medium">Email</th>
@@ -119,6 +121,8 @@ export function UserDataTable() {
               filtered.map((user) => (
                 <tr
                   key={user.id}
+                  data-testid="user-row"
+                  data-email={user.email}
                   className="border-b border-border last:border-0 hover:bg-accent/50 cursor-pointer transition-colors"
                   onClick={() => setSelectedUser(user)}
                 >
@@ -131,6 +135,8 @@ export function UserDataTable() {
                         return (
                           <span
                             key={r.id}
+                            data-testid="user-role-badge"
+                            data-role={r.role}
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-caption ${colors.bg} ${colors.text}`}
                           >
                             <Shield className="w-3 h-3" />
