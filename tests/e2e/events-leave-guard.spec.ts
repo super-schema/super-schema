@@ -25,7 +25,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, type NavFixtures } from "./helpers/db";
-import { BUILDER_ID, centerPanel, createEventFromMenu, expectNoRawDbText, productUrlOf } from "./helpers/event-builder";
+import { BUILDER_ID, centerPanel, createEventFromMenu, expectNoRawDbText, leftSidebar, productUrlOf } from "./helpers/event-builder";
 
 const SAVE_TIMEOUT = 60_000;
 /** A cancelled Back never commits: do not wait for it for long. */
@@ -62,7 +62,7 @@ const titleInput = (page: Page): Locator => centerPanel(page).getByTestId("metad
 const statusOf = (page: Page): Locator => centerPanel(page).getByTestId(BUILDER_ID.status);
 const leaveDialog = (page: Page): Locator => page.getByTestId("unsaved-changes-dialog");
 /** The Enterprise row of the explorer: another page, always rendered. */
-const explorerRow = (page: Page): Locator => page.getByTestId("left-sidebar").getByTestId("enterprise");
+const explorerRow = (page: Page): Locator => leftSidebar(page).getByTestId("enterprise");
 
 /** Opens the shared event on a fresh load and returns the stored title. */
 async function openEvent(page: Page): Promise<string> {

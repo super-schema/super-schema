@@ -37,6 +37,15 @@ export const BUILDER_ID = {
 
 export const centerPanel = (page: Page): Locator => page.getByTestId("center-panel");
 
+/**
+ * The explorer. It sits behind a Suspense boundary, and for about 60 ms after a hard load the page holds two of it: the one in place and
+ * the streamed segment's hidden copy (`div#S:0[hidden]` in <body>), so a bare `page.getByTestId("left-sidebar")` can resolve to two
+ * elements and trip strict mode (a third of the rapid `layout.spec` runs on a production build). Whatever sits under a `[hidden]`
+ * ancestor is left out. The loading skeleton has a test id of its own, `left-sidebar-fallback`. A collapsed sidebar has no width and
+ * is not "visible" to Playwright, which is why this is a selector and not `.filter({ visible: true })`.
+ */
+export const leftSidebar = (page: Page): Locator => page.locator('[data-testid="left-sidebar"]:not([hidden] *)');
+
 export const productUrlOf = (f: NavFixtures) => `/schemas/${f.domain.slug}/${f.product.slug}`;
 
 /** Raw driver / Prisma text must never reach a rendered page. */

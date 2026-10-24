@@ -12,6 +12,7 @@
 
 import type { Page } from "@playwright/test";
 import { test, expect, unique } from "./helpers/fixtures";
+import { leftSidebar } from "./helpers/event-builder";
 
 const NOT_FOUND_COPY = "This page could not be found";
 
@@ -30,7 +31,7 @@ async function expectNotFoundInsideShell(page: Page) {
   // The shell around it: top bar, organization switcher, and the loaded explorer (the skeleton has no "enterprise" row).
   await expect(page.getByTestId("topbar")).toBeVisible();
   await expect(page.getByTestId("tenant-switcher")).toBeVisible();
-  await expect(page.getByTestId("left-sidebar").getByTestId("enterprise")).toBeVisible({ timeout: 30_000 });
+  await expect(leftSidebar(page).getByTestId("enterprise")).toBeVisible({ timeout: 30_000 });
 }
 
 /** The switcher is live, not just painted: it opens and lists the organizations. */

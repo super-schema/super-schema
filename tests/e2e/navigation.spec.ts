@@ -22,6 +22,7 @@
 
 import type { APIRequestContext, Page } from "@playwright/test";
 import { test, expect, unique } from "./helpers/fixtures";
+import { leftSidebar } from "./helpers/event-builder";
 import {
   createNavFixtures,
   deleteNavFixtures,
@@ -81,7 +82,7 @@ async function expectNoNotFoundPage(page: Page) {
 /** Wait for the explorer tree to load: the loading skeleton is `left-sidebar-fallback` and has no "enterprise" row. */
 async function openExplorer(page: Page) {
   await page.goto("/schemas");
-  await expect(page.getByTestId("left-sidebar").getByTestId("enterprise")).toBeVisible({
+  await expect(leftSidebar(page).getByTestId("enterprise")).toBeVisible({
     timeout: 30_000,
   });
 }
@@ -92,7 +93,7 @@ async function openExplorer(page: Page) {
  * clicked in one tick; nodes revealed by that re-render are picked up by the next pass.
  */
 async function expandAll(page: Page) {
-  const sidebar = page.getByTestId("left-sidebar");
+  const sidebar = leftSidebar(page);
   for (let pass = 0; pass < 10; pass++) {
     const clicked = await sidebar.evaluate(async (root) => {
       const collapsed = Array.from(
@@ -171,7 +172,7 @@ test.describe("navigation", () => {
 
     await openExplorer(page);
     await expandAll(page);
-    const sidebar = page.getByTestId("left-sidebar");
+    const sidebar = leftSidebar(page);
 
     // Fixture nodes (always present) and where each must land.
     const expectedLanding: Record<string, string> = {
@@ -357,7 +358,7 @@ test.describe("navigation", () => {
 
       // Reach it from the sidebar, starting somewhere that is not its page.
       await openExplorer(page);
-      const row = page.getByTestId("left-sidebar").getByText(name, { exact: true });
+      const row = leftSidebar(page).getByText(name, { exact: true });
       await expect(row).toBeVisible({ timeout: 30_000 });
       await row.click();
       await expect(page).toHaveURL(/\/schemas\/enterprise\/entities\//);

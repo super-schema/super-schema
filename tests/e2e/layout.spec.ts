@@ -1,17 +1,19 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
+import { leftSidebar } from "./helpers/event-builder";
 
 // The shell is checked as the real, logged-in admin (the session the `setup` project saved), not with a made-up session cookie that
 // only gets past the middleware.
 
 /**
  * Open /schemas at `width` and wait until the shell has settled: the explorer (`left-sidebar`) is there. While it loads, the page shows a
- * skeleton with a test id of its own (`left-sidebar-fallback`), so `left-sidebar` is never two elements and needs no count to wait for.
+ * skeleton with a test id of its own (`left-sidebar-fallback`); the streamed segment's hidden copy of the explorer, which a hard load
+ * leaves in <body> for a moment, is not part of `leftSidebar(page)`: it is one element, with no count to wait for.
  */
 async function openSchemas(page: Page, width = 1440): Promise<void> {
   await page.setViewportSize({ width, height: 900 });
   await page.goto("/schemas");
-  await expect(page.getByTestId("left-sidebar")).toBeAttached({ timeout: 15_000 });
+  await expect(leftSidebar(page)).toBeAttached({ timeout: 15_000 });
 }
 
 test.describe("IDE Layout", () => {
@@ -20,7 +22,7 @@ test.describe("IDE Layout", () => {
 
     await expect(page.getByTestId("topbar")).toBeVisible();
     await expect(page.getByTestId("activity-bar")).toBeVisible();
-    await expect(page.getByTestId("left-sidebar")).toBeVisible();
+    await expect(leftSidebar(page)).toBeVisible();
     await expect(page.getByTestId("center-panel")).toBeVisible();
     await expect(page.getByTestId("right-panel")).toBeVisible();
     await expect(page.getByTestId("status-bar")).toBeVisible();
@@ -48,7 +50,7 @@ test.describe("IDE Layout", () => {
   test("sidebar collapses and expands via double-click", { tag: ["@regression"] }, async ({ authedPage: page }) => {
     await openSchemas(page);
 
-    const sidebar = page.getByTestId("left-sidebar");
+    const sidebar = leftSidebar(page);
     await expect(sidebar).toHaveAttribute("data-collapsed", "false");
 
     // Double-click handle to collapse
@@ -64,7 +66,7 @@ test.describe("IDE Layout", () => {
     await openSchemas(page);
 
     // Wait for sidebar to render
-    await expect(page.getByTestId("left-sidebar")).toHaveAttribute(
+    await expect(leftSidebar(page)).toHaveAttribute(
       "data-collapsed",
       "false"
     );
@@ -78,7 +80,7 @@ test.describe("IDE Layout", () => {
 
     // Reload and verify sidebar still visible (the explorer replaces its loading fallback, which has another test id)
     await page.reload();
-    await expect(page.getByTestId("left-sidebar")).toHaveAttribute(
+    await expect(leftSidebar(page)).toHaveAttribute(
       "data-collapsed",
       "false",
       { timeout: 15_000 }
@@ -89,7 +91,7 @@ test.describe("IDE Layout", () => {
     await openSchemas(page, 1200);
 
     await expect(page.getByTestId("responsive-warning")).toBeVisible();
-    const sidebar = page.getByTestId("left-sidebar");
+    const sidebar = leftSidebar(page);
     await expect(sidebar).toHaveAttribute("data-collapsed", "true");
   });
 });

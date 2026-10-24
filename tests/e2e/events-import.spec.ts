@@ -25,7 +25,7 @@ import path from "node:path";
 import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./helpers/fixtures";
 import { createNavFixtures, deleteNavFixtures, disconnectDb, pg, type NavFixtures } from "./helpers/db";
-import { centerPanel, expectNoRawDbText, openNewEventDialog, productUrlOf } from "./helpers/event-builder";
+import { centerPanel, expectNoRawDbText, leftSidebar, openNewEventDialog, productUrlOf } from "./helpers/event-builder";
 
 // The first preview starts the AsyncAPI parser, and first visits compile routes in dev.
 const FIXTURES = path.join(__dirname, "../fixtures/asyncapi-import");
@@ -175,10 +175,10 @@ test.describe("importing an AsyncAPI document end to end", () => {
       expect(rows.map((r) => ({ name: r.name, status: r.status, latestVersionId: r.latestVersionId }))).toEqual(
         ENTITIES.map((name) => ({ name, status: "DRAFT", latestVersionId: null }))
       );
-      // A hard load shows the sidebar's loading fallback (`left-sidebar-fallback`) and then the real one (`left-sidebar`): each row is
-      // waited for in the real one. A row is found by the entity's id (its testid), not by its text, which the event's own page and the
-      // dialog could repeat.
-      const explorer = page.getByTestId("left-sidebar");
+      // A hard load shows the sidebar's loading fallback (`left-sidebar-fallback`) and then the real one (`left-sidebar`, helpers/event-builder.ts
+      // leaves out the streamed segment's hidden copy): each row is waited for in the real one. A row is found by the entity's id (its
+      // testid), not by its text, which the event's own page and the dialog could repeat.
+      const explorer = leftSidebar(page);
       for (const row of rows) await expect(explorer.getByTestId(`entity-${row.id}`), `explorer row ${row.name}`).toBeVisible({ timeout: 30_000 });
       const versions = await pg().query(`SELECT count(*) AS n FROM entity_versions ev JOIN entities e ON e.id = ev."entityId" WHERE e."productId" = $1`, [f.product.id]);
       expect(Number(versions.rows[0].n), "nothing was published").toBe(0);
