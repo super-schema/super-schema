@@ -54,7 +54,7 @@ type IndexedEntity = {
   domainId: string | null;
   metadata: unknown;
   latestVersionId: string | null;
-  domain: { id: string; name: string } | null;
+  domain: { id: string; name: string; slug: string } | null;
   product: { name: string } | null;
   ref: EntityRef;
 };
@@ -80,7 +80,7 @@ async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<stri
       domainId: true,
       metadata: true,
       latestVersionId: true,
-      domain: { select: { id: true, name: true } },
+      domain: { select: { id: true, name: true, slug: true } },
       product: { select: { name: true } },
     },
     orderBy: { id: "asc" },
@@ -100,6 +100,13 @@ async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<stri
   return index;
 }
 
+/**
+ * Entity-level input for a closure member. LIMIT: `EntityVersion` snapshots only the fields (`fieldSnapshot`) and the
+ * TypeSpec source (`resolvedSource`); it holds no name, description, metadata or domain. So for published and pinned
+ * sources those come from the LIVE entity row (a post-publish rename or description edit shows through), and only the
+ * fields and the version number (`sequence`) are frozen. Identity (id, qualified-name segments) is live by design: the
+ * id is the key and the qualified name is refreshed from it (spec decision 4).
+ */
 function toEntityInput(e: IndexedEntity, version?: number): PrismaEntityInput {
   return {
     id: e.id,
@@ -109,7 +116,7 @@ function toEntityInput(e: IndexedEntity, version?: number): PrismaEntityInput {
     version: version ?? e.version,
     domainId: e.domainId,
     metadata: e.metadata,
-    domain: e.domain ? { id: e.domain.id, name: e.domain.name, slug: e.domain.name.toLowerCase().replace(/\s+/g, "-") } : null,
+    domain: e.domain ? { id: e.domain.id, name: e.domain.name, slug: e.domain.slug } : null,
   };
 }
 
@@ -130,6 +137,7 @@ function resolveTarget(
     return { ambiguous: matches.sort(byQualified), name: fieldRef.legacyName };
   }
   if (fieldRef.entityId) {
+    // A dangling id (target deleted or moved tenant) falls through to the qualified name, per id -> qualified -> bare.
     const byId = index.get(fieldRef.entityId);
     if (byId) return { target: byId };
   }
@@ -290,6 +298,8 @@ export async function loadReferenceClosure(
     // Breadth-first by qualified name, a field's name breaking ties.
     edges.sort((a, b) => byQualified(a.target, b.target) || compareStr(a.field, b.field));
     for (const edge of edges) {
+      // Pin conflict: when two fields pin different versions of one entity, the first visited wins (deterministic,
+      // breadth-first by qualified name then field name); later pins to an already-loaded entity are ignored.
       if (seen.has(edge.target.id)) continue;
       if (entities.length >= limit) return { success: false, error: { code: "CLOSURE_TOO_LARGE", limit } };
       const loaded = await add(edge.target, edge.pin, edge.field);

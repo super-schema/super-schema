@@ -48,7 +48,7 @@ function fakeDb(rows: EntityRow[]) {
             productId: r.product ? `p-${r.product}` : null,
             metadata: null,
             latestVersionId: r.latest ?? null,
-            domain: r.domain ? { id: `d-${r.domain}`, name: r.domain } : null,
+            domain: r.domain ? { id: `d-${r.domain}`, name: r.domain, slug: `${r.domain}-slug` } : null,
             product: r.product ? { name: r.product } : null,
           })),
     },
@@ -250,6 +250,53 @@ describe("loadReferenceClosure", () => {
       if (r.success) return;
       expect(r.error).toMatchObject({ code: "NEVER_PUBLISHED", ref: { entity: "B" } });
     });
+  });
+
+  it("published mode ignores post-publish field and description edits; draft mode sees them", async () => {
+    const mk = () =>
+      fakeDb([
+        ent("a", { versions: [version("a", 1, 0, ["B"])], latest: "a-v1.0" }, [["x", ref("C")]]),
+        ent("b", { versions: [version("b", 1, 0, [])], latest: "b-v1.0" }),
+        ent("c", { versions: [version("c", 1, 0, [])], latest: "c-v1.0" }),
+      ]);
+    const db = mk();
+    const pub = await loadReferenceClosure(db, "t1", "a", "published");
+    expect(pub.success && names(pub.data)).toEqual(["A", "B"]);
+    expect(pub.success && pub.data.root.fields[0].name).toBe("s0");
+    const dr = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(dr.success && names(dr.data)).toEqual(["A", "C"]);
+    // description is not snapshotted: documented limit, entity-level data stays live
+    expect(pub.success && pub.data.root.entity.description).toBe("");
+  });
+
+  it("passes the real domain slug through", async () => {
+    const db = fakeDb([ent("a", { domain: "Sales Dom", product: "p" })]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success && r.data.root.entity.domain?.slug).toBe("Sales Dom-slug");
+  });
+
+  it("pin conflict: the first visited pin wins", async () => {
+    const db = fakeDb([
+      ent("a", {}, [
+        ["f1", qref("b", "_tenant/_tenant/B", "1.0")],
+        ["f2", qref("b", "_tenant/_tenant/B", "1.1")],
+      ]),
+      ent("b", { versions: [version("b", 1, 0, ["C"]), version("b", 1, 1, ["D"])], latest: "b-v1.1" }),
+      ent("c"),
+      ent("d"),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success && names(r.data)).toEqual(["A", "B", "C"]);
+    expect(r.success && r.data.entities[1].version).toBe("1.0");
+  });
+
+  it("a dangling id falls back to the qualified name", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["x", qref("old-id", "d1/p1/Address")]]),
+      ent("x1", { name: "Address", domain: "d1", product: "p1" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success && r.data.entities.map((e) => e.entityId)).toEqual(["a", "x1"]);
   });
 
   it("never includes an entity of another tenant (dangling)", async () => {
