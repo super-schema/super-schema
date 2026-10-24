@@ -18,7 +18,7 @@ import type { GitPrResult, GitPrStatus } from "@/types/schemas/git-pr";
 import type { ChangeRecord } from "@/services/version-history/version.types";
 import type { MigrationArtifacts } from "@/lib/migration/migration.types";
 import type { TargetOutput } from "@/lib/emission/emission.types";
-import { slugify, generateExportFiles } from "./git.service";
+import { slugify, planGitExport, toExportEntityInput } from "./git.service";
 import { domainLabel } from "@/lib/entity-placement";
 
 // ---------------------------------------------------------------------------
@@ -318,6 +318,7 @@ export async function exportWithReview(
     where: { id: entityId },
     include: {
       domain: true,
+      product: true,
       fields: { orderBy: { sortOrder: "asc" } },
     },
   });
@@ -336,34 +337,8 @@ export async function exportWithReview(
 
   if (!createPr) {
     // Direct push — delegate to exportEntity logic
-    const emittedOutputs =
-      (metadata.emittedOutputs as Record<string, TargetOutput>) ?? {};
-
-    const entityDefinition = {
-      name: entity.name,
-      description: entity.description,
-      domain: domainLabel(entity.domain),
-      version,
-      status: entity.status,
-      fields: entity.fields.map((f) => ({
-        name: f.name,
-        type: f.type,
-        nullable: f.nullable,
-        isKey: f.isKey,
-        description: f.description,
-        classification: f.classification,
-        decorators: f.decorators,
-      })),
-      metadata: entity.metadata,
-    };
-
-    const files = generateExportFiles(
-      config.basePath,
-      domainLabel(entity.domain),
-      entity.name,
-      entityDefinition,
-      emittedOutputs
-    );
+    const plan = planGitExport(config.basePath, [toExportEntityInput(entity, version)]);
+    const files = plan.files;
 
     await withAudit({
       action: "GIT_DIRECT_PUSH",
@@ -386,6 +361,7 @@ export async function exportWithReview(
       success: true,
       filesExported: files.length,
       commitSha: `sha-${Date.now()}`,
+      ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
     });
   }
 
@@ -439,36 +415,14 @@ export async function exportWithReview(
       },
     });
 
-    const entityDefinition = {
-      name: entity.name,
-      description: entity.description,
-      domain: domainLabel(entity.domain),
-      version,
-      status: entity.status,
-      fields: entity.fields.map((f) => ({
-        name: f.name,
-        type: f.type,
-        nullable: f.nullable,
-        isKey: f.isKey,
-        description: f.description,
-        classification: f.classification,
-        decorators: f.decorators,
-      })),
-      metadata: entity.metadata,
-    };
-
-    const files = generateExportFiles(
-      config.basePath,
-      domainLabel(entity.domain),
-      entity.name,
-      entityDefinition,
-      emittedOutputs
-    );
+    const plan = planGitExport(config.basePath, [toExportEntityInput(entity, version)]);
+    const files = plan.files;
 
     return ok({
       success: true,
       filesExported: files.length,
       commitSha: `sha-${Date.now()}`,
+      ...(plan.warnings.length > 0 ? { warnings: plan.warnings } : {}),
       pr: {
         prUrl: prRecord.prUrl,
         prNumber: prRecord.prNumber,

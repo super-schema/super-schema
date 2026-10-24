@@ -83,6 +83,8 @@ export const GitExportResultSchema = z.object({
   filesExported: z.number(),
   commitSha: z.string().optional(),
   error: z.string().optional(),
+  /** Files the export skipped or kept apart (an unsafe path, two files on one path); the export itself went ahead. */
+  warnings: z.array(z.string()).optional(),
 });
 export type GitExportResult = z.infer<typeof GitExportResultSchema>;
 
