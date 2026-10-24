@@ -66,6 +66,38 @@ function entityRow(over: Record<string, unknown> = {}) {
 describe("loadEntityWorkspace", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The reference picker's entity list (and, where a test queues its own value first, the staleness lookup) read `entity.findMany`.
+    mockEntityFindMany.mockResolvedValue([]);
+  });
+
+  describe("reference picker entities", () => {
+    it("carries the tenant's entities with their domain and product names, read for the SCOPE's tenant", async () => {
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow());
+      mockEntityFindMany.mockResolvedValue([
+        { id: "e-addr", name: "Address", domain: { name: "Billing" }, product: { name: "Core" } },
+        { id: "e-money", name: "Money", domain: null, product: null },
+      ]);
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(data?.props.referenceTargets).toEqual([
+        { id: "e-addr", name: "Address", domain: "Billing", product: "Core" },
+        { id: "e-money", name: "Money", domain: "_tenant", product: "_tenant" },
+      ]);
+      expect(mockEntityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: "tenant-1" } }));
+    });
+
+    it("a failing lookup does not take the page down: no entities, the picker takes a typed name", async () => {
+      mockEntityFindFirst.mockResolvedValueOnce(entityRow());
+      mockEntityFindMany.mockRejectedValue(new Error("db down"));
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const data = await loadEntityWorkspace({ slugOrId: "order", productId: "prod-1", tenantId: "tenant-1" });
+
+      expect(data?.props.entity.id).toBe("ent-1");
+      expect(data?.props.referenceTargets).toEqual([]);
+      spy.mockRestore();
+    });
   });
 
   it("resolves by slug first, scoped by product and tenant", async () => {

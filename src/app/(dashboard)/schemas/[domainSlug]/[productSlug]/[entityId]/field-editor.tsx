@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutocompleteInput } from "@/components/custom/AutocompleteInput";
 import { TypePicker } from "@/components/custom/TypePicker";
+import { applyReferencePick, type PickableEntity, type ReferencePick } from "@/lib/references/entity-reference";
 import {
   getEntityCompleteness,
   getFieldCompleteness,
@@ -89,6 +90,11 @@ interface FieldEditorProps {
   selectedFieldId?: string | null;
   /** The pin control of reference fields (published versions of the referenced entity, pin / unpin). Keep it referentially stable. */
   referenceControls?: ReferenceFieldControls;
+  /**
+   * The entities of the tenant a reference can point at, with their domain and product. When given, choosing the `reference` type (in a
+   * field row or in the New Field form) asks for the target and saves the qualified reference with the field.
+   */
+  referenceTargets?: PickableEntity[];
 }
 
 export function FieldEditor({
@@ -106,12 +112,20 @@ export function FieldEditor({
   onFieldSelect,
   selectedFieldId,
   referenceControls,
+  referenceTargets,
 }: FieldEditorProps) {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldType, setNewFieldType] = useState("string");
+  // The target picked for a new reference field; ignored unless the type is still `reference` when the field is created.
+  const [newFieldReference, setNewFieldReference] = useState<ReferencePick | null>(null);
+  // Every change of the new field's type forgets the target picked for an earlier `reference` (the prompt sets it again right after).
+  const chooseNewFieldType = useCallback((type: string) => {
+    setNewFieldType(type);
+    setNewFieldReference(null);
+  }, []);
 
   // Filter state
   const [searchQuery, setSearchQuery] = useState("");
@@ -213,12 +227,12 @@ export function FieldEditor({
       if (e.key === "Escape") {
         setShowCreateDialog(false);
         setNewFieldName("");
-        setNewFieldType("string");
+        chooseNewFieldType("string");
       }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [showCreateDialog]);
+  }, [showCreateDialog, chooseNewFieldType]);
 
   // Autocomplete callback
   const getNameSuggestions = useCallback(
@@ -236,28 +250,39 @@ export function FieldEditor({
     // Auto-suggest type based on field name
     const ts = suggestType(name);
     if (ts && newFieldType === "string") {
-      setNewFieldType(ts.type);
+      chooseNewFieldType(ts.type);
     }
   }
 
   function handleNameSelect(suggestion: AutocompleteSuggestion) {
     setNewFieldName(suggestion.value);
     if (suggestion.suggestedType) {
-      setNewFieldType(suggestion.suggestedType);
+      chooseNewFieldType(suggestion.suggestedType);
     }
+  }
+
+  /** The options a new field is created with: the qualified reference of a reference field whose target was picked, nothing otherwise. */
+  function newFieldOptions(): { decorators: Record<string, unknown> } | undefined {
+    if (newFieldType !== "reference" || !newFieldReference) return undefined;
+    return { decorators: applyReferencePick({}, newFieldReference) };
+  }
+
+  function createField() {
+    const opts = newFieldOptions();
+    return opts ? onAddField(newFieldName.trim(), newFieldType, opts) : onAddField(newFieldName.trim(), newFieldType);
   }
 
   function resetDialog() {
     setShowCreateDialog(false);
     setNewFieldName("");
-    setNewFieldType("string");
+    chooseNewFieldType("string");
   }
 
   async function handleCreateAndAddDetails() {
     if (!newFieldName.trim() || isCreating) return;
     setIsCreating(true);
     try {
-      const result = await onAddField(newFieldName.trim(), newFieldType);
+      const result = await createField();
       const r = result as { success?: boolean; field?: { id: string; slug?: string }; error?: string } | undefined;
       if (r?.error) {
         setIsCreating(false);
@@ -282,7 +307,7 @@ export function FieldEditor({
     if (!newFieldName.trim() || isCreating) return;
     setIsCreating(true);
     try {
-      const result = (await onAddField(newFieldName.trim(), newFieldType)) as { error?: string } | undefined;
+      const result = (await createField()) as { error?: string } | undefined;
       // A refusal (shown as a toast by the workspace) keeps the dialog open with the typed name, so it can be fixed instead of typed again.
       if (result?.error) return;
       resetDialog();
@@ -439,6 +464,7 @@ export function FieldEditor({
                 onDeleteField={deleteFieldStable}
                 onNavigateStudio={navigateToFieldStudio}
                 referenceControls={referenceControls}
+                referenceTargets={referenceTargets}
               />
             ))}
           </div>
@@ -487,8 +513,16 @@ export function FieldEditor({
               </label>
               <TypePicker
                 value={newFieldType}
-                onChange={(t) => setNewFieldType(t)}
+                onChange={chooseNewFieldType}
+                entities={referenceTargets}
+                promptTypes={["reference"]}
+                onComplexTypeConfig={referenceTargets ? (_type, config) => setNewFieldReference(config) : undefined}
               />
+              {newFieldType === "reference" && newFieldReference && (
+                <p data-testid="new-field-reference-target" className="mt-1 truncate font-mono text-caption text-muted-foreground">
+                  → {newFieldReference.referencedQualifiedName?.split("/").join(" / ") ?? newFieldReference.referencedEntityName}
+                </p>
+              )}
             </div>
           </div>
 

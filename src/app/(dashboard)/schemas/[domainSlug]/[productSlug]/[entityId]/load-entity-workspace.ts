@@ -4,6 +4,7 @@ import { domainLabel } from "@/lib/entity-placement";
 import { toDraftVersionState } from "@/lib/entity-versioning/draft-label";
 import type { ReferenceStaleness } from "@/lib/entity-versioning/referenced-versions";
 import { loadReferenceStaleness } from "@/services/entity-version.service";
+import { loadPickableEntities } from "@/lib/references/pickable-entities";
 import type { ReplacementEntityLink } from "@/components/custom/DeprecationBanner";
 import type { EntityWorkspaceProps } from "./entity-workspace";
 
@@ -117,10 +118,13 @@ export async function loadEntityWorkspace(where: EntityScope): Promise<{ props: 
 
   const replacementEntity = await loadReplacementEntity(entity, where.tenantId);
   const referenceStaleness = await loadStaleReferences(entity.id);
+  // The entities of THIS tenant (the scope's tenant, never the client's) a reference field can be pointed at, for the type picker.
+  const referenceTargets = await loadPickableEntities(prisma, where.tenantId);
 
   return {
     props: {
       referenceStaleness,
+      referenceTargets,
       level: productId === null ? "TENANT" : "PRODUCT",
       entity: {
         id: entity.id,

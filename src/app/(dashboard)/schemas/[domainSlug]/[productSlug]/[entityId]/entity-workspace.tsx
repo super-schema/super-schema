@@ -66,6 +66,7 @@ import { needsReferenceOf, type PublishAnalysis } from "@/lib/entity-versioning/
 import { useReferencePick } from "./components/useReferencePick";
 import type { ReferenceFieldControls } from "./components/ReferencePinControl";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
+import type { PickableEntity } from "@/lib/references/entity-reference";
 import type { DraftVersionState } from "@/lib/entity-versioning/draft-label";
 type EntityStatus = "DRAFT" | "ACTIVE" | "DEPRECATED" | "RETIRED";
 type ViewTab = "editor" | "versions" | "governance" | "alerts" | "schemas" | "api" | "deployments" | "typespec";
@@ -134,9 +135,14 @@ export interface EntityWorkspaceProps {
    * loader from what the publish recorded. Optional so loaders and tests that predate it still compile; absent reads as none.
    */
   referenceStaleness?: ReferenceStaleness[];
+  /**
+   * The entities of the tenant a reference field can point at, with their domain and product, for the type picker's reference prompt.
+   * Optional so loaders and tests that predate it still compile; absent leaves `reference` a plain type change.
+   */
+  referenceTargets?: PickableEntity[];
 }
 
-export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity, referenceStaleness }: EntityWorkspaceProps) {
+export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServiceId, apiOperations, replacementEntity, referenceStaleness, referenceTargets }: EntityWorkspaceProps) {
   const readOnly_ = isReadOnly(entity.status as EntityStatus);
 
   // Track recent entity access for command palette
@@ -758,6 +764,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
                 selectedFieldId={selectedFieldId}
                 onFieldSelect={handleFieldSelect}
                 referenceControls={referenceControls}
+                referenceTargets={referenceTargets}
                 onAddField={async (name, type, opts) => {
                   const result = await addFieldAction(entity.id, name, type, opts);
                   setTypeSpecTrigger((n) => n + 1);

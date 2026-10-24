@@ -11,7 +11,7 @@ import { TypePicker } from "@/components/custom/TypePicker";
 import { ClassificationPicker } from "@/components/custom/ClassificationPicker";
 import { getTypeInfo, isComplexType, formatComplexTypeDisplay } from "@/lib/data-types";
 import { getFieldCompleteness } from "@/lib/validation/field-completeness";
-import { readFieldReference } from "@/lib/references/entity-reference";
+import { applyReferencePick, readFieldReference, type PickableEntity } from "@/lib/references/entity-reference";
 import { ReferencePinControl, type ReferenceFieldControls } from "./ReferencePinControl";
 
 interface FieldData {
@@ -85,7 +85,11 @@ interface FieldCardProps {
   onUpdateField: (id: string, data: Partial<FieldData>) => Promise<void>;
   onDeleteField: (id: string) => Promise<void>;
   onNavigateStudio: (fieldId: string) => void;
-  entityNames?: { id: string; name: string }[];
+  /**
+   * The entities of the tenant a reference can point at (with their domain and product). When given, choosing the `reference` type asks
+   * for the target and writes the type and the qualified reference in one update; without it `reference` is a plain type change.
+   */
+  referenceTargets?: PickableEntity[];
   /** Pin control of reference fields (published versions of the referenced entity, pin / unpin). Keep it referentially stable. */
   referenceControls?: ReferenceFieldControls;
 }
@@ -103,7 +107,7 @@ export const FieldCard = memo(function FieldCard({
   onUpdateField,
   onDeleteField,
   onNavigateStudio,
-  entityNames,
+  referenceTargets,
   referenceControls,
 }: FieldCardProps) {
   const [editingField, setEditingField] = useState(false);
@@ -238,6 +242,9 @@ export const FieldCard = memo(function FieldCard({
               <TypePicker
                 value={field.type}
                 onChange={(t) => {
+                  // With the reference prompt, a reference is reported WITH its target by `onComplexTypeConfig` below, which writes both in
+                  // one update (the picker calls this first, with the same type).
+                  if (t === "reference" && referenceTargets) return;
                   const update: Partial<FieldData> = { type: t };
                   if (!needsPrecisionScale(t)) {
                     update.precision = null;
@@ -246,7 +253,20 @@ export const FieldCard = memo(function FieldCard({
                   onUpdateField(field.id, update);
                 }}
                 compact
-                entities={entityNames}
+                entities={referenceTargets}
+                promptTypes={["reference"]}
+                onComplexTypeConfig={
+                  referenceTargets
+                    ? (_type, config) => {
+                        void onUpdateField(field.id, {
+                          type: "reference",
+                          precision: null,
+                          scale: null,
+                          decorators: applyReferencePick(field.decorators, config),
+                        });
+                      }
+                    : undefined
+                }
               />
             </div>
           )}
