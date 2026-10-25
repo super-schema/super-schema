@@ -2,20 +2,21 @@ import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 import { productionSecretProblem } from "@/lib/auth-secret";
 
+/**
+ * In production the session secret must be strong: the session cookie is signed with it. Development and test accept any non-empty value.
+ * The same rule is enforced when the server starts (src/instrumentation.ts), because this schema is only checked where it is imported.
+ */
+function requireStrongSecretInProduction(value: string, ctx: z.RefinementCtx): void {
+  if (process.env.NODE_ENV !== "production") return;
+  const problem = productionSecretProblem(value);
+  if (problem) ctx.addIssue({ code: "custom", message: problem });
+}
+
 export const env = createEnv({
   server: {
     DATABASE_URL: z.string().url(),
-    // In production the secret must be strong (32+ characters, not a development value): the session cookie is signed with it. Development
-    // and test accept any non-empty value. The same rule is enforced when the server starts (src/instrumentation.ts), because this schema is
-    // only checked where it is imported.
-    NEXTAUTH_SECRET: z
-      .string()
-      .min(1)
-      .superRefine((value, ctx) => {
-        if (process.env.NODE_ENV !== "production") return;
-        const problem = productionSecretProblem(value);
-        if (problem) ctx.addIssue({ code: "custom", message: problem });
-      }),
+    // In production the secret must be strong (32+ characters, not a development value): see `requireStrongSecretInProduction`.
+    NEXTAUTH_SECRET: z.string().min(1).superRefine(requireStrongSecretInProduction),
     NEXTAUTH_URL: z.string().url(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),

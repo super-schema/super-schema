@@ -128,6 +128,8 @@ export const HERMETIC_DROPPED_NAMES = Object.freeze({
   NODE_ENV: "Next sets it for `next build` / `next start`; a value of the shell would only draw a warning",
   PORT: "the app is started with -p; the runner's own port is the only one",
   HOSTNAME: "the app is started with -H 127.0.0.1",
+  NEXT_RUNTIME: "set by Next itself inside the server (`nodejs` or `edge`); src/instrumentation.ts only reads it, a value of the shell would mean nothing",
+  NEXT_PHASE: "set by Next itself while it builds (`phase-production-build`); src/instrumentation.ts only reads it, a value of the shell would skip the startup check",
   TEST_EMAIL: "read by the browser run (which loads no .env); the seeded admin is the contract",
   TEST_PASSWORD: "read by the browser run like TEST_EMAIL; the seeded admin's password is the contract",
 });
