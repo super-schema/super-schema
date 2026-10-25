@@ -250,22 +250,61 @@ export function readHeartbeat(file, { stat = statSync, read = (f) => readFileSyn
   }
 }
 
+/** A gap between two polls longer than this many poll periods is a machine that slept (or a process that was stopped), not a run that stalled. */
+export const SLEEP_JUMP_FACTOR = 4;
+
 /**
- * Looks at a heartbeat every `pollMs` and calls `onStall` once when the last sign of life (the heartbeat's modification time, or the
- * moment the watch began while there is none) is `stallMs` old. The watch ends by itself after it fired; `stop()` ends it earlier (the
- * child exited). It does NOT stop when the heartbeat says the run has ended: a run that hangs after its last test is the case it is for.
+ * Looks at a heartbeat every `pollMs` and calls `onStall` once when the run has shown no sign of life for `stallMs`. The watch ends by
+ * itself after it fired; `stop()` ends it earlier (the child exited). It does NOT stop when the heartbeat says the run has ended: a run
+ * that hangs after its last test is the case it is for.
+ *
+ * Time is measured on a MONOTONIC clock (`now`, default `performance.now()`), never by comparing the wall clock with the heartbeat's
+ * modification time: a laptop that slept for longer than the limit has a heartbeat that is hours old by the wall clock, and the first
+ * poll after the wake-up used to end a healthy run, blaming Node and Playwright. So:
+ *   - a sign of life is the heartbeat's modification time CHANGING (a value that differs from the last one seen, and is not from before
+ *     the watch began: a file of an earlier run); the idle time is the monotonic time since it last changed (or since the watch began);
+ *   - a gap between two polls of more than SLEEP_JUMP_FACTOR poll periods is a sleep: the idle time starts again from that poll
+ *     (`onSleep(gapMs)` is told, so a log can say so) instead of firing. A real stall is still found, one limit after the wake-up.
  *
  * @param {{ stallMs: number, pollMs?: number, readHeartbeat: () => ({ mtimeMs: number, text: string } | undefined),
- *   onStall: (info: { idleMs: number, ended: boolean }) => void, now?: () => number, setTimer?: Function, clearTimer?: Function }} options
+ *   onStall: (info: { idleMs: number, ended: boolean }) => void, onSleep?: (gapMs: number) => void,
+ *   now?: () => number, wallNow?: () => number, setTimer?: Function, clearTimer?: Function }} options
  * @returns {{ stop: () => void, readonly stalled: boolean }}
  */
-export function watchForStall({ stallMs, pollMs = POLL_MS, readHeartbeat: read, onStall, now = Date.now, setTimer = setInterval, clearTimer = clearInterval }) {
-  const startedAt = now();
+export function watchForStall({
+  stallMs,
+  pollMs = POLL_MS,
+  readHeartbeat: read,
+  onStall,
+  onSleep,
+  now = () => performance.now(),
+  wallNow = Date.now,
+  setTimer = setInterval,
+  clearTimer = clearInterval,
+}) {
+  // A file system rounds a modification time (HFS+ to the second): a beat of this run is never older than the watch by more than that.
+  const startedWall = wallNow() - 2000;
+  let lastSignOfLifeAt = now();
+  let lastPollAt = lastSignOfLifeAt;
+  /** @type {number | undefined} */
+  let lastMtime;
   let fired = false;
   const timer = setTimer(() => {
     if (fired) return;
+    const at = now();
+    const gapMs = at - lastPollAt;
+    lastPollAt = at;
+    if (gapMs > SLEEP_JUMP_FACTOR * pollMs) {
+      lastSignOfLifeAt = at;
+      onSleep?.(gapMs);
+      return;
+    }
     const beat = read();
-    const idleMs = now() - Math.max(startedAt, beat?.mtimeMs ?? 0);
+    if (beat && beat.mtimeMs !== lastMtime && beat.mtimeMs >= startedWall) {
+      lastMtime = beat.mtimeMs;
+      lastSignOfLifeAt = at;
+    }
+    const idleMs = at - lastSignOfLifeAt;
     if (idleMs < stallMs) return;
     fired = true;
     clearTimer(timer);

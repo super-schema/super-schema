@@ -316,19 +316,28 @@ describe("the stall watchdog's small pieces", () => {
 });
 
 describe("watchForStall", () => {
-  /** A clock and an interval that the test drives: `tick(ms)` moves the clock on and runs the poll once. */
-  function harness(beat: { mtimeMs: number; text: string } | undefined, options: { stallMs?: number } = {}) {
-    let clock = 1_000_000;
+  /**
+   * A monotonic clock, a wall clock and an interval that the test drives. `tick(ms)` moves BOTH clocks on and runs the poll once (a single
+   * jump larger than the poll period is what a sleeping machine looks like); `run(ms)` moves them on in poll-sized steps (time passing normally);
+   * `sleep(ms)` moves only the wall clock (a platform whose monotonic clock does not count a suspended machine) and runs one poll.
+   */
+  function harness(beat: { mtimeMs: number; text: string } | undefined, options: { stallMs?: number; pollMs?: number } = {}) {
+    let clock = 5_000; // the monotonic clock: unrelated to the wall clock on purpose
+    let wall = 1_000_000;
     let poll: (() => void) | undefined;
     const cleared: unknown[] = [];
     const stalls: Array<{ idleMs: number; ended: boolean }> = [];
+    const sleeps: number[] = [];
+    const pollMs = options.pollMs ?? 15_000;
     const state = { beat };
     const watcher = watchForStall({
       stallMs: options.stallMs ?? 300_000,
-      pollMs: 15_000,
+      pollMs,
       readHeartbeat: () => state.beat,
       onStall: (info) => stalls.push(info),
+      onSleep: (gapMs) => sleeps.push(gapMs),
       now: () => clock,
+      wallNow: () => wall,
       setTimer: (fn: () => void) => {
         poll = fn;
         return { unref() {} };
@@ -338,11 +347,26 @@ describe("watchForStall", () => {
     return {
       watcher,
       stalls,
+      sleeps,
       cleared,
       state,
-      at: () => clock,
+      /** The wall clock: where a heartbeat's modification time comes from. */
+      wall: () => wall,
       tick(ms: number) {
         clock += ms;
+        wall += ms;
+        poll?.();
+      },
+      run(ms: number) {
+        for (let left = ms; left > 0; left -= pollMs) {
+          const step = Math.min(pollMs, left);
+          clock += step;
+          wall += step;
+          poll?.();
+        }
+      },
+      sleep(ms: number) {
+        wall += ms;
         poll?.();
       },
     };
@@ -350,46 +374,115 @@ describe("watchForStall", () => {
 
   it("does not fire while the heartbeat is fresh, and fires once it is stallMs old", () => {
     const h = harness({ mtimeMs: 1_000_000, text: "begin 3 tests" });
-    h.tick(60_000);
-    h.state.beat = { mtimeMs: h.at(), text: "test-end passed a" }; // a test ended: a sign of life
-    h.tick(200_000);
+    h.run(60_000);
+    h.state.beat = { mtimeMs: h.wall(), text: "test-end passed a" }; // a test ended: a sign of life
+    h.run(285_000);
     expect(h.stalls).toEqual([]);
-    h.tick(100_000); // 300 s since the last beat
-    expect(h.stalls).toEqual([{ idleMs: 300_000, ended: false }]);
+    h.run(30_000); // the beat was seen at the poll after it was written; 300 s after that poll the run is stalled
+    expect(h.stalls).toHaveLength(1);
+    expect(h.stalls[0]).toMatchObject({ ended: false });
+    expect(h.stalls[0].idleMs).toBeGreaterThanOrEqual(300_000);
     expect(h.watcher.stalled).toBe(true);
+  });
+
+  it("every new heartbeat (a different modification time) resets the idle time, however long the run is", () => {
+    const h = harness({ mtimeMs: 1_000_000, text: "begin" }, { stallMs: 60_000 });
+    for (let i = 0; i < 40; i += 1) {
+      h.run(45_000); // three quarters of the limit, then a beat: the run is alive for 30 minutes
+      h.state.beat = { mtimeMs: h.wall(), text: `test-end ${i}` };
+    }
+    expect(h.stalls).toEqual([]);
+    h.run(75_000);
+    expect(h.stalls).toHaveLength(1);
+  });
+
+  it("the same modification time is not a beat (a heartbeat that is read again and again)", () => {
+    const h = harness({ mtimeMs: 1_000_100, text: "test-begin x" }, { stallMs: 60_000 });
+    h.run(45_000);
+    expect(h.stalls).toEqual([]);
+    h.run(30_000);
+    expect(h.stalls).toHaveLength(1);
   });
 
   it("fires only once, and stops polling when it has fired", () => {
     const h = harness({ mtimeMs: 1_000_000, text: "test-begin x" }, { stallMs: 30_000 });
-    h.tick(40_000);
-    h.tick(15_000);
-    h.tick(15_000);
+    h.run(60_000);
+    h.run(30_000);
     expect(h.stalls).toHaveLength(1);
     expect(h.cleared).toHaveLength(1);
   });
 
   it("counts from the start of the watch while there is no heartbeat file yet (Playwright that never began)", () => {
     const h = harness(undefined, { stallMs: 120_000 });
-    h.tick(100_000);
+    h.run(105_000);
     expect(h.stalls).toEqual([]);
-    h.tick(20_000);
+    h.run(15_000);
     expect(h.stalls).toEqual([{ idleMs: 120_000, ended: false }]);
   });
 
   it("ignores a heartbeat older than the watch (a file of an earlier run)", () => {
     const h = harness({ mtimeMs: 10, text: "end passed" }, { stallMs: 60_000 });
-    h.tick(50_000);
+    h.run(45_000);
     expect(h.stalls).toEqual([]);
-    h.tick(10_000);
+    h.run(15_000);
     expect(h.stalls).toHaveLength(1);
   });
 
   it("does NOT stop at an 'end' heartbeat: a run that hangs after its last test is stalled, and says every test had finished", () => {
     const h = harness({ mtimeMs: 1_000_000, text: "end passed\n" }, { stallMs: 60_000 });
-    h.tick(30_000);
+    h.run(45_000);
     expect(h.stalls).toEqual([]);
-    h.tick(30_000);
-    expect(h.stalls).toEqual([{ idleMs: 60_000, ended: true }]);
+    h.run(30_000);
+    expect(h.stalls).toHaveLength(1);
+    expect(h.stalls[0].ended).toBe(true);
+  });
+
+  it("a machine that slept does not end a healthy run: the clock jumped by far more than a poll period, so the idle time starts again", () => {
+    const h = harness({ mtimeMs: 1_000_000, text: "begin" }, { stallMs: 300_000, pollMs: 15_000 });
+    h.run(30_000);
+    h.tick(8 * 3_600_000); // the laptop slept for eight hours: the heartbeat is eight hours old by the wall clock
+    expect(h.stalls).toEqual([]);
+    expect(h.sleeps).toEqual([8 * 3_600_000]);
+    h.run(285_000); // and the run then has its whole limit again
+    expect(h.stalls).toEqual([]);
+    h.run(15_000);
+    expect(h.stalls).toHaveLength(1);
+  });
+
+  it("a run that is beating after the machine woke is never ended", () => {
+    const h = harness({ mtimeMs: 1_000_000, text: "begin" }, { stallMs: 60_000 });
+    h.tick(2 * 3_600_000);
+    for (let i = 0; i < 20; i += 1) {
+      h.run(30_000);
+      h.state.beat = { mtimeMs: h.wall(), text: `test-end ${i}` };
+    }
+    expect(h.stalls).toEqual([]);
+  });
+
+  it("a wall clock that jumped alone (a monotonic clock that does not count sleep) is no stall either: idle time is read from the monotonic clock", () => {
+    const h = harness({ mtimeMs: 1_000_000, text: "begin" }, { stallMs: 60_000 });
+    h.run(30_000);
+    h.sleep(10 * 3_600_000);
+    h.run(15_000);
+    expect(h.stalls).toEqual([]);
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it("a real stall still fires after a sleep: the limit counts again from the wake-up, with no beat", () => {
+    const h = harness({ mtimeMs: 1_000_000, text: "begin" }, { stallMs: 60_000 });
+    h.run(15_000); // the one heartbeat there will ever be is seen
+    h.tick(3_600_000);
+    h.run(45_000);
+    expect(h.stalls).toEqual([]);
+    h.run(15_000);
+    expect(h.stalls).toEqual([{ idleMs: 60_000, ended: false }]);
+  });
+
+  it("a gap of up to four poll periods (a busy machine) is not a sleep, and a stall in it still fires", () => {
+    const h = harness(undefined, { stallMs: 30_000, pollMs: 15_000 });
+    h.tick(60_000); // exactly four periods: a late timer, not a sleep
+    expect(h.sleeps).toEqual([]);
+    expect(h.stalls).toHaveLength(1);
   });
 
   it("stop() ends the watch (the child exited): no stall afterwards", () => {

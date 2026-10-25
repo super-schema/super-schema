@@ -37,6 +37,8 @@
 // tests/e2e/reporters/heartbeat-reporter.ts rewrites whenever a test starts or ends. A Playwright whose heartbeat is older than
 // E2E_STALL_MS (default 20 minutes, above the longest test timeout) is ended (its group, then everything below it) and the phase's code is 124. It does not matter
 // why it hangs, nor that the reporter's last word was "end": the hang after the last test, with every worker idle, is the case this is for.
+// The idle time is measured on a monotonic clock from the last CHANGE of the heartbeat's modification time (never wall clock minus mtime), and a gap
+// of more than four poll periods between two polls (a laptop that slept) starts the limit again instead of ending a healthy run as a stall.
 //
 // Dependency-free on purpose: the release runner calls it, and the planner and the pieces around it (`planPhases`, `parseCli`,
 // `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `phaseEnvironment`, `stallMessage`, `isEntryPoint`) are unit tested
@@ -410,6 +412,8 @@ function runPhase(phase, onChild, browser, stallMs) {
           stallMs,
           pollMs: pollMsFor(stallMs),
           readHeartbeat: () => readHeartbeat(heartbeat),
+          // A machine that slept is not a stall: the watchdog starts the limit again (scripts/e2e-process.mjs), and the log says why.
+          onSleep: (gapMs) => console.log(`[e2e-phases] ${phase.name}: the clock jumped by ${formatDuration(gapMs)} (the machine slept?): the stall limit starts again`),
           onStall: ({ idleMs, ended }) => {
             console.error(stallMessage({ phase: phase.name, idleMs, ended, nodeVersion: process.version }));
             void stopStalledChild(child);
