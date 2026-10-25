@@ -20,6 +20,7 @@ import { compileEntity } from "@/lib/compiler/compiler.service";
 import type { SuperSchemaField, SuperSchemaModel } from "@/types/super-schema-model";
 import { ENTERPRISE_NAMESPACE, JSON_SCHEMA_LIBRARY_IMPORT } from "./governance-decorators";
 import { generateTypeSpecWithDiagnostics, type GeneratorDiagnostic } from "./typespec-generator";
+import { withUnionFieldsAsString } from "./union-fields";
 import { sanitizeIdentifier } from "./typespec-identifiers";
 
 /** A schema target key as the catalog names it (`json-schema`, `avro`, ...). */
@@ -232,7 +233,13 @@ export function generateClosureTypeSpec(
 
   // A shared type keeps its stand-alone name unless another entity claims the name (a second entity declaring it, or a model of
   // the closure called that), or it is the reserved root: then the entity's model name is prefixed to it.
-  const compiled = new Map(placed.map((p) => [p, compileEntity(p.entity.entity, p.entity.fields)] as const));
+  const compiled = new Map(
+    placed.map((p) => {
+      const model = compileEntity(p.entity.entity, p.entity.fields);
+      // A .proto message field cannot be a union: it is typed string there (the emission plan reports it, see closure-emit.ts).
+      return [p, opts.target === "protobuf" ? withUnionFieldsAsString(model).model : model] as const;
+    })
+  );
   const sharedClaims = new Map<string, number>();
   for (const model of compiled.values()) for (const name of sharedTypeNames(model)) sharedClaims.set(name, (sharedClaims.get(name) ?? 0) + 1);
   const mustPrefix = (name: string): boolean =>

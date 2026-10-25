@@ -132,9 +132,18 @@ describe("JSON Schema Importer", () => {
       expect(r.data.fields[0]).toMatchObject({ type: "array", arrayElementType: "string" });
     });
 
-    it("maps oneOf to the first member type", () => {
+    it("maps a oneOf of scalars to a union of those types (not to its first member)", () => {
       const r = parseJsonSchema(
         schema({ value: { oneOf: [{ type: "string" }, { type: "integer" }] } })
+      );
+      expect(r.success).toBe(true);
+      if (!r.success) return;
+      expect(r.data.fields[0]).toMatchObject({ type: "union", unionMembers: ["string", "integer"] });
+    });
+
+    it("maps a oneOf that mixes a scalar and an inline object to the first member type", () => {
+      const r = parseJsonSchema(
+        schema({ value: { oneOf: [{ type: "string" }, { type: "object", properties: { k: { type: "string" } } }] } })
       );
       expect(r.success).toBe(true);
       if (!r.success) return;

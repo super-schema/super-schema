@@ -21,6 +21,7 @@ import { describeNameCollision, findNameCollisions } from "./name-collisions";
 import { boundedForLog, describeEmitterFailure, errorDiagnostics, warningDiagnostics } from "./emitter-diagnostics";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
+import { withUnionFieldsAsString } from "@/lib/compiler/union-fields";
 import { ok, err, type Result, type ServiceError } from "@/types/result";
 import { checkTypeSpecImports, TYPESPEC_IMPORT_NOT_ALLOWED } from "@/lib/typespec/import-guard";
 
@@ -249,7 +250,10 @@ export function buildSourceForTarget(model: SuperSchemaModel, targetKey: string)
   // (@typespec/avro reads only its avro* decorators by name), and importing @superschema/typespec-enterprise
   // would leak its enums (DataClassification, AvroLogicalType, …) into the java-pojo and json-schema output.
   // Opt a target in here if an emitter ever starts consuming the overlay.
-  const baseSource = generateTypeSpec(model, { governance: false }).trim();
+  // A .proto message field cannot be a union: it is written as string (and the warning says so) rather than failing the entity.
+  const unions = targetKey === "protobuf" ? withUnionFieldsAsString(model) : undefined;
+  const sourceModel = unions?.model ?? model;
+  const baseSource = generateTypeSpec(sourceModel, { governance: false }).trim();
 
   switch (targetKey) {
     case "json-schema":
@@ -257,7 +261,7 @@ export function buildSourceForTarget(model: SuperSchemaModel, targetKey: string)
     case "openapi3":
       return plainSource(buildOpenApi3Source(baseSource, model));
     case "protobuf":
-      return plainSource(buildProtobufSource(baseSource, model));
+      return { source: buildProtobufSource(baseSource, sourceModel), warnings: unions?.warnings ?? [], errors: [] };
     case "avro": {
       // An Avro enum symbol must be [A-Za-z_][A-Za-z0-9_]*; the canonical source keeps wire values (see avro-source.ts).
       const projection = projectTypeSpecSourceForAvro(baseSource);

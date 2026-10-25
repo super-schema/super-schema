@@ -45,6 +45,7 @@ import { getClassificationConfig, type ClassificationConfig } from "./classifica
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { constraintAppliesTo, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { pickRootEntity } from "./multi-asset";
+import { getTypeInfo } from "@/lib/data-types";
 import type {
   ParsedEntity,
   ParsedEnum,
@@ -465,6 +466,8 @@ interface ResolveContext {
   unresolvedSharedUnions?: Set<string>;
   /** `<Entity>_<field>` the node being resolved belongs to — the stem of a generated union name. */
   unionStem?: string;
+  /** `<Entity>.<field>` of the property being resolved, for the warnings of a type that cannot be imported whole. */
+  fieldLabel?: string;
 }
 
 /** A union with more members than this is not a real schema; the excess is dropped (and reported). */
@@ -795,29 +798,67 @@ function isNullMember(m: unknown): boolean {
   return isSchemaObject(m) && typeof m.$ref !== "string" && normalizeType(m.type).base === "null";
 }
 
+/** The JSON Schema types a scalar union can hold (each is one TypeSpec scalar). */
+const SCALAR_TYPES = new Set(["string", "integer", "number", "boolean"]);
+
+/** The TypeSpec scalar a scalar `type` (+ its `format`) imports as: `integer` -> `integer`, `number` -> `float64`, `date-time` -> `utcDateTime`. */
+function scalarTypeName(type: string, format: unknown, ctx: ResolveContext): string | undefined {
+  const logical = resolveSchemaType({ type, ...(typeof format === "string" ? { format } : {}) }, ctx).type;
+  return getTypeInfo(logical)?.typespecScalar;
+}
+
+/**
+ * The TypeSpec scalar a combinator member stands for when the member is only a scalar type (`{ type: "string" }`, with a format and any
+ * constraints): `undefined` for anything else (a `$ref`, an enum / const, an object, an array, a nested combinator, several types).
+ * `nullable` when the member's own `type` list has `null` in it.
+ */
+function scalarMember(member: JsonSchemaNode, ctx: ResolveContext): { name: string; nullable: boolean } | undefined {
+  if (typeof member.$ref === "string") return undefined;
+  for (const key of ["enum", "const", "properties", "items", "oneOf", "anyOf", "allOf"]) if (member[key] !== undefined) return undefined;
+  const types = [...new Set((Array.isArray(member.type) ? member.type : [member.type]).filter((t): t is string => typeof t === "string"))];
+  const real = types.filter((t) => t !== "null");
+  if (real.length !== 1 || !SCALAR_TYPES.has(real[0])) return undefined;
+  const name = scalarTypeName(real[0], member.format, ctx);
+  return name === undefined ? undefined : { name, nullable: types.includes("null") };
+}
+
 /**
  * The member names of a `oneOf` / `anyOf` whose every non-null member is a `$ref` to a named entity / enum
- * (in-document, or external and unresolved), deduplicated in order. `undefined` when any member is something else
- * (a primitive, an inline object, a boolean schema, a ref to an inline definition) or fewer than two names remain —
- * the caller keeps its first-member fallback then, never a partial union.
+ * (in-document, or external and unresolved), or every one a plain scalar type, deduplicated in order. `undefined` when any member is
+ * something else (an inline object, an enum, an array, a boolean schema, a ref to an inline definition, a ref mixed with a scalar) or
+ * fewer than two names remain — the caller keeps its first-member fallback then, never a partial union.
  */
 function namedRefMembers(raw: unknown[], ctx: ResolveContext): { names: string[]; hasNull: boolean } | undefined {
   const names: string[] = [];
   const seen = new Set<string>();
   let hasNull = false;
+  let refs = 0;
+  let scalars = 0;
   for (const m of raw) {
     if (isNullMember(m)) {
       hasNull = true;
       continue;
     }
-    if (!isSchemaObject(m) || typeof m.$ref !== "string") return undefined;
-    const name = unionMemberName(m.$ref, ctx);
+    if (!isSchemaObject(m)) return undefined;
+    let name: string | undefined;
+    if (typeof m.$ref === "string") {
+      name = unionMemberName(m.$ref, ctx);
+      refs += 1;
+    } else {
+      const scalar = scalarMember(m, ctx);
+      if (scalar?.nullable) hasNull = true;
+      name = scalar?.name;
+      scalars += 1;
+    }
     if (name === undefined) return undefined;
     if (!seen.has(name)) {
       seen.add(name);
       names.push(name);
     }
   }
+  // Refs only, or scalars only: a ref next to a scalar keeps the first-member fallback (a union that names an entity is not generated
+  // for most targets, and a field that used to generate must not stop doing so; see KD-029).
+  if (refs > 0 && scalars > 0) return undefined;
   return names.length >= 2 ? { names, hasNull } : undefined;
 }
 
@@ -853,7 +894,22 @@ function uniqueName(base: string, taken: Set<string>): string {
   return name;
 }
 
-/** A property-level `oneOf` / `anyOf` of named refs → a generated union (once per node), or `undefined`. */
+/** Nodes whose `type` list could not become a union (reported once, however many times the node is resolved). */
+const TYPE_LIST_WARNED = new WeakSet<object>();
+
+/** The union generated for `node` (one per node, however many times it is resolved), declared on first use with `names` as its members. */
+function declareUnion(node: JsonSchemaNode, names: string[], ctx: ResolveContext, unresolved: string[] = []): { name: string; memberTypes: string[] } {
+  let name = ctx.unionByNode.get(node);
+  if (name === undefined) {
+    name = uniqueName(`${sanitizeIdentifier(ctx.unionStem ?? "Anonymous")}_Union`, ctx.taken);
+    ctx.unionByNode.set(node, name);
+    ctx.unions.push({ name, memberTypes: boundMembers(names, name, ctx.warnings) });
+    if (unresolved.length > 0) ctx.warnings.push(unresolvedUnionWarning(name, unresolved));
+  }
+  return { name, memberTypes: ctx.unions.find((u) => u.name === name)?.memberTypes ?? names };
+}
+
+/** A property-level `oneOf` / `anyOf` of named refs and scalar types → a generated union (once per node), or `undefined`. */
 function resolveNamedRefUnion(
   node: JsonSchemaNode,
   keyword: string,
@@ -863,14 +919,7 @@ function resolveNamedRefUnion(
   const found = namedRefMembers(raw, ctx);
   if (!found) return undefined;
   const unresolved = unresolvedMemberRefs(raw, ctx);
-  let name = ctx.unionByNode.get(node);
-  if (name === undefined) {
-    name = uniqueName(`${sanitizeIdentifier(ctx.unionStem ?? "Anonymous")}_Union`, ctx.taken);
-    ctx.unionByNode.set(node, name);
-    ctx.unions.push({ name, memberTypes: boundMembers(found.names, name, ctx.warnings) });
-    if (unresolved.length > 0) ctx.warnings.push(unresolvedUnionWarning(name, unresolved));
-  }
-  const memberTypes = ctx.unions.find((u) => u.name === name)?.memberTypes;
+  const { name, memberTypes } = declareUnion(node, found.names, ctx, unresolved);
   return {
     type: "union",
     confidence: unresolved.length > 0 ? "low" : "medium",
@@ -926,6 +975,31 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
       originalType: `${keyword}(${members.length})`,
       lowFromUnresolvedRef: members.length === 1 && first.lowFromUnresolvedRef === true,
     };
+  }
+
+  // `type: ["string", "integer"]`: a value of any of the listed types. A scalar-only list is a union; a list with a type no scalar
+  // union holds (object, array) keeps its first type at low confidence and names what it dropped.
+  if (Array.isArray(node.type)) {
+    const listed = [...new Set(node.type.filter((t): t is string => typeof t === "string" && t !== "null"))];
+    if (listed.length > 1) {
+      const nullable = node.type.includes("null");
+      if (listed.every((t) => SCALAR_TYPES.has(t))) {
+        const names = [...new Set(listed.map((t) => scalarTypeName(t, node.format, ctx)).filter((n): n is string => n !== undefined))];
+        if (names.length > 1) {
+          const { name, memberTypes } = declareUnion(node, names, ctx);
+          return { type: "union", confidence: "medium", nullable, originalType: `type(${names.length})`, unionName: name, unionMembers: memberTypes };
+        }
+      }
+      if (!TYPE_LIST_WARNED.has(node)) {
+        TYPE_LIST_WARNED.add(node);
+        const where = ctx.fieldLabel ? `Property ${ctx.fieldLabel}` : "A schema";
+        ctx.warnings.push(
+          `${where} is typed [${listed.join(", ")}]: only ${listed[0]} was imported (dropped: ${listed.slice(1).join(", ")}); a union cannot hold ${listed.filter((t) => !SCALAR_TYPES.has(t)).join(", ")}`
+        );
+      }
+      const first = resolveSchemaType({ ...node, type: nullable ? [listed[0], "null"] : listed[0] }, ctx);
+      return { ...first, confidence: "low" };
+    }
   }
 
   const { base, nullableFromType } = normalizeType(node.type);
@@ -1404,7 +1478,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
 
   return [...members.properties].map(([name, propNode]) => {
     const node = (propNode && typeof propNode === "object" ? propNode : {}) as JsonSchemaNode;
-    const ctx: ResolveContext = { ...baseCtx, unionStem: `${ownerName}_${name}` };
+    const ctx: ResolveContext = { ...baseCtx, unionStem: `${ownerName}_${name}`, fieldLabel: `${ownerName}.${name}` };
     const resolved = resolveSchemaType(node, ctx);
     const isRequired = requiredSet.has(name);
     // nullable = optional (not in required) OR explicitly `type: [..., "null"]`.

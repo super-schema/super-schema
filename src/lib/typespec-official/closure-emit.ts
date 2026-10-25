@@ -36,6 +36,7 @@ import { isDbTypeSpecTarget } from "./db-source";
 import { describeNameCollision, findNameCollisions } from "./name-collisions";
 import { describeAvroProjection, describeInvalidAvroSymbols, findInvalidAvroSymbols, projectTypeSpecSourceForAvro } from "./avro-source";
 import { projectTypeSpecSourceForProtobuf } from "./protobuf-source";
+import { withUnionFieldsAsString } from "@/lib/compiler/union-fields";
 import {
   buildEmitterOptions,
   buildSourceForTarget,
@@ -319,6 +320,10 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
   });
 
   const warnings: string[] = [];
+  // A .proto message field cannot be a union: the source types it string (generateClosureTypeSpec), and each such field is reported.
+  if (key === "protobuf") {
+    models.forEach((model, i) => warnings.push(...withUnionFieldsAsString(model).warnings.map((w) => (multi ? `${entities[i].entity.name}: ${w}` : w))));
+  }
   // Entities whose qualified names sanitize to the same namespace (`a-b` / `a_b` entities of one product) share it: one OpenAPI
   // service, one Protobuf package, one Avro namespace and Java package. Their models keep distinct names, but say so.
   if (key !== "json-schema") {
