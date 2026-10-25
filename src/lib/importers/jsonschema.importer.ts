@@ -618,6 +618,27 @@ function isStringEnum(values: unknown[]): boolean {
   return symbols.length > 0 && symbols.every((v) => typeof v === "string");
 }
 
+/** An enum with more symbols than this is not a real enum; the excess is dropped (and reported), as a union's excess members are. */
+export const MAX_ENUM_VALUES = 5000;
+
+/** Enums already reported as too large (by their node), so a definition used by many fields is reported once. */
+const ENUM_BOUND_WARNED = new WeakSet<object>();
+
+/** The first MAX_ENUM_VALUES symbols, reporting what was dropped (once per `source` list). */
+function boundEnumSymbols(symbols: string[], label: string, warnings: string[] | undefined, source: object): string[] {
+  if (symbols.length <= MAX_ENUM_VALUES) return symbols;
+  if (warnings !== undefined && !ENUM_BOUND_WARNED.has(source)) {
+    ENUM_BOUND_WARNED.add(source);
+    warnings.push(`Enum ${label} has ${symbols.length} values; only the first ${MAX_ENUM_VALUES} are kept (${symbols.length - MAX_ENUM_VALUES} dropped).`);
+  }
+  return symbols.slice(0, MAX_ENUM_VALUES);
+}
+
+/** `enum(1,2,5)`: the original type of an enum, with its values listed up to 50 of them (a longer list is its length: the label is shown). */
+function enumLabel(values: unknown[]): string {
+  return values.length > 50 ? `enum(${values.length} values)` : `enum(${values.map((v) => JSON.stringify(v)).join(",")})`;
+}
+
 /**
  * Resolve the values of an `enum` / `const`.
  *
@@ -628,12 +649,12 @@ function isStringEnum(values: unknown[]): boolean {
  *
  * It never returns an enum without symbols: that would publish an unsatisfiable `{ "enum": [] }`.
  */
-function resolveLiteralValues(values: unknown[], originalType: string): ResolvedType {
+function resolveLiteralValues(values: unknown[], originalType: string, ctx?: ResolveContext): ResolvedType {
   const nullable = values.includes(null);
   const symbols = values.filter((v) => v !== null);
 
   if (isStringEnum(values)) {
-    const unique = [...new Set(symbols as string[])];
+    const unique = boundEnumSymbols([...new Set(symbols as string[])], ctx?.fieldLabel ?? "an enum", ctx?.warnings, values);
     // Symbols travel as "A|B|C" (the generator reads them back from the pattern slot), so one that holds the
     // separator, or is empty, cannot round-trip: flag it rather than silently splitting it.
     const lossy = unique.some((s) => s === "" || s.includes("|"));
@@ -641,15 +662,24 @@ function resolveLiteralValues(values: unknown[], originalType: string): Resolved
   }
 
   if (symbols.length > 0 && symbols.every((v) => typeof v === "number" && Number.isFinite(v))) {
+    // A loop, not Math.min(...numbers): spreading a few hundred thousand values overflows the call stack.
     const numbers = symbols as number[];
+    let min = numbers[0];
+    let max = numbers[0];
+    let integers = true;
+    for (const n of numbers) {
+      if (n < min) min = n;
+      if (n > max) max = n;
+      if (integers && !Number.isInteger(n)) integers = false;
+    }
     return {
-      type: numbers.every(Number.isInteger) ? "integer" : "float64",
+      type: integers ? "integer" : "float64",
       confidence: "low",
       nullable,
       originalType,
       impliedConstraints: [
-        { type: "minValue", value: Math.min(...numbers) },
-        { type: "maxValue", value: Math.max(...numbers) },
+        { type: "minValue", value: min },
+        { type: "maxValue", value: max },
       ],
     };
   }
@@ -764,7 +794,7 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
       nullable: (def.node.enum ?? []).includes(null),
       originalType: ref,
       enumName: def.assetName,
-      enumValues: [...new Set(values)],
+      enumValues: boundEnumSymbols([...new Set(values)], def.assetName, ctx.warnings, def.node),
     };
   }
   if (def?.kind === "union") {
@@ -961,12 +991,12 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
 
   // const → a fixed single-value enum (CloudEvents `specversion: { "const": "1.0" }`)
   if (node.const !== undefined) {
-    return resolveLiteralValues([node.const], `const(${JSON.stringify(node.const)})`);
+    return resolveLiteralValues([node.const], `const(${JSON.stringify(node.const)})`, ctx);
   }
 
   // enum → logical enum
   if (Array.isArray(node.enum)) {
-    return resolveLiteralValues(node.enum, `enum(${node.enum.map((v) => JSON.stringify(v)).join(",")})`);
+    return resolveLiteralValues(node.enum, enumLabel(node.enum), ctx);
   }
 
   // allOf → intersection of every member (resolveAllOf); oneOf / anyOf below
@@ -1941,7 +1971,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
       const parsedEnum: ParsedEnum = {
         name: def.assetName,
         // `kind: "enum"` is only assigned to all-string enums (indexDefinitions).
-        values: [...new Set((def.node.enum ?? []).filter((v) => v !== null) as string[])],
+        values: boundEnumSymbols([...new Set((def.node.enum ?? []).filter((v) => v !== null) as string[])], def.assetName, warnings, def.node),
       };
       if (typeof def.node.description === "string") parsedEnum.description = def.node.description;
       // What the definition carries besides its symbols has no place on a shared enum row: kept here, and on every field that uses it.

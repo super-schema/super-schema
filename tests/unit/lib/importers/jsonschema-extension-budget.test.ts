@@ -67,9 +67,10 @@ describe("extension budget: one definition's large value is not copied onto ever
 
   it("a response many times larger than its source is refused (the backstop for an enum, a pattern or a constant repeated on every reference)", () => {
     const enumValues = Array.from({ length: 40_000 }, (_, i) => `v${i}`);
-    for (const def of [{ enum: enumValues }, { pattern: "a".repeat(BIG) }, { const: "c".repeat(BIG) }]) {
+    // An enum is bounded to 5000 symbols (MAX_ENUM_VALUES), so it takes more references to pass the response limit than it once did.
+    for (const [refs, def] of [[400, { enum: enumValues }], [100, { pattern: "a".repeat(BIG) }], [100, { const: "c".repeat(BIG) }]] as const) {
       const started = Date.now();
-      const r = parseJsonSchemaDocument(amplified(100, def));
+      const r = parseJsonSchemaDocument(amplified(refs, def));
       expect(r.success).toBe(false);
       if (!r.success) {
         expect(r.error.code).toBe("PARSE_ERROR");
