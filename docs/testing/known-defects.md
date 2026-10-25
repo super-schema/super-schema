@@ -194,12 +194,14 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 ## KD-022: nothing produces a governance request
 
 - status: dead-code
-- symptom: `governance.service.createRequest` (the producer: it classifies a change and writes a PENDING or AUTO_APPROVED request) has no caller.
-  The Governance dashboard, its approve and reject, the emission gate (`checkEmissionGate`) and the Admin health card "Pending Governance" all
-  read requests that only a database write can make (the e2e specs write the rows). A published entity never waits for approval.
-- where: `src/services/governance.service.ts` (`createRequest`); the publish flow (`entity-version.service.ts`) never calls it.
+- symptom: `governance.service.createRequest` (the producer: it classifies a change and writes a PENDING or AUTO_APPROVED request) has no caller,
+  and neither has `checkEmissionGate` (the check that would stop an emission while a request about the entity is pending): no emission is ever gated.
+  The Governance dashboard, its approve and reject and the Admin health card "Pending Governance" read requests that only a database write can
+  make (the e2e specs write the rows). A published entity never waits for approval.
+- where: `src/services/governance.service.ts` (`createRequest`, `checkEmissionGate`); the publish flow (`entity-version.service.ts`) never calls the
+  first, no emission path the second.
 - cost to fix: decide where a request is raised (a breaking publish, a classification change) and call it there, in the same transaction as the
-  publish; this is a product decision, not a fix.
+  publish, and where the gate is asked (before an emission); this is a product decision, not a fix.
 
 ## KD-023: who may SEE governance requests is not decided
 
