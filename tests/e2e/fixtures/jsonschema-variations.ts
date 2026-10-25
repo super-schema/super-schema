@@ -151,12 +151,13 @@ export const VARIATIONS: Variation[] = [
     survives: ['"id"'],
     primaryKey: ["instrument_id"],
     // KD-029: the reference closure follows reference fields, not the members of a union, so a union of models names models the compile
-    // unit does not declare. Every closure target says so; the database targets (a plain column) generate.
+    // unit does not declare. JSON Schema, OpenAPI, Avro and Java say so; Protobuf does not (a .proto field cannot be a union, so the union is
+    // typed string and names no model: it generated here and in the corpus since final wave 2a, and this run said so); the database targets
+    // (a plain column) generate.
     known: {
       "json-schema": UNION_OF_MODELS,
       openapi3: UNION_OF_MODELS,
       avro: UNION_OF_MODELS,
-      protobuf: UNION_OF_MODELS,
       "java-pojo": UNION_OF_MODELS,
     },
   },

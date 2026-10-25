@@ -262,10 +262,10 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 
 ## KD-029: a union of entities is not followed by the reference closure
 
-- status: no-test (declared, not a failing test: the JSON Schema matrix's `oneof-union-of-models` REQUIRES the failure on the five closure targets and fails when it stops, and
+- status: no-test (declared, not a failing test: the JSON Schema matrix's `oneof-union-of-models` REQUIRES the failure on JSON Schema, OpenAPI, Avro and Java (Protobuf types a union as a string, so it does not fail) and fails when it stops, and
   the corpus rule `union-of-entity-references` does the same for four documents; both name this entry)
 - symptom: a JSON Schema `oneOf` / `anyOf` of `$ref`s to other entities (`method: { oneOf: [Card, Bank] }`) imports as a union field that holds the member NAMES
-  (`type: union`, `unionMembers: ["Card", "Bank"]`), and generating the entity for JSON Schema, OpenAPI, Avro, Protobuf or Java fails with
+  (`type: union`, `unionMembers: ["Card", "Bank"]`), and generating the entity for JSON Schema, OpenAPI, Avro or Java fails with
   `invalid-ref: Unknown identifier Card` (the DDL targets, which store the union as text, generate). An array or a map of references, and a plain reference, work.
 - where: `src/lib/references/closure.ts` (the walk follows `reference`, array-of-reference and map-of-reference fields; `holdsEntityReference`),
   `src/lib/compiler/closure-source.ts` (a union's members are written by their bare names).

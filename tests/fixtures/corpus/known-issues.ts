@@ -92,7 +92,7 @@ export const KNOWN_ISSUES: KnownIssue[] = [
     },
   },
   {
-    id: "union-of-entity-references", targets: ["json-schema", "openapi3", "avro", "protobuf", "java-pojo"], disposition: "open", owner: "this repo (closure.ts walks reference fields only; the importer stores a oneOf / anyOf of $refs as a union of NAMES)",
+    id: "union-of-entity-references", targets: ["json-schema", "openapi3", "avro", "java-pojo"], disposition: "open", owner: "this repo (closure.ts walks reference fields only; the importer stores a oneOf / anyOf of $refs as a union of NAMES)",
     issue: "(KD-029, docs/testing/known-defects.md) A field that is a union of entities (`oneOf` / `anyOf` of `$ref`s: `type: union`, `unionMembers: [Card, Bank]`) holds the member NAMES, not references. The reference closure walks `reference` fields (and arrays / maps of them), so the members are not in the closure and the union names models the compile unit does not declare: `invalid-ref: Unknown identifier Card`. Only matched when every unknown identifier is a union member that names an entity of the case's own tenant (a member nothing answers to is `reference-to-missing-entity`). The DB targets store the union as text and are unaffected.",
     diagnostic: { code: "invalid-ref", message: /Unknown identifier/ },
     when: ({ outcome, built }) => {
