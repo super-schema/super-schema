@@ -45,7 +45,7 @@ export function ImportReviewScreen({
 
   function updateFieldNullable(index: number, nullable: boolean) {
     setFields((prev) =>
-      prev.map((f, i) => (i === index ? { ...f, nullable } : f))
+      prev.map((f, i) => (i === index ? { ...f, nullable, ...(nullable ? {} : { nullableType: undefined, requiredNullable: undefined }) } : f))
     );
   }
 

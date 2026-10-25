@@ -199,8 +199,14 @@ describe("preserved keys", () => {
     for (const type of ["Customer", "Customer | null", "null | Customer"]) {
       const m = mergeSyncedField(existing, src({ type }));
       expect(m.type, type).toBe("reference");
-      expect(m.decorators, type).toEqual(existing.decorators);
-      expect(fieldNeedsUpdate(existing, m, src({ type }))).toBe(false);
+      if (type === "Customer") {
+        expect(m.decorators, type).toEqual(existing.decorators);
+        expect(fieldNeedsUpdate(existing, m, src({ type }))).toBe(false);
+      } else {
+        // The `| null` is the source's statement that the value may be null: stored (merge-fields-nullable.test.ts), the target kept.
+        expect(m.decorators, type).toEqual({ ...(existing.decorators as Record<string, unknown>), nullableType: true, requiredNullable: true });
+        expect(m.nullable).toBe(true);
+      }
     }
     expect(mergeSyncedField(existing, src({ type: "Customer", isOptional: true })).type).toBe("reference");
   });

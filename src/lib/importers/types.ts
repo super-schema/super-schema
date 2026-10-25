@@ -37,8 +37,15 @@ export interface ParsedField {
   name: string;
   /** Mapped logical type (from SuperSchemaModel LogicalType) */
   type: string;
-  /** Whether the field is nullable */
+  /** Whether the field is nullable: its column may be NULL / the property may be absent (optional) or hold null (see `nullableType`) */
   nullable: boolean;
+  /**
+   * The VALUE may be null (JSON Schema `type: [T, "null"]` / `anyOf` with `{ type: "null" }`, TypeSpec `T | null`), as opposed to the
+   * property being optional (absent). Always together with `nullable: true`; written as `T | null` in the TypeSpec text.
+   */
+  nullableType?: boolean;
+  /** The property must be present although its value may be null (`required` + a null type): `a: T | null`, no `?`. Only with `nullableType`. */
+  requiredNullable?: boolean;
   /** Description extracted from the source schema */
   description?: string;
   /** Protobuf field number (preserved for proto imports) */

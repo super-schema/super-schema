@@ -41,6 +41,8 @@ export interface SyncSourceField {
   isKey: boolean;
   decorators: Rec;
   arrayElementType?: string;
+  /** The type is `T | null` (T is `type`): read by the real-compiler reader; the text reader leaves it in the type (`string | null`). */
+  nullableType?: boolean;
 }
 
 /** The stored field row, as far as the merge reads it. */
@@ -219,6 +221,17 @@ const BUILTIN_NAMES = new Set(["string", "unknown", "null"]);
 const stripNull = (t: string | undefined) => (t === undefined ? t : t.replace(/^\s*null\s*\|\s*|\s*\|\s*null\s*$/g, "").trim());
 
 /**
+ * Whether the source says the VALUE may be null, apart from the property being optional: the compiler reader reports `nullableType`, the
+ * text reader leaves `| null` in the type (`string | null`), which is taken out here (the type is then what is left).
+ */
+function readNullable(source: SyncSourceField): { source: SyncSourceField; nullableType: boolean } {
+  if (source.nullableType === true) return { source, nullableType: true };
+  const stripped = stripNull(source.type);
+  if (stripped !== undefined && stripped !== "" && stripped !== source.type) return { source: { ...source, type: stripped }, nullableType: true };
+  return { source, nullableType: false };
+}
+
+/**
  * A resolved reference is written as the bare model name (`Customer`, `Customer[]`, `Customer | null`) and both parsers read it back as
  * that name, never as `reference`. When that name EQUALS the stored target (exact, case-sensitive) the field is unchanged: it is read as
  * `reference` / array of `reference` again so the target survives. A different name is a real edit and is left as written.
@@ -272,7 +285,8 @@ function enumAsDeclared(
 }
 
 /** The field row the source text means, given the stored row (null for a field the source adds). Pure; never mutates its inputs. */
-export function mergeSyncedField(existing: SyncExistingField | null, rawSource: SyncSourceField, opts: MergeOptions = {}): MergedField {
+export function mergeSyncedField(existing: SyncExistingField | null, textSource: SyncSourceField, opts: MergeOptions = {}): MergedField {
+  const { source: rawSource, nullableType } = readNullable(textSource);
   const enumTyped = enumAsDeclared(rawSource, opts.enums);
   const { source, matched: storedMatched } = resolvedTargetAsStored(
     existing,
@@ -281,6 +295,15 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
   // A reference the field keeps is, by definition, written as the target it stores (whatever its spelling).
   const matched = storedMatched || (opts.reference !== undefined && "keep" in opts.reference);
   const out: Rec = isRec(existing?.decorators) ? cloneJson(existing.decorators as Rec) : {};
+  // The null of the type, and whether the property must be present anyway (no `?`), are the source's: written when it says so, dropped when not.
+  if (nullableType) {
+    out.nullableType = true;
+    if (source.isOptional) delete out.requiredNullable;
+    else out.requiredNullable = true;
+  } else {
+    delete out.nullableType;
+    delete out.requiredNullable;
+  }
   const mapped = mapSourceField(source);
   const typeChanged = existing !== null && existing.type !== mapped.type;
   const hadMarker = existing !== null && activeDanglingRef(existing.type, existing.decorators as Rec | null) !== undefined;
@@ -415,7 +438,8 @@ export function mergeSyncedField(existing: SyncExistingField | null, rawSource: 
 
   return {
     type: mapped.type,
-    nullable: source.isOptional,
+    // The column may be NULL when the property may be absent (`?`) or its value may be null (`| null`).
+    nullable: source.isOptional || nullableType,
     isKey: source.isKey,
     description: (doc as string | undefined) ?? existing?.description ?? "",
     classification,

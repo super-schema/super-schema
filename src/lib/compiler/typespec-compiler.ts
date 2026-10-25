@@ -154,14 +154,42 @@ function elementName(type: Type | undefined): string {
   return "string";
 }
 
-function mapPropertyType(type: Type): { type: string; arrayElementType?: string } {
+/** What a property's type means: its logical type, and the null / union facts that its text spells (`T | null`, `A | B`). */
+interface MappedProperty {
+  type: string;
+  arrayElementType?: string;
+  /** The type is `T | null`: `type` / `arrayElementType` is T. */
+  nullableType?: boolean;
+  unionName?: string;
+  unionMembers?: string[];
+}
+
+const isNullType = (t: Type): boolean => t.kind === "Intrinsic" && (t as { name?: string }).name === "null";
+
+/** A union's members, the `null` of `T | null` taken out. */
+function unionMembersOf(u: Union): { members: Type[]; hasNull: boolean } {
+  const all = [...u.variants.values()].map((v) => v.type);
+  const members = all.filter((t) => !isNullType(t));
+  return { members, hasNull: members.length !== all.length };
+}
+
+function mapPropertyType(type: Type): MappedProperty {
   switch (type.kind) {
     case "Scalar":
       return { type: mapTypeSpecType((type as Scalar).name).type };
     case "Model": {
       const m = type as Model;
       if (m.name === "Array") {
-        const el = elementName(m.indexer?.value);
+        const value = m.indexer?.value;
+        if (value?.kind === "Union") {
+          // An array of a union: `(A | B)[]` is an array whose element is a union; `(T | null)[]` an array of T (the element's null is not kept).
+          const { members } = unionMembersOf(value as Union);
+          if (members.length >= 2 || ((value as Union).name && members.length >= 1)) {
+            return { type: "array", arrayElementType: "union", unionName: (value as Union).name || undefined, unionMembers: members.map(elementName) };
+          }
+          return { type: "array", arrayElementType: mapTypeSpecType(elementName(members[0])).type };
+        }
+        const el = elementName(value);
         return { type: "array", arrayElementType: mapTypeSpecType(el).type };
       }
       if (m.name === "Record") return { type: "map" };
@@ -172,8 +200,17 @@ function mapPropertyType(type: Type): { type: string; arrayElementType?: string 
       return { type: (type as Enum).name };
     case "Union": {
       const u = type as Union;
-      const members = [...u.variants.values()].map((v) => elementName(v.type));
-      return { type: members.join(" | ") };
+      const { members, hasNull } = unionMembersOf(u);
+      // `T | null` (an inline union of one type and null): the type is T, and the null is the field's own fact.
+      if (!u.name && members.length === 1) return { ...mapPropertyType(members[0]), nullableType: true };
+      const names = members.map(elementName);
+      // A union of literals (`"a" | "b"`) is values, not types: it has no members to name.
+      const ofTypes = members.every((t) => t.kind === "Scalar" || t.kind === "Model" || t.kind === "Enum" || t.kind === "Union");
+      return {
+        type: names.join(" | "),
+        ...(ofTypes ? { ...(u.name ? { unionName: u.name } : {}), unionMembers: names } : {}),
+        ...(hasNull ? { nullableType: true } : {}),
+      };
     }
     case "EnumMember":
     case "Number":
@@ -380,6 +417,9 @@ function extractField(program: Program, prop: ModelProperty): ParsedTypeSpecFiel
     name: prop.name,
     type: mapped.type,
     arrayElementType: mapped.arrayElementType,
+    ...(mapped.nullableType ? { nullableType: true } : {}),
+    ...(mapped.unionMembers && mapped.unionMembers.length > 0 ? { unionMembers: mapped.unionMembers } : {}),
+    ...(mapped.unionName ? { unionName: mapped.unionName } : {}),
     isOptional: prop.optional,
     isKey: hasKeyDecorator(prop),
     decorators: readDecorators(prop),

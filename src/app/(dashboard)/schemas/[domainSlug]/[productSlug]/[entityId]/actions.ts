@@ -819,6 +819,8 @@ type TypeSpecParsedField = {
   isKey: boolean;
   decorators: Record<string, unknown>;
   arrayElementType?: string;
+  /** Real-compiler reader: the type is `T | null` (see `SyncSourceField`). */
+  nullableType?: boolean;
 };
 
 export async function applyTypeSpecAction(
@@ -917,7 +919,7 @@ async function applyTypeSpecFields(
                 slug: generateSlug(pf.name),
                 type: merged.type,
                 sortOrder: nextSort++,
-                nullable: pf.isOptional,
+                nullable: merged.nullable,
                 isKey: pf.isKey,
                 fieldNumber: nextFieldNum++,
                 description: (pf.decorators.doc as string) ?? "",
@@ -941,7 +943,7 @@ async function applyTypeSpecFields(
                 where: { id: existing.id },
                 data: {
                   type: merged.type,
-                  nullable: pf.isOptional,
+                  nullable: merged.nullable,
                   isKey: pf.isKey,
                   description: merged.description,
                   classification,
@@ -2381,6 +2383,7 @@ async function compileAndApplyTypeSpecSource(
       isKey: f.isKey,
       decorators: f.decorators as Record<string, unknown>,
       arrayElementType: f.arrayElementType,
+      ...(f.nullableType ? { nullableType: true } : {}),
     })),
     fieldsToRemove,
     fieldGovernance,

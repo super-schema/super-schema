@@ -770,8 +770,13 @@ function generateFieldDefinition(
     typeExpr = resolveTypeSpecType(field, ctx);
   }
 
-  // Determine optionality
-  const optional = field.nullable ? "?" : "";
+  // Optionality (the property may be absent: `?`) and nullability (the value may be null: `| null`) are two things. A field that is nullable
+  // because its value may be null (a JSON Schema `type: [T, "null"]`) says so in its type; one that must be present anyway (`required`) has
+  // no `?`. Both need the field to be nullable at all: switching Nullable off writes the plain type. A dangling reference is `unknown`
+  // carrying a raw `$ref`: no null to add.
+  const nullType = field.nullable && field.nullableType === true && !isDanglingField(field);
+  const optional = field.nullable && !(nullType && field.requiredNullable === true) ? "?" : "";
+  if (nullType) typeExpr = `${typeExpr} | null`;
 
   // Default value
   const defaultClause = field.decorators.typespec?.identity?.defaultValue !== undefined

@@ -94,6 +94,9 @@ export function buildDecoratorsFromParsedField(
       reason: field.danglingRef.reason,
     };
   }
+  // The value may be null (`T | null`), and whether the property must be present anyway: read by compileEntity -> the generator.
+  if (field.nullableType) decorators.nullableType = true;
+  if (field.nullableType && field.requiredNullable) decorators.requiredNullable = true;
   if (field.mapKeyType) decorators.mapKeyType = field.mapKeyType;
   if (field.mapValueType) decorators.mapValueType = field.mapValueType;
   if (field.enumName) decorators.enumName = field.enumName;

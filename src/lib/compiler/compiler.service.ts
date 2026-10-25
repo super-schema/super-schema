@@ -117,6 +117,7 @@ function compileField(field: PrismaFieldInput): SuperSchemaField {
     precision: field.precision ?? undefined,
     scale: field.scale ?? undefined,
     nullable: field.nullable,
+    ...(rawDecorators.nullableType === true ? { nullableType: true, ...(rawDecorators.requiredNullable === true ? { requiredNullable: true } : {}) } : {}),
     isKey: field.isKey,
     fieldNumber: field.fieldNumber ?? undefined,
     description: field.description,

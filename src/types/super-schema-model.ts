@@ -247,6 +247,10 @@ export interface SuperSchemaField {
   precision?: number;
   scale?: number;
   nullable: boolean;
+  /** The VALUE may be null (`T | null`), not only absent. Written as `T | null` while `nullable` holds (see `requiredNullable`). */
+  nullableType?: boolean;
+  /** With `nullableType`: the property must be present although it may be null (`a: T | null`), where without it `a?: T | null`. */
+  requiredNullable?: boolean;
   isKey: boolean;
   fieldNumber?: number;
   description: string;

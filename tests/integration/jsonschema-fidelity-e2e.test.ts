@@ -4,63 +4,76 @@
  */
 import { describe, expect, it, vi } from "vitest";
 vi.setConfig({ testTimeout: 60_000 });
-import type { Prisma } from "@/generated/prisma/client";
-import { createImportedEntities, type ImportedEntityInput } from "@/services/imported-entities";
-import { compileEntity, type PrismaEntityInput, type PrismaFieldInput } from "@/lib/compiler/compiler.service";
+import { compileEntity } from "@/lib/compiler/compiler.service";
 import { parseJsonSchemaDocument } from "@/lib/importers/jsonschema.importer";
-import { toAssetImportResult } from "@/lib/importers/multi-asset";
-import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
+import { importAndPersist, type Imported } from "../helpers/import-persist";
 
 vi.mock("server-only", () => ({}));
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Row = Record<string, any> & { name: string; type: string; nullable: boolean; decorators: Record<string, any> };
-
-interface Imported {
-  rows: Row[];
-  metadata: Record<string, unknown> | undefined;
-  warnings: string[];
-  entity: PrismaEntityInput;
-  fields: PrismaFieldInput[];
-}
-
-/** import -> payload -> the rows `createImportedEntities` writes (the first entity), as the app persists them. */
-export async function importAndPersist(schema: unknown, name = "Evt"): Promise<Imported> {
-  const parsed = parseJsonSchemaDocument(JSON.stringify(schema));
-  if (!parsed.success) throw new Error(parsed.error.message);
-  const payload = buildImportAssetsPayload(toAssetImportResult(parsed.data), {
-    domainId: "d", selectedModels: [], selectedEntities: [0], selectedEnums: [], selectedScalars: [],
-    selectedUnions: [], selectedServices: [], selectedDecorators: [],
-  });
-  payload.entities[0].name = name;
-  const create = vi.fn(async ({ data }: { data: { name: string } }) => ({ id: `id-${data.name}` }));
-  const tx = { entity: { create, findFirst: vi.fn().mockResolvedValue(null) } } as unknown as Prisma.TransactionClient;
-  await createImportedEntities(tx, {
-    entities: [payload.entities[0] as unknown as ImportedEntityInput],
-    productScope: { tenantId: "t", domainId: "d", productId: "p" },
-    productId: "p", ownerId: "u", sourceFormat: "jsonschema", isNameFree: async () => true, skip: () => {}, refs: new Map(),
-  });
-  const data = create.mock.calls[0][0].data as unknown as { metadata?: Record<string, unknown>; fields: { create: Row[] } };
-  const rows = data.fields.create;
-  const entity: PrismaEntityInput = {
-    id: "e1", name, description: "", status: "DRAFT", version: 1, domainId: "d", metadata: data.metadata,
-    domain: { id: "d", name: "Sales", slug: "sales" },
-  };
-  const fields = rows.map((r, i) => ({
-    id: `f${i}`, name: r.name, type: r.type, precision: null, scale: null, nullable: r.nullable, isKey: r.name === "id",
-    fieldNumber: i + 1, description: (r.description as string) ?? "", classification: (r.classification as string) ?? null, aliases: [],
-    decorators: r.decorators, sortOrder: i,
-  })) as PrismaFieldInput[];
-  return { rows, metadata: data.metadata, warnings: parsed.data.warnings, entity, fields };
-}
-
-export const emitJsonSchema = async (i: Imported) => {
+const emitJsonSchema = async (i: Imported) => {
   const result = await emitOfficialTypeSpecTargetFromData(i.entity, i.fields, "json-schema");
   expect(result.errors).toEqual([]);
   return JSON.parse(result.output) as { properties: Record<string, Record<string, unknown>>; required?: string[]; [key: string]: unknown };
 };
+
+describe("required + nullable stays required, optional + nullable stays optional (F2b)", () => {
+  const SCHEMA = {
+    title: "Evt", type: "object", required: ["id", "reqNull", "reqAnyOfNull"],
+    properties: {
+      id: { type: "string" },
+      reqNull: { type: ["string", "null"], maxLength: 8 },
+      reqAnyOfNull: { anyOf: [{ type: "integer" }, { type: "null" }] },
+      optNull: { type: ["integer", "null"] },
+      opt: { type: "string" },
+    },
+  };
+  const flags = (fields: { name: string; nullable: boolean; nullableType?: boolean; requiredNullable?: boolean }[]) =>
+    Object.fromEntries(fields.map((f) => [f.name, [f.nullable, f.nullableType ?? false, f.requiredNullable ?? false]]));
+
+  it("the emitted JSON Schema lists the required nullable properties in `required` and types them as a union with null", async () => {
+    const schema = await emitJsonSchema(await importAndPersist(SCHEMA));
+    expect(schema.required).toEqual(["id", "reqNull", "reqAnyOfNull"]);
+    expect(schema.properties.reqNull).toMatchObject({ anyOf: [{ type: "string" }, { type: "null" }], maxLength: 8 });
+    expect(schema.properties.reqAnyOfNull).toEqual({ anyOf: [{ type: "integer" }, { type: "null" }] });
+    expect(schema.properties.optNull).toEqual({ anyOf: [{ type: "integer" }, { type: "null" }] });
+    expect(schema.properties.opt).toEqual({ type: "string" });
+  });
+
+  it("re-importing the emitted JSON Schema gives the same optional / nullable facts, field by field", async () => {
+    const i = await importAndPersist(SCHEMA);
+    const first = parseJsonSchemaDocument(JSON.stringify(SCHEMA));
+    const emitted = await emitOfficialTypeSpecTargetFromData(i.entity, i.fields, "json-schema");
+    const again = parseJsonSchemaDocument(emitted.output);
+    if (!first.success || !again.success) throw new Error("import failed");
+    expect(flags(again.data.entities[0].fields)).toEqual(flags(first.data.entities[0].fields));
+    expect(flags(first.data.entities[0].fields)).toEqual({
+      id: [false, false, false], reqNull: [true, true, true], reqAnyOfNull: [true, true, true], optNull: [true, true, false], opt: [true, false, false],
+    });
+  });
+
+  it("the OpenAPI schema lists them in `required` too", async () => {
+    const i = await importAndPersist(SCHEMA);
+    const result = await emitOfficialTypeSpecTargetFromData(i.entity, i.fields, "openapi3");
+    expect(result.errors).toEqual([]);
+    expect(result.output).toMatch(/required:\s+- id\s+- reqNull\s+- reqAnyOfNull\s+properties:/);
+  });
+
+  it.each(["avro", "protobuf", "java-pojo", "postgresql", "spanner", "bigquery"])("%s still generates it (a null type is a nullable column / field there)", async (target) => {
+    const i = await importAndPersist(SCHEMA);
+    const result = await emitOfficialTypeSpecTargetFromData(i.entity, i.fields, target);
+    expect(result.errors).toEqual([]);
+    expect(result.output.length).toBeGreaterThan(0);
+  });
+
+  it("the DDL keeps the column nullable (the value may be null), the key not", async () => {
+    const i = await importAndPersist(SCHEMA);
+    const result = await emitOfficialTypeSpecTargetFromData(i.entity, i.fields, "postgresql");
+    expect(result.output).toMatch(/req_null (TEXT|VARCHAR\(8\)),/);
+    expect(result.output).not.toMatch(/req_null [^,]*NOT NULL/);
+  });
+});
 
 describe("a property typed with several scalar types (F2a)", () => {
   const SCHEMA = {

@@ -68,6 +68,14 @@ export interface ParsedTypeSpecField {
   isKey: boolean;
   decorators: ParsedTypeSpecDecorators;
   arrayElementType?: string;
+  /** Real-compiler reader only: the type is `T | null` (T is `type` / `arrayElementType`), as opposed to `isOptional` (`?`). */
+  nullableType?: boolean;
+  /**
+   * Real-compiler reader only: the type is a union (or an array of one: `arrayElementType` is "union") with these members, `null` aside.
+   * `unionName` is the declared union's name, absent for an inline `A | B`.
+   */
+  unionName?: string;
+  unionMembers?: string[];
   defaultValue?: string;
   isNever?: boolean;
   isInternal?: boolean;

@@ -225,7 +225,7 @@ export const ParsedFieldSummaryBadges = memo(function ParsedFieldSummaryBadges({
           key
         </Badge>
       )}
-      {!field.nullable && (
+      {(!field.nullable || field.requiredNullable) && (
         <Badge variant="outline" className="text-[9px] h-3.5">
           required
         </Badge>
@@ -287,7 +287,10 @@ export const ParsedFieldDetails = memo(function ParsedFieldDetails({ field, enti
           <Row label="Name">{field.name}</Row>
           <Row label="Type">{field.type}</Row>
           {typeDiffers && <Row label="Original type">{field.originalType}</Row>}
-          <Row label="Required">{field.nullable ? "No (nullable)" : "Yes (required)"}</Row>
+          <Row label="Required">{field.nullable && !field.requiredNullable ? "No (nullable)" : "Yes (required)"}</Row>
+          {field.nullableType && (
+            <Row label="Nullable type">{field.requiredNullable ? "Yes: the value may be null, the property must be present" : "Yes: the value may be null"}</Row>
+          )}
           <Row label="Key">{field.isKey ? "Yes" : "No"}</Row>
           {field.description && <Row label="Description">{field.description}</Row>}
           {field.format && <Row label="Format">{field.format}</Row>}

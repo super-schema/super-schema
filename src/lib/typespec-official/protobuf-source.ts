@@ -108,7 +108,8 @@ export function projectTypeSpecSourceForProtobuf(source: string): string {
   const lines = normalizeEnumsForProtobuf(source).split("\n");
   const projected: string[] = [];
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    const line = withoutNullableType(rawLine);
     const property = PROPERTY_LINE.exec(line);
     if (!property) {
       projected.push(line);
@@ -164,6 +165,21 @@ export function rewriteTypeExpressionForProtobuf(typeExpression: string): string
       ? PROTOBUF_SCALAR_SUBSTITUTIONS[token]
       : token
   );
+}
+
+const NULLABLE_TYPE_SUFFIX = /[ \t]\|[ \t]null$/;
+
+/**
+ * `a: T | null;` / `a?: T | null;` -> `a?: T;`. A union is no .proto field type (`T | null` is one to the emitter), and a proto3 `optional`
+ * field is a value that may be absent, which is what the null of the type meant there. Any other line is returned as it is.
+ */
+function withoutNullableType(line: string): string {
+  const property = PROPERTY_LINE.exec(line);
+  if (!property || !NULLABLE_TYPE_SUFFIX.test(property[3])) return line;
+  const [, indent, head, typeExpression] = property;
+  const optionalHead = head.replace(/\??([ \t]*:[ \t]*)$/, "?$1");
+  const rest = line.slice(indent.length + head.length + typeExpression.length);
+  return `${indent}${optionalHead}${typeExpression.replace(NULLABLE_TYPE_SUFFIX, "")}${rest}`;
 }
 
 /** Remove type-bound decorators from the decorator block directly above the next property. */

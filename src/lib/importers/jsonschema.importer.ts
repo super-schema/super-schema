@@ -967,7 +967,10 @@ function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedT
     );
     const members = nonNull.length > 0 ? nonNull : combinator;
     const hasNull = combinator.some((m) => normalizeType(m.type).base === "null" || normalizeType(m.type).nullableFromType);
-    const first = resolveSchemaType(members[0], { ...ctx, nesting: ctx.nesting + 1 });
+    // A `format` written next to a single member (the null wrapper `anyOf: [{ type: "string" }, { type: "null" }], format: "uuid"`, which is
+    // what the JSON Schema emitter writes for `string | null` with @format) applies to that member.
+    const firstNode = members.length === 1 && typeof node.format === "string" && members[0].format === undefined ? { ...members[0], format: node.format } : members[0];
+    const first = resolveSchemaType(firstNode, { ...ctx, nesting: ctx.nesting + 1 });
     return {
       ...first,
       confidence: members.length === 1 ? first.confidence : "low",
@@ -1481,7 +1484,10 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     const ctx: ResolveContext = { ...baseCtx, unionStem: `${ownerName}_${name}`, fieldLabel: `${ownerName}.${name}` };
     const resolved = resolveSchemaType(node, ctx);
     const isRequired = requiredSet.has(name);
-    // nullable = optional (not in required) OR explicitly `type: [..., "null"]`.
+    // nullable (the column may be NULL) = optional (not in required) OR a null type. The two are kept apart in `nullableType` /
+    // `requiredNullable`: a property that is required AND may be null must stay required (`a: T | null`), not become optional (`a?: T`).
+    // A property that is ONLY `null` stays what it was (a string at low confidence): no value type to be nullable.
+    const nullableValue = resolved.nullable && resolved.originalType !== "null";
     const nullable = resolved.nullable || !isRequired;
 
     // A property written as `allOf` merges its members: constraints union (first wins per kind), annotations fold on.
@@ -1528,6 +1534,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       originalType: resolved.originalType,
       // Heuristic: a required property literally named "id" is the key.
       isKey: isRequired && name === "id",
+      ...(nullableValue ? { nullableType: true as const, ...(isRequired ? { requiredNullable: true as const } : {}) } : {}),
       format: resolved.format,
       deprecated: annotationSources.some((s) => s.deprecated === true) || undefined,
       constraints: constraints.length > 0 ? constraints : undefined,
