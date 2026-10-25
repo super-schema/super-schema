@@ -76,11 +76,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   in flight). The suite waits for the server action's answer (`afterServerAction`).
 - where: `InlineEntityMeta.tsx` (the description's Save does not call `onMetaSaved`).
 
-## KD-009: the Java POJO target writes a reference field as a `String`
-
-- status: no-test (a design question: a reference is stored as its key)
-- symptom: an OpenAPI schema `Product { price: Money }` imports `price` as a reference to `Money`; the Java POJO has `private String price;`.
-
 ## KD-010: in the new-field form Escape closes the form, not the suggestion list
 
 - status: no-test (UX)
