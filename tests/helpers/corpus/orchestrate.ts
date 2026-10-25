@@ -63,9 +63,24 @@ function schemaNameOf(output: string): string {
   return /CREATE SCHEMA IF NOT EXISTS (\S+?);/.exec(output)?.[1] ?? "corpus";
 }
 
-async function validateOutput(target: TargetKey, outcome: TargetOutcome, state: EmulatorState | undefined, emuLimit: ReturnType<typeof createLimiter>): Promise<Validation & { tierName?: "spanner" | "bigquery" | "java" }> {
+/**
+ * The `$ref` strings the case's own input keeps dangling on purpose (the importer's `danglingRef` of any field of any entity of the case):
+ * the only bare-file references the JSON Schema validator tolerates (see `validateJsonSchema`).
+ */
+export function declaredExternalRefs(built: BuiltCase): string[] {
+  const refs = new Set<string>();
+  for (const member of built.members) {
+    for (const f of member.fields) {
+      const dangling = (f.decorators as { danglingRef?: { ref?: unknown } } | null)?.danglingRef;
+      if (typeof dangling?.ref === "string") refs.add(dangling.ref);
+    }
+  }
+  return [...refs];
+}
+
+async function validateOutput(target: TargetKey, outcome: TargetOutcome, built: BuiltCase, state: EmulatorState | undefined, emuLimit: ReturnType<typeof createLimiter>): Promise<Validation & { tierName?: "spanner" | "bigquery" | "java" }> {
   const output = outcome.output ?? "";
-  const offline = await withTimeout(validateOffline(target, output), 90000, `validate ${target}`).catch((e: Error): Validation => ({ ok: false, tier: "validator", error: e.message }));
+  const offline = await withTimeout(validateOffline(target, output, { jsonSchema: { external: declaredExternalRefs(built) } }), 90000, `validate ${target}`).catch((e: Error): Validation => ({ ok: false, tier: "validator", error: e.message }));
   if (offline) return offline.skipped ? { ...offline, tierName: "java" } : offline;
   if (target === "spanner") {
     if (!state?.spanner) return { ok: true, skipped: true, tierName: "spanner", tier: `spanner emulator not used (${state?.reasons.find((r) => r.startsWith("spanner")) ?? "disabled"})` };
@@ -111,7 +126,7 @@ export async function runCases(cases: CorpusCase[], options: RunOptions): Promis
       const outcome = await generateTarget(c, b.value, target, limit, options.emitTimeoutMs ?? 150000);
       if (outcome.output !== undefined && (outcome.kind === "PASS" || outcome.kind === "DEGRADED")) {
         const v0 = Date.now();
-        const v = await validateOutput(target, outcome, state, emuLimit);
+        const v = await validateOutput(target, outcome, b.value, state, emuLimit);
         outcome.validateMs = Date.now() - v0;
         outcome.validator = v.tier;
         if (v.skipped && v.tierName) outcome.tierSkipped = { tier: v.tierName, reason: v.tier };
@@ -137,7 +152,11 @@ export async function runCases(cases: CorpusCase[], options: RunOptions): Promis
         result.roundTrip = compareRoundTrip(root, js.output);
       } else result.roundTrip = { status: "SKIPPED", differences: [], note: "json-schema output unavailable" };
     }
-    for (const o of Object.values(result.targets)) delete (o as TargetOutcome).output; // keep results small
+    for (const o of Object.values(result.targets)) {
+      // keep results small: the text is not kept, nor the content of the files (their paths and entities are)
+      delete (o as TargetOutcome).output;
+      if (o?.closure) o.closure = { ...o.closure, files: o.closure.files.map(({ path, entityId }) => ({ path, entityId })) };
+    }
     result.ms = Date.now() - t0;
     options.onProgress?.(done, cases.length, c.id);
   };

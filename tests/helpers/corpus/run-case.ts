@@ -7,15 +7,35 @@
 import type { PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { getTargetRequirements } from "@/lib/schema-targets/requirements";
+import { supportsClosureEmission } from "@/lib/schema-targets/catalog";
+import { loadReferenceClosure } from "@/lib/references/closure";
+import { qualifiedName } from "@/lib/references/entity-reference";
+import type { OfficialTypeSpecTargetResult } from "@/lib/typespec-official/emitter.service";
 import type { BuiltCase } from "./build-rows";
+import { CORPUS_TENANT, createMemoryDb } from "./memory-db";
 import type { CorpusCase, TargetKey } from "../../fixtures/corpus/types";
 
 export type OutcomeKind = "PASS" | "DEGRADED" | "NEEDS_INPUT" | "FAIL" | "SKIPPED";
+
+/** What a closure emission produced besides the text: the files (path, content, entity) and the entities the closure walked. */
+export interface ClosureFacts {
+  /** The files written; `content` is dropped once the output has been validated (the results of a whole corpus run are kept in memory). */
+  files: Array<{ path: string; content?: string; entityId?: string }>;
+  /** The qualified names of the closure's entities, the case's own first. */
+  entities: string[];
+  /** Entities whose content was read at a pinned version, by qualified name. */
+  pinned: string[];
+  cycles: string[][];
+}
+
 export interface TargetOutcome {
   target: TargetKey;
   kind: OutcomeKind;
   reason?: string;
+  /** The bundled `===== path =====` output (a single file is its bare content), the form `SchemaVersion.output` stores. */
   output?: string;
+  /** Present for the closure targets (json-schema, openapi3, avro, protobuf, java-pojo). */
+  closure?: ClosureFacts;
   warnings: string[];
   /** The validator tier that judged the output (or why none ran). */
   validator?: string;
@@ -66,6 +86,48 @@ export function applyPrimaryKey(built: BuiltCase, target: TargetKey): { fields: 
   return { fields: built.fields.map((f) => (f.name === choice ? { ...f, isKey: true } : f)), keyField: choice };
 }
 
+/** A result of a closure emission, with what the closure walked (the corpus's validators and tests read it). */
+type EmittedResult = OfficialTypeSpecTargetResult & { closure?: ClosureFacts };
+
+/**
+ * One closure target of a built case, generated the way the app does it: the case's own entity is the ROOT, the closure is loaded by the
+ * real resolver over the case's tenant (DRAFT mode: the current saved state, which is what the Schemas tab generates), and `emitClosure`
+ * writes one file per entity. A closure the resolver refuses (an ambiguous bare name, a pin that does not exist) is an INVALID result
+ * that says so, like the app's answer.
+ *
+ * `fields` are the root's fields (the primary-key answer for a DB target lands here; the closure targets need none).
+ */
+export async function emitCaseClosure(built: BuiltCase, fields: PrismaFieldInput[], target: TargetKey): Promise<EmittedResult> {
+  const { emitClosure, bundleEmittedFiles } = await import("@/lib/typespec-official/closure-emit");
+  const { resultFromEmissionError } = await import("@/lib/typespec-official/emitter.service");
+  const members = built.members.map((m, i) => (i === 0 ? { ...m, fields } : m));
+  const loaded = await loadReferenceClosure(createMemoryDb(members), CORPUS_TENANT, members[0].entity.id, "draft");
+  if (!loaded.success) {
+    const e = loaded.error;
+    const detail = e.code === "AMBIGUOUS_REFERENCE" ? `field "${e.field}" names "${e.name}", which matches ${e.candidates.map((c) => qualifiedName(c)).join(", ")}`
+      : e.code === "PIN_NOT_FOUND" ? `field "${e.field}" pins ${qualifiedName(e.ref)} v${e.version}, which does not exist`
+      : e.code === "NEVER_PUBLISHED" ? `${qualifiedName(e.ref)} was never published`
+      : e.code === "CLOSURE_TOO_LARGE" ? `more than ${e.limit} entities` : "the entity is not in the tenant";
+    return { output: "", validationStatus: "INVALID", warnings: [], errors: [{ message: `reference-closure ${e.code}: ${detail}` }] };
+  }
+  const closure = loaded.data;
+  const emitted = await emitClosure(closure, target);
+  if (!emitted.success) return resultFromEmissionError(emitted.error);
+  const { files, warnings } = emitted.data;
+  return {
+    output: bundleEmittedFiles(files),
+    validationStatus: warnings.length > 0 ? "WARNING" : "VALID",
+    warnings,
+    errors: [],
+    closure: {
+      files: files.map((f) => ({ path: f.path, content: f.content, entityId: f.entityId })),
+      entities: closure.entities.map((e) => qualifiedName(e.ref)),
+      pinned: closure.entities.filter((e) => e.source === "pinned").map((e) => qualifiedName(e.ref)),
+      cycles: closure.cycles,
+    },
+  };
+}
+
 export async function generateTarget(
   c: CorpusCase,
   built: BuiltCase,
@@ -78,7 +140,12 @@ export async function generateTarget(
   if (pk.needsInput) return { target, kind: "NEEDS_INPUT", reason: pk.needsInput, warnings: [] };
   const t0 = Date.now();
   try {
-    const result = await limit(() => withTimeout(emitOfficialTypeSpecTargetFromData(built.entity, pk.fields, target), timeoutMs, `emit ${target}`));
+    // The schema targets take the whole reference closure of the case's entity (one file per entity); the DB targets emit the entity on
+    // its own, a reference being a plain column there.
+    const result: EmittedResult = await limit(() => withTimeout(
+      supportsClosureEmission(target) ? emitCaseClosure(built, pk.fields, target) : emitOfficialTypeSpecTargetFromData(built.entity, pk.fields, target),
+      timeoutMs, `emit ${target}`,
+    ));
     const emitMs = Date.now() - t0;
     const warnings = result.warnings ?? [];
     if (result.validationStatus === "INVALID" || result.errors.length > 0) {
@@ -88,7 +155,7 @@ export async function generateTarget(
     const degraded = c.expectations.expectedDegraded?.find((d) => d.target === target);
     const isDegraded = warnings.length > 0 || result.validationStatus === "WARNING";
     return {
-      target, kind: isDegraded ? "DEGRADED" : "PASS", output: result.output, warnings, keyField: pk.keyField, emitMs,
+      target, kind: isDegraded ? "DEGRADED" : "PASS", output: result.output, closure: result.closure, warnings, keyField: pk.keyField, emitMs,
       ...(degraded ? { reason: degraded.reason } : isDegraded ? { reason: warnings[0]?.slice(0, 200) } : {}),
     };
   } catch (error) {

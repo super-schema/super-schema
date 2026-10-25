@@ -461,7 +461,7 @@ const refersToFile = (ref: string, path: string): boolean => {
   return target !== "" && (target === path || path.endsWith(`/${target}`));
 };
 
-function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "verify"> {
+function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "adopt" | "verify"> {
   // One `<Name>.json` per declaration: the model and each enum / union / scalar its block declares.
   const owner = new Map<string, string>();
   for (const [entityId, names] of generated.declarations) for (const name of names) if (!owner.has(name)) owner.set(name, entityId);

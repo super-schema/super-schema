@@ -14,7 +14,19 @@ import { toAssetImportResult, pickRootEntity } from "@/lib/importers/multi-asset
 import { buildImportAssetsPayload } from "@/lib/importers/import-payload";
 import { mapDocumentToImportResult, type TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import type { MultiEntityImportResult } from "@/lib/importers/types";
-import type { CorpusCase, ModelInput } from "../../fixtures/corpus/types";
+import type { CorpusCase, ModelInput, Placement } from "../../fixtures/corpus/types";
+
+/** The domain and product every entity of a document (and a model case that names no place) lives in. */
+export const CORPUS_PLACE: Required<Placement> = { domain: "Corpus", product: "Corpus" };
+
+/** One entity of the case's tenant: what the closure resolver would read from the database for it. */
+export interface BuiltMember {
+  entity: PrismaEntityInput;
+  fields: PrismaFieldInput[];
+  place: Placement;
+  /** Published versions, oldest first: what a pin names (and what a published-mode closure would read). */
+  published: Array<{ version: string; fields: PrismaFieldInput[] }>;
+}
 
 export interface BuiltCase {
   entity: PrismaEntityInput;
@@ -22,23 +34,32 @@ export interface BuiltCase {
   importWarnings: string[];
   /** The multi-entity import (JSON Schema cases) for the round-trip projection. */
   imported?: MultiEntityImportResult;
-  /** How many entities the document produced (only the root one is emitted). */
+  /** How many entities the document produced. */
   entityCount: number;
+  /**
+   * Every entity of the case's tenant, the case's own entity FIRST (`members[0]` is `entity` / `fields`): the document's other entities
+   * (its `$defs` / models), or the case's `siblings`. The closure of the case's entity walks these, like the app walks the tenant.
+   */
+  members: BuiltMember[];
 }
 export type BuildOutcome = { ok: true; value: BuiltCase } | { ok: false; reason: string };
 
 type Row = Record<string, unknown> & { name: string; type: string };
 
-export function toPrismaFields(rows: Row[]): PrismaFieldInput[] {
+export function toPrismaFields(rows: Row[], idPrefix = ""): PrismaFieldInput[] {
   return rows.map((r, i) => ({
-    id: `f${i}`, name: r.name, type: r.type, precision: (r.precision as number | null) ?? null, scale: (r.scale as number | null) ?? null,
+    id: `${idPrefix}f${i}`, name: r.name, type: r.type, precision: (r.precision as number | null) ?? null, scale: (r.scale as number | null) ?? null,
     nullable: (r.nullable as boolean) ?? false, isKey: (r.isKey as boolean) ?? false, fieldNumber: (r.fieldNumber as number | null) ?? null,
     description: (r.description as string) ?? "", classification: (r.classification as string | null) ?? null,
     aliases: (r.aliases as string[]) ?? [], decorators: r.decorators ?? {}, sortOrder: i,
   }));
 }
 
-async function persist(result: TypeSpecImportResult, rootName: string): Promise<{ entity: PrismaEntityInput; fields: PrismaFieldInput[] } | string> {
+const entityInput = (name: string, id: string, extra: Partial<PrismaEntityInput> = {}): PrismaEntityInput => ({
+  id, name, description: "", status: "DRAFT", version: 1, domainId: "d", metadata: {}, domain: { id: "d", name: CORPUS_PLACE.domain, slug: "corpus" }, ...extra,
+});
+
+async function persist(result: TypeSpecImportResult, rootName: string): Promise<{ entity: PrismaEntityInput; fields: PrismaFieldInput[]; members: BuiltMember[] } | string> {
   const payload = buildImportAssetsPayload(result, {
     domainId: "d", selectedModels: [], selectedEntities: result.models.map((_, i) => i), selectedEnums: [], selectedScalars: [],
     selectedUnions: [], selectedServices: [], selectedDecorators: [],
@@ -55,9 +76,28 @@ async function persist(result: TypeSpecImportResult, rootName: string): Promise<
   });
   const data = recorded.find((d) => d.name === rootName.trim()) ?? recorded[0];
   if (!data) return `no entity was created (${skipped.join("; ") || "none selected"})`;
+  // The document's other entities are the rest of the tenant: the root is `e1`, the others `m<n>`. The importer's reference fields
+  // name them, so the closure resolver finds them by name, exactly as it finds a legacy name-only reference in the app.
+  const members: BuiltMember[] = [data, ...recorded.filter((d) => d !== data)].map((d, i) => {
+    const id = i === 0 ? "e1" : `m${i}`;
+    return {
+      entity: entityInput(d.name, id, { description: d.description ?? "", metadata: d.metadata }),
+      fields: toPrismaFields(d.fields.create, i === 0 ? "" : `${id}-`),
+      place: { ...CORPUS_PLACE },
+      published: [],
+    };
+  });
+  return { entity: members[0].entity, fields: members[0].fields, members };
+}
+
+/** A hand-built entity (the case's own, or a sibling) as a member of the tenant. */
+function memberOf(input: ModelInput, id: string, fieldIdPrefix: string): BuiltMember {
+  const entity = entityInput(input.entity.name, id, input.entity as Partial<PrismaEntityInput>);
   return {
-    entity: { id: "e1", name: data.name, description: data.description ?? "", status: "DRAFT", version: 1, domainId: "d", metadata: data.metadata, domain: { id: "d", name: "Corpus", slug: "corpus" } },
-    fields: toPrismaFields(data.fields.create),
+    entity: { ...entity, id },
+    fields: toPrismaFields(input.fields as Row[], fieldIdPrefix),
+    place: input.place ?? { ...CORPUS_PLACE },
+    published: (input.published ?? []).map((p) => ({ version: p.version, fields: toPrismaFields(p.fields as Row[], `${id}-v${p.version}-`) })),
   };
 }
 
@@ -66,7 +106,15 @@ export async function buildCase(c: CorpusCase): Promise<BuildOutcome> {
     if (c.kind === "model") {
       const m = c.source as ModelInput;
       const entity: PrismaEntityInput = { id: "e1", description: "", status: "DRAFT", version: 1, domainId: "d", metadata: {}, domain: { id: "d", name: "Corpus", slug: "corpus" }, ...m.entity };
-      return { ok: true, value: { entity, fields: toPrismaFields(m.fields as Row[]), importWarnings: [], entityCount: 1 } };
+      const root = memberOf({ ...m, entity }, entity.id, "");
+      // A sibling takes its own id when the fixture gives one (a reference field names it), else `m<n>`.
+      const siblings = (m.siblings ?? []).map((s, i) => memberOf(s, s.entity.id ?? `m${i + 1}`, `${s.entity.id ?? `m${i + 1}`}-`));
+      const ids = new Set<string>();
+      for (const member of [root, ...siblings]) {
+        if (ids.has(member.entity.id)) return { ok: false, reason: `two entities of the case have the id ${member.entity.id}` };
+        ids.add(member.entity.id);
+      }
+      return { ok: true, value: { entity, fields: root.fields, importWarnings: [], entityCount: 1 + siblings.length, members: [root, ...siblings] } };
     }
     if (c.kind === "jsonschema") {
       const parsed = parseJsonSchemaDocument(c.source as string);
