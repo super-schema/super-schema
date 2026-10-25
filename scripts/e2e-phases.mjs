@@ -45,11 +45,11 @@
 // (tests/unit/e2e-phases.test.ts) without running anything.
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { browserEnv, decideForThisProcess, describeBrowser, realProbes } from "./e2e-browser.cjs";
+import { isEntryPoint } from "./e2e-entry.mjs";
 import { describeNode, nodeProblem } from "./e2e-node.mjs";
 import {
   DEFAULT_STALL_MS,
@@ -67,6 +67,9 @@ import {
   stopStalledChild,
   watchForStall,
 } from "./e2e-process.mjs";
+
+// The entry-point check lives in scripts/e2e-entry.mjs (every script uses it); re-exported for the callers that imported it from here.
+export { isEntryPoint };
 
 export const TIERS = ["smoke", "regression", "nightly", "serial", "visual"];
 
@@ -348,34 +351,6 @@ export async function runPhases({ phases, auth, deps }) {
     if (auth.ownedByThisRun) deps.rmSync(auth.file, { force: true });
   }
   return results;
-}
-
-/**
- * Whether this module is the script node was started with. The paths are compared as real paths: `import.meta.url` is already the real
- * one, while `process.argv[1]` keeps a symlink on the way (macOS: /tmp, /var and /private are links; a worktree's node_modules is one),
- * and comparing the two as strings made `main()` silently not run, with exit code 0. When the file run has THIS script's name and is
- * still not this file, it throws: a run that does nothing and says nothing is the worst way to fail.
- *
- * @param {string} moduleUrl `import.meta.url`
- * @param {string | undefined} argv1 `process.argv[1]`
- * @param {(file: string) => string} [realpath]
- */
-export function isEntryPoint(moduleUrl, argv1, realpath = realpathSync) {
-  if (!argv1) return false;
-  const self = fileURLToPath(moduleUrl);
-  const real = (file) => {
-    try {
-      return realpath(file);
-    } catch {
-      return path.resolve(file);
-    }
-  };
-  const [run, me] = [real(argv1), real(self)];
-  if (run === me) return true;
-  if (path.basename(argv1) === path.basename(self)) {
-    throw new Error(`[${path.basename(self)}] ${argv1} has this script's name but resolves to ${run}, not ${me}: refusing to exit 0 without running anything.`);
-  }
-  return false;
 }
 
 /**

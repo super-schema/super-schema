@@ -9,7 +9,7 @@
 
 import net from "node:net";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { isEntryPoint } from "./e2e-entry.mjs";
 
 /**
  * A TCP forwarder: every connection to `listenHost:listenPort` is piped to `targetHost:targetPort`, in both directions. A connection that
@@ -80,7 +80,7 @@ async function main() {
   });
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   main().catch((error) => {
     console.error(`[e2e-in-docker] ${error instanceof Error ? error.message : String(error)}`);
     process.exit(2);

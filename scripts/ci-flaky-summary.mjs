@@ -20,7 +20,7 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { isEntryPoint } from "./e2e-phases.mjs";
+import { isEntryPoint } from "./e2e-entry.mjs";
 
 const FLAKY_FILE = "flaky-tests.json";
 /** The other file every phase writes on CI (the junit reporter): its presence says that the phase ran, flaky or not. */

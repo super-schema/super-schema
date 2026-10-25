@@ -12,7 +12,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isEntryPoint } from "./e2e-entry.mjs";
 import { resolveLocalRef } from "../src/lib/event-specs/json-pointer";
 import type { BindingTarget, FieldKind, FieldTemplate } from "../src/lib/events/templates/types";
 
@@ -691,4 +692,4 @@ function main(): void {
   for (const cycle of cycles) console.log(`  cut a cyclic $ref to ${cycle} (the nested level is not checked)`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main();
+if (isEntryPoint(import.meta.url, process.argv[1])) main();

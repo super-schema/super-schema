@@ -9,7 +9,8 @@
 import { build } from "esbuild";
 import { existsSync, mkdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isEntryPoint } from "./e2e-entry.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const WORKER_ENTRY = path.join(root, "src/lib/event-specs/validation/parser-worker.ts");
@@ -59,7 +60,7 @@ export async function buildParserWorker() {
   return WORKER_OUTFILE;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   buildParserWorker().then(
     (file) => console.log(`built ${path.relative(root, file)}`),
     (error) => {

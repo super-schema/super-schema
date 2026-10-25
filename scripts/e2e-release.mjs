@@ -62,7 +62,8 @@ import { decideBrowser, describeBrowser, detectChrome, realProbes } from "./e2e-
 import { hashBuildInputs } from "./e2e-build-inputs.mjs";
 import { appEnvironment, hermeticEnv, phasesEnvironment, runnerKnobs } from "./e2e-env.mjs";
 import { describeNode, nodeProblem } from "./e2e-node.mjs";
-import { isEntryPoint, parseCli, planPhases } from "./e2e-phases.mjs";
+import { isEntryPoint } from "./e2e-entry.mjs";
+import { parseCli, planPhases } from "./e2e-phases.mjs";
 import { dockerVisualArgs, extraMounts, updatesSnapshots, visualContainerName } from "./e2e-visual-docker.mjs";
 import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, signalGroup, spawnGroup, terminateGroup } from "./e2e-process.mjs";
 

@@ -22,6 +22,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isEntryPoint } from "./e2e-entry.mjs";
 import { visualImageFor } from "./e2e-visual-docker.mjs";
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -103,7 +104,7 @@ async function main() {
   return new Promise((resolve) => child.on("exit", (code, signal) => resolve(code ?? (signal === "SIGINT" ? 130 : 143))));
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   main().then(
     (code) => process.exit(code),
     (error) => {
