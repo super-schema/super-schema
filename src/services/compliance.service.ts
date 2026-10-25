@@ -31,6 +31,15 @@ function assertComplianceRole(ctx: ServiceContext): Result<void> {
   return ok(undefined as unknown as void);
 }
 
+/**
+ * An unexpected failure of a query: the details (a driver error carries the invocation, the source path and the offending value) are logged
+ * server-side under the service's name, and the caller gets fixed words.
+ */
+function internalFailure(service: string, message: string, cause: unknown): Result<never> {
+  console.error(`[compliance.${service}] unexpected error`, cause);
+  return err({ code: "INTERNAL_ERROR", message });
+}
+
 // ============================================================
 // Story 6.1 — queryFields
 // ============================================================
@@ -174,10 +183,7 @@ export async function queryFields(
 
     return ok({ fields: results, total });
   } catch (e: unknown) {
-    return err({
-      code: "INTERNAL_ERROR",
-      message: e instanceof Error ? e.message : "Failed to query fields",
-    });
+    return internalFailure("queryFields", "Failed to query fields", e);
   }
 }
 
@@ -379,10 +385,7 @@ export async function detectGaps(
       },
     });
   } catch (e: unknown) {
-    return err({
-      code: "INTERNAL_ERROR",
-      message: e instanceof Error ? e.message : "Failed to detect gaps",
-    });
+    return internalFailure("detectGaps", "Failed to detect gaps", e);
   }
 }
 
@@ -485,10 +488,7 @@ export async function queryAuditTrail(
 
     return ok({ entries: mapped, total });
   } catch (e: unknown) {
-    return err({
-      code: "INTERNAL_ERROR",
-      message: e instanceof Error ? e.message : "Failed to query audit trail",
-    });
+    return internalFailure("queryAuditTrail", "Failed to query audit trail", e);
   }
 }
 

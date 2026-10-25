@@ -874,3 +874,23 @@ describe("Compliance Service", () => {
     });
   });
 });
+
+describe("compliance services: an unexpected failure is answered in fixed words and logged", () => {
+  const DRIVER = 'Invalid `prisma.field.count()` invocation in /srv/app/src/services/compliance.service.ts:81:36\n\nERROR: invalid byte sequence for encoding "UTF8": 0x00';
+
+  it.each([
+    ["queryFields", () => queryFields({}, undefined, mockCtx), "Failed to query fields", () => vi.mocked(prisma.field.count).mockRejectedValueOnce(new Error(DRIVER))],
+    ["detectGaps", () => detectGaps({}, mockCtx), "Failed to detect gaps", () => vi.mocked(prisma.field.findMany).mockRejectedValueOnce(new Error(DRIVER))],
+    ["queryAuditTrail", () => queryAuditTrail({}, undefined, mockCtx), "Failed to query audit trail", () => vi.mocked(prisma.auditLog.count).mockRejectedValueOnce(new Error(DRIVER))],
+  ])("%s never returns the driver's text", async (label, run, message, arrange) => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    arrange();
+    const result = await run();
+    expect(result).toEqual({ success: false, error: { code: "INTERNAL_ERROR", message } });
+    expect(JSON.stringify(result)).not.toMatch(/prisma|invocation|UTF8|srv\/app/i);
+    // the details are logged server-side, under the name of the service
+    expect(spy.mock.calls.flat().join(" ")).toContain("invalid byte sequence");
+    expect(spy.mock.calls.flat().join(" ")).toContain(label);
+    spy.mockRestore();
+  });
+});

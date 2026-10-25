@@ -1,6 +1,21 @@
 import { z } from "zod";
 
 // ============================================================
+// Bounds on what a request may carry (the routes validate their body with these schemas)
+// ============================================================
+
+/** Text for a filter: bounded, and never a NUL (PostgreSQL cannot store one: the driver's error text came back to the client). */
+const filterText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((s) => !s.includes("\u0000"), { message: "must not contain a NUL character" });
+
+/** Most rows a page of results may hold, and the last page that can be asked for (`skip` stays far below the database's integer range). */
+export const MAX_PAGE_SIZE = 200;
+export const MAX_PAGE = 100_000;
+
+// ============================================================
 // Story 6.1 — Compliance Query Types
 // ============================================================
 
@@ -33,22 +48,22 @@ export type EncryptionMethod = z.infer<typeof EncryptionEnum>;
 
 export const ComplianceFilterSchema = z
   .object({
-    classifications: z.array(z.string()).default([]),
+    classifications: z.array(filterText(64)).max(20).default([]),
     retention: RetentionRangeEnum.default("any"),
     anonymization: AnonymizationEnum.default("any"),
     encryption: EncryptionEnum.default("any"),
-    targets: z.array(z.string()).default([]),
-    domains: z.array(z.string()).default([]),
-    textSearch: z.string().default(""),
+    targets: z.array(filterText(64)).max(50).default([]),
+    domains: z.array(filterText(128)).max(200).default([]),
+    textSearch: filterText(200).default(""),
   })
   .partial();
 
 export type ComplianceFilter = z.infer<typeof ComplianceFilterSchema>;
 
 export const PaginationSchema = z.object({
-  page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(250).default(25),
-  sortBy: z.string().default("entityName"),
+  page: z.number().int().min(1).max(MAX_PAGE).default(1),
+  pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).default(25),
+  sortBy: filterText(32).default("entityName"),
   sortOrder: z.enum(["asc", "desc"]).default("asc"),
 });
 
@@ -112,8 +127,8 @@ export type GapSummary = {
 
 export const GapFilterSchema = z
   .object({
-    domains: z.array(z.string()).default([]),
-    entities: z.array(z.string()).default([]),
+    domains: z.array(filterText(128)).max(200).default([]),
+    entities: z.array(filterText(128)).max(1000).default([]),
   })
   .partial();
 
@@ -125,10 +140,10 @@ export type GapFilter = z.infer<typeof GapFilterSchema>;
 
 export const AuditTrailFilterSchema = z
   .object({
-    actionTypes: z.array(z.string()).default([]),
-    userId: z.string().optional(),
-    entityType: z.string().optional(),
-    entityName: z.string().optional(),
+    actionTypes: z.array(filterText(64)).max(20).default([]),
+    userId: filterText(128).optional(),
+    entityType: filterText(64).optional(),
+    entityName: filterText(200).optional(),
     dateRange: z
       .object({
         from: z.coerce.date(),
@@ -141,8 +156,8 @@ export const AuditTrailFilterSchema = z
 export type AuditTrailFilter = z.infer<typeof AuditTrailFilterSchema>;
 
 export const AuditPaginationSchema = z.object({
-  page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(250).default(50),
+  page: z.number().int().min(1).max(MAX_PAGE).default(1),
+  pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).default(50),
 });
 
 export type AuditPagination = z.infer<typeof AuditPaginationSchema>;

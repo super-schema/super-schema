@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
 import { detectGaps } from "@/services/compliance.service";
 import { resolveContext } from "../_context";
+import { GapsBodySchema, readBody, statusOf } from "../_body";
 
 export async function POST(req: Request) {
   const auth = await resolveContext();
   if (!auth.ok) {
     return NextResponse.json({ success: false, error: auth.message }, { status: auth.status });
   }
-  const body = await req.json().catch(() => ({}));
-  const result = await detectGaps(body.filters ?? {}, auth.ctx);
+  const body = await readBody(req, GapsBodySchema);
+  if (!body.ok) return body.response;
+  const result = await detectGaps(body.data.filters ?? {}, auth.ctx);
   if (!result.success) {
-    const status = result.error.code === "FORBIDDEN" ? 403 : 400;
-    return NextResponse.json({ success: false, error: result.error.message }, { status });
+    return NextResponse.json({ success: false, error: result.error.message }, { status: statusOf(result.error) });
   }
   return NextResponse.json({ success: true, data: result.data });
 }
