@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { useTransientFlag } from "@/hooks/useTransientFlag";
 
 // Map the leading path segment to a human-readable section label so the status
 // bar reflects real navigation state instead of hardcoded placeholder text.
@@ -21,18 +22,14 @@ function sectionLabel(pathname: string): string {
 }
 
 export function StatusBar() {
-  const [saveFlash, setSaveFlash] = useState(false);
+  const [saveFlash, flashSave] = useTransientFlag(2000);
   const pathname = usePathname();
 
   useEffect(() => {
-    function handleSaveFlash() {
-      setSaveFlash(true);
-      setTimeout(() => setSaveFlash(false), 2000);
-    }
-    document.addEventListener("super-schema:save-flash", handleSaveFlash);
+    document.addEventListener("super-schema:save-flash", flashSave);
     return () =>
-      document.removeEventListener("super-schema:save-flash", handleSaveFlash);
-  }, []);
+      document.removeEventListener("super-schema:save-flash", flashSave);
+  }, [flashSave]);
 
   return (
     <footer

@@ -64,6 +64,7 @@ import { EntityVersionList } from "./components/EntityVersionList";
 import { UsedByPanel } from "@/features/events/shared/UsedByPanel";
 import { needsReferenceOf, type PublishAnalysis } from "@/lib/entity-versioning/publish-plan";
 import { useReferencePick } from "./components/useReferencePick";
+import { useTransientFlag } from "@/hooks/useTransientFlag";
 import type { ReferenceFieldControls } from "./components/ReferencePinControl";
 import type { EntityVersionSummary, PublishInput } from "@/lib/entity-versioning/types";
 import type { PickableEntity } from "@/lib/references/entity-reference";
@@ -162,13 +163,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const [statusError, setStatusError] = useState<string | null>(null);
 
   // "Saved" flash indicator state
-  const [showSaved, setShowSaved] = useState(false);
-  const savedTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const flashSaved = useCallback(() => {
-    setShowSaved(true);
-    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
-    savedTimerRef.current = setTimeout(() => setShowSaved(false), 2000);
-  }, []);
+  const [showSaved, flashSaved] = useTransientFlag(2000);
 
   // Emission state
   const [isEmitting, setIsEmitting] = useState(false);

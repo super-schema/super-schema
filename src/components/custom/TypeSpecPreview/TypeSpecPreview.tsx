@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Copy, Check, Loader2, RefreshCw, Pencil, Eye, ClipboardPaste, Play, X, AlertTriangle } from "lucide-react";
 import { useTypeSpecGeneration } from "./useTypeSpecGeneration";
+import { useTransientFlag } from "@/hooks/useTransientFlag";
 import {
   parseTypeSpec,
   computeFieldDiff,
@@ -134,7 +135,7 @@ export function TypeSpecPreview({
     entityId,
     trigger,
   });
-  const [copied, setCopied] = useState(false);
+  const [copied, flashCopied] = useTransientFlag(2000);
 
   // Edit mode state
   const [isEditMode, setIsEditMode] = useState(false);
@@ -150,12 +151,11 @@ export function TypeSpecPreview({
     if (!source) return;
     try {
       await navigator.clipboard.writeText(source);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      flashCopied();
     } catch {
       // Ignore clipboard errors
     }
-  }, [source]);
+  }, [source, flashCopied]);
 
   // Enter edit mode, pre-populate with current source
   const enterEditMode = useCallback(() => {

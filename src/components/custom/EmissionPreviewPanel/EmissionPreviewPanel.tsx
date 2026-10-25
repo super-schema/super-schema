@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { toast } from "sonner";
+import { useTransientFlag } from "@/hooks/useTransientFlag";
 import {
   CheckCircle2,
   AlertTriangle,
@@ -64,18 +65,17 @@ function ValidationIndicator({ status }: { status: ValidationStatus }) {
 // ---------------------------------------------------------------------------
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, flashCopied] = useTransientFlag(2000);
 
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
+      flashCopied();
       toast.success("Copied to clipboard");
-      setTimeout(() => setCopied(false), 2000);
     } catch {
       toast.error("Failed to copy");
     }
-  }, [text]);
+  }, [text, flashCopied]);
 
   return (
     <Button
@@ -322,7 +322,7 @@ export function EmissionPreviewPanel({
   onWarningClick,
   overrides,
 }: EmissionPreviewPanelProps) {
-  const [copiedAll, setCopiedAll] = useState(false);
+  const [copiedAll, flashCopiedAll] = useTransientFlag(2000);
 
   const handleCopyAll = useCallback(async () => {
     const targetEntries = Object.entries(result.targets);
@@ -341,13 +341,12 @@ export function EmissionPreviewPanel({
 
     try {
       await navigator.clipboard.writeText(allText);
-      setCopiedAll(true);
+      flashCopiedAll();
       toast.success("All outputs copied to clipboard");
-      setTimeout(() => setCopiedAll(false), 2000);
     } catch {
       toast.error("Failed to copy");
     }
-  }, [result]);
+  }, [result, flashCopiedAll]);
 
   if (!open) return null;
 

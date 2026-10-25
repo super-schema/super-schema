@@ -131,6 +131,13 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
   // What the server said when the save failed (a refused name, for one), shown under the header row; the status span keeps "Error saving".
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(
+    () => () => {
+      if (idleTimerRef.current !== null) clearTimeout(idleTimerRef.current);
+    },
+    []
+  );
   const pendingRef = useRef(false);
   const savingRef = useRef(false);
 
@@ -174,6 +181,10 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
   const doSave = useCallback(async () => {
     if (savingRef.current) return; // Prevent concurrent saves
     savingRef.current = true;
+    if (idleTimerRef.current !== null) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
     setSaveStatus("saving");
     pendingRef.current = false;
 
@@ -197,7 +208,11 @@ export function FieldStudio({ field, entity, domain, referenceTargets }: FieldSt
     } else {
       setSaveError(null);
       setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      // The "saved" flash goes back to idle by itself; the timer is cleared on unmount and by the next save (it must not fire after either).
+      idleTimerRef.current = setTimeout(() => {
+        idleTimerRef.current = null;
+        setSaveStatus("idle");
+      }, 2000);
     }
   }, [field.id, field.decorators]);
 

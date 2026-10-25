@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { Copy, Check } from "lucide-react";
+import { useTransientFlag } from "@/hooks/useTransientFlag";
 import { highlightLine } from "@/lib/syntax-highlight";
 
 interface SchemaCodePreviewProps {
@@ -13,15 +14,14 @@ interface SchemaCodePreviewProps {
 }
 
 export function SchemaCodePreview({ code, language = "sql", onCopy, title = "Preview" }: SchemaCodePreviewProps) {
-  const [copied, setCopied] = useState(false);
+  const [copied, flashCopied] = useTransientFlag(2000);
   const lines = code.split("\n");
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(code);
-    setCopied(true);
+    flashCopied();
     onCopy();
-    setTimeout(() => setCopied(false), 2000);
-  }, [code, onCopy]);
+  }, [code, onCopy, flashCopied]);
 
   return (
     <div data-testid="schema-code-preview" className="relative rounded-md border border-border/50 bg-muted/20 overflow-hidden">

@@ -56,6 +56,13 @@ export function ExternalRefsCard({ kind, draft, problems }: {
   useEffect(() => {
     latestDoc.current = doc;
   });
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   // The row's position in the WHOLE list: that is what the document's problem pointers use.
   const rows = doc.externalRefs.map((ref, index) => ({ ref, index })).filter(({ ref }) => ref.kind === kind);
@@ -97,6 +104,8 @@ export function ExternalRefsCard({ kind, draft, problems }: {
     // for its real items before anything is removed or refused; if it cannot be asked, change nothing (fail closed).
     setChecking(ref.key);
     const latest = await loadExternalVersionItems(productId, status.latestVersionId);
+    // The card may be gone by now (the user left, or a test ended): nothing of it may be set or updated after that.
+    if (!mounted.current) return;
     setChecking(null);
     const now = latestDoc.current;
     if (!now.externalRefs.some((r) => r.key === ref.key && r.eventVersionId === ref.eventVersionId)) return; // removed or moved meanwhile
