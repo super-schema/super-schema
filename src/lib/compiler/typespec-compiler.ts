@@ -146,6 +146,9 @@ function isFromSource(type: Type, mainPath: string): boolean {
 function elementName(type: Type | undefined): string {
   if (!type) return "string";
   if (type.kind === "Scalar") return (type as Scalar).name;
+  // An array whose element is itself an array (`int32[][]`): the element is the logical type `array`, as the importers store it. The
+  // model's own name, `Array`, is not a type of ours and generates `Array` with no element (`invalid-template-args`).
+  if (type.kind === "Model" && (type as Model).name === "Array") return "array";
   if (type.kind === "Model") return (type as Model).name || "object";
   if (type.kind === "Enum") return (type as Enum).name;
   return "string";
