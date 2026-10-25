@@ -25,6 +25,9 @@ export function useGenerateWithInputs(entityId: string) {
   const ask = useCallback(
     (requirement: MissingRequirement) =>
       new Promise<boolean>((resolve) => {
+        // A question that is still open is replaced by this one (there is one dialog): it ends as declined, so the `generate()` that asked it
+        // resolves (null) instead of waiting forever for an answer that can no longer come.
+        settle.current?.(false);
         settle.current = resolve;
         setAsking(requirement);
       }),
