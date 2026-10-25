@@ -212,3 +212,56 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `src/app/(dashboard)/governance/actions.ts` (`getGovernanceRequestsAction`: a session and no role).
 - cost to fix: a role floor for the list (and a narrower impact report for the roles below it), with the access-control work: tenant-, domain- and
   product-scoped roles.
+
+## KD-024: no caller can create a webhook endpoint through the REST API
+
+- status: open
+- symptom: `POST /api/v1/webhooks` answers 403 to a session (a session is a VIEWER on this API, KD-025) and 500 `INTERNAL_ERROR` to the API key: the
+  key's principal is the user id `api-key-user`, which is no row of `users`, and `webhook_endpoints.createdBy` is a foreign key to `users`, so the
+  insert throws. Webhook endpoints that exist can be listed, changed and deleted by the key (the specs write the row); nothing can make one.
+- where: `src/app/api/v1/middleware.ts` (`authenticateWithApiKey`: `userId: "api-key-user"`), `src/services/webhook.service.ts` (`createEndpoint`:
+  `createdBy: ctx.userId`), `prisma/schema.prisma` (`WebhookEndpoint.creator`).
+- pinned by: `api-v1.spec.ts`, "a key creates an endpoint".
+- cost to fix: decide who the API key acts as (a real service user row, or `createdBy` optional with a migration), and give a session its real role (KD-025)
+  so an admin can create one from the app's own login; then delete the pin.
+
+## KD-025: a session is a viewer on the REST API, the admin's own login included
+
+- status: no-test (a policy of the API that the access-control work will change; `api-v1.spec.ts` CHARACTERIZES it: its test says the admin's session is
+  refused by each of the five webhook endpoints, so the day a session gets its real role that test fails and is edited with this entry)
+- symptom: `authenticateRequest` gives a session `userRole: "VIEWER"` whoever signed in. The webhook endpoints are for ADMIN only, so a browser session
+  gets 403 on them; only the API key (an ADMIN) can use them. Registration is open, so a stranger's session is as much a VIEWER as the seeded admin's.
+- where: `src/app/api/v1/middleware.ts` (`authenticateWithSession`).
+- cost to fix: resolve the user's effective role (`rbac.service.ts`) there, with tenant- and domain-scoped roles; this is the access-control work.
+
+## KD-026: the schemas routes are not tenant scoped
+
+- status: no-test (a policy the user will change with access control; `api-v1.spec.ts` CHARACTERIZES it: an entity of another tenant is listed by
+  `GET /api/v1/schemas` and returned by `GET /api/v1/schemas/:id` to a session that views the default tenant, so a fix edits that test with this entry)
+- symptom: `GET /api/v1/schemas` lists the entities of every tenant, `GET /api/v1/schemas/:id`, `/emit` and `/validate` accept the id of any tenant's
+  entity (the emission keeps its reference closure inside the entity's own tenant, so a foreign entity is emitted, not mixed with the caller's). The
+  detail answer carries `tenantId`, `ownerId` and the whole row. The event-spec route, by contrast, is scoped (a foreign id is the same 404 as an unknown one).
+- where: `src/services/entity.service.ts` (`getEntities`, `getEntityById`: no tenant in the query), the four routes under `src/app/api/v1/schemas`.
+- cost to fix: the caller's tenant (a session's active tenant, the key's configured one) in `getEntities` / `getEntityById`, as `getActiveTenantId` does for event specs.
+
+## KD-027: the webhook list returns every endpoint's signing secret, and the URL has no policy
+
+- status: no-test (a security note, not something a test can call wrong: `api-v1.spec.ts` shows the list's fields, secret included)
+- symptom: `GET /api/v1/webhooks` carries `secret` (the HMAC key of `X-Webhook-Signature`) of every endpoint, on every call, to any ADMIN caller; the
+  creation answer is the only one that would need it once. The endpoint URL is any URL that `z.string().url()` accepts: `http://127.0.0.1:5432`,
+  a cloud metadata address and `file:` URLs are all accepted, and `dispatchEvent` then makes the server `fetch` it (a server-side request forgery
+  surface for whoever holds the API key). Endpoints are global: they belong to no tenant and no user.
+- where: `src/services/webhook.service.ts` (`toWebhookEndpoint`, `CreateWebhookEndpointInputSchema` in `src/types/schemas/webhook.ts`, `sendWebhookRequest`).
+- cost to fix: leave `secret` out of everything but the creation answer; allow `https:` only (and `http:` for a configured allow-list), refuse private and
+  link-local addresses at the time of the request, not only of the URL's text.
+
+## KD-028: the rate limit is keyed by a header the client sends, and its answer has an envelope of its own
+
+- status: no-test (`api-v1.spec.ts` CHARACTERIZES both in its rate-limit test: 429 with `{ error, message, retryAfter }`, and a second `X-Forwarded-For` has its own allowance)
+- symptom: `emit`, `validate` and `event-specs` allow 100 requests a minute per client address, read from `X-Forwarded-For` (then `X-Real-IP`), which a caller
+  that does not sit behind a proxy that overwrites it can set to anything: another value is another client. The other routes have no limit. The 429
+  body is `{ error: "Too Many Requests", message, retryAfter }`, while every other API answer is `{ success: false, error: { code, message } }`; the
+  app's own JSON endpoints (`/api/tenants` ...) answer 401 as `{ error: "Not authenticated" }`, a third shape. The limiter is in memory, per process.
+- where: `src/app/api/v1/rate-limit.ts`, `src/middleware.ts`.
+- cost to fix: take the address from the platform (the connection, or a trusted-proxy count), give the 429 the standard envelope, and a shared store when there is
+  more than one instance.

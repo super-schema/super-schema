@@ -386,6 +386,18 @@ export async function createUserRow(input: { email: string; name?: string | null
   return { id, email: input.email };
 }
 
+/**
+ * A user who can sign in (`signInCaller`, helpers/api.ts): the password is stored as the app stores it (bcrypt), at cost 4 instead of the
+ * app's 12, which the app's own `bcrypt.compare` accepts and which makes the test's sign-in cheap. Remove with `deleteUsersByEmail`.
+ */
+export async function createUserWithPassword(input: { email: string; password: string; name?: string | null }): Promise<{ id: string; email: string; password: string }> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded on demand: only the specs that sign a second user in need it
+  const { hashSync } = require("bcryptjs") as { hashSync(password: string, rounds: number): string };
+  const id = newId();
+  await pg().query(`INSERT INTO users (id, email, name, password, "updatedAt") VALUES ($1, $2, $3, $4, now())`, [id, input.email, input.name ?? null, hashSync(input.password, 4)]);
+  return { id, email: input.email, password: input.password };
+}
+
 /** The role rows (`user_roles`) of a user: [{ role, domainId }]. */
 export async function rolesOfUser(userId: string): Promise<Array<{ role: string; domainId: string | null }>> {
   const { rows } = await pg().query(`SELECT role, "domainId" FROM user_roles WHERE "userId" = $1 ORDER BY role`, [userId]);
@@ -584,4 +596,92 @@ export async function setFieldGovernance(
     governance.classification ?? null,
     JSON.stringify(governance.policy ? { policy: governance.policy } : {}),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// Rows for the REST API spec (api-v1.spec.ts): entities in a second product, webhook endpoints and their deliveries.
+// ---------------------------------------------------------------------------
+
+/**
+ * An entity (one key field `id`) in a given product of a domain: `createWorkspaceRows` only puts its entities in its own product, and the
+ * ambiguity of a bare-name reference needs the same name in two. `name` is a plain identifier; it goes with the domain.
+ */
+export async function createEntityInProduct(domainId: string, productId: string, name: string): Promise<{ id: string; name: string; slug: string; fieldId: string }> {
+  const tenantId = await activeTenantId();
+  const ownerId = await seededOwnerId();
+  const row = { id: newId(), name, slug: name.toLowerCase(), fieldId: newId() };
+  await pg().query(
+    `INSERT INTO entities (id, name, slug, "tenantId", "domainId", "productId", "ownerId", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+    [row.id, row.name, row.slug, tenantId, domainId, productId, ownerId],
+  );
+  await pg().query(
+    `INSERT INTO fields (id, "entityId", name, slug, type, nullable, "isKey", "sortOrder", "updatedAt") VALUES ($1, $2, 'id', 'id', 'string', false, true, 0, now())`,
+    [row.fieldId, row.id],
+  );
+  return row;
+}
+
+/** Replace the decorators of a field (a reference field: `{ referencedEntityName }`, or the qualified form with `referencedEntityId`). */
+export async function setFieldDecorators(fieldId: string, decorators: Record<string, unknown>): Promise<void> {
+  await pg().query(`UPDATE fields SET decorators = $2::jsonb WHERE id = $1`, [fieldId, JSON.stringify(decorators)]);
+}
+
+export interface WebhookRow {
+  id: string;
+  url: string;
+  events: string[];
+  secret: string;
+}
+
+/**
+ * A webhook endpoint row, created by the seeded admin. The API cannot make one (KD-024), so the specs that read, change and delete
+ * endpoints write it. Remove with `deleteWebhookRows` (its deliveries go with it).
+ */
+export async function createWebhookRow(input: { url?: string; events?: string[]; active?: boolean } = {}): Promise<WebhookRow> {
+  const row: WebhookRow = {
+    id: newId(),
+    url: input.url ?? `https://e2e-hook-${suffix()}.example.invalid/hook`,
+    events: input.events ?? ["emission.completed"],
+    secret: randomBytes(32).toString("hex"),
+  };
+  await pg().query(
+    `INSERT INTO webhook_endpoints (id, url, events, secret, active, "createdBy", "updatedAt") VALUES ($1, $2, $3::text[], $4, $5, $6, now())`,
+    [row.id, row.url, row.events, row.secret, input.active ?? true, await seededOwnerId()],
+  );
+  return row;
+}
+
+/** `count` delivery rows of an endpoint, each older than the one before (the first is 1 minute old): the API lists them newest first. */
+export async function createWebhookDeliveryRows(endpointId: string, count: number): Promise<Array<{ id: string; event: string; statusCode: number | null }>> {
+  const rows: Array<{ id: string; event: string; statusCode: number | null }> = [];
+  for (let i = 0; i < count; i += 1) {
+    const failed = i % 2 === 1;
+    const row = { id: newId(), event: "emission.completed", statusCode: failed ? 500 : 200 };
+    await pg().query(
+      `INSERT INTO webhook_deliveries (id, "endpointId", event, payload, "statusCode", error, attempt, "deliveredAt")
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, now() - ($8 || ' minutes')::interval)`,
+      [row.id, endpointId, row.event, JSON.stringify({ event: row.event, timestamp: "2026-01-01T00:00:00.000Z", data: { n: i } }), row.statusCode, failed ? "HTTP 500: Internal Server Error" : null, failed ? 2 : 1, String(i + 1)],
+    );
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** Delete webhook endpoints by id (their deliveries cascade). Safe to call twice. */
+export async function deleteWebhookRows(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await pg().query(`DELETE FROM webhook_endpoints WHERE id = ANY($1::text[])`, [[...ids]]);
+}
+
+/** Whether the endpoint row, and how many of its delivery rows, are still in the database. */
+export async function webhookRowState(id: string): Promise<{ endpoint: boolean; deliveries: number }> {
+  const endpoint = await pg().query(`SELECT 1 FROM webhook_endpoints WHERE id = $1`, [id]);
+  const deliveries = await pg().query(`SELECT count(*)::int AS n FROM webhook_deliveries WHERE "endpointId" = $1`, [id]);
+  return { endpoint: endpoint.rows.length > 0, deliveries: deliveries.rows[0].n as number };
+}
+
+/** The webhook endpoint row as the database has it (what a test compares an API answer to), or undefined. */
+export async function webhookRow(id: string): Promise<{ url: string; events: string[]; secret: string; active: boolean; createdBy: string } | undefined> {
+  const { rows } = await pg().query(`SELECT url, events, secret, active, "createdBy" FROM webhook_endpoints WHERE id = $1`, [id]);
+  return rows[0] as { url: string; events: string[]; secret: string; active: boolean; createdBy: string } | undefined;
 }
