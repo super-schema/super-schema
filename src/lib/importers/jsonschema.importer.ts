@@ -37,6 +37,7 @@
 
 import { parseYamlBounded } from "./safe-yaml";
 import { importResponseTooLargeMessage } from "./response-size";
+import { objectJsonText, preservedValueSize, sameJsonValue } from "./value-size";
 import { collidingFieldNames } from "@/lib/typespec-official/name-collisions";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -205,6 +206,9 @@ function nestedSchemaNodes(
   const nodes: NestedNode[] = [];
   const tooDeep: string[] = [];
   const seen = new Set<JsonSchemaNode>(roots);
+  // A view is reported once however many members name its definition: N members `{ $ref: "#/$defs/Big" }` share ONE view (see
+  // `inlineDefinitionSources`), and folding it N times would be N copies of the same keys at N sites for no new information.
+  const reported = new Set<JsonSchemaNode>();
   let frontier = roots.map((node) => ({ node, site: "", depth: 0 }));
   while (frontier.length > 0) {
     const next: typeof frontier = [];
@@ -222,7 +226,11 @@ function nestedSchemaNodes(
         const views = [...members, ...inlineDefinitionSources(members, ctx)];
         for (const view of views) {
           charge(ctx.run);
-          if (!isWrapper) nodes.push({ site: childSite, node: view });
+          if (!isWrapper) {
+            if (reported.has(view)) continue;
+            reported.add(view);
+            nodes.push({ site: childSite, node: view });
+          }
           next.push({ node: view, site: childSite, depth: isWrapper ? depth : depth + 1 });
         }
       }
@@ -432,12 +440,23 @@ interface ResolveRun {
   budget: ResolveBudget;
   /** Definition node -> (ref depth, combinator nesting) -> its resolution. Both numbers are part of the key: they decide where resolution stops. */
   inline: Map<JsonSchemaNode, Map<number, ResolvedType>>;
+  /**
+   * The view a field gets of one member of an inline definition (its keys minus the ones that name the definition), built ONCE per import:
+   * N references to a definition share one view (by reference), they do not each copy its keys.
+   */
+  views: WeakMap<JsonSchemaNode, { defKey: string; view: JsonSchemaNode }>;
 }
 
-/** The work an import may spend resolving types: `resolveSchemaType` calls and inline-definition views. Shared across the documents of a URL import. */
+/**
+ * The work an import may spend resolving types. `visits` counts `resolveSchemaType` calls and inline-definition views; `work` counts what a
+ * visit does (keys copied, compared or scanned, and a kilobyte of every value serialised), which a visit count cannot see: one visit of a
+ * definition with 100,000 keys is not one unit of work. Shared across the documents of a URL import.
+ */
 export interface ResolveBudget {
   visits: number;
   limit: number;
+  work: number;
+  workLimit: number;
 }
 
 /** One document may make this many visits; a legitimate 2000-property schema makes about 10,000. Past it the import is refused, never slow. */
@@ -451,20 +470,51 @@ export function setResolveVisitLimitForTests(limit: number | undefined): void {
   resolveVisitLimitOverride = limit;
 }
 
-/** A fresh budget: for one document, or (`forUrlImport`) for every document of one URL import. */
-export function createResolveBudget(forUrlImport = false): ResolveBudget {
-  return { visits: 0, limit: resolveVisitLimitOverride ?? (forUrlImport ? MAX_RESOLVE_VISITS_PER_URL_IMPORT : MAX_RESOLVE_VISITS) };
+/**
+ * What one document may spend in WORK: a key copied, compared or scanned is a unit, and so is each kilobyte of a value serialised. A
+ * catalogue-sized schema spends about 120 units per KB of source (a 2 MB document, the largest accepted, about 250,000); one definition
+ * with a thousand keys that thousands of fields reference spends millions. Past the limit the import is refused, never slow: about a
+ * microsecond a unit, so a refusal costs well under a second.
+ */
+export const MAX_RESOLVE_WORK = 600_000;
+/** All the documents of one URL import together. */
+export const MAX_RESOLVE_WORK_PER_URL_IMPORT = 1_800_000;
+
+let resolveWorkLimitOverride: number | undefined;
+/** Test seam: replaces (or, with `undefined`, restores) the work limits so the refusal can be provoked with a small document. */
+export function setResolveWorkLimitForTests(limit: number | undefined): void {
+  resolveWorkLimitOverride = limit;
 }
 
-/** Thrown when an import exhausts its visit budget; `parseGuarded` turns it into the PARSE_ERROR the caller sees. */
-class ResolveBudgetError extends Error {}
+/** A fresh budget: for one document, or (`forUrlImport`) for every document of one URL import. */
+export function createResolveBudget(forUrlImport = false): ResolveBudget {
+  return {
+    visits: 0,
+    limit: resolveVisitLimitOverride ?? (forUrlImport ? MAX_RESOLVE_VISITS_PER_URL_IMPORT : MAX_RESOLVE_VISITS),
+    work: 0,
+    workLimit: resolveWorkLimitOverride ?? (forUrlImport ? MAX_RESOLVE_WORK_PER_URL_IMPORT : MAX_RESOLVE_WORK),
+  };
+}
+
+/** Thrown when an import exhausts its visit or work budget; `parseGuarded` turns it into the PARSE_ERROR the caller sees. */
+class ResolveBudgetError extends Error {
+  constructor(readonly kind: "visits" | "work") {
+    super("resolve budget exhausted");
+  }
+}
 
 function newRun(budget: ResolveBudget = createResolveBudget()): ResolveRun {
-  return { budget, inline: new Map() };
+  return { budget, inline: new Map(), views: new WeakMap() };
 }
 
 function charge(run: ResolveRun): void {
-  if (++run.budget.visits > run.budget.limit) throw new ResolveBudgetError("resolve budget exhausted");
+  if (++run.budget.visits > run.budget.limit) throw new ResolveBudgetError("visits");
+}
+
+/** Charges `units` of work (keys processed, kilobytes serialised) BEFORE it is done; refuses past the import's work limit. */
+function chargeWork(run: ResolveRun, units: number): void {
+  run.budget.work += units;
+  if (run.budget.work > run.budget.workLimit) throw new ResolveBudgetError("work");
 }
 
 interface ResolveContext {
@@ -538,64 +588,68 @@ export const MAX_PRESERVED_VALUE_BYTES = 2_000_000;
 /** A repeat shorter than this is always kept: it cannot amplify the response more than a small multiple of the references that name it. */
 const MIN_BUDGETED_VALUE_BYTES = 128;
 
+/** At most this many keys get a warning line of their own; the rest are counted in one closing line (a distinct key per site is a distinct key per member). */
+const MAX_BUDGET_WARNINGS = 20;
+
 /**
  * Keeps the values preserved on the fields of `entities` within `MAX_PRESERVED_VALUE_BYTES` in total. Entities are walked in order and every
- * copy is counted; once the budget is spent, a copy of a value (same key, same serialised value) that an earlier field already carries and that
- * is at least 128 bytes long is dropped instead of repeated, and one warning per key counts the fields it was dropped from. The first copy is
- * always kept, distinct values are always kept (they cannot outgrow the source text), and so are short ones.
+ * copy is counted; once the budget is spent, a copy of a value that an earlier field already carries (the same description; for an
+ * extension, the same value under any key) and that is at least 128 bytes long is dropped instead of repeated, and one warning per key counts
+ * the fields it was dropped from. The first copy is always kept, distinct values are always kept (they cannot outgrow the source text), and
+ * so are short ones.
+ *
+ * Linear in the entries, by UNIQUE content: a string is sized by its length and looked up as itself (never concatenated with its key, which
+ * made a new copy of the value per entry), an object is serialised once per identity (see value-size.ts).
  */
 export function budgetPreservedValues(entities: ParsedEntity[], warnings: string[], limit: number = MAX_PRESERVED_VALUE_BYTES): void {
-  const serialised = new Map<object, string>();
-  const text = (value: unknown): string => {
-    if (typeof value !== "object" || value === null) return JSON.stringify(value) ?? "";
-    let s = serialised.get(value);
-    if (s === undefined) {
-      s = JSON.stringify(value) ?? "";
-      serialised.set(value, s);
-    }
-    return s;
-  };
-
   let total = 0;
-  for (const entity of entities) {
+  scan: for (const entity of entities) {
     for (const field of entity.fields) {
       total += field.description?.length ?? 0;
-      for (const [key, value] of Object.entries(field.extensions ?? {})) total += key.length + text(value).length;
+      if (field.extensions) for (const [key, value] of Object.entries(field.extensions)) total += key.length + preservedValueSize(value);
+      if (total > limit) break scan;
     }
   }
   if (total <= limit) return;
 
   let used = 0;
-  const seen = new Set<string>();
+  const seenDescriptions = new Set<string>();
+  const seenStrings = new Set<string>();
+  const seenObjects = new Set<string>();
   const dropped = new Map<string, { fields: number; bytes: number }>();
+  let beyondWarnings = 0;
   const note = (key: string, bytes: number): void => {
-    const entry = dropped.get(key) ?? { fields: 0, bytes };
-    entry.fields += 1;
-    dropped.set(key, entry);
+    const entry = dropped.get(key);
+    if (entry) entry.fields += 1;
+    else if (dropped.size < MAX_BUDGET_WARNINGS) dropped.set(key, { fields: 1, bytes });
+    else beyondWarnings += 1;
   };
   for (const entity of entities) {
     for (const field of entity.fields) {
       if (field.description !== undefined) {
-        const id = `description\u0000${field.description}`;
         const bytes = field.description.length;
-        if (used > limit && bytes >= MIN_BUDGETED_VALUE_BYTES && seen.has(id)) {
+        if (used > limit && bytes >= MIN_BUDGETED_VALUE_BYTES && seenDescriptions.has(field.description)) {
           field.description = undefined;
           note("description", bytes);
         } else {
           used += bytes;
-          seen.add(id);
+          if (bytes >= MIN_BUDGETED_VALUE_BYTES) seenDescriptions.add(field.description);
         }
       }
       if (!field.extensions) continue;
       for (const [key, value] of Object.entries(field.extensions)) {
-        const s = text(value);
-        const id = `${key}\u0000${s}`;
-        if (used > limit && s.length >= MIN_BUDGETED_VALUE_BYTES && seen.has(id)) {
+        const bytes = preservedValueSize(value);
+        // A string is its own identity; an object is its cached text (two sets: a string equal to an object's text is not that object).
+        const isString = typeof value === "string";
+        const isObject = typeof value === "object" && value !== null;
+        const identity = bytes < MIN_BUDGETED_VALUE_BYTES ? undefined : isString ? value : isObject ? objectJsonText(value) : undefined;
+        const set = isString ? seenStrings : seenObjects;
+        if (used > limit && identity !== undefined && set.has(identity)) {
           delete field.extensions[key];
-          note(key, s.length);
+          note(key, bytes);
         } else {
-          used += key.length + s.length;
-          seen.add(id);
+          used += key.length + bytes;
+          if (identity !== undefined) set.add(identity);
         }
       }
       if (Object.keys(field.extensions).length === 0) delete field.extensions;
@@ -606,6 +660,9 @@ export function budgetPreservedValues(entities: ParsedEntity[], warnings: string
     warnings.push(
       `${what} on ${fields} field${fields === 1 ? "" : "s"} was not repeated: the same value of ${bytes.toLocaleString("en-US")} bytes is kept on the first field that carries it (the schema's preserved values passed ${limit.toLocaleString("en-US")} bytes).`
     );
+  }
+  if (beyondWarnings > 0) {
+    warnings.push(`${beyondWarnings.toLocaleString("en-US")} more repeated values under other keys were not repeated either (the first copy of each is kept).`);
   }
 }
 
@@ -1585,11 +1642,21 @@ function inlineDefinitionSources(own: JsonSchemaNode[], ctx: ResolveContext): Js
     const kindKeys = def.kind === "inline" ? undefined : KIND_DEFINING_KEYS[def.kind];
     for (const member of schemaSources(def.node)) {
       charge(ctx.run);
-      const view: JsonSchemaNode = {};
-      for (const [key, value] of Object.entries(member)) {
-        // A title that is only the definition's name adds nothing to the fields that use it.
-        if (key === "title" && typeof value === "string" && value.trim() === def.key) continue;
-        if (!DEFINITION_ONLY_KEYS.has(key) && !(kindKeys?.has(key) ?? false)) setOwn(view, key, value);
+      // The view of a definition's member is built ONCE per import: every reference gets that same object (its values are the definition's own,
+      // by reference), so N references cost N visits, not N copies of the definition's keys.
+      const known = ctx.run.views.get(member);
+      let view: JsonSchemaNode;
+      if (known !== undefined && known.defKey === def.key) view = known.view;
+      else {
+        const entries = Object.entries(member);
+        chargeWork(ctx.run, 1 + entries.length);
+        view = {};
+        for (const [key, value] of entries) {
+          // A title that is only the definition's name adds nothing to the fields that use it.
+          if (key === "title" && typeof value === "string" && value.trim() === def.key) continue;
+          if (!DEFINITION_ONLY_KEYS.has(key) && !(kindKeys?.has(key) ?? false)) setOwn(view, key, value);
+        }
+        ctx.run.views.set(member, { defKey: def.key, view });
       }
       out.push(view);
       visit(member, depth + 1);
@@ -1620,6 +1687,8 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     // A nullable wrapper (`anyOf: [X, { type: "null" }]`) is the field itself: what X carries is the field's own annotation.
     const wrappers = nullableWrapperMembers(sources);
     const annotationSources = [...sources, ...wrappers];
+    // Every key of every source is copied or scanned below: that is work, whatever the visit count says (see `chargeWork`).
+    for (const source of annotationSources) chargeWork(ctx.run, 1 + Object.keys(source).length);
     const constraints: ParsedFieldConstraint[] = [];
     let minValueExclusive: number | undefined;
     let maxValueExclusive: number | undefined;
@@ -1688,13 +1757,25 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     const found = nestedSchemaNodes(sources, new Set(wrappers), ctx);
     const nested = found.nodes.map((n) => n.node);
     const notes: string[] = [];
+    const noted = new Set<string>();
     const note = (message: string): void => {
-      if (!notes.includes(message)) notes.push(message);
+      if (noted.has(message)) return;
+      noted.add(message);
+      notes.push(message);
     };
     const owner = `${ownerName}.${name}`;
+    // Identity first (the same string or object reached through another reference is the same value at once), then the cached text of two
+    // different objects: never a fresh serialisation per reference.
+    const sameValue = (a: unknown, b: unknown): boolean => {
+      if (a === b) return true;
+      if (typeof a === "object" && typeof b === "object" && a !== null && b !== null) {
+        chargeWork(ctx.run, 1 + (Math.min(objectJsonText(a).length, objectJsonText(b).length) >> 10));
+      }
+      return sameJsonValue(a, b);
+    };
     const keep = (key: string, value: unknown): "kept" | "same" | "differs" | "too-deep" => {
       if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) {
-        return JSON.stringify(extensions[key]) === JSON.stringify(value) ? "same" : "differs";
+        return sameValue(extensions[key], value) ? "same" : "differs";
       }
       // An extension nested past MAX_LITERAL_DEPTH cannot be written into the generated TypeSpec (it would be left out there): say so here.
       if (nestsDeeperThan(value, MAX_LITERAL_DEPTH)) {
@@ -1706,11 +1787,13 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     };
     const hoisted = new Set<string>();
     for (const { site, node: source } of found.nodes) {
-      for (const [key, value] of Object.entries(source)) {
+      const sourceEntries = Object.entries(source);
+      chargeWork(ctx.run, 1 + sourceEntries.length);
+      for (const [key, value] of sourceEntries) {
         if (NESTED_CONSUMED_KEYS.has(key)) continue;
         if (IGNORED_SCHEMA_KEYWORDS.has(key)) {
           if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) {
-            if (hoisted.has(key) && JSON.stringify(extensions[key]) !== JSON.stringify(value)) {
+            if (hoisted.has(key) && !sameValue(extensions[key], value)) {
               const list = NESTED_CONFLICTS.get(field) ?? [];
               if (!list.includes(key)) list.push(key);
               NESTED_CONFLICTS.set(field, list);
@@ -1863,11 +1946,20 @@ function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndex
     return importJsonSchemaDocument(stripBom(rawContent), outIndex, budget);
   } catch (error) {
     if (error instanceof ResolveBudgetError) {
-      return err({
-        code: "PARSE_ERROR",
-        message: "The schema is too large to resolve: its references and allOf members expand into too many steps",
-        suggestedFix: "Flatten the repeated allOf / $ref chains, or split the schema into smaller documents.",
-      });
+      return err(
+        error.kind === "work"
+          ? {
+              code: "PARSE_ERROR",
+              message:
+                "The schema is too large to resolve: the definitions it references carry too many keys and values to copy onto every field that names them",
+              suggestedFix: "Reference a definition with many keys or large values from fewer places, or keep those keys off the shared definition.",
+            }
+          : {
+              code: "PARSE_ERROR",
+              message: "The schema is too large to resolve: its references and allOf members expand into too many steps",
+              suggestedFix: "Flatten the repeated allOf / $ref chains, or split the schema into smaller documents.",
+            }
+      );
     }
     return err({
       code: "PARSE_ERROR",
