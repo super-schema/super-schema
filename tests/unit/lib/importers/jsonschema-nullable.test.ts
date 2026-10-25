@@ -64,6 +64,13 @@ describe("nullable is not optional", () => {
     expect(d.entities[0].fields.find((x) => x.name === "b")).toMatchObject({ type: "utcDateTime", nullableType: true });
   });
 
+  it("a format that became the member's logical type is not kept again as an extension", () => {
+    const d = importDoc({ title: "R", type: "object", properties: { a: { anyOf: [{ type: "string", format: "date-time" }, { type: "null" }] } } });
+    const a = d.entities[0].fields.find((x) => x.name === "a")!;
+    expect(a).toMatchObject({ type: "utcDateTime", nullableType: true });
+    expect(a.extensions).toBeUndefined();
+  });
+
   it("both flags are persisted in the decorators (read by compileEntity)", () => {
     expect(buildDecoratorsFromParsedField(f("reqNull"))).toMatchObject({ nullableType: true, requiredNullable: true });
     expect(buildDecoratorsFromParsedField(f("optNull"))).toMatchObject({ nullableType: true });

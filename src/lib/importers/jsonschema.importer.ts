@@ -40,7 +40,7 @@ import { importResponseTooLargeMessage } from "./response-size";
 import { collidingFieldNames } from "@/lib/typespec-official/name-collisions";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
-import { setOwn } from "@/lib/compiler/governance-decorators";
+import { MAX_LITERAL_DEPTH, setOwn } from "@/lib/compiler/governance-decorators";
 import { getClassificationConfig, type ClassificationConfig } from "./classification-config";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { constraintAppliesTo, type ConstraintKind } from "@/lib/compiler/constraint-targets";
@@ -236,8 +236,20 @@ function siteKey(site: string): string {
   return site.replace(/\[(\d+)\]/g, "-$1").replace(/\./g, "-");
 }
 
-/** Keys read by the type resolution of a nested schema (or dropped by the documented inline-object limitation): nothing to fold. */
-const NESTED_CONSUMED_KEYS = new Set(["$ref", "type", "items", "oneOf", "anyOf", "allOf", "enum", "const", "properties", "required"]);
+/** Whether `value` nests deeper than `max` levels (iterative; a scalar is level 1): a value the extension writer would have to leave out. */
+function nestsDeeperThan(value: unknown, max: number): boolean {
+  const stack: Array<[unknown, number]> = [[value, 1]];
+  while (stack.length > 0) {
+    const [current, depth] = stack.pop()!;
+    if (depth > max) return true;
+    if (typeof current !== "object" || current === null) continue;
+    for (const child of Array.isArray(current) ? current : Object.values(current)) stack.push([child, depth + 1]);
+  }
+  return false;
+}
+
+/** Keys read by the type resolution of a nested schema: nothing to fold. */
+const NESTED_CONSUMED_KEYS = new Set(["$ref", "type", "items", "oneOf", "anyOf", "allOf", "enum", "const"]);
 
 /**
  * Keys of a nested schema that describe the ELEMENT and have no slot on the field: the constraints, description and deprecated flag of an
@@ -246,8 +258,19 @@ const NESTED_CONSUMED_KEYS = new Set(["$ref", "type", "items", "oneOf", "anyOf",
  */
 const ELEMENT_KEYS = new Set([
   "minLength", "maxLength", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems",
-  "description", "deprecated", "title", "$schema", "$id", "$defs", "definitions",
+  "description", "deprecated", "title", "$schema", "$id", "$defs", "definitions", "properties", "required",
 ]);
+
+/** Whether the resolved type of a field took the `format` (kept as its format hint, or turned into its logical type): nothing else carries it. */
+function formatTaken(format: string, resolved: ResolvedType): boolean {
+  if (resolved.format === format) return true;
+  if (resolved.originalType.startsWith("type(")) return true; // a scalar union: the format named its members
+  // The format became the logical type (date-time -> utcDateTime, int64 -> int64): the field has it, whatever wrapper it came through.
+  return [STRING_FORMAT_MAP, INTEGER_FORMAT_MAP, NUMBER_FORMAT_MAP].some((map) => {
+    const mapped = map[format];
+    return mapped !== undefined && !("keepFormat" in mapped && mapped.keepFormat) && mapped.type === resolved.type;
+  });
+}
 
 /** Whether the importer turns a `format` into a logical type of its own (a format it only passes through is not kept for an element). */
 function formatIsInterpreted(format: unknown): boolean {
@@ -1367,16 +1390,32 @@ function entityExtensions(
     }
   }
   const found = ignoredKeywordsOf(sources, false) ?? [];
+  // The identity / dialect of the document (of a definition: its dialect; its `$id` is the resource id, read by `$ref`), from the node or an allOf member.
   for (const key of isRoot ? (["$schema", "$id"] as const) : (["$schema"] as const)) {
-    const value = node[key];
-    if (typeof value !== "string") continue;
-    setOwn((extensions ??= {}), key, value);
+    const holder = sources.find((s) => typeof s[key] === "string");
+    if (!holder) continue;
+    setOwn((extensions ??= {}), key, holder[key]);
     if (!found.includes(key)) found.push(key);
   }
-  // A definition's title that is only its name adds nothing; one that says more is the schema's own and is kept (the root's title IS its name).
-  if (!isRoot && typeof node.title === "string" && node.title.trim() !== "" && node.title.trim() !== name && !(extensions && Object.prototype.hasOwnProperty.call(extensions, "title"))) {
-    setOwn((extensions ??= {}), "title", node.title);
+  // `$defs` / `definitions` are imported as the document's own definitions only at the root; below it (a definition's, an allOf member's) they
+  // are not: kept verbatim and reported.
+  for (const key of ["$defs", "definitions"] as const) {
+    const holder = sources.find((s) => s[key] !== undefined && !(isRoot && s === node));
+    if (!holder) continue;
+    if (!(extensions && Object.prototype.hasOwnProperty.call(extensions, key))) setOwn((extensions ??= {}), key, holder[key]);
+    if (!found.includes(key)) found.push(key);
   }
+  // Value keywords that mean something for a string / number / array and nothing for an object: nothing in the IR to put them on. Kept
+  // verbatim (first definition wins) and reported like the other unsupported keywords.
+  for (const key of ENTITY_UNMAPPED_KEYS) {
+    const holder = sources.find((s) => s[key] !== undefined);
+    if (!holder) continue;
+    if (!(extensions && Object.prototype.hasOwnProperty.call(extensions, key))) setOwn((extensions ??= {}), key, holder[key]);
+    if (!found.includes(key)) found.push(key);
+  }
+  // A title that is only the entity's name adds nothing; one that says more is the schema's own and is kept.
+  const title = sources.map((s) => (typeof s.title === "string" ? s.title.trim() : "")).find((t) => t !== "" && t !== name);
+  if (title !== undefined && !(extensions && Object.prototype.hasOwnProperty.call(extensions, "title"))) setOwn((extensions ??= {}), "title", title);
   const deprecated = sources.some((s) => s.deprecated === true);
   // An entity-level oneOf / anyOf (alternative `required` sets, a choice between shapes) maps to nothing in the IR: on a FIELD it becomes a
   // union, on an entity it is a constraint over the whole object. Report it like the other unsupported keywords and keep it verbatim.
@@ -1392,6 +1431,16 @@ function entityExtensions(
     ...(found.length > 0 ? { ignoredKeywords: found } : {}),
     ...(deprecated ? { deprecated: true as const } : {}),
   };
+}
+
+/** Keywords of the value vocabularies that an object schema (an entity) cannot map: kept as extensions and reported (see `entityExtensions`). */
+const ENTITY_UNMAPPED_KEYS = [
+  "minLength", "maxLength", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems", "format",
+] as const;
+
+/** The description of an entity: its node's, else the first allOf member's (an annotation-only member enriches the result, spec Addendum A). */
+function entityDescription(node: JsonSchemaNode): string | undefined {
+  return schemaSources(node).map((s) => s.description).find((d): d is string => typeof d === "string");
 }
 
 const MAX_IGNORED_WARNINGS = 200;
@@ -1479,7 +1528,7 @@ function readClassification(
 }
 
 /** Keys of a referenced definition that name the DEFINITION, not the field that points at it. */
-const DEFINITION_ONLY_KEYS = new Set(["title", "$schema", "$id", "$defs", "definitions", "$ref"]);
+const DEFINITION_ONLY_KEYS = new Set(["$schema", "$id", "$defs", "definitions", "$ref"]);
 
 /** Keys that define what a shared enum / union IS (its symbols, its members, its text): they are the asset's, not annotations for the fields that use it. */
 const KIND_DEFINING_KEYS: Record<"enum" | "union", ReadonlySet<string>> = {
@@ -1507,6 +1556,8 @@ function inlineDefinitionSources(own: JsonSchemaNode[], ctx: ResolveContext): Js
       charge(ctx.run);
       const view: JsonSchemaNode = {};
       for (const [key, value] of Object.entries(member)) {
+        // A title that is only the definition's name adds nothing to the fields that use it.
+        if (key === "title" && typeof value === "string" && value.trim() === def.key) continue;
         if (!DEFINITION_ONLY_KEYS.has(key) && !(kindKeys?.has(key) ?? false)) setOwn(view, key, value);
       }
       out.push(view);
@@ -1590,6 +1641,11 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
         if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) continue;
         setOwn((extensions ??= {}), key, value);
       }
+      // A `format` the resolved type did not take (an enum / union / array / a format of another type, or an integer format with no logical
+      // type) has no slot on the field: kept verbatim, first definition wins.
+      if (typeof source.format === "string" && !formatTaken(source.format, resolved) && !(extensions && Object.prototype.hasOwnProperty.call(extensions, "format"))) {
+        setOwn((extensions ??= {}), "format", source.format);
+      }
     }
     // What `items` schemas and oneOf / anyOf members (at any depth, with their allOf members and the inline definitions they `$ref`) carry
     // has no node of its own in the IR. It is folded onto this field, never dropped:
@@ -1605,9 +1661,14 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       if (!notes.includes(message)) notes.push(message);
     };
     const owner = `${ownerName}.${name}`;
-    const keep = (key: string, value: unknown): "kept" | "same" | "differs" => {
+    const keep = (key: string, value: unknown): "kept" | "same" | "differs" | "too-deep" => {
       if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) {
         return JSON.stringify(extensions[key]) === JSON.stringify(value) ? "same" : "differs";
+      }
+      // An extension nested past MAX_LITERAL_DEPTH cannot be written into the generated TypeSpec (it would be left out there): say so here.
+      if (nestsDeeperThan(value, MAX_LITERAL_DEPTH)) {
+        note(`${key} of ${owner} nests deeper than ${MAX_LITERAL_DEPTH} levels and was not kept`);
+        return "too-deep";
       }
       setOwn((extensions ??= {}), key, value);
       return "kept";
@@ -1653,6 +1714,18 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
           }
         }
       }
+    }
+    // An inline object's own `properties` / `required` are not imported as fields (it maps to the `object` type): kept verbatim on the field.
+    const inlineKept: string[] = [];
+    for (const source of annotationSources) {
+      for (const key of ["properties", "required"] as const) {
+        const value = source[key];
+        const filled = key === "properties" ? isSchemaObject(value) && Object.keys(value).length > 0 : Array.isArray(value) && value.length > 0;
+        if (filled && keep(key, value) === "kept") inlineKept.push(key);
+      }
+    }
+    if (inlineKept.length > 0) {
+      note(`${inlineKept.join(" and ")} of the inline object ${owner} ${inlineKept.length > 1 ? "are" : "is"} not imported as fields; kept verbatim on the field`);
     }
     for (const place of found.tooDeep) {
       note(`The schema at ${place} of ${owner} is nested deeper than ${MAX_NESTED_DEPTH} levels and was not scanned for keywords`);
@@ -1838,7 +1911,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     const rootExtends = resolveExtends(rootEntityName, rootMembers, ctx, warnings);
     entities.push({
       name: rootEntityName,
-      description: typeof schema.description === "string" ? schema.description : undefined,
+      description: entityDescription(schema),
       fields: buildFields(rootMembers, ctx, rootEntityName),
       ...(rootExtends ? { extends: rootExtends } : {}),
       ...entityExtensions(schema, rootEntityName, true),
@@ -1855,7 +1928,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
       const defExtends = resolveExtends(def.assetName, members, ctx, warnings);
       entities.push({
         name: def.assetName,
-        description: typeof def.node.description === "string" ? def.node.description : undefined,
+        description: entityDescription(def.node),
         fields: buildFields(members, ctx, def.assetName),
         ...(defExtends ? { extends: defExtends } : {}),
         ...entityExtensions(def.node, def.assetName, false),
@@ -1893,6 +1966,14 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
 
   breakInheritanceCycles(entities, warnings);
   warnings.push(...ignoredKeywordWarnings(entities));
+  // The dialect and nested definitions of a definition that is no entity / enum (an inline definition or a shared union) belong to no asset:
+  // reported, not carried.
+  for (const def of definitions.values()) {
+    if (def.kind !== "inline" && def.kind !== "union") continue;
+    for (const key of ["$schema", "$defs", "definitions"] as const) {
+      if (def.node[key] !== undefined) warnings.push(`Definition \`${def.key}\`: JSON Schema keyword \`${key}\` is not supported and was ignored`);
+    }
+  }
 
   if (outIndex) {
     for (const [pointer, def] of definitions) outIndex.set(pointer, { kind: def.kind, assetName: def.assetName });
