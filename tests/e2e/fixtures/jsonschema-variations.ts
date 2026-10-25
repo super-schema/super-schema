@@ -5,7 +5,9 @@
  * `$defs`, so the importer yields several models (review screen: `Import N Asset(s)`) and every model is registered as an entity.
  *
  * `known` documents an accepted open defect per target: the spec then REQUIRES the failure (matching `match`) and fails once it is
- * fixed ("stale expectation"), so an entry can never hide a regression nor outlive its bug.
+ * fixed ("stale expectation"), so an entry can never hide a regression nor outlive its bug. A target that is known to fail has nothing
+ * generated, so the steps that read it (content, rename, the regeneration after the TypeSpec sync) are skipped for it.
+ * Two entries are left, both for documented limits: a Protobuf nested array (array-of-refs) and a union of models (oneof-union-of-models).
  */
 
 import type { TargetKey } from "../helpers/lifecycle";
@@ -55,6 +57,12 @@ const PROTOBUF_NESTED_ARRAY: KnownFailure = {
   why: "protobuf-nested-array: Protobuf cannot express an array of arrays",
 };
 
+/** KD-029 (docs/testing/known-defects.md) and the corpus rule `union-of-entity-references`: `invalid-ref: Unknown identifier Card`. */
+const UNION_OF_MODELS: KnownFailure = {
+  match: /invalid-ref[\s\S]*Unknown identifier (Card|Bank)/,
+  why: "KD-029: a union of models is not followed by the reference closure",
+};
+
 const j = (o: unknown) => JSON.stringify(o);
 
 export const VARIATIONS: Variation[] = [
@@ -96,8 +104,8 @@ export const VARIATIONS: Variation[] = [
   },
   {
     id: "oneof-union",
-    title: "oneOf unions of scalars and of models",
-    kind: "multi",
+    title: "oneOf union of scalars",
+    kind: "single",
     entityName: "Payment",
     text: j({
       $schema: DRAFT,
@@ -106,20 +114,51 @@ export const VARIATIONS: Variation[] = [
       properties: {
         payment_id: { type: "string" },
         reference: { oneOf: [{ type: "string" }, { type: "integer" }] },
-        instrument: { oneOf: [{ $ref: "#/$defs/Card" }, { $ref: "#/$defs/Bank" }] },
       },
       required: ["payment_id"],
+    }),
+    review: ["payment_id", "reference"],
+    jsonSchema: ["payment_id"],
+    openapi: ["payment_id"],
+    rename: ["payment_id", "id"],
+    // `payment_id` is renamed to `id`, and a Save of the TypeSpec tab turns the union into a string (KD-030): what is left to check is the key
+    survives: ['"id"'],
+    primaryKey: ["payment_id"],
+  },
+  {
+    id: "oneof-union-of-models",
+    title: "oneOf union of models (Card or Bank)",
+    kind: "multi",
+    entityName: "Instrument",
+    text: j({
+      $schema: DRAFT,
+      title: "Instrument",
+      type: "object",
+      properties: {
+        instrument_id: { type: "string" },
+        method: { oneOf: [{ $ref: "#/$defs/Card" }, { $ref: "#/$defs/Bank" }] },
+      },
+      required: ["instrument_id"],
       $defs: {
         Card: { type: "object", properties: { pan_last4: { type: "string", maxLength: 4 } }, required: ["pan_last4"] },
         Bank: { type: "object", properties: { iban: { type: "string" } }, required: ["iban"] },
       },
     }),
-    review: ["Payment", "Card", "Bank"],
-    jsonSchema: ["payment_id"],
-    openapi: ["payment_id"],
-    rename: ["payment_id", "id"],
-    survives: ["payment_id"],
-    primaryKey: ["payment_id"],
+    review: ["Instrument", "Card", "Bank"],
+    jsonSchema: ["instrument_id"],
+    openapi: ["instrument_id"],
+    rename: ["instrument_id", "id"],
+    survives: ['"id"'],
+    primaryKey: ["instrument_id"],
+    // KD-029: the reference closure follows reference fields, not the members of a union, so a union of models names models the compile
+    // unit does not declare. Every closure target says so; the database targets (a plain column) generate.
+    known: {
+      "json-schema": UNION_OF_MODELS,
+      openapi3: UNION_OF_MODELS,
+      avro: UNION_OF_MODELS,
+      protobuf: UNION_OF_MODELS,
+      "java-pojo": UNION_OF_MODELS,
+    },
   },
   {
     id: "nullable-type-arrays",

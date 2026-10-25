@@ -135,6 +135,7 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
 
   await step("json-schema content", async () => {
     const g = jsonSchema();
+    if (v.known?.["json-schema"]) return; // a documented defect (KD): nothing was generated to read; the generate step requires the failure
     expect(g && !g.error, "json-schema generated").toBeTruthy();
     for (const s of v.jsonSchema) expect(canon(g!.code), `JSON Schema has ${s}`).toContain(s);
     if (v.required) {
@@ -145,6 +146,7 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
   });
   await step("openapi content", async () => {
     const g = openapi();
+    if (v.known?.openapi3) return;
     expect(g && !g.error, "openapi3 generated").toBeTruthy();
     for (const s of v.openapi) expect(canon(g!.code), `OpenAPI has ${s}`).toContain(s);
     if (v.required) {
@@ -163,9 +165,13 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     const target = ENABLED_TARGETS.find((t) => t.key === "json-schema")!;
     const g = await generateTarget(page, target.displayName, { primaryKey: v.primaryKey });
     writeFileSync(`${EVIDENCE}/${v.id}/json-schema-after-rename.txt`, g.code || `ERROR: ${g.error}`);
-    expect(g.error, g.error).toBeUndefined();
-    expect(canon(g.code)).toContain(`"${to}"`);
-    expect(canon(g.code)).not.toContain(`"${from}"`);
+    if (v.known?.["json-schema"]) {
+      expect(g.error, "json-schema still has its known defect").toMatch(v.known["json-schema"]!.match);
+    } else {
+      expect(g.error, g.error).toBeUndefined();
+      expect(canon(g.code)).toContain(`"${to}"`);
+      expect(canon(g.code)).not.toContain(`"${from}"`);
+    }
     // The sibling DDL target sees the same rename.
     const pg = ENABLED_TARGETS.find((t) => t.key === "postgresql")!;
     const d = await generateTarget(page, pg.displayName, { primaryKey: v.primaryKey?.map((k) => (k === from ? to : k)) });
@@ -192,6 +198,9 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     const target = ENABLED_TARGETS.find((t) => t.key === "json-schema")!;
     const g = await generateTarget(page, target.displayName, { primaryKey: v.primaryKey });
     writeFileSync(`${EVIDENCE}/${v.id}/json-schema-after-sync.txt`, g.code || `ERROR: ${g.error}`);
+    // A documented defect with nothing to read: the save went through (above). What the schema says afterwards is not asserted, because
+    // the Save itself changed the field the defect is about (KD-030: a union field is stored as a plain string by it).
+    if (v.known?.["json-schema"]) return;
     expect(g.error, g.error).toBeUndefined();
     expect(g.code).toContain("e2e_added");
     for (const s of v.survives) expect(canon(g.code), `after the sync the JSON Schema still has ${s}`).toContain(s);

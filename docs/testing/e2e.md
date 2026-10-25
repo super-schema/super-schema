@@ -307,6 +307,29 @@ created by anyone, a session is a viewer, the schemas routes are not tenant scop
 npm run test:e2e:release -- --tier regression --project chromium --reuse-build -- tests/e2e/api-v1.spec.ts
 ```
 
+## Entity references
+
+`tests/e2e/reference-lifecycle.spec.ts` (the first test is `@smoke`, the rest `@regression`) is the multi-entity emission through the real UI. Each test
+makes a workspace (`workspace` fixture) and entities with `unique()` names, because the reference prompt and the name-only resolution look at the whole
+tenant and the tests run in parallel with the rest of the suite. What it covers: a reference picked in the type picker is stored qualified
+(`domain / product / entity`) and generating the entity writes a file set (its file and the files of what it references: JSON Schema `$ref` to the sibling,
+OpenAPI one self-contained document per entity, Avro the record inline, Protobuf and Java `import`; the database targets stay one file; "Download all"); a
+draft of the referenced entity shows in a draft preview (badge, list) that cannot be published, and "Regenerate from published and publish" does; the
+publish dialog and the refused preview name an entity that was never published; a pin (the pin control) wins over a newer published version until it is
+removed; a name-only reference that two entities answer to is asked about (the pick dialog, from Generate and from the publish dialog, and from the
+TypeSpec tab) and the answer is stored qualified; the TypeSpec tab saves a source that names another entity; an imported document's `$defs` are generated
+with their parent and its dangling reference stays dangling. The legacy name-only references are written straight into the database
+(`createFieldRow` with `{ referencedEntityName }`), the only way to make one now that the UI writes qualified ones.
+
+The JSON Schema matrix (`jsonschema-lifecycle.spec.ts`, `@slow`) checks the files of a multi-file output one by one (`artifactProblems`: no file is
+trivial, the entity's own file names the entity: a bundle has the entity's name in every header, so the whole text could never fail that check). Its
+declared known defects are the few that are left (a Protobuf nested array, a union of entities: see [known-defects.md](known-defects.md)).
+
+```bash
+npm run test:e2e:release -- --tier regression --project chromium -- tests/e2e/reference-lifecycle.spec.ts
+npm run test:e2e:release -- --tier nightly --project chromium -- tests/e2e/jsonschema-lifecycle.spec.ts
+```
+
 ## Accessibility
 
 `tests/e2e/a11y.spec.ts` scans every route of the page sweep and the dialogs, tabs and overlays that matter with axe-core against a recorded baseline

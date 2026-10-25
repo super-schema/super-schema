@@ -255,3 +255,36 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `src/app/api/v1/rate-limit.ts`, `src/middleware.ts`.
 - cost to fix: take the address from the platform (the connection, or a trusted-proxy count), give the 429 the standard envelope, and a shared store when there is
   more than one instance.
+
+## KD-029: a union of entities is not followed by the reference closure
+
+- status: no-test (declared, not a failing test: the JSON Schema matrix's `oneof-union-of-models` REQUIRES the failure on the five closure targets and fails when it stops, and
+  the corpus rule `union-of-entity-references` does the same for four documents; both name this entry)
+- symptom: a JSON Schema `oneOf` / `anyOf` of `$ref`s to other entities (`method: { oneOf: [Card, Bank] }`) imports as a union field that holds the member NAMES
+  (`type: union`, `unionMembers: ["Card", "Bank"]`), and generating the entity for JSON Schema, OpenAPI, Avro, Protobuf or Java fails with
+  `invalid-ref: Unknown identifier Card` (the DDL targets, which store the union as text, generate). An array or a map of references, and a plain reference, work.
+- where: `src/lib/references/closure.ts` (the walk follows `reference`, array-of-reference and map-of-reference fields; `holdsEntityReference`),
+  `src/lib/compiler/closure-source.ts` (a union's members are written by their bare names).
+- cost to fix: follow the union members that name entities of the tenant (they hold no id or qualified name, so a bare name two entities share could not be
+  picked: the pick action writes one reference to one field, a union needs one per member), write them qualified in the closure source, and give the pick a member.
+- note: the multi-entity design names "a field typed `reference`, or an array/map of references" as what is followed; the union was never in it. The goal "every reference
+  case of the corpus that fails with `invalid-ref` passes" is met for all but these four documents and the missing-entity cases (KD-031).
+
+## KD-030: a Save of the TypeSpec tab turns every union field into a plain string
+
+- status: no-test (the lossy path was there before multi-entity emission and was accepted again by its Task 11; the JSON Schema matrix steps over it: `oneof-union` checks only
+  the key after a Save)
+- symptom: an entity with a union field (an `oneOf` of scalars, or of entities) is saved from the TypeSpec tab with any unrelated edit; the field is `string` afterwards
+  (the JSON Schema says `{ "type": "string" }` where it said `oneOf`), its member list and union name are gone, and the Editor shows the new type. Nothing warns.
+- where: `src/lib/typespec-sync/merge-fields.ts` (`mergeSyncedField`: the union text `A | B` is read back as a literal union, `unionName` / `unionMembers` are not carried).
+- cost to fix: carry `unionName` / `unionMembers` (and, for a union of entities, KD-029) through the merge, or refuse the save with a message naming the field.
+
+## KD-031: a reference to an entity that no longer exists is refused, or emitted untyped, depending on what else the entity references
+
+- status: no-test (the corpus rule `reference-to-missing-entity` and its cases `ref-dangling-qualified` / `ref-dangling-in-closure` pin both behaviours)
+- symptom: delete the entity a field references (or reference a name no entity carries). If that field is the only reference the entity has, generating it for JSON Schema,
+  OpenAPI, Avro, Protobuf or Java fails with `invalid-ref: Unknown identifier Carrier` (the closure is that entity alone, which is emitted by its bare names). If the entity also
+  references an entity that exists, the same field is emitted untyped with a warning naming it. The reference resolver itself treats the field as dangling in both (no error).
+- where: `src/lib/typespec-official/closure-emit.ts` (`standalonePlan` uses `buildSourceForTarget`, `combinedPlan` uses `generateClosureTypeSpec`, which writes `unknown` and a warning).
+- cost to fix: make `standalonePlan` write a reference field that nothing resolves as `unknown` with the same warning (the stand-alone content of an entity WITHOUT such a field is
+  unchanged), or refuse both with one message.
