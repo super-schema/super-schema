@@ -10,7 +10,8 @@
  *  - plain HTTP fetches are https-only with an SSRF guard (blocked IP ranges,
  *    DNS re-check, manual same-host redirects, no credentials in URLs);
  *  - allow-listed internal git hosts are fetched via `gh api` (execFile, argv
- *    array, validated coordinates, Accept: application/vnd.github.raw);
+ *    array, validated coordinates, Accept: application/vnd.github.raw), and only
+ *    for repositories SCHEMA_IMPORT_GIT_* allows (the root URL and every `$ref`);
  *  - hard limits on file count, bytes, concurrency and time;
  *  - every per-reference failure is recorded in `unreachable`, never thrown.
  *
@@ -56,13 +57,14 @@ export interface ResolverDeps {
   /**
    * Extra git scopes ("host/owner" or "host/owner/repo") that may be fetched in addition to the
    * root document's own host/owner. Default none: cross-organization refs are not fetched.
+   * They never widen `gitImportConfig`: a ref must pass that check (in restricted mode, be inside an allowed scope) too.
    */
   extraGitScopes?: readonly string[];
   /** Injectable DNS lookup (returns all addresses); defaults to dns.lookup. */
   lookup?: DnsLookup;
   /** Injectable exec for the default `gh` fetcher. */
   execFile?: ExecFileFn;
-  /** Which git-host ROOT URLs may be fetched; defaults to the SCHEMA_IMPORT_GIT_* env (restricted, no scopes). */
+  /** Which git-host repositories may be fetched, the ROOT URL and every `$ref` alike; defaults to the SCHEMA_IMPORT_GIT_* env (restricted, no scopes). */
   gitImportConfig?: GitImportConfig;
 }
 
@@ -388,6 +390,7 @@ async function resolveInner(rootUrl: string, rootContent: string, deps: Resolver
   const limits: Limits = { ...DEFAULT_LIMITS, ...deps.limits };
   const hosts = deps.internalGitHosts ?? INTERNAL_GIT_HOSTS;
   const extraScopes = deps.extraGitScopes ?? [];
+  const gitConfig = deps.gitImportConfig ?? readGitImportConfig();
   const lookup = deps.lookup ?? defaultLookup;
   const fetchGitFile = deps.fetchGitFile ?? createGhFetchGitFile(deps.execFile ?? defaultExec, limits, hosts);
   const fetchHttp = deps.fetchHttp ?? createDefaultFetchHttp(limits, lookup);
@@ -443,6 +446,10 @@ async function resolveInner(rootUrl: string, rootContent: string, deps: Resolver
     if (isGitHost) {
       const git = parseGitFileUrl(url, hosts);
       if (!git.ok) throw new RefFetchError(git.reason);
+      // The server configuration (SCHEMA_IMPORT_GIT_*) decides which repositories the server's own `gh` credentials may read: it holds
+      // for EVERY fetch, not only the root URL (a root of an allowed repository could otherwise name any other repository of its owner).
+      const refusal = gitRootRefusal(gitConfig, git.coords.owner, git.coords.repo);
+      if (refusal) throw new RefFetchError(refusal);
       const sameOrg =
         rootGit !== null &&
         rootGit.host.toLowerCase() === git.coords.host.toLowerCase() &&

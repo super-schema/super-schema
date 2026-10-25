@@ -19,6 +19,8 @@ function mk(files: Record<string, string>, extra: Partial<ResolverDeps> = {}) {
   const git: string[][] = [];
   const deps: ResolverDeps = {
     lookup: PUBLIC,
+    // These tests are about the organization rule, not about which repositories the server may read (jsonschema-ref-repo-scope.test.ts).
+    gitImportConfig: { mode: "any" },
     fetchHttp: async (u) => {
       http.push(u);
       if (u in files) return files[u]!;

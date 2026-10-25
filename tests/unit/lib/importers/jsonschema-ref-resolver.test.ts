@@ -247,6 +247,8 @@ describe("internal git hosts", () => {
     const calls: Array<{ host: string; owner: string; repo: string; ref: string; path: string }> = [];
     const deps: ResolverDeps = {
       lookup: PUBLIC,
+      // These tests are about how git URLs are read, not about which repositories may be (jsonschema-ref-repo-scope.test.ts).
+      gitImportConfig: { mode: "any" },
       fetchHttp: async () => {
         throw new Error("HTTP 404");
       },
