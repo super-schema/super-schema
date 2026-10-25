@@ -120,7 +120,7 @@ describe("official TypeSpec emitter service", () => {
     expect(result.output).toContain("message Customer");
     expect(result.output).toContain("string id = 1;");
     expect(result.output).toContain("string name = 2;");
-  });
+  }, 30_000); // a real `tsp compile`: over the default 5 s under the load of the whole suite
 
   it("emits Protobuf for a tenant-level entity with no domain (namespace falls back to the keyword `unknown`)", async () => {
     // Entity.domainId is optional (tenant-level entities, Story 13.5);

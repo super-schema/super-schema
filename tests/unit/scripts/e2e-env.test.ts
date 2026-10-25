@@ -407,14 +407,15 @@ describe("the app does not read a name that no group accounts for", () => {
       }
     }
     expect(unaccounted, "add the name to SET, BLANKED, DROPPED or ALLOWED in scripts/e2e-env.mjs (with its reason)").toEqual([]);
-  });
+    // (a whole-repository scan: 6 s and 8 s under the load of the whole suite, so a 60 s limit instead of the default 5 s)
+  }, 60_000);
 
   it("finds the names it is meant to find (the scan itself is not empty)", () => {
     const all = new Set(files.flatMap((file) => namesRead(readFileSync(file, "utf8"))));
     for (const name of ["DATABASE_URL", "GOOGLE_CLIENT_ID", "AI_PROVIDER", "API_KEY", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_CLASSIFICATION_VALUE_MAP", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "NEXT_PUBLIC_APP_URL"]) {
       expect(all.has(name), name).toBe(true);
     }
-  });
+  }, 60_000);
 
   it("every server and client name declared in src/env.ts is in a group", () => {
     const text = readFileSync(path.join(REPO, "src", "env.ts"), "utf8");
