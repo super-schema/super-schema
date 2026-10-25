@@ -214,6 +214,9 @@ describe("Governance Service", () => {
       expect(result.success && result.data).toEqual([]);
     });
 
+    /** An error as a caller sees it, with the request id it was asked about taken out: all that is left is what the answer tells. */
+    const shape = (result: { success: boolean; error?: unknown }, id: string) => JSON.parse(JSON.stringify(result).split(id).join("<id>"));
+
     it("a request of another tenant reads exactly like a missing one, by id", async () => {
       const { mine, theirs } = await twoRequests();
 
@@ -223,6 +226,17 @@ describe("Governance Service", () => {
       expect(foreign.success).toBe(false);
       expect(!foreign.success && foreign.error.code).toBe("NOT_FOUND");
       expect(!missing.success && missing.error.code).toBe("NOT_FOUND");
+      // The whole answer (code, message, suggested fix) is the same: it is no oracle for "this id exists in another tenant".
+      expect(shape(foreign, theirs.id)).toEqual(shape(missing, "gov-req-none"));
+      expect(shape(foreign, theirs.id)).toEqual({ success: false, error: expect.objectContaining({ code: "NOT_FOUND", message: 'Governance request "<id>" not found' }) });
+    });
+
+    it("approve and reject of another tenant's request give the same whole answer as for a missing one", async () => {
+      const { theirs } = await twoRequests();
+      const inA = { ...stewardCtx, tenantId: "tenant-a" };
+
+      expect(shape(await approveRequest(theirs.id, "ok", inA), theirs.id)).toEqual(shape(await approveRequest("gov-req-none", "ok", inA), "gov-req-none"));
+      expect(shape(await rejectRequest(theirs.id, "no", inA), theirs.id)).toEqual(shape(await rejectRequest("gov-req-none", "no", inA), "gov-req-none"));
     });
 
     it("approve and reject of another tenant's request answer NOT_FOUND and decide nothing", async () => {
