@@ -130,12 +130,12 @@ export function SchemaWorkbench({
     setUrlLoading(false);
     if (parseTimer.current) clearTimeout(parseTimer.current);
     // Loaded on demand: the detector pulls in `yaml`, which stays out of the wizard chunk.
-    const { detectFormat } = await import("@/lib/importers/format-detector");
-    const format = detectFormat(text, filename);
+    const { detectFormatDetailed } = await import("@/lib/importers/format-detector");
+    const { format, reason } = detectFormatDetailed(text, filename);
     setImportNotice(
       format
         ? null
-        : "Could not detect the schema format. You can still edit the text, but import may fail."
+        : `${reason ? `Could not detect the schema format: ${reason}.` : "Could not detect the schema format."} You can still edit the text, but import may fail.`
     );
     setNotice(null);
     setHydrate(undefined);

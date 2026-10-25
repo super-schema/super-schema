@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectFormat } from "@/lib/importers/format-detector";
+import { detectFormat, detectFormatDetailed } from "@/lib/importers/format-detector";
 
 describe("Format Detector", () => {
   describe("detection by file extension", () => {
@@ -127,6 +127,33 @@ paths:
 
     it("does not treat arbitrary YAML as a schema", () => {
       expect(detectFormat("name: my-service\nreplicas: 3\n", "deploy.yaml")).toBeNull();
+    });
+  });
+
+  // M5: a YAML document over the size cap (512 KiB) is not parsed, so it is "not detected"; the reason (its size) must reach the person, who
+  // otherwise reads "could not detect the format" for a perfectly good OpenAPI file.
+  describe("a YAML document over the size cap", () => {
+    const pad = `# ${"x".repeat(600 * 1024)}\n`;
+    const bigOpenApi = `openapi: "3.1.0"\ninfo:\n  title: T\n  version: "1"\npaths:\n  /a: {}\n${pad}`;
+    const bigJsonSchema = `$schema: https://json-schema.org/draft/2020-12/schema\ntype: object\nproperties:\n  id:\n    type: string\n${pad}`;
+
+    it("is not detected, and detectFormatDetailed says why (the size limit, in the parser's words)", () => {
+      for (const content of [bigOpenApi, bigJsonSchema]) {
+        expect(detectFormat(content, "api.yaml")).toBeNull();
+        const detailed = detectFormatDetailed(content, "api.yaml");
+        expect(detailed.format).toBeNull();
+        expect(detailed.reason).toBe("YAML documents are limited to 512 KiB; convert to JSON for larger schemas");
+      }
+    });
+
+    it("has no reason when the format is detected, nor for content that is simply not a schema", () => {
+      expect(detectFormatDetailed(`openapi: "3.1.0"\ninfo:\n  title: T\n  version: "1"\npaths:\n  /a: {}\n`, "a.yaml")).toEqual({ format: "openapi" });
+      expect(detectFormatDetailed("name: my-service\nreplicas: 3\n", "deploy.yaml")).toEqual({ format: null });
+      expect(detectFormatDetailed("hello", undefined)).toEqual({ format: null });
+    });
+
+    it("detectFormat keeps its answer (the detailed one only adds the reason)", () => {
+      expect(detectFormat("syntax = \"proto3\";\nmessage A { string a = 1; }\n", "a.proto")).toBe("protobuf");
     });
   });
 });

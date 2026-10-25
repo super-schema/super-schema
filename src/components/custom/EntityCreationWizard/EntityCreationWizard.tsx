@@ -220,15 +220,17 @@ export function EntityCreationWizard({
       try {
         // Loaded on demand: the importers (protobufjs, yaml) stay out of the
         // wizard's initial client chunk until someone actually imports.
-        const [{ detectFormat }, { importSchemaAssets }] = await Promise.all([
+        const [{ detectFormatDetailed }, { importSchemaAssets }] = await Promise.all([
           import("@/lib/importers/format-detector"),
           import("@/services/import.service"),
         ]);
-        const resolvedFormat = format ?? detectFormat(content, filename);
+        const detected: { format: ImportFormat | null; reason?: string } = format ? { format } : detectFormatDetailed(content, filename);
+        const resolvedFormat = detected.format;
         setDetectedFormat(resolvedFormat);
 
         if (!resolvedFormat) {
-          setError("Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, Protobuf, JSON Schema, or TypeSpec.");
+          // A YAML document refused for its size or its aliases is not "unrecognised": its own message says what was wrong.
+          setError(detected.reason ?? "Could not detect schema format. Ensure the content matches Avro, BigQuery DDL, Protobuf, JSON Schema, or TypeSpec.");
           return;
         }
 

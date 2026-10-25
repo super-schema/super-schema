@@ -49,7 +49,17 @@ const YAML_JSON_SCHEMA_KEYS = /(^|\n)(\$schema|properties|\$defs|definitions)\s*
 // Content-based detection
 // ---------------------------------------------------------------------------
 
-function detectByContent(content: string): ImportFormat | null {
+/** What the content analysis learned besides the format: why a document that looked like a schema was not read (its size, its aliases). */
+interface DetectionNotes {
+  reason?: string;
+}
+
+/** The reason a bounded YAML read was refused (size / aliases / expansion), or nothing for a document that is merely not YAML. */
+function noteRefusal(notes: DetectionNotes, parsed: ReturnType<typeof parseYamlBounded>): void {
+  if (!parsed.ok && parsed.kind !== "syntax") notes.reason ??= parsed.message;
+}
+
+function detectByContent(content: string, notes: DetectionNotes): ImportFormat | null {
   const trimmed = content.trim();
 
   // Check for OpenAPI (JSON or YAML): has an `openapi: "3.x"` version field
@@ -57,6 +67,7 @@ function detectByContent(content: string): ImportFormat | null {
   if (/"openapi"\s*:\s*"3\./.test(trimmed) || /(^|\n)\s*openapi\s*:\s*["']?3\./m.test(trimmed)) {
     // Bounded parse (an alias fan-out is refused, never expanded: see safe-yaml.ts). Not valid YAML/JSON: continue checking other formats.
     const parsedYaml = parseYamlBounded(trimmed);
+    noteRefusal(notes, parsedYaml);
     const parsed = parsedYaml.ok ? (parsedYaml.value as Record<string, unknown> | null) : null;
     if (parsed && typeof parsed === "object" && parsed.paths) {
       return "openapi";
@@ -80,6 +91,7 @@ function detectByContent(content: string): ImportFormat | null {
   } else if (YAML_JSON_SCHEMA_KEYS.test(trimmed)) {
     // JSON Schema authored in YAML (top-level `properties:` / `$schema:` / `$defs:`).
     const parsedYaml = parseYamlBounded(trimmed);
+    noteRefusal(notes, parsedYaml);
     const parsed = parsedYaml.ok ? parsedYaml.value : undefined;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       if (looksLikeJsonSchema(parsed as Record<string, unknown>)) return "json-schema";
@@ -120,19 +132,29 @@ function detectByContent(content: string): ImportFormat | null {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function detectFormat(
-  content: string,
-  filename?: string
-): ImportFormat | null {
+/**
+ * The format, and when it is not detected, WHY if the document was refused rather than unrecognised: a YAML document over the size cap
+ * (512 KiB) or with too many aliases is not parsed, and "could not detect the format" would blame a good OpenAPI file for it.
+ */
+export function detectFormatDetailed(content: string, filename?: string): { format: ImportFormat | null; reason?: string } {
   // Try extension first (.json / .yaml / .yml carry several formats → content)
   if (filename) {
     const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
     const byExt = CONTENT_SNIFFED_EXTENSIONS.has(ext) ? undefined : EXTENSION_MAP[ext];
     if (byExt) {
-      return byExt;
+      return { format: byExt };
     }
   }
 
   // Fall back to content analysis
-  return detectByContent(content);
+  const notes: DetectionNotes = {};
+  const format = detectByContent(content, notes);
+  return format === null && notes.reason !== undefined ? { format, reason: notes.reason } : { format };
+}
+
+export function detectFormat(
+  content: string,
+  filename?: string
+): ImportFormat | null {
+  return detectFormatDetailed(content, filename).format;
 }

@@ -27,7 +27,7 @@ import type { TypeSpecImportResult } from "@/lib/importers/typespec.importer";
 import { parseTypeSpecDocument } from "@/lib/compiler/typespec-parser";
 import { importTypeSpecDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/typespec-import-actions";
 import { importOpenApiDocumentAction } from "@/app/(dashboard)/schemas/[domainSlug]/openapi-import-actions";
-import { detectFormat } from "@/lib/importers/format-detector";
+import { detectFormatDetailed } from "@/lib/importers/format-detector";
 import { inferJsonSchema } from "@/lib/importers/jsonschema-infer";
 import {
   buildImportAssetsPayload,
@@ -286,7 +286,7 @@ export function ImportDialog({
   }
 
   async function reviewImportedContent(content: string, filename?: string) {
-    const format = detectFormat(content, filename);
+    const { format, reason: notDetectedBecause } = detectFormatDetailed(content, filename);
 
     if (format === "typespec" || format === "openapi") {
       const tsResult =
@@ -323,7 +323,8 @@ export function ImportDialog({
           }
         }
       }
-      setError(result.error.message);
+      // A YAML document that was refused (over the size cap, too many aliases) is not "unrecognised": say what was wrong with it.
+      setError(!format && notDetectedBecause ? notDetectedBecause : result.error.message);
       return;
     }
 
