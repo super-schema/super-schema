@@ -58,7 +58,7 @@ export function DriftBadge({
     return (
       <TooltipProvider>
         <Tooltip>
-          <TooltipTrigger>
+          <TooltipTrigger aria-label={`${targetFormat ? `${targetFormat}: ` : ""}${config.label}`}>
             <span
               data-testid={`drift-badge-${status}`}
               className={`inline-block w-2 h-2 rounded-full ${

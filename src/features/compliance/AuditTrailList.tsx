@@ -170,6 +170,7 @@ export function AuditTrailList({
             <button
               disabled={page <= 1}
               onClick={() => onPageChange(page - 1)}
+              aria-label="Previous page"
               className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -177,6 +178,7 @@ export function AuditTrailList({
             <button
               disabled={page >= totalPages}
               onClick={() => onPageChange(page + 1)}
+              aria-label="Next page"
               className="p-1 rounded hover:bg-accent/50 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronRight className="w-4 h-4" />

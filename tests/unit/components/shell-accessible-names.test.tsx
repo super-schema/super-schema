@@ -6,10 +6,13 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 // (tests/e2e/a11y.spec.ts), fixed here and kept fixed by these tests as well as by the baseline.
 
 const pathname = vi.hoisted(() => ({ value: "/schemas" }));
-vi.mock("next/navigation", () => ({ usePathname: () => pathname.value }));
+vi.mock("next/navigation", () => ({ usePathname: () => pathname.value, useRouter: () => ({ push: () => {} }) }));
 
 import { ActivityBar } from "@/components/layout/ActivityBar";
 import { RightPanel } from "@/components/layout/RightPanel";
+import { ComplianceResultsTable } from "@/features/compliance/ComplianceResultsTable";
+import { AuditTrailList } from "@/features/compliance/AuditTrailList";
+import { DriftBadge } from "@/components/custom/DriftBadge/DriftBadge";
 
 afterEach(cleanup);
 
@@ -51,5 +54,35 @@ describe("RightPanel", () => {
     unmount();
     render(<RightPanel {...props} />);
     expect(screen.getByRole("button", { name: "Close panel" })).toBeTruthy();
+  });
+});
+
+describe("the pagers of the compliance pages", () => {
+  it("name their buttons: the table's and the audit trail's, each with a Previous and a Next page", () => {
+    const common = { total: 120, page: 2, pageSize: 25, onPageChange: () => {}, loading: false };
+    const { unmount } = render(<ComplianceResultsTable {...common} fields={[]} sortBy="entityName" sortOrder="asc" onSort={() => {}} />);
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeTruthy();
+    unmount();
+    const entry = { id: "a1", action: "UPDATE", entityType: "Entity", entityId: "e1", entityName: "Customer", userId: "u1", userName: "Admin", userAvatar: null, timestamp: new Date(0), beforeState: null, afterState: null, changeSummary: "changed" };
+    render(<AuditTrailList {...common} entries={[entry]} />);
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeTruthy();
+  });
+
+  it("the table's scroll area is reachable by keyboard and named", () => {
+    render(<ComplianceResultsTable total={0} page={1} pageSize={25} fields={[]} sortBy="entityName" sortOrder="asc" onSort={() => {}} onPageChange={() => {}} loading={false} />);
+    const region = screen.getByRole("region", { name: "Compliance results" });
+    expect(region.getAttribute("tabindex")).toBe("0");
+  });
+});
+
+describe("DriftBadge", () => {
+  it("the compact dot is a button with a name that says what it shows, with the format when there is one", () => {
+    const { unmount } = render(<DriftBadge status="unknown" compact />);
+    expect(screen.getByRole("button", { name: "Unknown" })).toBeTruthy();
+    unmount();
+    render(<DriftBadge status="drifted" targetFormat="avro" compact />);
+    expect(screen.getByRole("button", { name: /^avro: / })).toBeTruthy();
   });
 });
