@@ -19,8 +19,11 @@ import {
   dockerRunEnv,
   hermeticEnv,
   judgeProviders,
+  formatClock,
+  formatDuration,
   makeRunDirs,
   removeRunTmp,
+  stepTimingLine,
   parseArgs,
   pickPorts,
   planRun,
@@ -978,5 +981,49 @@ describe("the run's temp directory: only what the runner made is removed", () =>
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the timing of a run: a long hole in the log is attributable", () => {
+  it("formats a duration as the largest units that matter: tenths of a second under a minute, then minutes and seconds, then hours", () => {
+    expect(formatDuration(0)).toBe("0.0 s");
+    expect(formatDuration(1234)).toBe("1.2 s");
+    expect(formatDuration(59_949)).toBe("59.9 s");
+    expect(formatDuration(60_000)).toBe("1m00s");
+    expect(formatDuration(62_400)).toBe("1m02s");
+    expect(formatDuration(10 * 60_000 + 24_000)).toBe("10m24s");
+    expect(formatDuration(3_600_000)).toBe("1h00m00s");
+    expect(formatDuration(3_725_000)).toBe("1h02m05s");
+    expect(formatDuration(-5)).toBe("0.0 s");
+  });
+
+  it("formats a clock time as HH:MM:SS in the machine's time zone, two digits each", () => {
+    expect(formatClock(new Date(2026, 9, 25, 7, 5, 9))).toBe("07:05:09");
+    expect(formatClock(new Date(2026, 9, 25, 23, 59, 59))).toBe("23:59:59");
+  });
+
+  it("says how long a step took and how long the run has been going, naming the step", () => {
+    expect(stepTimingLine("building the app", 62_400, 130_000)).toBe("[e2e-release]   ... building the app: took 1m02s (the run is 2m10s old)");
+  });
+
+  it("logs a step that took 2 s or more with its duration, and none that was quicker, so the log of a fast run is unchanged", async () => {
+    let clock = 1_000_000;
+    const { deps, messages } = fakeDeps();
+    const slowWait = deps.waitForDb;
+    deps.waitForDb = async (...args: unknown[]) => {
+      clock += 125_000; // two minutes of waiting for the database
+      return (slowWait as (...a: unknown[]) => Promise<void>)(...args);
+    };
+    (deps as { now?: () => number }).now = () => clock;
+    expect(await runRelease(plan(), deps)).toBe(0);
+    const timing = messages.filter((m) => m.includes("... "));
+    expect(timing).toEqual([`[e2e-release]   ... waiting for the database: took 2m05s (the run is 2m05s old)`]);
+    expect(messages.at(-1)).toMatch(/done: exit 0 in 2m05s;/);
+  });
+
+  it("the last line names how long the whole run took", async () => {
+    const { deps, messages } = fakeDeps();
+    expect(await runRelease(plan(), deps)).toBe(0);
+    expect(messages.at(-1)).toMatch(/done: exit 0 in \d+(\.\d)? s;/);
   });
 });

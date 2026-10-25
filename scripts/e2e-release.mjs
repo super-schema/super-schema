@@ -240,6 +240,30 @@ function resolveBins(root) {
   return { prisma: bin("prisma", "prisma"), next: bin("next", "next") };
 }
 
+/** A duration for a log: `1.2 s` under a minute, `1m02s` under an hour, `1h02m05s` after. */
+export function formatDuration(ms) {
+  const total = Math.max(0, ms);
+  if (total < 60_000) return `${(total / 1000).toFixed(1)} s`;
+  const seconds = Math.floor(total / 1000);
+  const two = (n) => String(n).padStart(2, "0");
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m${two(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h${two(Math.floor((seconds % 3600) / 60))}m${two(seconds % 60)}s`;
+}
+
+/** The time of day of a log line, `HH:MM:SS`, in the machine's time zone. */
+export function formatClock(date) {
+  const two = (n) => String(n).padStart(2, "0");
+  return `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
+}
+
+/** A step slower than this says how long it took (a quick step adds nothing to the log). */
+const SLOW_STEP_MS = 2000;
+
+/** The line after a slow step: its name, how long it took, and how old the run is, so a gap in the log has a name. */
+export function stepTimingLine(name, tookMs, runAgeMs) {
+  return `[e2e-release]   ... ${name}: took ${formatDuration(tookMs)} (the run is ${formatDuration(runAgeMs)} old)`;
+}
+
 /**
  * Make the run's directories: the output root (it may exist: it is where reports go) and the temp directory, which must NOT exist and which
  * is recorded in `created` once it does. `mkdir` without `recursive` fails on an existing directory, so a path that is somebody else's is never
@@ -563,10 +587,18 @@ export async function runRelease(initialPlan, deps) {
   const checkpoint = () => {
     if (received) throw new Interrupted(received);
   };
+  const now = deps.now ?? Date.now;
+  const startedAt = now();
   const step = async (name, fn) => {
     checkpoint();
     deps.log(`[e2e-release] ${name}`);
-    return fn();
+    const began = now();
+    try {
+      return await fn();
+    } finally {
+      const took = now() - began;
+      if (took >= SLOW_STEP_MS) deps.log(stepTimingLine(name, took, now() - startedAt));
+    }
   };
 
   let code = EXIT.setup;
@@ -703,7 +735,7 @@ export async function runRelease(initialPlan, deps) {
 
   const final = received ? exitCodeForSignal(received) : code;
   deps.log(
-    `[e2e-release] done: exit ${final}${received ? ` (${received})` : ""}${madeDirs ? `; reports and server.log: ${plan.outputRoot}` : ""}${browserText ? `; browser: ${browserText}` : ""}` +
+    `[e2e-release] done: exit ${final}${received ? ` (${received})` : ""} in ${formatDuration(now() - startedAt)}${madeDirs ? `; reports and server.log: ${plan.outputRoot}` : ""}${browserText ? `; browser: ${browserText}` : ""}` +
       (leftovers.length > 0 ? `; TEARDOWN INCOMPLETE: ${leftovers.join("; ")} (leftovers of any run: docker ps -a --filter name=${CONTAINER_PREFIX})` : ""),
   );
   return final;
@@ -834,7 +866,10 @@ const markerDir = (root) => path.join(os.tmpdir(), "ss-e2e-release", createHash(
  * signal this process gets is forwarded once to the step in progress, a second one kills it; the teardown's own children (docker, the
  * app's stop) are not forwarded to, so a second Ctrl-C cannot leave a container behind.
  */
-export function createRealDeps({ log = console.log, error = console.error } = {}) {
+export function createRealDeps({ log: write = console.log, error: writeError = console.error } = {}) {
+  // Every line carries the time of day it was written at: with the duration lines of the slow steps, a hole in the log of a run has a name.
+  const log = (message) => write(`${formatClock(new Date())} ${message}`);
+  const error = (message) => writeError(`${formatClock(new Date())} ${message}`);
   /** The children a signal is forwarded to: the step in progress. */
   const running = new Set();
   const interrupt = createInterrupt({
