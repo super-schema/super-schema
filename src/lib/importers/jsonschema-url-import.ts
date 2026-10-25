@@ -22,12 +22,14 @@
  */
 import { randomBytes } from "node:crypto";
 import { parseYamlBounded } from "./safe-yaml";
+import { importResponseTooLargeMessage } from "./response-size";
 import { err, ok, type Result } from "@/types/result";
 import { setOwn } from "@/lib/compiler/governance-decorators";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import {
   breakInheritanceCycles,
   budgetOriginalContent,
+  budgetPreservedValues,
   createResolveBudget,
   importCountLimitMessage,
   isLowFromUnresolvedRef,
@@ -610,8 +612,10 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   const tooMany = importCountLimitMessage(entities.length, enums.length);
   if (tooMany) return fail("PARSE_ERROR", tooMany, "Import fewer referenced documents or split the schema.");
   budgetOriginalContent(entities, warnings);
+  // Each document was budgeted on its own; the copies a `$ref` made in many documents add up across them.
+  budgetPreservedValues(entities, warnings);
 
-  return ok({
+  const result: MultiEntityImportResult = {
     sourceFormat: "json-schema",
     entities,
     ...(rootEntityName ? { rootEntityName } : {}),
@@ -619,7 +623,11 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
     scalars: [],
     unions,
     warnings,
-  });
+  };
+  const sourceChars = docs.reduce((sum, d) => sum + d.original.length, 0);
+  const tooLarge = importResponseTooLargeMessage(result, sourceChars);
+  if (tooLarge) return fail("PARSE_ERROR", tooLarge, "Reference large enums, patterns and constants from fewer fields, or import fewer documents.");
+  return ok(result);
 }
 
 function dedupe(names: string[]): string[] {

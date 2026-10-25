@@ -36,6 +36,7 @@
  */
 
 import { parseYamlBounded } from "./safe-yaml";
+import { importResponseTooLargeMessage } from "./response-size";
 import { collidingFieldNames } from "@/lib/typespec-official/name-collisions";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
@@ -394,6 +395,86 @@ export function budgetOriginalContent(entities: ParsedEntity[], warnings: string
     else seen.add(e.originalContent);
   }
   warnings.push("The schema is large; the original source text is kept on the first entity of each document only.");
+}
+
+/**
+ * What one import may preserve verbatim on its fields (extensions, `default` / `examples`, descriptions), in serialised bytes. A `$ref` to an
+ * inline definition copies the definition's values onto every field that points at it, so a 200 KB value and 100 references came back as 20 MB.
+ * Within the budget nothing changes; past it a REPEAT of a large value is not copied again (see `budgetPreservedValues`).
+ */
+export const MAX_PRESERVED_VALUE_BYTES = 2_000_000;
+/** A repeat shorter than this is always kept: it cannot amplify the response more than a small multiple of the references that name it. */
+const MIN_BUDGETED_VALUE_BYTES = 128;
+
+/**
+ * Keeps the values preserved on the fields of `entities` within `MAX_PRESERVED_VALUE_BYTES` in total. Entities are walked in order and every
+ * copy is counted; once the budget is spent, a copy of a value (same key, same serialised value) that an earlier field already carries and that
+ * is at least 128 bytes long is dropped instead of repeated, and one warning per key counts the fields it was dropped from. The first copy is
+ * always kept, distinct values are always kept (they cannot outgrow the source text), and so are short ones.
+ */
+export function budgetPreservedValues(entities: ParsedEntity[], warnings: string[], limit: number = MAX_PRESERVED_VALUE_BYTES): void {
+  const serialised = new Map<object, string>();
+  const text = (value: unknown): string => {
+    if (typeof value !== "object" || value === null) return JSON.stringify(value) ?? "";
+    let s = serialised.get(value);
+    if (s === undefined) {
+      s = JSON.stringify(value) ?? "";
+      serialised.set(value, s);
+    }
+    return s;
+  };
+
+  let total = 0;
+  for (const entity of entities) {
+    for (const field of entity.fields) {
+      total += field.description?.length ?? 0;
+      for (const [key, value] of Object.entries(field.extensions ?? {})) total += key.length + text(value).length;
+    }
+  }
+  if (total <= limit) return;
+
+  let used = 0;
+  const seen = new Set<string>();
+  const dropped = new Map<string, { fields: number; bytes: number }>();
+  const note = (key: string, bytes: number): void => {
+    const entry = dropped.get(key) ?? { fields: 0, bytes };
+    entry.fields += 1;
+    dropped.set(key, entry);
+  };
+  for (const entity of entities) {
+    for (const field of entity.fields) {
+      if (field.description !== undefined) {
+        const id = `description\u0000${field.description}`;
+        const bytes = field.description.length;
+        if (used > limit && bytes >= MIN_BUDGETED_VALUE_BYTES && seen.has(id)) {
+          field.description = undefined;
+          note("description", bytes);
+        } else {
+          used += bytes;
+          seen.add(id);
+        }
+      }
+      if (!field.extensions) continue;
+      for (const [key, value] of Object.entries(field.extensions)) {
+        const s = text(value);
+        const id = `${key}\u0000${s}`;
+        if (used > limit && s.length >= MIN_BUDGETED_VALUE_BYTES && seen.has(id)) {
+          delete field.extensions[key];
+          note(key, s.length);
+        } else {
+          used += key.length + s.length;
+          seen.add(id);
+        }
+      }
+      if (Object.keys(field.extensions).length === 0) delete field.extensions;
+    }
+  }
+  for (const [key, { fields, bytes }] of dropped) {
+    const what = key === "description" ? "Description" : `Extension \`${key}\``;
+    warnings.push(
+      `${what} on ${fields} field${fields === 1 ? "" : "s"} was not repeated: the same value of ${bytes.toLocaleString("en-US")} bytes is kept on the first field that carries it (the schema's preserved values passed ${limit.toLocaleString("en-US")} bytes).`
+    );
+  }
 }
 
 const MAX_REF_DEPTH = 16;
@@ -1592,8 +1673,9 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   const tooMany = importCountLimitMessage(entities.length, enums.length);
   if (tooMany) return err({ code: "PARSE_ERROR", message: tooMany, suggestedFix: "Split the schema into smaller documents." });
   budgetOriginalContent(entities, warnings);
+  budgetPreservedValues(entities, warnings);
 
-  return ok({
+  const result: MultiEntityImportResult = {
     sourceFormat: "json-schema",
     entities,
     ...(rootIsEntity && rootEntityName ? { rootEntityName } : {}),
@@ -1601,7 +1683,11 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
     scalars: [],
     unions: [...sharedUnions, ...unions],
     warnings,
-  });
+  };
+  // Backstop for the copies the keyword budget above does not cover (an enum's values, a pattern, a constant on every field that names it).
+  const tooLarge = importResponseTooLargeMessage(result, content.length);
+  if (tooLarge) return err({ code: "PARSE_ERROR", message: tooLarge, suggestedFix: "Reference large enums, patterns and constants from fewer fields, or split the schema." });
+  return ok(result);
 }
 
 export function parseJsonSchema(content: string): Result<ParsedEntity> {
