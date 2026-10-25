@@ -63,7 +63,7 @@ import { hashBuildInputs } from "./e2e-build-inputs.mjs";
 import { appEnvironment, hermeticEnv, phasesEnvironment, runnerKnobs } from "./e2e-env.mjs";
 import { describeNode, nodeProblem } from "./e2e-node.mjs";
 import { isEntryPoint, parseCli, planPhases } from "./e2e-phases.mjs";
-import { dockerVisualArgs, extraMounts, visualContainerName } from "./e2e-visual-docker.mjs";
+import { dockerVisualArgs, extraMounts, updatesSnapshots, visualContainerName } from "./e2e-visual-docker.mjs";
 import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, signalGroup, spawnGroup, terminateGroup } from "./e2e-process.mjs";
 
 /**
@@ -74,7 +74,7 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, sig
  *   root: string, tmpDir: string, outputRoot: string, serverLog: string, authState: string,
  *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
  *   browser: import("./e2e-browser.cjs").BrowserDecision, nodeText: string, knobs: Record<string, string>,
- *   visual?: { image: string, containerName: string, uid: number, gid: number, platform: string, mounts: Array<{ path: string, readOnly: boolean }> },
+ *   visual?: { image: string, containerName: string, uid: number, gid: number, platform: string, mounts: Array<{ path: string, readOnly: boolean }>, snapshotsDir: string, updateSnapshots: boolean },
  * }} FixedPlan the part of a plan that does not depend on the ports (`visual`: the browser run is a `docker run` of that image)
  * @typedef {FixedPlan & {
  *   ports: { app: number, db: number }, databaseUrl: string, baseUrl: string,
@@ -201,7 +201,7 @@ export function parseArgs(argv) {
       throw new UsageError(`--shard must be i/n with 1 <= i <= n (got "${out.shard}")`);
     }
   }
-  if (out.dockerImage !== undefined && !/^[\w][\w.-]*(\/[\w.-]+)*(:[\w][\w.-]*)?$/.test(out.dockerImage)) throw new UsageError(`--docker-image is not an image name: "${out.dockerImage}"`);
+  if (out.dockerImage !== undefined && !/^[\w][\w.-]*(\/[\w.-]+)*(:[\w][\w.-]*)?(@sha256:[0-9a-f]{64})?$/.test(out.dockerImage)) throw new UsageError(`--docker-image is not an image name: "${out.dockerImage}"`);
   out.projects = [...new Set(out.projects)];
   return out;
 }
@@ -245,11 +245,13 @@ function resolveBins(root) {
  * is recorded in `created` once it does. `mkdir` without `recursive` fails on an existing directory, so a path that is somebody else's is never
  * adopted: the run stops with a message, and the teardown (which removes only what is in `created`) leaves it alone.
  *
- * @param {{ tmpDir: string, outputRoot: string }} plan
+ * @param {{ tmpDir: string, outputRoot: string, visual?: { snapshotsDir: string, updateSnapshots: boolean } }} plan
  * @param {Set<string>} created
  */
 export function makeRunDirs(plan, created) {
   mkdirSync(plan.outputRoot, { recursive: true });
+  // The snapshots directory is mounted into the container when it updates them: a mount needs it to exist (the first run makes it).
+  if (plan.visual?.updateSnapshots) mkdirSync(plan.visual.snapshotsDir, { recursive: true });
   try {
     mkdirSync(plan.tmpDir, { mode: 0o700 });
   } catch (error) {
@@ -293,6 +295,9 @@ function visualPhasesCommand(fixed, ports, phases) {
       image: visual.image,
       containerName: visual.containerName,
       root: fixed.root,
+      outputRoot: fixed.outputRoot,
+      snapshotsDir: visual.snapshotsDir,
+      updateSnapshots: visual.updateSnapshots,
       uid: visual.uid,
       gid: visual.gid,
       platform: visual.platform,
@@ -428,7 +433,9 @@ export function planRun(argv, env = process.env, options = {}) {
             uid: options.uid ?? process.getuid?.() ?? 1000,
             gid: options.gid ?? process.getgid?.() ?? 1000,
             platform: options.platform ?? process.platform,
-            mounts: extraMounts({ root, outputRoot, nodeModulesTarget: "nodeModulesTarget" in options ? options.nodeModulesTarget : realNodeModules(root) }),
+            mounts: extraMounts({ root, nodeModulesTarget: "nodeModulesTarget" in options ? options.nodeModulesTarget : realNodeModules(root) }),
+            snapshotsDir: path.join(root, "tests", "e2e", "visual.spec.ts-snapshots"),
+            updateSnapshots: updatesSnapshots(args.extra),
           },
         }
       : {}),

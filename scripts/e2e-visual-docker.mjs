@@ -7,8 +7,10 @@
 // `mcr.microsoft.com/playwright:v<the installed @playwright/test version>-jammy`, on a Linux whatever the machine around it is.
 //
 // HOW THE CONTAINER SEES THE RUN
-//   - the repository is mounted at the SAME absolute path it has on the host (`-v <root>:<root>`, `-w <root>`), so every path the runner
-//     put in the environment (the output root, the login file) is valid in the container as it stands, and snapshots land in the checkout;
+//   - the repository is mounted at the SAME absolute path it has on the host (`-v <root>:<root>:ro`, `-w <root>`), so every path the runner
+//     put in the environment (the output root, the login file) is valid in the container as it stands. It is READ-ONLY: the container may
+//     write the run's output root, and the snapshots directory only when it was asked to update the snapshots (`--update-snapshots`), so a
+//     test, a reporter or a dependency of the browser run cannot change a file of the checkout;
 //   - the container user is the host user (`--user uid:gid`): no file in the checkout becomes root's;
 //   - the app and the database are on the host's loopback (127.0.0.1:<port>). On macOS and Windows Docker's VM reaches the host as
 //     `host.docker.internal`, and nothing is bound to the container's own loopback: scripts/e2e-in-docker.mjs, started first in the
@@ -58,27 +60,35 @@ export function forwardingCommand({ ports, command, hostName = DOCKER_HOST_NAME 
 }
 
 /**
- * Where, besides the checkout, the container needs the host's files: a `node_modules` that is a symlink out of the checkout (a git
- * worktree shares the main checkout's) and an output root that is not under the checkout. Each is mounted at its own host path.
+ * Where, besides the checkout, the container needs read access to the host's files: a `node_modules` that is a symlink out of the checkout (a
+ * git worktree shares the main checkout's). Mounted read-only at its own host path. (The output root and the snapshots directory are mounted by
+ * `dockerVisualArgs`, read-write, wherever they are.)
  *
- * @param {{ root: string, outputRoot: string, nodeModulesTarget?: string }} input `nodeModulesTarget` is the real path of node_modules
- * @returns {Array<{ path: string, readOnly: boolean }>} absolute host paths, each to be mounted at itself (node_modules read-only, the output root not)
+ * @param {{ root: string, nodeModulesTarget?: string }} input `nodeModulesTarget` is the real path of node_modules
+ * @returns {Array<{ path: string, readOnly: boolean }>}
  */
-export function extraMounts({ root, outputRoot, nodeModulesTarget }) {
+export function extraMounts({ root, nodeModulesTarget }) {
   const outside = (target) => path.relative(root, target).startsWith("..") || path.isAbsolute(path.relative(root, target));
-  const mounts = [];
-  if (nodeModulesTarget && outside(nodeModulesTarget)) mounts.push({ path: nodeModulesTarget, readOnly: true });
-  if (outside(outputRoot)) mounts.push({ path: outputRoot, readOnly: false });
-  return mounts;
+  return nodeModulesTarget && outside(nodeModulesTarget) ? [{ path: nodeModulesTarget, readOnly: true }] : [];
+}
+
+/** Whether the Playwright arguments of a run (the ones after `--`) ask to write snapshots: `--update-snapshots` (any mode but `none`) or `-u`. */
+export function updatesSnapshots(playwrightArgs) {
+  return playwrightArgs.some((arg) => arg === "-u" || arg === "--update-snapshots" || (arg.startsWith("--update-snapshots=") && arg !== "--update-snapshots=none"));
 }
 
 /**
  * The names of the environment variables the browser run is given (their values come from the environment of the `docker` process, never from
- * its arguments): the run's own `E2E_*`, the database, and `CI` (Playwright's CI reporters, retries and `forbidOnly` in the container too).
+ * its arguments): the run's own `E2E_*` and `CI` (Playwright's CI reporters, retries and `forbidOnly` in the container too), and nothing the visual
+ * spec does not read: not `E2E_API_KEY` (only api-v1.spec.ts calls the API with it) and not `DATABASE_URL` / `DB_PROVIDER` (they repeat
+ * `E2E_DATABASE_URL`, which the specs read, with the same password).
  */
+/** Run names the container is not given: see `passedEnvironmentNames`. */
+const WITHHELD = ["E2E_API_KEY"];
+
 export function passedEnvironmentNames(env) {
   return Object.keys(env)
-    .filter((name) => /^E2E_[A-Z0-9_]+$/.test(name) || name === "DATABASE_URL" || name === "DB_PROVIDER" || name === "CI")
+    .filter((name) => (/^E2E_[A-Z0-9_]+$/.test(name) && !WITHHELD.includes(name)) || name === "CI")
     .sort();
 }
 
@@ -86,13 +96,14 @@ export function passedEnvironmentNames(env) {
  * The arguments of `docker run` for the browser run.
  *
  * @param {{
- *   image: string, containerName: string, root: string, uid: number, gid: number, platform: string,
- *   env: Record<string, string>, command: string[], ports: { app: number, db: number }, mounts?: Array<{ path: string, readOnly: boolean }>,
- * }} input `env` is the environment the browser run would have on the host (only the `E2E_*` names, DATABASE_URL and DB_PROVIDER are
- *   passed on, by name); `command` is what runs in the container, after the forwarding
+ *   image: string, containerName: string, root: string, outputRoot: string, snapshotsDir: string, updateSnapshots: boolean, uid: number, gid: number,
+ *   platform: string, env: Record<string, string>, command: string[], ports: { app: number, db: number }, mounts?: Array<{ path: string, readOnly: boolean }>,
+ * }} input `env` is the environment the browser run would have on the host (only the `E2E_*` names it reads and `CI` are passed on, by name);
+ *   `command` is what runs in the container, after the forwarding. The checkout is read-only; the output root is writable, and so is
+ *   `snapshotsDir` when `updateSnapshots`.
  * @returns {string[]}
  */
-export function dockerVisualArgs({ image, containerName, root, uid, gid, platform, env, command, ports, mounts = [] }) {
+export function dockerVisualArgs({ image, containerName, root, outputRoot, snapshotsDir, updateSnapshots, uid, gid, platform, env, command, ports, mounts = [] }) {
   if (!containerName.startsWith(VISUAL_CONTAINER_PREFIX)) throw new Error(`the container is named ${VISUAL_CONTAINER_PREFIX}<id>, not "${containerName}"`);
   const access = hostAccessFor(platform);
   const names = passedEnvironmentNames(env).filter((name) => !FIXED_ENVIRONMENT.some(([fixed]) => fixed === name));
@@ -102,10 +113,15 @@ export function dockerVisualArgs({ image, containerName, root, uid, gid, platfor
     "--label", "ss-e2e=1",
     "--label", "ss-e2e-visual=1",
     "--user", `${uid}:${gid}`,
-    // Chromium shares memory between its processes through /dev/shm: the image's own advice (--ipc=host) rather than a guess at a size.
-    "--ipc", "host",
+    // An init process reaps the browser's children; Chromium shares memory between its processes through /dev/shm, which Docker sizes at 64 MB:
+    // 1 GB of its own, not the host's IPC namespace (`--ipc=host`). No `--privileged`, no capability, no seccomp change: the browser runs with its own sandbox off
+    // (Playwright's default as a non-root user) inside a container that can write two directories.
+    "--init",
+    "--shm-size", "1gb",
     ...access.network,
-    "-v", `${root}:${root}`,
+    "-v", `${root}:${root}:ro`,
+    "-v", `${outputRoot}:${outputRoot}`,
+    ...(updateSnapshots ? ["-v", `${snapshotsDir}:${snapshotsDir}`] : []),
     ...mounts.flatMap((mount) => ["-v", `${mount.path}:${mount.path}${mount.readOnly ? ":ro" : ""}`]),
     "-w", root,
     ...FIXED_ENVIRONMENT.flatMap(([name, value]) => ["-e", `${name}=${value}`]),

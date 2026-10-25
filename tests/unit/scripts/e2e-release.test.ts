@@ -856,6 +856,13 @@ describe("the visual tier: the browser run inside the Playwright image", () => {
     // Inside the image (E2E_VISUAL_IN_DOCKER=1: the runner is itself in the container) it is the plain tier.
     expect(plan(["--tier", "visual"], { ...DEVELOPER, E2E_VISUAL_IN_DOCKER: "1" }).visual).toBeUndefined();
     expect(() => parseArgs(["--tier", "smoke", "--docker-image", "not an image"])).toThrow(/not an image name/);
+    // A digest is an image name too: `name:tag@sha256:<64 hex>` pins the exact image (the tag is mutable).
+    const digest = `${IMAGE}@sha256:${"ab12".repeat(16)}`;
+    expect(parseArgs(["--tier", "visual", "--docker-image", digest]).dockerImage).toBe(digest);
+    expect(parseArgs(["--tier", "visual", "--docker-image", `mcr.microsoft.com/playwright@sha256:${"0".repeat(64)}`]).dockerImage).toContain("@sha256:");
+    for (const bad of [`${IMAGE}@sha256:abc`, `${IMAGE}@sha256:${"G".repeat(64)}`, `${IMAGE}@md5:${"a".repeat(32)}`, `${IMAGE}@sha256:${"a".repeat(64)}x`]) {
+      expect(() => parseArgs(["--tier", "visual", "--docker-image", bad]), bad).toThrow(/not an image name/);
+    }
     expect(() => parseArgs(["--tier", "smoke", "--docker-image"])).toThrow(/needs a value/);
   });
 
@@ -868,7 +875,7 @@ describe("the visual tier: the browser run inside the Playwright image", () => {
     expect(spec.args.slice(0, 4)).toEqual(["run", "--rm", "--name", p.visual?.containerName]);
     expect(spec.args).toContain(IMAGE);
     expect(spec.args[spec.args.indexOf("--user") + 1]).toBe("502:20");
-    expect(spec.args[spec.args.indexOf("-v") + 1]).toBe("/repo:/repo");
+    expect(spec.args[spec.args.indexOf("-v") + 1]).toBe("/repo:/repo:ro");
     const afterImage = spec.args.slice(spec.args.indexOf(IMAGE) + 1);
     expect(afterImage.slice(0, 6)).toEqual(["node", "scripts/e2e-in-docker.mjs", "--forward", `${p.ports.app},${p.ports.db}`, "--target", "host.docker.internal"]);
     expect(afterImage.slice(afterImage.indexOf("--") + 1)).toEqual(["node", "scripts/e2e-phases.mjs", "visual"]);

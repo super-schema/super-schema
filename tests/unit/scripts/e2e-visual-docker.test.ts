@@ -1,7 +1,7 @@
 import net from "node:net";
 import { describe, expect, it } from "vitest";
 import {
-  DOCKER_HOST_NAME, FIXED_ENVIRONMENT, VISUAL_CONTAINER_PREFIX, dockerVisualArgs, extraMounts, forwardingCommand, hostAccessFor, passedEnvironmentNames,
+  DOCKER_HOST_NAME, FIXED_ENVIRONMENT, VISUAL_CONTAINER_PREFIX, dockerVisualArgs, extraMounts, forwardingCommand, hostAccessFor, passedEnvironmentNames, updatesSnapshots,
   visualContainerName, visualImageFor,
 } from "../../../scripts/e2e-visual-docker.mjs";
 import { parseInDockerArgs, startForwarder } from "../../../scripts/e2e-in-docker.mjs";
@@ -28,8 +28,14 @@ const INPUT = {
   platform: "darwin",
   env: ENV,
   ports: { app: 24001, db: 24002 },
+  outputRoot: "/repo/test-results/run-1",
+  snapshotsDir: "/repo/tests/e2e/visual.spec.ts-snapshots",
+  updateSnapshots: false,
   command: ["node", "scripts/e2e-phases.mjs", "visual"],
 };
+
+/** The `-v` arguments, in order. */
+const volumesOf = (args: string[]) => args.flatMap((arg, i) => (args[i - 1] === "-v" ? [arg] : []));
 
 /** The values of every `-e NAME=value` pair and the names of every bare `-e NAME`. */
 const environmentOf = (args: string[]) => args.flatMap((arg, i) => (args[i - 1] === "-e" ? [arg] : []));
@@ -82,30 +88,57 @@ describe("docker run for the browser run", () => {
     expect(args.slice(0, 7)).toEqual(["run", "--rm", "--name", "ss-e2e-visual-0a1b2c3d", "--label", "ss-e2e=1", "--label"]);
     expect(args).toContain("ss-e2e-visual=1");
     expect(args[args.indexOf("--user") + 1]).toBe("502:20");
-    expect(args[args.indexOf("--ipc") + 1]).toBe("host");
   });
 
-  it("mounts the checkout at its own host path and works there, so every path of the run's environment is valid inside", () => {
+  it("is hardened: an init process (zombies of the browser are reaped), a bounded /dev/shm instead of the host's IPC namespace, no privilege, no added capability", () => {
     const args = dockerVisualArgs(INPUT);
-    expect(args[args.indexOf("-v") + 1]).toBe("/repo:/repo");
+    expect(args).toContain("--init");
+    expect(args[args.indexOf("--shm-size") + 1]).toBe("1gb");
+    expect(args).not.toContain("--ipc");
+    expect(args.join(" ")).not.toMatch(/--privileged|--cap-add|--security-opt|--pid|--userns/);
+    expect(args).toContain("--rm");
+  });
+
+  it("mounts the checkout at its own host path and works there, so every path of the run's environment is valid inside: read-only", () => {
+    const args = dockerVisualArgs(INPUT);
+    expect(volumesOf(args)[0]).toBe("/repo:/repo:ro");
     expect(args[args.indexOf("-w") + 1]).toBe("/repo");
   });
 
-  it("mounts a node_modules outside the checkout read-only and an output root outside it read-write, each at its own path", () => {
-    const mounts = extraMounts({ root: "/work/repo", outputRoot: "/elsewhere/out", nodeModulesTarget: "/work/main/node_modules" });
-    expect(mounts).toEqual([{ path: "/work/main/node_modules", readOnly: true }, { path: "/elsewhere/out", readOnly: false }]);
-    expect(extraMounts({ root: "/work/repo", outputRoot: "/work/repo/test-results/run-1", nodeModulesTarget: "/work/repo/node_modules" })).toEqual([]);
-    expect(extraMounts({ root: "/work/repo", outputRoot: "/work/repo/out" })).toEqual([]);
-    const args = dockerVisualArgs({ ...INPUT, mounts });
-    expect(args).toContain("/work/main/node_modules:/work/main/node_modules:ro");
-    expect(args).toContain("/elsewhere/out:/elsewhere/out");
+  it("lets the container write only the output root, and the snapshots directory when it is asked to update them", () => {
+    expect(volumesOf(dockerVisualArgs(INPUT))).toEqual(["/repo:/repo:ro", "/repo/test-results/run-1:/repo/test-results/run-1"]);
+    expect(volumesOf(dockerVisualArgs({ ...INPUT, updateSnapshots: true }))).toEqual([
+      "/repo:/repo:ro",
+      "/repo/test-results/run-1:/repo/test-results/run-1",
+      "/repo/tests/e2e/visual.spec.ts-snapshots:/repo/tests/e2e/visual.spec.ts-snapshots",
+    ]);
   });
 
-  it("passes the E2E_* names, DATABASE_URL and DB_PROVIDER on by NAME, never by value: no secret is in a process list", () => {
+  it("tells whether a run updates snapshots from the Playwright arguments after --", () => {
+    expect(updatesSnapshots(["--update-snapshots=all"])).toBe(true);
+    expect(updatesSnapshots(["--update-snapshots"])).toBe(true);
+    expect(updatesSnapshots(["-u"])).toBe(true);
+    expect(updatesSnapshots(["--grep", "login", "--retries=0"])).toBe(false);
+    expect(updatesSnapshots([])).toBe(false);
+    expect(updatesSnapshots(["--update-snapshots=none"])).toBe(false);
+  });
+
+  it("mounts a node_modules outside the checkout read-only, at its own path, and an output root outside the checkout read-write like any other", () => {
+    const mounts = extraMounts({ root: "/work/repo", nodeModulesTarget: "/work/main/node_modules" });
+    expect(mounts).toEqual([{ path: "/work/main/node_modules", readOnly: true }]);
+    expect(extraMounts({ root: "/work/repo", nodeModulesTarget: "/work/repo/node_modules" })).toEqual([]);
+    expect(extraMounts({ root: "/work/repo" })).toEqual([]);
+    const args = dockerVisualArgs({ ...INPUT, root: "/work/repo", outputRoot: "/elsewhere/out", snapshotsDir: "/work/repo/snaps", mounts });
+    expect(volumesOf(args)).toEqual(["/work/repo:/work/repo:ro", "/elsewhere/out:/elsewhere/out", "/work/main/node_modules:/work/main/node_modules:ro"]);
+  });
+
+  it("passes the E2E_* names the browser run reads on by NAME, never by value: no secret is in a process list, and not the API key (the visual spec calls no API)", () => {
     const args = dockerVisualArgs(INPUT);
     expect(JSON.stringify(args)).not.toMatch(/secret-pw|secret-api-key/);
     const names = environmentOf(args);
-    for (const name of ["E2E_BASE_URL", "E2E_DATABASE_URL", "E2E_API_KEY", "E2E_AUTH_STATE", "E2E_OUTPUT_ROOT", "DATABASE_URL", "DB_PROVIDER"]) expect(names, name).toContain(name);
+    for (const name of ["E2E_BASE_URL", "E2E_DATABASE_URL", "E2E_AUTH_STATE", "E2E_OUTPUT_ROOT"]) expect(names, name).toContain(name);
+    // The API key is for api-v1.spec.ts; DATABASE_URL and DB_PROVIDER repeat E2E_DATABASE_URL (the specs read that one) with the same password.
+    for (const name of ["E2E_API_KEY", "DATABASE_URL", "DB_PROVIDER"]) expect(names, name).not.toContain(name);
     expect(names).not.toContain("PATH");
     expect(names).not.toContain("HOME"); // the host's HOME is not the container's
   });
@@ -124,7 +157,7 @@ describe("docker run for the browser run", () => {
   });
 
   it("lists only what the browser run reads", () => {
-    expect(passedEnvironmentNames({ PATH: "/x", E2E_A: "1", E2E_b: "2", DATABASE_URL: "x", DB_PROVIDER: "y", CI: "true", PGPASSWORD: "z", AUTH_SECRET: "s" })).toEqual(["CI", "DATABASE_URL", "DB_PROVIDER", "E2E_A"]);
+    expect(passedEnvironmentNames({ PATH: "/x", E2E_A: "1", E2E_b: "2", E2E_API_KEY: "k", DATABASE_URL: "x", DB_PROVIDER: "y", CI: "true", PGPASSWORD: "z", AUTH_SECRET: "s" })).toEqual(["CI", "E2E_A"]);
   });
 });
 
