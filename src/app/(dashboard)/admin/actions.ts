@@ -88,7 +88,7 @@ export async function getHealthAction() {
   const auth = await resolveCtx();
   if (!auth.ok) return { error: auth.error };
   const [health, usage, activity, errors] = await Promise.all([
-    runHealthCheck(auth.ctx),
+    runHealthCheck(auth.ctx, { detail: "admin" }),
     getUsageMetrics(auth.ctx),
     // The governance count is the dashboard's: the requests of the tenant being viewed.
     getActivityMetrics(auth.ctx, await getActiveTenantId()),

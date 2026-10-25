@@ -3,7 +3,10 @@ import { z } from "zod";
 export const ComponentStatusSchema = z.object({
   name: z.string(),
   status: z.enum(["healthy", "degraded", "unhealthy"]),
+  /** Fixed words and counts: safe for the unauthenticated endpoint. */
   message: z.string().optional(),
+  /** Package names and versions: only the administrators' Health view carries it (`runHealthCheck(ctx, { detail: "admin" })`). */
+  detail: z.string().optional(),
   latencyMs: z.number().optional(),
 });
 

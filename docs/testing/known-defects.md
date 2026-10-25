@@ -384,3 +384,17 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   back" test of `glossary-lineage.spec.ts` read both; its baseline is now what Fit gives, not the first view).
 - where: `LineageGraph` (`src/features/lineage/LineageGraph.tsx`: `onInit`, the `fitView` prop).
 - cost to fix: fit again when the nodes' measured sizes settle (`useNodesInitialized` plus a re-fit on a size change that the user has not zoomed away from), or drop the timer and rely on the `fitView` prop.
+
+## KD-040: the Docker image ships no emitter packages, so it cannot generate a schema (and its build needs the sibling `typespec` checkout)
+
+- status: no-test (a deployment gap: the suite runs the app from `next build` + `next start` and never from the image, and a container build is not part of it)
+- symptom: in an image built from `.docker/Dockerfile`, importing, editing and the in-process compile work, but generating a target (OpenAPI, JSON Schema, Protobuf, Avro, the DDL
+  targets ...) fails: the emission shells out to `<cwd>/node_modules/.bin/tsp` and loads each emitter from `<cwd>/node_modules`, and the standalone output has neither. `/api/v1/health`
+  reads `degraded` (HTTP 200: a missing emitter is not a reason to take the pod out of service) with "N of M emitter packages installed", the names are in Admin, Health.
+- evidence: `.next/standalone/node_modules/@typespec` holds `compiler` only and there is no `.next/standalone/node_modules/.bin`. `package.json` makes five emitters (`@typespec/avro`,
+  `bigquery`, `java-pojo`, `postgres`, `spanner`) `file:../typespec/packages/*` links (and `package-lock.json` records them as links), while the image build's context is this repository
+  only, so its `npm ci` cannot resolve them (read, not built: no container was built for this note).
+- where: `.docker/Dockerfile` (the runtime stage copies `.next/standalone`, `.next/static`, `public`), `next.config.ts` (`serverExternalPackages`, `outputFileTracingIncludes` name no emitter),
+  `src/lib/typespec-official/emitter.service.ts` (`getTspBinaryPath`, `findUninstalledLibrary`), `src/services/health.service.ts` (`defaultEmitterCheck`).
+- cost to fix: vendor the five sibling packages into the repository (as `vendor/typespec-enterprise` is) or publish them with pinned versions, then give the runtime stage the emitter packages
+  and the `tsp` bin (`npm ci --omit=dev` there, or `outputFileTracingIncludes` for every emitter plus a `.bin/tsp` shim) and prove it with a `docker build` + one generation in CI.

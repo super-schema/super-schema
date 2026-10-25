@@ -171,36 +171,44 @@ async function installedVersion(name: string, root: string): Promise<string | nu
 }
 
 /**
+ * What a component's absence means for the application: `core` is needed to serve at all (the TypeSpec compiler: nothing compiles without it),
+ * `optional` only limits what can be generated (an emitter package: its target fails, the rest of the application works).
+ */
+export type PackageRole = "core" | "optional";
+
+/**
  * A cheap, TRUTHFUL check of what a component runs on: the packages are installed where the emission looks for them
  * (`<root>/node_modules`, the project's own, which is where `tsp` is pinned to). It does not compile anything, so it says nothing about
- * a package that is installed but broken; it no longer says "healthy" for a missing one. Every package missing is unhealthy, some is
- * degraded. The names of what is missing go to the server's log only: this answer is public (`/api/v1/health`).
+ * a package that is installed but broken; it no longer says "healthy" for a missing one. A missing `core` package is unhealthy; a missing
+ * `optional` one (some or all) is degraded: the application still serves, and the readiness probe on `/api/v1/health` must say so (the
+ * Docker image's standalone output ships the compiler and no emitter).
+ *
+ * The `message` is what the PUBLIC endpoint shows: fixed words and counts, no package name and no version (they fingerprint the install).
+ * The names and versions are in `detail`, which only the administrators' Health view keeps (see `runHealthCheck`), and the missing names go
+ * to the server's log.
  */
-export async function checkInstalledPackages(name: string, packages: readonly string[], root: string = process.cwd()): Promise<ComponentStatus> {
+export async function checkInstalledPackages(name: string, packages: readonly string[], root: string = process.cwd(), role: PackageRole = "core"): Promise<ComponentStatus> {
   const start = Date.now();
   const found = await Promise.all(packages.map(async (pkg) => ({ pkg, version: await installedVersion(pkg, root) })));
   const latencyMs = Date.now() - start;
   const missing = found.filter((f) => f.version === null).map((f) => f.pkg);
   if (missing.length > 0) console.error(`[health] ${name}: not installed: ${missing.join(", ")}`);
-  if (packages.length === 1) {
-    return missing.length === 0
-      ? { name, status: "healthy", message: `${found[0].pkg} ${found[0].version} installed`, latencyMs }
-      : { name, status: "unhealthy", message: `${name} is not installed`, latencyMs };
-  }
+  const versions = found.filter((f) => f.version !== null).map((f) => `${f.pkg} ${f.version}`);
+  const detail = [...(missing.length > 0 ? [`Missing: ${missing.join(", ")}`] : []), ...(versions.length > 0 ? [`Installed: ${versions.join(", ")}`] : [])].join(". ");
   const present = packages.length - missing.length;
-  const message = `${present} of ${packages.length} emitter packages installed`;
-  if (missing.length === 0) return { name, status: "healthy", message, latencyMs };
-  return { name, status: present === 0 ? "unhealthy" : "degraded", message, latencyMs };
+  const message = role === "core" ? (missing.length === 0 ? "Installed" : "Not installed") : `${present} of ${packages.length} emitter packages installed`;
+  if (missing.length === 0) return { name, status: "healthy", message, ...(detail ? { detail } : {}), latencyMs };
+  return { name, status: role === "core" ? "unhealthy" : "degraded", message, ...(detail ? { detail } : {}), latencyMs };
 }
 
 async function defaultCompilerCheck(): Promise<ComponentStatus> {
-  return checkInstalledPackages("TypeSpec Compiler", ["@typespec/compiler"]);
+  return checkInstalledPackages("TypeSpec Compiler", ["@typespec/compiler"], process.cwd(), "core");
 }
 
 async function defaultEmitterCheck(): Promise<ComponentStatus> {
   // The emitter packages of the targets the application generates (`enabledInSchemaTab`).
   const packages = [...new Set(getSchemaTargetCatalog().flatMap((target) => (target.enabledInSchemaTab && target.packageName ? [target.packageName] : [])))];
-  return checkInstalledPackages("Emitters", packages);
+  return checkInstalledPackages("Emitters", packages, process.cwd(), "optional");
 }
 
 // ---------------------------------------------------------------------------
@@ -252,8 +260,22 @@ export async function checkEmitters(
 // runHealthCheck — aggregate all checks
 // ---------------------------------------------------------------------------
 
+export interface HealthCheckOptions {
+  /**
+   * Who is asking. "public" (the default: fail closed) is the unauthenticated endpoint: fixed words and counts only. "admin" is the
+   * administrators' Health view: the `detail` of each component (package names and versions) is kept.
+   */
+  detail?: "public" | "admin";
+}
+
+/**
+ * The overall status is READINESS FOR SERVING REQUESTS (it is what `/api/v1/health` turns into 200 or 503): unhealthy only when the database
+ * or the compiler core is unavailable. A missing emitter package (or an emitter check that could not run) limits what can be generated and
+ * makes the overall status degraded, never unhealthy: an orchestrator that gates readiness on the endpoint must not take a pod out for it.
+ */
 export async function runHealthCheck(
-  ctx: ServiceContext
+  ctx: ServiceContext,
+  options: HealthCheckOptions = {}
 ): Promise<Result<HealthCheckResponse>> {
   const [database, compiler, emitters] = await Promise.all([
     checkDatabase(ctx),
@@ -261,18 +283,24 @@ export async function runHealthCheck(
     checkEmitters(ctx),
   ]);
 
-  const statuses = [database.status, compiler.status, emitters.status];
-
   let overallStatus: "healthy" | "degraded" | "unhealthy" = "healthy";
-  if (statuses.includes("unhealthy")) {
+  if (database.status === "unhealthy" || compiler.status === "unhealthy") {
     overallStatus = "unhealthy";
-  } else if (statuses.includes("degraded")) {
+  } else if ([database, compiler, emitters].some((component) => component.status !== "healthy")) {
     overallStatus = "degraded";
   }
 
+  // The unauthenticated answer carries no package name and no version: `detail` is for the administrators.
+  const shown = (component: ComponentStatus): ComponentStatus => {
+    if (options.detail === "admin" || component.detail === undefined) return component;
+    const rest: ComponentStatus = { ...component };
+    delete rest.detail;
+    return rest;
+  };
+
   return ok({
     status: overallStatus,
-    components: { database, compiler, emitters },
+    components: { database: shown(database), compiler: shown(compiler), emitters: shown(emitters) },
     timestamp: new Date().toISOString(),
   });
 }

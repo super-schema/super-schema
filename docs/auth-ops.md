@@ -67,6 +67,17 @@ parser worker and the compiler and emitters that are installed. It answers `503 
 logs the cause when the check itself cannot run: it never returns the cause to an unauthenticated caller. The same checks, in more detail, are in
 Admin, Health (administrators only).
 
+**The status code is readiness for serving requests**, so a probe can gate on it: `503` only when the database does not answer or the TypeSpec
+compiler (the core) is not installed. A missing emitter package makes the answer `degraded` (`200`, "N of M emitter packages installed"): the
+application serves, and only generating that target fails. **The unauthenticated body names no package and no version** (they fingerprint the
+install); the names of what is missing and the installed versions are in the server's log and in Admin, Health (the `detail` line of each service).
+
+**The Docker image cannot generate schemas yet** (KD-040 in `docs/testing/known-defects.md`). Its standalone output ships `@typespec/compiler` and no
+emitter package and no `node_modules/.bin/tsp`, so in that image `/api/v1/health` reads `degraded` (`200`) with a count below M and generating a
+target fails; import, editing and the in-process compile work. Five of the emitters are `file:../typespec/packages/*` dependencies of the sibling
+`typespec` repository, which the image build does not have. Until they are vendored (as `vendor/typespec-enterprise` is), run the application from
+a checkout (`npm ci && npm run build && npm start`) when generation is needed.
+
 ## The REST API key
 
 `API_KEY` (an environment variable) enables `Authorization: Bearer <key>` on `/api/v1/*`. Whoever has the key acts as an administrator there. The

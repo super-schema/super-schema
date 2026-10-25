@@ -19,7 +19,7 @@ function toServiceCtx(ctx: { session: unknown; db: unknown }): ServiceContext {
 
 export const adminHealthRouter = {
   runCheck: adminProcedure.handler(async ({ context }) =>
-    healthService.runHealthCheck(toServiceCtx(context))
+    healthService.runHealthCheck(toServiceCtx(context), { detail: "admin" })
   ),
 
   usageMetrics: adminProcedure.handler(async ({ context }) =>

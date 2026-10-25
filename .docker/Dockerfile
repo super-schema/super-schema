@@ -21,6 +21,9 @@ ENV NEXTAUTH_URL="http://localhost:3000"
 RUN npm run build
 
 # Stage 3: Production runtime
+# KNOWN GAP (KD-040, docs/auth-ops.md): the standalone output below carries @typespec/compiler and NO emitter package and no
+# node_modules/.bin/tsp, so this image cannot GENERATE a schema target (/api/v1/health reads "degraded", HTTP 200). Five emitters are
+# file:../typespec/packages/* links that this build context does not have.
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production

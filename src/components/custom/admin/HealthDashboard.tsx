@@ -159,6 +159,8 @@ export function HealthDashboard() {
                   <StatusIndicator status={statusToColor(comp.status)} />
                 </div>
                 <p className="text-body-small text-muted-foreground">{comp.message}</p>
+                {/* package names and versions: administrators only (the public endpoint leaves them out) */}
+                {comp.detail !== undefined && <p className="text-caption text-muted-foreground mt-1 break-words">{comp.detail}</p>}
                 {comp.latencyMs !== undefined && (
                   <p className="text-caption text-muted-foreground mt-1">{comp.latencyMs}ms</p>
                 )}
