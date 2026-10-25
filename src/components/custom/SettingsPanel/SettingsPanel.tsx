@@ -184,7 +184,7 @@ export function SettingsPanel() {
           value={locale}
           onValueChange={(val) => setLocale(val as Locale)}
         >
-          <SelectTrigger className="w-60" data-testid="locale-select">
+          <SelectTrigger className="w-60" data-testid="locale-select" aria-label={t("language")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

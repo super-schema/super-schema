@@ -394,6 +394,7 @@ export function FieldEditor({
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
+            aria-label="Filter by type"
             className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           >
             <option value="">All types</option>
@@ -404,6 +405,7 @@ export function FieldEditor({
           <select
             value={classificationFilter}
             onChange={(e) => setClassificationFilter(e.target.value)}
+            aria-label="Filter by classification"
             className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           >
             <option value="">All classifications</option>
@@ -414,6 +416,7 @@ export function FieldEditor({
           <select
             value={completenessFilter}
             onChange={(e) => setCompletenessFilter(e.target.value)}
+            aria-label="Filter by completeness"
             className="h-7 rounded-md border border-input bg-transparent px-2 text-body-small text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           >
             <option value="">All completeness</option>

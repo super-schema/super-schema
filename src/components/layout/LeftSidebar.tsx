@@ -545,7 +545,7 @@ function ExplorerSidebar({
           Explorer
         </h3>
         {!isLoading && !isError && (
-          <span className="text-[10px] text-muted-foreground/70">
+          <span className="text-[10px] text-muted-foreground">
             {domains.length} {domains.length === 1 ? "domain" : "domains"}
           </span>
         )}
@@ -575,7 +575,7 @@ function ExplorerSidebar({
 
 function SidebarSkeleton() {
   return (
-    <div className="px-space-2 py-space-1 space-y-space-2" aria-label="Loading domains">
+    <div className="px-space-2 py-space-1 space-y-space-2" role="status" aria-busy="true" aria-label="Loading domains">
       {Array.from({ length: 5 }).map((_, index) => (
         <div key={index} className="space-y-1">
           <div className="h-5 rounded-md bg-muted/70 animate-pulse" />

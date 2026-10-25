@@ -35,6 +35,7 @@ export function ActivityBar() {
     <TooltipProvider>
       <nav
         data-testid="activity-bar"
+        aria-label="Main navigation"
         className="w-12 surface-1 flex flex-col items-center pt-space-2 gap-space-1 border-r border-border"
       >
         {navItems.map((item) => {
@@ -46,6 +47,8 @@ export function ActivityBar() {
                   <Link
                     href={item.href}
                     data-testid={`nav-${item.href.slice(1)}`}
+                    aria-label={item.label}
+                    aria-current={isActive ? "page" : undefined}
                     className={`relative w-10 h-10 flex items-center justify-center rounded-lg animate-field-hover ${
                       isActive
                         ? "text-primary"

@@ -84,7 +84,8 @@ export function ComplianceResultsTable({
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      {/* A scroll area has to be reachable by keyboard to be scrolled by it */}
+      <div className="flex-1 overflow-auto" tabIndex={0} role="region" aria-label="Compliance results">
         <table className="w-full text-body-small">
           <thead className="sticky top-0 surface-1 border-b border-border">
             <tr>

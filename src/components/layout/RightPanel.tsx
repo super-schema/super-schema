@@ -52,6 +52,7 @@ export function RightPanel({
           <div className="flex items-center justify-end px-space-2 py-space-1 border-b border-border/50">
             <button
               onClick={onCollapse}
+              aria-label="Close panel"
               className="p-1 rounded-lg hover:bg-accent animate-field-hover"
             >
               <X className="w-4 h-4 text-muted-foreground" />
@@ -69,6 +70,7 @@ export function RightPanel({
             <h3 className="text-heading-3 text-foreground">Detail Panel</h3>
             <button
               onClick={onCollapse}
+              aria-label="Close panel"
               className="p-1 rounded-lg hover:bg-accent animate-field-hover"
             >
               <X className="w-4 h-4 text-muted-foreground" />

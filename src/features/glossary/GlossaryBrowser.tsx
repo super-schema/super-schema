@@ -172,7 +172,7 @@ export function GlossaryBrowser() {
       </div>
 
       {/* Main area: concept grid */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-4" tabIndex={0} role="region" aria-label="Concepts">
         {loading ? (
           <div className="flex items-center justify-center h-full text-caption text-muted-foreground">
             Loading concepts...

@@ -509,7 +509,7 @@ export function TypeSpecPreview({
         </div>
       ) : (
         /* View mode (original) */
-        <div className="flex-1 overflow-auto p-space-3">
+        <div className="flex-1 overflow-auto p-space-3" tabIndex={0} role="region" aria-label="TypeSpec preview">
           {error ? (
             <div className="text-caption text-destructive p-space-2">
               {error}
