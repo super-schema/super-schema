@@ -419,6 +419,17 @@
   animation: auth-shake 400ms ease-in-out;
 }
 
+/* A toast with an action button (the refusal that offers "Regenerate from published and publish"). Sonner lays a toast out as one row, so a
+   button that is 240px wide left the message a column of a few characters: the toast came out 1650px tall, taller than the window, and the
+   button, which is the way out of the refusal, was below the fold and could not be clicked. The button wraps under the message instead. */
+[data-sonner-toaster] [data-sonner-toast]:has([data-button]) {
+  flex-wrap: wrap;
+}
+[data-sonner-toaster] [data-sonner-toast]:has([data-button]) [data-content] {
+  flex: 1 1 12rem;
+  min-width: 12rem;
+}
+
 /* Respect prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   *,

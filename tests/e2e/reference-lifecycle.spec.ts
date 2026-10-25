@@ -222,6 +222,7 @@ test.describe("references between entities", () => {
     await expect(tab.getByTestId("schema-version-button").first()).toHaveAttribute("data-status", "draft");
 
     // The way out: generated from the published versions, so the draft field is not in it, and published
+    // (a toast this long used to be taller than the window, with this button below the fold: it is clicked as a user would)
     await refusal.getByRole("button", { name: REGENERATE_AND_PUBLISH }).click();
     await expect(successToast(page, /regenerated from the published versions and published/)).toBeVisible({ timeout: 60_000 });
     await expect(tab.getByTestId("schema-deployed-badge")).toBeVisible();
@@ -385,7 +386,12 @@ test.describe("a name that two entities answer to", () => {
     const t = await twins(workspace);
     await openEntityPage(page, t.customer.url, t.customer.name);
     const dialog = await openPublishDialog(page);
+    // the question is asked as soon as the publish dialog has found the ambiguity; declining it leaves the blocker and a button to ask again
+    const declined = await expectPickDialog(page, workspace, t);
+    await declined.getByRole("button", { name: "Cancel" }).click();
+    await expect(declined).toBeHidden();
     await expect(dialog.getByTestId("confirm-publish")).toBeDisabled();
+    await expect(dialog.getByTestId("publish-blocker").first()).toBeVisible();
     await dialog.getByTestId("publish-pick-reference").click();
     const pick = await expectPickDialog(page, workspace, t);
     await pick.getByTestId("reference-pick-candidate").filter({ hasText: t.otherProduct.name }).click();
@@ -462,7 +468,9 @@ test.describe("an imported document", () => {
 
     await pasteAndReview(page, workspace.productUrl, text);
     // the review says what it could not load: the low-confidence marker of an unresolved reference
-    await expect(page.getByRole("button", { name: /import 2 assets?/i })).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByRole("button", { name: /import \d+ asset/i })).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator("main")).toContainText(parent);
+    await expect(page.locator("main")).toContainText(child);
     await expect(page.getByTestId("import-dangling-banner")).toContainText("1 reference(s) could not be loaded");
     const parentUrl = await createEntityFromReview(page, workspace.productUrl, parent);
 
