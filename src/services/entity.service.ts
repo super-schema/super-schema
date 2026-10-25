@@ -15,7 +15,8 @@ import {
 import type { Prisma } from "@/generated/prisma/client";
 import { canTransition } from "@/lib/entity-lifecycle";
 import { entityUpdateTouchesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
-import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { generateSlug } from "@/lib/slug";
+import { entityNameMessage } from "@/lib/entity-name";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { createInScope, writeWithUniqueName, ServiceErrorRejection } from "@/services/scoped-create.service";
 import { deleteEntityGuarded, entityDeleteFailure } from "@/services/events/entity-pin-usage";
@@ -49,7 +50,7 @@ export async function createEntity(
   }
 
   const entitySlug = generateSlug(parsed.data.name);
-  const reservedMsg = reservedEntitySlugMessage(parsed.data.name);
+  const reservedMsg = entityNameMessage(parsed.data.name);
   if (reservedMsg) {
     return err({
       code: "VALIDATION_ERROR",
@@ -218,7 +219,7 @@ export async function updateEntity(
 
   // Check if renaming to a reserved slug
   if (parsed.data.name && parsed.data.name !== existing.name) {
-    const reservedMsg = reservedEntitySlugMessage(parsed.data.name);
+    const reservedMsg = entityNameMessage(parsed.data.name);
     if (reservedMsg) {
       return err({
         code: "VALIDATION_ERROR",

@@ -9,7 +9,8 @@ import type { LevelScope } from "@/lib/levels";
 import { renameReservedFields, renameReservedNames, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
 import { isPlainObject } from "@/lib/editable-fields";
 import { genericExtensionEntries, setOwn } from "@/lib/compiler/governance-decorators";
-import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { generateSlug } from "@/lib/slug";
+import { entityNameMessage } from "@/lib/entity-name";
 
 export interface ImportedEntityInput {
   name: string;
@@ -112,7 +113,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
     const name = entity.name.trim();
     if (!(await args.isNameFree(name))) continue;
 
-    const reservedMsg = reservedEntitySlugMessage(name);
+    const reservedMsg = entityNameMessage(name);
     if (reservedMsg) {
       args.skip(reservedMsg);
       continue;

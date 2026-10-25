@@ -103,6 +103,16 @@ describe("createTenantEntityAction", () => {
     });
   });
 
+  it.each(["url", "int32", "Duration", "String"])("rejects a tenant entity named '%s' (a built-in type name) before any database work", async (name) => {
+    const result = await createTenantEntityAction({ name, description: "", fields: [] });
+
+    expect(result).toEqual({ error: expect.stringContaining(`"${name}" is a built-in type name`) });
+    expect(mockGetActiveTenantId).not.toHaveBeenCalled();
+    expect(mockAssertNameAvailable).not.toHaveBeenCalled();
+    expect(mockTx.entity.create).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it("rejects an entity named 'Events' (reserved URL segment) before any database work", async () => {
     const result = await createTenantEntityAction({ name: "Events", description: "", fields: [] });
 

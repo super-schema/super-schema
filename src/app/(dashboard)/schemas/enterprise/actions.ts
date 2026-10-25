@@ -7,7 +7,8 @@ import { revalidatePath } from "next/cache";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { inActiveTenant, unexpectedFailure } from "@/lib/action-context";
 import { FOREIGN_REFERENCE_MESSAGE, fieldsReferenceAllowed } from "@/lib/references/foreign-reference-guard";
-import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { generateSlug } from "@/lib/slug";
+import { entityNameMessage } from "@/lib/entity-name";
 import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
 import { firstInvalidDecimalFactMessage, mapFieldCreateInput } from "@/lib/entity-field-input";
@@ -46,7 +47,7 @@ export async function createTenantEntityAction(data: {
   }
 
   // Reserved URL segments are rejected before any database work.
-  const reservedMsg = reservedEntitySlugMessage(name);
+  const reservedMsg = entityNameMessage(name);
   if (reservedMsg) {
     return { error: reservedMsg };
   }

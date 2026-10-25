@@ -16,7 +16,8 @@ import { parseProtobufDocument } from "@/lib/importers/protobuf.importer";
 import type { MultiEntityImportResult, ParsedField } from "@/lib/importers/types";
 import { validateScope, type LevelScope } from "@/lib/levels";
 import { renameReservedFields, reservedFieldRenamedMessage, reservedNameMessage } from "@/lib/reserved-field-names";
-import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { generateSlug } from "@/lib/slug";
+import { entityNameMessage } from "@/lib/entity-name";
 import { deleteEntity } from "@/services/entity.service";
 import { MAX_FIELD_RENAME_WARNINGS, MAX_NAME_ATTEMPTS, MAX_NOTES_PER_PAYLOAD, MAX_REQUESTED_NAME, boundText } from "@/services/events/import-limits";
 import { createImportedEntities, IMPORT_TRANSACTION_OPTIONS, type ImportedEntityInput } from "@/services/imported-entities";
@@ -153,7 +154,7 @@ export async function createNameAllocator(db: PrismaClient, scope: LevelScope): 
         const suffix = n === 1 ? "" : String(n);
         const candidate = `${requested.slice(0, 128 - suffix.length)}${suffix}`;
         const slug = generateSlug(candidate);
-        const unclaimed = !names.has(candidate.toLowerCase()) && reservedNameMessage(candidate) === null && (kind === "event" || (slug !== "" && !slugs.has(slug) && reservedEntitySlugMessage(candidate) === null));
+        const unclaimed = !names.has(candidate.toLowerCase()) && reservedNameMessage(candidate) === null && (kind === "event" || (slug !== "" && !slugs.has(slug) && entityNameMessage(candidate) === null));
         if (!unclaimed) continue;
         const registry = await assertNameAvailable(db, { name: candidate, ...scope });
         if (!registry.success) {

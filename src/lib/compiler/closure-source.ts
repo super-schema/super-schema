@@ -22,6 +22,7 @@ import { ENTERPRISE_NAMESPACE, JSON_SCHEMA_LIBRARY_IMPORT } from "./governance-d
 import { generateTypeSpecWithDiagnostics, type GeneratorDiagnostic } from "./typespec-generator";
 import { withUnionFieldsAsString } from "./union-fields";
 import { sanitizeIdentifier } from "./typespec-identifiers";
+import { builtInNameConflict } from "./built-in-names";
 
 /** A schema target key as the catalog names it (`json-schema`, `avro`, ...). */
 export type ClosureTarget = string;
@@ -74,7 +75,7 @@ const nameSegment = (s: string): string => s.replace(/[^A-Za-z0-9_]/g, "_");
 function modelNameAtTier(ref: EntityRef, tier: number): string {
   switch (tier) {
     case 0:
-      return sanitizeIdentifier(ref.entity);
+      return builtInSafe(sanitizeIdentifier(ref.entity));
     case 1:
       return sanitizeIdentifier(`${nameSegment(ref.product)}_${nameSegment(ref.entity)}`);
     case 2:
@@ -113,9 +114,23 @@ export function closureModelNames(refs: readonly EntityRef[], reserved: Readonly
   }
 }
 
-/** A namespace segment: sanitized (keywords prefixed, invalid characters replaced), never equal to the reserved root. */
+/**
+ * The suffix that qualifies a name that is a built-in type name (`url`, `int32`, `String`: see `builtInNameConflict`). A namespace named
+ * like a scalar hides the scalar from every model beside it (an unqualified `url` resolves to the namespace), and a Java class named
+ * like `String` shadows `java.lang.String` where it is imported. The suffix is LETTERS (the Java and Avro emitters PascalCase a name and
+ * drop an underscore, so `String_` would be `String` again) and deterministic. Entities stored before these names were refused still
+ * emit valid output because of it.
+ */
+export const BUILT_IN_NAME_SUFFIX = "_Entity";
+
+/** A sanitized identifier that never shadows a built-in type: `url` -> `url_Entity`. */
+function builtInSafe(identifier: string): string {
+  return builtInNameConflict(identifier) ? `${identifier}${BUILT_IN_NAME_SUFFIX}` : identifier;
+}
+
+/** A namespace segment: sanitized (keywords prefixed, invalid characters replaced), never equal to the reserved root or a built-in type name. */
 function namespaceSegment(segment: string): string {
-  const safe = sanitizeIdentifier(segment);
+  const safe = builtInSafe(sanitizeIdentifier(segment));
   return safe === CLOSURE_ROOT_NAMESPACE ? `_${safe}` : safe;
 }
 

@@ -178,6 +178,16 @@ describe("createNameAllocator: reserved names", () => {
     expect(await allocator.data.allocate("hasownproperty", "entity")).toEqual({ success: true, data: "hasownproperty" });
   });
 
+  it("skips a requested ENTITY name that is a built-in type name (url -> url2, String -> String2); an event may be named so", async () => {
+    const entities = await createNameAllocator(db(), scope);
+    if (!entities.success) throw new Error(entities.error.message);
+    expect(await entities.data.allocate("url", "entity")).toEqual({ success: true, data: "url2" });
+    expect(await entities.data.allocate("String", "entity")).toEqual({ success: true, data: "String2" });
+    expect(await entities.data.allocate("Customer", "entity")).toEqual({ success: true, data: "Customer" });
+    // (an event is not a model of a schema: its name is not an entity name)
+    expect(await entities.data.allocate("url", "event")).toEqual({ success: true, data: "url" });
+  });
+
   it("resolveEntityNames reports the rename (ENTITY_RENAMED says the name is used or reserved) and the entity gets the allocated name", async () => {
     const allocator = await createNameAllocator(db(), scope);
     if (!allocator.success) throw new Error(allocator.error.message);

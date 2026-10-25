@@ -227,6 +227,16 @@ describe("createEntityWithFieldsAction session reconciliation", () => {
       expect(mockTx.entity.create).not.toHaveBeenCalled();
     });
 
+    it.each(["url", "int32", "Duration", "String", "bool"])("rejects an entity named '%s' (a built-in type name) before any database work", async (name) => {
+      const result = await createEntityWithFieldsAction("domain-1", { name, description: "", fields: [] });
+
+      expect(result).toEqual({ error: expect.stringContaining("is a built-in type name") });
+      expect((result as { error: string }).error).toContain(`"${name}"`);
+      expect(mockEnsureDefaultProductId).not.toHaveBeenCalled();
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
     it("rejects an entity named 'Events' (reserved URL segment)", async () => {
       const result = await createEntityWithFieldsAction("domain-1", {
         name: "Events",

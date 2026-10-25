@@ -177,6 +177,18 @@ describe("Entity Service", () => {
       }
     });
 
+    it.each(["url", "int32", "Duration", "String", "Object"])("rejects '%s' as an entity name (a built-in type name), creating nothing", async (name) => {
+      const result = await createEntity({ name, domainId: "dom-1", description: "" }, mockCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+        expect(result.error.message).toContain(`"${name}" is a built-in type name`);
+        expect(result.error.message).toContain("choose another name");
+      }
+      expect(mockTx.entity.create).not.toHaveBeenCalled();
+    });
+
     it("rejects 'Events' entity name (reserved for event spec routes)", async () => {
       const result = await createEntity(
         { name: "Events", domainId: "dom-1", description: "Reserved for event spec routes" },
@@ -238,6 +250,29 @@ describe("Entity Service", () => {
       productId: "prd-1",
       status: "DRAFT",
     };
+
+    it.each(["url", "int32", "String"])("rejects renaming to '%s' (a built-in type name)", async (name) => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);
+
+      const result = await updateEntity("ent-1", { name }, mockCtx);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe("VALIDATION_ERROR");
+        expect(result.error.message).toContain(`"${name}" is a built-in type name`);
+      }
+      expect(mockTx.entity.update).not.toHaveBeenCalled();
+    });
+
+    it("an entity that ALREADY has a built-in name can still be edited (only a change of the name is refused)", async () => {
+      vi.mocked(prisma.entity.findUnique).mockResolvedValue({ ...existing, name: "url" } as never);
+      mockTx.entity.update.mockResolvedValue({ ...existing, name: "url", description: "x" } as never);
+      vi.mocked(prisma.entity.update).mockResolvedValue({ ...existing, name: "url", description: "x" } as never);
+
+      const result = await updateEntity("ent-1", { name: "url", description: "x" }, mockCtx);
+
+      expect(result.success).toBe(true);
+    });
 
     it("rejects renaming to 'Specs' (reserved URL segment)", async () => {
       vi.mocked(prisma.entity.findUnique).mockResolvedValue(existing as never);

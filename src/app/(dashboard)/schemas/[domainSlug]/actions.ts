@@ -5,7 +5,8 @@ import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
-import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
+import { generateSlug } from "@/lib/slug";
+import { entityNameMessage } from "@/lib/entity-name";
 import { firstReservedFieldNameMessage, renameReservedFields, renameReservedNames, reservedFieldNameMessage, reservedFieldRenamedMessage, reservedNameRenamedMessage } from "@/lib/reserved-field-names";
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
@@ -138,7 +139,7 @@ async function createProductEntity(params: {
   const { userId, domainId, description, fields } = params;
   const name = params.name.trim();
 
-  const reservedMsg = reservedEntitySlugMessage(name);
+  const reservedMsg = entityNameMessage(name);
   if (reservedMsg) {
     return { error: reservedMsg };
   }
