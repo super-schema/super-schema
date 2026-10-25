@@ -398,3 +398,23 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   `src/lib/typespec-official/emitter.service.ts` (`getTspBinaryPath`, `findUninstalledLibrary`), `src/services/health.service.ts` (`defaultEmitterCheck`).
 - cost to fix: vendor the five sibling packages into the repository (as `vendor/typespec-enterprise` is) or publish them with pinned versions, then give the runtime stage the emitter packages
   and the `tsp` bin (`npm ci --omit=dev` there, or `outputFileTracingIncludes` for every emitter plus a `.bin/tsp` shim) and prove it with a `docker build` + one generation in CI.
+
+## KD-041: a string enum of more than 5,000 values is imported with its first 5,000 and a warning, on the shared enum and on every field that names it
+
+- status: no-test (a documented trade-off, pinned by unit tests of the bound and not by the browser suite: the limit protects the response size)
+- symptom: a closed value set with more than `MAX_ENUM_VALUES` (5,000) symbols (ICD-10, NAICS, currency x locale lists) imports "successfully" with the first 5,000 and one warning
+  ("Enum ... has N values; only the first 5000 are kept"), for the shared enum and for each field that uses it. The complete list stays only in the entity's `originalContent`, so the generated
+  schema accepts fewer values than the source did.
+- where: `src/lib/importers/jsonschema.importer.ts` (`boundEnumSymbols`, `MAX_ENUM_VALUES`).
+- why it is not fixed here: refusing the import (a PARSE_ERROR with the count) is a product decision between a partial import with a warning and no import at all; the 8 MB response limit already
+  covers the amplification the bound was added for, so the bound could be raised or replaced by a refusal without a new risk. It is not a small, safe change in this wave.
+- cost to fix: decide the policy; for a refusal, `boundEnumSymbols` ends the import with the importer's PARSE_ERROR and the count (and the tests of the bound change from "kept with a warning" to "refused").
+
+## KD-042: a nullable reference to an inline definition (`oneOf: [{ "$ref": ... }, { "type": "null" }]`) does not carry the definition's description or extensions onto the field
+
+- status: no-test (found while testing the importer budgets; the behaviour is the same before and after them, and no test asserts it either way)
+- symptom: `p: { "oneOf": [{ "$ref": "#/$defs/D" }, { "type": "null" }] }` with `D = { "type": "string", "description": "d", "x-owner": "t" }` imports `p` as a nullable string WITHOUT the
+  description `d` and without `x-owner`, where `p: { "$ref": "#/$defs/D" }` keeps both. The nullable wrapper is "the field itself", but the definition its `$ref` names is not folded onto the field
+  (`nestedSchemaNodes` looks through a wrapper member without reporting what its `$ref` brings).
+- where: `src/lib/importers/jsonschema.importer.ts` (`nullableWrapperMembers`, `nestedSchemaNodes`: a view found under a wrapper is walked but not reported; `buildFields` takes the definition views of the field's own `$ref`s only).
+- cost to fix: have `buildFields` add the inline-definition views of the wrapper members to the field's annotation sources, with a test of the shape above (description, vendor key, constraints).
