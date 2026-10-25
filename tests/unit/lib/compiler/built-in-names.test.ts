@@ -16,7 +16,6 @@ describe("builtInNameConflict", () => {
     ["bytes", ["TypeSpec", "Protobuf", "Avro"]],
     ["double", ["Protobuf", "Avro"]],
     ["null", ["TypeSpec", "Avro"]],
-    ["enum", ["Avro"]],
     ["fixed", ["Avro"]],
     ["String", ["TypeSpec", "Java", "Protobuf", "Avro"]],
     ["Object", ["Java"]],
@@ -34,11 +33,18 @@ describe("builtInNameConflict", () => {
   });
 
   it("compares case-insensitively on the sanitized identifier: Url, URL, STRING, Int32 and `my url` handling", () => {
-    for (const name of ["Url", "URL", "STRING", "Int32", "DURATION", "record", " url "]) expect(builtInNameConflict(name), name).not.toBeNull();
+    for (const name of ["Url", "URL", "STRING", "Int32", "DURATION", "Record", " url "]) expect(builtInNameConflict(name), name).not.toBeNull();
     // "my url" sanitizes to my_url: not a built-in; neither is a name that merely contains one
     for (const name of ["my url", "Urls", "Stringer", "Order", "Customer", "Address", "Event", "Item", "OrderItem", "Order_Item", "Int32Value", ""]) {
       expect(builtInNameConflict(name), name).toBeNull();
     }
+  });
+
+  it("a name that IS a TypeSpec keyword is not a conflict: it is written with a _ prefix everywhere already (model, enum, union, record, void)", () => {
+    // (an imported JSON Schema titled "model" must still import: the corpus case js-title-reserved)
+    for (const name of ["model", "enum", "union", "record", "void", "never", "unknown", "namespace", "interface"]) expect(builtInNameConflict(name), name).toBeNull();
+    // ... while the same word capitalised is a type name, not a keyword
+    for (const name of ["Model", "Record", "Array"]) expect(builtInNameConflict(name), name).not.toBeNull();
   });
 
   it("names the name and the languages, and says to choose another", () => {

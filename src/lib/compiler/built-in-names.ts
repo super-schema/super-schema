@@ -13,7 +13,7 @@
  * one, `my url` (`my_url`) is not, and neither is a name that merely contains a built-in (`Urls`). Pure.
  */
 
-import { TYPESPEC_STD_TYPE_NAMES } from "./typespec-identifiers";
+import { TYPESPEC_STD_TYPE_NAMES, sanitizeIdentifier } from "./typespec-identifiers";
 
 export type BuiltInNameConflict = { name: string; languages: string[] };
 
@@ -43,8 +43,12 @@ const LANGUAGES: ReadonlyArray<{ language: string; names: ReadonlySet<string> }>
   { language: "Avro", names: new Set(AVRO) },
 ];
 
-/** The identifier a name makes: trimmed, invalid characters `_`, lowercase. */
-const identifierOf = (name: string): string => name.trim().replace(/[^A-Za-z0-9_]/g, "_").toLowerCase();
+/**
+ * The identifier a name makes, as the generators spell it (`sanitizeIdentifier`: invalid characters `_`, a TypeSpec keyword gets a `_` prefix),
+ * lowercase. A name that IS a TypeSpec keyword (`model`, `enum`, `union`) is therefore not a conflict: it is written `_model` everywhere
+ * already. The reflection type `Model` (a capital: not a keyword) is.
+ */
+const identifierOf = (name: string): string => sanitizeIdentifier(name.trim()).toLowerCase();
 
 /** The languages `name` is a built-in type name of, or null when it is not one (see the module note). */
 export function builtInNameConflict(name: string): BuiltInNameConflict | null {
