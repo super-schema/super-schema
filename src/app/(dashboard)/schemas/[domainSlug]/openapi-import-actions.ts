@@ -68,7 +68,10 @@ async function runOpenApiImport(content: string): Promise<Result<TypeSpecImportR
     return err({
       code: "PARSE_ERROR",
       message: parsed.message.replace("The YAML document", "The OpenAPI document"),
-      suggestedFix: "Write the repeated parts out in full instead of using YAML aliases, or use $ref to components.",
+      suggestedFix:
+        parsed.kind === "size"
+          ? "Convert the document to JSON (accepted up to 2 MB), or split it into smaller documents."
+          : "Write the repeated parts out in full instead of using YAML aliases, or use $ref to components.",
     });
   }
   if (!parsed.ok) {

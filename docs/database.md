@@ -62,6 +62,7 @@ npm run dev
 | `HEALTH_DB_TIMEOUT_MS` | `5000` | `GET /api/v1/health`: a database that has not answered within this many milliseconds, or fails, makes the probe `unhealthy` (HTTP 503); a hung database cannot hang the probe. The answer never carries the database's own error (it is logged by the server) |
 | `SCHEMA_IMPORT_GIT_MODE` | `restricted` | JSON Schema "From URL": `any` or `restricted`. Git-host URLs are fetched with the server's own `gh` credentials; unknown value = `restricted` |
 | `SCHEMA_IMPORT_GIT_SCOPES` | (empty) | Comma-separated `owner` or `owner/repo` (case-insensitive) git repositories allowed in `restricted` mode; they hold for the root URL and for every `$ref` into a git host (an `owner` entry covers all its repositories, `owner/repo` only that one). Empty = git-host import disabled |
+| `SCHEMA_IMPORT_MAX_YAML_BYTES` | `524288` | Schema import (JSON Schema, OpenAPI, format detection): a YAML document longer than this many bytes is refused BEFORE it is parsed (`YAML documents are limited to 512 KiB; convert to JSON for larger schemas`): the YAML parser alone costs seconds and about 1 GB for a 1.8 MB document. JSON is not affected (it keeps the importers' 2 MB limit). Not a positive whole number = the default |
 
 ## npm scripts
 

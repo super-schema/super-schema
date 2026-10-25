@@ -85,6 +85,8 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   "SCHEMA_IMPORT_GIT_MODE",
   "SCHEMA_IMPORT_GIT_SCOPES",
   "SCHEMA_CLASSIFICATION_VALUE_MAP",
+  // src/lib/importers/safe-yaml.ts: the size a YAML document may have before it is parsed (empty = its default, 512 KiB)
+  "SCHEMA_IMPORT_MAX_YAML_BYTES",
   // src/lib/event-specs/validation: the parser worker pool (empty = its defaults; ASYNCAPI_PARSER_IN_PROCESS=1 would move the parser into the server process)
   "ASYNCAPI_PARSER_IN_PROCESS",
   "ASYNCAPI_PARSER_WORKER",

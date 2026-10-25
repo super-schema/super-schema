@@ -1773,7 +1773,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
 }
 
 /** JSON first; anything that is not JSON-shaped is tried as YAML (JSON Schema is often authored in YAML). */
-function parseStructured(content: string): { value: JsonSchemaNode | null; message?: string } {
+function parseStructured(content: string): { value: JsonSchemaNode | null; message?: string; tooBig?: boolean } {
   try {
     return { value: JSON.parse(content) };
   } catch {
@@ -1782,7 +1782,7 @@ function parseStructured(content: string): { value: JsonSchemaNode | null; messa
     // Bounded parse: a YAML alias fan-out is refused with its own message, never expanded (see safe-yaml.ts).
     const parsed = parseYamlBounded(trimmed);
     if (parsed.ok) return { value: parsed.value as JsonSchemaNode };
-    return parsed.kind === "syntax" ? { value: null } : { value: null, message: parsed.message };
+    return parsed.kind === "syntax" ? { value: null } : { value: null, message: parsed.message, ...(parsed.kind === "size" ? { tooBig: true } : {}) };
   }
 }
 
@@ -1846,14 +1846,16 @@ function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndex
 }
 
 function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget): Result<MultiEntityImportResult> {
-  const { value: schema, message: rejected } = parseStructured(content);
+  const { value: schema, message: rejected, tooBig } = parseStructured(content);
   if (schema === null) {
     return err({
       code: "PARSE_ERROR",
       message: rejected ?? "Invalid JSON: could not parse JSON Schema",
-      suggestedFix: rejected
-        ? "Write the repeated parts out in full instead of using YAML aliases, or use $ref to a definition."
-        : "Ensure the content is a valid JSON Schema document (JSON or YAML).",
+      suggestedFix: tooBig
+        ? "Convert the schema to JSON (accepted up to 2 MB), or split it into smaller documents."
+        : rejected
+          ? "Write the repeated parts out in full instead of using YAML aliases, or use $ref to a definition."
+          : "Ensure the content is a valid JSON Schema document (JSON or YAML).",
     });
   }
 
