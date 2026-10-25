@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Shield } from "lucide-react";
 import { createLatestRequestGuard } from "@/lib/latest-request";
 import { ComplianceFilterSidebar } from "@/features/compliance/ComplianceFilterSidebar";
@@ -51,8 +51,17 @@ export default function CompliancePage() {
   const [gapsLoading, setGapsLoading] = useState(false);
 
   // The latest request of each list: an older answer that arrives late must not replace a newer one (src/lib/latest-request.ts)
-  const fieldsRequest = useRef(createLatestRequestGuard());
-  const auditRequest = useRef(createLatestRequestGuard());
+  // Made once per page (a lazy initial state, not a new object on every render); invalidated when the page unmounts, so an answer that comes
+  // after it is dropped too.
+  const [guards] = useState(() => ({ fields: createLatestRequestGuard(), gaps: createLatestRequestGuard(), audit: createLatestRequestGuard() }));
+  useEffect(
+    () => () => {
+      guards.fields.invalidate();
+      guards.gaps.invalidate();
+      guards.audit.invalidate();
+    },
+    [guards],
+  );
 
   // Audit trail state
   const [auditFilters, setAuditFilters] = useState<AuditTrailFilter>({});
@@ -95,7 +104,7 @@ export default function CompliancePage() {
   }, [activeTab, auditFilters, auditPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function fetchFields() {
-    const isLatest = fieldsRequest.current.start();
+    const isLatest = guards.fields.start();
     setLoading(true);
     setError(null);
     try {
@@ -121,6 +130,7 @@ export default function CompliancePage() {
   }
 
   async function fetchGaps() {
+    const isLatest = guards.gaps.start();
     setGapsLoading(true);
     setError(null);
     try {
@@ -130,6 +140,7 @@ export default function CompliancePage() {
         body: JSON.stringify({ filters: {} }),
       });
       const data = await res.json().catch(() => null);
+      if (!isLatest()) return;
       if (res.ok && data?.success) {
         setGaps(data.data.gaps);
         setGapSummary(data.data.summary);
@@ -137,14 +148,14 @@ export default function CompliancePage() {
         setError(data?.error || `Failed to load gaps (${res.status})`);
       }
     } catch {
-      setError("Network error — could not reach the compliance service.");
+      if (isLatest()) setError("Network error — could not reach the compliance service.");
     } finally {
-      setGapsLoading(false);
+      if (isLatest()) setGapsLoading(false);
     }
   }
 
   async function fetchAuditTrail() {
-    const isLatest = auditRequest.current.start();
+    const isLatest = guards.audit.start();
     setAuditLoading(true);
     setError(null);
     try {

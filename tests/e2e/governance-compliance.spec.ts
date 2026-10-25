@@ -35,7 +35,9 @@ import {
   createEntityInTenant,
   createFieldRow,
   createGovernanceRequest,
+  createIsolatedWorkspaceRows,
   createSecondTenant,
+  deleteIsolatedWorkspaceRows,
   deleteGovernanceRequestsByEntity,
   deleteTenantWithDomain,
   disconnectDb,
@@ -536,6 +538,11 @@ const rowFor = (page: Page, field: string): Locator => centerPanel(page).locator
 const gapRows = (page: Page, entity: string, extra = ""): Locator => centerPanel(page).locator(`[data-testid="compliance-gap-row"][data-entity="${entity}"]${extra}`);
 const complianceTab = (page: Page, name: "Query" | "Gaps" | "Audit Trail"): Locator => centerPanel(page).getByRole("button", { name, exact: true });
 
+/** The page's own error box (a request that failed: "Failed to load gaps (500)"): it is checked first so that a missing row says WHY it is missing. */
+async function expectNoComplianceError(page: Page): Promise<void> {
+  await expect(centerPanel(page).getByTestId("compliance-error"), "the compliance page shows an error instead of the data").toHaveCount(0);
+}
+
 /** An entity with fields that cover every case the compliance pages tell apart. */
 async function seedComplianceEntity(entity: { id: string }): Promise<void> {
   const key = await pg().query(`SELECT id FROM fields WHERE "entityId" = $1 AND name = 'id'`, [entity.id]);
@@ -675,19 +682,34 @@ test.describe("compliance: query, gaps, audit trail and exports", () => {
     await expect(page).toHaveURL(new RegExp(`/schemas/${workspace.domainSlug}/${workspace.productSlug}/${workspace.entities[0].slug}`));
   });
 
-  test("a gap goes away when the field is fixed: a PII field with anonymization and retention is no gap", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    const entity = workspace.entities[0];
-    const { id: piiId } = await createFieldRow(entity.id, { name: "ssn", classification: "PII" });
-    await openCompliance(page);
-    await complianceTab(page, "Gaps").click();
-    const gaps = gapRows(page, entityName, '[data-field="ssn"]');
-    await expect(gaps).toHaveCount(2); // no anonymization, no retention
+  // In a tenant of its own, viewed through the `active_tenant` cookie: the gaps are computed from every field of the VIEWED tenant, and in the
+  // default tenant that is whatever the other specs of a whole-suite run have made by then. This test failed once in such a run (no row of its entity
+  // for 15 s) and passed alone; with only its own data the answer is small and does not depend on the rest.
+  test("a gap goes away when the field is fixed: a PII field with anonymization and retention is no gap", { tag: ["@regression"] }, async ({ authedPage: page, context, baseURL }) => {
+    if (!baseURL) throw new Error("the spec needs a baseURL");
+    const home = await createIsolatedWorkspaceRows();
+    try {
+      await context.addCookies([{ name: "active_tenant", value: home.tenantId, url: baseURL }]);
+      const { id: piiId } = await createFieldRow(home.entity.id, { name: "ssn", classification: "PII" });
+      const gapsView = centerPanel(page).getByTestId("compliance-gaps-view");
+      const emptyState = centerPanel(page).getByTestId("gaps-empty-state");
 
-    await setFieldGovernance(piiId, { classification: "PII", policy: { retention: "1 year", anonymization: "mask" } });
-    await openCompliance(page);
-    await complianceTab(page, "Gaps").click();
-    await expect(centerPanel(page).getByTestId("compliance-gaps-view").or(centerPanel(page).getByTestId("gaps-empty-state"))).toBeVisible();
-    await expect(gaps).toHaveCount(0);
+      await openCompliance(page);
+      await complianceTab(page, "Gaps").click();
+      await expect(gapsView.or(emptyState)).toBeVisible();
+      await expectNoComplianceError(page);
+      const gaps = gapRows(page, home.entity.name, '[data-field="ssn"]');
+      await expect(gaps).toHaveCount(2); // no anonymization, no retention
+
+      await setFieldGovernance(piiId, { classification: "PII", policy: { retention: "1 year", anonymization: "mask" } });
+      await openCompliance(page);
+      await complianceTab(page, "Gaps").click();
+      await expect(gapsView.or(emptyState)).toBeVisible();
+      await expectNoComplianceError(page);
+      await expect(gaps).toHaveCount(0);
+    } finally {
+      await deleteIsolatedWorkspaceRows(home);
+    }
   });
 
   test("the Audit Trail lists an action performed in the app with its user, action, type and id, filters by id and by action, and expands to the record", { tag: ["@regression"] }, async ({
