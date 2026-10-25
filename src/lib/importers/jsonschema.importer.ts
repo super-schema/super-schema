@@ -46,6 +46,7 @@ import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { constraintAppliesTo, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { pickRootEntity } from "./multi-asset";
 import { getTypeInfo } from "@/lib/data-types";
+import { primaryKeyIneligibility } from "@/lib/schema-targets/requirements";
 import type {
   ParsedEntity,
   ParsedEnum,
@@ -1655,7 +1656,7 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       description: annotationSources.find((s) => typeof s.description === "string")?.description,
       confidence: resolved.confidence,
       originalType: resolved.originalType,
-      // Heuristic: a required property literally named "id" is the key.
+      // Heuristic: a required property literally named "id" is the key (unless its type cannot be one: see below).
       isKey: isRequired && name === "id",
       ...(nullableValue ? { nullableType: true as const, ...(isRequired ? { requiredNullable: true as const } : {}) } : {}),
       format: resolved.format,
@@ -1797,6 +1798,10 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
         field.danglingRef = { ref: item.originalType, reason: DANGLING_REASON, element: true };
       }
     }
+
+    // A key must be able to identify a row: an `id` that is an array, an object, a union or an unresolved reference is a field, not the key
+    // (the same rule the primary-key dialog and `setEntityPrimaryKeyAction` use), so the DDL targets still ask which field is.
+    if (field.isKey && primaryKeyIneligibility({ name, type: field.type, dangling: field.danglingRef !== undefined }) !== null) field.isKey = false;
 
     return field;
   });

@@ -80,8 +80,9 @@ export function primaryKeyRequirement(entity: RequirementEntityShape): MissingRe
   };
 }
 
+/** A key counts only when it can identify a row (the eligibility rule): an `id` typed as an array or a dangling reference is flagged, but is no key. */
 const primaryKeyCheck: RequirementCheck = (entity) =>
-  entity.fields.some((field) => field.isKey) ? null : primaryKeyRequirement(entity);
+  entity.fields.some((field) => field.isKey && primaryKeyIneligibility(field) === null) ? null : primaryKeyRequirement(entity);
 
 const REQUIREMENTS_BY_TARGET: Readonly<Record<string, readonly RequirementCheck[]>> = {
   bigquery: [primaryKeyCheck],
