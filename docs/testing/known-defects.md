@@ -95,16 +95,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
   alone (a Git export of it) has no precision.
 - where: `typespec-generator.ts` / `typespec-parser.ts` have no spelling for it; `merge-fields.ts` does not touch the `precision` / `scale` columns.
 
-## KD-012: the @slow jsonschema matrix is red until multi-entity Task 12 removes its stale entries
-
-- status: no-test (the @slow jsonschema matrix is itself the red signal; it is to be removed, not pinned, by multi-entity Task 12)
-- symptom: the nightly (`@slow`) JSON Schema matrix fails. It still lists entries in `MULTI_MODEL_KNOWN` / `knownSync` for cases the
-  multi-entity import has since fixed (they now pass where the matrix expects a failure), and it has no expectation yet for the protobuf
-  emitter's nested array of an array of references (the output has a nested array where the matrix says nothing).
-- where: `tests/e2e/jsonschema-lifecycle.spec.ts` and `tests/e2e/fixtures/jsonschema-variations.ts` (`MULTI_MODEL_KNOWN`, `knownSync`).
-- to remove: multi-entity Task 12 drops the stale `MULTI_MODEL_KNOWN` / `knownSync` entries and adds a protobuf nested-array expectation for
-  array-of-refs. That task deletes this entry with them.
-
 ## KD-013: the Type Mapping Reference has no row for OpenAPI 3, JSON Schema and the Java POJO
 
 - status: no-test (a design question: the page tabulates "the technologies that have a mapping table", and these have none under their catalog key; `type-mappings.spec.ts` CHARACTERIZES it: the first test lists exactly the five technologies, so the day the table gains a row that test fails and is edited with this entry)

@@ -18,7 +18,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { test, expect } from "./helpers/fixtures";
-import { canon, requiredOf } from "./helpers/artifact-text";
+import { artifactProblems, canon, requiredOf } from "./helpers/artifact-text";
 import { deleteDomainsByName, disconnectDb } from "./helpers/db";
 import {
   ENABLED_TARGETS,
@@ -119,8 +119,9 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
           problems.push(`${t.key}: ${g.error.slice(0, 300)}`);
           continue;
         }
-        if (g.code.trim().length < 40) problems.push(`${t.key}: output is empty or trivial (${g.code.length} chars)`);
-        else if (!norm(g.code).includes(norm(v.entityName).slice(0, 24))) problems.push(`${t.key}: output never names the entity ${v.entityName}`);
+        // Per FILE: a multi-file output carries the entity's name in every `===== path =====` header, so a check on the whole text could
+        // never fail. Every file must have content, and the entity's own file must name the entity in that content.
+        for (const problem of artifactProblems(g.code, v.entityName)) problems.push(`${t.key}: ${problem}`);
       }
       mkdirSync(`${EVIDENCE}/${v.id}`, { recursive: true });
       for (const [k, g] of outputs) writeFileSync(`${EVIDENCE}/${v.id}/${k}.txt`, g.code || `ERROR: ${g.error}`);
@@ -134,7 +135,6 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
 
   await step("json-schema content", async () => {
     const g = jsonSchema();
-    if (v.known?.["json-schema"]) return; // documented defect: nothing generated to read (the generate step requires the failure)
     expect(g && !g.error, "json-schema generated").toBeTruthy();
     for (const s of v.jsonSchema) expect(canon(g!.code), `JSON Schema has ${s}`).toContain(s);
     if (v.required) {
@@ -145,7 +145,6 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
   });
   await step("openapi content", async () => {
     const g = openapi();
-    if (v.known?.openapi3) return;
     expect(g && !g.error, "openapi3 generated").toBeTruthy();
     for (const s of v.openapi) expect(canon(g!.code), `OpenAPI has ${s}`).toContain(s);
     if (v.required) {
@@ -163,10 +162,6 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     await openSchemasTab(page);
     const target = ENABLED_TARGETS.find((t) => t.key === "json-schema")!;
     const g = await generateTarget(page, target.displayName, { primaryKey: v.primaryKey });
-    if (v.known?.["json-schema"]) {
-      expect(g.error, "json-schema still has its known defect").toMatch(v.known["json-schema"]!.match);
-      return;
-    }
     writeFileSync(`${EVIDENCE}/${v.id}/json-schema-after-rename.txt`, g.code || `ERROR: ${g.error}`);
     expect(g.error, g.error).toBeUndefined();
     expect(canon(g.code)).toContain(`"${to}"`);
@@ -174,10 +169,8 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     // The sibling DDL target sees the same rename.
     const pg = ENABLED_TARGETS.find((t) => t.key === "postgresql")!;
     const d = await generateTarget(page, pg.displayName, { primaryKey: v.primaryKey?.map((k) => (k === from ? to : k)) });
-    if (!v.known?.postgresql) {
-      expect(d.error, d.error).toBeUndefined();
-      expect(norm(d.code)).toContain(norm(to));
-    }
+    expect(d.error, d.error).toBeUndefined();
+    expect(norm(d.code)).toContain(norm(to));
   });
 
   await step("typespec source edit + sync + regenerate", async () => {
@@ -188,12 +181,8 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     expect(edited).not.toBe(source);
     mkdirSync(`${EVIDENCE}/${v.id}`, { recursive: true });
     writeFileSync(`${EVIDENCE}/${v.id}/typespec-before-sync.tsp`, edited);
+    // An entity whose source names another entity's model saves too: the reference resolves to that entity (multi-entity emission).
     const saved = await saveTypeSpecSource(page, edited);
-    if (v.knownSync) {
-      expect(saved.ok, `known defect "${v.knownSync.why}" no longer reproduces: remove knownSync from the table`).toBe(false);
-      await expect(page.locator("main")).toContainText(v.knownSync.match);
-      return;
-    }
     expect(saved.ok, saved.message).toBe(true);
     await openEditor(page);
     await expect(fieldName(page, "e2e_added")).toBeVisible({ timeout: 30_000 });
@@ -202,7 +191,6 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     await openSchemasTab(page);
     const target = ENABLED_TARGETS.find((t) => t.key === "json-schema")!;
     const g = await generateTarget(page, target.displayName, { primaryKey: v.primaryKey });
-    if (v.known?.["json-schema"]) return;
     writeFileSync(`${EVIDENCE}/${v.id}/json-schema-after-sync.txt`, g.code || `ERROR: ${g.error}`);
     expect(g.error, g.error).toBeUndefined();
     expect(g.code).toContain("e2e_added");

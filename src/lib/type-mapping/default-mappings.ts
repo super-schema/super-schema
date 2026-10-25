@@ -248,7 +248,9 @@ const PROTOBUF_MAPPINGS: DefaultMappingEntry[] = [
   { sourceType: "array", targetFormat: "protobuf", mappedType: "repeated", isLossy: false },
   { sourceType: "map", targetFormat: "protobuf", mappedType: "map", isLossy: false },
   { sourceType: "object", targetFormat: "protobuf", mappedType: "google.protobuf.Struct", isLossy: true, lossDescription: "Nested object emitted as dynamic google.protobuf.Struct — nested field types are not preserved" },
-  { sourceType: "reference", targetFormat: "protobuf", mappedType: "message", isLossy: true, lossDescription: "Cross-entity references are not emitted yet: the referenced entity's message is not in the same compile unit, so protobuf emission fails with \"Unknown identifier\" (multi-model emission gap). The intended mapping is a reference to the referenced entity's message." },
+  // A reference is the referenced entity's own message, in its own package and `.proto` file, which the referencing file `import`s
+  // (multi-entity emission: the generation writes one file per entity of the reference closure). Not lossy, like the OpenAPI `$ref`.
+  { sourceType: "reference", targetFormat: "protobuf", mappedType: "message", isLossy: false },
 ];
 
 // ---------------------------------------------------------------------------

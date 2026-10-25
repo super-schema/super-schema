@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { bundlePreviewFiles } from "../../e2e/helpers/preview-text";
-import { canon, requiredOf, rootFirst } from "../../e2e/helpers/artifact-text";
+import { artifactProblems, canon, requiredOf, rootFirst } from "../../e2e/helpers/artifact-text";
 
 const SCHEMA = "https://json-schema.org/draft/2020-12/schema";
 
@@ -150,5 +150,40 @@ describe("requiredOf", () => {
 
   it("is null for an artifact that has no parseable document", () => {
     expect(requiredOf("CREATE TABLE t (\n  id INT64\n) ;: [", "Ticket")).toBeNull();
+  });
+});
+
+describe("artifactProblems: per file, never on the whole text", () => {
+  const files = (list: Array<{ path: string; content: string }>) => bundlePreviewFiles(list);
+
+  it("a multi-file output names the entity in every header, so the CONTENT of the entity's own file is what is checked", () => {
+    const text = files([
+      { path: "Account.json", content: JSON.stringify({ $id: "Address.json", type: "object", properties: { city: { type: "string" } } }) },
+      { path: "Address.json", content: JSON.stringify({ $id: "Address.json", type: "object", properties: { city: { type: "string" } } }) },
+    ]);
+    // the old whole-text check passed: "Account" is in a header
+    expect(text).toContain("Account");
+    expect(artifactProblems(text, "Account")).toEqual([`the file of Account (Account.json) never names it`]);
+  });
+
+  it("holds for each target's file naming: json, yaml, proto, avro, java, a bare single file", () => {
+    const body = (name: string) => `// ${name} is defined here, with its fields below`;
+    for (const path of ["Order.json", "openapi.Sales.Orders.Order.yaml", "Sales/Orders/Order.proto", "com.superschema.sales.orders.order.Order.avsc.json", "sales/orders/order/Order.java"]) {
+      expect(artifactProblems(files([{ path, content: body("Order") }, { path: "Address.json", content: body("Address") }]), "Order"), path).toEqual([]);
+    }
+    expect(artifactProblems("CREATE TABLE order_line (\n  id INT64\n);", "OrderLine")).toEqual([]);
+    expect(artifactProblems("CREATE TABLE something_else (\n  id INT64\n);", "OrderLine")).toEqual([expect.stringContaining("never names it")]);
+  });
+
+  it("a file with no content, or a set with no file of the entity, is a problem", () => {
+    expect(artifactProblems(files([{ path: "Order.json", content: "{}" }, { path: "Address.json", content: JSON.stringify({ city: "x".repeat(30) }) }]), "Order")).toContain("Order.json is empty or trivial (2 chars)");
+    const noOwn = artifactProblems(files([{ path: "Address.json", content: "x".repeat(40) }, { path: "Line.json", content: "y".repeat(40) }]), "Order");
+    expect(noOwn).toEqual(["no file is named after the entity Order (files: Address.json, Line.json)"]);
+    expect(artifactProblems("", "Order")).toEqual(["the output is empty or trivial (0 chars)", "the file of Order (the output) never names it"]);
+  });
+
+  it("an inline enum's file counts as the entity's own file too (Ticket_state.json), but the entity's file must still name it", () => {
+    const ok = files([{ path: "Ticket.json", content: JSON.stringify({ $id: "Ticket.json", type: "object" }) }, { path: "Ticket_state.json", content: JSON.stringify({ $id: "Ticket_state.json", enum: ["a"] }) }]);
+    expect(artifactProblems(ok, "Ticket")).toEqual([]);
   });
 });

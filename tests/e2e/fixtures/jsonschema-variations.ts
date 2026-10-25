@@ -41,29 +41,18 @@ export interface Variation {
   /** The key the BigQuery/Spanner/PostgreSQL dialog is answered with (the first offered field when absent). */
   primaryKey?: string[];
   known?: Partial<Record<TargetKey, KnownFailure>>;
-  /** The TypeSpec tab cannot save the entity's own source (it names models the entity has no source for): the save must fail like this. */
-  knownSync?: KnownFailure;
 }
 
 const DRAFT = "https://json-schema.org/draft/2020-12/schema";
 
-/** Reference-field emission gap (accepted, open): a model referencing another resolved model is emitted alone, so the ref is unknown. */
-const MULTI_MODEL_REF: KnownFailure = {
-  match: /invalid-ref|Unknown identifier/,
-  why: "multi-model reference fields fail invalid-ref (accepted open issue)",
-};
-// The DDL targets (BigQuery, PostgreSQL, Spanner) store a model reference as a plain column and generate fine.
-const MULTI_MODEL_KNOWN: Variation["known"] = {
-  avro: MULTI_MODEL_REF,
-  "java-pojo": MULTI_MODEL_REF,
-  openapi3: MULTI_MODEL_REF,
-  "json-schema": MULTI_MODEL_REF,
-  protobuf: MULTI_MODEL_REF,
-};
-/** Same root cause on the TypeSpec tab: the entity's own source declares only its model, so Save cannot resolve the referenced one. */
-const MULTI_MODEL_SYNC: KnownFailure = {
-  match: /invalid-ref|Unknown identifier/,
-  why: "the TypeSpec source of an entity with model-reference fields does not compile (same open issue)",
+/**
+ * The Protobuf emitter has no spelling for an array of arrays (`repeated repeated` does not exist). The documented sibling limitation
+ * `protobuf-nested-array` (tests/fixtures/corpus/known-issues.ts): the Schemas tab shows exactly the emitter's diagnostic. The other
+ * targets write the array of arrays.
+ */
+const PROTOBUF_NESTED_ARRAY: KnownFailure = {
+  match: /@typespec\/protobuf\/nested-array[\s\S]*nested arrays are not supported/,
+  why: "protobuf-nested-array: Protobuf cannot express an array of arrays",
 };
 
 const j = (o: unknown) => JSON.stringify(o);
@@ -104,8 +93,6 @@ export const VARIATIONS: Variation[] = [
     rename: ["status", "account_status"],
     survives: ["x-owner"],
     primaryKey: ["account_id"],
-    known: MULTI_MODEL_KNOWN,
-    knownSync: MULTI_MODEL_SYNC,
   },
   {
     id: "oneof-union",
@@ -133,8 +120,6 @@ export const VARIATIONS: Variation[] = [
     rename: ["payment_id", "id"],
     survives: ["payment_id"],
     primaryKey: ["payment_id"],
-    known: MULTI_MODEL_KNOWN,
-    knownSync: MULTI_MODEL_SYNC,
   },
   {
     id: "nullable-type-arrays",
@@ -266,8 +251,8 @@ export const VARIATIONS: Variation[] = [
     rename: ["order_id", "id"],
     survives: ["order_id"],
     primaryKey: ["order_id"],
-    known: MULTI_MODEL_KNOWN,
-    knownSync: MULTI_MODEL_SYNC,
+    // `matrix` is an array of arrays: every target writes it but Protobuf. Everything else, `lines` (an array of references) included, generates.
+    known: { protobuf: PROTOBUF_NESTED_ARRAY },
   },
   {
     id: "additional-properties",

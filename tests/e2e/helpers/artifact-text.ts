@@ -28,6 +28,26 @@ function isNamedAfter(path: string, entityName: string): boolean {
   return norm(name) === norm(entityName) || norm(last) === norm(entityName);
 }
 
+/**
+ * What is wrong with a generated artifact, per FILE: a file with (almost) no content, and an entity whose own file does not name it. A
+ * multi-file output has the entity's name in the header of every file (`===== Order.json =====`), so a check on the whole text could never
+ * fail: the content of each file is judged, and the entity's own file (the one whose name has the entity's name in it, any extension or
+ * namespace prefix: `Order.json`, `Sales/Orders/Order.proto`, `com.x.order.Order.avsc.json`) must have the name in its content. A single
+ * file (the DDL targets) has no path: its content must name the entity. Empty when everything holds.
+ */
+export function artifactProblems(text: string, entityName: string): string[] {
+  const files = splitBundle(text);
+  const problems: string[] = [];
+  for (const file of files) {
+    if (file.content.trim().length < 20) problems.push(`${file.path === "" ? "the output" : file.path} is empty or trivial (${file.content.trim().length} chars)`);
+  }
+  const key = norm(entityName).slice(0, 24);
+  const own = files.filter((file) => file.path === "" || norm(file.path.slice(file.path.lastIndexOf("/") + 1)).includes(key));
+  if (own.length === 0) problems.push(`no file is named after the entity ${entityName} (files: ${files.map((file) => file.path).join(", ")})`);
+  else if (!own.some((file) => norm(file.content).includes(key))) problems.push(`the file of ${entityName} (${own.map((file) => file.path || "the output").join(", ")}) never names it`);
+  return problems;
+}
+
 /** The files with the one named after the entity first, the others in their order (no match: unchanged, the first file is the root's). */
 export function rootFirst(files: ReadonlyArray<BundleFile>, entityName: string): BundleFile[] {
   const root = files.find((file) => isNamedAfter(file.path, entityName));

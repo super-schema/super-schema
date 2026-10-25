@@ -12,6 +12,7 @@ import { unique } from "./unique";
 import { fillWorkbenchPaste, expectDetailPanelText } from "./workbench";
 import { SCHEMA_TARGETS_FOR_TESTS } from "./targets";
 import { previewSignature, readPreviewFrom, settlePreview, type PreviewSource } from "./preview-text";
+import { artifactProblems } from "./artifact-text";
 import { centerPanel } from "./event-builder";
 
 export { unique };
@@ -271,12 +272,10 @@ export interface KnownTargetFailure {
   why: string;
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-
 /**
  * Generate EVERY target of the catalog on the open Schemas tab and check each artifact: it generated (or failed exactly as `known`
- * says, and a `known` entry that no longer fails is reported as stale), it is not trivial, and it names the entity. `problems` is
- * empty when everything held.
+ * says, and a `known` entry that no longer fails is reported as stale), and, file by file (`artifactProblems`), no file is trivial and
+ * the entity's own file names the entity. `problems` is empty when everything held.
  */
 export async function generateAllTargets(
   page: Page,
@@ -295,8 +294,7 @@ export async function generateAllTargets(
       continue;
     }
     if (g.error) problems.push(`${t.key}: ${g.error.slice(0, 300)}`);
-    else if (g.code.trim().length < 40) problems.push(`${t.key}: output is empty or trivial (${g.code.length} chars)`);
-    else if (!norm(g.code).includes(norm(entityName).slice(0, 24))) problems.push(`${t.key}: output never names the entity ${entityName}`);
+    else for (const problem of artifactProblems(g.code, entityName)) problems.push(`${t.key}: ${problem}`);
   }
   return { outputs, problems };
 }
