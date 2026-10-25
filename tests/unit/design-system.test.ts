@@ -33,6 +33,38 @@ describe("Design System Tokens", () => {
     }
   });
 
+  // FINAL WAVE 2b, G10: --primary was lightened for contrast (#A477B2 -> #A97FB7); every token that is "the primary colour" follows it,
+  // so a focus ring, a chart series, the sidebar's accent and the gradient border are not a second, slightly different purple.
+  describe("the primary colour is one colour", () => {
+    // The dark theme's block (the default theme, and the one the a11y spec scans): `.dark { ... }` up to its closing brace.
+    const darkBlock = /\n\.dark \{([\s\S]*?)\n\}/.exec(globalsCss)?.[1] ?? "";
+    const valueOf = (token: string): string => {
+      const match = new RegExp(`(?:^|[\\s;])${token}:\\s*([^;]+);`).exec(darkBlock);
+      if (!match) throw new Error(`${token} is not defined in the dark theme`);
+      return match[1].trim();
+    };
+    const primary = valueOf("--primary");
+
+    it.each(["--ring", "--chart-1", "--sidebar-primary", "--sidebar-ring"])("%s is --primary", (token) => {
+      expect(valueOf(token).toLowerCase()).toBe(primary.toLowerCase());
+    });
+
+    it("--gradient-border starts at --primary", () => {
+      expect(valueOf("--gradient-border").toLowerCase()).toContain(`linear-gradient(135deg, ${primary.toLowerCase()},`);
+    });
+
+    it("the old brand hex survives only in the comment that explains the change", () => {
+      const withoutComments = globalsCss.replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(withoutComments.toLowerCase()).not.toContain("#a477b2");
+    });
+
+    it("the design-system page lists the primary swatch with the real --primary hex", () => {
+      const page = fs.readFileSync(path.resolve(__dirname, "../../src/app/dev/design-system/page.tsx"), "utf-8");
+      expect(page).toContain(`{ name: "primary", hex: "${primary}", token: "bg-primary" }`);
+      expect(page.toLowerCase()).not.toContain("#a477b2");
+    });
+  });
+
   describe("Classification badge colors", () => {
     it("defines NEVER_STORED badge", () => {
       expect(globalsCss).toContain("badge-never-stored");
@@ -108,7 +140,7 @@ describe("Design System Tokens", () => {
     });
 
     it("defines --gradient-border", () => {
-      expect(globalsCss).toContain("--gradient-border: linear-gradient(135deg, #A477B2, #F5C0C0)");
+      expect(globalsCss).toContain("--gradient-border: linear-gradient(135deg, #A97FB7, #F5C0C0)");
     });
 
     it("defines --transition-spring", () => {

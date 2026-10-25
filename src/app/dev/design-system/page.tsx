@@ -43,7 +43,7 @@ const colors = [
   { name: "foreground", hex: "#e3e1e4", token: "text-foreground" },
   { name: "card", hex: "#1c1c26", token: "bg-card" },
   { name: "popover", hex: "#22222e", token: "bg-popover" },
-  { name: "primary", hex: "#A477B2", token: "bg-primary" },
+  { name: "primary", hex: "#A97FB7", token: "bg-primary" },
   { name: "secondary", hex: "#F5C0C0", token: "bg-secondary" },
   { name: "muted", hex: "#2a2a36", token: "bg-muted" },
   { name: "muted-foreground", hex: "#8a8694", token: "text-muted-foreground" },
