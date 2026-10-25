@@ -53,6 +53,10 @@ import {
 } from "./helpers/lifecycle";
 import { splitBundle } from "./helpers/preview-text";
 
+// Each test is a user journey of several server round trips (a publish, a reference picked, a target or five generated): about 25 s alone and
+// up to a minute with eight workers on one server, against the suite's 60 s. The assertions inside have their own waits; this is only the room.
+test.describe.configure({ timeout: 180_000 });
+
 const REGENERATE_AND_PUBLISH = "Regenerate from published and publish";
 const DRAFT = "https://json-schema.org/draft/2020-12/schema";
 
@@ -369,7 +373,8 @@ test.describe("a name that two entities answer to", () => {
     // generation goes on with the pick: the entity of the OTHER product is in the file set
     await expect(dialog).toBeHidden();
     await expect(successToast(page, /schema generated/)).toBeVisible({ timeout: 60_000 });
-    expect(await filePaths(page)).toEqual([`${t.customer.name}.json`, `${t.twinName}.json`]);
+    // (the toast comes before the versions are reloaded: the list is waited for, not read at once)
+    await expect.poll(() => filePaths(page), { message: "the file list of the new version" }).toEqual([`${t.customer.name}.json`, `${t.twinName}.json`]);
     const files = await fileSet(page);
     // (customer first: the file list puts the entity that was generated before the ones it references)
     expect(JSON.parse(files.get(`${t.customer.name}.json`) ?? "null").properties.twin.$ref).toBe(`${t.twinName}.json`);
