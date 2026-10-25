@@ -28,9 +28,34 @@ export interface CorpusExpectations {
   roundTrip?: false;
 }
 
+/**
+ * Where an entity lives in the tenant, by the NAMES the qualified reference carries (`domain / product / entity`). An absent
+ * `product` is a tenant-level entity (the product segment is the `_tenant` placeholder); an absent `domain` likewise.
+ */
+export interface Placement {
+  domain?: string;
+  product?: string;
+}
+
+/** A published version of a sibling entity: the label (`1.0`) and the fields it froze, which is what a pin to it generates from. */
+export interface PublishedSnapshot {
+  version: string;
+  fields: Array<Partial<PrismaFieldInput> & { name: string; type: string }>;
+}
+
 export interface ModelInput {
   entity: Partial<PrismaEntityInput> & { name: string };
   fields: Array<Partial<PrismaFieldInput> & { name: string; type: string }>;
+  /** Where the entity lives (default: the one domain and product of the corpus, which a JSON Schema document's entities share). */
+  place?: Placement;
+  /** Published versions of the entity (a pin on a reference names one of these). */
+  published?: PublishedSnapshot[];
+  /**
+   * The OTHER entities of the tenant: what the entity's reference fields resolve to (and what they, in turn, reference). They are only
+   * emitted when the closure of the case's entity reaches them, exactly as the app's closure resolver walks the tenant. For a JSON Schema
+   * or TypeSpec case the siblings are the document's other entities (its `$defs` / models) and need not be given.
+   */
+  siblings?: ModelInput[];
 }
 
 export interface CorpusCase {

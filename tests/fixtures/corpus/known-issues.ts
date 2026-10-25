@@ -35,14 +35,37 @@ export interface KnownIssue {
 
 const decoratorsOf = (f: BuiltCase["fields"][number]): { referencedEntityName?: string; unionMembers?: string[] } => (f.decorators ?? {}) as { referencedEntityName?: string; unionMembers?: string[] };
 
-/** The names of every entity / enum / union that the case's OWN document defines or refers to, as the generator may spell them. */
-export function documentNames(built: BuiltCase): Set<string> {
+/**
+ * The names the case's entities REFER to (a reference field's target, a union member) that NO entity of the case's tenant carries, as the
+ * generator may spell them: a reference nothing answers to. A name some entity of the case has is resolved by the closure and is never here.
+ */
+export function unansweredNames(built: BuiltCase): Set<string> {
+  const answered = new Set<string>();
+  for (const member of built.members) { answered.add(member.entity.name); answered.add(sanitizeIdentifier(member.entity.name)); }
+  for (const e of built.imported?.enums ?? []) { answered.add(e.name); answered.add(sanitizeIdentifier(e.name)); }
+  for (const u of built.imported?.unions ?? []) { answered.add(u.name); answered.add(sanitizeIdentifier(u.name)); }
   const names = new Set<string>();
-  const add = (n: string | undefined): void => { if (n) { names.add(n); names.add(sanitizeIdentifier(n)); } };
-  for (const f of built.fields) { add(decoratorsOf(f).referencedEntityName); for (const m of decoratorsOf(f).unionMembers ?? []) add(m); }
-  for (const e of built.imported?.entities ?? []) add(e.name);
-  for (const e of built.imported?.enums ?? []) add(e.name);
-  for (const u of built.imported?.unions ?? []) add(u.name);
+  const add = (n: string | undefined): void => {
+    if (n && !answered.has(n) && !answered.has(sanitizeIdentifier(n))) { names.add(n); names.add(sanitizeIdentifier(n)); }
+  };
+  for (const member of built.members) {
+    for (const f of member.fields) { add(decoratorsOf(f).referencedEntityName); for (const m of decoratorsOf(f).unionMembers ?? []) add(m); }
+  }
+  return names;
+}
+
+/** The union members (`unionMembers` of a field of any entity of the case) that are the name of an entity of the case's tenant, as the generator may spell them. */
+export function unionEntityMembers(built: BuiltCase): Set<string> {
+  const entities = new Set<string>();
+  for (const member of built.members) { entities.add(member.entity.name); entities.add(sanitizeIdentifier(member.entity.name)); }
+  const names = new Set<string>();
+  for (const member of built.members) {
+    for (const f of member.fields) {
+      for (const m of decoratorsOf(f).unionMembers ?? []) {
+        if (entities.has(m) || entities.has(sanitizeIdentifier(m))) { names.add(m); names.add(sanitizeIdentifier(m)); }
+      }
+    }
+  }
   return names;
 }
 
@@ -56,13 +79,36 @@ export const KNOWN_ISSUES: KnownIssue[] = [
     diagnostic: { code: "validate:", message: /TIMESTAMP columns are qualified only as top-level non-repeated columns/ },
   },
   {
-    id: "multi-model-emission-gap", targets: ["json-schema", "openapi3", "avro", "protobuf", "java-pojo"], disposition: "open", owner: "this repo (documented gap: default-mappings.ts reference -> protobuf lossDescription)",
-    issue: "An entity is emitted ALONE (emitOfficialTypeSpecTargetFromData takes one entity), so a field that references another entity of the same document (`$ref: #/$defs/Addr`, a oneOf of refs, a model reference) names a type that is not in the compile unit: `invalid-ref: Unknown identifier X`. Only matched when X is an entity the case's own document defines or refers to. The DB targets store a reference as text and are unaffected.",
+    // Re-judged against closure emission (multi-entity emission, Task 12). The old `multi-model-emission-gap` (an entity emitted ALONE
+    // cannot name the other entities of its document) is gone: every reference to an entity of the tenant resolves through the closure
+    // and is generated and validated as one file per entity. What is left of `invalid-ref` is a reference to a name NO entity answers to.
+    id: "reference-to-missing-entity", targets: ["json-schema", "openapi3", "avro", "protobuf", "java-pojo"], disposition: "open", owner: "this repo (closure-emit.ts standalonePlan; default-mappings.ts reference -> protobuf lossDescription)",
+    issue: "A reference field whose target no entity of the tenant carries (a deleted entity, a name that never existed), in an entity whose closure is that entity alone, is emitted by its bare name, which the compiler refuses: `invalid-ref: Unknown identifier X`. A closure of several entities emits the same field untyped with a warning instead (case ref-dangling-in-closure): the two paths disagree. The reference resolver itself treats the field as dangling (no error). Only a name the case's own entities REFER to and none of them carries is matched. The DB targets store a reference as text and are unaffected.",
     diagnostic: { code: "invalid-ref", message: /Unknown identifier/ },
     when: ({ outcome, built }) => {
       const unknown = unknownIdentifiers(outcome.reason ?? "");
-      const names = documentNames(built);
+      const names = unansweredNames(built);
       return unknown.length > 0 && unknown.every((id) => names.has(id));
+    },
+  },
+  {
+    id: "union-of-entity-references", targets: ["json-schema", "openapi3", "avro", "protobuf", "java-pojo"], disposition: "open", owner: "this repo (closure.ts walks reference fields only; the importer stores a oneOf / anyOf of $refs as a union of NAMES)",
+    issue: "A field that is a union of entities (`oneOf` / `anyOf` of `$ref`s: `type: union`, `unionMembers: [Card, Bank]`) holds the member NAMES, not references. The reference closure walks `reference` fields (and arrays / maps of them), so the members are not in the closure and the union names models the compile unit does not declare: `invalid-ref: Unknown identifier Card`. Only matched when every unknown identifier is a union member that names an entity of the case's own tenant (a member nothing answers to is `reference-to-missing-entity`). The DB targets store the union as text and are unaffected.",
+    diagnostic: { code: "invalid-ref", message: /Unknown identifier/ },
+    when: ({ outcome, built }) => {
+      const unknown = unknownIdentifiers(outcome.reason ?? "");
+      const members = unionEntityMembers(built);
+      return unknown.length > 0 && unknown.every((id) => members.has(id));
+    },
+  },
+  {
+    id: "ambiguous-reference-refusal", targets: ["json-schema", "openapi3", "avro", "protobuf", "java-pojo"], disposition: "by-design", owner: "this repo closure.ts (refusal)",
+    issue: "A legacy name-only reference that more than one entity of the tenant answers to is refused with the candidates (domain / product / entity), and nothing is silently picked: only an explicit pick (the pick dialog, the TypeSpec tab) writes the qualified reference, and a generate call never does. Only matched when every candidate named is an entity of the case.",
+    diagnostic: { code: "AMBIGUOUS_REFERENCE", message: /names ".+", which matches .+\/.+\/.+, .+\/.+\/.+/ },
+    when: ({ outcome, built }) => {
+      const m = /which matches (.+)$/.exec(outcome.reason ?? "");
+      const candidates = (m?.[1] ?? "").split(", ").map((c) => c.split("/").pop());
+      return candidates.length >= 2 && candidates.every((name) => built.members.some((member) => member.entity.name === name));
     },
   },
   {
@@ -86,8 +132,11 @@ export const KNOWN_ISSUES: KnownIssue[] = [
     diagnostic: { code: "The field", message: /cannot be turned into a (column|table|schema) name|would all become the (column|table)/ },
   },
   {
-    id: "openapi-internal-ref-extension", targets: ["openapi3"], disposition: "open", owner: "this repo importer (additionalProperties kept verbatim as an extension, by design)",
-    issue: "`additionalProperties` is not mapped by the importer (IGNORED_SCHEMA_KEYWORDS) and is kept verbatim as an extension so a JSON Schema round trip loses nothing. When its value is a `$ref: #/$defs/V` the OpenAPI document gets `additionalProperties: {$ref: '#/$defs/V'}`, which does not resolve there. Only matched when the unresolved pointer is one the case's own source contains.",
+    // Re-judged against closure emission: still real, and now on JSON Schema too. The JSON Schema output used to be one bundle whose `$defs`
+    // held `V`, so the pointer resolved by accident (nothing compiled the unreferenced `$defs`); each entity is its own file now and the
+    // pointer names a node the file does not have. The importer does not map the map's value to a reference, so `V` is not in the closure.
+    id: "openapi-internal-ref-extension", targets: ["openapi3", "json-schema"], disposition: "open", owner: "this repo importer (additionalProperties kept verbatim as an extension, by design)",
+    issue: "`additionalProperties` is not mapped by the importer (IGNORED_SCHEMA_KEYWORDS) and is kept verbatim as an extension so a JSON Schema round trip loses nothing. When its value is a `$ref: #/$defs/V` the OpenAPI document and the JSON Schema file get `additionalProperties: {$ref: '#/$defs/V'}`, which does not resolve there (`V` is not a node of that document, nor a file of the set: the map's value is not a reference field, so `V` is not in the closure). Only matched when the unresolved pointer is one the case's own source contains.",
     diagnostic: { code: "validate:", message: /Can't resolve reference: #\/\$defs\// },
     when: ({ c, outcome }) => {
       const m = /Can't resolve reference: (#\/\$defs\/[^\s|]+)/.exec(outcome.reason ?? "");

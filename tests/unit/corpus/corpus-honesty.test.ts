@@ -3,7 +3,7 @@
  * failure, a rule that no longer reproduces fails a full run, and skipped work is never silently green.
  */
 import { describe, it, expect, vi } from "vitest";
-import { matchKnownIssue, registryProblems, documentNames, type KnownIssue } from "../../fixtures/corpus/known-issues";
+import { matchKnownIssue, registryProblems, unansweredNames, type KnownIssue } from "../../fixtures/corpus/known-issues";
 import { KNOWN_ISSUES } from "../../fixtures/corpus/known-issues";
 import { problemsOf, allowedSkipTiersFromEnv, type CaseResult } from "../../helpers/corpus/orchestrate";
 import { isAllowedBigQueryStatement, splitStatements, stripPrimaryKey } from "../../helpers/corpus/emulators";
@@ -14,11 +14,15 @@ import type { TargetOutcome } from "../../helpers/corpus/run-case";
 vi.mock("server-only", () => ({}));
 
 const baseCase = (extra: Partial<CorpusCase["expectations"]> = {}, source = "{}"): CorpusCase => ({ id: "c1", title: "t", kind: "jsonschema", source, tags: [], expectations: extra });
-const built = (referenced: string[] = []): BuiltCase => ({
-  entity: { id: "e", name: "Evt", description: "", status: "DRAFT", version: 1, domainId: "d", metadata: {} },
-  fields: referenced.map((n, i) => ({ id: `f${i}`, name: `f${i}`, type: "reference", precision: null, scale: null, nullable: false, isKey: false, fieldNumber: null, description: "", classification: null, aliases: [], decorators: { referencedEntityName: n }, sortOrder: i })),
-  importWarnings: [], entityCount: 1,
-});
+/** A case whose entity refers to the names in `referenced`; `tenant` are the other entities of its tenant (what the closure resolves a name to). */
+const built = (referenced: string[] = [], tenant: string[] = []): BuiltCase => {
+  const entity = { id: "e", name: "Evt", description: "", status: "DRAFT", version: 1, domainId: "d", metadata: {} };
+  const fields = referenced.map((n, i) => ({ id: `f${i}`, name: `f${i}`, type: "reference", precision: null, scale: null, nullable: false, isKey: false, fieldNumber: null, description: "", classification: null, aliases: [], decorators: { referencedEntityName: n }, sortOrder: i }));
+  return {
+    entity, fields, importWarnings: [], entityCount: 1 + tenant.length,
+    members: [{ entity, fields, place: {}, published: [] }, ...tenant.map((name, i) => ({ entity: { ...entity, id: `t${i}`, name }, fields: [], place: {}, published: [] }))],
+  };
+};
 const failed = (target: TargetOutcome["target"], reason: string): TargetOutcome => ({ target, kind: "FAIL", reason, warnings: [] });
 
 describe("a known issue does not mask a different failure", () => {
@@ -43,19 +47,57 @@ describe("a known issue does not mask a different failure", () => {
     expect(matchKnownIssue(baseCase(), "spanner", failed("spanner", `validate: ${TS}`), built())).toBeUndefined();
   });
 
-  it("multi-model gap: only an identifier the case's own document refers to", () => {
+  it("the multi-model emission gap is retired: a name an entity of the tenant carries is resolved by the closure, so its failure is real", () => {
+    expect(KNOWN_ISSUES.map((k) => k.id)).not.toContain("multi-model-emission-gap");
     const reason = "invalid-ref: Unknown identifier Addr";
-    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", reason), built(["Addr"]))?.id).toBe("multi-model-emission-gap");
+    // `Addr` is an entity of the case's tenant: the old rule would have masked this, the new one must not
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", reason), built(["Addr"], ["Addr"]))).toBeUndefined();
+  });
+
+  it("reference to a missing entity: only a name the case's entities refer to and no entity of the tenant carries", () => {
+    const reason = "invalid-ref: Unknown identifier Addr";
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", reason), built(["Addr"]))?.id).toBe("reference-to-missing-entity");
     // an importer naming bug (the field points at `Addr`, the emitter complains about `addr_x`) is a real failure
     expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", "invalid-ref: Unknown identifier addr_x"), built(["Addr"]))).toBeUndefined();
     expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", `${reason}\ninvalid-ref: Unknown identifier Other`), built(["Addr"]))).toBeUndefined();
     expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", reason), built(["Addr"]))).toBeUndefined();
   });
 
-  it("the openapi ref rule needs the pointer to come from the case's own source", () => {
+  it("union of entity references: only a union member that names an entity of the case's tenant (a member nothing answers to is another rule)", () => {
+    const reason = "invalid-ref: Unknown identifier Card\ninvalid-ref: Unknown identifier Bank";
+    const diagnostics = reason.replace("\n", " | ");
+    const withUnion = (members: string[], tenant: string[]): BuiltCase => {
+      const b = built([], tenant);
+      const fields = [{ ...b.fields[0], id: "u", name: "method", type: "union", decorators: { unionName: "U", unionMembers: members } }].filter(Boolean);
+      return { ...b, fields, members: [{ ...b.members[0], fields }, ...b.members.slice(1)] };
+    };
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", diagnostics), withUnion(["Card", "Bank"], ["Card", "Bank"]))?.id).toBe("union-of-entity-references");
+    // a member that is no entity is the other rule's (each diagnostic is judged on its own), and a name that is no member of the union at all is nobody's
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", diagnostics), withUnion(["Card", "Bank"], []))?.id).toBe("reference-to-missing-entity");
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", "invalid-ref: Unknown identifier Card | invalid-ref: Unknown identifier Other"), withUnion(["Card", "Bank"], ["Card", "Bank"]))).toBeUndefined();
+    expect(matchKnownIssue(baseCase(), "bigquery", failed("bigquery", diagnostics), withUnion(["Card", "Bank"], ["Card", "Bank"]))).toBeUndefined();
+  });
+
+  it("ambiguous reference refusal: only when every candidate named is an entity of the case", () => {
+    const reason = 'reference-closure AMBIGUOUS_REFERENCE: field "customer" names "Customer", which matches Sales/Retail/Customer, Sales/Wholesale/Customer';
+    expect(matchKnownIssue(baseCase(), "avro", failed("avro", reason), built([], ["Customer", "Customer"]))?.id).toBe("ambiguous-reference-refusal");
+    // candidates the case does not have: not this refusal
+    expect(matchKnownIssue(baseCase(), "avro", failed("avro", reason), built([], ["Other"]))).toBeUndefined();
+    // the same words under another code, or for a DB target, are not it either
+    expect(matchKnownIssue(baseCase(), "avro", failed("avro", reason.replace("AMBIGUOUS_REFERENCE", "SOMETHING_ELSE")), built([], ["Customer", "Customer"]))).toBeUndefined();
+    expect(matchKnownIssue(baseCase(), "postgresql", failed("postgresql", reason), built([], ["Customer", "Customer"]))).toBeUndefined();
+  });
+
+  it("the internal ref extension rule (openapi3 and json-schema) needs the pointer to come from the case's own source", () => {
     const reason = "validate: Can't resolve reference: #/$defs/V";
     expect(matchKnownIssue(baseCase({}, '{"x":{"$ref":"#/$defs/V"}}'), "openapi3", failed("openapi3", reason), built())?.id).toBe("openapi-internal-ref-extension");
     expect(matchKnownIssue(baseCase({}, '{"x":{"$ref":"#/$defs/Other"}}'), "openapi3", failed("openapi3", reason), built())).toBeUndefined();
+    // the JSON Schema file says the same of the same pointer (each entity is a file of its own now)
+    const js = "validate: Can't resolve reference: #/$defs/V (MapRef.json is in the output and has no such node)";
+    expect(matchKnownIssue(baseCase({}, '{"x":{"$ref":"#/$defs/V"}}'), "json-schema", failed("json-schema", js), built())?.id).toBe("openapi-internal-ref-extension");
+    expect(matchKnownIssue(baseCase({}, '{"x":{"$ref":"#/$defs/Other"}}'), "json-schema", failed("json-schema", js), built())).toBeUndefined();
+    // a sibling FILE that does not resolve is not this rule: it is a defect of the output
+    expect(matchKnownIssue(baseCase({}, '{"x":{"$ref":"#/$defs/V"}}'), "json-schema", failed("json-schema", 'validate: a $ref to the sibling file "V.json" does not resolve: no file of the output has that name or $id'), built())).toBeUndefined();
   });
 
   it("a per-case expectation needs its code AND message; any other failure of that target is real", () => {
@@ -70,12 +112,13 @@ describe("a known issue does not mask a different failure", () => {
     const joined = "invalid-ref: Unknown identifier Addr | decorator-wrong-target: Cannot apply @minItems";
     expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", joined), built(["Addr"]))).toBeUndefined();
     const both = "invalid-ref: Unknown identifier Addr | invalid-ref: Unknown identifier Line";
-    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", both), built(["Addr", "Line"]))?.id).toBe("multi-model-emission-gap");
+    expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", both), built(["Addr", "Line"]))?.id).toBe("reference-to-missing-entity");
     expect(matchKnownIssue(baseCase(), "json-schema", failed("json-schema", both), built(["Addr"]))).toBeUndefined();
   });
 
-  it("documentNames spells entities the way the generator does", () => {
-    expect([...documentNames(built(["my-entity"]))].sort()).toEqual(["my-entity", "my_entity"]);
+  it("unansweredNames spells the names the way the generator does, and leaves out every entity of the tenant", () => {
+    expect([...unansweredNames(built(["my-entity"]))].sort()).toEqual(["my-entity", "my_entity"]);
+    expect([...unansweredNames(built(["my-entity", "Kept"], ["Kept"]))].sort()).toEqual(["my-entity", "my_entity"]);
   });
 });
 

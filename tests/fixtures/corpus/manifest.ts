@@ -6,11 +6,12 @@ import type { CorpusCase } from "./types";
 import { JSONSCHEMA_CASES } from "./jsonschema-cases";
 import { TYPESPEC_CASES } from "./typespec-cases";
 import { MODEL_CASES } from "./model-cases";
+import { REFERENCE_CASES } from "./reference-cases";
 
-export type { CorpusCase, CorpusExpectations, CorpusKind, TargetKey, ModelInput } from "./types";
+export type { CorpusCase, CorpusExpectations, CorpusKind, TargetKey, ModelInput, Placement, PublishedSnapshot } from "./types";
 export { ALL_TARGETS } from "./types";
 
-export const CORPUS: CorpusCase[] = [...JSONSCHEMA_CASES, ...TYPESPEC_CASES, ...MODEL_CASES];
+export const CORPUS: CorpusCase[] = [...JSONSCHEMA_CASES, ...TYPESPEC_CASES, ...MODEL_CASES, ...REFERENCE_CASES];
 
 /** The small always-on subset (kept under ~60 s with every target, no emulators). */
 export const SMOKE_CASE_IDS = [
