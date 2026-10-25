@@ -115,6 +115,26 @@ export function classificationDecorator(
   };
 }
 
+/**
+ * `text` with every `open ... close` span (the first `close` after an `open`) replaced by `replacement`; an `open` with no `close` after it
+ * is left as it is. The same answer as `text.replace(/open[\s\S]*?close/g, replacement)`, in one pass: a lazy regex retries every later
+ * `open` against the whole rest of the text when there is no `close` (240 KB of `/*a` took 3.7 s), where, once one `open` has no `close`
+ * after it, no later one has either.
+ */
+function replaceDelimited(text: string, open: string, close: string, replacement: string): string {
+  let out = "";
+  let from = 0;
+  for (;;) {
+    const start = text.indexOf(open, from);
+    if (start === -1) break;
+    const end = text.indexOf(close, start + open.length);
+    if (end === -1) break;
+    out += text.slice(from, start) + replacement;
+    from = end + close.length;
+  }
+  return from === 0 ? text : out + text.slice(from);
+}
+
 const DECLARATION = /\b(?:model|enum|scalar|union|interface|alias|namespace)\s+([\w.]+)/g;
 const BARE_ENTERPRISE = /(?<![\w.@])Enterprise(?![\w.])/;
 
@@ -125,11 +145,7 @@ const BARE_ENTERPRISE = /(?<![\w.@])Enterprise(?![\w.])/;
  * count. String literals and comments are ignored.
  */
 export function sourceShadowsEnterprise(source: string): boolean {
-  const code = source
-    .replace(/"""[\s\S]*?"""/g, '""')
-    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/.*$/gm, "");
+  const code = replaceDelimited(replaceDelimited(source, '"""', '"""', '""').replace(/"(?:[^"\\\n]|\\.)*"/g, '""'), "/*", "*/", " ").replace(/\/\/.*$/gm, "");
   for (const [, name] of code.matchAll(DECLARATION)) {
     if (name.split(".").includes(ENTERPRISE_NAMESPACE)) return true;
   }
