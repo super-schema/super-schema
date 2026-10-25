@@ -125,16 +125,32 @@ describe("GET /api/v1/event-specs/:id", () => {
 });
 
 describe("version and format parameters", () => {
-  it.each(["latest", "1", "1.", ".1", "1.0.0", "v1.0", "-1.0", "1.0 ", "1.x", "", "Draft", "DRAFT"])("rejects version=%j with 400", async (version) => {
+  it.each(["latest", "1", "1.", ".1", "1.0.0", "v1.0", "-1.0", "1.0 ", "1.x", "Draft", "DRAFT"])("rejects version=%j with 400", async (version) => {
     const res = await call(`?version=${encodeURIComponent(version)}`);
     expect(res.status).toBe(400);
     expect((await res.json()).error.code).toBe("VALIDATION_ERROR");
     expect(emitters()).toBe(0);
   });
 
-  it.each(["xml", "YAML", "yml", "", "json,yaml"])("rejects format=%j with 400", async (format) => {
+  it.each(["xml", "YAML", "yml", "json,yaml"])("rejects format=%j with 400", async (format) => {
     const res = await call(`?format=${encodeURIComponent(format)}`);
     expect(res.status).toBe(400);
+    expect(emitters()).toBe(0);
+  });
+
+  it("an empty parameter is no parameter: ?version= is the latest published version, ?format= the default format", async () => {
+    const res = await call("?version=&format=");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/yaml/);
+    expect(h.emitEventStoredVersion).toHaveBeenCalled();
+  });
+
+  it("a NUL byte in a query parameter is a 400 VALIDATION_ERROR before anything is looked up", async () => {
+    for (const query of ["?format=%00", "?version=1.0%00", "?x=%00"]) {
+      const res = await call(query);
+      expect(res.status, query).toBe(400);
+      expect((await res.json()).error.code).toBe("VALIDATION_ERROR");
+    }
     expect(emitters()).toBe(0);
   });
 

@@ -12,7 +12,7 @@ import {
   apiUnauthorized,
   apiServerError,
 } from "@/app/api/v1/error-handler";
-import { isUsableId, unusableIdNotFound } from "@/app/api/v1/request";
+import { isUsableId, optionalParam, queryProblem, unusableIdNotFound } from "@/app/api/v1/request";
 import {
   getNotificationsForUser,
   markAllAsRead,
@@ -41,6 +41,8 @@ export async function GET(request: Request) {
 
   try {
     const url = new URL(request.url);
+    const bad = queryProblem(url);
+    if (bad) return bad;
 
     // Check if requesting unread count only
     if (url.searchParams.get("countOnly") === "true") {
@@ -52,14 +54,15 @@ export async function GET(request: Request) {
       return apiSuccess({ unreadCount: countResult.data });
     }
 
-    const typesParam = url.searchParams.get("types");
-    const readParam = url.searchParams.get("read");
-    const page = parseInt(url.searchParams.get("page") ?? "1", 10);
-    const pageSize = parseInt(url.searchParams.get("pageSize") ?? "25", 10);
+    // Every optional parameter: an empty value is no value (`?read=` is no filter, `?page=` is the first page).
+    const typesParam = optionalParam(url, "types");
+    const readParam = optionalParam(url, "read");
+    const page = parseInt(optionalParam(url, "page") ?? "1", 10);
+    const pageSize = parseInt(optionalParam(url, "pageSize") ?? "25", 10);
 
     const filters: NotificationFilter = {
       types: typesParam ? typesParam.split(",") as NotificationFilter["types"] : undefined,
-      read: readParam !== null ? readParam === "true" : undefined,
+      read: readParam !== undefined ? readParam === "true" : undefined,
     };
 
     const result = await getNotificationsForUser(
@@ -86,10 +89,12 @@ export async function POST(request: Request) {
 
   try {
     const url = new URL(request.url);
-    const action = url.searchParams.get("action");
+    const bad = queryProblem(url);
+    if (bad) return bad;
+    const action = optionalParam(url, "action");
 
     if (action === "mark-read") {
-      const id = url.searchParams.get("id");
+      const id = optionalParam(url, "id");
       if (!id) return apiError({ code: "VALIDATION_ERROR", message: "Notification id is required" });
       if (!isUsableId(id)) return unusableIdNotFound("notification", id);
       const result = await markAsRead(id, authResult.context);

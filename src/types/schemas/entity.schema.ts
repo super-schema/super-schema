@@ -24,10 +24,13 @@ export const UpdateEntityInputSchema = z.object({
 
 export type UpdateEntityInput = z.infer<typeof UpdateEntityInputSchema>;
 
+/** A string that PostgreSQL can hold: no NUL byte (a query with one makes the driver throw). */
+const NoNul = z.string().refine((value) => !value.includes("\u0000"), "A filter must not hold a NUL byte (\\u0000)");
+
 export const EntityFiltersSchema = z.object({
-  domainId: z.string().optional(),
+  domainId: NoNul.optional(),
   status: EntityStatusEnum.optional(),
-  search: z.string().optional(),
+  search: NoNul.optional(),
 });
 
 export type EntityFilters = z.infer<typeof EntityFiltersSchema>;

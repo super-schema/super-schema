@@ -17,7 +17,7 @@
 import type { NextResponse } from "next/server";
 import { authenticateRequest } from "@/app/api/v1/middleware";
 import { checkRateLimit } from "@/app/api/v1/rate-limit";
-import { isUsableId } from "@/app/api/v1/request";
+import { isUsableId, optionalParam, queryProblem } from "@/app/api/v1/request";
 import { apiError, apiServerError, apiUnauthorized } from "@/app/api/v1/error-handler";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { formatVersionLabel } from "@/lib/entity-versioning/version-math";
@@ -85,13 +85,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     // PostgreSQL text holds no NUL byte: an id with one cannot be an event's, and the lookup would throw.
     if (!isUsableId(id)) return specNotFound();
     const url = new URL(request.url);
+    const bad = queryProblem(url);
+    if (bad) return bad;
 
-    const format = url.searchParams.get("format") ?? "yaml";
+    // An empty parameter is no parameter: `?format=` is the default format, `?version=` the latest published version.
+    const format = optionalParam(url, "format") ?? "yaml";
     if (format !== "yaml" && format !== "json") {
       return apiError({ code: "VALIDATION_ERROR", message: 'format must be "yaml" or "json"', suggestedFix: "Use ?format=yaml (default) or ?format=json." });
     }
-    const versionParam = url.searchParams.get("version");
-    if (versionParam !== null && versionParam !== "draft" && !VERSION_PARAM.test(versionParam)) {
+    const versionParam = optionalParam(url, "version");
+    if (versionParam !== undefined && versionParam !== "draft" && !VERSION_PARAM.test(versionParam)) {
       return apiError({ code: "VALIDATION_ERROR", message: 'version must be "draft" or MAJOR.MINOR', suggestedFix: "Use e.g. ?version=2.1, ?version=draft, or omit it for the latest published version." });
     }
 
@@ -106,7 +109,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
     let version: string;
     if (versionParam === DRAFT) version = DRAFT;
-    else if (versionParam !== null) {
+    else if (versionParam !== undefined) {
       const label = toVersionLabel(versionParam);
       if (!label) return versionNotFound();
       version = label;

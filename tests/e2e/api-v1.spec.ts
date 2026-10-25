@@ -393,10 +393,13 @@ test.describe("schemas: list and detail", () => {
     expect(await names("&status=DRAFT")).toHaveLength(2);
     expect(await names("&status=ACTIVE")).toEqual([]);
     expect(await names("&status=ACTIVE&search=alp")).toEqual([]);
+    // An empty filter is no filter: `?status=`, `?search=` and `?domain=` (the last one is left out of `names`) are the unfiltered list.
+    expect(await names("&status=&search=")).toHaveLength(2);
+    expect(await expectApiSuccess<SchemaListItem[]>(await api.session.get(`${API}/schemas?domain=&status=&search=`))).toHaveProperty("data");
     const unknownDomain = await expectApiSuccess<SchemaListItem[]>(await api.session.get(`${API}/schemas?domain=${unique("no-such-domain-")}`));
     expect(unknownDomain).toMatchObject({ data: [], summary: "Found 0 entities" });
     // A search that is made of LIKE wildcards or quotes is text, not a pattern or a statement.
-    for (const hostile of ["%", "_", "'", "\\", "' OR '1'='1", "\"; DROP TABLE entities; --"]) {
+    for (const hostile of ["%", "_", "'", "\\", "' OR '1'='1", "\"; DROP TABLE entities; --", "\u00e9\u65e5\u672c"]) {
       const body = await expectApiSuccess<SchemaListItem[]>(await api.session.get(`${API}/schemas?domain=${workspace.domainId}&search=${encodeURIComponent(hostile)}`));
       expect(body.data.length, hostile).toBeLessThanOrEqual(2);
     }
@@ -463,12 +466,35 @@ test.describe("schemas: list and detail", () => {
       [api.key, "DELETE", `${API}/webhooks/%00`],
       [api.key, "GET", `${API}/webhooks/%00/deliveries`],
       [api.session, "GET", `${API}/event-specs/%00`],
-      [api.session, "POST", `${API}/notifications?action=mark-read&id=%00`],
       [api.session, "GET", `${API}/schemas/ab%00cd`],
     ];
     for (const [caller, method, url] of cases) {
       const response = await caller.fetch(url, { method, ...(method === "PUT" ? asJson({ active: false }) : {}) });
       await expectApiError(response, 404, "NOT_FOUND");
+    }
+  });
+
+  test("a NUL byte in a query parameter is a 400 VALIDATION_ERROR, not a 500, on every route that reads one", { tag: ["@regression"] }, async ({ api }) => {
+    // The filter of the list, a notification's page or type or id, an event's format or version: all of them reach the database or a parser.
+    const cases: Array<[APIRequestContext, "GET" | "POST", string]> = [
+      [api.session, "GET", `${API}/schemas?search=%00`],
+      [api.session, "GET", `${API}/schemas?search=abc%00def`],
+      [api.session, "GET", `${API}/schemas?domain=%00`],
+      [api.session, "GET", `${API}/schemas?status=%00`],
+      [api.session, "GET", `${API}/schemas?%00=1`],
+      [api.session, "GET", `${API}/notifications?types=%00`],
+      [api.session, "GET", `${API}/notifications?read=%00`],
+      [api.session, "GET", `${API}/notifications?page=%00`],
+      [api.session, "GET", `${API}/notifications?countOnly=%00`],
+      [api.session, "POST", `${API}/notifications?action=mark-read&id=%00`],
+      [api.session, "POST", `${API}/notifications?action=%00`],
+      [api.session, "GET", `${API}/event-specs/some-id?format=%00`],
+      [api.session, "GET", `${API}/event-specs/some-id?version=%00`],
+      [api.session, "GET", `${API}/event-specs/some-id?version=1.0&x=%00`],
+    ];
+    for (const [caller, method, url] of cases) {
+      const error = await expectApiError(await caller.fetch(url, { method }), 400, "VALIDATION_ERROR");
+      expect(error.message, url).toMatch(/NUL/);
     }
   });
 
@@ -955,11 +981,12 @@ test.describe("notifications", () => {
   });
 
   test("a page, page size or type that cannot be is a 400 VALIDATION_ERROR", { tag: ["@regression"] }, async ({ api }) => {
-    for (const query of ["page=0", "page=-1", "page=abc", "pageSize=0", "pageSize=101", "pageSize=abc", "types=NOT_A_TYPE", "types=DRIFT_ALERT,NOPE", "types="]) {
-      const response = await api.session.get(`${API}/notifications?${query}`);
-      // `types=` (empty) is "no filter": the only one of these that is accepted.
-      if (query === "types=") expect(response.status(), query).toBe(200);
-      else await expectApiError(response, 400, "VALIDATION_ERROR");
+    for (const query of ["page=0", "page=-1", "page=abc", "pageSize=0", "pageSize=101", "pageSize=abc", "types=NOT_A_TYPE", "types=DRIFT_ALERT,NOPE"]) {
+      await expectApiError(await api.session.get(`${API}/notifications?${query}`), 400, "VALIDATION_ERROR");
+    }
+    // An empty parameter is no parameter: no filter, the first page, the default page size.
+    for (const query of ["types=", "read=", "page=", "pageSize=", "types=&read=&page=&pageSize=", "countOnly="]) {
+      expect((await api.session.get(`${API}/notifications?${query}`)).status(), query).toBe(200);
     }
   });
 
@@ -1044,10 +1071,18 @@ test.describe("event specs", () => {
 
   test("a format or version that cannot be is a 400 with a suggested fix, checked before the event is looked up", { tag: ["@regression"] }, async ({ api }) => {
     const id = unique("no-such-");
-    for (const query of ["format=xml", "format=YAML", "format=", "version=abc", "version=1", "version=1.", "version=1.0.0", "version=-1.0", "version=DRAFT", "version=1.0;DROP"]) {
+    for (const query of ["format=xml", "format=YAML", "version=abc", "version=1", "version=1.", "version=1.0.0", "version=-1.0", "version=DRAFT", "version=1.0;DROP"]) {
       const error = await expectApiError(await api.session.get(`${API}/event-specs/${id}?${query}`), 400, "VALIDATION_ERROR");
       expect(error.suggestedFix, query).toMatch(/\?(format|version)=/);
     }
+  });
+
+  test("an empty format or version is none: the same answer as without the parameter", { tag: ["@regression"] }, async ({ api }) => {
+    const id = unique("no-such-");
+    const without = await api.session.get(`${API}/event-specs/${id}`);
+    const empty = await api.session.get(`${API}/event-specs/${id}?format=&version=`);
+    expect(empty.status()).toBe(without.status());
+    expect(await empty.text()).toBe(await without.text());
   });
 
   test.describe("an event in a product of the tenant", () => {

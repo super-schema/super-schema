@@ -13,6 +13,7 @@ import {
   apiServerError,
 } from "@/app/api/v1/error-handler";
 import { getEntities } from "@/services/entity.service";
+import { optionalParam, queryProblem } from "@/app/api/v1/request";
 import { EntityFiltersSchema } from "@/types/schemas/entity.schema";
 
 export async function GET(request: Request) {
@@ -24,17 +25,19 @@ export async function GET(request: Request) {
 
   try {
     const url = new URL(request.url);
+    const bad = queryProblem(url);
+    if (bad) return bad;
     // A status that is none of the four is the caller's mistake (400), not a query for the database to refuse (500).
     const parsed = EntityFiltersSchema.safeParse({
-      domainId: url.searchParams.get("domain") ?? undefined,
-      status: url.searchParams.get("status") ?? undefined,
-      search: url.searchParams.get("search") ?? undefined,
+      domainId: optionalParam(url, "domain"),
+      status: optionalParam(url, "status"),
+      search: optionalParam(url, "search"),
     });
     if (!parsed.success) {
       return apiError({
         code: "VALIDATION_ERROR",
         message: parsed.error.issues[0].message,
-        suggestedFix: "status is one of DRAFT, ACTIVE, DEPRECATED, RETIRED.",
+        suggestedFix: parsed.error.issues[0].path[0] === "status" ? "status is one of DRAFT, ACTIVE, DEPRECATED, RETIRED." : "Remove the NUL byte (%00) from the filter.",
       });
     }
 

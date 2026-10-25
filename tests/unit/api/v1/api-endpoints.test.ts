@@ -334,6 +334,23 @@ describe("API v1", () => {
       expect(body.data).toHaveLength(0);
     });
 
+    it("a NUL byte in any filter is a 400 VALIDATION_ERROR and the service is not asked (it used to reach the database: a 500)", async () => {
+      for (const query of ["search=%00", "domain=a%00b", "status=%00", "search=abc%00"]) {
+        vi.mocked(getEntities).mockClear();
+        const response = await schemasListGet(makeAuthenticatedRequest(`http://localhost/api/v1/schemas?${query}`) as never);
+        expect(response.status, query).toBe(400);
+        expect((await response.json()).error.code).toBe("VALIDATION_ERROR");
+        expect(getEntities).not.toHaveBeenCalled();
+      }
+    });
+
+    it("an empty filter is no filter: ?status=, ?domain= and ?search= are the unfiltered list, not an error", async () => {
+      vi.mocked(getEntities).mockResolvedValue({ success: true, data: [] });
+      const response = await schemasListGet(makeAuthenticatedRequest("http://localhost/api/v1/schemas?status=&domain=&search=") as never);
+      expect(response.status).toBe(200);
+      expect(getEntities).toHaveBeenCalledWith({ domainId: undefined, status: undefined, search: undefined }, expect.any(Object));
+    });
+
     it("passes query filters to service", async () => {
       vi.mocked(getEntities).mockResolvedValue({
         success: true,

@@ -1,7 +1,8 @@
 /**
- * What the API v1 routes ask of a request before they act on it: a body that is JSON, and an id that can be a row's.
+ * What the API v1 routes ask of a request before they act on it: a body that is JSON, an id that can be a row's, and query parameters
+ * that hold no NUL byte (an empty one is no parameter at all).
  *
- * Both used to reach the database or the service as they came: a body that was not JSON threw out of `request.json()` into the route's
+ * They used to reach the database or the service as they came: a body that was not JSON threw out of `request.json()` into the route's
  * catch-all (a 500, "Internal server error", for what is the caller's mistake), and an id with a NUL byte in it made PostgreSQL refuse the
  * lookup (`invalid byte sequence for encoding "UTF8": 0x00`), which was a 500 as well.
  */
@@ -28,6 +29,30 @@ export async function readJsonBody(request: Request): Promise<JsonBody> {
       }),
     };
   }
+}
+
+/** The query parameter `name`, or undefined when it is missing or EMPTY: for every optional filter, `?status=` is no status. */
+export function optionalParam(url: URL, name: string): string | undefined {
+  const value = url.searchParams.get(name);
+  return value === null || value === "" ? undefined : value;
+}
+
+/**
+ * A 400 `VALIDATION_ERROR` when a query parameter's name or value holds a NUL byte, else null. PostgreSQL text cannot hold one: a filter, an id
+ * or a page that carried it into a query made the driver throw, and the route answered 500. Every v1 route calls this on its URL before it reads
+ * a parameter; `EntityFiltersSchema` refuses it too, for the callers that are not a route.
+ */
+export function queryProblem(url: URL): NextResponse | null {
+  for (const [name, value] of url.searchParams) {
+    if (name.includes("\u0000") || value.includes("\u0000")) {
+      return apiError({
+        code: "VALIDATION_ERROR",
+        message: "A query parameter holds a NUL byte (\\u0000), which no value can",
+        suggestedFix: "Remove the NUL byte (%00) from the query string.",
+      });
+    }
+  }
+  return null;
 }
 
 /**
