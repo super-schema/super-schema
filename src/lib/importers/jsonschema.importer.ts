@@ -137,17 +137,122 @@ function ignoredKeywordsOf(nodes: JsonSchemaNode[], isField: boolean, nested: Js
   return found.size > 0 ? [...found] : undefined;
 }
 
-/** Object schemas directly under `items` / `oneOf` / `anyOf` of the given sources (one level; not recursive). */
-function nestedSchemas(sources: JsonSchemaNode[]): JsonSchemaNode[] {
-  const out: JsonSchemaNode[] = [];
-  for (const source of sources) {
-    if (isSchemaObject(source.items)) out.push(source.items as JsonSchemaNode);
-    for (const list of [source.oneOf, source.anyOf]) {
-      if (!Array.isArray(list)) continue;
-      for (const member of list) if (isSchemaObject(member)) out.push(member);
-    }
+/** The schemas directly below `node` that the importer reads for a TYPE: `items` and the `oneOf` / `anyOf` members, labelled by where they sit. */
+function childSchemas(node: JsonSchemaNode): { label: string; node: JsonSchemaNode }[] {
+  const out: { label: string; node: JsonSchemaNode }[] = [];
+  if (isSchemaObject(node.items)) out.push({ label: "items", node: node.items as JsonSchemaNode });
+  else if (Array.isArray(node.items)) {
+    node.items.forEach((member, i) => {
+      if (isSchemaObject(member)) out.push({ label: `items[${i}]`, node: member });
+    });
+  }
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    const list = node[keyword];
+    if (!Array.isArray(list)) continue;
+    list.forEach((member, i) => {
+      if (isSchemaObject(member)) out.push({ label: `${keyword}[${i}]`, node: member });
+    });
   }
   return out;
+}
+
+/** Nesting below a field that is scanned for keywords (items of items of ...); deeper than this is not a real schema and is reported. */
+const MAX_NESTED_DEPTH = 16;
+
+/** A schema below a field (an `items` schema, a combinator member, ...) with the place it sits at (`items`, `oneOf[1]`, `items.items`). */
+interface NestedNode {
+  site: string;
+  node: JsonSchemaNode;
+}
+
+/**
+ * The members of a `oneOf` / `anyOf` that is only a nullable wrapper (`[X, { type: "null" }]`, or a single `X`), followed through: such a
+ * member IS the field (its constraints, description and extensions are the field's), where a member of a real choice is only one alternative.
+ */
+function nullableWrapperMembers(sources: JsonSchemaNode[]): JsonSchemaNode[] {
+  const out: JsonSchemaNode[] = [];
+  const seen = new Set<JsonSchemaNode>(sources);
+  const visit = (node: JsonSchemaNode, depth: number): void => {
+    if (depth >= MAX_NESTED_DEPTH) return;
+    for (const keyword of ["oneOf", "anyOf"] as const) {
+      const list = node[keyword];
+      if (!Array.isArray(list)) continue;
+      const real = list.filter((m) => !isNullMember(m));
+      if (real.length !== 1 || !isSchemaObject(real[0]) || seen.has(real[0])) continue;
+      seen.add(real[0]);
+      out.push(real[0]);
+      visit(real[0], depth + 1);
+    }
+  };
+  for (const source of sources) visit(source, 0);
+  return out;
+}
+
+/**
+ * Every schema below the field's own sources, breadth first: `items` and `oneOf` / `anyOf` members, at any depth, each with its `allOf`
+ * members and the inline definitions it `$ref`s (they all describe the same element). The importer maps the TYPE of these and nothing else, so
+ * what they carry has no node of its own in the IR and is folded onto the field (see `foldNestedNode`). `wrappers` are the nullable-wrapper
+ * members (the field itself): not reported, but looked through. Bounded: every node is charged against the import's visit budget, a node is
+ * visited once, and past MAX_NESTED_DEPTH the place is returned in `tooDeep` instead of being scanned.
+ */
+function nestedSchemaNodes(
+  roots: JsonSchemaNode[],
+  wrappers: ReadonlySet<JsonSchemaNode>,
+  ctx: ResolveContext
+): { nodes: NestedNode[]; tooDeep: string[] } {
+  const nodes: NestedNode[] = [];
+  const tooDeep: string[] = [];
+  const seen = new Set<JsonSchemaNode>(roots);
+  let frontier = roots.map((node) => ({ node, site: "", depth: 0 }));
+  while (frontier.length > 0) {
+    const next: typeof frontier = [];
+    for (const { node, site, depth } of frontier) {
+      for (const child of childSchemas(node)) {
+        if (seen.has(child.node)) continue;
+        seen.add(child.node);
+        const isWrapper = wrappers.has(child.node);
+        const childSite = isWrapper ? site : site === "" ? child.label : `${site}.${child.label}`;
+        if (!isWrapper && depth + 1 > MAX_NESTED_DEPTH) {
+          tooDeep.push(childSite);
+          continue;
+        }
+        const members = [child.node, ...flattenAllOf(child.node).members];
+        const views = [...members, ...inlineDefinitionSources(members, ctx)];
+        for (const view of views) {
+          charge(ctx.run);
+          if (!isWrapper) nodes.push({ site: childSite, node: view });
+          next.push({ node: view, site: childSite, depth: isWrapper ? depth : depth + 1 });
+        }
+      }
+    }
+    frontier = next;
+  }
+  return { nodes, tooDeep };
+}
+
+/** `oneOf[1].items` -> `oneOf-1-items`: a site as part of an extension key. */
+function siteKey(site: string): string {
+  return site.replace(/\[(\d+)\]/g, "-$1").replace(/\./g, "-");
+}
+
+/** Keys read by the type resolution of a nested schema (or dropped by the documented inline-object limitation): nothing to fold. */
+const NESTED_CONSUMED_KEYS = new Set(["$ref", "type", "items", "oneOf", "anyOf", "allOf", "enum", "const", "properties", "required"]);
+
+/**
+ * Keys of a nested schema that describe the ELEMENT and have no slot on the field: the constraints, description and deprecated flag of an
+ * `items` / member schema (the IR has no element-constraint concept) and the keys that only name a schema. Kept as `x-<site>-<keyword>`:
+ * never under their own name, where they would replace the field's own value of the keyword when the extensions are re-emitted.
+ */
+const ELEMENT_KEYS = new Set([
+  "minLength", "maxLength", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems",
+  "description", "deprecated", "title", "$schema", "$id", "$defs", "definitions",
+]);
+
+/** Whether the importer turns a `format` into a logical type of its own (a format it only passes through is not kept for an element). */
+function formatIsInterpreted(format: unknown): boolean {
+  if (typeof format !== "string") return false;
+  const mapped = STRING_FORMAT_MAP[format] ?? INTEGER_FORMAT_MAP[format] ?? NUMBER_FORMAT_MAP[format];
+  return mapped !== undefined && !("keepFormat" in mapped && mapped.keepFormat);
 }
 
 /** Every key of `node` the importer does not read, verbatim (parsed JSON values); `undefined` when none. */
@@ -1186,6 +1291,9 @@ const MAX_IGNORED_WARNINGS = 200;
 /** Fields whose hoisted keyword appears in several nested members with different values (reported under the same cap). */
 const NESTED_CONFLICTS = new WeakMap<object, string[]>();
 
+/** What was folded onto a field from the schemas below it (`x-visibility found on items of R.links was kept on the field`), reported under the same cap. */
+const NESTED_NOTES = new WeakMap<object, string[]>();
+
 /** One warning per distinct (keyword, entity/field) pair, capped; the overflow is counted in a final warning. */
 function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
   const out: string[] = [];
@@ -1208,6 +1316,10 @@ function ignoredKeywordWarnings(entities: ParsedEntity[]): string[] {
         if (out.length < MAX_IGNORED_WARNINGS) {
           out.push(`Field \`${entity.name}.${field.name}\`: keyword \`${keyword}\` appears in several members with different values; kept the first`);
         }
+      }
+      for (const message of NESTED_NOTES.get(field) ?? []) {
+        total += 1;
+        if (out.length < MAX_IGNORED_WARNINGS) out.push(message);
       }
     }
   }
@@ -1301,10 +1413,13 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
     // A property written as `allOf` merges its members: constraints union (first wins per kind), annotations fold on.
     const ownSources = schemaSources(node);
     const sources = [...ownSources, ...inlineDefinitionSources(ownSources, ctx)];
+    // A nullable wrapper (`anyOf: [X, { type: "null" }]`) is the field itself: what X carries is the field's own annotation.
+    const wrappers = nullableWrapperMembers(sources);
+    const annotationSources = [...sources, ...wrappers];
     const constraints: ParsedFieldConstraint[] = [];
     let minValueExclusive: number | undefined;
     let maxValueExclusive: number | undefined;
-    for (const source of sources) {
+    for (const source of annotationSources) {
       const extracted = extractConstraints(source);
       for (const c of extracted.constraints) {
         if (!constraints.some((existing) => existing.type === c.type)) constraints.push(c);
@@ -1334,48 +1449,94 @@ function buildFields(members: ObjectMembers, baseCtx: ResolveContext, ownerName:
       name,
       type: resolved.type,
       nullable,
-      description: sources.find((s) => typeof s.description === "string")?.description,
+      description: annotationSources.find((s) => typeof s.description === "string")?.description,
       confidence: resolved.confidence,
       originalType: resolved.originalType,
       // Heuristic: a required property literally named "id" is the key.
       isKey: isRequired && name === "id",
       format: resolved.format,
-      deprecated: sources.some((s) => s.deprecated === true) || undefined,
+      deprecated: annotationSources.some((s) => s.deprecated === true) || undefined,
       constraints: constraints.length > 0 ? constraints : undefined,
       minValueExclusive,
       maxValueExclusive,
     };
 
     let extensions: Record<string, unknown> | undefined;
-    for (const source of sources) {
+    for (const source of annotationSources) {
       for (const [key, value] of Object.entries(captureExtensions(source, true) ?? {})) {
         if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) continue;
         setOwn((extensions ??= {}), key, value);
       }
     }
-    // Unsupported keywords inside an array `items` schema or a oneOf / anyOf member are not mapped either: they are
-    // listed (and preserved, first definition wins) on the field that owns them.
-    // NOTE: nested hoisting is deliberate: keywords found in `items` / a oneOf member are lifted onto this field, and
-    // when several members define the same keyword the first definition wins (a differing later value is reported).
-    const nested = nestedSchemas(sources);
+    // What `items` schemas and oneOf / anyOf members (at any depth, with their allOf members and the inline definitions they `$ref`) carry
+    // has no node of its own in the IR. It is folded onto this field, never dropped:
+    //  - an unsupported standard keyword is lifted under its own name, the first definition wins and a differing later value is reported
+    //    (it is also listed in `ignoredKeywords`);
+    //  - a vendor / unknown key is kept under its own name, with a note saying where it was found (`<key>@<site>` when the field already
+    //    has the key with another value);
+    //  - a constraint / description / deprecated flag (element-level, no slot on the field) is kept as `x-<site>-<keyword>`.
+    const found = nestedSchemaNodes(sources, new Set(wrappers), ctx);
+    const nested = found.nodes.map((n) => n.node);
+    const notes: string[] = [];
+    const note = (message: string): void => {
+      if (!notes.includes(message)) notes.push(message);
+    };
+    const owner = `${ownerName}.${name}`;
+    const keep = (key: string, value: unknown): "kept" | "same" | "differs" => {
+      if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) {
+        return JSON.stringify(extensions[key]) === JSON.stringify(value) ? "same" : "differs";
+      }
+      setOwn((extensions ??= {}), key, value);
+      return "kept";
+    };
     const hoisted = new Set<string>();
-    for (const source of nested) {
-      for (const key of Object.keys(source)) {
-        if (!IGNORED_SCHEMA_KEYWORDS.has(key)) continue;
-        if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) {
-          if (hoisted.has(key) && JSON.stringify(extensions[key]) !== JSON.stringify(source[key])) {
-            const list = NESTED_CONFLICTS.get(field) ?? [];
-            if (!list.includes(key)) list.push(key);
-            NESTED_CONFLICTS.set(field, list);
+    for (const { site, node: source } of found.nodes) {
+      for (const [key, value] of Object.entries(source)) {
+        if (NESTED_CONSUMED_KEYS.has(key)) continue;
+        if (IGNORED_SCHEMA_KEYWORDS.has(key)) {
+          if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) {
+            if (hoisted.has(key) && JSON.stringify(extensions[key]) !== JSON.stringify(value)) {
+              const list = NESTED_CONFLICTS.get(field) ?? [];
+              if (!list.includes(key)) list.push(key);
+              NESTED_CONFLICTS.set(field, list);
+            }
+            continue;
+          }
+          hoisted.add(key);
+          setOwn((extensions ??= {}), key, value);
+          continue;
+        }
+        // A format the importer turns into a logical type (date-time -> utcDateTime) is part of the element's type, already read.
+        if (key === "format" && formatIsInterpreted(value)) continue;
+        if (ELEMENT_KEYS.has(key) || key === "format") {
+          const kept = `x-${siteKey(site)}-${key}`;
+          if (keep(kept, value) === "kept" && key !== "title") {
+            note(`${key} found on ${site} of ${owner} was kept on the field as ${kept} (the IR has no element-level ${key})`);
           }
           continue;
         }
-        hoisted.add(key);
-        setOwn((extensions ??= {}), key, source[key]);
+        // A vendor / unknown key. The reserved keys have their own round trip on the FIELD's own node only: here they are plain extensions.
+        const reserved = RESERVED_EXTENSION_KEYS.has(key);
+        const outcome = reserved ? "differs" : keep(key, value);
+        if (outcome === "kept") note(`${key} found on ${site} of ${owner} was kept on the field`);
+        else if (outcome === "differs") {
+          const renamed = `${key}@${site}`;
+          if (keep(renamed, value) === "kept") {
+            note(
+              reserved
+                ? `${key} found on ${site} of ${owner} was kept on the field as ${renamed} (it is only read on the field's own node)`
+                : `${key} found on ${site} of ${owner} differs from the field's own value; kept on the field as ${renamed}`
+            );
+          }
+        }
       }
     }
+    for (const place of found.tooDeep) {
+      note(`The schema at ${place} of ${owner} is nested deeper than ${MAX_NESTED_DEPTH} levels and was not scanned for keywords`);
+    }
+    if (notes.length > 0) NESTED_NOTES.set(field, notes);
     if (extensions) field.extensions = extensions;
-    const ignoredKeywords = ignoredKeywordsOf([...sources], true, nested);
+    const ignoredKeywords = ignoredKeywordsOf([...annotationSources], true, nested);
     if (ignoredKeywords) field.ignoredKeywords = ignoredKeywords;
 
     const classified = readClassification(sources, extensions, classificationConfig);
