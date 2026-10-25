@@ -239,14 +239,12 @@ export async function rejectRequest(
  */
 export async function countPendingRequests(tenantId?: string): Promise<number> {
   if (tenantId === undefined) return prisma.governanceRequest.count({ where: { status: "PENDING" } });
-  const rows = await prisma.governanceRequest.findMany({ where: { status: "PENDING" }, select: { entityId: true } });
-  if (rows.length === 0) return 0;
-  const entities = await prisma.entity.findMany({
-    where: { tenantId, id: { in: [...new Set(rows.map((row) => row.entityId))] } },
-    select: { id: true },
-  });
-  const inTenant = new Set(entities.map((entity) => entity.id));
-  return rows.filter((row) => inTenant.has(row.entityId)).length;
+  // ONE counting query in the database: a request has no foreign key to its entity, so the join is a subquery. (It used to read every PENDING
+  // request of all tenants into memory and filter them there: unbounded on a large install.)
+  const rows = await prisma.$queryRaw<Array<{ n: number }>>`
+    SELECT COUNT(*)::int AS n FROM "governance_requests" r
+    WHERE r."status" = 'PENDING' AND EXISTS (SELECT 1 FROM "entities" e WHERE e."id" = r."entityId" AND e."tenantId" = ${tenantId})`;
+  return Number(rows[0]?.n ?? 0);
 }
 
 /**

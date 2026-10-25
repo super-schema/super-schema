@@ -130,6 +130,11 @@ vi.mock("@/lib/db", () => {
   };
   // An interactive transaction: the callback gets the same (in-memory) client.
   prisma.$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+  // The one counting query of `countPendingRequests(tenantId)`: the PENDING requests that have an entity of the tenant (the tagged template's only value).
+  prisma.$queryRaw = vi.fn(async (_strings: TemplateStringsArray, tenantId: string) => {
+    const inTenant = new Set(entities.filter((e) => e.tenantId === tenantId).map((e) => e.id));
+    return [{ n: requests.filter((r) => r.status === "PENDING" && inTenant.has(r.entityId)).length }];
+  });
   return { prisma };
 });
 
@@ -338,11 +343,29 @@ describe("Governance Service", () => {
 
       expect(await countPendingRequests("tenant-a")).toBe(2);
       expect(await countPendingRequests("tenant-b")).toBe(1);
+      expect(await countPendingRequests("tenant-none")).toBe(0);
       // the list the dashboard shows has the same pending ones
       const listed = await getAllRequests("tenant-a");
       expect(listed.success && listed.data.filter((r) => r.status === "PENDING")).toHaveLength(2);
       // without a tenant (a caller that is not a page) it is every pending request, as the list is every request
       expect(await countPendingRequests()).toBe(4);
+    });
+  });
+
+  describe("countPendingRequests is one counting query", () => {
+    it("loads no request row and no entity row (it used to read every PENDING request of ALL tenants and filter them in memory)", async () => {
+      entities = [{ id: "ent-a", tenantId: "tenant-a" }];
+      for (let i = 0; i < 5; i += 1) await createRequest("ent-a", i + 1, makeClassification("breaking"), null, stewardCtx, "A");
+      const { prisma } = await import("@/lib/db");
+      const requestRows = prisma.governanceRequest.findMany as unknown as ReturnType<typeof vi.fn>;
+      const entityRows = prisma.entity.findMany as unknown as ReturnType<typeof vi.fn>;
+      requestRows.mockClear();
+      entityRows.mockClear();
+      (prisma.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockClear();
+      expect(await countPendingRequests("tenant-a")).toBe(5);
+      expect(requestRows).not.toHaveBeenCalled();
+      expect(entityRows).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     });
   });
 
