@@ -5,7 +5,7 @@
  */
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -285,8 +285,8 @@ describe("the stall watchdog's small pieces", () => {
     }
   });
 
-  it("the default is five minutes", () => {
-    expect(DEFAULT_STALL_MS).toBe(300_000);
+  it("the default is twenty minutes (above the longest test timeout of the suite: the guard below keeps it so)", () => {
+    expect(DEFAULT_STALL_MS).toBe(1_200_000);
     expect(STALL_EXIT_CODE).toBe(124);
   });
 
@@ -443,36 +443,144 @@ describe("stopStalledChild", () => {
   });
 });
 
-describe("the watchdog, with a real hung process and a real heartbeat file", () => {
-  it.skipIf(process.platform === "win32")("ends a child that stops beating, and leaves one that keeps beating alone", async () => {
+describe("the watchdog, with a real process and a real heartbeat file", () => {
+  /** A "Playwright": it starts a worker in a process group of its own (as a browser is), writes the worker's pid to `pidFile`, and waits a minute. */
+  const childSource = (pidFile: string) =>
+    `const g = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { detached: true, stdio: 'ignore' }); ` +
+    `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(g.pid)); setTimeout(()=>{},60000)`;
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /** A started child and its worker, a heartbeat file, and the clean-up of all of it. */
+  async function start() {
     const dir = mkdtempSync(path.join(tmpdir(), "ss-heartbeat-"));
     const file = path.join(dir, "heartbeat");
+    const pidFile = path.join(dir, "worker.pid");
+    writeFileSync(file, "begin 1 tests\n");
+    const child = spawnGroup(process.execPath, ["-e", childSource(pidFile)], { stdio: "ignore" });
+    const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
+    await vi.waitFor(() => expect(() => readFileSync(pidFile, "utf8")).not.toThrow(), { timeout: 5000 });
+    const workerPid = Number(readFileSync(pidFile, "utf8"));
+    expect(alive(workerPid)).toBe(true);
+    const cleanUp = () => {
+      try {
+        process.kill(workerPid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+      void terminateGroup(child, { graceMs: 200 });
+      rmSync(dir, { recursive: true, force: true });
+    };
+    return { file, child, exited, workerPid, cleanUp };
+  }
+
+  it.skipIf(process.platform === "win32")("ends a child that never beats, and the worker it started in a group of its own", async () => {
+    const run = await start();
     try {
-      writeFileSync(file, "begin 1 tests\n");
-      // A hung "Playwright": it does nothing for a minute, with a worker of its own, and never touches the heartbeat.
-      const child = spawnGroup(process.execPath, ["-e", "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], {stdio:'inherit'}); setTimeout(()=>{},60000)"], { stdio: "ignore" });
-      const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
-      const stalled = new Promise<{ idleMs: number; ended: boolean }>((resolve) => {
-        const beats = setInterval(() => utimesSync(file, new Date(), new Date()), 100); // a healthy run, for the first second
-        setTimeout(() => clearInterval(beats), 1000);
+      let stopped: Promise<void> | undefined;
+      const info = await new Promise<{ idleMs: number; ended: boolean }>((resolve) => {
         watchForStall({
-          stallMs: 1500,
+          stallMs: 1000,
           pollMs: 100,
-          readHeartbeat: () => readHeartbeat(file),
-          onStall: (info) => {
-            void stopStalledChild(child, { graceMs: 1000 });
-            resolve(info);
+          readHeartbeat: () => readHeartbeat(run.file),
+          onStall: (stall) => {
+            stopped = stopStalledChild(run.child, { graceMs: 1000 });
+            resolve(stall);
           },
         });
       });
-      const info = await stalled;
-      // It was not ended while the file was being touched: the first second plus the limit have passed.
-      expect(info.idleMs).toBeGreaterThanOrEqual(1500);
-      expect(info.ended).toBe(false);
-      const result = await exited;
-      expect(result.signal).toBe("SIGTERM");
+      expect(info.ended).toBe(false); // the last word was "begin", not "end"
+      await stopped;
+      expect((await run.exited).signal).toBe("SIGTERM");
+      // The worker is in a group of its own: the group signal did not reach it, the tree that was read before the leader went did.
+      await vi.waitFor(() => expect(alive(run.workerPid)).toBe(false), { timeout: 5000 });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      run.cleanUp();
     }
-  }, 15_000);
+  }, 20_000);
+
+  it.skipIf(process.platform === "win32")("leaves a child that keeps beating alone for four times the limit, and ends it once it stops", async () => {
+    const run = await start();
+    try {
+      let stalls = 0;
+      let stopped: Promise<void> | undefined;
+      const watcher = watchForStall({
+        stallMs: 1000,
+        pollMs: 100,
+        readHeartbeat: () => readHeartbeat(run.file),
+        onStall: () => {
+          stalls += 1;
+          stopped = stopStalledChild(run.child, { graceMs: 1000 });
+        },
+      });
+      const beats = setInterval(() => utimesSync(run.file, new Date(), new Date()), 100);
+      await new Promise((resolve) => setTimeout(resolve, 4000)); // four times the limit, beating all the while
+      expect(stalls).toBe(0);
+      expect(watcher.stalled).toBe(false);
+      expect(run.child.exitCode).toBeNull();
+      expect(run.child.signalCode).toBeNull();
+      expect(alive(run.workerPid)).toBe(true);
+
+      clearInterval(beats); // the run stops making progress
+      await vi.waitFor(() => expect(stalls).toBe(1), { timeout: 5000 });
+      await stopped;
+      expect((await run.exited).signal).toBe("SIGTERM");
+      await vi.waitFor(() => expect(alive(run.workerPid)).toBe(false), { timeout: 5000 });
+    } finally {
+      run.cleanUp();
+    }
+  }, 30_000);
+});
+
+describe("the stall limit stays above the longest test the suite declares", () => {
+  const REPO = path.resolve(__dirname, "../../..");
+  const E2E_DIR = path.join(REPO, "tests", "e2e");
+
+  function files(dir: string): string[] {
+    return readdirSync(dir).flatMap((name) => {
+      const file = path.join(dir, name);
+      if (statSync(file).isDirectory()) return files(file);
+      return /\.ts$/.test(name) ? [file] : [];
+    });
+  }
+
+  /** `420_000`, `300000`, `5 * 60_000`: a duration written as numbers (and products of them) only. */
+  const NUMERIC = /^[\d_]+(\s*\*\s*[\d_]+)*$/;
+  const millis = (expression: string) => expression.split("*").reduce((product, part) => product * Number(part.replace(/_/g, "").trim()), 1);
+
+  /** Every per-test timeout the specs and the config declare, with where. */
+  function declared(): Array<{ where: string; text: string }> {
+    const found: Array<{ where: string; text: string }> = [];
+    for (const file of files(E2E_DIR)) {
+      const source = readFileSync(file, "utf8");
+      const where = path.relative(REPO, file);
+      for (const match of source.matchAll(/\btest\.setTimeout\(\s*([^)]*?)\s*\)/g)) found.push({ where, text: match[1] });
+      for (const match of source.matchAll(/\bsetConfig\(\s*\{[^}]*?\btestTimeout\s*:\s*([^,}]*?)\s*[,}]/g)) found.push({ where, text: match[1] });
+      for (const match of source.matchAll(/\bconfigure\(\s*\{[^}]*?\btimeout\s*:\s*([^,}]*?)\s*[,}]/g)) found.push({ where, text: match[1] });
+    }
+    const config = readFileSync(path.join(REPO, "playwright.config.ts"), "utf8");
+    for (const match of config.matchAll(/^\s{2}timeout:\s*([^,]*?),/gm)) found.push({ where: "playwright.config.ts", text: match[1] });
+    return found;
+  }
+
+  it("reads every declared timeout as a number (a constant or a sum would hide a long test from this guard)", () => {
+    const found = declared();
+    expect(found.length, "the scan found no timeout at all: it is broken").toBeGreaterThan(20);
+    const unreadable = found.filter((d) => !NUMERIC.test(d.text));
+    expect(unreadable.map((d) => `${d.where}: ${d.text}`), "write the timeout as a number, e.g. 420_000").toEqual([]);
+  });
+
+  it("DEFAULT_STALL_MS is greater than the largest of them (a test is silent between its start and its end)", () => {
+    const found = declared().filter((d) => NUMERIC.test(d.text));
+    const longest = found.reduce((a, b) => (millis(b.text) > millis(a.text) ? b : a));
+    // The suite's longest today is the link crawl of navigation.spec.ts (900 s, @slow); the authored lifecycle and events-publish tests are 420 s.
+    expect(millis(longest.text), `the longest declared timeout is ${longest.text} in ${longest.where}`).toBeGreaterThanOrEqual(420_000);
+    expect(DEFAULT_STALL_MS, `a test of ${longest.text} ms (${longest.where}) would be ended as stalled`).toBeGreaterThan(millis(longest.text));
+  });
 });

@@ -24,8 +24,9 @@ Design and decisions: `docs/superpowers/specs/2026-10-23-release-ui-suite-design
   resort); on Windows it signals the child alone and is not tested there.
 - **Node 20.9+ or 22** (`.nvmrc` says 22, CI runs 22; `engines` in `package.json` is `^20.9.0 || ^22.0.0`) and `npm ci`, as for the app:
   `nvm install` (once) and `nvm use` in the checkout pick 22. The runner and the phases script refuse any other Node with exit code 2 before they provision
-  anything: on Node 26.3.1 a run stopped after its last test with every Playwright worker idle and never ended (see Troubleshooting).
-  `E2E_ALLOW_UNSUPPORTED_NODE=1` runs the suite on another Node anyway. No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
+  anything: on Node 26.3.1 a run stopped after its last test with every Playwright worker idle and never ended (see Troubleshooting). The
+  check is a whitelist, not a finding about every other Node: Node 24 (the current LTS) is untested here, not known to be broken, and is
+  refused until someone runs the suite on it. `E2E_ALLOW_UNSUPPORTED_NODE=1` runs the suite on another Node anyway (try Node 24 that way). No `.env` is needed, no database, no running server. A `.env` in the checkout is still read by the
   app, the seed and prisma (Next, dotenv and prisma/load-env-file.ts load it), so the runner defines every name the app reads, below: a
   `.env` cannot change what a run tests.
 
@@ -321,16 +322,26 @@ hidden: it is listed as flaky in all of the above. Old runs stay in `test-result
 - **"Node 26.3.1 is not supported by this suite ..."** (exit 2, before anything is provisioned): the Node of your shell is not 20.9+ or 22.
   Run `nvm use 22` in the checkout (`.nvmrc`), or put a Node 20.9+/22 first on the path for one command:
   `PATH="$HOME/.nvm/versions/node/v22.12.0/bin:$PATH" npm run test:e2e:release -- --tier smoke` (`ls ~/.nvm/versions/node` lists the ones you have;
-  the build is made once per Node major, it is part of the reuse hash). `E2E_ALLOW_UNSUPPORTED_NODE=1` overrides the refusal.
+  the build is made once per Node major, it is part of the reuse hash). `E2E_ALLOW_UNSUPPORTED_NODE=1` overrides the refusal (Node 24 is untested,
+  not known to be broken; Node 26.3.1 is the one that stalled).
 - **A run that stalls**: a run that never ends, with every Playwright worker idle (the list shows the last test or no test at all, no summary, no
   CPU, no sockets), was seen four times on Node 26.3.1 (Homebrew) with a suite of about a hundred tests, never on Node 20.19.4. The Node guard keeps
   that Node away, and a watchdog covers whatever else makes a run hang: the phases script gives each phase a heartbeat file
   (`<output root>/test-results/<phase>/heartbeat`, rewritten by `tests/e2e/reporters/heartbeat-reporter.ts` at every test start and end and at the
-  end of the run) and polls its modification time every 15 s. With no heartbeat for `E2E_STALL_MS` (5 minutes by default; the longest test is 60 s)
-  it prints `stalled: no test finished for N min, workers idle, likely a Node/Playwright incompatibility (node <version>)`, ends Playwright (SIGTERM to
+  end of the run) and polls its modification time every 15 s. With no heartbeat for `E2E_STALL_MS` (**20 minutes** by default) it prints `stalled: no test finished for N min, workers idle, likely a Node/Playwright incompatibility (node <version>)`, ends Playwright (SIGTERM to
   its group, then SIGKILL for it and everything below it) and exits with **124**; the release runner then tears everything down as usual. It does not
   stop at the reporter's last "end": a hang after the last test is what it is for (the message then says every test had finished).
-  `E2E_GLOBAL_TIMEOUT_MS` is Playwright's own `globalTimeout`, a hard ceiling on the whole run in milliseconds (unset: none; a CI job sets it).
+  The default is above the longest per-test timeout the suite declares: a running test is silent until it ends, and the longest are the link
+  crawl of `navigation.spec.ts` (`@slow`, 15 minutes) and the 7-minute authored-lifecycle and events-publish tests (the other tests are 60 s to
+  5 minutes). A unit test (`tests/unit/scripts/e2e-process.test.ts`) scans `tests/e2e` for every `test.setTimeout(` and `timeout:` and fails when
+  `DEFAULT_STALL_MS` is not above the largest, so a longer test needs a longer default in the same change. A shorter limit for a hunt:
+  `E2E_STALL_MS=180000` (3 minutes) on a run of short tests.
+  `E2E_GLOBAL_TIMEOUT_MS` is Playwright's own `globalTimeout`, a hard ceiling on the whole run in milliseconds (unset: none).
+  **CI sets neither of them**: `.github/workflows/e2e.yml` passes no `E2E_STALL_MS` and no `E2E_GLOBAL_TIMEOUT_MS`, so a CI run has the
+  20-minute stall limit and no global ceiling; the jobs' own `timeout-minutes` (25 for smoke, 60 and 90 for the others) are what ends a hung job
+  first on the short tiers. Both are checked when the release runner starts: a value that is not a positive whole number of milliseconds is
+  exit 2 there, while a bare `node scripts/e2e-phases.mjs` with a bad `E2E_GLOBAL_TIMEOUT_MS` only meets it when Playwright loads
+  `playwright.config.ts`: Playwright throws and the phase exits **1** (a bad `E2E_STALL_MS` is exit 2 in both).
   Ctrl-C ends the run and the teardown removes its container as usual.
 - **Port conflicts**: ports are picked at random and checked when the run starts; if the database port is taken at that moment the runner
   picks another (three tries).

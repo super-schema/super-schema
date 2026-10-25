@@ -33,7 +33,7 @@ export function nodeProblem(versions, env) {
   if (env[ALLOW_UNSUPPORTED_NODE] === "1") return null;
   return (
     `Node ${version} is not supported by this suite (Playwright stalls after the last test on it): run \`nvm use 22\` (or Node 20.9+). ` +
-    `${ALLOW_UNSUPPORTED_NODE}=1 runs it anyway; a run that stalls is then ended by the watchdog (E2E_STALL_MS, 5 minutes by default, exit 124).`
+    `${ALLOW_UNSUPPORTED_NODE}=1 runs it anyway; a run that stalls is then ended by the watchdog (E2E_STALL_MS, 20 minutes by default, exit 124).`
   );
 }
 

@@ -202,8 +202,13 @@ export const exitCodeForSignal = (signal) => SIGNAL_EXIT_CODE[signal] ?? 1;
 /** What `timeout(1)` answers for a command it had to end; the phases script exits with it when the watchdog ended Playwright. */
 export const STALL_EXIT_CODE = 124;
 
-/** No heartbeat for this long and the child is stalled (a test is at most 60 s, the setup a few seconds: 5 minutes is never a slow test). */
-export const DEFAULT_STALL_MS = 5 * 60 * 1000;
+/**
+ * No heartbeat for this long and the child is stalled. The heartbeat moves when a test starts or ends, so a test that is running is silent
+ * for as long as it runs: the limit must be above the longest per-test timeout the suite declares (the link crawl of navigation.spec.ts is
+ * 900 s, @slow; the authored lifecycle and events-publish tests are 420 s; the default is 60 s). tests/unit/scripts/e2e-process.test.ts scans
+ * tests/e2e for every `test.setTimeout(` / `timeout:` and fails when this is not above the largest, so the two cannot drift.
+ */
+export const DEFAULT_STALL_MS = 20 * 60 * 1000;
 
 /** How often the heartbeat is looked at. */
 export const POLL_MS = 15_000;

@@ -35,7 +35,7 @@
 //
 // The stall watchdog: each phase gets a heartbeat file (E2E_HEARTBEAT_FILE, <results>/<phase>/heartbeat) that
 // tests/e2e/reporters/heartbeat-reporter.ts rewrites whenever a test starts or ends. A Playwright whose heartbeat is older than
-// E2E_STALL_MS (default 5 minutes) is ended (its group, then everything below it) and the phase's code is 124. It does not matter
+// E2E_STALL_MS (default 20 minutes, above the longest test timeout) is ended (its group, then everything below it) and the phase's code is 124. It does not matter
 // why it hangs, nor that the reporter's last word was "end": the hang after the last test, with every worker idle, is the case this is for.
 //
 // Dependency-free on purpose: the release runner calls it, and the planner and the pieces around it (`planPhases`, `parseCli`,
