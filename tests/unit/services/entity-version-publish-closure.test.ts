@@ -38,6 +38,7 @@ vi.mock("@/lib/compiler/typespec-compiler", () => ({ compileTypeSpecWithGovernan
 
 import { publishEntity, previewPublish, loadReferenceStaleness } from "@/services/entity-version.service";
 import { readReferencedVersions } from "@/lib/entity-versioning/referenced-versions";
+import { readEntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import { needsReferenceOf } from "@/lib/entity-versioning/publish-plan";
 import type { ServiceContext } from "@/types/service-context";
 
@@ -227,7 +228,7 @@ describe("publishEntity: the gate compiles the real closure", () => {
     const res = await publishEntity("order", {}, ctxFor(prisma));
     expect(res.success).toBe(true);
     expect(h.compile).toHaveBeenCalledTimes(1);
-    expect(createdReport()).toEqual({ referencedVersions: [] });
+    expect(createdReport()).toEqual({ referencedVersions: [], entitySnapshot: { name: "Order", description: "", status: "DRAFT", metadata: {} } });
   });
 
   it("a fresh stored source of an entity that references nothing is not compiled (unchanged)", async () => {
@@ -404,7 +405,32 @@ describe("publishEntity: records the versions it used", () => {
     await publishEntity("order", {}, ctxFor(prisma));
     expect(JSON.parse(JSON.stringify(createdReport()))).toEqual({
       referencedVersions: [{ ref: { entityId: "cust", domain: "Sales", product: "Orders", entity: "Customer" }, version: "1.0", pinned: false }],
+      // (the entity's own name, description, status and metadata as published: final wave 2b, G7)
+      entitySnapshot: { name: "Order", description: "", status: "DRAFT", metadata: {} },
     });
+  });
+
+  // FINAL WAVE 2b, G7: what the entity itself contributes to an emission (name, description, status, metadata) is frozen with the version.
+  it("freezes the entity's name, description, status and metadata (the stored schema versions left out) on the published version", async () => {
+    orderAndCustomer();
+    entityOf("order")!.metadata = {
+      tags: ["pii"],
+      custom: { extensions: { "x-owner": "billing" } },
+      retentionPolicy: { period: 7, unit: "years" },
+      schemaVersions: { avro: [{ version: 1, output: "a very large generated schema" }] },
+    };
+    const { prisma } = fakePrisma();
+    expect((await publishEntity("order", {}, ctxFor(prisma))).success).toBe(true);
+    const stored = JSON.parse(JSON.stringify(createdReport())) as { entitySnapshot: Record<string, unknown> };
+    expect(stored.entitySnapshot).toEqual({
+      name: "Order",
+      description: "",
+      status: "DRAFT",
+      metadata: { tags: ["pii"], custom: { extensions: { "x-owner": "billing" } }, retentionPolicy: { period: 7, unit: "years" } },
+    });
+    expect(JSON.stringify(stored)).not.toContain("a very large generated schema");
+    // and it reads back through the tolerant reader
+    expect(readEntitySnapshot(createdReport())).toEqual(stored.entitySnapshot);
   });
 
   it("aborts with a retryable CONFLICT when a referenced entity publishes a newer version between the compile and the lock", async () => {

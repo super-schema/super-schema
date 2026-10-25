@@ -3,6 +3,7 @@ import { ok, type Result } from "@/types/result";
 import type { PrismaEntityInput, PrismaFieldInput } from "@/lib/compiler/compiler.service";
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-generator";
 import { formatVersionLabel, parseVersionLabel } from "@/lib/entity-versioning/version-math";
+import { readEntitySnapshot, withoutSchemaVersions, type EntitySnapshot } from "@/lib/entity-versioning/entity-snapshot";
 import {
   TENANT_PLACEHOLDER,
   holdsEntityReference,
@@ -152,43 +153,34 @@ async function loadTenantIndex(db: DbClient, tenantId: string): Promise<Map<stri
 }
 
 /**
- * Entity-level input for a closure member. LIMIT: `EntityVersion` snapshots only the fields (`fieldSnapshot`) and the
- * TypeSpec source (`resolvedSource`); it holds no name, description, metadata or domain. So for published and pinned
- * sources those come from the LIVE entity row (a post-publish rename or description edit shows through), and only the
- * fields and the version number (`sequence`) are frozen. Identity (id, qualified-name segments) is live by design: the
- * id is the key and the qualified name is refreshed from it (spec decision 4).
+ * Entity-level input for a closure member: its name, description, status and metadata (tags, deprecation, retention policy, the custom
+ * declarations, relationships: everything `compileEntity` reads of the entity) come from the `snapshot` its published version froze
+ * (`entitySnapshot` in the version's `compatReport`, see `entity-snapshot.ts`), so an edit made after the publish is not in published
+ * output. Without one (a draft source, or a version published before snapshots) they come from the LIVE entity row. Identity (id,
+ * qualified-name segments, domain) is always live by design: the id is the key and the qualified name is refreshed from it (spec decision
+ * 4). The version number (`sequence`) is the published version's own.
  */
-function toEntityInput(e: IndexedEntity, metadata: unknown, version?: number): PrismaEntityInput {
+function toEntityInput(e: IndexedEntity, metadata: unknown, version?: number, snapshot?: EntitySnapshot): PrismaEntityInput {
   return {
     id: e.id,
-    name: e.name,
-    description: e.description,
-    status: e.status,
+    name: snapshot?.name ?? e.name,
+    description: snapshot?.description ?? e.description,
+    status: snapshot?.status ?? e.status,
     version: version ?? e.version,
     domainId: e.domainId,
-    metadata,
+    metadata: snapshot ? snapshot.metadata : metadata,
     domain: e.domain ? { id: e.domain.id, name: e.domain.name, slug: e.domain.slug } : null,
   };
 }
 
-/**
- * `metadata` without `schemaVersions`: the stored generated schemas (every version's `output` and `files`, per target) are bookkeeping
- * the emitters never read (`compileEntity` takes tags, relationships, deprecation, custom and the retention policy), and they can be
- * large. Anything that is not a plain object is returned as it is. The input is not modified.
- */
-export function withoutSchemaVersions(metadata: unknown): unknown {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return metadata;
-  if (!Object.prototype.hasOwnProperty.call(metadata, "schemaVersions")) return metadata;
-  const rest = { ...(metadata as Record<string, unknown>) };
-  delete rest.schemaVersions;
-  return rest;
-}
+export { withoutSchemaVersions };
 
 /** The metadata of one closure member (see {@link withoutSchemaVersions}); one primary-key read. A vanished row reads as no metadata. */
 async function loadMemberMetadata(db: DbClient, entityId: string): Promise<unknown> {
   const row = await db.entity.findUnique({ where: { id: entityId }, select: { metadata: true } });
   return withoutSchemaVersions(row?.metadata ?? null);
 }
+
 
 /**
  * Resolves a field reference to an indexed entity: id, then qualified name, then a legacy bare name (tenant-wide).
@@ -250,7 +242,14 @@ export function createRefResolver(refs: readonly EntityRef[]): (fieldRef: Entity
   };
 }
 
-type Loaded = { fields: PrismaFieldInput[]; source: ClosureEntity["source"]; version?: string; sequence?: number };
+type Loaded = {
+  fields: PrismaFieldInput[];
+  source: ClosureEntity["source"];
+  version?: string;
+  sequence?: number;
+  /** What the published version froze about the entity itself. Absent for a draft source and for a version published before snapshots. */
+  snapshot?: EntitySnapshot;
+};
 
 async function loadContent(
   db: DbClient,
@@ -266,11 +265,13 @@ async function loadContent(
     const v = await db.entityVersion.findUnique({ where });
     if (!v) return undefined;
     const snapshot = Array.isArray(v.fieldSnapshot) ? (v.fieldSnapshot as unknown as PrismaFieldInput[]) : [];
+    const entitySnapshot = readEntitySnapshot(v.compatReport);
     return {
       fields: [...snapshot].sort((a, b) => a.sortOrder - b.sortOrder),
       source,
       version: formatVersionLabel(v),
       sequence: v.sequence,
+      ...(entitySnapshot ? { snapshot: entitySnapshot } : {}),
     };
   };
 
@@ -368,6 +369,8 @@ export async function loadReferenceClosure(
     observed: Map<string, Observation[]>;
     /** The pin each entity was loaded with (absent: loaded by the mode). */
     applied: Map<string, string | undefined>;
+    /** Members of a published or pinned source whose version froze no entity snapshot (published before snapshots): read from the live row. */
+    legacy: Set<string>;
   };
 
   /**
@@ -381,6 +384,7 @@ export async function loadReferenceClosure(
     const upgrades: LegacyUpgrade[] = [];
     const observed = new Map<string, Observation[]>();
     const applied = new Map<string, string | undefined>();
+    const legacy = new Set<string>();
 
     const add = async (
       e: IndexedEntity,
@@ -390,14 +394,18 @@ export async function loadReferenceClosure(
     ): Promise<Result<Loaded, ClosureError>> => {
       const loaded = await loadContent(db, e, contentMode, pin, field);
       if (!loaded.success) return loaded;
-      const metadata = await loadMemberMetadata(db, e.id);
+      // A published version that froze the entity's own content is read from that snapshot (no read of the live row); a draft source and a
+      // version published before snapshots are read from the live row, and the latter is said so in the notes.
+      const frozen = loaded.data.snapshot;
+      const metadata = frozen ? undefined : await loadMemberMetadata(db, e.id);
+      if (!frozen && loaded.data.source !== "draft") legacy.add(e.id);
       entities.push({
         entityId: e.id,
         ref: e.ref,
         source: loaded.data.source,
         ...(loaded.data.version ? { version: loaded.data.version } : {}),
         fields: loaded.data.fields,
-        entity: toEntityInput(e, metadata, loaded.data.sequence),
+        entity: toEntityInput(e, metadata, loaded.data.sequence, frozen),
       });
       applied.set(e.id, pin);
       return loaded;
@@ -458,7 +466,7 @@ export async function loadReferenceClosure(
         seen.add(edge.target.id);
       }
     }
-    return ok({ entities, graph, upgrades, observed, applied });
+    return ok({ entities, graph, upgrades, observed, applied, legacy });
   };
 
   // A closure resolves each entity ONCE (the emitted files are per entity), so a pin on any edge to an entity applies to it everywhere:
@@ -504,7 +512,7 @@ export async function loadReferenceClosure(
     };
   }
 
-  const { entities, graph, upgrades, observed } = result;
+  const { entities, graph, upgrades, observed, legacy } = result;
   const notes: string[] = [];
   for (const entity of entities) {
     const list = observed.get(entity.entityId) ?? [];
@@ -515,6 +523,11 @@ export async function loadReferenceClosure(
     notes.push(
       `${unpinned.map(who).join(", ")} ${unpinned.length === 1 ? "is" : "are"} unpinned but ${who(pinning)} pins ${entity.ref.entity} ${pinning.pin}: the pin was used for both.`
     );
+  }
+  // A published member whose version froze no entity snapshot (published before snapshots): its name, description, status and metadata are
+  // read from the live row, so an edit made since the publish shows through. Said once per member, in closure order.
+  for (const entity of entities) {
+    if (legacy.has(entity.entityId)) notes.push(`${entity.ref.entity} ${entity.version ?? ""}: metadata read from the live row: published before snapshots.`.replace("  ", " "));
   }
 
   const labels = new Map(entities.map((e) => [e.entityId, qualifiedName(e.ref)]));

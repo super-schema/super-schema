@@ -306,7 +306,11 @@ describe("generateSchemaAction: draft and published modes", () => {
     expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["b", "pinned", "1.0"]]);
     const resolution = storedVersion("a", "json-schema").resolution;
     expect(resolution?.entities[1]).toMatchObject({ source: "pinned", version: "1.0" });
-    expect(resolution?.notes).toEqual([expect.stringContaining("Order.a_plain is unpinned but Order.b_pinned pins Customer 1.0: the pin was used for both")]);
+    expect(resolution?.notes).toEqual([
+      expect.stringContaining("Order.a_plain is unpinned but Order.b_pinned pins Customer 1.0: the pin was used for both"),
+      // (the fixture version predates entity snapshots: its entity-level content is read from the live row, and the version says so)
+      "Customer 1.0: metadata read from the live row: published before snapshots.",
+    ]);
   });
 
   it("two fields that pin different versions of one entity refuse the generation with PIN_CONFLICT naming both, and store nothing", async () => {

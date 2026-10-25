@@ -97,7 +97,7 @@ describe("publish preview and publish never read another tenant's entity named b
     h.closure.mockResolvedValue({
       success: true,
       data: {
-        closure: { entities: [{}, {}] },
+        closure: { root: { entity: { name: "Order", description: "", status: "DRAFT", metadata: {} } }, entities: [{}, {}] },
         referencedVersions: [{ ref: { entityId: "eC", domain: "d", product: "p", entity: "Address" }, version: "1.0", pinned: false }],
       },
     });

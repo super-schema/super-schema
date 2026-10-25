@@ -37,6 +37,7 @@ import {
   freezableStoredSource,
 } from "@/lib/entity-versioning/resolve-source";
 import { loadPublishClosure } from "@/lib/entity-versioning/publish-closure";
+import { entitySnapshotReport } from "@/lib/entity-versioning/entity-snapshot";
 import {
   readReferencedVersions,
   referencedVersionsReport,
@@ -303,7 +304,13 @@ export async function publishEntity(
                 fieldSnapshot: state.data.currentFields as unknown as Prisma.InputJsonValue,
                 changeKind: plan.data.changeKind,
                 // The exact version of every referenced entity the closure used (pinned or latest published); no column needed.
-                compatReport: referencedVersionsReport(plan.data.referencedVersions) as unknown as Prisma.InputJsonValue,
+                // The entity's own name, description, status and metadata as they are now (the closure's root is read from its saved rows,
+                // under the row lock): published output of this version, and of whatever references it, reads them from here, not from
+                // the live row (final wave 2b, G7). No column needed either.
+                compatReport: {
+                  ...referencedVersionsReport(plan.data.referencedVersions),
+                  ...(state.data.closure ? entitySnapshotReport(state.data.closure.root.entity) : {}),
+                } as unknown as Prisma.InputJsonValue,
                 changeSummary,
                 publishedById: ctx.userId,
               },

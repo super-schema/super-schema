@@ -3,7 +3,7 @@ import { loadReferenceClosure, type ClosureError } from "@/lib/references/closur
 import { qualifiedName, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
 
 type FieldRow = { id: string; name: string; decorators: Record<string, unknown>; type?: string };
-type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[] };
+type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[]; compatReport?: unknown };
 type EntityRow = {
   id: string;
   name: string;
@@ -13,6 +13,8 @@ type EntityRow = {
   fields: FieldRow[];
   versions: VersionRow[];
   latest?: string; // version id
+  description?: string;
+  status?: string;
   metadata?: unknown; // read per member by `entity.findUnique`, never by the tenant index
 };
 
@@ -49,8 +51,8 @@ function fakeDb(rows: EntityRow[]) {
           .map((r) => ({
             id: r.id,
             name: r.name,
-            description: "",
-            status: "DRAFT",
+            description: r.description ?? "",
+            status: r.status ?? "DRAFT",
             version: 1,
             domainId: r.domain ? `d-${r.domain}` : null,
             productId: r.product ? `p-${r.product}` : null,
@@ -323,7 +325,7 @@ describe("loadReferenceClosure", () => {
     expect(pub.success && pub.data.root.fields[0].name).toBe("s0");
     const dr = await loadReferenceClosure(db, "t1", "a", "draft");
     expect(dr.success && names(dr.data)).toEqual(["A", "C"]);
-    // description is not snapshotted: documented limit, entity-level data stays live
+    // (this fixture version predates entity snapshots, so its entity-level data is read from the live row; a version that froze one is covered below)
     expect(pub.success && pub.data.root.entity.description).toBe("");
   });
 
@@ -591,10 +593,12 @@ describe("loadReferenceClosure: several edges to one entity, one of them pinned"
       ["C", "draft", undefined],
     ]);
     // Both facts are recorded: which field was unpinned, which pinned.
-    expect(r.data.notes).toHaveLength(1);
-    expect(r.data.notes[0]).toMatch(/is unpinned but .* pins B 1\.0: the pin was used for both/);
-    expect(r.data.notes[0]).toContain(fields.map((f) => f[0]).find((n) => n.includes("unpinned")) as string);
-    expect(r.data.notes[0]).toContain(fields.map((f) => f[0]).find((n) => n.includes("_pinned") || n.startsWith("a_pinned")) as string);
+    // (the published fixture versions carry no entity snapshot, which has its own note: only the pin notes are looked at here)
+    const pinNotes = r.data.notes.filter((n) => n.includes("unpinned but"));
+    expect(pinNotes).toHaveLength(1);
+    expect(pinNotes[0]).toMatch(/is unpinned but .* pins B 1\.0: the pin was used for both/);
+    expect(pinNotes[0]).toContain(fields.map((f) => f[0]).find((n) => n.includes("unpinned")) as string);
+    expect(pinNotes[0]).toContain(fields.map((f) => f[0]).find((n) => n.includes("_pinned") || n.startsWith("a_pinned")) as string);
   });
 
   it("the pin wins in published mode too (B resolves to 1.0, not the latest published 2.0)", async () => {
@@ -621,7 +625,7 @@ describe("loadReferenceClosure: several edges to one entity, one of them pinned"
       ["B", "pinned", "1.0"],
       ["C", "draft", undefined],
     ]);
-    expect(r.data.notes).toEqual([]);
+    expect(r.data.notes.filter((n) => n.includes("unpinned but"))).toEqual([]);
   });
 
   it("a pin on an edge of ANOTHER member applies to the entity the root already reached unpinned", async () => {
@@ -760,4 +764,82 @@ describe("loadReferenceClosure: names that hold '/' and '%'", () => {
     expect(again.success && again.data.upgrades).toEqual([]);
     expect(again.success && again.data.entities.map((e) => [e.entityId, e.version])).toEqual([["a", undefined], ["t", "1.0"]]);
   });
+});
+
+// FINAL WAVE 2b, G7: the entity-level content of a published member (name, description, status, metadata) is the SNAPSHOT its version
+// stored at publish, not the live row, so an unpublished edit (retention, extensions, a description) never reaches published output.
+describe("loadReferenceClosure: the entity snapshot of a published version", () => {
+  const PUBLISHED_METADATA = { tags: ["pii"], custom: { extensions: { "x-owner": "billing" } }, retentionPolicy: { period: 7, unit: "years" } };
+  const LIVE_METADATA = { tags: ["draft"], custom: { extensions: { "x-owner": "someone-else" } }, retentionPolicy: { period: 1, unit: "days" }, schemaVersions: { avro: [{ output: "big" }] } };
+  const snapshotReport = { entitySnapshot: { name: "B as published", description: "published description", status: "ACTIVE", metadata: PUBLISHED_METADATA } };
+
+  const withSnapshot = (over: Partial<VersionRow> = {}): VersionRow => ({ ...version("b", 1, 0, []), compatReport: snapshotReport, ...over });
+  const world = (bVersion: VersionRow, aFields: TypedField[] = [["cust", qref("b", "_tenant/_tenant/B")]]) =>
+    fakeDb([
+      ent("a", { versions: [{ ...version("a", 1, 0, []), fieldSnapshot: [toField({ id: "a-s0", name: "cust", decorators: qref("b", "_tenant/_tenant/B") }, 0)], compatReport: { entitySnapshot: { name: "A as published", description: "a published", status: "ACTIVE", metadata: { tags: ["a-pub"] } } } }], latest: "a-v1.0", description: "a live", metadata: { tags: ["a-live"] } }, aFields),
+      ent("b", { versions: [bVersion], latest: "b-v1.0", description: "LIVE edit", status: "DRAFT", metadata: LIVE_METADATA }),
+    ]);
+
+  it("published mode reads a member's name, description, status and metadata from its snapshot (the live edits are not in it)", async () => {
+    const r = await loadReferenceClosure(world(withSnapshot()), "t1", "a", "published");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    const b = r.data.entities.find((e) => e.entityId === "b")!;
+    expect(b.entity).toMatchObject({ id: "b", name: "B as published", description: "published description", status: "ACTIVE", metadata: PUBLISHED_METADATA });
+    expect(r.data.notes).toEqual([]);
+  });
+
+  it("the ROOT of a published-mode closure is read from its snapshot too", async () => {
+    const r = await loadReferenceClosure(world(withSnapshot()), "t1", "a", "published");
+    expect(r.success && r.data.root.entity).toMatchObject({ name: "A as published", description: "a published", metadata: { tags: ["a-pub"] } });
+  });
+
+  it("a PINNED member is read from the snapshot of the pinned version", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["cust", qref("b", "_tenant/_tenant/B", "1.0")]]),
+      ent("b", { versions: [withSnapshot(), { ...version("b", 2, 0, []), compatReport: { entitySnapshot: { name: "B v2", description: "v2", status: "ACTIVE", metadata: {} } } }], latest: "b-v2.0", description: "LIVE edit", metadata: LIVE_METADATA }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success && r.data.entities.find((e) => e.entityId === "b")?.entity).toMatchObject({ name: "B as published", description: "published description", metadata: PUBLISHED_METADATA });
+  });
+
+  it("draft mode and a draft root still read the live rows", async () => {
+    const r = await loadReferenceClosure(world(withSnapshot()), "t1", "a", "draft");
+    expect(r.success && r.data.entities.find((e) => e.entityId === "b")?.entity).toMatchObject({ name: "B", description: "LIVE edit", status: "DRAFT", metadata: { tags: ["draft"], retentionPolicy: { period: 1, unit: "days" } } });
+    const atDraft = await loadReferenceClosure(world(withSnapshot()), "t1", "a", "published", { rootAtDraft: true });
+    expect(atDraft.success && atDraft.data.root.entity).toMatchObject({ description: "a live", metadata: { tags: ["a-live"] } });
+    expect(atDraft.success && atDraft.data.entities.find((e) => e.entityId === "b")?.entity.description).toBe("published description");
+  });
+
+  it("identity stays live: the id, the qualified name segments and the domain are the entity's current ones, whatever the snapshot says", async () => {
+    const r = await loadReferenceClosure(world(withSnapshot()), "t1", "a", "published");
+    if (!r.success) throw new Error("closure failed");
+    const b = r.data.entities.find((e) => e.entityId === "b")!;
+    expect(b.ref).toMatchObject({ entityId: "b", entity: "B" });
+    expect(b.entity.id).toBe("b");
+  });
+
+  it("the stored schema versions are never part of the snapshot content it hands out", async () => {
+    const withBig = withSnapshot({ compatReport: { entitySnapshot: { ...snapshotReport.entitySnapshot, metadata: { ...PUBLISHED_METADATA, schemaVersions: { avro: ["x"] } } } } });
+    const r = await loadReferenceClosure(world(withBig), "t1", "a", "published");
+    expect(r.success && JSON.stringify(r.data.entities.find((e) => e.entityId === "b")?.entity.metadata)).not.toContain("schemaVersions");
+  });
+
+  it("a version published BEFORE snapshots falls back to the live row and says so in the closure's notes", async () => {
+    const legacy = { ...version("b", 1, 0, []), compatReport: {} };
+    const r = await loadReferenceClosure(world(legacy), "t1", "a", "published");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities.find((e) => e.entityId === "b")?.entity).toMatchObject({ name: "B", description: "LIVE edit", metadata: { tags: ["draft"] } });
+    expect(r.data.notes).toContain("B 1.0: metadata read from the live row: published before snapshots.");
+  });
+
+  it.each([["null", null], ["an array", []], ["a string", "x"], ["no name", { entitySnapshot: { description: "d", status: "ACTIVE", metadata: {} } }], ["a bad status", { entitySnapshot: { name: "n", description: "d", status: 3, metadata: {} } }]])(
+    "a malformed snapshot (%s) reads as none: the live row, with the note",
+    async (_label, compatReport) => {
+      const r = await loadReferenceClosure(world({ ...version("b", 1, 0, []), compatReport }), "t1", "a", "published");
+      expect(r.success && r.data.entities.find((e) => e.entityId === "b")?.entity.description).toBe("LIVE edit");
+      expect(r.success && r.data.notes.some((n) => n.includes("published before snapshots"))).toBe(true);
+    }
+  );
 });
