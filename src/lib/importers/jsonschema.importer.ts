@@ -292,8 +292,54 @@ interface DefinitionEntry {
   assetName: string;
 }
 
+/**
+ * What one import has spent resolving types, shared by every copy of the `ResolveContext` of that import.
+ * `visits` bounds the TOTAL work (a hostile `allOf` fan-out is exponential in its depth: depth bounds the chain, not the breadth);
+ * `inline` remembers what each inline `$defs` entry resolved to, so a definition reached along many paths (a diamond) is resolved once.
+ */
+interface ResolveRun {
+  budget: ResolveBudget;
+  /** Definition node -> (ref depth, combinator nesting) -> its resolution. Both numbers are part of the key: they decide where resolution stops. */
+  inline: Map<JsonSchemaNode, Map<number, ResolvedType>>;
+}
+
+/** The work an import may spend resolving types: `resolveSchemaType` calls and inline-definition views. Shared across the documents of a URL import. */
+export interface ResolveBudget {
+  visits: number;
+  limit: number;
+}
+
+/** One document may make this many visits; a legitimate 2000-property schema makes about 10,000. Past it the import is refused, never slow. */
+export const MAX_RESOLVE_VISITS = 500_000;
+/** All the documents of one URL import together (each is resolved on the event loop, so the total is what blocks it). */
+export const MAX_RESOLVE_VISITS_PER_URL_IMPORT = 1_500_000;
+
+let resolveVisitLimitOverride: number | undefined;
+/** Test seam: replaces (or, with `undefined`, restores) the visit limits so the refusal can be provoked with a small document. */
+export function setResolveVisitLimitForTests(limit: number | undefined): void {
+  resolveVisitLimitOverride = limit;
+}
+
+/** A fresh budget: for one document, or (`forUrlImport`) for every document of one URL import. */
+export function createResolveBudget(forUrlImport = false): ResolveBudget {
+  return { visits: 0, limit: resolveVisitLimitOverride ?? (forUrlImport ? MAX_RESOLVE_VISITS_PER_URL_IMPORT : MAX_RESOLVE_VISITS) };
+}
+
+/** Thrown when an import exhausts its visit budget; `parseGuarded` turns it into the PARSE_ERROR the caller sees. */
+class ResolveBudgetError extends Error {}
+
+function newRun(budget: ResolveBudget = createResolveBudget()): ResolveRun {
+  return { budget, inline: new Map() };
+}
+
+function charge(run: ResolveRun): void {
+  if (++run.budget.visits > run.budget.limit) throw new ResolveBudgetError("resolve budget exhausted");
+}
+
 interface ResolveContext {
   definitions: Map<string, DefinitionEntry>;
+  /** The work spent so far by this import (one object shared by every context copy). */
+  run: ResolveRun;
   /** Root entity name when the document root is itself an object schema (target of `$ref: "#"`). */
   rootEntityName?: string;
   /** Guards `$ref` chains through inline definitions. */
@@ -467,6 +513,16 @@ function definitionFor(definitions: Map<string, DefinitionEntry>, ref: string): 
   return byId.get(ref);
 }
 
+/** A copy a caller may keep: the memoised resolution is shared by every path that reaches the definition. */
+function cloneResolved(r: ResolvedType): ResolvedType {
+  return {
+    ...r,
+    ...(r.enumValues ? { enumValues: [...r.enumValues] } : {}),
+    ...(r.unionMembers ? { unionMembers: [...r.unionMembers] } : {}),
+    ...(r.impliedConstraints ? { impliedConstraints: r.impliedConstraints.map((c) => ({ ...c })) } : {}),
+  };
+}
+
 function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
   if ((ref === "#" || ref === "") && ctx.rootEntityName) {
     return {
@@ -510,7 +566,19 @@ function resolveRef(ref: string, ctx: ResolveContext): ResolvedType {
     };
   }
   if (def?.kind === "inline" && ctx.depth < MAX_REF_DEPTH) {
-    return resolveSchemaType(def.node, { ...ctx, depth: ctx.depth + 1 });
+    // Resolved once per (definition, depth, nesting): along every path that reaches it the same way the answer is the same, and without
+    // this a definition whose `allOf` lists the next one several times costs members^depth.
+    const slot = ctx.depth * 1024 + ctx.nesting;
+    let bySlot = ctx.run.inline.get(def.node);
+    const hit = bySlot?.get(slot);
+    if (hit) return cloneResolved(hit);
+    const resolved = resolveSchemaType(def.node, { ...ctx, depth: ctx.depth + 1 });
+    if (!bySlot) {
+      bySlot = new Map();
+      ctx.run.inline.set(def.node, bySlot);
+    }
+    bySlot.set(slot, resolved);
+    return cloneResolved(resolved);
   }
 
   // Not defined in this document: a reference by name to an entity that must
@@ -628,6 +696,7 @@ function resolveNamedRefUnion(
 }
 
 function resolveSchemaType(node: JsonSchemaNode, ctx: ResolveContext): ResolvedType {
+  charge(ctx.run);
   if (typeof node.$ref === "string") {
     return resolveRef(node.$ref, ctx);
   }
@@ -996,6 +1065,7 @@ function indexDefinitions(
   // indexed (a member must point at one, or outside the document); unions never nest, so no cycle is possible.
   const probe: ResolveContext = {
     definitions,
+    run: newRun(),
     rootEntityName,
     depth: 0,
     nesting: 0,
@@ -1124,6 +1194,7 @@ function inlineDefinitionSources(own: JsonSchemaNode[], ctx: ResolveContext): Js
     if (def?.kind !== "inline" || seen.has(def.node)) return;
     seen.add(def.node);
     for (const member of schemaSources(def.node)) {
+      charge(ctx.run);
       const view: JsonSchemaNode = {};
       for (const [key, value] of Object.entries(member)) if (!DEFINITION_ONLY_KEYS.has(key)) setOwn(view, key, value);
       out.push(view);
@@ -1291,8 +1362,8 @@ export function stripBom(content: string): string {
  * Never throws (the `Result` contract): a document nested past the engine's stack, or any other failure while
  * mapping it, comes back as a `PARSE_ERROR` instead of an unhandled exception in the import action.
  */
-export function parseJsonSchemaDocument(rawContent: string): Result<MultiEntityImportResult> {
-  return parseGuarded(rawContent);
+export function parseJsonSchemaDocument(rawContent: string, budget?: ResolveBudget): Result<MultiEntityImportResult> {
+  return parseGuarded(rawContent, undefined, budget);
 }
 
 /** A named `$defs` / `definitions` entry of a parsed document, as the importer classified and named it. */
@@ -1306,18 +1377,26 @@ export interface DefinitionIndexEntry {
  * final asset name), so a cross-file `$ref` with a fragment can be pointed at the right asset.
  */
 export function parseJsonSchemaDocumentIndexed(
-  rawContent: string
+  rawContent: string,
+  budget?: ResolveBudget
 ): Result<{ doc: MultiEntityImportResult; definitions: Map<string, DefinitionIndexEntry> }> {
   const definitions = new Map<string, DefinitionIndexEntry>();
-  const parsed = parseGuarded(rawContent, definitions);
+  const parsed = parseGuarded(rawContent, definitions, budget);
   if (!parsed.success) return parsed;
   return ok({ doc: parsed.data, definitions });
 }
 
-function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndexEntry>): Result<MultiEntityImportResult> {
+function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget): Result<MultiEntityImportResult> {
   try {
-    return importJsonSchemaDocument(stripBom(rawContent), outIndex);
+    return importJsonSchemaDocument(stripBom(rawContent), outIndex, budget);
   } catch (error) {
+    if (error instanceof ResolveBudgetError) {
+      return err({
+        code: "PARSE_ERROR",
+        message: "The schema is too large to resolve: its references and allOf members expand into too many steps",
+        suggestedFix: "Flatten the repeated allOf / $ref chains, or split the schema into smaller documents.",
+      });
+    }
     return err({
       code: "PARSE_ERROR",
       message:
@@ -1329,7 +1408,7 @@ function parseGuarded(rawContent: string, outIndex?: Map<string, DefinitionIndex
   }
 }
 
-function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>): Result<MultiEntityImportResult> {
+function importJsonSchemaDocument(content: string, outIndex?: Map<string, DefinitionIndexEntry>, budget?: ResolveBudget): Result<MultiEntityImportResult> {
   const schema = parseStructured(content);
   if (schema === null) {
     return err({
@@ -1366,6 +1445,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
   const unions: ParsedUnion[] = [];
   const ctx: ResolveContext = {
     definitions,
+    run: newRun(budget),
     rootEntityName,
     depth: 0,
     nesting: 0,

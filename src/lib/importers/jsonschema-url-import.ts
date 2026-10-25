@@ -28,12 +28,14 @@ import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import {
   breakInheritanceCycles,
   budgetOriginalContent,
+  createResolveBudget,
   importCountLimitMessage,
   isLowFromUnresolvedRef,
   parseJsonSchemaDocumentIndexed,
   refToEntityName,
   stripBom,
   type DefinitionIndexEntry,
+  type ResolveBudget,
 } from "./jsonschema.importer";
 import {
   fetchRootDocument,
@@ -207,6 +209,7 @@ function buildFile(
   rawDoc: unknown,
   originalContent: string,
   tokens: Tokens,
+  budget: ResolveBudget,
 ): { ok: true; built: BuiltFile } | { ok: false; reason: string } {
   if (!isPlainObject(rawDoc)) return { ok: false, reason: "the document is not a JSON object" };
   try {
@@ -214,14 +217,14 @@ function buildFile(
     if (typeof rewritten.title !== "string" || !rewritten.title.trim()) {
       if (!hasUsableId(rewritten)) setOwn(rewritten, "title", fileBaseName(docUri));
     }
-    const first = parseJsonSchemaDocumentIndexed(JSON.stringify(rewritten));
+    const first = parseJsonSchemaDocumentIndexed(JSON.stringify(rewritten), budget);
     if (first.success && first.data.doc.rootEntityName) {
       return { ok: true, built: toBuilt(first.data.doc, first.data.definitions, first.data.doc.rootEntityName, "entity") };
     }
     const isNonObjectRoot =
       Array.isArray(rewritten.enum) || Array.isArray(rewritten.oneOf) || Array.isArray(rewritten.anyOf);
     if (isNonObjectRoot && (!first.success || !first.data.doc.rootEntityName)) {
-      const synthetic = parseNonObjectRoot(rewritten, docUri);
+      const synthetic = parseNonObjectRoot(rewritten, docUri, budget);
       if (synthetic) return { ok: true, built: synthetic };
     }
     if (!first.success) return { ok: false, reason: first.error.message };
@@ -248,7 +251,7 @@ function toBuilt(
  * of those kinds, so the root is parsed as one definition next to a throwaway placeholder entity (which keeps the
  * importer from rejecting an entity-less document) and the placeholder is dropped again.
  */
-function parseNonObjectRoot(rewritten: Record<string, unknown>, docUri: string): BuiltFile | null {
+function parseNonObjectRoot(rewritten: Record<string, unknown>, docUri: string, budget: ResolveBudget): BuiltFile | null {
   const taken = new Set<string>();
   for (const kw of ["$defs", "definitions"]) {
     const d = rewritten[kw];
@@ -269,7 +272,7 @@ function parseNonObjectRoot(rewritten: Record<string, unknown>, docUri: string):
   setOwn(defs, PLACEHOLDER_KEY, { type: "object", properties: { x: { type: "string" } } });
   const synth: Record<string, unknown> = { $defs: defs };
   if (isPlainObject(rewritten.definitions)) setOwn(synth, "definitions", rewritten.definitions);
-  const parsed = parseJsonSchemaDocumentIndexed(JSON.stringify(synth));
+  const parsed = parseJsonSchemaDocumentIndexed(JSON.stringify(synth), budget);
   if (!parsed.success) return null;
   const { doc, definitions } = parsed.data;
   const placeholder = definitions.get(`#/$defs/${PLACEHOLDER_KEY}`)?.assetName ?? PLACEHOLDER_KEY;
@@ -401,8 +404,10 @@ function assemble(rootUrl: string, rootContent: string, refs: ResolvedRefs): Res
   const unions: ParsedUnion[] = [];
   let rootEntityName: string | undefined;
 
+  // One visit budget for the whole import: every document is resolved on the event loop, so the sum is what could block it.
+  const budget = createResolveBudget(true);
   for (const d of docs) {
-    const built = buildFile(d.uri, d.doc, d.original, tokens);
+    const built = buildFile(d.uri, d.doc, d.original, tokens, budget);
     if (!built.ok) {
       if (d.isRoot) {
         const why = built.reason;
