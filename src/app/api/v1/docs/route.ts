@@ -4,6 +4,19 @@
  */
 
 import { NextResponse } from "next/server";
+import { WEBHOOK_EVENT_TYPES } from "@/types/schemas/webhook";
+
+const WEBHOOK_EVENTS = [...WEBHOOK_EVENT_TYPES];
+
+const componentStatus = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    status: { type: "string", enum: ["healthy", "degraded", "unhealthy"] },
+    message: { type: "string" },
+    latencyMs: { type: "number" },
+  },
+};
 
 const openApiSpec = {
   openapi: "3.0.3",
@@ -36,22 +49,14 @@ const openApiSpec = {
             description: "Service is healthy",
             content: {
               "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    success: { type: "boolean", example: true },
-                    data: {
-                      type: "object",
-                      properties: {
-                        status: { type: "string", example: "healthy" },
-                        version: { type: "string", example: "1.0.0" },
-                        timestamp: { type: "string", format: "date-time" },
-                      },
-                    },
-                  },
-                },
+                // The report itself, not the `{ success, data }` envelope of the other endpoints.
+                schema: { $ref: "#/components/schemas/HealthReport" },
               },
             },
+          },
+          "503": {
+            description: "The system is unhealthy, or the check could not run (the body names no cause)",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/HealthReport" } } },
           },
         },
       },
@@ -232,6 +237,162 @@ const openApiSpec = {
         },
       },
     },
+    "/webhooks": {
+      get: {
+        summary: "List webhook endpoints",
+        description: "Admin only: a session is a viewer on this API, so this takes the API key. Every endpoint is listed, with its signing secret.",
+        tags: ["Webhooks"],
+        responses: {
+          "200": { description: "The endpoints", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+      post: {
+        summary: "Create a webhook endpoint",
+        description: "Admin only. The body is `{ url, events, active? }`; the signing secret is made up by the server.",
+        tags: ["Webhooks"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["url", "events"],
+                properties: {
+                  url: { type: "string", format: "uri" },
+                  events: { type: "array", minItems: 1, items: { type: "string", enum: WEBHOOK_EVENTS } },
+                  active: { type: "boolean", default: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": { description: "The endpoint created", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+        },
+      },
+    },
+    "/webhooks/{id}": {
+      put: {
+        summary: "Update a webhook endpoint",
+        description: "Admin only. Any of `url`, `events`, `active`; nothing else of the endpoint can be changed.",
+        tags: ["Webhooks"],
+        parameters: [{ name: "id", in: "path", required: true, description: "Webhook endpoint ID", schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  url: { type: "string", format: "uri" },
+                  events: { type: "array", minItems: 1, items: { type: "string", enum: WEBHOOK_EVENTS } },
+                  active: { type: "boolean" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "The endpoint as updated", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+      delete: {
+        summary: "Delete a webhook endpoint",
+        description: "Admin only. The endpoint's deliveries are deleted with it.",
+        tags: ["Webhooks"],
+        parameters: [{ name: "id", in: "path", required: true, description: "Webhook endpoint ID", schema: { type: "string" } }],
+        responses: {
+          "200": { description: "`{ deleted: true }`", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
+    "/webhooks/{id}/deliveries": {
+      get: {
+        summary: "List the deliveries of a webhook endpoint",
+        description: "Admin only. Newest first, with the status code or the error of each attempt.",
+        tags: ["Webhooks"],
+        parameters: [{ name: "id", in: "path", required: true, description: "Webhook endpoint ID", schema: { type: "string" } }],
+        responses: {
+          "200": { description: "The deliveries", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
+    "/notifications": {
+      get: {
+        summary: "List the notifications of the caller",
+        description:
+          "The signed-in user's own notifications, newest first, with their unread count. `countOnly=true` answers just `{ unreadCount }` " +
+          "(and 0, not a 401, to a caller without a credential: it is what the bell polls).",
+        tags: ["Notifications"],
+        parameters: [
+          { name: "types", in: "query", description: "Comma-separated notification types", schema: { type: "string" } },
+          { name: "read", in: "query", description: "Only read (true) or unread (false) notifications", schema: { type: "boolean" } },
+          { name: "page", in: "query", description: "Page, from 1", schema: { type: "integer", minimum: 1, default: 1 } },
+          { name: "pageSize", in: "query", description: "Page size, 1 to 100", schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } },
+          { name: "countOnly", in: "query", description: "Answer only the unread count", schema: { type: "boolean" } },
+        ],
+        responses: {
+          "200": { description: "The notifications and the unread count", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+        },
+      },
+      post: {
+        summary: "Mark notifications as read",
+        description: "`action=mark-read&id=<id>` marks one of the caller's own notifications, `action=mark-all-read` all of them.",
+        tags: ["Notifications"],
+        parameters: [
+          { name: "action", in: "query", required: true, description: "mark-read or mark-all-read", schema: { type: "string", enum: ["mark-read", "mark-all-read"] } },
+          { name: "id", in: "query", description: "The notification, for mark-read", schema: { type: "string" } },
+        ],
+        responses: {
+          "200": { description: "`{ marked: true }`", content: { "application/json": { schema: { $ref: "#/components/schemas/ApiSuccessResponse" } } } },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
+          "404": { $ref: "#/components/responses/NotFound" },
+        },
+      },
+    },
+    "/event-specs/{id}": {
+      get: {
+        summary: "Get the AsyncAPI document of an event",
+        description:
+          "The raw AsyncAPI document (not the JSON envelope): the latest published version, a published `version=MAJOR.MINOR`, or `version=draft`. " +
+          "An event of another tenant and one that does not exist give the same 404.",
+        tags: ["Events"],
+        parameters: [
+          { name: "id", in: "path", required: true, description: "Event spec ID", schema: { type: "string" } },
+          { name: "version", in: "query", description: "`draft`, or MAJOR.MINOR; omitted: the latest published version", schema: { type: "string" } },
+          { name: "format", in: "query", description: "yaml (default) or json", schema: { type: "string", enum: ["yaml", "json"], default: "yaml" } },
+        ],
+        responses: {
+          "200": {
+            description: "The AsyncAPI document",
+            content: { "application/yaml": { schema: { type: "string" } }, "application/json": { schema: { type: "object" } } },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "404": { $ref: "#/components/responses/NotFound" },
+          "429": { description: "More than 100 requests a minute from one client address" },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -243,6 +404,17 @@ const openApiSpec = {
       },
     },
     schemas: {
+      HealthReport: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["healthy", "degraded", "unhealthy"], description: "200 for healthy and degraded, 503 for unhealthy" },
+          components: {
+            type: "object",
+            properties: { database: componentStatus, compiler: componentStatus, emitters: componentStatus },
+          },
+          timestamp: { type: "string", format: "date-time" },
+        },
+      },
       ApiSuccessResponse: {
         type: "object",
         properties: {
@@ -268,6 +440,22 @@ const openApiSpec = {
       },
     },
     responses: {
+      BadRequest: {
+        description: "The request is invalid (VALIDATION_ERROR): a body that is not JSON, a value that is not allowed",
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/ApiErrorResponse" },
+          },
+        },
+      },
+      Forbidden: {
+        description: "The caller's role may not do this (FORBIDDEN)",
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/ApiErrorResponse" },
+          },
+        },
+      },
       Unauthorized: {
         description: "Authentication required",
         content: {

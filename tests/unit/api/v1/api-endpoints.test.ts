@@ -74,6 +74,7 @@ import { getEntities, getEntityById } from "@/services/entity.service";
 import { emitOfficialTypeSpecTargetFromData } from "@/lib/typespec-official/emitter.service";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { prisma } from "@/lib/db";
+import { WEBHOOK_EVENT_TYPES } from "@/types/schemas/webhook";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -210,6 +211,33 @@ describe("API v1", () => {
       expect(body.paths["/schemas/{id}"]).toBeTruthy();
       expect(body.paths["/schemas/{id}/emit"]).toBeTruthy();
       expect(body.paths["/schemas/{id}/validate"]).toBeTruthy();
+    });
+
+    it("names the webhook, notification and event-spec routes with the methods they have", async () => {
+      const body = await (await docsGet()).json();
+      const methods = (path: string) => Object.keys(body.paths[path] ?? {}).sort();
+      expect(methods("/webhooks")).toEqual(["get", "post"]);
+      expect(methods("/webhooks/{id}")).toEqual(["delete", "put"]);
+      expect(methods("/webhooks/{id}/deliveries")).toEqual(["get"]);
+      expect(methods("/notifications")).toEqual(["get", "post"]);
+      expect(methods("/event-specs/{id}")).toEqual(["get"]);
+      // The events a webhook may subscribe to are the service's own list.
+      expect(body.paths["/webhooks"].post.requestBody.content["application/json"].schema.properties.events.items.enum).toEqual([...WEBHOOK_EVENT_TYPES]);
+    });
+
+    it("describes the health answer as it is: the report itself, not the { success, data } envelope", async () => {
+      const body = await (await docsGet()).json();
+      const ok = body.paths["/health"].get.responses["200"].content["application/json"].schema;
+      expect(ok).toEqual({ $ref: "#/components/schemas/HealthReport" });
+      expect(Object.keys(body.components.schemas.HealthReport.properties).sort()).toEqual(["components", "status", "timestamp"]);
+      expect(body.paths["/health"].get.responses["503"]).toBeTruthy();
+    });
+
+    it("every $ref in the document points at a component that is in it", async () => {
+      const body = await (await docsGet()).json();
+      const refs = [...JSON.stringify(body).matchAll(/"\$ref":"#\/components\/(\w+)\/(\w+)"/g)];
+      expect(refs.length).toBeGreaterThan(5);
+      for (const [, group, name] of refs) expect(body.components[group]?.[name], `${group}/${name}`).toBeTruthy();
     });
 
     it("includes security scheme", async () => {
