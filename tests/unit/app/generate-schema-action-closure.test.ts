@@ -350,6 +350,31 @@ describe("generateSchemaAction: result and storage", () => {
     expect(result.validationStatus).toBe("VALID");
   });
 
+  // FINAL WAVE 2b, G8: what the Admin > Health cards count.
+  it("audits a successful generation as GENERATE (an emission, not a change of the schema)", async () => {
+    await actions.generateSchemaAction("a", "json-schema");
+    const audited = p.auditLog.create.mock.calls.map((c) => (c[0] as { data: { action: string; entityType: string; entityId: string; userId: string } }).data);
+    expect(audited).toEqual([expect.objectContaining({ action: "GENERATE", entityType: "Entity", entityId: "a", userId: "user-1" })]);
+  });
+
+  it("records a generation whose emission was invalid as EMISSION_FAILED, naming the target, and no GENERATE", async () => {
+    h.emitClosure.mockResolvedValue({ success: false, error: { code: "EMISSION_INVALID", message: "x", details: { errors: ["Order: bad name"], warnings: [] } } });
+    const result = await actions.generateSchemaAction("a", "json-schema");
+    expect(result).toEqual({ error: "Order: bad name" });
+    const audited = p.auditLog.create.mock.calls.map((c) => (c[0] as { data: { action: string; afterState: unknown } }).data);
+    expect(audited).toEqual([
+      expect.objectContaining({ action: "EMISSION_FAILED", entityType: "Entity", entityId: "a", afterState: { target: "json-schema", mode: "draft", message: "Order: bad name" } }),
+    ]);
+  });
+
+  it("a refusal to resolve a reference (a question, or an entity never published) is not an emission failure", async () => {
+    h.store.entities = [entity("a", "Order", [["cust", qualified("b", "_tenant/_tenant/Customer")]]), entity("b", "Customer")];
+    h.store.versions = [publish("a", 1, 0, [["cust", qualified("b", "_tenant/_tenant/Customer")]])];
+    entityOf("a")!.latestVersionId = "a-v1.0";
+    expect(await actions.generateSchemaAction("a", "json-schema", { mode: "published" })).toMatchObject({ code: "NEVER_PUBLISHED" });
+    expect(p.auditLog.create).not.toHaveBeenCalled();
+  });
+
   it("returns the emitter's warnings", async () => {
     h.emitClosure.mockResolvedValue({ success: true, data: { files: FILES, warnings: ["Order and Customer share a namespace"], entityFiles: {} } });
     const result = await actions.generateSchemaAction("a", "json-schema");

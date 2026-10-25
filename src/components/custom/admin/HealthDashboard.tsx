@@ -95,7 +95,6 @@ export function HealthDashboard() {
   const errorCards = [
     { label: "Compilation Errors", value: errors?.compilationErrors24h ?? 0 },
     { label: "Emission Failures", value: errors?.emissionValidationFailures24h ?? 0 },
-    { label: "API Errors", value: errors?.apiErrors24h ?? 0 },
   ];
 
   return (
@@ -206,7 +205,7 @@ export function HealthDashboard() {
       {/* Error Summary */}
       <section>
         <h3 className="text-heading-4 text-foreground mb-space-3">Errors (24h)</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-space-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-space-4">
           {errorCards.map(({ label, value }) => (
             <div
               key={label}

@@ -6,7 +6,10 @@
  * All functions return Result<T>.
  */
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { prisma } from "@/lib/db";
+import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -126,25 +129,47 @@ async function defaultDbCheck(): Promise<ComponentStatus> {
   }
 }
 
-async function defaultCompilerCheck(): Promise<ComponentStatus> {
+/** The version of an installed package (`<root>/node_modules/<name>/package.json`), or null when it is not installed or unreadable. */
+async function installedVersion(name: string, root: string): Promise<string | null> {
+  try {
+    const manifest = JSON.parse(await readFile(path.join(root, "node_modules", name, "package.json"), "utf8")) as { version?: unknown };
+    return typeof manifest.version === "string" ? manifest.version : "unknown version";
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A cheap, TRUTHFUL check of what a component runs on: the packages are installed where the emission looks for them
+ * (`<root>/node_modules`, the project's own, which is where `tsp` is pinned to). It does not compile anything, so it says nothing about
+ * a package that is installed but broken; it no longer says "healthy" for a missing one. Every package missing is unhealthy, some is
+ * degraded. The names of what is missing go to the server's log only: this answer is public (`/api/v1/health`).
+ */
+export async function checkInstalledPackages(name: string, packages: readonly string[], root: string = process.cwd()): Promise<ComponentStatus> {
   const start = Date.now();
-  // Simulate compiler check with trivial model
-  const latency = Date.now() - start;
-  return {
-    name: "TypeSpec Compiler",
-    status: "healthy",
-    message: `Compilation successful (${latency}ms)`,
-    latencyMs: latency,
-  };
+  const found = await Promise.all(packages.map(async (pkg) => ({ pkg, version: await installedVersion(pkg, root) })));
+  const latencyMs = Date.now() - start;
+  const missing = found.filter((f) => f.version === null).map((f) => f.pkg);
+  if (missing.length > 0) console.error(`[health] ${name}: not installed: ${missing.join(", ")}`);
+  if (packages.length === 1) {
+    return missing.length === 0
+      ? { name, status: "healthy", message: `${found[0].pkg} ${found[0].version} installed`, latencyMs }
+      : { name, status: "unhealthy", message: `${name} is not installed`, latencyMs };
+  }
+  const present = packages.length - missing.length;
+  const message = `${present} of ${packages.length} emitter packages installed`;
+  if (missing.length === 0) return { name, status: "healthy", message, latencyMs };
+  return { name, status: present === 0 ? "unhealthy" : "degraded", message, latencyMs };
+}
+
+async function defaultCompilerCheck(): Promise<ComponentStatus> {
+  return checkInstalledPackages("TypeSpec Compiler", ["@typespec/compiler"]);
 }
 
 async function defaultEmitterCheck(): Promise<ComponentStatus> {
-  return {
-    name: "Emitters",
-    status: "healthy",
-    message: "All enabled emitters operational",
-    latencyMs: 0,
-  };
+  // The emitter packages of the targets the application generates (`enabledInSchemaTab`).
+  const packages = [...new Set(getSchemaTargetCatalog().flatMap((target) => (target.enabledInSchemaTab && target.packageName ? [target.packageName] : [])))];
+  return checkInstalledPackages("Emitters", packages);
 }
 
 // ---------------------------------------------------------------------------
@@ -285,18 +310,16 @@ export async function getActivityMetrics(
   });
   const activeUsers24h = activeUsersResult.length;
 
-  // Emissions today
+  // Emissions today: a schema version was generated (`generateSchemaAction` audits every successful generation as GENERATE).
   const emissionsToday = await prisma.auditLog.count({
-    where: {
-      action: { startsWith: "emission." },
-      timestamp: { gte: startOfToday },
-    },
+    where: { action: "GENERATE", timestamp: { gte: startOfToday } },
   });
 
-  // Schema changes today
+  // Schema changes today: an entity or a field was created, edited or deleted (the writers audit CREATE / UPDATE / DELETE).
   const schemaChangesToday = await prisma.auditLog.count({
     where: {
-      action: { in: ["field.create", "field.update", "field.delete", "entity.create", "entity.update"] },
+      action: { in: ["CREATE", "UPDATE", "DELETE"] },
+      entityType: { in: ["Entity", "Field"] },
       timestamp: { gte: startOfToday },
     },
   });
@@ -331,33 +354,16 @@ export async function getErrorSummary(
 
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [compilationErrors24h, emissionValidationFailures24h, apiErrors24h] =
-    await Promise.all([
-      prisma.auditLog.count({
-        where: {
-          action: "compilation.error",
-          timestamp: { gte: twentyFourHoursAgo },
-        },
-      }),
-      prisma.auditLog.count({
-        where: {
-          action: "emission.validation.failure",
-          timestamp: { gte: twentyFourHoursAgo },
-        },
-      }),
-      prisma.auditLog.count({
-        where: {
-          action: { endsWith: ".error" },
-          timestamp: { gte: twentyFourHoursAgo },
-          NOT: { action: "compilation.error" },
-        },
-      }),
-    ]);
+  // Only failures the application records are counted: EMISSION_FAILED (a generation whose emission was invalid) and COMPILATION_ERROR
+  // (the TypeSpec compiler refused a source). There is no count of API errors: nothing records one.
+  const [compilationErrors24h, emissionValidationFailures24h] = await Promise.all([
+    prisma.auditLog.count({ where: { action: "COMPILATION_ERROR", timestamp: { gte: twentyFourHoursAgo } } }),
+    prisma.auditLog.count({ where: { action: "EMISSION_FAILED", timestamp: { gte: twentyFourHoursAgo } } }),
+  ]);
 
   return ok({
     compilationErrors24h,
     emissionValidationFailures24h,
-    apiErrors24h,
   });
 }
 
@@ -379,11 +385,9 @@ export async function getErrorDetails(
 
   let actionFilter: Record<string, unknown>;
   if (errorType === "compilation") {
-    actionFilter = { action: "compilation.error" };
+    actionFilter = { action: "COMPILATION_ERROR" };
   } else if (errorType === "emission") {
-    actionFilter = { action: "emission.validation.failure" };
-  } else if (errorType === "api") {
-    actionFilter = { action: { endsWith: ".error" } };
+    actionFilter = { action: "EMISSION_FAILED" };
   } else {
     return ok([]);
   }

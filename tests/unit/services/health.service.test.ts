@@ -98,7 +98,7 @@ describe("Health Service", () => {
   });
 
   describe("checkCompiler", () => {
-    it("returns healthy when trivial model compiles", async () => {
+    it("returns healthy when the compiler package is installed", async () => {
       const result = await checkCompiler(adminCtx);
       expect(result.status).toBe("healthy");
     });
@@ -233,15 +233,13 @@ describe("Health Service", () => {
     it("returns correct error counts from audit_log", async () => {
       mockAuditLogCount
         .mockResolvedValueOnce(5)  // compilationErrors24h
-        .mockResolvedValueOnce(2)  // emissionValidationFailures24h
-        .mockResolvedValueOnce(1); // apiErrors24h
+        .mockResolvedValueOnce(2); // emissionValidationFailures24h (EMISSION_FAILED)
 
       const result = await getErrorSummary(adminCtx);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.compilationErrors24h).toBe(5);
         expect(result.data.emissionValidationFailures24h).toBe(2);
-        expect(result.data.apiErrors24h).toBe(1);
       }
     });
 
@@ -256,7 +254,7 @@ describe("Health Service", () => {
       mockAuditLogFindMany.mockResolvedValue([
         {
           id: "log-1",
-          action: "compilation.error",
+          action: "COMPILATION_ERROR",
           entityType: "Entity",
           entityId: "e-1",
           userId: "u-1",
@@ -269,7 +267,7 @@ describe("Health Service", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data).toHaveLength(1);
-        expect(result.data[0].action).toBe("compilation.error");
+        expect(result.data[0].action).toBe("COMPILATION_ERROR");
       }
     });
 
@@ -277,8 +275,8 @@ describe("Health Service", () => {
       mockAuditLogFindMany.mockResolvedValue([
         {
           id: "log-3",
-          action: "emission.validation.failure",
-          entityType: "Emission",
+          action: "EMISSION_FAILED",
+          entityType: "Entity",
           entityId: "em-1",
           userId: "u-1",
           timestamp: new Date(),

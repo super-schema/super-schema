@@ -43,7 +43,6 @@ export type ActivityMetrics = z.infer<typeof ActivityMetricsSchema>;
 export const ErrorSummarySchema = z.object({
   compilationErrors24h: z.number(),
   emissionValidationFailures24h: z.number(),
-  apiErrors24h: z.number(),
 });
 
 export type ErrorSummary = z.infer<typeof ErrorSummarySchema>;

@@ -26,7 +26,7 @@ function inferChangeType(action: string, entityType: string): ChangeType {
   const a = action.toUpperCase();
 
   if (a === "CREATE_VERSION" || a.includes("VERSION")) return "version";
-  if (a.includes("EMIT")) return "emission";
+  if (a.includes("EMIT") || a === "GENERATE" || a === "EMISSION_FAILED") return "emission";
   if (a.includes("STATUS") || a.includes("DEPRECAT") || a.includes("RETIRE"))
     return "status_change";
   if (a.includes("DECORATOR")) return "decorator_change";
@@ -62,6 +62,9 @@ function buildAuditSummary(
   if (a === "CREATE" && entityType === "Entity") return "Created entity";
   if (a === "UPDATE" && entityType === "Entity") return "Updated entity";
   if (a.includes("STATUS")) return "Changed entity status";
+  if (a === "GENERATE") return "Generated a schema version";
+  if (a === "EMISSION_FAILED") return "A schema generation failed";
+  if (a === "COMPILATION_ERROR") return "The TypeSpec source did not compile";
   if (a.includes("EMIT")) return "Ran emission pipeline";
 
   return `${action} on ${entityType}`;

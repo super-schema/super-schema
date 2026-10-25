@@ -4,7 +4,7 @@ import { activeDanglingRef, decoratorsAfterFieldEdit } from "@/lib/field-danglin
 import { prisma } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
-import { withAudit } from "@/lib/audit";
+import { withAudit, recordAuditFailure } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { generateSlug } from "@/lib/slug";
 import { firstReservedFieldNameMessage, reservedFieldNameMessage, reservedNameMessage } from "@/lib/reserved-field-names";
@@ -1542,6 +1542,14 @@ export async function generateSchemaAction(entityId: string, target: string, opt
           if (asked.length > 0) return { needsInput: asked };
         }
         const firstError = officialResult.errors[0]?.message;
+        // The generation failed (not a question, not a refusal to resolve a reference): the Health card "Emission Failures" counts it.
+        await recordAuditFailure({
+          action: "EMISSION_FAILED",
+          entityType: "Entity",
+          entityId,
+          userId: session.user.id,
+          details: { target, mode, message: (firstError ?? "").slice(0, 500) },
+        });
         return { error: firstError ?? `Failed to generate ${targetDefinition.displayName}` };
       }
       targetOutput = officialResult;
@@ -1619,8 +1627,9 @@ export async function generateSchemaAction(entityId: string, target: string, opt
       schemaVersions: { ...schemaVersions, [target]: updatedVersions },
     };
 
+    // A generation is audited as GENERATE (not UPDATE): the Health cards count it as an emission and not as a change of the schema.
     await withAudit({
-      action: "UPDATE",
+      action: "GENERATE",
       entityType: "Entity",
       entityId,
       userId: session.user.id,
@@ -2269,6 +2278,14 @@ async function compileAndApplyTypeSpecSource(
     },
   });
   if (!result.success) {
+    // The TypeSpec compiler refused the source: the Health card "Compilation Errors" counts it (the first messages only, as a short note).
+    await recordAuditFailure({
+      action: "COMPILATION_ERROR",
+      entityType: "Entity",
+      entityId,
+      userId,
+      details: { messages: result.diagnostics.slice(0, 5).map((d) => String((d as { message?: unknown }).message ?? "").slice(0, 300)) },
+    });
     return { success: false, diagnostics: result.diagnostics };
   }
   const existingFields = await loadFieldRows();

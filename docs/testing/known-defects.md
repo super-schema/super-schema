@@ -168,13 +168,22 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `src/app/api/command-palette-fields/route.ts`.
 - cost to fix: search on the server (a query parameter), instead of filtering a fixed page in the browser.
 
-## KD-021: the Enabled toggle of an emitter and the Health tab's compiler and emitter statuses are not wired to anything
+## KD-021: the Enabled toggle of an emitter is not wired to anything, and the Health tab's compiler and emitter checks only look at what is installed
 
 - status: no-test (a product gap: nothing for a test to pin that is not the stub itself)
 - symptom: Admin > Emitters saves "Disabled", and every target still generates (the config is read by no emission path; the same for the
-  catalog's `enabledInSchemaTab`). Admin > Health shows "TypeSpec Compiler" and "Emitters" as healthy always: both checks return a constant.
-- where: `src/services/emitter-config.service.ts` (no caller outside the admin page), `src/services/health.service.ts` (`defaultCompilerCheck`,
-  `defaultEmitterCheck`).
+  catalog's `enabledInSchemaTab`). Admin > Health's "TypeSpec Compiler" and "Emitters" cards (and `/api/v1/health`) check that
+  `@typespec/compiler` and the emitter packages of the catalog are installed in the project's `node_modules` (healthy / degraded when some
+  are missing / unhealthy): they used to be constants. They do not compile anything, so a package that is installed but broken is still
+  "healthy".
+- Health cards (final wave 2b): "Emissions Today" counts `GENERATE` audit rows (a successful `generateSchemaAction`), "Schema Changes"
+  counts today's `CREATE` / `UPDATE` / `DELETE` rows of an Entity or a Field, "Compilation Errors" counts `COMPILATION_ERROR` rows (a
+  TypeSpec source the Source tab refused) and "Emission Failures" counts `EMISSION_FAILED` rows (a generation whose emission was invalid);
+  they counted action names nothing wrote and were always zero. There is NO "API Errors" card any more: nothing records an API error, so the
+  card could only ever show zero. A failure that is not recorded (the publish gate's compile failure, an emission through the REST routes) is
+  not counted.
+- where: `src/services/emitter-config.service.ts` (no caller outside the admin page), `src/services/health.service.ts`
+  (`checkInstalledPackages`, `getActivityMetrics`, `getErrorSummary`), `src/lib/audit.ts` (`recordAuditFailure`).
 
 ## KD-022: nothing produces a governance request
 
