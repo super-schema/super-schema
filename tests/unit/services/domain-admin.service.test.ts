@@ -152,6 +152,29 @@ describe("Domain Admin Service", () => {
       expect(result.success && result.data[0].policyTemplateStatus).toBe("No template");
     });
 
+    // FINAL WAVE 2b, G9: a template stored with a fractional retention period (stored before the editor required a whole number) is still
+    // a template: it is read with the period rounded UP to a whole number (at least 1), and nothing is rewritten.
+    it.each([
+      [0.5, 1],
+      [1.2, 2],
+      [2.5, 3],
+      [7, 7],
+    ])("a stored template with a retention period of %s is read as a template with a period of %s, not as no template", async (stored, read) => {
+      const policyTemplate = { classification: "PII", retentionPolicy: { strategy: "age-based", period: stored, periodUnit: "months", action: "delete" } };
+      seed({ name: "Legacy", policyTemplate });
+      const result = await getDomainsAdmin(adminCtx);
+      expect(result.success && result.data[0].policyTemplateStatus).toBe("Configured");
+      expect(result.success && result.data[0].policyTemplate).toEqual({ classification: "PII", retentionPolicy: { strategy: "age-based", period: read, periodUnit: "months", action: "delete" } });
+      // no data change: the stored value is what it was
+      expect(policyTemplate.retentionPolicy.period).toBe(stored);
+    });
+
+    it("a template whose other parts are wrong is still no template (only the period is tolerated)", async () => {
+      seed({ name: "Odd", policyTemplate: { retentionPolicy: { strategy: "forever", period: 0.5, action: "delete" } } });
+      const result = await getDomainsAdmin(adminCtx);
+      expect(result.success && result.data[0].policyTemplateStatus).toBe("No template");
+    });
+
     it("rejects non-Admin users", async () => {
       const result = await getDomainsAdmin(viewerCtx);
       expect(result.success).toBe(false);

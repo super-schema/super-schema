@@ -19,34 +19,34 @@ beforeEach(() => {
 describe("updateRetentionPolicyAction draft + source tracking (R45)", () => {
   it("marks a changed retention policy as a draft change and the stored source stale", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { tags: ["a"] }, tenantId: "tenant-1" });
-    expect(await updateRetentionPolicyAction("ent-1", { period: "P1Y" })).toEqual({ success: true });
+    expect(await updateRetentionPolicyAction("ent-1", { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" })).toEqual({ success: true });
     expect(mockPrisma.entity.update).toHaveBeenCalledWith({
       where: { id: "ent-1" },
       data: {
-        metadata: { tags: ["a"], retentionPolicy: { period: "P1Y" }, sourceStale: true },
+        metadata: { tags: ["a"], retentionPolicy: { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" }, sourceStale: true },
         hasUnpublishedChanges: true,
       },
     });
   });
 
   it("does not touch the flags when the policy is unchanged on a fresh source", async () => {
-    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { retentionPolicy: { period: "P1Y" } }, tenantId: "tenant-1" });
-    await updateRetentionPolicyAction("ent-1", { period: "P1Y" });
+    mockPrisma.entity.findUnique.mockResolvedValue({ metadata: { retentionPolicy: { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" } }, tenantId: "tenant-1" });
+    await updateRetentionPolicyAction("ent-1", { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" });
     expect(mockPrisma.entity.update).toHaveBeenCalledWith({
       where: { id: "ent-1" },
-      data: { metadata: { retentionPolicy: { period: "P1Y" } } },
+      data: { metadata: { retentionPolicy: { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" } } },
     });
   });
 
   it("keeps an already-stale source stale", async () => {
     mockPrisma.entity.findUnique.mockResolvedValue({
-      metadata: { retentionPolicy: { period: "P1Y" }, sourceStale: true },
+      metadata: { retentionPolicy: { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" }, sourceStale: true },
       tenantId: "tenant-1",
     });
-    await updateRetentionPolicyAction("ent-1", { period: "P1Y" });
+    await updateRetentionPolicyAction("ent-1", { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" });
     expect(mockPrisma.entity.update).toHaveBeenCalledWith({
       where: { id: "ent-1" },
-      data: { metadata: { retentionPolicy: { period: "P1Y" }, sourceStale: true } },
+      data: { metadata: { retentionPolicy: { strategy: "age-based", period: 1, periodUnit: "years", action: "delete" }, sourceStale: true } },
     });
   });
 });

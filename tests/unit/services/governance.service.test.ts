@@ -30,8 +30,8 @@ let aprCounter = 0;
 // The entities the requests are about, and the tenant each belongs to (a request has no foreign key to its entity).
 let entities: Array<{ id: string; tenantId: string }> = [];
 
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  const prisma: Record<string, unknown> = {
     governanceRequest: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         const row = {
@@ -51,8 +51,10 @@ vi.mock("@/lib/db", () => ({
         requests.push(row);
         return row;
       }),
+      // A COPY, like a database read: a row read before another decision landed stays as it was read (the check-then-act race).
       findUnique: vi.fn(async (args: { where: { id: string } }) => {
-        return requests.find((r) => r.id === args.where.id) ?? null;
+        const row = requests.find((r) => r.id === args.where.id);
+        return row ? { ...row } : null;
       }),
       findMany: vi.fn(async (args?: { where?: Record<string, unknown>; orderBy?: Record<string, string> }) => {
         let result = [...requests];
@@ -82,6 +84,13 @@ vi.mock("@/lib/db", () => ({
         }
         return r;
       }),
+      // Like the database: the filter and the write are ONE step (a row that is no longer PENDING is not matched).
+      updateMany: vi.fn(async (args: { where: { id: string; status?: string }; data: Record<string, unknown> }) => {
+        const matched = requests.filter((r) => r.id === args.where.id && (args.where.status === undefined || r.status === args.where.status));
+        for (const r of matched) Object.assign(r, args.data, { updatedAt: new Date() });
+        return { count: matched.length };
+      }),
+      count: vi.fn(async (args?: { where?: { status?: string } }) => requests.filter((r) => args?.where?.status === undefined || r.status === args.where.status).length),
       deleteMany: vi.fn(async () => {
         requests = [];
         reqCounter = 0;
@@ -118,8 +127,11 @@ vi.mock("@/lib/db", () => ({
         aprCounter = 0;
       }),
     },
-  },
-}));
+  };
+  // An interactive transaction: the callback gets the same (in-memory) client.
+  prisma.$transaction = vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
+  return { prisma };
+});
 
 import {
   createRequest,
@@ -129,6 +141,7 @@ import {
   getPendingRequests,
   getAllRequests,
   getRequest,
+  countPendingRequests,
   checkEmissionGate,
   _resetGovernanceStore,
   type GovernanceContext,
@@ -265,6 +278,71 @@ describe("Governance Service", () => {
       expect(approved.success).toBe(true);
       const stored = await getRequest(mine.id, "tenant-a");
       expect(stored.success && stored.data.status).toBe("APPROVED");
+    });
+  });
+
+  // FINAL WAVE 2b, G9: a decision is ONE atomic step: two stewards deciding at once cannot both win.
+  describe("two decisions at once", () => {
+    beforeEach(() => {
+      entities = [];
+    });
+
+    it("exactly one of two simultaneous decisions is recorded; the other is told the request was already decided", async () => {
+      const created = await createRequest("ent-1", 2, makeClassification("breaking"), null, stewardCtx, "Order");
+      if (!created.success) throw new Error("setup");
+
+      const [approved, rejected] = await Promise.all([
+        approveRequest(created.data.id, "ok", stewardCtx),
+        rejectRequest(created.data.id, "no", { ...stewardCtx, userId: "steward-2" }),
+      ]);
+
+      expect([approved.success, rejected.success].filter(Boolean)).toHaveLength(1);
+      const loser = approved.success ? rejected : approved;
+      expect(!loser.success && loser.error.code).toBe("INVALID_STATE");
+      expect(!loser.success && loser.error.message).toMatch(/already|status/);
+      // one approval row, and it is the winner's; the request's status is the winner's decision
+      expect(approvals).toHaveLength(1);
+      const winner = approved.success ? approved : rejected;
+      expect(approvals[0].id).toBe(winner.success ? winner.data.id : "");
+      const stored = await getRequest(created.data.id);
+      expect(stored.success && stored.data.status).toBe(approved.success ? "APPROVED" : "REJECTED");
+    });
+
+    it("many simultaneous approvals record exactly one", async () => {
+      const created = await createRequest("ent-1", 2, makeClassification("breaking"), null, stewardCtx, "Order");
+      if (!created.success) throw new Error("setup");
+      const results = await Promise.all(Array.from({ length: 6 }, (_, i) => approveRequest(created.data.id, null, { ...stewardCtx, userId: "steward-" + i })));
+      expect(results.filter((r) => r.success)).toHaveLength(1);
+      expect(approvals).toHaveLength(1);
+    });
+
+    it("both writes of a decision go through ONE transaction", async () => {
+      const created = await createRequest("ent-1", 2, makeClassification("breaking"), null, stewardCtx, "Order");
+      if (!created.success) throw new Error("setup");
+      const { prisma } = await import("@/lib/db");
+      vi.mocked(prisma.$transaction).mockClear();
+      await approveRequest(created.data.id, null, stewardCtx);
+      expect(vi.mocked(prisma.$transaction)).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // The Admin > Health "Pending Governance" count follows the same rule as the dashboard list.
+  describe("countPendingRequests", () => {
+    it("counts the PENDING requests of entities of the tenant (a deleted entity's and another tenant's do not count), like the list does", async () => {
+      entities = [{ id: "ent-a", tenantId: "tenant-a" }, { id: "ent-b", tenantId: "tenant-b" }];
+      await createRequest("ent-a", 1, makeClassification("breaking"), null, stewardCtx, "A");
+      await createRequest("ent-a", 2, makeClassification("breaking"), null, stewardCtx, "A");
+      await createRequest("ent-b", 1, makeClassification("breaking"), null, stewardCtx, "B");
+      await createRequest("ent-gone", 1, makeClassification("breaking"), null, stewardCtx, "Gone");
+      await createRequest("ent-a", 3, makeClassification("non-breaking"), null, stewardCtx, "A"); // AUTO_APPROVED
+
+      expect(await countPendingRequests("tenant-a")).toBe(2);
+      expect(await countPendingRequests("tenant-b")).toBe(1);
+      // the list the dashboard shows has the same pending ones
+      const listed = await getAllRequests("tenant-a");
+      expect(listed.success && listed.data.filter((r) => r.status === "PENDING")).toHaveLength(2);
+      // without a tenant (a caller that is not a page) it is every pending request, as the list is every request
+      expect(await countPendingRequests()).toBe(4);
     });
   });
 

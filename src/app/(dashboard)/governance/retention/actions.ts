@@ -7,6 +7,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { isInActiveTenant, notFoundFailure, unexpectedFailure } from "@/lib/action-context";
 import { isPlainObject } from "@/lib/editable-fields";
+import { RetentionPolicySchema } from "@/types/schemas/retention-policy.schema";
 import { domainLabel } from "@/lib/entity-placement";
 import { metadataChangesDraft, withSourceStale } from "@/lib/entity-versioning/draft-state";
 
@@ -56,6 +57,11 @@ export async function updateRetentionPolicyAction(
 
   // `retentionPolicy` is stored as metadata: only a plain object is a policy (a Date or Map would still mark the draft changed).
   if (!isPlainObject(retentionPolicy)) return { error: "The retention policy must be an object", code: "VALIDATION_ERROR" };
+  // The policy is validated HERE, not only in the editor: `{ period: 0.5 }` used to be stored, and a stored policy that the schema refuses
+  // reads as "No template" (and as nothing) wherever the schema is applied. What is stored is the policy as the schema reads it.
+  const checked = RetentionPolicySchema.safeParse(retentionPolicy);
+  if (!checked.success) return { error: checked.error.issues[0]?.message ?? "The retention policy is not valid", code: "VALIDATION_ERROR" };
+  const policy = checked.data;
 
   try {
     const entity = await prisma.entity.findUnique({
@@ -66,7 +72,7 @@ export async function updateRetentionPolicyAction(
     if (!entity || !(await isInActiveTenant(entity.tenantId))) return { ...notFoundFailure("Entity") };
 
     const existingMeta = (entity.metadata as Record<string, unknown>) ?? {};
-    const mergedMeta = { ...existingMeta, retentionPolicy };
+    const mergedMeta = { ...existingMeta, retentionPolicy: policy };
     // A changed policy is a draft edit and marks the stored TypeSpec source stale (R45); an unchanged
     // policy leaves the flags alone, but never lets an already-stale source go fresh.
     const changesDraft = metadataChangesDraft(existingMeta, mergedMeta);

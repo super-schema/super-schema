@@ -71,10 +71,24 @@ const duplicateName = (name: string) =>
 const isPrismaCode = (e: unknown, code: string): boolean =>
   typeof e === "object" && e !== null && (e as { code?: unknown }).code === code;
 
+/**
+ * A template stored with a FRACTIONAL retention period (stored before the editor and the server required a whole number: 0.5, 2.5) is
+ * read with the period rounded UP to a whole number of at least 1, so it stays a template instead of reading as "No template". Nothing is
+ * rewritten (saving the template writes the whole number). Any other fault of the template is not tolerated.
+ */
+function withWholeRetentionPeriod(value: Prisma.JsonValue): Prisma.JsonValue {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const retention = (value as { retentionPolicy?: unknown }).retentionPolicy;
+  if (retention === null || typeof retention !== "object" || Array.isArray(retention)) return value;
+  const period = (retention as { period?: unknown }).period;
+  if (typeof period !== "number" || !Number.isFinite(period) || Number.isInteger(period)) return value;
+  return { ...(value as object), retentionPolicy: { ...(retention as object), period: Math.max(1, Math.ceil(period)) } } as Prisma.JsonValue;
+}
+
 /** A stored template that is not a template (hand-edited JSON) reads as no template, not as a crash on every page load. */
 function parseTemplate(value: Prisma.JsonValue | null): PolicyTemplate | null {
   if (value === null) return null;
-  const parsed = PolicyTemplateSchema.safeParse(value);
+  const parsed = PolicyTemplateSchema.safeParse(withWholeRetentionPeriod(value));
   return parsed.success ? parsed.data : null;
 }
 

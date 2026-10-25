@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { getSchemaTargetCatalog } from "@/lib/schema-targets/catalog";
+import { countPendingRequests } from "@/services/governance.service";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -288,7 +289,9 @@ export async function getUsageMetrics(
 // ---------------------------------------------------------------------------
 
 export async function getActivityMetrics(
-  ctx: ServiceContext
+  ctx: ServiceContext,
+  /** The tenant being viewed: "Pending Governance" then counts the way the governance dashboard lists (requests of entities of that tenant). */
+  tenantId?: string
 ): Promise<Result<ActivityMetrics>> {
   if (ctx.userRole !== "ADMIN") {
     return err({
@@ -324,10 +327,8 @@ export async function getActivityMetrics(
     },
   });
 
-  // Pending governance requests
-  const governanceRequestsPending = await prisma.governanceRequest.count({
-    where: { status: "PENDING" },
-  });
+  // Pending governance requests: the dashboard list's rule (tenant scoped, an entity that no longer exists does not count)
+  const governanceRequestsPending = await countPendingRequests(tenantId);
 
   return ok({
     activeUsers24h,

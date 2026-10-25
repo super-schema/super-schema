@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { getEffectiveRole } from "@/services/rbac.service";
 import type { ServiceContext } from "@/types/service-context";
 import { getUsers, updateUser } from "@/services/user.service";
@@ -89,7 +90,8 @@ export async function getHealthAction() {
   const [health, usage, activity, errors] = await Promise.all([
     runHealthCheck(auth.ctx),
     getUsageMetrics(auth.ctx),
-    getActivityMetrics(auth.ctx),
+    // The governance count is the dashboard's: the requests of the tenant being viewed.
+    getActivityMetrics(auth.ctx, await getActiveTenantId()),
     getErrorSummary(auth.ctx),
   ]);
   if (!health.success) return { error: health.error.message };

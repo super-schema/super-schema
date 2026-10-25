@@ -11,6 +11,8 @@ import { join } from "node:path";
 const mockAuditLogFindMany = vi.fn().mockResolvedValue([]);
 const mockAuditLogCount = vi.fn().mockResolvedValue(0);
 const mockGovernanceRequestCount = vi.fn().mockResolvedValue(0);
+const mockGovernanceRequestFindMany = vi.fn().mockResolvedValue([]);
+const mockEntityFindMany = vi.fn().mockResolvedValue([]);
 
 vi.mock("@/lib/db", () => ({
   prisma: {
@@ -18,7 +20,11 @@ vi.mock("@/lib/db", () => ({
       findMany: (...args: unknown[]) => mockAuditLogFindMany(...args),
       count: (...args: unknown[]) => mockAuditLogCount(...args),
     },
-    governanceRequest: { count: (...args: unknown[]) => mockGovernanceRequestCount(...args) },
+    governanceRequest: {
+      count: (...args: unknown[]) => mockGovernanceRequestCount(...args),
+      findMany: (...args: unknown[]) => mockGovernanceRequestFindMany(...args),
+    },
+    entity: { findMany: (...args: unknown[]) => mockEntityFindMany(...args) },
     $queryRaw: vi.fn().mockResolvedValue([{ result: 1 }]),
   },
 }));
@@ -72,6 +78,18 @@ describe("what the Health cards count (the audit actions that are written)", () 
       { action: "COMPILATION_ERROR", timestamp: { gte: expect.any(Date) } },
       { action: "EMISSION_FAILED", timestamp: { gte: expect.any(Date) } },
     ]);
+  });
+
+  it("Pending Governance is the dashboard's rule: PENDING requests of entities of the tenant being viewed (a deleted or foreign entity's do not count)", async () => {
+    mockGovernanceRequestFindMany.mockResolvedValue([{ entityId: "e-a" }, { entityId: "e-a" }, { entityId: "e-b" }, { entityId: "e-gone" }]);
+    mockEntityFindMany.mockResolvedValue([{ id: "e-a" }]);
+    const scoped = await getActivityMetrics(adminCtx, "tenant-a");
+    expect(scoped.success && scoped.data.governanceRequestsPending).toBe(2);
+    expect(mockEntityFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tenantId: "tenant-a" }) }));
+    // without a tenant it is the plain count, as before
+    mockGovernanceRequestCount.mockResolvedValue(7);
+    const unscoped = await getActivityMetrics(adminCtx);
+    expect(unscoped.success && unscoped.data.governanceRequestsPending).toBe(7);
   });
 
   it("there is no API error count: nothing counts API errors, so the summary does not claim one", async () => {

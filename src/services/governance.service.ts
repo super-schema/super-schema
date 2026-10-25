@@ -149,19 +149,24 @@ export async function createRequest(
 }
 
 /**
- * Approve a governance request.
- * Only Steward/Admin roles can approve.
+ * One decision on a request, ATOMICALLY. The status moves from PENDING with a conditional update (`updateMany` where the status is still
+ * PENDING) and the approval row is written only when that update moved exactly one row, in the same transaction: two stewards deciding at
+ * the same time cannot both pass a read-then-write check, both write an approval and let the last status write win; the second one is told
+ * the request was already decided.
  */
-export async function approveRequest(
+async function decide(
   requestId: string,
   comment: string | null,
-  ctx: GovernanceContext
+  ctx: GovernanceContext,
+  decision: "APPROVE" | "REJECT"
 ): Promise<Result<GovernanceApproval>> {
+  const verb = decision === "APPROVE" ? "approve" : "reject";
+  const decided = decision === "APPROVE" ? "approved" : "rejected";
   if (!canApproveOrReject(ctx.userRole)) {
     return err({
       code: "FORBIDDEN",
-      message: "Only Steward or Admin roles can approve governance requests",
-      suggestedFix: "Contact a data steward or admin for approval.",
+      message: `Only Steward or Admin roles can ${verb} governance requests`,
+      suggestedFix: decision === "APPROVE" ? "Contact a data steward or admin for approval." : "Contact a data steward or admin.",
     });
   }
 
@@ -176,31 +181,43 @@ export async function approveRequest(
     });
   }
 
-  if (request.status !== "PENDING") {
-    return err({
+  const notPending = (status: string): Result<GovernanceApproval> =>
+    err({
       code: "INVALID_STATE",
-      message: `Cannot approve request with status "${request.status}" — only PENDING requests can be approved`,
-      suggestedFix: "Only PENDING requests can be approved.",
+      message: `Cannot ${verb} request with status "${status}" — only PENDING requests can be ${decided}`,
+      suggestedFix: `Only PENDING requests can be ${decided}.`,
     });
+  // The quick refusal for a request that is plainly decided already; the conditional update below is what makes it safe.
+  if (request.status !== "PENDING") return notPending(request.status);
+
+  const approvalRow = await prisma.$transaction(async (tx) => {
+    const moved = await tx.governanceRequest.updateMany({
+      where: { id: requestId, status: "PENDING" },
+      data: { status: decision === "APPROVE" ? "APPROVED" : "REJECTED" },
+    });
+    if (moved.count !== 1) return null; // someone decided between the read and this update
+    return tx.governanceApproval.create({
+      data: { requestId, approverId: ctx.userId, decision, comment },
+    });
+  });
+  if (approvalRow === null) {
+    const current = await prisma.governanceRequest.findUnique({ where: { id: requestId } });
+    return notPending(current?.status ?? "decided");
   }
 
-  // Update request status
-  await prisma.governanceRequest.update({
-    where: { id: requestId },
-    data: { status: "APPROVED" },
-  });
-
-  // Create approval record
-  const approvalRow = await prisma.governanceApproval.create({
-    data: {
-      requestId,
-      approverId: ctx.userId,
-      decision: "APPROVE",
-      comment,
-    },
-  });
-
   return ok(toGovernanceApproval(approvalRow));
+}
+
+/**
+ * Approve a governance request.
+ * Only Steward/Admin roles can approve.
+ */
+export async function approveRequest(
+  requestId: string,
+  comment: string | null,
+  ctx: GovernanceContext
+): Promise<Result<GovernanceApproval>> {
+  return decide(requestId, comment, ctx, "APPROVE");
 }
 
 /**
@@ -212,50 +229,24 @@ export async function rejectRequest(
   comment: string | null,
   ctx: GovernanceContext
 ): Promise<Result<GovernanceApproval>> {
-  if (!canApproveOrReject(ctx.userRole)) {
-    return err({
-      code: "FORBIDDEN",
-      message: "Only Steward or Admin roles can reject governance requests",
-      suggestedFix: "Contact a data steward or admin.",
-    });
-  }
+  return decide(requestId, comment, ctx, "REJECT");
+}
 
-  const request = await prisma.governanceRequest.findUnique({
-    where: { id: requestId },
+/**
+ * How many requests are PENDING, by the rule the dashboard list uses (`getAllRequests`): with a `tenantId`, only the requests of entities
+ * that exist in that tenant (a request has no foreign key to its entity: a deleted entity's request and another tenant's do not count).
+ * Without one it is every pending request, as the unscoped list is every request.
+ */
+export async function countPendingRequests(tenantId?: string): Promise<number> {
+  if (tenantId === undefined) return prisma.governanceRequest.count({ where: { status: "PENDING" } });
+  const rows = await prisma.governanceRequest.findMany({ where: { status: "PENDING" }, select: { entityId: true } });
+  if (rows.length === 0) return 0;
+  const entities = await prisma.entity.findMany({
+    where: { tenantId, id: { in: [...new Set(rows.map((row) => row.entityId))] } },
+    select: { id: true },
   });
-  if (!request || (ctx.tenantId !== undefined && !(await entityInTenant(request.entityId, ctx.tenantId)))) {
-    return err({
-      code: "NOT_FOUND",
-      message: `Governance request "${requestId}" not found`,
-      suggestedFix: "Verify the request ID and try again.",
-    });
-  }
-
-  if (request.status !== "PENDING") {
-    return err({
-      code: "INVALID_STATE",
-      message: `Cannot reject request with status "${request.status}" — only PENDING requests can be rejected`,
-      suggestedFix: "Only PENDING requests can be rejected.",
-    });
-  }
-
-  // Update request status
-  await prisma.governanceRequest.update({
-    where: { id: requestId },
-    data: { status: "REJECTED" },
-  });
-
-  // Create approval record
-  const approvalRow = await prisma.governanceApproval.create({
-    data: {
-      requestId,
-      approverId: ctx.userId,
-      decision: "REJECT",
-      comment,
-    },
-  });
-
-  return ok(toGovernanceApproval(approvalRow));
+  const inTenant = new Set(entities.map((entity) => entity.id));
+  return rows.filter((row) => inTenant.has(row.entityId)).length;
 }
 
 /**

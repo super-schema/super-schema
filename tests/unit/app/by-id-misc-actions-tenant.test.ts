@@ -140,15 +140,15 @@ describe("updateRetentionPolicyAction", () => {
   const retention = (policy: unknown) => updateRetentionPolicyAction("ent-1", asAny(policy));
 
   it("writes the policy of an entity of the active tenant", async () => {
-    expect(await retention({ period: "P1Y" })).toEqual({ success: true });
+    expect(await retention({ strategy: "age-based", period: 1, periodUnit: "years", action: "delete" })).toEqual({ success: true });
     expect(p.entity.update).toHaveBeenCalledTimes(1);
   });
 
   it("answers an entity of ANOTHER tenant exactly like a missing one and writes nothing", async () => {
     p.entity.findUnique.mockResolvedValue({ id: "ent-1", tenantId: OTHER, metadata: {} });
-    const foreign = await retention({ period: "P1Y" });
+    const foreign = await retention({ strategy: "age-based", period: 1, periodUnit: "years", action: "delete" });
     p.entity.findUnique.mockResolvedValue(null);
-    const missing = await retention({ period: "P1Y" });
+    const missing = await retention({ strategy: "age-based", period: 1, periodUnit: "years", action: "delete" });
     expect(foreign).toEqual(NOT_FOUND);
     expect(JSON.stringify(foreign)).toBe(JSON.stringify(missing));
     expect(p.entity.update).not.toHaveBeenCalled();
@@ -166,7 +166,7 @@ describe("updateRetentionPolicyAction", () => {
   it("returns the generic message, never the Prisma text", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     p.entity.update.mockRejectedValue(new Error(PRISMA_TEXT));
-    const result = await retention({ period: "P1Y" });
+    const result = await retention({ strategy: "age-based", period: 1, periodUnit: "years", action: "delete" });
     expect(result).toEqual({ error: GENERIC_ACTION_ERROR, code: "INTERNAL_ERROR" });
     expect(JSON.stringify(result)).not.toMatch(LEAKS);
     spy.mockRestore();
