@@ -821,6 +821,9 @@ type TypeSpecParsedField = {
   arrayElementType?: string;
   /** Real-compiler reader: the type is `T | null` (see `SyncSourceField`). */
   nullableType?: boolean;
+  /** Real-compiler reader: the members (and declared name) of a union type (see `SyncSourceField`). */
+  unionName?: string;
+  unionMembers?: string[];
 };
 
 export async function applyTypeSpecAction(
@@ -848,6 +851,8 @@ async function applyTypeSpecFields(
    * this function is not exported, so a client cannot hand it one: `applyTypeSpecAction` never passes any.
    */
   references?: ReadonlyMap<string, SourceReference>,
+  /** The names the source declares (models, enums, scalars, unions): what a union field's members may name besides the scalars. */
+  declared?: ReadonlySet<string>,
 ): Promise<ApplyTypeSpecResult> {
   const session = await auth();
   if (!session?.user?.id) return { added: 0, updated: 0, removed: [], error: "Not authenticated" };
@@ -900,6 +905,7 @@ async function applyTypeSpecFields(
         governanceKnown: fieldGovernance !== undefined,
         enums,
         reference: references?.get(pf.name),
+        declared,
       });
       const decoratorsJson = merged.decorators;
       const classification = merged.classification;
@@ -2384,11 +2390,14 @@ async function compileAndApplyTypeSpecSource(
       decorators: f.decorators as Record<string, unknown>,
       arrayElementType: f.arrayElementType,
       ...(f.nullableType ? { nullableType: true } : {}),
+      ...(f.unionMembers ? { unionMembers: f.unionMembers } : {}),
+      ...(f.unionName ? { unionName: f.unionName } : {}),
     })),
     fieldsToRemove,
     fieldGovernance,
     new Map(enums.map((d) => [d.name, d.values] as const)),
     references,
+    new Set([...result.document.models.map((m) => m.name), ...enums.map((d) => d.name), ...scalars.map((d) => d.name), ...unions.map((d) => d.name)]),
   );
 
   if (applyResult.error) {

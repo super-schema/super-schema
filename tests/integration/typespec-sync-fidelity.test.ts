@@ -33,10 +33,18 @@ let imported: Imported;
 let rows: Row[];
 let source: string;
 
-/** Import `schema`, persist it as rows, and generate the entity's source from them. */
-async function load(schema: unknown): Promise<void> {
+/**
+ * Import `schema`, persist it as rows, and generate the entity's source from them. `unionTypes` are the shared unions the entity's source
+ * declares (a union row of the domain, as the entity loader hands it to the compiler: `metadata.custom.unionTypes`).
+ */
+async function load(schema: unknown, unionTypes?: Array<{ name: string; memberTypes: string[] }>): Promise<void> {
   imported = await importAndPersist(schema, "Evt");
   rows = imported.rows;
+  if (unionTypes) {
+    const metadata = { ...((imported.entity.metadata as Record<string, unknown> | undefined) ?? {}), custom: { unionTypes } };
+    imported.entity = { ...imported.entity, metadata };
+    imported.metadata = metadata;
+  }
   source = generateTypeSpec(compileEntity(imported.entity, imported.fields));
 }
 
@@ -130,5 +138,81 @@ describe("a nullable type survives a Save (F2b)", () => {
     expect(d.nullable).toBe(true);
     expect(d.decorators).toMatchObject({ nullableType: true });
     expect(d.decorators).not.toHaveProperty("requiredNullable");
+  });
+});
+
+describe("a union survives a Save (KD-030)", () => {
+  const SCHEMA = {
+    title: "Evt", type: "object", required: ["id", "scalarUnion"],
+    properties: {
+      id: { type: "string" },
+      scalarUnion: { oneOf: [{ type: "string" }, { type: "integer" }] },
+      typeList: { type: ["string", "boolean"] },
+      many: { type: "array", items: { oneOf: [{ type: "string" }, { type: "integer" }] } },
+      shared: { $ref: "#/$defs/Id" },
+    },
+    $defs: { Id: { oneOf: [{ type: "string" }, { type: "integer" }] } },
+  };
+  const SHARED = [{ name: "Id", memberTypes: ["string", "integer"] }];
+  const unionKeys = (name: string) => {
+    const d = (updates()[idOf(name)] as Data | undefined)?.decorators;
+    return d && { unionName: d.unionName, unionMembers: d.unionMembers, arrayElementType: d.arrayElementType };
+  };
+
+  it("the generated source writes the inline unions, the declared one by name", async () => {
+    await load(SCHEMA, SHARED);
+    expect(source).toMatch(/^union Id \{\s+string,\s+integer,\s+\}/m);
+    expect(source).toMatch(/^\s*scalarUnion: string \| integer;/m);
+    expect(source).toMatch(/^\s*typeList\?: string \| boolean;/m);
+    expect(source).toMatch(/^\s*many\?: \(string \| integer\)\[\];/m);
+    expect(source).toMatch(/^\s*shared\?: Id;/m);
+  });
+
+  it("the rows of the import are union fields (precondition)", async () => {
+    await load(SCHEMA, SHARED);
+    expect(dbRows().map((r) => [r.name, r.type])).toEqual([["id", "string"], ["scalarUnion", "union"], ["typeList", "union"], ["many", "array"], ["shared", "union"]]);
+  });
+
+  it("a no-op save changes no row: every union field is still a union with its members", async () => {
+    await load(SCHEMA, SHARED);
+    const res = await save(source);
+    expect(res.diagnostics.filter((d) => d.severity === "error")).toEqual([]);
+    expect(res.success).toBe(true);
+    expect(res.applied).toEqual({ added: 0, updated: 0, removed: [] });
+    expect(mockPrisma.field.update).not.toHaveBeenCalled();
+  });
+
+  it("an unrelated edit (a new field) leaves every union field as it is", async () => {
+    await load(SCHEMA, SHARED);
+    const res = await save(source.replace("  shared?: Id;", "  shared?: Id;\n  brand_new: string;"));
+    expect(res.success).toBe(true);
+    expect(res.applied).toMatchObject({ added: 1, updated: 0 });
+  });
+
+  it("editing the members of an inline union updates that field alone, still a union", async () => {
+    await load(SCHEMA, SHARED);
+    const res = await save(source.replace("scalarUnion: string | integer;", "scalarUnion: string | boolean;"));
+    expect(res.success).toBe(true);
+    expect(Object.keys(updates())).toEqual([idOf("scalarUnion")]);
+    expect(updates()[idOf("scalarUnion")]).toMatchObject({ type: "union" });
+    expect(unionKeys("scalarUnion")).toMatchObject({ unionMembers: ["string", "boolean"] });
+  });
+
+  it("retyping a union field to a plain scalar leaves the union", async () => {
+    await load(SCHEMA, SHARED);
+    const res = await save(source.replace("shared?: Id;", "shared?: string;"));
+    expect(res.success).toBe(true);
+    expect(updates()[idOf("shared")]).toMatchObject({ type: "string" });
+    expect(unionKeys("shared")).toEqual({ unionName: undefined, unionMembers: undefined, arrayElementType: undefined });
+  });
+
+  it("a union typed in the source by hand (a new field) is a union field too", async () => {
+    await load(SCHEMA, SHARED);
+    const res = await save(source.replace("  shared?: Id;", "  shared?: Id;\n  typed: string | utcDateTime;\n  named?: Id;"));
+    expect(res.success).toBe(true);
+    const created = mockPrisma.field.create.mock.calls.map(([arg]) => (arg as { data: { name: string; type: string; decorators: Record<string, unknown> } }).data);
+    expect(created.map((c) => [c.name, c.type])).toEqual([["typed", "union"], ["named", "union"]]);
+    expect(created[0].decorators.unionMembers).toEqual(["string", "utcDateTime"]);
+    expect(created[1].decorators).toMatchObject({ unionName: "Id", unionMembers: ["string", "integer"] });
   });
 });

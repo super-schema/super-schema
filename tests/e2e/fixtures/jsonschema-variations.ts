@@ -121,8 +121,8 @@ export const VARIATIONS: Variation[] = [
     jsonSchema: ["payment_id"],
     openapi: ["payment_id"],
     rename: ["payment_id", "id"],
-    // `payment_id` is renamed to `id`, and a Save of the TypeSpec tab turns the union into a string (KD-030): what is left to check is the key
-    survives: ['"id"'],
+    // `payment_id` is renamed to `id`, and the union field is still there after the Save of the TypeSpec tab (it stays a union field)
+    survives: ['"id"', '"reference"'],
     primaryKey: ["payment_id"],
   },
   {

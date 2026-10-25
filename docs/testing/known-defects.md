@@ -265,15 +265,6 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - note: the multi-entity design names "a field typed `reference`, or an array/map of references" as what is followed; the union was never in it. The goal "every reference
   case of the corpus that fails with `invalid-ref` passes" is met for all but these four documents and the missing-entity cases (KD-031).
 
-## KD-030: a Save of the TypeSpec tab turns every union field into a plain string
-
-- status: no-test (the lossy path was there before multi-entity emission and was accepted again by its Task 11; the JSON Schema matrix steps over it: `oneof-union` checks only
-  the key after a Save)
-- symptom: an entity with a union field (an `oneOf` of scalars, or of entities) is saved from the TypeSpec tab with any unrelated edit; the field is `string` afterwards
-  (the JSON Schema says `{ "type": "string" }` where it said `oneOf`), its member list and union name are gone, and the Editor shows the new type. Nothing warns.
-- where: `src/lib/typespec-sync/merge-fields.ts` (`mergeSyncedField`: the union text `A | B` is read back as a literal union, `unionName` / `unionMembers` are not carried).
-- cost to fix: carry `unionName` / `unionMembers` (and, for a union of entities, KD-029) through the merge, or refuse the save with a message naming the field.
-
 ## KD-031: a reference to an entity that no longer exists is refused, or emitted untyped, depending on what else the entity references
 
 - status: no-test (the corpus rule `reference-to-missing-entity` and its cases `ref-dangling-qualified` / `ref-dangling-in-closure` pin both behaviours)

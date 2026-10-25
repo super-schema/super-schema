@@ -30,6 +30,7 @@ import { activeDanglingRef } from "@/lib/field-dangling";
 import { isConstraintWithheld, type ConstraintKind } from "@/lib/compiler/constraint-targets";
 import { refToEntityName } from "@/lib/importers/jsonschema.importer";
 import { writeFieldReference, type EntityRef, type ReferenceShape } from "@/lib/references/entity-reference";
+import { DATA_TYPE_HIERARCHY } from "@/lib/data-types";
 
 type Rec = Record<string, unknown>;
 
@@ -43,6 +44,12 @@ export interface SyncSourceField {
   arrayElementType?: string;
   /** The type is `T | null` (T is `type`): read by the real-compiler reader; the text reader leaves it in the type (`string | null`). */
   nullableType?: boolean;
+  /**
+   * Real-compiler reader: the type is a union (or an array of one: `arrayElementType` is "union") of these members, null aside; `unionName`
+   * is the declared union's name (absent for an inline `A | B`). The text reader gives neither: the members are read from `type`.
+   */
+  unionName?: string;
+  unionMembers?: string[];
 }
 
 /** The stored field row, as far as the merge reads it. */
@@ -82,6 +89,11 @@ export interface MergeOptions {
    * stored key as it is. Absent: the field is merged as the text says.
    */
   reference?: { ref: EntityRef; shape: ReferenceShape } | { keep: true; shape: ReferenceShape };
+  /**
+   * The names the source declares (models, enums, scalars, unions). A union whose members are all declared there, or all TypeSpec scalars,
+   * is a union field; one that names an entity of the tenant (it only had to compile) is stored as the text, unless the row already is it.
+   */
+  declared?: ReadonlySet<string>;
 }
 
 export const GENERIC_DANGLING_REASON = "unresolved reference";
@@ -220,6 +232,59 @@ const BUILTIN_NAMES = new Set(["string", "unknown", "null"]);
 
 const stripNull = (t: string | undefined) => (t === undefined ? t : t.replace(/^\s*null\s*\|\s*|\s*\|\s*null\s*$/g, "").trim());
 
+// ---------------------------------------------------------------------------
+// Unions
+// ---------------------------------------------------------------------------
+
+/** What a union field's members may be without the source declaring them: the scalars (a TypeSpec name or the logical id). */
+const SCALAR_MEMBER_NAMES: ReadonlySet<string> = new Set(
+  DATA_TYPE_HIERARCHY.filter((t) => t.category !== "Structured" && t.category !== "Special").flatMap((t) => [t.id, t.typespecScalar]),
+);
+
+const TYPE_NAME = /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/;
+
+/** The members of a text `A | B | C` (type names only), or undefined when the text is not a union of type names. */
+function unionTextMembers(text: string | undefined): string[] | undefined {
+  if (text === undefined || !text.includes("|")) return undefined;
+  const parts = text.split("|").map((p) => p.trim());
+  return parts.every((p) => TYPE_NAME.test(p)) ? parts : undefined;
+}
+
+interface UnionRead {
+  /** A union field (`direct`), or an array whose element is one. */
+  shape: "direct" | "array";
+  name?: string;
+  members: string[];
+}
+
+const sameMembers = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((m) => b.includes(m));
+
+/**
+ * The union the source field means, or undefined when it is not one. A union field needs two members (a declared union may have one) and
+ * every member must be a scalar, declared by the source, or the row's own (a row that already is that union stays it whatever its members
+ * name: what the stored row says is not lost by a Save that says the same). A union that names an entity of the tenant, new or changed,
+ * is not read here: it is stored as the text, as before.
+ */
+function readUnion(source: SyncSourceField, existing: SyncExistingField | null, opts: MergeOptions): UnionRead | undefined {
+  const array = source.type === "array" && source.arrayElementType === "union";
+  const found = array ? source.unionMembers : (source.unionMembers ?? unionTextMembers(source.type));
+  if (found === undefined) return undefined;
+  const members = [...new Set(found.filter((m) => m !== "null"))];
+  const name = source.unionName;
+  if (members.length < 2 && !(name !== undefined && members.length === 1)) return undefined;
+
+  const stored = isRec(existing?.decorators) ? (existing.decorators as Rec) : undefined;
+  const storedUnion =
+    existing && stored && (existing.type === "union" || (existing.type === "array" && stored.arrayElementType === "union")) && Array.isArray(stored.unionMembers)
+      ? { name: typeof stored.unionName === "string" ? stored.unionName : undefined, members: stored.unionMembers.filter((m): m is string => typeof m === "string") }
+      : undefined;
+  const unchanged = storedUnion !== undefined && sameMembers(storedUnion.members, members);
+  const known =
+    members.every((m) => SCALAR_MEMBER_NAMES.has(m) || (opts.declared?.has(m) ?? false)) || (name !== undefined && (opts.declared?.has(name) ?? false));
+  if (!known && !unchanged) return undefined;
+  return { shape: array ? "array" : "direct", ...(name !== undefined ? { name } : unchanged && storedUnion.name !== undefined ? { name: storedUnion.name } : {}), members };
+}
+
 /**
  * Whether the source says the VALUE may be null, apart from the property being optional: the compiler reader reports `nullableType`, the
  * text reader leaves `| null` in the type (`string | null`), which is taken out here (the type is then what is left).
@@ -305,6 +370,13 @@ export function mergeSyncedField(existing: SyncExistingField | null, textSource:
     delete out.requiredNullable;
   }
   const mapped = mapSourceField(source);
+  // A union: the text `A | B` is a union field with its members, not the literal type text (which reads back as `string`).
+  const union = mapped.dangling ? undefined : readUnion(source, existing, opts);
+  if (union?.shape === "direct") mapped.type = "union";
+  if (union?.shape === "array") {
+    mapped.type = "array";
+    mapped.arrayElementType = "union";
+  }
   const typeChanged = existing !== null && existing.type !== mapped.type;
   const hadMarker = existing !== null && activeDanglingRef(existing.type, existing.decorators as Rec | null) !== undefined;
   const priorMarker = isRec(out.danglingRef) ? out.danglingRef : undefined;
@@ -394,6 +466,15 @@ export function mergeSyncedField(existing: SyncExistingField | null, textSource:
   }
   if (mapped.arrayElementType) out.arrayElementType = mapped.arrayElementType;
   else if (mapped.type !== "array") delete out.arrayElementType;
+  // The union's members (and its declared name, which the members of a changed union no longer match) are the source's.
+  if (union) {
+    out.unionMembers = [...union.members];
+    if (union.name !== undefined) out.unionName = union.name;
+    else delete out.unionName;
+  } else {
+    delete out.unionMembers;
+    delete out.unionName;
+  }
 
   // --- reference version pin: source-owned (the `x-super-schema-pin` tag is generated from it and read back) ---
   if (isReferenceResult && typeof sourcePin === "string" && sourcePin !== "") setOwn(out, "referencedEntityVersion", sourcePin);

@@ -199,7 +199,7 @@ async function lifecycle(page: import("@playwright/test").Page, v: Variation, re
     const g = await generateTarget(page, target.displayName, { primaryKey: v.primaryKey });
     writeFileSync(`${EVIDENCE}/${v.id}/json-schema-after-sync.txt`, g.code || `ERROR: ${g.error}`);
     // A documented defect with nothing to read: the save went through (above). What the schema says afterwards is not asserted, because
-    // the Save itself changed the field the defect is about (KD-030: a union field is stored as a plain string by it).
+    // the defect (`v.known`) is about the generation of the schema itself.
     if (v.known?.["json-schema"]) return;
     expect(g.error, g.error).toBeUndefined();
     expect(g.code).toContain("e2e_added");
