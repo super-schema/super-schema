@@ -335,7 +335,8 @@ describe("SchemasTab Workflow", () => {
       expect(versions[0].publishedAt).toBeDefined();
     });
 
-    it("rejects publishing an already-published version", async () => {
+    // FINAL WAVE 2b, G12: a double submit of Publish reports the version as already published (idempotent), it is not an error.
+    it("reports an already-published version as already published, success, and writes nothing", async () => {
       mockPrisma.entity.findUnique.mockResolvedValue({
         id: "ent-1",
         tenantId: "tenant-1",
@@ -357,7 +358,18 @@ describe("SchemasTab Workflow", () => {
 
       const result = await publishSchemaAction("ent-1", "bigquery", 1);
 
-      expect(result.error).toContain("not a draft");
+      expect(result).toEqual({ success: true, alreadyPublished: true, version: 1, status: "published", message: "Version 1 is already published." });
+      expect(mockPrisma.entity.update).not.toHaveBeenCalled();
+    });
+
+    it("reports a deployed version as already published too, and a version that does not exist or a draft keep their own answers", async () => {
+      mockPrisma.entity.findUnique.mockResolvedValue({
+        id: "ent-1",
+        tenantId: "tenant-1",
+        metadata: { schemaVersions: { bigquery: [{ version: 2, status: "deployed", output: "x", generatedAt: "2026-04-05T10:00:00.000Z", entityVersion: 1 }] } },
+      });
+      expect(await publishSchemaAction("ent-1", "bigquery", 2)).toEqual({ success: true, alreadyPublished: true, version: 2, status: "deployed", message: "Version 2 is already published (it is deployed)." });
+      expect(await publishSchemaAction("ent-1", "bigquery", 9)).toEqual({ error: "Version 9 not found" });
       expect(mockPrisma.entity.update).not.toHaveBeenCalled();
     });
   });

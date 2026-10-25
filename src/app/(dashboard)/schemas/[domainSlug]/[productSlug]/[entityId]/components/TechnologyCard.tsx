@@ -536,7 +536,8 @@ export function TechnologyCard({
           else toast.error(refusal.message);
           return;
         }
-        toast.success(`${targetInfo.displayName} v${version} published`);
+        // (a second submit of the same Publish finds it published already: said as that, and the list is refreshed all the same)
+        toast.success("alreadyPublished" in result && result.alreadyPublished ? `${targetInfo.displayName} v${version} is already published` : `${targetInfo.displayName} v${version} published`);
         await Promise.resolve(onVersionsChange());
       } catch {
         toast.error("Publish failed");

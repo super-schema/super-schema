@@ -293,3 +293,15 @@ An entry gives: what a user sees, how to see it, where it is, the suspected caus
 - where: `extractEnumValues` (`src/lib/compiler/typespec-generator.ts`), `mergeSyncedField` (`src/lib/typespec-sync/merge-fields.ts`), `parsedFieldToCreateFieldInput` (`src/lib/importers/import-payload.ts`: it writes both).
 - cost to fix: decide which slot owns the symbols and make the other follow (a pattern that wins when it differs from `aliases.join("|")` is wrong for the Aliases panel, which edits the aliases
   directly); then let a Save read the members of a declared enum back. Rows that carry both stay valid while the two agree, which every import writes.
+
+## KD-033: generating or publishing a schema version rewrites the whole `metadata`, which can overwrite a concurrent atomic write
+
+- status: no-test (a race between two requests: the unit tests run one at a time)
+- symptom: `generateSchemaAction` and `publishSchemaAction` read `entity.metadata`, change `schemaVersions`, and write the WHOLE object back with `prisma.entity.update`. A write that landed in
+  between and touched another key atomically (`sourceStale`, `tags`, `retentionPolicy`: the draft-state helpers use `jsonb_set`) is overwritten by the stale copy. Two generations of different
+  targets at once can lose one of the two new versions for the same reason.
+- where: `generateSchemaAction`, `publishSchemaAction`, `deploySchemaAction` (`src/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions.ts`); the atomic pattern is in
+  `src/lib/entity-versioning/draft-state.ts` (`MARK_DRAFT_CHANGED_SQL`, `SET_ENTITY_TAGS_SQL`).
+- cost to fix: write only the target's list with `jsonb_set(coalesce(metadata, '{}'), '{schemaVersions,<target>}', $json)` (a raw statement like the draft-state ones) and keep the audit row; every unit test
+  that fakes `prisma.entity.update` for these three actions needs a raw-statement equivalent in its fake. Not done in final wave 2b: the same three writes, the same fakes and the audit
+  before-state all change together, which is a change of its own.

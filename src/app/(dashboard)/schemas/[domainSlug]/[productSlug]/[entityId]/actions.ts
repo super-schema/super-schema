@@ -1749,8 +1749,21 @@ export async function publishSchemaAction(
 
       const idx = targetVersions.findIndex((v) => v.version === publishing);
       if (idx === -1) return { error: `Version ${publishing} not found` };
-      if (targetVersions[idx].status !== "draft") {
-        return { error: `Version ${publishing} is not a draft (current: ${targetVersions[idx].status})` };
+      // A second submit of the same Publish (a double click, a retry after a slow answer) finds the version already published: that is the
+      // answer the first submit got, not an error. A version number is immutable (a regeneration makes a new one), so "published" is
+      // the very content that was asked to be published. Nothing is written.
+      const stored = targetVersions[idx].status;
+      if (stored === "published" || stored === "deployed") {
+        return {
+          success: true as const,
+          alreadyPublished: true as const,
+          version: publishing,
+          status: stored,
+          message: stored === "deployed" ? `Version ${publishing} is already published (it is deployed).` : `Version ${publishing} is already published.`,
+        };
+      }
+      if (stored !== "draft") {
+        return { error: `Version ${publishing} is not a draft (current: ${stored})` };
       }
 
       // A preview that used the saved draft of a referenced entity cannot be published as it is.
