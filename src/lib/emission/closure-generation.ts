@@ -73,6 +73,21 @@ export function closureFailure(error: ClosureError): ServiceError {
 }
 
 /**
+ * The pick a closure refusal asks for, in the shape `generateSchemaAction` answers as `needsReference` (the field, the name it refers to,
+ * the entities that name matches, and the entity + field row that hold it), or undefined when the refusal is not a question: any other
+ * code, details that are not the expected shape, or a name frozen in a published or pinned snapshot (a pick cannot change it).
+ */
+export function pickRequestOfRefusal(refusal: { code: string; message?: string; details?: unknown } | undefined):
+  | { field: string; name: string; candidates: EntityRef[]; entityId: string; fieldId: string }
+  | undefined {
+  if (!refusal || refusal.code !== "AMBIGUOUS_REFERENCE" || !refusal.details || typeof refusal.details !== "object") return undefined;
+  const d = refusal.details as Record<string, unknown>;
+  if (d.frozen === true) return undefined;
+  if (typeof d.field !== "string" || typeof d.name !== "string" || !Array.isArray(d.candidates) || typeof d.entityId !== "string" || typeof d.fieldId !== "string") return undefined;
+  return { field: d.field, name: d.name, candidates: d.candidates as EntityRef[], entityId: d.entityId, fieldId: d.fieldId };
+}
+
+/**
  * What a generation records about the versions it used (see `SchemaVersionResolution`): the root first, then what it references.
  * `preview` is true when any of them came from unpublished rows, which makes the output a preview that cannot be published as is.
  */

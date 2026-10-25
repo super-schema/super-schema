@@ -44,6 +44,12 @@ export interface TargetOutput {
 export interface EmissionResult {
   /** The generated TypeSpec source code */
   typespec: string;
+  /**
+   * Set when the reference closure could not be built (an ambiguous bare-name reference, a pin that is gone, an entity never published ...):
+   * every closure target is then INVALID with its message. Structured, so the caller can ask for the pick an ambiguous reference needs
+   * (`pickRequestOfRefusal`) instead of showing "N targets invalid".
+   */
+  refusal?: { code: string; message: string; details?: object; suggestedFix?: string };
   /** Per-target emission outputs keyed by emitter name */
   targets: Record<string, TargetOutput>;
   /** Overall success — true if all targets are valid or have only warnings */

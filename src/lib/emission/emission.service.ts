@@ -171,6 +171,7 @@ export async function emitEntity(entityId: string): Promise<EmissionResult> {
   return {
     typespec: generateTypeSpec(compileEntity(prismaEntity, prismaFields)),
     targets,
+    ...(emission.refusal ? { refusal: emission.refusal } : {}),
     success: invalidCount === 0,
     summary: {
       totalTargets: enabledTargets.length,

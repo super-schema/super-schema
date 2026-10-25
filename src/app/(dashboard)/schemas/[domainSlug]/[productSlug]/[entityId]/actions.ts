@@ -466,8 +466,12 @@ export async function emitEntityAction(entityId: string) {
     // Ownership: the emitter reads the entity by id and trusts it, so scope it first.
     if (!(await inActiveTenant("entity", entityId))) return { ...notFoundFailure("Entity") };
     const { emitEntity } = await import("@/lib/emission/emission.service");
+    const { pickRequestOfRefusal } = await import("@/lib/emission/closure-generation");
     const result = await emitEntity(entityId);
-    return { success: true, result };
+    // A name that two entities answer to is a question (the same one a generation asks): answered beside the result so the page can open
+    // the pick dialog and run the emission again.
+    const needsReference = pickRequestOfRefusal(result.refusal);
+    return { success: true, result, ...(needsReference ? { needsReference } : {}) };
   } catch (e: unknown) {
     return { ...unexpectedFailure("emitEntityAction", e) };
   }

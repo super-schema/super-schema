@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   publish: vi.fn(),
   listVersions: vi.fn(),
   setReference: vi.fn(),
+  emit: vi.fn(),
   refresh: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/actions
   getVersionHistoryAction: vi.fn().mockResolvedValue({ versions: [] }),
   updateEntityMetadataAction: vi.fn(),
   setFieldReferenceAction: mocks.setReference,
+  emitEntityAction: mocks.emit,
 }));
 vi.mock("@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/version-actions", () => ({
   getPublishPreviewAction: mocks.getPreview,
@@ -261,6 +263,59 @@ describe("a publish the server refuses for an ambiguous reference", () => {
 
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(AMBIGUOUS_BLOCKER.message));
     expect(mocks.publish).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("reference-pick-dialog")).toBeNull();
+  });
+});
+
+// FINAL WAVE 2b, G12: the all-targets run (Cmd+E) asks the same question a generation asks, instead of "N targets invalid".
+describe("the all-targets emission (Cmd+E) with an ambiguous reference", () => {
+  const SUMMARY_OK = { totalTargets: 8, validCount: 8, warningCount: 0, invalidCount: 0 };
+  const emitted = (summary = SUMMARY_OK, extra: Record<string, unknown> = {}) => ({ success: true, result: { typespec: "", targets: {}, success: true, summary, ...extra } });
+  const asking = {
+    success: true,
+    result: { typespec: "", targets: {}, success: false, summary: { totalTargets: 8, validCount: 3, warningCount: 0, invalidCount: 5 }, refusal: { code: "AMBIGUOUS_REFERENCE", message: AMBIGUOUS_BLOCKER.message, details: DETAILS } },
+    needsReference: DETAILS,
+  };
+  const pressEmit = () => fireEvent.keyDown(document, { key: "e", metaKey: true });
+
+  it("opens the pick dialog, saves the pick on the owning field and emits again; no error toast comes first", async () => {
+    mocks.emit.mockResolvedValueOnce(asking).mockResolvedValueOnce(emitted());
+    mocks.setReference.mockResolvedValue({ success: true, data: undefined });
+    render(<EntityWorkspace {...props()} />);
+
+    pressEmit();
+    await waitFor(() => expect(mocks.emit).toHaveBeenCalledTimes(1));
+    const dialog = await screen.findByTestId("reference-pick-dialog");
+    expect(mocks.toastError).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getAllByTestId("reference-pick-candidate")[1]);
+
+    await waitFor(() => expect(mocks.emit).toHaveBeenCalledTimes(2));
+    expect(mocks.setReference).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x2" });
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith(expect.stringContaining("all valid")));
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("Cancel emits nothing more and shows no error", async () => {
+    mocks.emit.mockResolvedValue(asking);
+    render(<EntityWorkspace {...props()} />);
+
+    pressEmit();
+    fireEvent.click(await within(await screen.findByTestId("reference-pick-dialog")).findByRole("button", { name: /cancel/i }));
+
+    await waitFor(() => expect(screen.queryByTestId("reference-pick-dialog")).toBeNull());
+    expect(mocks.emit).toHaveBeenCalledTimes(1);
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("a refusal that is not a question (an entity never published) is said as it is, not as 'N targets invalid'", async () => {
+    mocks.emit.mockResolvedValue(
+      emitted({ totalTargets: 8, validCount: 3, warningCount: 0, invalidCount: 5 }, { success: false, refusal: { code: "NEVER_PUBLISHED", message: "Sales / Crm / Address has never been published." } })
+    );
+    render(<EntityWorkspace {...props()} />);
+
+    pressEmit();
+
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith("Sales / Crm / Address has never been published."));
     expect(screen.queryByTestId("reference-pick-dialog")).toBeNull();
   });
 });

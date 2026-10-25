@@ -315,14 +315,19 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
   const handleEmit = useCallback(async () => {
     setIsEmitting(true);
     try {
-      const response = await emitEntityAction(entity.id);
-      if (response.error) {
+      // A name that two entities answer to is asked about (the same pick dialog a generation opens), and the emission runs again.
+      const response = await resolveReferences(() => emitEntityAction(entity.id));
+      if (response === null) return; // the user cancelled the pick
+      if ("error" in response && response.error) {
         toast.error(response.error);
         return;
       }
-      if (response.result) {
+      if ("result" in response && response.result) {
         const { summary } = response.result;
-        if (summary.invalidCount === 0 && summary.warningCount === 0) {
+        if (response.result.refusal) {
+          // The closure could not be built (and no question is left to ask): say why, not "N targets invalid".
+          toast.error(response.result.refusal.message);
+        } else if (summary.invalidCount === 0 && summary.warningCount === 0) {
           toast.success(`Emitted to ${pluralize(summary.totalTargets, "target")} — all valid`);
         } else if (summary.invalidCount === 0) {
           toast.warning(
@@ -339,7 +344,7 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
     } finally {
       setIsEmitting(false);
     }
-  }, [entity.id]);
+  }, [entity.id, resolveReferences]);
 
   const handleOpenHistory = useCallback(async () => {
     // allSettled: a failure in one list must not hide the other, and nothing may go unreported.
@@ -976,6 +981,8 @@ export function EntityWorkspace({ level, entity, fields, domainPolicy, apiServic
         onOpenChange={setPublishOpen}
         onConfirm={handleConfirmPublish}
       />
+      {/* The same pick dialog, when the question comes from the all-targets emission (the publish dialog is not open to host it). */}
+      {!publishOpen && referenceDialog}
 
       {/* Type Mapping Override Dialog */}
       <TypeMappingOverrideDialog
