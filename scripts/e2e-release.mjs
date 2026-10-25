@@ -31,6 +31,13 @@
 //      (`docker rm -f`; --keep leaves it and says how to connect), the temp directory. It runs in a `finally`, and on SIGINT / SIGTERM /
 //      SIGHUP (exit code 128 + the signal's number).
 //
+// THE SECOND APP (`--second-app`, and by itself for the tiers that include the @external tests: nightly): the git-host import has a mode, read
+// from the environment when the app starts (SCHEMA_IMPORT_GIT_MODE, "restricted" by default), and a test that checks the `any` mode needs a
+// server of its own. After the first app is healthy the runner starts a SECOND `next start` of the same build on another free port with
+// SCHEMA_IMPORT_GIT_MODE=any and the same database, secret and API key (its own origin for Auth.js: a login is checked against the app that
+// made it), waits until it is healthy, and hands its origin to the browser run as E2E_GIT_ANY_BASE_URL. It is stopped with the first, log in
+// <output root>/server-git-any.log. Without it that test skips, which the skipped-test gate of scripts/e2e-phases.mjs reports (it is @external).
+//
 // THE VISUAL TIER (`--tier visual`, with `--docker-image <image>`): steps 2 to 5 are the same, on the host; step 6 is `docker run` of that image
 // (scripts/e2e-visual-docker.mjs), which runs the phases script INSIDE it, because screenshots are only compared where they were taken:
 // the Playwright image's Chromium on Linux. The app and the database stay on the host. The image has to be there already (it is about
@@ -60,7 +67,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { decideBrowser, describeBrowser, detectChrome, realProbes } from "./e2e-browser.cjs";
 import { hashBuildInputs } from "./e2e-build-inputs.mjs";
-import { appEnvironment, hermeticEnv, phasesEnvironment, runnerKnobs } from "./e2e-env.mjs";
+import { appEnvironment, hermeticEnv, phasesEnvironment, runnerKnobs, secondAppEnvironment } from "./e2e-env.mjs";
 import { describeNode, nodeProblem } from "./e2e-node.mjs";
 import { isEntryPoint } from "./e2e-entry.mjs";
 import { parseCli, planPhases } from "./e2e-phases.mjs";
@@ -72,15 +79,15 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, sig
  * @typedef {{
  *   tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, shard?: string, projects: string[], extra: string[],
  *   runId: string, containerName: string, image: string, dbPassword: string, authSecret: string, apiKey: string,
- *   root: string, tmpDir: string, outputRoot: string, serverLog: string, authState: string,
+ *   root: string, tmpDir: string, outputRoot: string, serverLog: string, secondServerLog: string, secondApp: boolean, authState: string,
  *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
  *   browser: import("./e2e-browser.cjs").BrowserDecision, nodeText: string, knobs: Record<string, string>,
  *   visual?: { image: string, containerName: string, uid: number, gid: number, platform: string, mounts: Array<{ path: string, readOnly: boolean }>, snapshotsDir: string, updateSnapshots: boolean },
  * }} FixedPlan the part of a plan that does not depend on the ports (`visual`: the browser run is a `docker run` of that image)
  * @typedef {FixedPlan & {
- *   ports: { app: number, db: number }, databaseUrl: string, baseUrl: string,
- *   env: { db: Record<string, string>, app: Record<string, string>, phases: Record<string, string> },
- *   commands: { migrate: CommandSpec, seed: CommandSpec, build: CommandSpec, server: CommandSpec, phases: CommandSpec },
+ *   ports: { app: number, db: number, second?: number }, databaseUrl: string, baseUrl: string, secondBaseUrl?: string,
+ *   env: { db: Record<string, string>, app: Record<string, string>, secondApp?: Record<string, string>, phases: Record<string, string> },
+ *   commands: { migrate: CommandSpec, seed: CommandSpec, build: CommandSpec, server: CommandSpec, secondServer?: CommandSpec, phases: CommandSpec },
  * }} RunPlan
  */
 
@@ -131,6 +138,8 @@ export const USAGE = `usage: node scripts/e2e-release.mjs --tier <${RELEASE_TIER
   --project <name>     narrow the tier to a Playwright project (repeatable): chromium, firefox-smoke, a11y ...
   --reuse-build        skip \`next build\` when .next was built by this runner from the same inputs (sources, config, lockfile, public/, NEXT_PUBLIC_ values)
   --keep               leave the database container running afterwards (it prints how to connect and how to remove it)
+  --second-app         also start a second app (same build, database and secret) with SCHEMA_IMPORT_GIT_MODE=any, for the @external test that needs one
+                       (E2E_GIT_ANY_BASE_URL); the nightly tier does it by itself
   --list-only          provision, build and start everything, but only LIST the tests of the tier (a dry run)
   --output-root <dir>  where the reports and server.log go (default: $E2E_OUTPUT_ROOT, else test-results/run-<id>)
   --docker-image <img> run the browser run inside this Docker image (the Playwright image of the installed version); the image must be local
@@ -140,10 +149,10 @@ Playwright's own options (a spec file, --headed, --grep ...) go after --.`;
 
 /**
  * @param {string[]} argv the arguments after the script name
- * @returns {{ tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, shard?: string, projects: string[], outputRoot?: string, dockerImage?: string, extra: string[], help: boolean }}
+ * @returns {{ tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, secondApp: boolean, shard?: string, projects: string[], outputRoot?: string, dockerImage?: string, extra: string[], help: boolean }}
  */
 export function parseArgs(argv) {
-  const out = { tier: undefined, keep: false, reuseBuild: false, listOnly: false, shard: undefined, projects: [], outputRoot: undefined, dockerImage: undefined, extra: [], help: false };
+  const out = { tier: undefined, keep: false, reuseBuild: false, listOnly: false, secondApp: false, shard: undefined, projects: [], outputRoot: undefined, dockerImage: undefined, extra: [], help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--") {
@@ -184,6 +193,9 @@ export function parseArgs(argv) {
         break;
       case "--list-only":
         out.listOnly = true;
+        break;
+      case "--second-app":
+        out.secondApp = true;
         break;
       case "--help":
       case "-h":
@@ -228,6 +240,24 @@ export function pickPorts(next = () => randomInt(PORT_RANGE.min, PORT_RANGE.max 
   };
   const app = one(undefined);
   return { app, db: one(app) };
+}
+
+/**
+ * A port for the second app, distinct from the app's and the database's (the second app exists only for the tiers that include @external).
+ *
+ * @param {{ app: number, db: number }} taken
+ * @param {() => number} [next]
+ */
+export function pickSecondPort(taken, next = () => randomInt(PORT_RANGE.min, PORT_RANGE.max + 1)) {
+  for (;;) {
+    const port = next();
+    if (!isReserved(port) && port !== taken.app && port !== taken.db) return port;
+  }
+}
+
+/** Whether a run starts the second app: it was asked for, or the tier includes the @external tests (the nightly tier is everything), and the run is not a listing. */
+export function wantsSecondApp({ tier, secondApp, listOnly }) {
+  return !listOnly && (secondApp || tier === "nightly");
 }
 
 /** The bin files of the tools the runner starts with node itself (no npx, no shell: a signal then reaches the tool). */
@@ -340,26 +370,30 @@ function visualPhasesCommand(fixed, ports, phases) {
  * Everything that depends on the ports, derived from the plan's fixed part (a run that finds a chosen port taken calls this again).
  *
  * @param {FixedPlan} fixed
- * @param {{ app: number, db: number }} ports
+ * @param {{ app: number, db: number, second?: number }} ports
  * @returns {RunPlan}
  */
 export function withPorts(fixed, ports) {
   const databaseUrl = `postgresql://${DB_USER}:${fixed.dbPassword}@127.0.0.1:${ports.db}/${DB_NAME}`;
   const baseUrl = `http://localhost:${ports.app}`;
   const app = appEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, authSecret: fixed.authSecret, pgliteDir: path.join(fixed.tmpDir, "pglite-unused"), apiKey: fixed.apiKey });
-  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState, apiKey: fixed.apiKey, browserChannel: fixed.browser.channel, knobs: fixed.knobs });
+  const secondBaseUrl = ports.second === undefined ? undefined : `http://localhost:${ports.second}`;
+  const secondApp = secondBaseUrl === undefined ? undefined : secondAppEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, authSecret: fixed.authSecret, pgliteDir: path.join(fixed.tmpDir, "pglite-unused"), apiKey: fixed.apiKey }, secondBaseUrl);
+  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState, apiKey: fixed.apiKey, browserChannel: fixed.browser.channel, knobs: fixed.knobs, gitAnyBaseUrl: secondBaseUrl });
   const node = process.execPath;
   return {
     ...fixed,
     ports: { ...ports },
     databaseUrl,
     baseUrl,
-    env: { db: app, app, phases },
+    ...(secondBaseUrl ? { secondBaseUrl } : {}),
+    env: { db: app, app, ...(secondApp ? { secondApp } : {}), phases },
     commands: {
       migrate: { command: node, args: [fixed.bins.prisma, "migrate", "deploy"], env: app, cwd: fixed.root },
       seed: { command: "npm", args: ["run", "db:seed"], env: app, cwd: fixed.root },
       build: { command: "npm", args: ["run", "build", "--", "--webpack"], env: app, cwd: fixed.root },
       server: { command: node, args: [fixed.bins.next, "start", "-p", String(ports.app), "-H", "127.0.0.1"], env: app, cwd: fixed.root },
+      ...(secondApp ? { secondServer: { command: node, args: [fixed.bins.next, "start", "-p", String(ports.second), "-H", "127.0.0.1"], env: secondApp, cwd: fixed.root } } : {}),
       phases: fixed.visual
         ? visualPhasesCommand(fixed, ports, phases)
         : { command: node, args: [path.join(fixed.root, "scripts", "e2e-phases.mjs"), ...fixed.phasesArgv], env: phases, cwd: fixed.root },
@@ -443,6 +477,8 @@ export function planRun(argv, env = process.env, options = {}) {
     tmpDir,
     outputRoot,
     serverLog: path.join(outputRoot, "server.log"),
+    secondServerLog: path.join(outputRoot, "server-git-any.log"),
+    secondApp: wantsSecondApp({ tier: args.tier, secondApp: args.secondApp, listOnly: args.listOnly }),
     authState: path.join(tmpDir, "admin.json"),
     baseEnv,
     bins: options.bins ?? resolveBins(root),
@@ -465,7 +501,8 @@ export function planRun(argv, env = process.env, options = {}) {
         }
       : {}),
   };
-  return withPorts(fixed, pickPorts(options.randomPort));
+  const ports = pickPorts(options.randomPort);
+  return withPorts(fixed, fixed.secondApp ? { ...ports, second: pickSecondPort(ports, options.randomPort) } : ports);
 }
 
 /**
@@ -636,7 +673,7 @@ export async function runRelease(initialPlan, deps) {
 
     plan = await step("choosing free ports", async () => {
       const ports = await deps.freePorts(plan.ports);
-      return ports.app === plan.ports.app && ports.db === plan.ports.db ? plan : withPorts(plan, ports);
+      return ports.app === plan.ports.app && ports.db === plan.ports.db && ports.second === plan.ports.second ? plan : withPorts(plan, ports);
     });
 
     // Registered before `docker run`: a run that is interrupted while the container is being created must still remove it.
@@ -652,7 +689,7 @@ export async function runRelease(initialPlan, deps) {
         if (!started.portInUse || attempt >= CONTAINER_START_ATTEMPTS) throw new SetupError(`could not start the database container: ${started.message ?? "docker run failed"}`);
         deps.log(`[e2e-release] database port ${plan.ports.db} is taken, choosing another`);
         await deps.removeContainer(plan);
-        plan = withPorts(plan, await deps.freePorts({ app: plan.ports.app, db: pickPorts().db }));
+        plan = withPorts(plan, await deps.freePorts({ ...plan.ports, db: pickPorts().db }));
       }
     });
     await step("waiting for the database", () => deps.waitForDb(plan, ctx));
@@ -683,31 +720,42 @@ export async function runRelease(initialPlan, deps) {
     run.setState("serving");
 
     // The build took minutes: the app's port is probed again now, and a port that is taken between the probe and the bind (another run, any
-    // program) is a second try on another port, up to three, not a failed run.
-    for (let attempt = 1; ; attempt += 1) {
-      plan = await step("choosing the app's port (probed again, after the build)", async () =>
-        withPorts(plan, { app: await deps.freeAppPort(plan.ports.app, plan.ports.db), db: plan.ports.db }),
-      );
-      const server = await step(`starting the app on ${plan.baseUrl} (log: ${plan.serverLog})`, () => deps.startServer(plan));
-      const entry = {
-        name: "stop the app",
-        undo: () => server.stop(),
-        hint: () => `stop the process that listens on port ${plan.ports.app}: lsof -ti tcp:${plan.ports.app} | xargs kill`,
-      };
-      undo.push(entry);
-      try {
-        await step("waiting until the app is ready and /api/v1/health answers", () => deps.waitForHealth(plan, server, ctx));
-        const verdict = await step("checking the app's sign-in origin and providers", () => deps.verifyApp(plan, server, ctx));
-        if (!verdict.ok) throw new SetupError(verdict.message ?? "the app is not the one that was configured");
-        break;
-      } catch (error) {
-        const portTaken = error instanceof Error && /** @type {any} */ (error).portInUse === true;
-        if (!portTaken || attempt >= APP_START_ATTEMPTS || received) throw error;
-        deps.log(`[e2e-release] port ${plan.ports.app} was taken before the app could bind it (attempt ${attempt} of ${APP_START_ATTEMPTS}), choosing another`);
-        undo.splice(undo.indexOf(entry), 1);
-        await server.stop();
+    // program) is a second try on another port, up to three, not a failed run. The second app (the @external tests' git import in `any` mode)
+    // goes the same way, after the first one is healthy.
+    const bringUp = async (which) => {
+      const second = which === "second";
+      const label = second ? "the second app (SCHEMA_IMPORT_GIT_MODE=any)" : "the app";
+      for (let attempt = 1; ; attempt += 1) {
+        plan = await step(`choosing ${second ? "the second app's" : "the app's"} port (probed again, after the build)`, async () =>
+          second
+            ? withPorts(plan, { ...plan.ports, second: await deps.freeSecondPort(plan.ports) })
+            : withPorts(plan, { ...plan.ports, app: await deps.freeAppPort(plan.ports.app, plan.ports.db) }),
+        );
+        const origin = second ? plan.secondBaseUrl : plan.baseUrl;
+        const server = await step(`starting ${label} on ${origin} (log: ${second ? plan.secondServerLog : plan.serverLog})`, () => (second ? deps.startServer(plan, "second") : deps.startServer(plan)));
+        const port = second ? plan.ports.second : plan.ports.app;
+        const entry = {
+          name: second ? "stop the second app" : "stop the app",
+          undo: () => server.stop(),
+          hint: () => `stop the process that listens on port ${port}: lsof -ti tcp:${port} | xargs kill`,
+        };
+        undo.push(entry);
+        try {
+          await step(`waiting until ${label} is ready and /api/v1/health answers`, () => (second ? deps.waitForHealth(plan, server, ctx, "second") : deps.waitForHealth(plan, server, ctx)));
+          const verdict = await step(`checking ${label}'s sign-in origin and providers`, () => (second ? deps.verifyApp(plan, server, ctx, "second") : deps.verifyApp(plan, server, ctx)));
+          if (!verdict.ok) throw new SetupError(verdict.message ?? `${label} is not the one that was configured`);
+          return;
+        } catch (error) {
+          const portTaken = error instanceof Error && /** @type {any} */ (error).portInUse === true;
+          if (!portTaken || attempt >= APP_START_ATTEMPTS || received) throw error;
+          deps.log(`[e2e-release] port ${port} was taken before ${label} could bind it (attempt ${attempt} of ${APP_START_ATTEMPTS}), choosing another`);
+          undo.splice(undo.indexOf(entry), 1);
+          await server.stop();
+        }
       }
-    }
+    };
+    await bringUp("app");
+    if (plan.secondApp) await bringUp("second");
 
     code = await step(
       `running the ${plan.tier} tier${plan.listOnly ? " (list only)" : ""}${plan.visual ? ` in ${plan.visual.image} as ${plan.visual.containerName}` : ""}: node scripts/e2e-phases.mjs ${plan.phasesArgv.join(" ")}`,
@@ -884,11 +932,11 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
     graceMs: 60_000,
   });
   /** What a crash must still clean up synchronously (process 'exit'): the app's group and a container that is not kept. */
-  const live = { container: undefined, server: undefined, visual: undefined };
+  const live = { container: undefined, servers: new Set(), visual: undefined };
   /** The directories this run made itself: the only ones its teardown may remove. */
   const createdDirs = new Set();
   process.on("exit", () => {
-    if (live.server?.pid) signalGroup(live.server, "SIGKILL");
+    for (const server of live.servers) if (server.pid) signalGroup(server, "SIGKILL");
     if (live.container) spawnSync("docker", ["rm", "-f", live.container], { stdio: "ignore", timeout: 30_000 });
     if (live.visual) spawnSync("docker", ["rm", "-f", live.visual], { stdio: "ignore", timeout: 30_000 });
   });
@@ -960,13 +1008,21 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
     removeTmp: (plan) => removeRunTmp(plan, createdDirs),
 
     async freePorts(ports) {
-      const take = async (preferred, other) => {
+      const take = async (preferred, others) => {
         let port = preferred;
-        for (let tries = 0; tries < 50 && (port === other || !(await isPortFree(port))); tries += 1) port = pickPorts().app;
+        for (let tries = 0; tries < 50 && (others.includes(port) || !(await isPortFree(port))); tries += 1) port = pickPorts().app;
         return port;
       };
-      const app = await take(ports.app, undefined);
-      return { app, db: await take(ports.db, app) };
+      const app = await take(ports.app, []);
+      const db = await take(ports.db, [app]);
+      return ports.second === undefined ? { app, db } : { app, db, second: await take(ports.second, [app, db]) };
+    },
+
+    /** The second app's port alone: `preferred` when nothing listens on it now, else another free one (never the app's or the database's). */
+    async freeSecondPort({ second, app, db }) {
+      let port = second;
+      for (let tries = 0; tries < 50 && (port === app || port === db || !(await isPortFree(port))); tries += 1) port = pickPorts().app;
+      return port;
     },
 
     /** The app's port alone (the database's is held by the running container): `preferred` when nothing listens on it now, else another free one. */
@@ -1056,17 +1112,18 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
       return true;
     },
 
-    startServer(plan) {
-      const spec = plan.commands.server;
-      const logOffset = existsSync(plan.serverLog) ? statSync(plan.serverLog).size : 0; // a retry appends to the log of the attempt before it
-      const fd = openSync(plan.serverLog, "a");
+    startServer(plan, which = "app") {
+      const spec = which === "second" ? plan.commands.secondServer : plan.commands.server;
+      const serverLog = which === "second" ? plan.secondServerLog : plan.serverLog;
+      const logOffset = existsSync(serverLog) ? statSync(serverLog).size : 0; // a retry appends to the log of the attempt before it
+      const fd = openSync(serverLog, "a");
       let child;
       try {
         child = spawnGroup(spec.command, spec.args, { cwd: spec.cwd, env: spec.env, stdio: ["ignore", fd, fd] });
       } finally {
         closeSync(fd);
       }
-      live.server = child;
+      live.servers.add(child);
       const server = {
         child,
         logOffset,
@@ -1088,7 +1145,7 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
         }),
         async stop() {
           await terminateGroup(child, { graceMs: SERVER_STOP_GRACE_MS });
-          live.server = undefined;
+          live.servers.delete(child);
         },
       };
       return server;
@@ -1099,11 +1156,12 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
      * without it, and a health answer from another program on that port is not ours); an app that is still silent after READY_FALLBACK_MS
      * but answers is trusted. A start that died because the port is taken throws an error with `portInUse`.
      */
-    async waitForHealth(plan, server, { signal }) {
-      const url = `${plan.baseUrl}/api/v1/health`;
+    async waitForHealth(plan, server, { signal }, which = "app") {
+      const url = `${which === "second" ? plan.secondBaseUrl : plan.baseUrl}/api/v1/health`;
+      const serverLog = which === "second" ? plan.secondServerLog : plan.serverLog;
       const ownLog = () => {
         try {
-          return readFileSync(plan.serverLog, "utf8").slice(server.logOffset);
+          return readFileSync(serverLog, "utf8").slice(server.logOffset);
         } catch {
           return "";
         }
@@ -1115,7 +1173,7 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
         if (server.hasExited) {
           const log = ownLog();
           throw Object.assign(
-            new SetupError(`the app exited (code ${server.exitCode}${server.spawnError ? `, ${server.spawnError}` : ""}) before ${url} answered. Last lines of ${plan.serverLog}:\n${tail(plan.serverLog)}`),
+            new SetupError(`the app exited (code ${server.exitCode}${server.spawnError ? `, ${server.spawnError}` : ""}) before ${url} answered. Last lines of ${serverLog}:\n${tail(serverLog)}`),
             { portInUse: /EADDRINUSE|address already in use/i.test(log) },
           );
         }
@@ -1132,16 +1190,17 @@ export function createRealDeps({ log: write = console.log, error: writeError = c
         }
         await sleep(300, signal);
       }
-      throw new SetupError(`the app did not become healthy within ${HEALTH_TIMEOUT_MS / 1000} s (${url}: ${last}). Last lines of ${plan.serverLog}:\n${tail(plan.serverLog)}`);
+      throw new SetupError(`the app did not become healthy within ${HEALTH_TIMEOUT_MS / 1000} s (${url}: ${last}). Last lines of ${serverLog}:\n${tail(serverLog)}`);
     },
 
     /** Asks the app which sign-in URLs and providers it has (`judgeProviders`): a leaked AUTH_URL or GOOGLE_CLIENT_ID shows here. */
-    async verifyApp(plan, _server, { signal }) {
-      const url = `${plan.baseUrl}/api/auth/providers`;
+    async verifyApp(plan, _server, { signal }, which = "app") {
+      const origin = which === "second" ? plan.secondBaseUrl : plan.baseUrl;
+      const url = `${origin}/api/auth/providers`;
       try {
         const response = await fetch(url, { signal: AbortSignal.any([AbortSignal.timeout(10_000), signal]) });
         if (!response.ok) return { ok: false, message: `${url} answered HTTP ${response.status}` };
-        return judgeProviders(await response.json(), plan.baseUrl);
+        return judgeProviders(await response.json(), origin);
       } catch (e) {
         return { ok: false, message: `${url} did not answer: ${e instanceof Error ? e.message : String(e)}` };
       }

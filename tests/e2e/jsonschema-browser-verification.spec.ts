@@ -4,7 +4,9 @@
  *   1. "From URL": a SUCCESSFUL import over the real network path (public https host, DNS + SSRF checks, size limits), and the
  *      git-host refusal message of the default restricted mode. With `E2E_GIT_ANY_BASE_URL` (a second server started with
  *      SCHEMA_IMPORT_GIT_MODE=any) the refusal is gone and the server tries the fetch (it then fails on `gh`, which has no
- *      credentials for the fixture host, with a DIFFERENT message).
+ *      credentials for the fixture host, with a DIFFERENT message). The release runner starts that second server itself for the tiers that
+ *      include the @external tests (nightly, or `--second-app`: scripts/e2e-release.mjs) and sets the variable; without it the test skips,
+ *      and the skipped-test gate (scripts/e2e-phases.mjs) lists it by name, with the reason.
  *   2. A schema with unresolved external `$ref`s: dangling marker + low confidence on the review, entity DRAFT with an alert, JSON
  *      Schema AND OpenAPI keep the raw `$ref`, the publish dialog.
  *   3. The primary-key prompt on BigQuery, PostgreSQL and Spanner: dialog, choose, generation succeeds, key persisted (TypeSpec
@@ -12,7 +14,8 @@
  *   4. x-securityClassification: the level on every field in the editor.
  *   5. The syntax-highlighted paste box (CodeMirror tokens for JSON, coloured layer for TypeSpec).
  *
- * Screenshots go to /tmp/e2e-evidence/A. The successful URL import needs outbound https (skipped with a note when it is offline).
+ * Screenshots go to /tmp/e2e-evidence/A. The successful URL import needs outbound https: an @external NETWORK precondition, which skips
+ * with a reason that says so when the machine is offline (the skipped-test gate allows an @external skip and lists it).
  * PREREQS: see helpers/auth.ts.
  */
 
@@ -50,7 +53,7 @@ test.describe("A1: From URL", () => {
   test("a successful import over the real https path ends in a created entity", { tag: ["@regression", "@external"] }, async ({ authedPage: page }) => {
     test.setTimeout(240_000);
     const online = await fetch(PUBLIC_SCHEMA_URL, { signal: AbortSignal.timeout(10_000) }).then((r) => r.ok, () => false);
-    test.skip(!online, `${PUBLIC_SCHEMA_URL} is not reachable from this machine`);
+    test.skip(!online, `@external network precondition not met: ${PUBLIC_SCHEMA_URL} is not reachable from this machine`);
     const { productUrl } = await createUiWorkspace(page, "a1");
     await openUrlMode(page, productUrl);
     await page.getByTestId("workbench-url-input").fill(PUBLIC_SCHEMA_URL);
@@ -88,7 +91,7 @@ test.describe("A1: From URL", () => {
 
 test.describe("A1: git mode any (second server)", () => {
   const anyBase = process.env.E2E_GIT_ANY_BASE_URL;
-  test.skip(!anyBase, "set E2E_GIT_ANY_BASE_URL to a server started with SCHEMA_IMPORT_GIT_MODE=any");
+  test.skip(!anyBase, "@external second-server precondition not met: E2E_GIT_ANY_BASE_URL is not set (the release runner's nightly tier, or --second-app, starts the server with SCHEMA_IMPORT_GIT_MODE=any)");
   // Another server is another session: the saved login belongs to the first one (a session cookie is not scoped to a port, and its
   // signature is that server's), so this test starts logged out and logs in on the second server itself.
   test.use({ baseURL: anyBase, storageState: { cookies: [], origins: [] } });

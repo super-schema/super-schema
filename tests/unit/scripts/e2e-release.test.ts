@@ -492,6 +492,9 @@ function fakeDeps(
     browser?: string;
     /** The visual tier's Playwright image is not on this machine. */
     imageMissing?: boolean;
+    /** The first n starts of the SECOND app find its port taken. */
+    secondPortTaken?: number;
+    secondVerify?: { ok: boolean; message?: string };
   } = {},
 ) {
   const events: string[] = [];
@@ -501,6 +504,8 @@ function fakeDeps(
   const startedOn: number[] = [];
   let containerAttempts = 0;
   let serverStarts = 0;
+  let secondStarts = 0;
+  const secondStartedOn: number[] = [];
   let appPort = 30000;
   const blocked = (signal: AbortSignal) => new Promise<void>((resolve) => (signal.aborted ? resolve() : signal.addEventListener("abort", () => resolve())));
   const record = async (name: string) => {
@@ -567,18 +572,38 @@ function fakeDeps(
       appPort = serverStarts === 0 ? preferred : preferred + 1;
       return appPort;
     },
-    startServer: async (planOfStart: { ports: { app: number } }) => {
+    freeSecondPort: async (ports: { second: number }) => {
+      events.push("free second port");
+      return secondStarts === 0 ? ports.second : ports.second + 1;
+    },
+    startServer: async (planOfStart: { ports: { app: number; second?: number } }, which = "app") => {
+      if (which === "second") {
+        secondStarts += 1;
+        events.push("start second server");
+        secondStartedOn.push(planOfStart.ports.second as number);
+        return { stop: async () => void events.push("stop second server"), exited: new Promise<never>(() => {}) };
+      }
       serverStarts += 1;
       events.push("start server");
       startedOn.push(planOfStart.ports.app);
       return { stop: async () => void events.push("stop server"), exited: new Promise<never>(() => {}) };
     },
-    waitForHealth: async () => {
+    waitForHealth: async (_plan: unknown, _server: unknown, _ctx: unknown, which = "app") => {
+      if (which === "second") {
+        events.push("wait second health");
+        if (secondStarts <= (options.secondPortTaken ?? 0)) throw Object.assign(new Error("EADDRINUSE: the second app could not bind its port"), { portInUse: true });
+        if (options.fail === "wait second health") throw new Error("wait second health failed");
+        return;
+      }
       events.push("wait health");
       if (serverStarts <= (options.appPortTaken ?? 0)) throw Object.assign(new Error("EADDRINUSE: the app could not bind its port"), { portInUse: true });
       if (options.fail === "wait health") throw new Error("wait health failed");
     },
-    verifyApp: async () => {
+    verifyApp: async (_plan: unknown, _server: unknown, _ctx: unknown, which = "app") => {
+      if (which === "second") {
+        events.push("verify second app");
+        return options.secondVerify ?? { ok: true };
+      }
       events.push("verify app");
       return options.verify ?? { ok: true };
     },
@@ -591,7 +616,7 @@ function fakeDeps(
       return options.phasesCode ?? 0;
     },
   };
-  return { deps, events, messages, handlers, stamped, startedOn };
+  return { deps, events, messages, handlers, stamped, startedOn, secondStartedOn };
 }
 
 /** The setup of a full run in order (what must be undone in reverse), as the fake records it. */
@@ -1025,5 +1050,133 @@ describe("the timing of a run: a long hole in the log is attributable", () => {
     const { deps, messages } = fakeDeps();
     expect(await runRelease(plan(), deps)).toBe(0);
     expect(messages.at(-1)).toMatch(/done: exit 0 in \d+(\.\d)? s;/);
+  });
+});
+
+describe("the second app: git import in `any` mode, for the @external test that needs a server of its own", () => {
+  const nightly = (extra: string[] = []) => plan(["--tier", "nightly", ...extra]);
+
+  describe("when it is started", () => {
+    it("reads --second-app", () => {
+      expect(parseArgs(["--tier", "smoke", "--second-app"]).secondApp).toBe(true);
+      expect(parseArgs(["--tier", "smoke"]).secondApp).toBe(false);
+    });
+
+    it("is started by the nightly tier (it includes the @external tests) and by --second-app, and by nothing else", () => {
+      expect(plan(["--tier", "nightly"]).secondApp).toBe(true);
+      expect(plan(["--tier", "smoke", "--second-app"]).secondApp).toBe(true);
+      expect(plan(["--tier", "regression", "--second-app"]).secondApp).toBe(true);
+      for (const tier of ["smoke", "regression", "serial"]) expect(plan(["--tier", tier]).secondApp, tier).toBe(false);
+    });
+
+    it("is never started for a listing (nothing runs), even with --second-app", () => {
+      expect(plan(["--tier", "nightly", "--list-only"]).secondApp).toBe(false);
+      expect(plan(["--tier", "smoke", "--second-app", "--list-only"]).secondApp).toBe(false);
+    });
+
+    it("gives a plan without it no second port, origin or command: the ports are exactly the app's and the database's", () => {
+      const p = plan(["--tier", "smoke"]);
+      expect(Object.keys(p.ports).sort()).toEqual(["app", "db"]);
+      expect(p.secondBaseUrl).toBeUndefined();
+      expect(p.commands.secondServer).toBeUndefined();
+      expect(p.env.secondApp).toBeUndefined();
+      expect(p.env.phases).not.toHaveProperty("E2E_GIT_ANY_BASE_URL");
+    });
+  });
+
+  describe("its plan", () => {
+    it("has a port of its own, distinct from the app's, the database's and every reserved one", () => {
+      for (let i = 0; i < 200; i += 1) {
+        const { ports } = nightly();
+        expect(ports.second).toBeDefined();
+        expect(new Set([ports.app, ports.db, ports.second]).size).toBe(3);
+        expect(ports.second as number).toBeGreaterThanOrEqual(20000);
+        expect(ports.second as number).toBeLessThanOrEqual(32000);
+        expect([3000, 5432]).not.toContain(ports.second);
+      }
+    });
+
+    it("starts `next start` of the SAME checkout (the same build) on that port, with its own environment", () => {
+      const p = nightly();
+      expect(p.commands.secondServer?.args).toEqual([BINS.next, "start", "-p", String(p.ports.second), "-H", "127.0.0.1"]);
+      expect(p.commands.secondServer?.cwd).toBe(p.commands.server.cwd);
+      expect(p.secondBaseUrl).toBe(`http://localhost:${p.ports.second}`);
+      expect(p.secondServerLog).toBe(path.join(p.outputRoot, "server-git-any.log"));
+      expect(p.secondServerLog).not.toBe(p.serverLog);
+    });
+
+    it("is the first app's environment (same database, secret, API key) with SCHEMA_IMPORT_GIT_MODE=any and ITS OWN origin for Auth.js", () => {
+      const p = nightly();
+      const first = p.env.app;
+      const second = p.env.secondApp as Record<string, string>;
+      expect(first.SCHEMA_IMPORT_GIT_MODE, "the first app stays restricted: blank").toBe("");
+      expect(second.SCHEMA_IMPORT_GIT_MODE).toBe("any");
+      for (const name of ["DATABASE_URL", "DB_PROVIDER", "AUTH_SECRET", "NEXTAUTH_SECRET", "API_KEY"]) expect(second[name], name).toBe(first[name]);
+      // Auth.js builds its sign-in URLs from AUTH_URL: the second app's must be its own origin, not the first's.
+      expect(second.AUTH_URL).toBe(p.secondBaseUrl);
+      expect(second.NEXTAUTH_URL).toBe(p.secondBaseUrl);
+      expect(first.AUTH_URL).toBe(p.baseUrl);
+      // and nothing of the developer's shell reaches it (the same hermetic rules as the first)
+      expect(second.DATABASE_URL).not.toContain("db.internal");
+      expect(second.GOOGLE_CLIENT_ID).toBe("");
+    });
+
+    it("hands the browser run the second app's origin as E2E_GIT_ANY_BASE_URL (a shell value of the name is dropped, the run's own is set)", () => {
+      const p = plan(["--tier", "nightly"], { ...DEVELOPER, E2E_GIT_ANY_BASE_URL: "http://shell.example" });
+      expect(p.env.phases.E2E_GIT_ANY_BASE_URL).toBe(p.secondBaseUrl);
+      const q = plan(["--tier", "smoke"], { ...DEVELOPER, E2E_GIT_ANY_BASE_URL: "http://shell.example" });
+      expect(q.env.phases).not.toHaveProperty("E2E_GIT_ANY_BASE_URL");
+    });
+
+    it("follows the ports when they are chosen again (withPorts)", () => {
+      const p = nightly();
+      const moved = withPorts(p, { ...p.ports, second: 31999 });
+      expect(moved.secondBaseUrl).toBe("http://localhost:31999");
+      expect(moved.commands.secondServer?.args).toContain("31999");
+      expect(moved.env.phases.E2E_GIT_ANY_BASE_URL).toBe("http://localhost:31999");
+      expect((moved.env.secondApp as Record<string, string>).AUTH_URL).toBe("http://localhost:31999");
+    });
+  });
+
+  describe("runRelease", () => {
+    const SECOND_UP = ["free second port", "start second server", "wait second health", "verify second app"];
+    const upToFirstApp = FULL_RUN.slice(0, FULL_RUN.indexOf("run phases"));
+
+    it("starts it after the first app is healthy and before the tier, and tears it down first", async () => {
+      const { deps, events } = fakeDeps();
+      expect(await runRelease(nightly(), deps)).toBe(0);
+      expect(events).toEqual([...upToFirstApp, ...SECOND_UP, "run phases", "stop second server", "stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
+    });
+
+    it("starts nothing more for a plan without it (the events of a smoke run are the ones they always were)", async () => {
+      const { deps, events } = fakeDeps();
+      await runRelease(plan(["--tier", "smoke"]), deps);
+      expect(events).toEqual([...FULL_RUN, "stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
+    });
+
+    it("does not run the tier, and stops both apps, when the second one never gets healthy", async () => {
+      const { deps, events } = fakeDeps({ fail: "wait second health" });
+      expect(await runRelease(nightly(), deps)).toBe(EXIT.setup);
+      expect(events).not.toContain("run phases");
+      expect(events.slice(-6)).toEqual(["stop second server", "stop server", "unregister run", "remove container", "remove tmp", "signals off"]);
+    });
+
+    it("refuses a second app that is not the one configured (its sign-in URLs are another origin)", async () => {
+      const { deps, events, messages } = fakeDeps({ secondVerify: { ok: false, message: "the app's credentials signinUrl is elsewhere" } });
+      expect(await runRelease(nightly(), deps)).toBe(EXIT.setup);
+      expect(events).not.toContain("run phases");
+      expect(messages.join("\n")).toContain("the app's credentials signinUrl is elsewhere");
+    });
+
+    it("chooses another port for it when it was taken before the app could bind it, and stops the failed attempt", async () => {
+      const { deps, events, secondStartedOn } = fakeDeps({ secondPortTaken: 1 });
+      const p = nightly();
+      expect(await runRelease(p, deps)).toBe(0);
+      expect(secondStartedOn).toHaveLength(2);
+      expect(secondStartedOn[1]).toBe((p.ports.second as number) + 1);
+      expect(events.filter((e) => e === "start second server")).toHaveLength(2);
+      expect(events.filter((e) => e === "stop second server")).toHaveLength(2); // the failed attempt, then the run's teardown
+      expect(events).toContain("run phases");
+    });
   });
 });

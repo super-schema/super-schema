@@ -112,9 +112,18 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
    the meantime is a new port and a second start, up to three), then asks `/api/auth/providers` and stops the run when the sign-in URLs
    are not under the run's own origin (an `AUTH_URL` got through) or Google sign-in is on (a `GOOGLE_CLIENT_ID` got through). The
    app's output goes to `<output root>/server.log`.
-7. `node scripts/e2e-phases.mjs <tier>` with `E2E_BASE_URL`, `E2E_DATABASE_URL`, `E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE` and `E2E_BROWSER_CHANNEL` of the run's own.
-   The exit code of the run is that command's: 124 when its stall watchdog ended a Playwright that stopped making progress (below).
-8. Teardown, in the reverse order of the setup: the app is stopped (SIGTERM, SIGKILL after 10 s), the container is removed
+7. **The second app**, for the tiers that include the `@external` tests (the nightly tier) and with `--second-app`: the git-host import has a
+   mode read from the environment when the app starts (`SCHEMA_IMPORT_GIT_MODE`, `restricted` by default), and the test "A1: git mode any
+   (second server)" needs a server in `any` mode. After the first app is healthy the runner starts a second `next start` of the **same build**
+   on another free port, with the same database, secret and API key, `SCHEMA_IMPORT_GIT_MODE=any`, and its own origin for Auth.js (a sign-in
+   URL of the other port would send a login to the other server); it waits until it is ready and `/api/v1/health` answers, checks its sign-in
+   origin like the first app's, and gives the browser run its origin as `E2E_GIT_ANY_BASE_URL`. Its output goes to
+   `<output root>/server-git-any.log`, and it is stopped first in the teardown. That test logs in on the second server itself (a
+   session is that server's). Without a second app the test skips, and the skipped-test gate lists it (below).
+8. `node scripts/e2e-phases.mjs <tier>` with `E2E_BASE_URL`, `E2E_DATABASE_URL`, `E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE` and `E2E_BROWSER_CHANNEL` of the run's own
+   (and `E2E_GIT_ANY_BASE_URL` with a second app). The exit code of the run is that command's: 124 when its stall watchdog ended a Playwright
+   that stopped making progress (below), 1 when a test failed or when a test that is not `@external` was skipped (below).
+9. Teardown, in the reverse order of the setup: the apps are stopped (SIGTERM, SIGKILL after 10 s), the container is removed
    (`docker rm -f`), the temp directory (login file) is deleted. This happens in a `finally`, and on SIGINT, SIGTERM and SIGHUP. A teardown
    step that fails is said again in the last line (`TEARDOWN INCOMPLETE: ...` with the command to run by hand, e.g.
    `docker rm -f ss-e2e-<id>`), whatever the exit code is.
@@ -158,6 +167,7 @@ whatever your shell has under the prefixes `PG`, `AUTH_`, `NEXTAUTH_`, `E2E_`, `
 | `--project <name>` | narrow the tier to a project (repeatable): `--tier smoke --project firefox-smoke`. It narrows; it does not add |
 | `--reuse-build` | skip the build when it can be reused (below) |
 | `--keep` | leave the database container running, and print how to connect and how to remove it |
+| `--second-app` | also start a second app with `SCHEMA_IMPORT_GIT_MODE=any` and give the browser run `E2E_GIT_ANY_BASE_URL` (the nightly tier does it by itself; a listing never does) |
 | `--list-only` | the whole setup, but the browser run only lists the tests of the tier (a dry run) |
 | `--output-root <dir>` | where reports and `server.log` go (default `$E2E_OUTPUT_ROOT`, else `test-results/run-<id>`) |
 | `-- <args>` | Playwright's own: `-- tests/e2e/layout.spec.ts --headed --grep "sidebar"` (they go to the first phase) |

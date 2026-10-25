@@ -24,6 +24,7 @@ import {
   hermeticEnv,
   phasesEnvironment,
   runnerKnobs,
+  secondAppEnvironment,
   setValues,
 } from "../../../scripts/e2e-env.mjs";
 
@@ -127,6 +128,42 @@ describe("the runner's knobs", () => {
   it("the run's own settings win over a knob of the same name (a knob cannot repoint the run)", () => {
     const phases = phasesEnvironment({}, { ...RUN, outputRoot: "/out", authState: "/a.json", knobs: { E2E_BASE_URL: "http://elsewhere", E2E_STALL_MS: "9" } as Record<string, string> });
     expect(phases.E2E_BASE_URL).toBe(RUN.baseUrl);
+  });
+});
+
+describe("the second app (git import in `any` mode) and the browser run's E2E_GIT_ANY_BASE_URL", () => {
+  const SECOND = "http://localhost:22001";
+  const base = hermeticEnv(DEVELOPER);
+
+  it("is the first app's environment with the git mode set to `any` (blank for the first), and the second origin for Auth.js", () => {
+    const first = appEnvironment(base, RUN);
+    const second = secondAppEnvironment(base, RUN, SECOND);
+    expect(first.SCHEMA_IMPORT_GIT_MODE).toBe("");
+    expect(second.SCHEMA_IMPORT_GIT_MODE).toBe("any");
+    expect(second.AUTH_URL).toBe(SECOND);
+    expect(second.NEXTAUTH_URL).toBe(SECOND);
+    // everything else is the first app's: one database, one secret (a login is a signed cookie of that secret), one API key
+    const differing = ["SCHEMA_IMPORT_GIT_MODE", "AUTH_URL", "NEXTAUTH_URL"];
+    const without = (env: Record<string, string>) => Object.fromEntries(Object.entries(env).filter(([name]) => !differing.includes(name)));
+    expect(without(second)).toEqual(without(first));
+  });
+
+  it("carries nothing of the developer's shell (the developer's SCHEMA_IMPORT_GIT_MODE=any is not what makes it `any`: the run's value is)", () => {
+    const second = secondAppEnvironment(hermeticEnv({ ...DEVELOPER, SCHEMA_IMPORT_GIT_MODE: "restricted" }), RUN, SECOND);
+    expect(second.SCHEMA_IMPORT_GIT_MODE).toBe("any");
+    expect(JSON.stringify(second)).not.toContain("devpass");
+    expect(second.GOOGLE_CLIENT_ID).toBe("");
+  });
+
+  it("gives the browser run the second origin as E2E_GIT_ANY_BASE_URL when the run has one, and nothing when it has none", () => {
+    expect(phasesEnvironment(base, { ...RUN, outputRoot: "/out", authState: "/a.json", gitAnyBaseUrl: SECOND }).E2E_GIT_ANY_BASE_URL).toBe(SECOND);
+    expect(phasesEnvironment(base, { ...RUN, outputRoot: "/out", authState: "/a.json" })).not.toHaveProperty("E2E_GIT_ANY_BASE_URL");
+  });
+
+  it("a shell value of E2E_GIT_ANY_BASE_URL is dropped (the E2E_ prefix is the runner's): only the run's own reaches the browser run", () => {
+    const shell = hermeticEnv({ ...DEVELOPER, E2E_GIT_ANY_BASE_URL: "http://shell.example" });
+    expect(shell).not.toHaveProperty("E2E_GIT_ANY_BASE_URL");
+    expect(phasesEnvironment(shell, { ...RUN, outputRoot: "/out", authState: "/a.json" })).not.toHaveProperty("E2E_GIT_ANY_BASE_URL");
   });
 });
 

@@ -15,7 +15,9 @@
 //            reaches it (NODE_ENV is Next's, TEST_EMAIL is read by the browser run, which loads no `.env`);
 //   ALLOWED  read by the app and passed through from the shell on purpose, with the reason.
 //
-// Two more groups are for the browser run alone, which the app never sees:
+// Two more groups are for the browser run alone, which the app never sees (and the run's own values for it: E2E_BASE_URL, E2E_DATABASE_URL,
+// E2E_OUTPUT_ROOT, E2E_AUTH_STATE, E2E_API_KEY, and, when the run started a second app, E2E_GIT_ANY_BASE_URL (the origin of the app that runs
+// with SCHEMA_IMPORT_GIT_MODE=any: `secondAppEnvironment`)):
 //
 //   BROWSER RUN  E2E_BROWSER_CHANNEL (`chrome` | `chromium`, scripts/e2e-browser.cjs). The shell's value is dropped like every E2E_ name
 //            (that prefix is the runner's); the runner decides the channel from it (an explicit value wins, CI forces the bundled
@@ -200,6 +202,21 @@ export function appEnvironment(base, run) {
 }
 
 /**
+ * The environment of the SECOND app of a run that includes the @external tests (the git-host import in `any` mode needs a server of its own:
+ * the mode is read from the environment when the app starts): the first app's environment (the same database, secret, API key and build), the
+ * origin of ITS OWN port for Auth.js (a sign-in URL of the other port would send a login to the other server), and
+ * `SCHEMA_IMPORT_GIT_MODE=any`, the one name that is blank for the first app and set here.
+ *
+ * @param {Record<string, string>} base `hermeticEnv(shell)`
+ * @param {{ databaseUrl: string, baseUrl: string, authSecret: string, pgliteDir: string, apiKey: string }} run the run of the FIRST app
+ * @param {string} secondBaseUrl `http://localhost:<the second port>`
+ * @returns {Record<string, string>}
+ */
+export function secondAppEnvironment(base, run, secondBaseUrl) {
+  return { ...appEnvironment(base, run), AUTH_URL: secondBaseUrl, NEXTAUTH_URL: secondBaseUrl, SCHEMA_IMPORT_GIT_MODE: "any" };
+}
+
+/**
  * The environment of the browser run: the shell's rest and what points it at the run. No name is blanked here: the browser run loads no
  * `.env` (a blank TEST_EMAIL would be the login "" and not the seeded admin).
  *
@@ -209,7 +226,10 @@ export function appEnvironment(base, run) {
  * @param {Record<string, string>} base
  * `run.apiKey` is the key the app was started with (`API_KEY`); the browser run gets it as E2E_API_KEY (nothing when the run has none).
  *
- * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string, apiKey?: string, browserChannel?: string, knobs?: Record<string, string> }} run
+ * `run.gitAnyBaseUrl` is the origin of the second app (git import in `any` mode), when the run started one; the browser run gets it as
+ * E2E_GIT_ANY_BASE_URL (nothing otherwise: the test that needs it then skips, and the skipped-test gate reports it).
+ *
+ * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string, apiKey?: string, browserChannel?: string, knobs?: Record<string, string>, gitAnyBaseUrl?: string }} run
  * @returns {Record<string, string>}
  */
 export function phasesEnvironment(base, run) {
@@ -218,6 +238,7 @@ export function phasesEnvironment(base, run) {
     ...(run.knobs ?? {}),
     ...(run.browserChannel ? { E2E_BROWSER_CHANNEL: run.browserChannel } : {}),
     ...(run.apiKey ? { E2E_API_KEY: run.apiKey } : {}),
+    ...(run.gitAnyBaseUrl ? { E2E_GIT_ANY_BASE_URL: run.gitAnyBaseUrl } : {}),
     DB_PROVIDER: "postgresql",
     DATABASE_URL: run.databaseUrl,
     E2E_DATABASE_URL: run.databaseUrl,
