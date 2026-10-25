@@ -245,6 +245,9 @@ describe("updateFieldAction drops the reference (target, id, pin) of a field tha
     expect(written()).not.toHaveProperty("decorators");
   });
 
+  // The new target must be an entity of the active tenant (store-time check, forged-reference-field-actions.test.ts): "e-money" is one.
+  beforeEach(() => mockPrisma.entity.findUnique.mockResolvedValue({ tenantId: "tenant-1" }));
+
   it("re-pointing a pinned reference at another entity drops the old pin that the client carried along", async () => {
     mockPrisma.field.findUnique.mockResolvedValue(PINNED);
     await update("fld-1", {

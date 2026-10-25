@@ -96,7 +96,12 @@ function isUniqueViolation(e: unknown): boolean {
  * The planner's state plus whether the stored source lags the field rows (R42) and the closure the publish is judged against
  * (`null` exactly when `closureBlocker` is set: the plan then refuses before anything uses it).
  */
-type LoadedPublishState = PublishState & { sourceStale: boolean; closure: ReferenceClosure | null };
+type LoadedPublishState = PublishState & {
+  sourceStale: boolean;
+  closure: ReferenceClosure | null;
+  /** The tenant of the entity being published: every other entity or version the publish reads or links to must belong to it. */
+  tenantId: string;
+};
 
 /**
  * The EntityVersion each direct-reference edge (`SchemaReference`, read by the artifact renderer, usage and pin-usage) points at, in
@@ -106,14 +111,18 @@ type LoadedPublishState = PublishState & { sourceStale: boolean; closure: Refere
  * version the planner found. A recorded version whose row cannot be read here (it was just read by the closure, in this same
  * transaction) aborts the publish, retryable.
  */
-async function edgeTargetVersionIds(db: Db, plan: PublishPlan): Promise<string[]> {
+async function edgeTargetVersionIds(db: Db, plan: PublishPlan, tenantId: string): Promise<string[]> {
   const used = new Map(plan.referencedVersions.flatMap((r) => (r.ref.entityId ? [[r.ref.entityId, r.version] as const] : [])));
   const wanted = plan.pins.flatMap((pin) => {
     const label = used.get(pin.entityId);
     const parsed = label === undefined ? undefined : parseVersionLabel(label);
     return parsed?.success ? [{ entityId: pin.entityId, major: parsed.data.major, minor: parsed.data.minor }] : [];
   });
-  const rows = wanted.length === 0 ? [] : await db.entityVersion.findMany({ where: { OR: wanted }, select: { id: true, entityId: true, major: true, minor: true } });
+  // Bound to the publishing entity's tenant: an edge never links to a version another tenant owns, whatever the pins say.
+  const rows =
+    wanted.length === 0
+      ? []
+      : await db.entityVersion.findMany({ where: { OR: wanted, entity: { tenantId } }, select: { id: true, entityId: true, major: true, minor: true } });
   const idOf = new Map(rows.map((row) => [`${row.entityId}@${formatVersionLabel(row)}`, row.id]));
 
   return plan.pins.map((pin) => {
@@ -150,9 +159,11 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
   // References stored by name only (every creation path today) are resolved against the entity's line
   // (shared with the draft artifact renderer: src/lib/entity-versioning/line-references.ts).
   const { targetIds, unresolvedNames } = await resolveEntityReferences(db, entity);
+  // Only entities of THIS entity's tenant: an id of another tenant's entity (stored by a client that forged it) is not found, so it reads as a
+  // missing reference and blocks the publish instead of showing that entity's name or pinning its latest version.
   const targets =
     targetIds.length > 0
-      ? await db.entity.findMany({ where: { id: { in: targetIds } }, select: { id: true, name: true, latestVersionId: true } })
+      ? await db.entity.findMany({ where: { id: { in: targetIds }, tenantId: entity.tenantId }, select: { id: true, name: true, latestVersionId: true } })
       : [];
   const byId = new Map(targets.map((t) => [t.id, t]));
 
@@ -165,6 +176,7 @@ async function loadPublishState(db: Db, entityId: string): Promise<Result<Loaded
     closureBlocker: published.success ? undefined : published.error,
     referencedVersions: published.success ? published.data.referencedVersions : [],
     sourceStale: isSourceStale(entity.metadata),
+    tenantId: entity.tenantId,
     entity: {
       id: entity.id,
       name: entity.name,
@@ -299,7 +311,7 @@ export async function publishEntity(
             });
 
             if (plan.data.pins.length > 0) {
-              const targets = await edgeTargetVersionIds(tx, plan.data);
+              const targets = await edgeTargetVersionIds(tx, plan.data, state.data.tenantId);
               await tx.schemaReference.createMany({
                 data: plan.data.pins.map((pin, i) => ({
                   fromKind: "ENTITY_VERSION" as const,

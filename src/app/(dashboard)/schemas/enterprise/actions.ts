@@ -5,7 +5,8 @@ import { auth } from "@/lib/auth";
 import { AuditUserMissingError, withAudit } from "@/lib/audit";
 import { revalidatePath } from "next/cache";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { unexpectedFailure } from "@/lib/action-context";
+import { inActiveTenant, unexpectedFailure } from "@/lib/action-context";
+import { FOREIGN_REFERENCE_MESSAGE, fieldsReferenceAllowed } from "@/lib/references/foreign-reference-guard";
 import { generateSlug, reservedEntitySlugMessage } from "@/lib/slug";
 import { firstReservedFieldNameMessage } from "@/lib/reserved-field-names";
 import { resolveCurrentUserId, STALE_SESSION_ENTITY_ERROR } from "@/lib/current-user";
@@ -61,6 +62,9 @@ export async function createTenantEntityAction(data: {
   const slug = generateSlug(name);
 
   try {
+    // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
+    if (!(await fieldsReferenceAllowed(data.fields, (id) => inActiveTenant("entity", id)))) return { error: FOREIGN_REFERENCE_MESSAGE };
+
     const [tenantId, userId] = await Promise.all([
       getActiveTenantId(),
       resolveCurrentUserId(session.user),

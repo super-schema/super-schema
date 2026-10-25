@@ -80,10 +80,15 @@ function rootModelFor(source: string, entityName: string, label: string): Result
   return ok(found.data ?? sanitizeIdentifier(entityName));
 }
 
-async function loadVersionPart(db: Db, versionId: string): Promise<Result<{ part: ProgramPart; pins: string[] }>> {
+/**
+ * One frozen version as a program part. `tenantId` binds the lookup to a tenant: the dependencies of a program are reached through stored
+ * `SchemaReference` edges, and an edge to another tenant's version (stored data is not trusted to be clean) must read as "not found", never
+ * load that version's source into this tenant's payload. The ROOT version is loaded without it (its tenant is the one its dependencies use).
+ */
+async function loadVersionPart(db: Db, versionId: string, tenantId?: string): Promise<Result<{ part: ProgramPart; pins: string[]; tenantId: string }>> {
   const v = await db.entityVersion.findUnique({
-    where: { id: versionId },
-    select: { id: true, entityId: true, major: true, minor: true, resolvedSource: true, fieldSnapshot: true, entity: { select: { name: true } } },
+    where: { id: versionId, ...(tenantId !== undefined ? { entity: { tenantId } } : {}) },
+    select: { id: true, entityId: true, major: true, minor: true, resolvedSource: true, fieldSnapshot: true, entity: { select: { name: true, tenantId: true } } },
   });
   if (!v) return err({ code: "NOT_FOUND", message: `Entity version "${versionId}" not found` });
   const pins = await db.schemaReference.findMany({
@@ -105,11 +110,12 @@ async function loadVersionPart(db: Db, versionId: string): Promise<Result<{ part
       fields: snapshot.map((f) => ({ name: f.name, fieldNumber: f.fieldNumber ?? null })),
     },
     pins: pins.map((p) => p.toId),
+    tenantId: v.entity.tenantId,
   });
 }
 
 /** BFS over FIELD pins; one version per entity (CONFLICTING_PINS otherwise). */
-async function loadClosure(db: Db, start: string[], present: Map<string, ProgramPart>): Promise<Result<ProgramPart[]>> {
+async function loadClosure(db: Db, start: string[], present: Map<string, ProgramPart>, tenantId: string): Promise<Result<ProgramPart[]>> {
   const byEntity = new Map(present);
   const queue = [...start];
   const visited = new Set<string>();
@@ -121,7 +127,7 @@ async function loadClosure(db: Db, start: string[], present: Map<string, Program
     if (visited.size > MAX_CLOSURE) {
       return err({ code: "REFERENCE_CLOSURE_TOO_LARGE", message: `More than ${MAX_CLOSURE} referenced entity versions` });
     }
-    const loaded = await loadVersionPart(db, id);
+    const loaded = await loadVersionPart(db, id, tenantId);
     if (!loaded.success) return loaded;
     const { part, pins } = loaded.data;
     const existing = byEntity.get(part.entityId);
@@ -146,7 +152,7 @@ export async function loadProgram(db: Db, subject: ArtifactSubject): Promise<Res
   if (subject.kind === "version") {
     const root = await loadVersionPart(db, subject.entityVersionId);
     if (!root.success) return root;
-    const deps = await loadClosure(db, root.data.pins, new Map([[root.data.part.entityId, root.data.part]]));
+    const deps = await loadClosure(db, root.data.pins, new Map([[root.data.part.entityId, root.data.part]]), root.data.tenantId);
     if (!deps.success) return deps;
     const namespace = await namespaceFor(db, root.data.part.entityId);
     if (!namespace.success) return namespace;
@@ -192,8 +198,10 @@ export async function loadProgram(db: Db, subject: ArtifactSubject): Promise<Res
       details: { names: resolved.unresolvedNames },
     });
   }
+  // Only entities of the draft's own tenant: an id of another tenant's entity (stored by a client that forged it) is "no longer exists" here,
+  // never a published version loaded into this tenant's payload.
   const refs = resolved.targetIds.length > 0
-    ? await db.entity.findMany({ where: { id: { in: resolved.targetIds } }, select: { id: true, name: true, latestVersionId: true } })
+    ? await db.entity.findMany({ where: { id: { in: resolved.targetIds }, tenantId: entity.tenantId }, select: { id: true, name: true, latestVersionId: true } })
     : [];
   if (refs.length < resolved.targetIds.length) {
     const missing = resolved.targetIds.filter((id) => !refs.some((r) => r.id === id));
@@ -203,7 +211,7 @@ export async function loadProgram(db: Db, subject: ArtifactSubject): Promise<Res
   if (unpublished.length > 0) {
     return err({ code: "UNPUBLISHED_REFERENCE", message: `${entity.name} references unpublished ${unpublished.join(", ")}; publish them to preview this payload` });
   }
-  const deps = await loadClosure(db, refs.map((r) => r.latestVersionId as string), new Map([[entity.id, root]]));
+  const deps = await loadClosure(db, refs.map((r) => r.latestVersionId as string), new Map([[entity.id, root]]), entity.tenantId);
   if (!deps.success) return deps;
   const namespace = await namespaceFor(db, entity.id);
   if (!namespace.success) return namespace;

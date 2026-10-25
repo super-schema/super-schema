@@ -72,6 +72,7 @@ import { generateTypeSpec } from "@/lib/compiler/typespec-generator";
 import { fieldNeedsUpdate, mergeSyncedField, entityExtensionsChange } from "@/lib/typespec-sync/merge-fields";
 import { isDecimalType } from "@/lib/data-types";
 import { upgradeLegacyTagDecorators } from "@/lib/compiler/legacy-tag-decorators";
+import { FOREIGN_REFERENCE_MESSAGE, referencedEntityAllowed } from "@/lib/references/foreign-reference-guard";
 import { loadEntityModel } from "@/lib/compiler/entity-model-loader";
 import {
   markEntityDraftChanged,
@@ -161,6 +162,11 @@ export async function addFieldAction(
       if (!validation.success) {
         return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
       }
+    }
+
+    // The entity id inside the decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
+    if (!(await referencedEntityAllowed(opts?.decorators, undefined, (id) => inActiveTenant("entity", id)))) {
+      return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
     // Auto-assign field number if not provided
@@ -309,6 +315,12 @@ export async function updateFieldAction(
       if (!validation.success) {
         return { error: `Invalid TypeSpec decorators: ${validation.error.message}` };
       }
+    }
+
+    // A NEW or CHANGED entity id inside the decorators must be an entity of the active tenant (an id the field already holds is left alone:
+    // its entity may have been deleted since, and an unrelated edit of the field must stay possible).
+    if (!(await referencedEntityAllowed(decorators, existing.decorators, (id) => inActiveTenant("entity", id)))) {
+      return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
     }
 
     // Validate field number uniqueness

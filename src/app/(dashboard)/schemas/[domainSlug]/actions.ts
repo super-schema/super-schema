@@ -10,6 +10,7 @@ import { firstReservedFieldNameMessage, renameReservedFields, renameReservedName
 import { ensureDefaultProductId } from "@/lib/org-defaults";
 import { getActiveTenantId } from "@/lib/active-tenant";
 import { inActiveTenant, isInActiveTenant, notFoundFailure, targetInActiveTenant, unexpectedFailure } from "@/lib/action-context";
+import { FOREIGN_REFERENCE_MESSAGE, fieldsReferenceAllowed } from "@/lib/references/foreign-reference-guard";
 import {
   isBoolean, isInt, isPlainObject, isString, isStringArray, isStringOrNull, optional, pickEditable, readFields,
 } from "@/lib/editable-fields";
@@ -217,6 +218,11 @@ export async function createEntityWithFieldsAction(
   try {
     // Ownership of the PARENT: the domain must belong to the active tenant; anything else reads as missing.
     if (!(await inActiveTenant("domain", domainId))) return { ...notFoundFailure("Domain") };
+
+    // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
+    if (!(await fieldsReferenceAllowed(fields, (id) => inActiveTenant("entity", id)))) {
+      return { error: FOREIGN_REFERENCE_MESSAGE, code: "VALIDATION_ERROR" as const };
+    }
 
     const currentUserId = await resolveCurrentUserId(session.user);
 
@@ -1290,6 +1296,15 @@ export async function createDomainAssetsFromImportAction(
     // tenant. A foreign domain reads exactly like a missing one (same message), before anything is created.
     const notOwned = await foreignTarget({ level: "DOMAIN", domainId: payload.domainId });
     if (notOwned) return emptyImportResult([notOwned.error]);
+
+    // An entity id inside a field's decorators is what publish pins and the renderers load: it must be an entity of the active tenant.
+    if (Array.isArray(payload.entities)) {
+      for (const entity of payload.entities) {
+        if (!(await fieldsReferenceAllowed(isPlainObject(entity) ? entity.fields : undefined, (id) => inActiveTenant("entity", id)))) {
+          return emptyImportResult([FOREIGN_REFERENCE_MESSAGE]);
+        }
+      }
+    }
 
     const imported = await prisma.$transaction(async (tx) => {
       const result = emptyImportResult(skipped); // errors aliases `skipped`
