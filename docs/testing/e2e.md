@@ -353,10 +353,15 @@ still enough: find what moves and mask it, do not widen the tolerance. A snapsho
 
 **In CI** the `e2e-visual` job (nightly, tags, by hand) pulls the image of the installed version and runs `npm run test:e2e:visual` when the repository has snapshots;
 when it has none it makes them, writes a notice, and uploads them as the artifact `e2e-visual-snapshots` for a maintainer to review and commit. It is not a job-level
-`container:` because the runner needs Docker for its database, which a job container does not have; the browser run is inside the image all the same. The first
-snapshots in the repository were made on an arm64 machine (Apple Silicon) and CI is x86-64: Chromium's text rendering can differ by a few pixels between the two. If the first
-nightly runs report differences nobody made, replace the snapshots with the ones the job uploads (it makes them when none are committed: delete the committed ones in a branch
-and run the job by hand) before anyone treats `e2e-visual` as a gate.
+`container:` because the runner needs Docker for its database, which a job container does not have; the browser run is inside the image all the same.
+
+**CPU architecture.** The snapshots in the repository were made in the arm64 build of the image (Apple Silicon, Linux aarch64) and the CI runners are x86-64. The cross-architecture
+noise was **not measured**: the amd64 variant of the image is not on the machine that made the snapshots, and getting it is a second 2.4 GB pull (the first one stalled for hours), so
+`maxDiffPixelRatio` stays at 0.0005 (about 500 pixels of 1280x800: the edge of a glyph, not a button), the value chosen against the same-architecture runs (0 pixels of noise) and the CSS
+simulations (700 to 13,000 pixels). Chromium's text rendering can differ by a few pixels between the two architectures. **If the first nightly `e2e-visual` runs report differences nobody
+made**, do not widen the tolerance first: replace the baseline with the one the job makes on x86-64 (delete the committed snapshots in a branch and run the job by hand: with none committed it
+makes them and uploads `e2e-visual-snapshots`; review the images, commit them), and if a few pixels of anti-aliasing still differ between two x86-64 runs, measure them and set the ratio from
+that. Until a week of nightly runs says that it never fails by itself, `e2e-visual` is reported and not required.
 
 ## Troubleshooting
 

@@ -142,7 +142,8 @@ export default defineConfig({
     // Screenshots (visual.spec.ts, in the Playwright image only): animations and the caret are off so a frame is the same every time.
     // `threshold` is how different two pixels may be (pixelmatch's YIQ distance; Playwright's default 0.2 does not see a change of hue at the
     // same brightness: a purple turned copper passed), `maxDiffPixelRatio` how many may differ (0.05%, about 500 of 1280x800: the edge of a
-    // glyph, not a button). The same image on the same machine differs by 0 pixels.
+    // glyph, not a button). The same image on the same machine differs by 0 pixels. NOT measured: arm64 against x86-64 (docs/testing/e2e.md, "CPU architecture"):
+    // the snapshots were made on arm64 and CI is x86-64, so a first nightly diff is checked against a baseline made on x86-64 before this is widened.
     toHaveScreenshot: { animations: "disabled", caret: "hide", threshold: 0.1, maxDiffPixelRatio: 0.0005 },
   },
   fullyParallel: true,
