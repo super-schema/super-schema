@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SchemaFileSet } from "@/components/custom/SchemaFileSet/SchemaFileSet";
+import { readZipEntries } from "@/lib/zip-store";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 
@@ -154,15 +155,21 @@ describe("SchemaFileSet", () => {
 });
 
 describe("SchemaFileSet download all", () => {
-  let createObjectURL: ReturnType<typeof vi.fn>;
+  let blobs: Blob[];
   let revokeObjectURL: ReturnType<typeof vi.fn>;
   let clicked: Array<{ download: string; href: string }>;
 
   beforeEach(() => {
     clicked = [];
-    createObjectURL = vi.fn((blob: Blob) => `blob:${blob.size}`);
+    blobs = [];
     revokeObjectURL = vi.fn();
-    Object.defineProperty(URL, "createObjectURL", { value: createObjectURL, configurable: true });
+    Object.defineProperty(URL, "createObjectURL", {
+      value: vi.fn((blob: Blob) => {
+        blobs.push(blob);
+        return `blob:${blobs.length}`;
+      }),
+      configurable: true,
+    });
     Object.defineProperty(URL, "revokeObjectURL", { value: revokeObjectURL, configurable: true });
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       clicked.push({ download: this.download, href: this.href });
@@ -170,34 +177,68 @@ describe("SchemaFileSet download all", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("downloads each file in turn, named after its path (no directory separators)", async () => {
+  const bytesOf = (blob: Blob) =>
+    new Promise<Uint8Array>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(blob);
+    });
+
+  it("saves ONE zip named <entity>-<target>.zip that keeps every file under its path", async () => {
     render(<SchemaFileSet files={FILES} entityName="Customer" />);
 
     fireEvent.click(screen.getByTestId("schema-file-set-download-all"));
 
-    await waitFor(() => expect(clicked).toHaveLength(2));
-    expect(clicked.map((c) => c.download)).toEqual(["Sales_Crm_Customer.json", "Sales_Crm_Address.json"]);
-    expect(createObjectURL).toHaveBeenCalledTimes(2);
-    // the blob URLs outlive the clicks (a browser reads them after the click returns) and are released afterwards
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    expect(clicked[0].download).toBe("Customer-json-schema.zip");
+    expect(blobs).toHaveLength(1);
+    expect(blobs[0].type).toBe("application/zip");
+    const entries = readZipEntries(await bytesOf(blobs[0]));
+    expect(entries.map((e) => e.path)).toEqual(["Sales/Crm/Customer.json", "Sales/Crm/Address.json"]);
+    expect(new TextDecoder().decode(entries[0].content)).toBe('{ "title": "Customer-body" }');
+    expect(new TextDecoder().decode(entries[1].content)).toBe('{ "title": "Address-body" }');
+    // the blob URL outlives the click (a browser reads it after the click returns) and is released afterwards
     expect(revokeObjectURL).not.toHaveBeenCalled();
-    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledTimes(1), { timeout: 3000 });
   });
 
-  it("keeps two files whose flattened names collide apart", async () => {
+  it("keeps the Protobuf import path and a Java package directory intact (the paths are not flattened)", async () => {
     const files: EmittedFile[] = [
-      { path: "a/b_c.json", content: "1", target: "json-schema", entityId: "x" },
-      { path: "a_b/c.json", content: "2", target: "json-schema", entityId: "y" },
+      { path: "D/P/Record.proto", content: 'import "D/P/Other.proto";', target: "protobuf", entityId: "x" },
+      { path: "D/P/Other.proto", content: "message Other {}", target: "protobuf", entityId: "y" },
+    ];
+    render(<SchemaFileSet files={files} entityName="Record" />);
+
+    fireEvent.click(screen.getByTestId("schema-file-set-download-all"));
+
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    expect(clicked[0].download).toBe("Record-protobuf.zip");
+    expect(readZipEntries(await bytesOf(blobs[0])).map((e) => e.path)).toEqual(["D/P/Record.proto", "D/P/Other.proto"]);
+  });
+
+  it("keeps two files that end up with one path apart", async () => {
+    const files: EmittedFile[] = [
+      { path: "a/b.json", content: "1", target: "json-schema", entityId: "x" },
+      { path: "a//b.json", content: "2", target: "json-schema", entityId: "y" },
     ];
     render(<SchemaFileSet files={files} entityName="A" />);
 
     fireEvent.click(screen.getByTestId("schema-file-set-download-all"));
 
-    await waitFor(() => expect(clicked).toHaveLength(2));
-    expect(new Set(clicked.map((c) => c.download)).size).toBe(2);
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    expect(new Set(readZipEntries(await bytesOf(blobs[0])).map((e) => e.path)).size).toBe(2);
   });
 
   it("names the number of files on the button", () => {
     render(<SchemaFileSet files={FILES} entityName="Customer" />);
     expect(screen.getByTestId("schema-file-set-download-all").textContent).toContain("2 files");
+  });
+
+  it("copy still copies the selected file, not the set", async () => {
+    render(<SchemaFileSet files={FILES} entityName="Customer" />);
+    fireEvent.click(screen.getAllByTestId("schema-file-item")[1]);
+    fireEvent.click(within(screen.getByTestId("schema-code-preview")).getByRole("button", { name: /copy/i }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('{ "title": "Address-body" }'));
   });
 });

@@ -313,7 +313,7 @@ npm run test:e2e:release -- --tier regression --project chromium --reuse-build -
 makes a workspace (`workspace` fixture) and entities with `unique()` names, because the reference prompt and the name-only resolution look at the whole
 tenant and the tests run in parallel with the rest of the suite. What it covers: a reference picked in the type picker is stored qualified
 (`domain / product / entity`) and generating the entity writes a file set (its file and the files of what it references: JSON Schema `$ref` to the sibling,
-OpenAPI one self-contained document per entity, Avro the record inline, Protobuf and Java `import`; the database targets stay one file; "Download all"); a
+OpenAPI one self-contained document per entity, Avro the record inline, Protobuf and Java `import`; the database targets stay one file; "Download all" is one zip of the set with the paths kept, `<entity>-<target>.zip`); a
 draft of the referenced entity shows in a draft preview (badge, list) that cannot be published, and "Regenerate from published and publish" does; the
 publish dialog and the refused preview name an entity that was never published; a pin (the pin control) wins over a newer published version until it is
 removed; a name-only reference that two entities answer to is asked about (the pick dialog, from Generate and from the publish dialog, and from the

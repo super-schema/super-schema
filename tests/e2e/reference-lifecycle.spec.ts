@@ -9,7 +9,7 @@
  *     in the file list, the JSON Schema `$ref` pointing at the sibling file (`@smoke`: one target, a published Address);
  *   - all five closure targets write one file per entity, linked the way the format links files (JSON Schema `$ref` to the sibling,
  *     OpenAPI the entities inlined in one self-contained document each, Avro the record inline, Protobuf `import`, Java `import`);
- *     the database targets stay one file; "Download all" saves the files;
+ *     the database targets stay one file; "Download all" saves one zip that keeps the file paths;
  *   - a DRAFT of the referenced entity is in a draft preview (the badge lists it, its file has the draft field); marking that preview
  *     deployed is refused naming the draft entity, and "Regenerate from published and publish" generates from the published versions
  *     (no draft field in them) and publishes that;
@@ -52,6 +52,7 @@ import {
   saveTypeSpecSource,
 } from "./helpers/lifecycle";
 import { splitBundle } from "./helpers/preview-text";
+import { readZipDirectory } from "./helpers/zip";
 
 // Each test is a user journey of several server round trips (a publish, a reference picked, a target or five generated): about 25 s alone and
 // up to a minute with eight workers on one server, against the suite's 60 s. The assertions inside have their own waits; this is only the room.
@@ -174,18 +175,20 @@ test.describe("references between entities", () => {
     expect(fileOf(java, customer.name).content).toMatch(new RegExp(`private ${address.name} home;`));
     expect(fileOf(java, address.name).content).toMatch(new RegExp(`class ${address.name}\\b`));
 
-    // Download all: every file of the set is saved, under its path (directories flattened with `_`)
+    // Download all: ONE zip, named <entity>-<target>.zip, that keeps every file under its path (the directories of a Java package and of a
+    // Protobuf import survive; saving the files one by one used to flatten them with `_`)
     const downloads: Download[] = [];
     page.on("download", (download) => downloads.push(download));
     await schemasTab(page).getByTestId("schema-file-set-download-all").click();
-    await expect.poll(() => downloads.length, { message: "both files are downloaded" }).toBe(2);
+    await expect.poll(() => downloads.length, { message: "the zip is downloaded" }).toBe(1);
+    expect(downloads[0].suggestedFilename()).toBe(`${customer.name}-java-pojo.zip`);
     const javaPaths = [...java.keys()];
-    const saved = new Map<string, string>();
-    for (const download of downloads) saved.set(download.suggestedFilename(), readFileSync(await download.path(), "utf8"));
-    expect([...saved.keys()].sort()).toEqual(javaPaths.map((p) => p.replace(/[\\/]+/g, "_")).sort());
+    expect(javaPaths.some((p) => p.includes("/")), "the Java files are in package directories").toBe(true);
+    const saved = readZipDirectory(readFileSync(await downloads[0].path()));
+    expect([...saved.keys()].sort()).toEqual([...javaPaths].sort());
     // (compared without trailing blanks: the preview text is read line by line)
     const lines = (text: string | undefined): string => (text ?? "").split("\n").map((line) => line.trimEnd()).join("\n").trim();
-    for (const [path, content] of java) expect(lines(saved.get(path.replace(/[\\/]+/g, "_"))), path).toBe(lines(content));
+    for (const [path, content] of java) expect(lines(saved.get(path)), path).toBe(lines(content));
 
     // The database targets are unchanged: a reference is a plain column there, one file, no file list
     expect((await generateTarget(page, displayName("postgresql"))).error).toBeUndefined();

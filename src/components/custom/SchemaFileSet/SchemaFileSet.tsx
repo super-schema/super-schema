@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SchemaCodePreview } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemaCodePreview";
-import { downloadFilesSequentially } from "./download-files";
+import { downloadFilesAsZip, zipFileName } from "./download-files";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 
@@ -66,7 +66,8 @@ function groupFiles(files: EmittedFile[], entities: SchemaFileSetProps["entities
 
 /**
  * The files one generation wrote (one per entity of the closure): the list on the left, the selected file in the code preview on the
- * right (the preview's Copy copies that file), "Download all" saving every file. One file is just the code preview.
+ * right (the preview's Copy copies that file), "Download all" saving every file in one zip that keeps their paths. One file is just the
+ * code preview.
  */
 export function SchemaFileSet({ files, entityName, entities, language = "text", onCopy }: SchemaFileSetProps) {
   const groups = useMemo(() => groupFiles(files, entities), [files, entities]);
@@ -107,7 +108,8 @@ export function SchemaFileSet({ files, entityName, entities, language = "text", 
   async function handleDownloadAll() {
     setIsDownloading(true);
     try {
-      await downloadFilesSequentially(files);
+      // One zip, every file under its path: the files point at each other by path (a Protobuf import, a Java package directory).
+      await downloadFilesAsZip(files, zipFileName(entityName, files[0].target));
     } finally {
       setIsDownloading(false);
     }
