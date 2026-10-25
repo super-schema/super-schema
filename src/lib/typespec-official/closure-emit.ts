@@ -112,6 +112,12 @@ interface Plan {
   warnings: string[];
   errors: string[];
   attribute: (file: { path: string; content: string }) => Attribution;
+  /**
+   * Called for a file `attribute` dropped, with the files kept so far: a file that a kept file points at (a JSON Schema `$ref` to a
+   * library model such as `RecordUnknown.json`) must stay, or the set would hold a file pointing at a file that is not in it. Returns
+   * the attribution to keep it under, `null` to leave it dropped. Repeated until no file is adopted any more.
+   */
+  adopt?: (file: { path: string; content: string }, kept: readonly EmittedFile[]) => Attribution;
   /** Checks the finished file list; returns what is wrong with it, if anything. */
   verify?: (files: EmittedFile[]) => string[];
 }
@@ -195,13 +201,34 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Prom
 
   const files: EmittedFile[] = [];
   const served = new Map<string, Set<string>>(entities.map((e) => [e.entityId, new Set<string>()]));
+  const keep = (path: string, content: string, attribution: NonNullable<Attribution>): void => {
+    const finalPath = attribution.path ?? path;
+    files.push({ path: finalPath, content, target: key, entityId: attribution.entityId });
+    for (const id of [attribution.entityId, ...(attribution.alsoFor ?? [])]) served.get(id)?.add(finalPath);
+  };
+  let dropped: Array<{ path: string; content: string }> = [];
   for (const raw of run.data.files) {
     const path = raw.relativePath.split(/[\\/]/).join("/");
     const attribution = plan.attribute({ path, content: raw.content });
-    if (attribution === null) continue;
-    const finalPath = attribution.path ?? path;
-    files.push({ path: finalPath, content: raw.content, target: key, entityId: attribution.entityId });
-    for (const id of [attribution.entityId, ...(attribution.alsoFor ?? [])]) served.get(id)?.add(finalPath);
+    if (attribution === null) dropped.push({ path, content: raw.content });
+    else keep(path, raw.content, attribution);
+  }
+  // A dropped file that a kept file points at stays (a library model the entity's file `$ref`s); adopting one can make the next one
+  // referenced, so go on until a round adopts nothing (at most one round per dropped file).
+  if (plan.adopt) {
+    for (let progress = true; progress && dropped.length > 0; ) {
+      progress = false;
+      const stillDropped: typeof dropped = [];
+      for (const file of dropped) {
+        const attribution = plan.adopt(file, files);
+        if (attribution === null) stillDropped.push(file);
+        else {
+          keep(file.path, file.content, attribution);
+          progress = true;
+        }
+      }
+      dropped = stillDropped;
+    }
   }
   files.sort((a, b) => compareCodeUnits(a.path, b.path));
   if (files.length === 0) return err({ code: "EMITTER_NO_OUTPUT", message: `Emitter "${packageName}" completed but wrote no file for this closure.`, details: { warnings: plan.warnings } });
@@ -410,6 +437,30 @@ function decorateBlocks(source: string, decorators: (namespace: string) => strin
 
 // JSON Schema ----------------------------------------------------------------
 
+/** Every `$ref` string of a JSON document (none when it does not parse). Iterative: a deep document cannot overflow the stack. */
+function jsonRefs(content: string): string[] {
+  const parsed = parseJsonOrNull(content);
+  const refs: string[] = [];
+  const pending: unknown[] = [parsed];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (Array.isArray(node)) pending.push(...node);
+    else if (node !== null && typeof node === "object") {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        if (k === "$ref" && typeof v === "string") refs.push(v);
+        else pending.push(v);
+      }
+    }
+  }
+  return refs;
+}
+
+/** Whether `ref` (`RecordUnknown.json`, `RecordUnknown.json#/x`) names the file at `path`. */
+const refersToFile = (ref: string, path: string): boolean => {
+  const target = ref.split("#")[0];
+  return target !== "" && (target === path || path.endsWith(`/${target}`));
+};
+
 function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan, "source" | "attribute" | "verify"> {
   // One `<Name>.json` per declaration: the model and each enum / union / scalar its block declares.
   const owner = new Map<string, string>();
@@ -420,6 +471,14 @@ function jsonSchemaPlan(generated: ClosureTypeSpec, places: Place[]): Pick<Plan,
     attribute: (file) => {
       const entityId = owner.get(stemOf(file.path));
       return entityId === undefined ? null : { entityId };
+    },
+    // A library model an entity's file `$ref`s (`Record<unknown>`, a field typed `object` or a map, is `RecordUnknown.json`) is no
+    // entity's declaration but must stay: a file that points at a file that is not in the set is not a usable set. It is kept under the
+    // entity of the file that points at it.
+    adopt: (file, kept) => {
+      if (!file.path.endsWith(".json")) return null;
+      const referencing = kept.find((k) => k.path.endsWith(".json") && k.entityId !== undefined && jsonRefs(k.content).some((ref) => refersToFile(ref, file.path)));
+      return referencing?.entityId === undefined ? null : { entityId: referencing.entityId };
     },
     // Every entity's model must have its file: an emitter that skipped one must not pass as a smaller, "valid" set.
     verify: (files) =>

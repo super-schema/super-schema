@@ -124,6 +124,22 @@ describe("three-entity closure, one file per entity on every target", () => {
     expect(text(files)).not.toContain("$defs");
   });
 
+  it("json-schema: a map field's library model (RecordString.json) is in the set: no file points at a file that is not there", async () => {
+    const orderWithMap = member("o", "Sales", "Orders", "Order", [
+      field("buyer", "reference", 1, refTo(CUSTOMER)),
+      field("attributes", "map", 2, { mapKeyType: "string", mapValueType: "string" }),
+    ]);
+    const { files, entityFiles } = await emit(closureOf([orderWithMap, customer(), address()]), "json-schema");
+    const paths = files.map((f) => f.path);
+    expect(paths).toEqual(["Address.json", "Customer.json", "Order.json", "RecordString.json"]);
+    // kept under the entity whose file points at it
+    expect(entityFiles.o).toEqual(["Order.json", "RecordString.json"]);
+    for (const f of files) {
+      const refs = [...f.content.matchAll(/"\$ref":\s*"([^"#]+)"/g)].map((m) => m[1]);
+      for (const ref of refs) expect(paths, `${f.path} refers to ${ref}`).toContain(ref);
+    }
+  });
+
   it("openapi3: each entity gets its own @service file, referenced entities are inlined in components.schemas, no external ref", () => {
     const { files } = out.openapi3;
     expect(files.map((f) => f.path)).toEqual(["openapi.Sales.Orders.Address.yaml", "openapi.Sales.Orders.Customer.yaml", "openapi.Sales.Orders.Order.yaml"]);

@@ -76,3 +76,34 @@ describe("files of an emitter run that match no entity of the closure", () => {
     expect(result).toMatchObject({ success: false, error: { code: "EMITTER_NO_OUTPUT" } });
   });
 });
+
+describe("a file of no entity that a kept file points at stays (JSON Schema: a library model such as RecordUnknown.json)", () => {
+  const withRef = (ref: string) => JSON.stringify({ $id: "A.json", type: "object", properties: { attributes: { $ref: ref, additionalProperties: { type: "string" } } } });
+
+  it("is kept under the entity of the file that refers to it, and a chain of such files is followed", async () => {
+    // A.json -> RecordUnknown.json -> Inner.json (only the library file refers to it); Foreign.json is referred to by nothing
+    const result = await run("json-schema", [
+      ["A.json", withRef("RecordUnknown.json")],
+      ["B.json", "{}"],
+      ["Inner.json", "{}"],
+      ["RecordUnknown.json", JSON.stringify({ type: "object", properties: { x: { $ref: "Inner.json#/properties" } } })],
+      ["Foreign.json", "{}"],
+    ]);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.files.map((f) => [f.path, f.entityId])).toEqual([["A.json", "a"], ["B.json", "b"], ["Inner.json", "a"], ["RecordUnknown.json", "a"]]);
+    // the adopted files are the entity's, so the UI groups them under it and a git export writes them with it
+    expect(result.data.entityFiles.a).toEqual(["A.json", "Inner.json", "RecordUnknown.json"]);
+  });
+
+  it("a ref with a directory or a pointer into the file counts only when it names a file of the output", async () => {
+    const result = await run("json-schema", [["A.json", withRef("elsewhere/RecordUnknown.json")], ["B.json", "{}"], ["RecordUnknown.json", "{}"]]);
+    expect(result.success && result.data.files.map((f) => f.path)).toEqual(["A.json", "B.json"]);
+  });
+
+  it("is not done for the other targets (they have no file-to-file reference of that kind)", async () => {
+    const { own, foreign } = SETS.avro;
+    const result = await run("avro", [[own[0][0], withRef(foreign[0])], own[1], foreign]);
+    expect(result.success && result.data.files.map((f) => f.entityId).sort()).toEqual(["a", "b"]);
+  });
+});
