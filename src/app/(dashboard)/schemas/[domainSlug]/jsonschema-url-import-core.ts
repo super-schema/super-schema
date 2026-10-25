@@ -7,6 +7,7 @@ import type { Result } from "@/types/result";
 import { err, ok } from "@/types/result";
 import { getActionContext, sanitizeActionError } from "@/lib/action-context";
 import { withCompileTimeout } from "@/lib/compiler/import-limits";
+import { ImportLimiter, urlImportLimiter } from "@/lib/importers/import-limiter";
 import { DEFAULT_LIMITS } from "@/lib/importers/jsonschema-ref-resolver";
 import { importJsonSchemaFromUrl, type UrlImportDeps } from "@/lib/importers/jsonschema-url-import";
 import { toAssetImportResult } from "@/lib/importers/multi-asset";
@@ -18,11 +19,16 @@ export const MAX_SCHEMA_URL_LENGTH = 2048;
 /** Resolver's overall timeout plus a margin for fetching the root and building the entities. */
 export const URL_IMPORT_TIMEOUT_MS = DEFAULT_LIMITS.overallTimeoutMs + 30_000;
 
-export function runJsonSchemaUrlImport(url: string, deps?: UrlImportDeps): Promise<Result<TypeSpecImportResult>> {
-  return sanitizeActionError(runInner(url, deps), LABEL);
+/** Test seam, like `deps`: the exported server action passes none, so the process-wide limiter always applies. */
+export interface UrlImportOptions {
+  limiter?: ImportLimiter;
 }
 
-async function runInner(url: string, deps?: UrlImportDeps): Promise<Result<TypeSpecImportResult>> {
+export function runJsonSchemaUrlImport(url: string, deps?: UrlImportDeps, options?: UrlImportOptions): Promise<Result<TypeSpecImportResult>> {
+  return sanitizeActionError(runInner(url, deps, options), LABEL);
+}
+
+async function runInner(url: string, deps?: UrlImportDeps, options?: UrlImportOptions): Promise<Result<TypeSpecImportResult>> {
   const ctx = await getActionContext();
   if (!ctx) return err({ code: "UNAUTHORIZED", message: "Not authenticated" });
 
@@ -41,7 +47,21 @@ async function runInner(url: string, deps?: UrlImportDeps): Promise<Result<TypeS
     });
   }
 
-  const imported = await withCompileTimeout(() => importJsonSchemaFromUrl(url.trim(), deps), URL_IMPORT_TIMEOUT_MS);
+  // Admission control (see import-limiter.ts): a slot per running import and a per-user window. Taken after the cheap checks above, so a
+  // malformed request costs the user nothing. The slot is released when the import itself ends, not when the action stops waiting for it
+  // (a timeout abandons the import, it does not cancel it, and the next one must not start on top of it).
+  const slot = (options?.limiter ?? urlImportLimiter).acquire(ctx.userId);
+  if (!slot.ok) {
+    return err({
+      code: slot.reason === "busy" ? "IMPORT_BUSY" : "RATE_LIMITED",
+      message: slot.message,
+      suggestedFix: `Try again in ${Math.ceil(slot.retryAfterMs / 1000)} seconds.`,
+      details: { retryAfterMs: slot.retryAfterMs },
+    });
+  }
+  const running = importJsonSchemaFromUrl(url.trim(), deps);
+  void running.then(slot.release, slot.release);
+  const imported = await withCompileTimeout(() => running, URL_IMPORT_TIMEOUT_MS);
   if (!imported.success) return imported;
   if (!imported.data.success) return imported.data;
   return ok(toAssetImportResult(imported.data.data));
