@@ -383,5 +383,6 @@ describe("no stub models", () => {
   it("`stubUnresolvedReferences` does not exist anywhere in src", () => {
     const hits = sources(SRC).filter((file) => readFileSync(file, "utf8").includes("stubUnresolvedReferences"));
     expect(hits).toEqual([]);
-  });
+    // It reads every file of src: 5 s is not enough when the whole unit suite runs on eight workers (a load flake of 5061 ms was seen).
+  }, 60_000);
 });
