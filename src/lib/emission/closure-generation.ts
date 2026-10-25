@@ -38,6 +38,12 @@ export function closureFailure(error: ClosureError): ServiceError {
         message: `Field "${error.field}" pins version ${error.version} of ${describeRef(error.ref)}, which does not exist or is not published. Unpin it or pin a published version.`,
         details: { field: error.field, ref: error.ref, version: error.version },
       };
+    case "PIN_CONFLICT":
+      return {
+        code: error.code,
+        message: `${describeRef(error.ref)} is pinned to different versions: ${error.pins.map((pin) => `${pin.owner.entity}.${pin.field} pins ${pin.version}`).join("; ")}. A schema uses one version of each entity: pin the same version on every field that refers to it, or unpin all but one.`,
+        details: { ref: error.ref, pins: error.pins },
+      };
     case "NEVER_PUBLISHED":
       return {
         code: error.code,
@@ -59,7 +65,10 @@ export function closureFailure(error: ClosureError): ServiceError {
  * What a generation records about the versions it used (see `SchemaVersionResolution`): the root first, then what it references.
  * `preview` is true when any of them came from unpublished rows, which makes the output a preview that cannot be published as is.
  */
-export function describeResolution(closure: Pick<ReferenceClosure, "entities" | "draftEntities">, mode: ResolveMode): SchemaVersionResolution {
+export function describeResolution(
+  closure: Pick<ReferenceClosure, "entities" | "draftEntities"> & Partial<Pick<ReferenceClosure, "notes">>,
+  mode: ResolveMode
+): SchemaVersionResolution {
   return {
     mode,
     preview: closure.draftEntities.length > 0,
@@ -68,6 +77,7 @@ export function describeResolution(closure: Pick<ReferenceClosure, "entities" | 
       ...(entity.version ? { version: entity.version } : {}),
       source: entity.source,
     })),
+    ...(closure.notes && closure.notes.length > 0 ? { notes: [...closure.notes] } : {}),
   };
 }
 

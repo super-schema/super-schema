@@ -110,6 +110,37 @@ describe("loadPublishClosure", () => {
     ]);
   });
 
+  // FINAL WAVE 2b, G1: a pin on any edge to an entity is what the publish records for it.
+  it("records pinned:true (and the pinned version) for an entity reached by an unpinned field AND a pinned one", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["a_plain", qref("b", Q("B"))], ["b_pinned", qref("b", Q("B"), "1.0")]]),
+      ent("b", { versions: [version("b", 1, 0), version("b", 2, 0)], latest: "b-v2.0" }),
+    ]);
+    const res = await loadPublishClosure(db, root);
+    expect(res.success).toBe(true);
+    if (!res.success) return;
+    expect(res.data.referencedVersions).toEqual([
+      { ref: { entityId: "b", domain: "sales", product: "orders", entity: "B" }, version: "1.0", pinned: true },
+    ]);
+    expect(res.data.closure.notes[0]).toContain("is unpinned but A.b_pinned pins B 1.0");
+  });
+
+  it("two pins that disagree block the publish with PIN_CONFLICT naming both fields", async () => {
+    const db = fakeDb([
+      ent("a", {}, [["first", qref("b", Q("B"), "1.0")], ["second", qref("b", Q("B"), "2.0")]]),
+      ent("b", { versions: [version("b", 1, 0), version("b", 2, 0)], latest: "b-v2.0" }),
+    ]);
+    const res = await loadPublishClosure(db, root);
+    expect(res.success).toBe(false);
+    if (res.success) return;
+    expect(res.error.code).toBe("PIN_CONFLICT");
+    expect(res.error.message).toContain("A.first");
+    expect(res.error.message).toContain("A.second");
+    expect(res.error.message).toContain("1.0");
+    expect(res.error.message).toContain("2.0");
+    expect(res.error.message).toMatch(/unpin|same version/i);
+  });
+
   it("an entity that references nothing records nothing", async () => {
     const res = await loadPublishClosure(fakeDb([ent("a")]), root);
     expect(res.success && res.data.referencedVersions).toEqual([]);

@@ -333,7 +333,7 @@ describe("loadReferenceClosure", () => {
     expect(r.success && r.data.root.entity.domain?.slug).toBe("Sales Dom-slug");
   });
 
-  it("pin conflict: the first visited pin wins", async () => {
+  it("two fields that pin DIFFERENT versions of one entity are a PIN_CONFLICT naming both fields and owners (no silent winner)", async () => {
     const db = fakeDb([
       ent("a", {}, [
         ["f1", qref("b", "_tenant/_tenant/B", "1.0")],
@@ -344,10 +344,15 @@ describe("loadReferenceClosure", () => {
       ent("d"),
     ]);
     const r = await loadReferenceClosure(db, "t1", "a", "draft");
-    expect(r.success && names(r.data)).toEqual(["A", "B", "C"]);
-    expect(r.success && r.data.entities[1].version).toBe("1.0");
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatchObject({ code: "PIN_CONFLICT", ref: { entity: "B" } });
+    if (r.error.code !== "PIN_CONFLICT") return;
+    expect(r.error.pins).toEqual([
+      { field: "f1", owner: expect.objectContaining({ entity: "A" }), version: "1.0" },
+      { field: "f2", owner: expect.objectContaining({ entity: "A" }), version: "1.1" },
+    ]);
   });
-
   it("a dangling id falls back to the qualified name", async () => {
     const db = fakeDb([
       ent("a", {}, [["x", qref("old-id", "d1/p1/Address")]]),
@@ -561,6 +566,97 @@ describe("loadReferenceClosure: rootAtDraft (the closure a PUBLISH of the root i
     expect(r.success && r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
       ["A", "draft", undefined],
       ["B", "pinned", "1.0"],
+    ]);
+  });
+});
+
+// FINAL WAVE 2b, G1: a pin on ANY edge to an entity applies to the entity (a closure resolves each entity once).
+describe("loadReferenceClosure: several edges to one entity, one of them pinned", () => {
+  const b2 = () => ent("b", { versions: [version("b", 1, 0, ["C"]), version("b", 2, 0, ["D"])], latest: "b-v2.0" });
+  const world = (aFields: TypedField[], extra: EntityRow[] = []) =>
+    fakeDb([ent("a", {}, aFields), b2(), ent("c", { versions: [version("c", 1, 0, [])], latest: "c-v1.0" }), ent("d", { versions: [version("d", 1, 0, [])], latest: "d-v1.0" }), ...extra]);
+  const pinned = qref("b", "_tenant/_tenant/B", "1.0");
+  const unpinned = qref("b", "_tenant/_tenant/B");
+
+  it.each([
+    ["the unpinned field sorts first", [["a_unpinned", unpinned], ["b_pinned", pinned]] as TypedField[]],
+    ["the pinned field sorts first", [["a_pinned", pinned], ["b_unpinned", unpinned]] as TypedField[]],
+  ])("the pin wins over an unpinned edge to the same entity (%s)", async (_label, fields) => {
+    const r = await loadReferenceClosure(world(fields), "t1", "a", "draft");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
+      ["A", "draft", undefined],
+      ["B", "pinned", "1.0"],
+      ["C", "draft", undefined],
+    ]);
+    // Both facts are recorded: which field was unpinned, which pinned.
+    expect(r.data.notes).toHaveLength(1);
+    expect(r.data.notes[0]).toMatch(/is unpinned but .* pins B 1\.0: the pin was used for both/);
+    expect(r.data.notes[0]).toContain(fields.map((f) => f[0]).find((n) => n.includes("unpinned")) as string);
+    expect(r.data.notes[0]).toContain(fields.map((f) => f[0]).find((n) => n.includes("_pinned") || n.startsWith("a_pinned")) as string);
+  });
+
+  it("the pin wins in published mode too (B resolves to 1.0, not the latest published 2.0)", async () => {
+    const db = fakeDb([
+      ent("a", { versions: [{ ...version("a", 1, 0, []), fieldSnapshot: [toField({ id: "s1", name: "a_unpinned", decorators: unpinned }, 0), toField({ id: "s2", name: "b_pinned", decorators: pinned }, 1)] }], latest: "a-v1.0" }),
+      b2(),
+      ent("c", { versions: [version("c", 1, 0, [])], latest: "c-v1.0" }),
+      ent("d", { versions: [version("d", 1, 0, [])], latest: "d-v1.0" }),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "a", "published");
+    expect(r.success && r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
+      ["A", "published", "1.0"],
+      ["B", "pinned", "1.0"],
+      ["C", "published", "1.0"],
+    ]);
+  });
+
+  it("two fields that pin the SAME version are fine: no conflict and no note", async () => {
+    const r = await loadReferenceClosure(world([["f1", pinned], ["f2", pinned]]), "t1", "a", "draft");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
+      ["A", "draft", undefined],
+      ["B", "pinned", "1.0"],
+      ["C", "draft", undefined],
+    ]);
+    expect(r.data.notes).toEqual([]);
+  });
+
+  it("a pin on an edge of ANOTHER member applies to the entity the root already reached unpinned", async () => {
+    // A -> B (unpinned) and A -> M; M -> B pinned 1.0. B is loaded (at its latest) before M is walked: the closure re-resolves it.
+    const db = world(
+      [["b", unpinned], ["m", qref("m", "_tenant/_tenant/M")]],
+      [ent("m", {}, [["viaM", pinned]])]
+    );
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities.map((e) => [e.ref.entity, e.source, e.version])).toEqual([
+      ["A", "draft", undefined],
+      ["B", "pinned", "1.0"],
+      ["M", "draft", undefined],
+      ["C", "draft", undefined],
+    ]);
+    // D (what B 2.0 references) is not in the closure: the entity is B 1.0 everywhere.
+    expect(names(r.data)).not.toContain("D");
+    expect(r.data.notes[0]).toMatch(/M\.viaM|viaM/);
+  });
+
+  it("different pins on edges of different members conflict, naming both owners", async () => {
+    const db = world(
+      [["p", pinned], ["m", qref("m", "_tenant/_tenant/M")]],
+      [ent("m", {}, [["viaM", qref("b", "_tenant/_tenant/B", "2.0")]])]
+    );
+    const r = await loadReferenceClosure(db, "t1", "a", "draft");
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error.code).toBe("PIN_CONFLICT");
+    if (r.error.code !== "PIN_CONFLICT") return;
+    expect(r.error.pins.map((p) => [p.owner.entity, p.field, p.version])).toEqual([
+      ["A", "p", "1.0"],
+      ["M", "viaM", "2.0"],
     ]);
   });
 });

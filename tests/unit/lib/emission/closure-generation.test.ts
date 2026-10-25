@@ -45,6 +45,25 @@ describe("closureFailure", () => {
     expect(closureFailure({ code: "CLOSURE_TOO_LARGE", limit: 200 })).toMatchObject({ code: "CLOSURE_TOO_LARGE", message: expect.stringContaining("200") });
   });
 
+  it("a PIN_CONFLICT names the entity, both pinning fields with their owners and versions, and how to fix it", () => {
+    const failure = closureFailure({
+      code: "PIN_CONFLICT",
+      ref: ref("Address"),
+      pins: [
+        { field: "home", owner: ref("Customer"), version: "1.0" },
+        { field: "billing", owner: ref("Invoice"), version: "2.0" },
+      ],
+    });
+    expect(failure.code).toBe("PIN_CONFLICT");
+    expect(failure.message).toContain("Sales / Crm / Address");
+    expect(failure.message).toContain("Customer.home");
+    expect(failure.message).toContain("1.0");
+    expect(failure.message).toContain("Invoice.billing");
+    expect(failure.message).toContain("2.0");
+    expect(failure.message).toMatch(/same version|unpin/i);
+    expect(failure.details).toMatchObject({ ref: ref("Address"), pins: expect.any(Array) });
+  });
+
   it("answers a cross-tenant root like a missing entity", () => {
     expect(closureFailure({ code: "CROSS_TENANT" })).toMatchObject({ code: "NOT_FOUND" });
   });
@@ -64,6 +83,12 @@ describe("describeResolution", () => {
         { ref: ref("C"), source: "pinned", version: "1.0" },
       ],
     });
+  });
+
+  it("carries the closure's resolution notes (a pin used for an unpinned edge too), and omits the key when there are none", () => {
+    const notes = ["A.x is unpinned but A.y pins B 1.0: the pin was used for both."];
+    expect(describeResolution({ ...closure([member("A", "draft"), member("B", "pinned", "1.0")]), notes }, "draft").notes).toEqual(notes);
+    expect("notes" in describeResolution({ ...closure([member("A", "draft")]), notes: [] }, "draft")).toBe(false);
   });
 
   it("is not a preview when everything is published or pinned, and records each version", () => {

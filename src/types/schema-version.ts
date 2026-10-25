@@ -24,6 +24,8 @@ export interface SchemaVersionResolution {
   mode: "published" | "draft";
   preview: boolean;
   entities: { ref: EntityRef; version?: string; source: "published" | "draft" | "pinned" }[];
+  /** How the references were resolved when that is worth knowing, one sentence each (a pin used for an unpinned edge too, ...). Absent when there is nothing to say. */
+  notes?: string[];
 }
 
 export interface SchemaVersion {

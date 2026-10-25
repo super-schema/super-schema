@@ -277,6 +277,34 @@ describe("generateSchemaAction: draft and published modes", () => {
     expect(storedVersion("a", "json-schema").resolution?.entities[1]).toMatchObject({ source: "pinned", version: "1.0" });
   });
 
+  // FINAL WAVE 2b, G1: several fields reach one entity and one of them pins a version.
+  it("uses the pin of ANY field that reaches an entity, and records it (resolution notes + pinned) with the stored version", async () => {
+    h.store.versions = [publish("b", 1, 0, []), publish("b", 2, 0, [])];
+    h.store.entities = [
+      entity("a", "Order", [["a_plain", qualified("b", "_tenant/_tenant/Customer")], ["b_pinned", qualified("b", "_tenant/_tenant/Customer", "1.0")]]),
+      entity("b", "Customer", [], { latestVersionId: "b-v2.0" }),
+    ];
+    const result = await actions.generateSchemaAction("a", "json-schema");
+    expect(result).toMatchObject({ success: true });
+    expect(closureGiven().entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["b", "pinned", "1.0"]]);
+    const resolution = storedVersion("a", "json-schema").resolution;
+    expect(resolution?.entities[1]).toMatchObject({ source: "pinned", version: "1.0" });
+    expect(resolution?.notes).toEqual([expect.stringContaining("Order.a_plain is unpinned but Order.b_pinned pins Customer 1.0: the pin was used for both")]);
+  });
+
+  it("two fields that pin different versions of one entity refuse the generation with PIN_CONFLICT naming both, and store nothing", async () => {
+    h.store.versions = [publish("b", 1, 0, []), publish("b", 2, 0, [])];
+    h.store.entities = [
+      entity("a", "Order", [["first", qualified("b", "_tenant/_tenant/Customer", "1.0")], ["second", qualified("b", "_tenant/_tenant/Customer", "2.0")]]),
+      entity("b", "Customer", [], { latestVersionId: "b-v2.0" }),
+    ];
+    const result = await actions.generateSchemaAction("a", "json-schema");
+    expect(result).toMatchObject({ code: "PIN_CONFLICT", error: expect.stringContaining("Order.first") });
+    expect((result as { error: string }).error).toContain("Order.second");
+    expect(h.emitClosure).not.toHaveBeenCalled();
+    expect(p.entity.update).not.toHaveBeenCalled();
+  });
+
   it("refuses a mode other than draft or published", async () => {
     world();
     const result = await actions.generateSchemaAction("a", "json-schema", { mode: "latest" as never });

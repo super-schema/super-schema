@@ -162,7 +162,7 @@ const openApiSpec = {
           },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "404": { $ref: "#/components/responses/NotFound" },
-          "422": { description: "A reference of the entity cannot be resolved (AMBIGUOUS_REFERENCE, PIN_NOT_FOUND, NEVER_PUBLISHED, CLOSURE_TOO_LARGE)" },
+          "422": { description: "A reference of the entity cannot be resolved (AMBIGUOUS_REFERENCE, PIN_NOT_FOUND, PIN_CONFLICT, NEVER_PUBLISHED, CLOSURE_TOO_LARGE)" },
         },
       },
     },

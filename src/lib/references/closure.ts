@@ -31,6 +31,11 @@ export type ClosureError =
   /** `entityId` / `fieldId` name the entity and the field row that hold the ambiguous reference (a member of the closure, not always the root): where an explicit pick is written. */
   | { code: "AMBIGUOUS_REFERENCE"; field: string; name: string; candidates: EntityRef[]; entityId: string; fieldId: string }
   | { code: "PIN_NOT_FOUND"; field: string; ref: EntityRef; version: string }
+  /**
+   * Fields of the closure pin DIFFERENT versions of one entity. A closure resolves an entity once (its files are per entity), so the
+   * pins cannot both hold. `pins` has one entry per distinct pinned version: the field and the entity that owns it.
+   */
+  | { code: "PIN_CONFLICT"; ref: EntityRef; pins: { field: string; owner: EntityRef; version: string }[] }
   | { code: "NEVER_PUBLISHED"; ref: EntityRef }
   | { code: "CLOSURE_TOO_LARGE"; limit: number }
   | { code: "CROSS_TENANT" };
@@ -51,6 +56,11 @@ export type ReferenceClosure = {
    * published or pinned snapshot is frozen and never listed.
    */
   upgrades: LegacyUpgrade[];
+  /**
+   * Facts about how the closure was resolved that are not errors, one sentence each (shown with the generated version). Today: an entity
+   * reached by an unpinned edge while another edge pins a version, which resolved to the pin for the whole closure.
+   */
+  notes: string[];
 };
 
 export const DEFAULT_MAX_CLOSURE_ENTITIES = 200;
@@ -78,6 +88,26 @@ const nameKey = (name: string) => name.trim().toLowerCase();
 const byQualified = (a: Pick<Resolvable, "ref">, b: Pick<Resolvable, "ref">) => compareStr(qualifiedName(a.ref), qualifiedName(b.ref));
 function compareStr(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** A pin as a comparable label: `1.0` and `01.0` are one version. Anything that does not parse is compared as written. */
+function normalizePin(pin: string): string {
+  const parsed = parseVersionLabel(pin.trim());
+  return parsed.success ? formatVersionLabel(parsed.data) : pin.trim();
+}
+
+/** The pinning edges among `edges`, one per distinct version, ordered by owner (qualified name) then field name. */
+function distinctPins<T extends { field: string; ownerRef: EntityRef; pin?: string }>(edges: T[]): T[] {
+  const pinned = edges
+    .filter((o) => o.pin)
+    .sort((a, b) => compareStr(qualifiedName(a.ownerRef), qualifiedName(b.ownerRef)) || compareStr(a.field, b.field));
+  const seenVersions = new Set<string>();
+  return pinned.filter((o) => {
+    const key = normalizePin(o.pin as string);
+    if (seenVersions.has(key)) return false;
+    seenVersions.add(key);
+    return true;
+  });
 }
 
 /**
@@ -320,79 +350,161 @@ export async function loadReferenceClosure(
   const rootIndexed = index.get(rootEntityId);
   if (!rootIndexed) return { success: false, error: { code: "CROSS_TENANT" } };
 
-  const entities: ClosureEntity[] = [];
-  const graph = new Map<string, string[]>();
-  const seen = new Set<string>();
-  const upgrades: LegacyUpgrade[] = [];
-
-  const add = async (
-    e: IndexedEntity,
-    pin: string | undefined,
-    field: string,
-    contentMode: ResolveMode = mode
-  ): Promise<Result<Loaded, ClosureError>> => {
-    const loaded = await loadContent(db, e, contentMode, pin, field);
-    if (!loaded.success) return loaded;
-    const metadata = await loadMemberMetadata(db, e.id);
-    entities.push({
-      entityId: e.id,
-      ref: e.ref,
-      source: loaded.data.source,
-      ...(loaded.data.version ? { version: loaded.data.version } : {}),
-      fields: loaded.data.fields,
-      entity: toEntityInput(e, metadata, loaded.data.sequence),
-    });
-    return loaded;
+  /** One edge to an entity, as a field of a member declared it: who owns the field and the version it pins (none: unpinned). */
+  type Observation = { field: string; owner: IndexedEntity; ownerRef: EntityRef; pin?: string };
+  type Walk = {
+    entities: ClosureEntity[];
+    graph: Map<string, string[]>;
+    upgrades: LegacyUpgrade[];
+    /** Every edge to every entity but the root (a member as often as the root declares them), in walk order. */
+    observed: Map<string, Observation[]>;
+    /** The pin each entity was loaded with (absent: loaded by the mode). */
+    applied: Map<string, string | undefined>;
   };
 
-  // The root is never pinned by anything: resolve it by the mode, or (a publish of the root) from its current saved rows.
-  const rootLoaded = await add(rootIndexed, undefined, "", opts?.rootAtDraft ? "draft" : mode);
-  if (!rootLoaded.success) return rootLoaded;
-  seen.add(rootIndexed.id);
+  /**
+   * One breadth-first pass. `forced` is the pin to load an entity with whichever edge reached it first (a pin on ANY edge to an entity
+   * wins, and the first edge visited is not always the one that pins), learned from the previous pass.
+   */
+  const walk = async (forced: Map<string, Observation & { pin: string }>): Promise<Result<Walk, ClosureError>> => {
+    const entities: ClosureEntity[] = [];
+    const graph = new Map<string, string[]>();
+    const seen = new Set<string>();
+    const upgrades: LegacyUpgrade[] = [];
+    const observed = new Map<string, Observation[]>();
+    const applied = new Map<string, string | undefined>();
 
-  for (let i = 0; i < entities.length; i++) {
-    const current = entities[i];
-    const edges: Edge[] = [];
-    for (const field of current.fields) {
-      // Only a field that IS a reference (or an array / map of them) points at an entity: the `referenced*` keys left on a field that was
-      // retyped are stale data and must not keep the old target in the closure (nor fail it with its pin).
-      if (!holdsEntityReference(field.type, field.decorators)) continue;
-      const fieldRef = readFieldReference(field.decorators);
-      if (!fieldRef) continue;
-      const resolved = resolveTarget(index, fieldRef);
-      if (!resolved) continue; // dangling
-      if ("ambiguous" in resolved) {
+    const add = async (
+      e: IndexedEntity,
+      pin: string | undefined,
+      field: string,
+      contentMode: ResolveMode = mode
+    ): Promise<Result<Loaded, ClosureError>> => {
+      const loaded = await loadContent(db, e, contentMode, pin, field);
+      if (!loaded.success) return loaded;
+      const metadata = await loadMemberMetadata(db, e.id);
+      entities.push({
+        entityId: e.id,
+        ref: e.ref,
+        source: loaded.data.source,
+        ...(loaded.data.version ? { version: loaded.data.version } : {}),
+        fields: loaded.data.fields,
+        entity: toEntityInput(e, metadata, loaded.data.sequence),
+      });
+      applied.set(e.id, pin);
+      return loaded;
+    };
+
+    // The root is never pinned by anything: resolve it by the mode, or (a publish of the root) from its current saved rows.
+    const rootLoaded = await add(rootIndexed, undefined, "", opts?.rootAtDraft ? "draft" : mode);
+    if (!rootLoaded.success) return rootLoaded;
+    seen.add(rootIndexed.id);
+
+    for (let i = 0; i < entities.length; i++) {
+      const current = entities[i];
+      const edges: Edge[] = [];
+      for (const field of current.fields) {
+        // Only a field that IS a reference (or an array / map of them) points at an entity: the `referenced*` keys left on a field that was
+        // retyped are stale data and must not keep the old target in the closure (nor fail it with its pin).
+        if (!holdsEntityReference(field.type, field.decorators)) continue;
+        const fieldRef = readFieldReference(field.decorators);
+        if (!fieldRef) continue;
+        const resolved = resolveTarget(index, fieldRef);
+        if (!resolved) continue; // dangling
+        if ("ambiguous" in resolved) {
+          return {
+            success: false,
+            error: {
+              code: "AMBIGUOUS_REFERENCE",
+              field: field.name,
+              name: resolved.name,
+              candidates: resolved.ambiguous.map((c) => c.ref),
+              entityId: current.entityId,
+              fieldId: field.id,
+            },
+          };
+        }
+        if ("legacyName" in fieldRef && current.source === "draft") {
+          upgrades.push({ entityId: current.entityId, fieldId: field.id, fieldName: field.name, ref: resolved.target.ref });
+        }
+        const pin = "legacyName" in fieldRef ? undefined : fieldRef.pinnedVersion;
+        edges.push({ field: field.name, target: resolved.target, pin });
+        if (resolved.target.id !== rootIndexed.id) {
+          const list = observed.get(resolved.target.id) ?? [];
+          list.push({ field: field.name, owner: index.get(current.entityId) ?? rootIndexed, ownerRef: current.ref, ...(pin ? { pin } : {}) });
+          observed.set(resolved.target.id, list);
+        }
+      }
+      graph.set(current.entityId, [...new Set(edges.map((e) => e.target.id))]);
+
+      // Breadth-first by qualified name, a field's name breaking ties.
+      edges.sort((a, b) => byQualified(a.target, b.target) || compareStr(a.field, b.field));
+      for (const edge of edges) {
+        if (seen.has(edge.target.id)) continue;
+        if (entities.length >= limit) return { success: false, error: { code: "CLOSURE_TOO_LARGE", limit } };
+        const force = forced.get(edge.target.id);
+        const loaded = await add(edge.target, force ? force.pin : edge.pin, force ? force.field : edge.field);
+        if (!loaded.success) return loaded;
+        seen.add(edge.target.id);
+      }
+    }
+    return ok({ entities, graph, upgrades, observed, applied });
+  };
+
+  // A closure resolves each entity ONCE (the emitted files are per entity), so a pin on any edge to an entity applies to it everywhere:
+  // walk, look at every edge that reached each entity, and walk again with the pins that were not the first edge's. Two pins that
+  // disagree are a conflict. Pins only come from edges, so this settles in a pass or two; the bound only guards a closure whose edges
+  // change with the version a pin selects (version 1 of M pins B 1.0, version 2 pins B 2.0), which has no consistent answer.
+  const MAX_PASSES = 8;
+  const forced = new Map<string, Observation & { pin: string }>();
+  let result: Walk | undefined;
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    const walked = await walk(forced);
+    if (!walked.success) return walked;
+    let again = false;
+    for (const [targetId, list] of walked.data.observed) {
+      const target = index.get(targetId);
+      if (!target) continue;
+      const pins = distinctPins(list);
+      if (pins.length > 1) {
         return {
           success: false,
-          error: {
-            code: "AMBIGUOUS_REFERENCE",
-            field: field.name,
-            name: resolved.name,
-            candidates: resolved.ambiguous.map((c) => c.ref),
-            entityId: current.entityId,
-            fieldId: field.id,
-          },
+          error: { code: "PIN_CONFLICT", ref: target.ref, pins: pins.map((o) => ({ field: o.field, owner: o.ownerRef, version: o.pin as string })) },
         };
       }
-      if ("legacyName" in fieldRef && current.source === "draft") {
-        upgrades.push({ entityId: current.entityId, fieldId: field.id, fieldName: field.name, ref: resolved.target.ref });
-      }
-      const pin = "legacyName" in fieldRef ? undefined : fieldRef.pinnedVersion;
-      edges.push({ field: field.name, target: resolved.target, pin });
+      const wanted = pins[0] ? normalizePin(pins[0].pin as string) : undefined;
+      const had = walked.data.applied.get(targetId);
+      if ((had === undefined ? undefined : normalizePin(had)) === wanted) continue;
+      if (pins[0]) forced.set(targetId, { ...pins[0], pin: pins[0].pin as string });
+      else forced.delete(targetId);
+      again = true;
     }
-    graph.set(current.entityId, [...new Set(edges.map((e) => e.target.id))]);
+    if (!again) {
+      result = walked.data;
+      break;
+    }
+  }
+  if (!result) {
+    // Oscillating: report the entity whose pin keeps changing with the content it selects.
+    const [id, last] = [...forced.entries()][0] ?? [rootIndexed.id, undefined];
+    const target = index.get(id) ?? rootIndexed;
+    return {
+      success: false,
+      error: { code: "PIN_CONFLICT", ref: target.ref, pins: last ? [{ field: last.field, owner: last.ownerRef, version: last.pin }] : [] },
+    };
+  }
 
-    // Breadth-first by qualified name, a field's name breaking ties.
-    edges.sort((a, b) => byQualified(a.target, b.target) || compareStr(a.field, b.field));
-    for (const edge of edges) {
-      // Pin conflict: when two fields pin different versions of one entity, the first visited wins (deterministic,
-      // breadth-first by qualified name then field name); later pins to an already-loaded entity are ignored.
-      if (seen.has(edge.target.id)) continue;
-      if (entities.length >= limit) return { success: false, error: { code: "CLOSURE_TOO_LARGE", limit } };
-      const loaded = await add(edge.target, edge.pin, edge.field);
-      if (!loaded.success) return loaded;
-      seen.add(edge.target.id);
-    }
+  const { entities, graph, upgrades, observed } = result;
+  const notes: string[] = [];
+  for (const entity of entities) {
+    const list = observed.get(entity.entityId) ?? [];
+    const pinning = distinctPins(list)[0];
+    const unpinned = list.filter((o) => !o.pin);
+    if (!pinning || unpinned.length === 0) continue;
+    const who = (o: Observation) => `${o.ownerRef.entity}.${o.field}`;
+    notes.push(
+      `${unpinned.map(who).join(", ")} ${unpinned.length === 1 ? "is" : "are"} unpinned but ${who(pinning)} pins ${entity.ref.entity} ${pinning.pin}: the pin was used for both.`
+    );
   }
 
   const labels = new Map(entities.map((e) => [e.entityId, qualifiedName(e.ref)]));
@@ -402,5 +514,6 @@ export async function loadReferenceClosure(
     draftEntities: entities.filter((e) => e.source === "draft").map((e) => e.ref),
     cycles: findCycles(graph, (id) => labels.get(id) ?? id),
     upgrades,
+    notes,
   });
 }
