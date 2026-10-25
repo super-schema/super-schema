@@ -28,6 +28,9 @@ const REFERENCE_FIELD = {
     referencedEntityId: "e-cust",
     referencedEntityName: "Customer",
     referencedQualifiedName: "Sales/Crm/Customer",
+    referencedDomain: "Sales",
+    referencedProduct: "Crm",
+    referencedEntity: "Customer",
     referencedEntityVersion: "1.2",
   } as Record<string, unknown>,
 };

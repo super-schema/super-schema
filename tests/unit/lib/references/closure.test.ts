@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { loadReferenceClosure, type ClosureError } from "@/lib/references/closure";
-import { qualifiedName } from "@/lib/references/entity-reference";
+import { qualifiedName, upgradeLegacyReference, writeFieldReference } from "@/lib/references/entity-reference";
 
 type FieldRow = { id: string; name: string; decorators: Record<string, unknown>; type?: string };
 type VersionRow = { id: string; entityId: string; major: number; minor: number; sequence: number; fieldSnapshot: unknown[] };
@@ -705,6 +705,7 @@ describe("loadReferenceClosure: an ambiguous bare name inside a frozen snapshot"
     expect(r.error).toMatchObject({ code: "AMBIGUOUS_REFERENCE", entityId: "y", frozen: false });
   });
 
+  // FINAL WAVE 2b, G3 lives below (names that hold "/").
   it("after the pick (the live row now holds the qualified reference) and a re-publish of Y, the closure resolves", async () => {
     const y11 = { ...version("y", 1, 1, []), fieldSnapshot: [toField({ id: "y-s0", name: "addr", decorators: qref("ad2", "d2/p2/Address") }, 0)] };
     const r = await loadReferenceClosure(world([y10, y11], "y-v1.1", [["addr", qref("ad2", "d2/p2/Address")]]), "t1", "x", "published");
@@ -715,5 +716,48 @@ describe("loadReferenceClosure: an ambiguous bare name inside a frozen snapshot"
       ["y", "published", "1.1"],
       ["ad2", "published", "1.0"],
     ]);
+  });
+});
+
+// FINAL WAVE 2b, G3: a name may hold "/" or "%": the reference still resolves (by id, by the qualified name) and keeps its pin.
+describe("loadReferenceClosure: names that hold '/' and '%'", () => {
+  const target = { id: "t", domain: "Sales/EU", product: "Orders", name: "Order/Line 100%" };
+  const written = (over: { id?: string; pin?: string } = {}) =>
+    writeFieldReference({}, { entityId: over.id ?? target.id, domain: target.domain, product: target.product, entity: target.name, ...(over.pin ? { pinnedVersion: over.pin } : {}) });
+  const world = (decorators: Record<string, unknown>) =>
+    fakeDb([
+      ent("a", {}, [["line", decorators]]),
+      ent("t", { name: target.name, domain: target.domain, product: target.product, versions: [version("t", 1, 0, []), version("t", 2, 0, ["Z"])], latest: "t-v2.0" }),
+      ent("z", { versions: [version("z", 1, 0, [])], latest: "z-v1.0" }),
+    ]);
+
+  it("resolves a reference written with the segments, by id", async () => {
+    const r = await loadReferenceClosure(world(written()), "t1", "a", "draft");
+    expect(r.success && r.data.entities.map((e) => e.entityId)).toEqual(["a", "t"]);
+    expect(r.success && r.data.upgrades).toEqual([]);
+  });
+
+  it("resolves it by the qualified name when its id is gone (the encoded string matches the entity's qualified name)", async () => {
+    const r = await loadReferenceClosure(world(written({ id: "gone" })), "t1", "a", "draft");
+    expect(r.success && r.data.entities.map((e) => e.entityId)).toEqual(["a", "t"]);
+  });
+
+  it("keeps the pin: the pinned version is used (not the latest), in draft and in published mode", async () => {
+    const r = await loadReferenceClosure(world(written({ pin: "1.0" })), "t1", "a", "draft");
+    expect(r.success && r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["t", "pinned", "1.0"]]);
+  });
+
+  it("an old row whose qualified string cannot be split (raw '/' in the domain AND the entity name, no segment keys) still resolves by id, keeps its pin, and is upgraded ONCE", async () => {
+    const old = { referencedEntityId: "t", referencedEntityName: target.name, referencedQualifiedName: "Sales/EU/Orders/Order/Line 100%", referencedEntityVersion: "1.0" };
+    const r = await loadReferenceClosure(world(old), "t1", "a", "draft");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([["a", "draft", undefined], ["t", "pinned", "1.0"]]);
+    expect(r.data.upgrades).toHaveLength(1);
+    // what the upgrade writes reads as qualified: the next generation reports nothing to upgrade
+    const upgraded = upgradeLegacyReference(old, r.data.upgrades[0].ref);
+    const again = await loadReferenceClosure(world(upgraded), "t1", "a", "draft");
+    expect(again.success && again.data.upgrades).toEqual([]);
+    expect(again.success && again.data.entities.map((e) => [e.entityId, e.version])).toEqual([["a", undefined], ["t", "1.0"]]);
   });
 });

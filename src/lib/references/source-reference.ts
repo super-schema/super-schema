@@ -22,7 +22,7 @@
 import { sanitizeIdentifier } from "@/lib/compiler/typespec-identifiers";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { createRefResolver, type RefResolution } from "@/lib/references/closure";
-import { holdsEntityReference, parseQualifiedName, type EntityRef, type ReferenceShape } from "@/lib/references/entity-reference";
+import { holdsEntityReference, readFieldReference, type EntityRef, type ReferenceShape } from "@/lib/references/entity-reference";
 
 /** At most this many different written names are looked at in one save; a source with more cannot be told apart from an attack. */
 export const MAX_WRITTEN_NAMES = 500;
@@ -96,9 +96,9 @@ const SHAPE_TYPE: Record<ReferenceShape, string> = { direct: "reference", array:
 
 /** The `Domain.Product.Entity` spelling (segments as identifiers) of the qualified name a row stores (`Domain/Product/Entity`), if it stores one. */
 function dottedSpelling(decorators: unknown): string | undefined {
-  const qualified = ownString(decorators, "referencedQualifiedName");
-  const parsed = qualified === undefined ? undefined : parseQualifiedName(qualified);
-  return parsed ? [parsed.domain, parsed.product, parsed.entity].map(sanitizeIdentifier).join(".") : undefined;
+  // Read the way every reader reads a reference (the three names stored on their own, else the qualified string), never parsed here.
+  const stored = readFieldReference(decorators);
+  return stored && !("legacyName" in stored) ? [stored.domain, stored.product, stored.entity].map(sanitizeIdentifier).join(".") : undefined;
 }
 
 /**
@@ -112,7 +112,7 @@ function storedTarget(row: StoredFieldRow | undefined, shape: ReferenceShape): {
   const name = ownString(row.decorators, "referencedEntityName");
   if (name === undefined) return undefined;
   const dotted = dottedSpelling(row.decorators);
-  return { name, ...(dotted !== undefined ? { dotted } : {}), legacy: ownString(row.decorators, "referencedQualifiedName") === undefined };
+  return { name, ...(dotted !== undefined ? { dotted } : {}), legacy: dotted === undefined };
 }
 
 /**

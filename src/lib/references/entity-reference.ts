@@ -24,16 +24,55 @@ export type EntityRef = {
 /** A tenant entity the reference picker offers; `domain` / `product` make its qualified name (`_tenant` stands in for a missing one). */
 export type PickableEntity = { id: string; name: string; domain?: string; product?: string };
 
+/**
+ * A name inside the qualified string: `%` is `%25` and `/` is `%2F`, so a segment can never add a separator. A name without either is
+ * unchanged, which keeps every string stored before the encoding existed valid.
+ */
+const encodeSegment = (segment: string): string => segment.replace(/%/g, "%25").replace(/\//g, "%2F");
+/** The inverse of {@link encodeSegment}, in one pass (`%2525` is `%25`). Any other `%` is left as it is. */
+const decodeSegment = (segment: string): string => segment.replace(/%(2F|25)/gi, (_match, hex: string) => (hex === "25" ? "%" : "/"));
+
+/** `domain/product/entity` with each name encoded ({@link encodeSegment}): always exactly three parts, whatever the names hold. */
 export function qualifiedName(ref: EntityRef): string {
-  return `${ref.domain}/${ref.product}/${ref.entity}`;
+  return `${encodeSegment(ref.domain)}/${encodeSegment(ref.product)}/${encodeSegment(ref.entity)}`;
 }
 
-export function parseQualifiedName(s: string): EntityRef | undefined {
+/** `domain / product / entity` as a person reads it: the names as they are (never the encoding). */
+export function describeEntityRef(ref: Pick<EntityRef, "domain" | "product" | "entity">): string {
+  return `${ref.domain} / ${ref.product} / ${ref.entity}`;
+}
+
+/** {@link describeEntityRef} of a stored qualified string; anything that is not one is returned as it is. */
+export function describeQualifiedName(qualified: string): string {
+  const parsed = parseQualifiedName(qualified);
+  return parsed ? describeEntityRef(parsed) : qualified;
+}
+
+/**
+ * The segments of a qualified string. `entityNameHint` is the entity's own name (a reference stores it beside the string): a string
+ * written BEFORE names were encoded can hold the raw `/` of an entity name (four or more parts), which the hint recovers when the rest is
+ * exactly a domain and a product.
+ */
+export function parseQualifiedName(s: string, entityNameHint?: string): EntityRef | undefined {
   if (typeof s !== "string") return undefined;
   const parts = s.split("/");
-  if (parts.length !== 3 || parts.some((p) => p.length === 0)) return undefined;
-  return { domain: parts[0], product: parts[1], entity: parts[2] };
+  if (parts.length === 3 && parts.every((p) => p.length > 0)) {
+    return { domain: decodeSegment(parts[0]), product: decodeSegment(parts[1]), entity: decodeSegment(parts[2]) };
+  }
+  if (entityNameHint && parts.length > 3 && s.endsWith(`/${entityNameHint}`)) {
+    const head = s.slice(0, s.length - entityNameHint.length - 1).split("/");
+    if (head.length === 2 && head.every((p) => p.length > 0)) {
+      return { domain: decodeSegment(head[0]), product: decodeSegment(head[1]), entity: entityNameHint };
+    }
+  }
+  return undefined;
 }
+
+/**
+ * A reference that is only a name: a legacy name-only reference, or a stored one whose qualified string cannot be read. It still carries
+ * the entity id and the pin when the field has them (the id settles it, and the pin is not lost with the parse).
+ */
+export type LegacyEntityRef = { legacyName: string; entityId?: string; pinnedVersion?: string };
 
 function ownString(obj: Record<string, unknown>, key: string): string | undefined {
   if (!Object.prototype.hasOwnProperty.call(obj, key)) return undefined;
@@ -46,6 +85,10 @@ export const REFERENCE_DECORATOR_KEYS: ReadonlyArray<string> = [
   "referencedEntityId",
   "referencedEntityName",
   "referencedQualifiedName",
+  // The three names of the qualified name, stored on their own (raw, never encoded): reading a reference never needs to parse the string.
+  "referencedDomain",
+  "referencedProduct",
+  "referencedEntity",
   "referencedEntityVersion",
 ];
 
@@ -89,21 +132,30 @@ export function withoutReferenceKeys(decorators: Record<string, unknown>): Recor
  * Reads the reference stored on a field's decorators. A qualified reference yields an `EntityRef`; a name-only
  * (pre-qualification) one yields `{ legacyName }`.
  */
-export function readFieldReference(decorators: unknown): EntityRef | { legacyName: string } | undefined {
+export function readFieldReference(decorators: unknown): EntityRef | LegacyEntityRef | undefined {
   if (!decorators || typeof decorators !== "object" || Array.isArray(decorators)) return undefined;
   const d = decorators as Record<string, unknown>;
+  const entityId = ownString(d, "referencedEntityId");
+  const pinnedVersion = ownString(d, "referencedEntityVersion");
+  const name = ownString(d, "referencedEntityName");
+  // The three names stored on their own come first (nothing to parse); the qualified string is read for rows stored before they existed.
+  const domain = ownString(d, "referencedDomain");
+  const product = ownString(d, "referencedProduct");
+  const entity = ownString(d, "referencedEntity");
   const qualified = ownString(d, "referencedQualifiedName");
-  const parsed = qualified ? parseQualifiedName(qualified) : undefined;
+  const parsed: Pick<EntityRef, "domain" | "product" | "entity"> | undefined =
+    domain && product && entity ? { domain, product, entity } : qualified ? parseQualifiedName(qualified, name) : undefined;
   if (parsed) {
-    const entityId = ownString(d, "referencedEntityId");
-    const pinnedVersion = ownString(d, "referencedEntityVersion");
     const ref: EntityRef = { domain: parsed.domain, product: parsed.product, entity: parsed.entity };
     if (entityId) ref.entityId = entityId;
     if (pinnedVersion) ref.pinnedVersion = pinnedVersion;
     return ref;
   }
-  const legacyName = ownString(d, "referencedEntityName");
-  return legacyName ? { legacyName } : undefined;
+  if (!name) return undefined;
+  const legacy: LegacyEntityRef = { legacyName: name };
+  if (entityId) legacy.entityId = entityId;
+  if (pinnedVersion) legacy.pinnedVersion = pinnedVersion;
+  return legacy;
 }
 
 /**
@@ -128,6 +180,9 @@ export function writeFieldReference(decorators: Record<string, unknown>, ref: En
   if (ref.entityId) setOwn(out, "referencedEntityId", ref.entityId);
   setOwn(out, "referencedEntityName", ref.entity);
   setOwn(out, "referencedQualifiedName", qualifiedName(ref));
+  setOwn(out, "referencedDomain", ref.domain);
+  setOwn(out, "referencedProduct", ref.product);
+  setOwn(out, "referencedEntity", ref.entity);
   if (ref.pinnedVersion) setOwn(out, "referencedEntityVersion", ref.pinnedVersion);
   return out;
 }

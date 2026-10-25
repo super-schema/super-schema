@@ -117,6 +117,9 @@ export const ComplexTypeMetadataSchema = z
     referencedEntityId: z.string(),
     referencedEntityName: z.string(),
     referencedQualifiedName: z.string(),
+    referencedDomain: z.string(),
+    referencedProduct: z.string(),
+    referencedEntity: z.string(),
     referencedEntityVersion: z.string(),
   })
   .partial();

@@ -5,7 +5,7 @@
  */
 
 import type { ClosureError, ReferenceClosure, ResolveMode } from "@/lib/references/closure";
-import { qualifiedName, type EntityRef } from "@/lib/references/entity-reference";
+import { describeEntityRef, type EntityRef } from "@/lib/references/entity-reference";
 import { bundleEmittedFiles, emitClosure, type Closure, type EmittedFile } from "@/lib/typespec-official/closure-emit";
 import { resultFromEmissionError, type OfficialTypeSpecTargetResult } from "@/lib/typespec-official/emitter.service";
 import type { TargetId } from "@/lib/schema-targets/catalog";
@@ -16,7 +16,7 @@ import type { SchemaVersionResolution } from "@/types/schema-version";
 export type ClosureTargetResult = OfficialTypeSpecTargetResult & { files?: EmittedFile[] };
 
 /** `domain / product / entity`: how a person reads a qualified name (the stored form is `domain/product/entity`). */
-const describeRef = (ref: EntityRef): string => qualifiedName(ref).split("/").join(" / ");
+const describeRef = (ref: EntityRef): string => describeEntityRef(ref);
 
 /**
  * A closure that could not be built, as a `ServiceError` every caller can map: the code is the closure's own, except a root outside

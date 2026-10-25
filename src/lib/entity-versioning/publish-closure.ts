@@ -14,7 +14,7 @@
 import type { PrismaClient, Prisma } from "@/generated/prisma/client";
 import { closureFailure } from "@/lib/emission/closure-generation";
 import { loadReferenceClosure, type ClosureError, type ReferenceClosure } from "@/lib/references/closure";
-import { qualifiedName, type EntityRef } from "@/lib/references/entity-reference";
+import { describeEntityRef, type EntityRef } from "@/lib/references/entity-reference";
 import type { Result } from "@/types/result";
 import type { ReferencedVersion } from "./referenced-versions";
 
@@ -40,7 +40,7 @@ export type PublishClosure = {
 };
 
 /** `domain / product / entity`: how a person reads a qualified name (the stored form is `domain/product/entity`). */
-const describeRef = (ref: EntityRef): string => qualifiedName(ref).split("/").join(" / ");
+const describeRef = (ref: EntityRef): string => describeEntityRef(ref);
 
 /** A closure error as a publish blocker. The wording follows the generate path's (`closureFailure`), except where a publish needs its own. */
 export function publishBlockerFor(error: ClosureError, rootName: string): PublishClosureBlocker {

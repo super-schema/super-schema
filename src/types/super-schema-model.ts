@@ -6,7 +6,7 @@
  * This is a pure data structure with zero Prisma or framework dependencies.
  */
 
-import type { EntityRef } from "@/lib/references/entity-reference";
+import type { EntityRef, LegacyEntityRef } from "@/lib/references/entity-reference";
 
 // ---------------------------------------------------------------------------
 // Logical type — covers every supported field type
@@ -222,7 +222,7 @@ export interface ComplexTypeInfo {
   /** Present only when the reference is pinned to a version. */
   referencedEntityVersion?: string;
   /** Validated reference read from the decorators (qualified, or name-only legacy). */
-  reference?: EntityRef | { legacyName: string };
+  reference?: EntityRef | LegacyEntityRef;
   // Union (a field typed by a named union, or an array of one)
   unionName?: string;
   unionMembers?: string[];

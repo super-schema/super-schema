@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutocompleteInput } from "@/components/custom/AutocompleteInput";
 import { TypePicker } from "@/components/custom/TypePicker";
-import { applyReferencePick, type PickableEntity, type ReferencePick } from "@/lib/references/entity-reference";
+import { applyReferencePick, describeQualifiedName, type PickableEntity, type ReferencePick } from "@/lib/references/entity-reference";
 import {
   getEntityCompleteness,
   getFieldCompleteness,
@@ -524,7 +524,7 @@ export function FieldEditor({
               />
               {newFieldType === "reference" && newFieldReference && (
                 <p data-testid="new-field-reference-target" className="mt-1 truncate font-mono text-caption text-muted-foreground">
-                  → {newFieldReference.referencedQualifiedName?.split("/").join(" / ") ?? newFieldReference.referencedEntityName}
+                  → {newFieldReference.referencedQualifiedName ? describeQualifiedName(newFieldReference.referencedQualifiedName) : newFieldReference.referencedEntityName}
                 </p>
               )}
             </div>

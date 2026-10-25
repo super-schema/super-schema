@@ -357,7 +357,15 @@ describe("entityExtensionsChange", () => {
 describe("a name the source typed a field with that resolved to an entity of the tenant (Task 11)", () => {
   const BILLING = { entityId: "addr-1", domain: "Billing", product: "Payments", entity: "Address" };
   const SALES = { entityId: "addr-2", domain: "Sales", product: "Shipping", entity: "Address" };
-  const QUALIFIED = (r: typeof BILLING) => ({ referencedEntityId: r.entityId, referencedEntityName: r.entity, referencedQualifiedName: `${r.domain}/${r.product}/${r.entity}` });
+  // (the three names are stored on their own beside the qualified string: final wave 2b, G3)
+  const QUALIFIED = (r: typeof BILLING) => ({
+    referencedEntityId: r.entityId,
+    referencedEntityName: r.entity,
+    referencedQualifiedName: `${r.domain}/${r.product}/${r.entity}`,
+    referencedDomain: r.domain,
+    referencedProduct: r.product,
+    referencedEntity: r.entity,
+  });
 
   it("a new field becomes a reference: id, name and qualified name, and NO version", () => {
     const m = mergeSyncedField(null, src({ type: "Address" }), { reference: { ref: BILLING, shape: "direct" } });

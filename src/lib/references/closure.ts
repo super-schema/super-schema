@@ -9,6 +9,7 @@ import {
   qualifiedName,
   readFieldReference,
   type EntityRef,
+  type LegacyEntityRef,
 } from "@/lib/references/entity-reference";
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
@@ -195,9 +196,12 @@ async function loadMemberMetadata(db: DbClient, entityId: string): Promise<unkno
  */
 function resolveTarget<T extends Resolvable>(
   index: Map<string, T>,
-  fieldRef: EntityRef | { legacyName: string }
+  fieldRef: EntityRef | LegacyEntityRef
 ): { target: T } | { ambiguous: T[]; name: string } | undefined {
   if ("legacyName" in fieldRef) {
+    // A name-only reference whose field still carries the entity id (its qualified string could not be read): the id is the key.
+    const byId = fieldRef.entityId ? index.get(fieldRef.entityId) : undefined;
+    if (byId) return { target: byId };
     const all = [...index.values()];
     const exact = all.filter((e) => nameKey(e.name) === nameKey(fieldRef.legacyName));
     const matches = exact.length > 0 ? exact : all.filter((e) => idKey(e.name) === idKey(fieldRef.legacyName));
@@ -235,7 +239,7 @@ export async function loadTenantEntityRefs(db: DbClient, tenantId: string): Prom
  * The closure walk's own resolver (id, then qualified name, then a legacy bare name across the tenant) over a list of tenant entity
  * references, for callers that resolve a reference outside a closure walk. Entries without an id are not resolvable and are skipped.
  */
-export function createRefResolver(refs: readonly EntityRef[]): (fieldRef: EntityRef | { legacyName: string }) => RefResolution {
+export function createRefResolver(refs: readonly EntityRef[]): (fieldRef: EntityRef | LegacyEntityRef) => RefResolution {
   const index = new Map<string, Resolvable>();
   for (const ref of refs) if (ref.entityId) index.set(ref.entityId, { id: ref.entityId, name: ref.entity, ref });
   return (fieldRef) => {
@@ -433,7 +437,7 @@ export async function loadReferenceClosure(
         if ("legacyName" in fieldRef && current.source === "draft") {
           upgrades.push({ entityId: current.entityId, fieldId: field.id, fieldName: field.name, ref: resolved.target.ref });
         }
-        const pin = "legacyName" in fieldRef ? undefined : fieldRef.pinnedVersion;
+        const pin = fieldRef.pinnedVersion;
         edges.push({ field: field.name, target: resolved.target, pin });
         if (resolved.target.id !== rootIndexed.id) {
           const list = observed.get(resolved.target.id) ?? [];

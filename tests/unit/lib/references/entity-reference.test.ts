@@ -13,13 +13,31 @@ import {
 } from "@/lib/references/entity-reference";
 
 describe("referencePickChangesNothing (the same target picked again)", () => {
-  const stored = { keep: { a: 1, b: [1, 2] }, referencedEntityName: "Address", referencedEntityId: "e-addr", referencedQualifiedName: "Billing/Core/Address" };
+  // (the stored form carries the three names on their own since final wave 2b, G3)
+  const stored = {
+    keep: { a: 1, b: [1, 2] },
+    referencedEntityName: "Address",
+    referencedEntityId: "e-addr",
+    referencedQualifiedName: "Billing/Core/Address",
+    referencedDomain: "Billing",
+    referencedProduct: "Core",
+    referencedEntity: "Address",
+  };
   const same = { referencedEntityName: "Address", referencedEntityId: "e-addr", referencedQualifiedName: "Billing/Core/Address" };
 
   it("is true for the target the field already points at, whatever order its keys were stored in", () => {
     expect(referencePickChangesNothing(stored, same)).toBe(true);
-    const shuffled = { referencedQualifiedName: "Billing/Core/Address", keep: { b: [1, 2], a: 1 }, referencedEntityId: "e-addr", referencedEntityName: "Address" };
+    const shuffled = {
+      referencedEntity: "Address", referencedQualifiedName: "Billing/Core/Address", keep: { b: [1, 2], a: 1 }, referencedEntityId: "e-addr",
+      referencedProduct: "Core", referencedEntityName: "Address", referencedDomain: "Billing",
+    };
     expect(referencePickChangesNothing(shuffled, same)).toBe(true);
+  });
+
+  it("is a change for a row stored before the three names were: the pick writes them (it upgrades the row)", () => {
+    const { referencedDomain, referencedProduct, referencedEntity, ...old } = stored;
+    void referencedDomain; void referencedProduct; void referencedEntity;
+    expect(referencePickChangesNothing(old, same)).toBe(false);
   });
 
   it("is false for another target, for a typed name over a qualified reference, and for a field with no reference yet", () => {
@@ -70,7 +88,9 @@ describe("withoutReferenceKeys", () => {
     const out = withoutReferenceKeys(decorators);
     expect(Object.keys(out).sort()).toEqual(["arrayElementType", "semantics"]);
     expect(out).not.toBe(decorators);
-    expect([...REFERENCE_DECORATOR_KEYS].sort()).toEqual(["referencedEntityId", "referencedEntityName", "referencedEntityVersion", "referencedQualifiedName"]);
+    expect([...REFERENCE_DECORATOR_KEYS].sort()).toEqual([
+      "referencedDomain", "referencedEntity", "referencedEntityId", "referencedEntityName", "referencedEntityVersion", "referencedProduct", "referencedQualifiedName",
+    ]);
   });
 });
 

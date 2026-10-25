@@ -11,6 +11,9 @@ describe("upgradeLegacyReference", () => {
       referencedEntityName: "Customer",
       referencedEntityId: "e2",
       referencedQualifiedName: "Sales/Crm/Customer",
+      referencedDomain: "Sales",
+      referencedProduct: "Crm",
+      referencedEntity: "Customer",
     });
   });
 

@@ -56,6 +56,9 @@ describe("setFieldReferenceAction", () => {
       referencedEntityId: "ent-2",
       referencedEntityName: "Customer",
       referencedQualifiedName: "Sales/Crm/Customer",
+      referencedDomain: "Sales",
+      referencedProduct: "Crm",
+      referencedEntity: "Customer",
     });
     expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalled();
   });

@@ -801,7 +801,7 @@ function fieldPin(field: SuperSchemaField): string | undefined {
     (field.type === "array" && field.complexType?.arrayElementType === "reference") ||
     (field.type === "map" && field.complexType?.mapValueType === "reference");
   const reference = memberIsReference ? field.complexType?.reference : undefined;
-  return reference && !("legacyName" in reference) ? reference.pinnedVersion : undefined;
+  return reference?.pinnedVersion;
 }
 
 function generateFieldDecorators(field: SuperSchemaField, governance: Governance): string[] {

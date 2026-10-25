@@ -76,6 +76,9 @@ describe("a field row's type picker", () => {
         referencedEntityId: "e-addr-s",
         referencedEntityName: "Address",
         referencedQualifiedName: "Sales/Crm/Address",
+        referencedDomain: "Sales",
+        referencedProduct: "Crm",
+        referencedEntity: "Address",
       },
     });
   });
@@ -154,7 +157,14 @@ describe("the New Field form", () => {
 
     await waitFor(() => expect(onAddField).toHaveBeenCalledTimes(1));
     expect(onAddField).toHaveBeenCalledWith("billingAddress", "reference", {
-      decorators: { referencedEntityId: "e-addr-b", referencedEntityName: "Address", referencedQualifiedName: "Billing/Core/Address" },
+      decorators: {
+        referencedEntityId: "e-addr-b",
+        referencedEntityName: "Address",
+        referencedQualifiedName: "Billing/Core/Address",
+        referencedDomain: "Billing",
+        referencedProduct: "Core",
+        referencedEntity: "Address",
+      },
     });
   });
 

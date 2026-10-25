@@ -15,14 +15,14 @@
  * it always did. Pure and client-safe; tolerant of malformed stored data (read as nothing to refuse, never throws).
  */
 
-import { qualifiedName, type EntityRef } from "@/lib/references/entity-reference";
+import { describeEntityRef, type EntityRef } from "@/lib/references/entity-reference";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** `domain / product / entity`: how a person reads a qualified name (the stored form is `domain/product/entity`). */
-const describeRef = (ref: EntityRef): string => qualifiedName(ref).split("/").join(" / ");
+const describeRef = (ref: EntityRef): string => describeEntityRef(ref);
 
 const MAX_NAMED = 5;
 

@@ -265,7 +265,7 @@ export function generateClosureTypeSpec(
   const referenceType = (field: SuperSchemaField): string | null => {
     const ref = field.complexType?.reference;
     let target: Placed | undefined;
-    if (ref && "legacyName" in ref) target = resolveLegacy(ref.legacyName);
+    if (ref && "legacyName" in ref) target = (ref.entityId ? byId.get(ref.entityId) : undefined) ?? resolveLegacy(ref.legacyName);
     else if (ref) target = (ref.entityId ? byId.get(ref.entityId) : undefined) ?? byQualified.get(qualifiedName(ref));
     return target ? qualifiedModel(target) : null;
   };

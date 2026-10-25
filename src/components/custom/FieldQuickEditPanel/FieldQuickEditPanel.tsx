@@ -16,6 +16,8 @@ import { TypePicker } from "@/components/custom/TypePicker";
 import { getTypeInfo } from "@/lib/data-types";
 import {
   applyReferencePick,
+  describeEntityRef,
+  describeQualifiedName,
   holdsEntityReference,
   readFieldReference,
   referencePickChangesNothing,
@@ -75,10 +77,10 @@ interface FieldQuickEditPanelProps {
 
 /** How a person reads what a reference field points at: `domain / product / entity`, or the name of a name-only reference. */
 function referenceLabel(pick: ReferencePick | null, decorators: Record<string, unknown>): string | undefined {
-  if (pick) return pick.referencedQualifiedName?.split("/").join(" / ") ?? pick.referencedEntityName;
+  if (pick) return pick.referencedQualifiedName ? describeQualifiedName(pick.referencedQualifiedName) : pick.referencedEntityName;
   const stored = readFieldReference(decorators);
   if (!stored) return undefined;
-  return "legacyName" in stored ? stored.legacyName : `${stored.domain} / ${stored.product} / ${stored.entity}`;
+  return "legacyName" in stored ? stored.legacyName : describeEntityRef(stored);
 }
 
 // ---------------------------------------------------------------------------
