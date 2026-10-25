@@ -13,22 +13,84 @@ export type Role = z.infer<typeof RoleEnum>;
 /**
  * Permission hierarchy — higher index = more permissive.
  * ADMIN > COMPLIANCE_OFFICER > STEWARD > AUTHOR > VIEWER
+ *
+ * Frozen: the ladder is what every authorization decision ranks roles by (`@/lib/access`), so nothing may reorder it at runtime.
  */
-export const ROLE_HIERARCHY: Role[] = [
+export const ROLE_HIERARCHY: readonly Role[] = Object.freeze([
   "VIEWER",
   "AUTHOR",
   "STEWARD",
   "COMPLIANCE_OFFICER",
   "ADMIN",
-];
+] as const satisfies readonly Role[]);
+
+/** True for exactly the five role names (a runtime guard for values read from the database or the wire). */
+export function isRole(value: unknown): value is Role {
+  return typeof value === "string" && (ROLE_HIERARCHY as readonly string[]).includes(value);
+}
+
+// ---------------------------------------------------------------------------
+// Scopes (docs/superpowers/specs/2026-10-24-access-control-design.md, decisions 2 and 3)
+//
+// A role assignment is bound to a scope. Containment: GLOBAL ⊃ TENANT ⊃ DOMAIN ⊃ PRODUCT ⊃ entity; a tenant-level entity (no domain and no
+// product) is governed by TENANT and GLOBAL assignments only. The rules live in `@/lib/access`; this file holds the types and the validity
+// constants they share with the input schemas.
+// ---------------------------------------------------------------------------
+
+/** The longest id a scope or resource may carry (database ids are 25-character cuids; the cap keeps every check bounded). */
+export const SCOPE_ID_MAX_LENGTH = 128;
+
+/**
+ * What an id may look like in a scope: no whitespace, no control character and no ":" (the separator of a scope key, `T:<id>`), so a key
+ * parses back unambiguously. Combined with `SCOPE_ID_MAX_LENGTH` (the pattern alone does not bound the length).
+ */
+export const SCOPE_ID_PATTERN = /^[^\s:\p{Cc}]+$/u;
+
+const ScopeIdSchema = z.string().min(1).max(SCOPE_ID_MAX_LENGTH).regex(SCOPE_ID_PATTERN);
+
+export const ScopeKindEnum = z.enum(["GLOBAL", "TENANT", "DOMAIN", "PRODUCT"]);
+
+export const ScopeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("GLOBAL") }),
+  z.object({ kind: z.literal("TENANT"), tenantId: ScopeIdSchema }),
+  z.object({ kind: z.literal("DOMAIN"), tenantId: ScopeIdSchema, domainId: ScopeIdSchema }),
+  z.object({ kind: z.literal("PRODUCT"), tenantId: ScopeIdSchema, domainId: ScopeIdSchema, productId: ScopeIdSchema }),
+]);
+
+/** Where a role applies: the whole platform, one tenant, one domain of a tenant, or one product of a domain. */
+export type Scope = z.infer<typeof ScopeSchema>;
+export type ScopeKind = Scope["kind"];
+
+export const AssignmentSchema = z.object({ role: RoleEnum, scope: ScopeSchema });
+
+/** One role held in one scope (a `user_roles` row, read as its scope). */
+export type Assignment = z.infer<typeof AssignmentSchema>;
+
+/**
+ * The place of a thing in the scope tree: its tenant, and the domain and product it hangs under when it has them. An entity at tenant
+ * level has neither; a domain-level asset has no product.
+ */
+export type ResourceRef = { tenantId: string; domainId?: string | null; productId?: string | null };
+
+/**
+ * The only role a GLOBAL (platform) assignment may carry. Every other role is bound to a tenant, a domain or a product (decision 3:
+ * any role at any of those scopes, COMPLIANCE_OFFICER and ADMIN at tenant scope included).
+ */
+export const GLOBAL_SCOPE_ROLES: readonly Role[] = Object.freeze(["ADMIN"] as const satisfies readonly Role[]);
 
 /**
  * Roles that must be system-level (domainId = null).
+ *
+ * @deprecated The legacy `domainId`-only model (no tenant or product scope, COMPLIANCE_OFFICER and ADMIN "system only"). Scope validity
+ * is `isValidAssignment` in `@/lib/access` (GLOBAL only for ADMIN). Kept, unchanged, only because `rbac.service.assignRole` and the
+ * `RolesEditor` still enforce the old rule; both move to the scope model in the principal / admin UI tasks, and this goes with them.
  */
 export const SYSTEM_ONLY_ROLES: Role[] = ["COMPLIANCE_OFFICER", "ADMIN"];
 
 /**
  * Roles that require a domainId.
+ *
+ * @deprecated See `SYSTEM_ONLY_ROLES`.
  */
 export const DOMAIN_SCOPED_ROLES: Role[] = ["VIEWER", "AUTHOR", "STEWARD"];
 
