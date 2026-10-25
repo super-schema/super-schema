@@ -582,6 +582,34 @@ describe("interfaces with operations", () => {
     expect(!result.success && result.error.message).toMatch(/Order: interface "AddressApi" has operations/);
   });
 
+  // FINAL WAVE 2b, G12: the refusal is for a closure of SEVERAL entities (a bare model name cannot be qualified across namespaces). An
+  // entity that references only ITSELF is a closure of one: it is generated as before (the bare name is the model), operations included.
+  const selfWithOperations = () =>
+    member("o", "Sales", "Orders", "Order", [field("parent", "reference", 1, refTo({ entityId: "o", domain: "Sales", product: "Orders", entity: "Order" }))], withOperations("Order"));
+
+  it("openapi3: an entity that references only itself, with operations, is generated (a closure of one), the response typed with the Order model", async () => {
+    const { files } = await emit(closureOf([selfWithOperations()], [["Sales/Orders/Order"]]), "openapi3");
+    expect(files).toHaveLength(1);
+    expect(files[0].content).toContain("/addr/{id}:");
+    expect(files[0].content).toMatch(/\$ref: '?#\/components\/schemas\/Order'?/);
+  });
+
+  // The other targets do not take HTTP operations at all (a stand-alone entity with operations fails there with `Unknown decorator @path`,
+  // today and before closures): what is pinned is that the closure's refusal is NOT what a closure of one answers.
+  it.each(TARGETS.filter((target) => target !== "openapi3"))("%s: a closure of one is not refused as a multi-entity closure; it answers as the stand-alone entity does", async (target) => {
+    const solo = member("o", "Sales", "Orders", "Order", [field("x", "string", 1)], withOperations("Order"));
+    const alone = await emitClosure(closureOf([solo]), target);
+    const self = await emitClosure(closureOf([selfWithOperations()], [["Sales/Orders/Order"]]), target);
+    expect(!self.success && self.error.message).not.toMatch(/multi-entity closure/);
+    expect(self.success).toBe(alone.success);
+  });
+
+  it("a self reference WITHOUT operations is unchanged (the closure plan, one file)", async () => {
+    const self = member("o", "Sales", "Orders", "Order", [field("parent", "reference", 1, refTo({ entityId: "o", domain: "Sales", product: "Orders", entity: "Order" }))]);
+    const { files } = await emit(closureOf([self], [["Sales/Orders/Order"]]), "json-schema");
+    expect(files.map((f) => f.path)).toEqual(["Order.json"]);
+  });
+
   it("a stand-alone entity keeps its operations on openapi3 (today's behaviour)", async () => {
     const solo = member("o", "Sales", "Orders", "Order", [field("x", "string", 1)], withOperations("Order"));
     const { files } = await emit(closureOf([solo]), "openapi3");

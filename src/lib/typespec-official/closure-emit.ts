@@ -190,7 +190,12 @@ async function emitClosureUnguarded(closure: Closure, targetKey: TargetId): Prom
   const collisions = models.flatMap((model, i) => findNameCollisions(model, key).map((c) => `${label(i)}${describeNameCollision(c, key)}`));
   if (collisions.length > 0) return invalid(collisions);
 
-  const standalone = entities.length === 1 && closure.cycles.length === 0;
+  // A closure of ONE entity is generated from the stand-alone source, unless it references ITSELF (a cycle of one), which the closure plan
+  // writes with a file / record / class pointing back at itself. Operations are the exception: their model names are free text, bare, and
+  // in the closure plan a bare `Order` binds to the entity's NAMESPACE (the type silently becomes `{}`), so an entity that references only
+  // itself and has operations keeps the stand-alone source, where the bare name IS the model (as it was before closures).
+  const hasOperations = models.some((model) => (model.interfaces ?? []).some((iface) => iface.operations.length > 0));
+  const standalone = entities.length === 1 && (closure.cycles.length === 0 || hasOperations);
   const plan = standalone ? standalonePlan(closure, models[0], key) : combinedPlan(closure, models, key);
   if (plan.errors.length > 0) return invalid(plan.errors, plan.warnings);
 
