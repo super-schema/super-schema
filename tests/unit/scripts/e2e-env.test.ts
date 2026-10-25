@@ -143,7 +143,7 @@ describe("the second app (git import in `any` mode) and the browser run's E2E_GI
     expect(second.AUTH_URL).toBe(SECOND);
     expect(second.NEXTAUTH_URL).toBe(SECOND);
     // everything else is the first app's: one database, one secret (a login is a signed cookie of that secret), one API key
-    const differing = ["SCHEMA_IMPORT_GIT_MODE", "AUTH_URL", "NEXTAUTH_URL"];
+    const differing = ["SCHEMA_IMPORT_GIT_MODE", "AUTH_URL", "NEXTAUTH_URL", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR"];
     const without = (env: Record<string, string>) => Object.fromEntries(Object.entries(env).filter(([name]) => !differing.includes(name)));
     expect(without(second)).toEqual(without(first));
   });
@@ -153,6 +153,27 @@ describe("the second app (git import in `any` mode) and the browser run's E2E_GI
     expect(second.SCHEMA_IMPORT_GIT_MODE).toBe("any");
     expect(JSON.stringify(second)).not.toContain("devpass");
     expect(second.GOOGLE_CLIENT_ID).toBe("");
+  });
+
+  // M7: `any` mode makes the server call `gh api` for a git URL; with the developer's own HOME and token that is the developer's login, so the
+  // test could read a private repository. The second app gets none of it.
+  it("does not inherit the developer's `gh` credentials: the tokens are blank and the config directory is an empty one of the run's own", () => {
+    const shell = hermeticEnv({ ...DEVELOPER, GH_TOKEN: "ghp_dev", GITHUB_TOKEN: "ghp_dev2", GH_ENTERPRISE_TOKEN: "ghe_dev", GITHUB_ENTERPRISE_TOKEN: "ghe_dev2", GH_CONFIG_DIR: "/home/dev/.config/gh", HOME: "/home/dev" });
+    const second = secondAppEnvironment(shell, RUN, SECOND);
+    expect(second.GH_TOKEN).toBe("");
+    expect(second.GITHUB_TOKEN).toBe("");
+    expect(second.GH_ENTERPRISE_TOKEN).toBe("");
+    expect(second.GITHUB_ENTERPRISE_TOKEN).toBe("");
+    expect(second.GH_CONFIG_DIR).toBe("/tmp/ss-e2e-x/gh-config-none"); // next to RUN.pgliteDir, in the run's own temporary directory
+    expect(JSON.stringify(second)).not.toMatch(/ghp_dev|ghe_dev|\.config\/gh/);
+    // the first app's environment is the shell's rest, as before (its git mode refuses a git URL before it reaches `gh`)
+    expect(appEnvironment(shell, RUN)).not.toHaveProperty("GH_CONFIG_DIR", "/tmp/ss-e2e-x/gh-config-none");
+  });
+
+  it("without a directory given the tokens are still blank (and the shell's config directory is not passed on)", () => {
+    const second = secondAppEnvironment(hermeticEnv({ ...DEVELOPER, GH_TOKEN: "ghp_dev", GH_CONFIG_DIR: "/home/dev/.config/gh" }), RUN, SECOND);
+    expect(second.GH_TOKEN).toBe("");
+    expect(second.GH_CONFIG_DIR).not.toBe("/home/dev/.config/gh");
   });
 
   it("gives the browser run the second origin as E2E_GIT_ANY_BASE_URL when the run has one, and nothing when it has none", () => {

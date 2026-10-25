@@ -215,7 +215,20 @@ export function appEnvironment(base, run) {
  * @returns {Record<string, string>}
  */
 export function secondAppEnvironment(base, run, secondBaseUrl) {
-  return { ...appEnvironment(base, run), AUTH_URL: secondBaseUrl, NEXTAUTH_URL: secondBaseUrl, SCHEMA_IMPORT_GIT_MODE: "any" };
+  return {
+    ...appEnvironment(base, run),
+    AUTH_URL: secondBaseUrl,
+    NEXTAUTH_URL: secondBaseUrl,
+    SCHEMA_IMPORT_GIT_MODE: "any",
+    // `any` mode makes the server run `gh api` for a git URL, and `gh` would use the developer's own login (a token variable, or the
+    // config directory under their real HOME): the @external test could then read a private repository. No token, and a config directory
+    // of the run's own that does not exist (next to the run's pglite directory, in its temporary directory).
+    GH_TOKEN: "",
+    GITHUB_TOKEN: "",
+    GH_ENTERPRISE_TOKEN: "",
+    GITHUB_ENTERPRISE_TOKEN: "",
+    GH_CONFIG_DIR: `${run.pgliteDir.replace(/[\\/][^\\/]*$/, "")}/gh-config-none`,
+  };
 }
 
 /**

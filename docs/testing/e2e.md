@@ -160,6 +160,11 @@ decides what a baseline looks like. Firefox and WebKit (`firefox-smoke`, `webkit
    origin like the first app's, and gives the browser run its origin as `E2E_GIT_ANY_BASE_URL`. Its output goes to
    `<output root>/server-git-any.log`, and it is stopped first in the teardown. That test logs in on the second server itself (a
    session is that server's). Without a second app the test skips, and the skipped-test gate lists it (below).
+   **It never uses your `gh` login.** In `any` mode the server runs `gh api` for a git URL, and `gh` would otherwise read the developer's own
+   credentials (`GH_TOKEN`, `GITHUB_TOKEN`, the enterprise variants, or the config directory under the real `HOME`); the test could then fetch
+   a private repository. The second app therefore gets blank tokens and `GH_CONFIG_DIR=<the run's tmp>/gh-config-none` (a directory that does
+   not exist), whatever the shell has set (`secondAppEnvironment`, pinned in `tests/unit/scripts/e2e-env.test.ts`). The test only needs the
+   server to TRY the fetch and fail on the host, not on the policy.
 8. `node scripts/e2e-phases.mjs <tier>` with `E2E_BASE_URL`, `E2E_DATABASE_URL`, `E2E_OUTPUT_ROOT`, `E2E_AUTH_STATE` and `E2E_BROWSER_CHANNEL` of the run's own
    (and `E2E_GIT_ANY_BASE_URL` with a second app). The exit code of the run is that command's: 124 when its stall watchdog ended a Playwright
    that stopped making progress (below), 1 when a test failed or when a test that is not `@external` was skipped (below).
