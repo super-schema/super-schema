@@ -137,13 +137,26 @@ describe("JSON Schema importer: allOf merge semantics", () => {
     expect(f.constraints).toContainEqual({ type: "maxLength", value: 5 });
     expect(f.constraints).toContainEqual({ type: "minLength", value: 2 });
 
-    let deep: Record<string, unknown> = { type: "string" };
-    for (let i = 0; i < 5000; i++) deep = { allOf: [deep] };
-    const raw = JSON.stringify({ title: "T", type: "object", properties: { v: { type: "string" } }, allOf: [deep] });
-    expect(() => parseJsonSchemaDocument(raw)).not.toThrow();
-    const rawProp =
-      '{"title":"T","type":"object","properties":{"v":' + '{"allOf":['.repeat(2000) + '{"type":"string"}' + "]}".repeat(2000) + "}}";
-    expect(() => parseJsonSchemaDocument(rawProp)).not.toThrow();
+    // The hostile documents are built as TEXT, by repetition: building the 5000-level nest as an object and calling JSON.stringify on it
+    // throws a RangeError on Node 20 (a smaller stack than Node 22 and later) BEFORE the importer is ever called, and the test then
+    // failed for a reason that is not the importer's. JSON.parse reads these (its own recursion is iterative in V8), the importer bounds them.
+    const nest = (depth: number, inner: string) => '{"allOf":['.repeat(depth) + inner + "]}".repeat(depth);
+    const root = nest(5000, '{"type":"string"}');
+    const raw = `{"title":"T","type":"object","properties":{"v":{"type":"string"}},"allOf":[${root}]}`;
+    const rawProp = `{"title":"T","type":"object","properties":{"v":${nest(2000, '{"type":"string"}')}}}`;
+    for (const [name, text] of [["5000 levels under the root", raw], ["2000 levels in a property", rawProp]] as const) {
+      // Not "does not throw": it ANSWERS. Either the import succeeded (the bound truncated the nest) or it is a PARSE_ERROR that says the document is too deep.
+      const result = parseJsonSchemaDocument(text);
+      if (result.success) {
+        expect(result.data.entities.length, name).toBeGreaterThan(0);
+      } else {
+        expect(result.error.code, name).toBe("PARSE_ERROR");
+        expect(result.error.message.length, name).toBeGreaterThan(0);
+      }
+    }
+    // And a document just under the bound is imported, not refused: the bound is not tighter than it says.
+    const fine = parseJsonSchemaDocument(`{"title":"T","type":"object","properties":{"v":${nest(50, '{"type":"string"}')}}}`);
+    expect(fine.success).toBe(true);
   });
 
   describe("inheritance cycles", () => {

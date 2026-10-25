@@ -170,7 +170,9 @@ describe("uniqueIn against the reference `uniqueKey` (which copies the set and s
       subject.add(actual);
     }
     expect(reference.size).toBe(subject.size);
-  });
+    // The REFERENCE copies the set and searches from -2 on every step: quadratic by design, about 4 s alone and more than vitest's default 5 s
+    // when the machine is busy (it failed in a whole-suite run). The timeout is the cost of the reference, not a slack for the code under test.
+  }, 60_000);
 
   it("bases that differ only in their last characters (so they share every candidate) are allocated in turn, in order, without repeating a key", () => {
     const bases = Array.from({ length: 300 }, (_, i) => `${"k".repeat(62)}${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}`);
