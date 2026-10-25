@@ -37,8 +37,9 @@ Tests carry their tier as a tag: `test(name, { tag: ["@smoke"] }, fn)`. `tests/u
 | Tier | Selects | Browsers | When |
 | --- | --- | --- | --- |
 | `smoke` | `@smoke`: login, the basic create flows, one generate | Chromium, Firefox, WebKit | every pull request |
-| `regression` | everything except `@slow` and `@external` | Chromium (+ the `a11y` project) | nightly and before a release; sharded |
-| `nightly` | everything, unfiltered: adds `@slow` (the JSON Schema matrix, the navigation crawl) and `@external` (network, a second server) | every project: Chromium, the smoke tests on Firefox and WebKit, `a11y`, `visual` | nightly, before a release |
+| `regression` | everything except `@slow` and `@external`, the REST API spec (`api-v1.spec.ts`) and the accessibility scan (`a11y.spec.ts`) included | Chromium (+ the `a11y` project) | nightly and before a release; sharded |
+| `nightly` | everything, unfiltered: adds `@slow` (the JSON Schema matrix, the navigation crawl) and `@external` (network, a second server) | every project: Chromium, the smoke tests on Firefox and WebKit, `a11y`, and `visual` where it exists (in the Playwright image) | nightly, before a release |
+| `visual` | the screenshots (`visual.spec.ts`, project `visual`), made and compared only inside the Playwright Docker image: [Visual snapshots](#visual-snapshots) | the image's Chromium, on Linux | the `e2e-visual` job; by hand before a release |
 
 A test is never both `@smoke` and `@slow` / `@external` (the guard enforces that too). The Playwright projects (`setup`, `chromium`,
 `firefox-smoke`, `webkit-smoke`, `serial-after`, `visual`, `a11y`) are described at the top of `playwright.config.ts`.
@@ -187,7 +188,8 @@ own; `.github/workflows/ci.yml` (the unit tests, on PGlite and PostgreSQL) is un
 | pull request | `smoke`: the smoke tier on Chromium, Firefox and WebKit | `e2e-smoke` | 25 min | **yes**, once a maintainer requires it (below) |
 | nightly (`schedule`, 02:23 UTC), a tag `v*` | `regression`: the regression tier, four shards | `e2e-regression (1/4)`, `e2e-regression (2/4)`, `e2e-regression (3/4)`, `e2e-regression (4/4)` | 60 min each | no, it reports |
 | nightly, a tag `v*` | `nightly-extra`: what the nightly tier has and the regression tier has not, three legs | `e2e-nightly-extra (slow-chromium)`, `e2e-nightly-extra (slow-serial)`, `e2e-nightly-extra (cross-browser)` | 90 min each | no, it reports |
-| `workflow_dispatch` | the input `tier`: `smoke` runs `smoke`; `regression` runs `regression`; `nightly` runs `regression` and `nightly-extra` | as above | as above | no |
+| nightly, a tag `v*` | `visual`: the screenshots, the browser run in the Playwright image ([Visual snapshots](#visual-snapshots)) | `e2e-visual` | 30 min | no, it reports (and is not to be required: below) |
+| `workflow_dispatch` | the input `tier`: `smoke` runs `smoke`; `regression` runs `regression`; `nightly` runs `regression`, `nightly-extra` and `visual`; `visual` runs `visual` alone | as above | as above | no |
 
 A leg or a shard that fails does not cancel the others (`fail-fast: false`). A newer push to a pull request cancels that pull request's
 older run; nothing else is cancelled.
@@ -201,6 +203,8 @@ required status check. This is the only new check to require.
 - GitHub lists a check only after it has reported once: open a pull request first, let `e2e-smoke` run, then add it.
 - Require `e2e-smoke` only after it has run green once (for example by a `workflow_dispatch` run of the `smoke` tier on `main`): a
   required check that always fails blocks every merge.
+- Do not require `e2e-visual` either: it compares screenshots made on one CPU architecture with a render on another (below), and is for reading until a
+  first week of runs says that it never fails by itself; whether it ever gates a merge is a repository setting, and a decision for the maintainers.
 - Do not require the `e2e-regression (...)` or `e2e-nightly-extra (...)` checks. They do not run on pull requests, and a required check
   that never reports blocks every merge. They are for reading the next morning, and before a release.
 - The `pull_request` trigger has no path or branch filter on purpose, so `e2e-smoke` reports on every pull request. Keep it that way.
@@ -223,8 +227,8 @@ npm run test:e2e:release -- --tier smoke --project firefox-smoke --project webki
 ```
 
 `slow-serial` has a tier of its own because Playwright runs a project's dependencies in full whatever `--grep` says: `--project serial-after`
-with the grep would run all of `chromium` first. The `serial` tier logs in and runs `serial-after` alone. A `visual` leg (`--tier nightly
---project visual`, in the Playwright Docker image) is added with the visual specs.
+with the grep would run all of `chromium` first. The `serial` tier logs in and runs `serial-after` alone. The screenshots are the `e2e-visual` job
+(they need the Playwright image: [Visual snapshots](#visual-snapshots)); the REST API spec and the accessibility scan are in the regression shards.
 
 ### Artifacts, the flaky list, and the same run on your machine
 
@@ -285,9 +289,74 @@ the run lists each phase's result and the report paths that exist. A test that p
 hidden: it is listed as flaky in all of the above. Old runs stay in `test-results/run-<id>`; delete them when you do not need them
 (`test-results` is ignored by version control).
 
+## REST API
+
+`tests/e2e/api-v1.spec.ts` (`@regression`, plus the health test in `@smoke`) calls the REST API over HTTP with Playwright's `request`, no browser, and
+asserts status codes and bodies: health, `/api/v1/docs` (a valid OpenAPI 3 document that names every route group), the 401 of every non-public
+route (the spec reads `src/app/api` and fails on a route it does not know), schemas (list, filters, detail), emit and validate (the closure
+`files`, `resolution`, the 422 `AMBIGUOUS_REFERENCE` error and its fix), the rate limit, webhooks, notifications, event specs, and what a bad request gets
+(a body that is not JSON, several megabytes, a NUL byte in an id, a wrong method: never a 500, never a stack trace).
+
+Three callers (`tests/e2e/helpers/api.ts`): the admin's saved session (a VIEWER on this API, always), the run's API key (`Authorization: Bearer`: the release runner
+makes one up per run, starts the app with it as `API_KEY` and gives the browser run the same value as `E2E_API_KEY`; against a server you started yourself,
+set both to one value), and nobody. Every test sends a client address of its own in `X-Forwarded-For`, so the rate limit (100 requests a minute per
+address) never couples two tests. What the spec found and could not fix is in [known-defects.md](known-defects.md) (KD-024 to KD-028): webhooks cannot be
+created by anyone, a session is a viewer, the schemas routes are not tenant scoped, the webhook list carries every endpoint's secret, the rate limit trusts a header.
+
+```bash
+npm run test:e2e:release -- --tier regression --project chromium --reuse-build -- tests/e2e/api-v1.spec.ts
+```
+
+## Accessibility
+
+`tests/e2e/a11y.spec.ts` scans every route of the page sweep and the dialogs, tabs and overlays that matter with axe-core against a recorded baseline
+(`tests/e2e/a11y-baseline.json`): a new violation fails, an entry that no longer occurs fails ("remove it"), so the baseline only shrinks. How it
+works, how to rewrite it (`UPDATE_A11Y_BASELINE=1`), what was fixed and what is left: [a11y.md](a11y.md).
+
 ## Visual snapshots
 
-<!-- TODO(Task 7): how to update the visual snapshots (generated in the Playwright Docker image, never on a laptop) and how a diff is read. -->
+`tests/e2e/visual.spec.ts` takes nine screenshots (login, register, the domain grid, an empty product, the entity editor, admin settings, the type mapping
+table, the governance dashboard with nothing to decide, the shell's 404) and compares them with `toHaveScreenshot`. **Snapshots are made, and compared, only
+inside the official Playwright Docker image**, `mcr.microsoft.com/playwright:v<the installed @playwright/test>-jammy` (today `v1.59.1-jammy`): the same page
+renders differently on macOS and on Linux, and a snapshot made on a laptop would fail everywhere else. The `visual` project does not exist outside the
+image (`playwright.config.ts`: `E2E_VISUAL_IN_DOCKER=1`, which only the script below sets): it is not a test that skips itself, and a run that names it says why.
+
+```bash
+docker pull mcr.microsoft.com/playwright:v1.59.1-jammy      # once; about 2.5 GB. The runner never pulls it for you
+npm run test:e2e:visual                                       # compare to the committed snapshots (a difference fails, nothing is written)
+npm run test:e2e:update-snapshots                             # take every snapshot again and write it to tests/e2e/visual.spec.ts-snapshots/
+npm run test:e2e:update-snapshots -- --reuse-build -- --grep "login"   # options before the second --, Playwright's after it
+```
+
+(`node scripts/e2e-update-snapshots.mjs --help`.) Both are `node scripts/e2e-release.mjs --tier visual --docker-image <image>`: the database and the app are
+made on the host as for any tier, and the browser run, the login and the `visual` project, is `docker run` of the image (`scripts/e2e-visual-docker.mjs`):
+
+- the checkout is mounted at its own path, the container runs as your user (no file of the checkout becomes root's), and the container is
+  `ss-e2e-visual-<id>`, removed at the end whatever happened (`docker ps -a --filter name=ss-e2e-`; the suite never touches another container);
+- on macOS and Windows the container reaches the host's loopback through `host.docker.internal`: `scripts/e2e-in-docker.mjs` forwards its own
+  `127.0.0.1:<port>` of the app and of the database there, so the browser run uses the same URLs as on the host (and the app's own origin stays right); on Linux
+  it shares the host's network. The image ships Node 24, which the Node guard lists as untested: the container is told `E2E_ALLOW_UNSUPPORTED_NODE=1`;
+- a `node_modules` that is a symlink out of the checkout (a git worktree's) and an output root outside it are mounted read-only and read-write at their own paths.
+
+**What makes a page the same every time** (`visual.spec.ts` has the reasons): a tenant of its own with fixed names (`Visual Fixtures`: the domains Billing and
+Customers, the products Invoicing, Payments (empty) and Profiles, the entity Customer with six fields; the viewed tenant is the `active_tenant` cookie, so the
+explorer, the grid and the governance dashboard list this and nothing else); 1280x800, scale 1, English, UTC, reduced motion, no animation and no caret; a wait for
+the page to settle (fonts loaded, nothing being fetched, nothing moving); a mask over every date, "N minutes ago" and the notification bell. The tolerance is `threshold: 0.1`
+and `maxDiffPixelRatio: 0.0005` (about 500 pixels of 1280x800), in `playwright.config.ts`: with Playwright's default threshold of 0.2 a purple turned copper
+passed; at 0.1 the same change fails all nine pages. The same image on the same machine differs by 0 pixels.
+
+**When it fails.** The html report (`<output root>/playwright-report/main`) and `<output root>/test-results/main/artifacts/<test>/` hold the expected, actual and diff
+images. A change you meant (a new look): run `npm run test:e2e:update-snapshots`, look at every image that changed (`git diff --stat tests/e2e/visual.spec.ts-snapshots`, then
+open them), and commit them with the change. A change you did not mean is the bug. A snapshot that changed without a change to the product is a page that is not
+still enough: find what moves and mask it, do not widen the tolerance. A snapshot whose name has another platform than `-visual-linux` was not made in the image, and
+`tests/unit/e2e/visual-snapshots.test.ts` refuses it.
+
+**In CI** the `e2e-visual` job (nightly, tags, by hand) pulls the image of the installed version and runs `npm run test:e2e:visual` when the repository has snapshots;
+when it has none it makes them, writes a notice, and uploads them as the artifact `e2e-visual-snapshots` for a maintainer to review and commit. It is not a job-level
+`container:` because the runner needs Docker for its database, which a job container does not have; the browser run is inside the image all the same. The first
+snapshots in the repository were made on an arm64 machine (Apple Silicon) and CI is x86-64: Chromium's text rendering can differ by a few pixels between the two. If the first
+nightly runs report differences nobody made, replace the snapshots with the ones the job uploads (it makes them when none are committed: delete the committed ones in a branch
+and run the job by hand) before anyone treats `e2e-visual` as a gate.
 
 ## Troubleshooting
 
@@ -343,6 +412,12 @@ hidden: it is listed as flaky in all of the above. Old runs stay in `test-result
   exit 2 there, while a bare `node scripts/e2e-phases.mjs` with a bad `E2E_GLOBAL_TIMEOUT_MS` only meets it when Playwright loads
   `playwright.config.ts`: Playwright throws and the phase exits **1** (a bad `E2E_STALL_MS` is exit 2 in both).
   Ctrl-C ends the run and the teardown removes its container as usual.
+- **"the Playwright image ... is not on this machine"** (exit 3, before anything is provisioned): `docker pull mcr.microsoft.com/playwright:v<version>-jammy` (the version of
+  `@playwright/test` in `node_modules`; about 2.5 GB). The runner never pulls it. A `ss-e2e-visual-*` container left by a killed run: `docker rm -f <name>`.
+- **The browser run in the image cannot reach the app** (the setup login times out, `ECONNREFUSED` on the app's port): on macOS the container reaches the host through
+  `host.docker.internal`, which Docker Desktop and Rancher Desktop both provide; do not add `--add-host=host.docker.internal:host-gateway` (on Rancher Desktop it points
+  the name at the VM, not at the host). `docker run --rm <image> getent hosts host.docker.internal` says where the name goes.
+- **"the `visual` project exists only inside the Playwright Docker image"**: you ran `--project=visual` (or the spec) outside it. Use `npm run test:e2e:visual`.
 - **Port conflicts**: ports are picked at random and checked when the run starts; if the database port is taken at that moment the runner
   picks another (three tries).
 

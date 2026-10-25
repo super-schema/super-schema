@@ -1,5 +1,5 @@
 /**
- * Screenshots of a few stable pages, compared with `toHaveScreenshot`, in the `visual` project: Chromium, 1280x800, light, still, English,
+ * Screenshots of a few stable pages, compared with `toHaveScreenshot`, in the `visual` project: Chromium, 1280x800, the app's default (dark) theme, still, English,
  * UTC. The project exists only INSIDE the Playwright Docker image (playwright.config.ts: E2E_VISUAL_IN_DOCKER), where the snapshots were
  * made and are compared: the same page renders differently on macOS and on Linux, and a snapshot made anywhere else would fail
  * everywhere else. `npm run test:e2e:update-snapshots` makes them, `npm run test:e2e:visual` compares (docs/testing/e2e.md); the files are

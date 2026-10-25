@@ -8,9 +8,10 @@
  * `UPDATE_A11Y_BASELINE=1` rewrites the entries of the states that ran (the tests then run one after the other, one writer) instead of
  * comparing; CI never sets it. The rules, how to shrink the baseline, and what is left in it: docs/testing/a11y.md.
  *
- * The project is `a11y` (Chromium, the Google Chrome of the machine when there is one, as in playwright.config.ts). The page is light
- * (`colorScheme`) and still (`reducedMotion`) so a scan sees the same colours every time, and each scan waits for a quiet page first
- * (helpers/axe.ts). The scan reads the document the user sees; the AsyncAPI preview's iframe is out of it.
+ * The project is `a11y` (Chromium, the Google Chrome of the machine when there is one, as in playwright.config.ts). The browser asks for a
+ * light scheme (`colorScheme`) and reduced motion (`reducedMotion`) so nothing depends on the machine's own settings; the app shows its
+ * own default theme, DARK (src/lib/theme.tsx), which is what is scanned. Each scan waits for a quiet page first (helpers/settle.ts). The
+ * scan reads the document the user sees; the AsyncAPI preview's iframe is out of it.
  *
  * States: every route of tests/e2e/fixtures/routes.ts (the page sweep's table), login and register (signed out), the shell's 404, and, in
  * a workspace made for the test, the domain and product pages, an entity page with fields, its Schemas tab, the publish dialog, the new
