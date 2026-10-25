@@ -107,7 +107,7 @@ describe("deleteDomainAction", () => {
     expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
   });
 
-  it("bootstraps the first registered user when no Admin exists", async () => {
+  it("does not make the first registered user an Admin when none exists: the check is a read, the user is refused and no role is written", async () => {
     mockPrisma.user.findUnique.mockImplementation(async (args) =>
       args.select?.roles
         ? { id: "admin-1", roles: [] }
@@ -117,14 +117,20 @@ describe("deleteDomainAction", () => {
 
     const result = await deleteDomainAction("domain-1");
 
-    expect(result).toEqual({ success: true });
-    expect(mockPrisma.userRole.create).toHaveBeenCalledWith({
-      data: {
-        id: "system-bootstrap-global-admin",
-        userId: "admin-1",
-        role: "ADMIN",
-        domainId: null,
-      },
+    expect(result).toEqual({ error: "Administrator access is required to delete domains" });
+    expect(mockPrisma.userRole.create).not.toHaveBeenCalled();
+    expect(mockPrisma.userRole.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.user.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.domain.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.domain.delete).not.toHaveBeenCalled();
+  });
+
+  it("asks for the administrator by the global scope key (a tenant-scoped ADMIN row is not a platform administrator)", async () => {
+    await deleteDomainAction("domain-1");
+
+    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "admin-1" },
+      select: { id: true, roles: { where: { role: "ADMIN", scopeKey: "G" }, select: { id: true }, take: 1 } },
     });
   });
 
