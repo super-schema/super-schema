@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Shield } from "lucide-react";
+import { createLatestRequestGuard } from "@/lib/latest-request";
 import { ComplianceFilterSidebar } from "@/features/compliance/ComplianceFilterSidebar";
 import { ComplianceResultsTable } from "@/features/compliance/ComplianceResultsTable";
 import { ComplianceGapsView } from "@/features/compliance/ComplianceGapsView";
@@ -49,6 +50,10 @@ export default function CompliancePage() {
   });
   const [gapsLoading, setGapsLoading] = useState(false);
 
+  // The latest request of each list: an older answer that arrives late must not replace a newer one (src/lib/latest-request.ts)
+  const fieldsRequest = useRef(createLatestRequestGuard());
+  const auditRequest = useRef(createLatestRequestGuard());
+
   // Audit trail state
   const [auditFilters, setAuditFilters] = useState<AuditTrailFilter>({});
   const [auditEntries, setAuditEntries] = useState<AuditTrailEntry[]>([]);
@@ -90,6 +95,7 @@ export default function CompliancePage() {
   }, [activeTab, auditFilters, auditPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function fetchFields() {
+    const isLatest = fieldsRequest.current.start();
     setLoading(true);
     setError(null);
     try {
@@ -99,6 +105,8 @@ export default function CompliancePage() {
         body: JSON.stringify({ filters, pagination: { page, pageSize: 25, sortBy, sortOrder } }),
       });
       const data = await res.json().catch(() => null);
+      // A newer request has been made (the filters changed again): this answer is stale, and the newer one sets the state.
+      if (!isLatest()) return;
       if (res.ok && data?.success) {
         setFields(data.data.fields);
         setTotal(data.data.total);
@@ -106,9 +114,9 @@ export default function CompliancePage() {
         setError(data?.error || `Failed to load compliance data (${res.status})`);
       }
     } catch {
-      setError("Network error — could not reach the compliance service.");
+      if (isLatest()) setError("Network error — could not reach the compliance service.");
     } finally {
-      setLoading(false);
+      if (isLatest()) setLoading(false);
     }
   }
 
@@ -136,6 +144,7 @@ export default function CompliancePage() {
   }
 
   async function fetchAuditTrail() {
+    const isLatest = auditRequest.current.start();
     setAuditLoading(true);
     setError(null);
     try {
@@ -145,6 +154,7 @@ export default function CompliancePage() {
         body: JSON.stringify({ filters: auditFilters, pagination: { page: auditPage, pageSize: 50 } }),
       });
       const data = await res.json().catch(() => null);
+      if (!isLatest()) return;
       if (res.ok && data?.success) {
         setAuditEntries(data.data.entries);
         setAuditTotal(data.data.total);
@@ -152,9 +162,9 @@ export default function CompliancePage() {
         setError(data?.error || `Failed to load audit trail (${res.status})`);
       }
     } catch {
-      setError("Network error — could not reach the compliance service.");
+      if (isLatest()) setError("Network error — could not reach the compliance service.");
     } finally {
-      setAuditLoading(false);
+      if (isLatest()) setAuditLoading(false);
     }
   }
 
