@@ -331,12 +331,15 @@ npm run test:e2e:update-snapshots -- --reuse-build -- --grep "login"   # options
 (`node scripts/e2e-update-snapshots.mjs --help`.) Both are `node scripts/e2e-release.mjs --tier visual --docker-image <image>`: the database and the app are
 made on the host as for any tier, and the browser run, the login and the `visual` project, is `docker run` of the image (`scripts/e2e-visual-docker.mjs`):
 
-- the checkout is mounted at its own path, the container runs as your user (no file of the checkout becomes root's), and the container is
-  `ss-e2e-visual-<id>`, removed at the end whatever happened (`docker ps -a --filter name=ss-e2e-`; the suite never touches another container);
+- the checkout is mounted at its own path, **read-only**: the container may write the run's output root and, only when the run updates the snapshots, `tests/e2e/visual.spec.ts-snapshots/`,
+  and nothing else; it runs as your user (no file of the checkout becomes root's), with `--init` and `--shm-size=1gb` (not the host's IPC namespace), no `--privileged`, no added capability, and
+  only the `E2E_*` names the browser run reads and `CI` (not the API key, not `DATABASE_URL`), passed by name. It is `ss-e2e-visual-<id>`, removed at the end whatever happened
+  (`docker ps -a --filter name=ss-e2e-`; the suite never touches another container). The image tag is mutable: `--image name:tag@sha256:<digest>` pins one;
 - on macOS and Windows the container reaches the host's loopback through `host.docker.internal`: `scripts/e2e-in-docker.mjs` forwards its own
   `127.0.0.1:<port>` of the app and of the database there, so the browser run uses the same URLs as on the host (and the app's own origin stays right); on Linux
   it shares the host's network. The image ships Node 24, which the Node guard lists as untested: the container is told `E2E_ALLOW_UNSUPPORTED_NODE=1`;
-- a `node_modules` that is a symlink out of the checkout (a git worktree's) and an output root outside it are mounted read-only and read-write at their own paths.
+- a `node_modules` that is a symlink out of the checkout (a git worktree's) is mounted read-only at its own path; an output root outside the checkout is mounted read-write like any other;
+- the runner logs the time of day on every line and the duration of every step that takes 2 s or more, and of the whole run (`done: exit 0 in 4m12s`), so a hole in a log has a name.
 
 **What makes a page the same every time** (`visual.spec.ts` has the reasons): a tenant of its own with fixed names (`Visual Fixtures`: the domains Billing and
 Customers, the products Invoicing, Payments (empty) and Profiles, the entity Customer with six fields; the viewed tenant is the `active_tenant` cookie, so the
