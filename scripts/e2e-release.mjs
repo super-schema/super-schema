@@ -63,7 +63,7 @@ import { SIGNALS, createInterrupt, exitCodeForSignal, killTree, parseMillis, sig
  * @typedef {{ command: string, args: string[], env: Record<string, string>, cwd: string }} CommandSpec
  * @typedef {{
  *   tier: string, keep: boolean, reuseBuild: boolean, listOnly: boolean, shard?: string, projects: string[], extra: string[],
- *   runId: string, containerName: string, image: string, dbPassword: string, authSecret: string,
+ *   runId: string, containerName: string, image: string, dbPassword: string, authSecret: string, apiKey: string,
  *   root: string, tmpDir: string, outputRoot: string, serverLog: string, authState: string,
  *   baseEnv: Record<string, string>, bins: { prisma: string, next: string }, phasesArgv: string[],
  *   browser: import("./e2e-browser.cjs").BrowserDecision, nodeText: string, knobs: Record<string, string>,
@@ -236,8 +236,8 @@ function resolveBins(root) {
 export function withPorts(fixed, ports) {
   const databaseUrl = `postgresql://${DB_USER}:${fixed.dbPassword}@127.0.0.1:${ports.db}/${DB_NAME}`;
   const baseUrl = `http://localhost:${ports.app}`;
-  const app = appEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, authSecret: fixed.authSecret, pgliteDir: path.join(fixed.tmpDir, "pglite-unused") });
-  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState, browserChannel: fixed.browser.channel, knobs: fixed.knobs });
+  const app = appEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, authSecret: fixed.authSecret, pgliteDir: path.join(fixed.tmpDir, "pglite-unused"), apiKey: fixed.apiKey });
+  const phases = phasesEnvironment(fixed.baseEnv, { databaseUrl, baseUrl, outputRoot: fixed.outputRoot, authState: fixed.authState, apiKey: fixed.apiKey, browserChannel: fixed.browser.channel, knobs: fixed.knobs });
   const node = process.execPath;
   return {
     ...fixed,
@@ -315,6 +315,7 @@ export function planRun(argv, env = process.env, options = {}) {
     image: POSTGRES_IMAGE,
     dbPassword: randomHex(16),
     authSecret: randomHex(32),
+    apiKey: randomHex(24),
     root,
     tmpDir,
     outputRoot,

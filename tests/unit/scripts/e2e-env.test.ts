@@ -28,7 +28,7 @@ import {
 } from "../../../scripts/e2e-env.mjs";
 
 const REPO = path.resolve(__dirname, "../../..");
-const RUN = { databaseUrl: "postgresql://postgres:pw@127.0.0.1:21000/superschema", baseUrl: "http://localhost:22000", authSecret: "run-secret", pgliteDir: "/tmp/ss-e2e-x/pglite-unused" };
+const RUN = { databaseUrl: "postgresql://postgres:pw@127.0.0.1:21000/superschema", baseUrl: "http://localhost:22000", authSecret: "run-secret", pgliteDir: "/tmp/ss-e2e-x/pglite-unused", apiKey: "run-api-key" };
 const DEVELOPER = {
   PATH: "/usr/bin",
   AUTH_URL: "http://localhost:3000",
@@ -50,7 +50,7 @@ describe("the groups", () => {
   it("pin the blanked names: a name is added or removed on purpose, with a reason in scripts/e2e-env.mjs", () => {
     expect([...HERMETIC_BLANKED_NAMES].sort()).toEqual(
       [
-        "AI_BASE_URL", "AI_MODEL", "AI_PROVIDER", "API_KEY",
+        "AI_BASE_URL", "AI_MODEL", "AI_PROVIDER",
         "ASYNCAPI_PARSER_BREAKER_MS", "ASYNCAPI_PARSER_IN_PROCESS", "ASYNCAPI_PARSER_MAX_MESSAGE_BYTES", "ASYNCAPI_PARSER_PARSE_TIMEOUT_MS", "ASYNCAPI_PARSER_REBUILD_BACKOFF_MS",
         "ASYNCAPI_PARSER_START_TIMEOUT_MS", "ASYNCAPI_PARSER_VALIDATE_TIMEOUT_MS", "ASYNCAPI_PARSER_WORKER", "ASYNCAPI_PARSER_WORKERS",
         "AUTH_REDIRECT_PROXY_URL", "AUTH_SECRET_1", "AUTH_SECRET_2", "AUTH_SECRET_3",
@@ -68,7 +68,7 @@ describe("the groups", () => {
   it("pin the names the run sets", () => {
     expect([...HERMETIC_SET_NAMES].sort()).toEqual(
       [
-        "AUTH_SECRET", "AUTH_TRUST_HOST", "AUTH_URL", "DATABASE_URL", "DB_PROVIDER", "E2E_DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "PGLITE_DATA_DIR",
+        "API_KEY", "AUTH_SECRET", "AUTH_TRUST_HOST", "AUTH_URL", "DATABASE_URL", "DB_PROVIDER", "E2E_DATABASE_URL", "NEXTAUTH_SECRET", "NEXTAUTH_URL", "PGLITE_DATA_DIR",
         "SCHEMA_CLASSIFICATION_CATEGORY_FIELD", "SCHEMA_CLASSIFICATION_EXTENSION_KEY", "SCHEMA_CLASSIFICATION_LEVEL_FIELD",
       ].sort(),
     );
@@ -151,10 +151,19 @@ describe("a fake developer environment never reaches a child", () => {
   });
 
   it("the developer's feature toggles and secrets are empty strings, not missing (a missing name is filled in by a .env)", () => {
-    for (const name of ["AI_PROVIDER", "AI_BASE_URL", "GOOGLE_CLIENT_ID", "API_KEY", "PGPASSWORD", "SCHEMA_IMPORT_GIT_MODE", "ASYNCAPI_PARSER_IN_PROCESS"]) {
+    for (const name of ["AI_PROVIDER", "AI_BASE_URL", "GOOGLE_CLIENT_ID", "PGPASSWORD", "SCHEMA_IMPORT_GIT_MODE", "ASYNCAPI_PARSER_IN_PROCESS"]) {
       expect(app[name], name).toBe("");
     }
     for (const name of HERMETIC_BLANKED_NAMES) expect(app[name], name).toBe("");
+  });
+
+  it("the REST API key is the run's own (a developer's API_KEY is dropped), the app gets it as API_KEY and the browser run as E2E_API_KEY", () => {
+    expect(app.API_KEY).toBe(RUN.apiKey);
+    expect(phases.E2E_API_KEY).toBe(RUN.apiKey);
+    expect(phases).not.toHaveProperty("API_KEY");
+    expect(app).not.toHaveProperty("E2E_API_KEY");
+    const { apiKey: _none, ...withoutKey } = RUN;
+    expect(phasesEnvironment(base, { ...withoutKey, outputRoot: "/out", authState: "/a.json" })).not.toHaveProperty("E2E_API_KEY");
   });
 
   it("nothing of the developer's values is left in any child's environment", () => {
@@ -229,7 +238,7 @@ describe("a name defined as an empty string beats a checkout's .env in the loade
     AUTH_SECRET: env.AUTH_SECRET,
     AI_PROVIDER: "",
     GOOGLE_CLIENT_ID: "",
-    API_KEY: "",
+    API_KEY: env.API_KEY, // the run's own key, not the .env's
     DATABASE_URL: env.DATABASE_URL,
     ONLY_IN_THE_FILE: "from-the-file", // the loader did run: it filled in what the process environment does not define
   });

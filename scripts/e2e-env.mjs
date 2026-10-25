@@ -9,7 +9,7 @@
 // the process environment wins in all three loaders, even as an empty string (tests/unit/scripts/e2e-env.test.ts runs that probe against
 // a real `.env`). Every name the app reads is therefore in exactly one of four groups:
 //
-//   SET      the run's own value (database, auth origin and secret, ...);
+//   SET      the run's own value (database, auth origin and secret, the REST API key, ...);
 //   BLANKED  defined as "" for the children that load a `.env` (app, migrate, seed, build): the app treats "" as "not configured";
 //   DROPPED  removed from the shell and left undefined: where "" would mean something other than the default, or no loader of a `.env`
 //            reaches it (NODE_ENV is Next's, TEST_EMAIL is read by the browser run, which loads no `.env`);
@@ -32,16 +32,22 @@ export const CLASSIFICATION_DEFAULTS = {
 };
 
 /**
- * What the run decides, for the children that start the app or prepare its database. `run` is `{ databaseUrl, baseUrl, authSecret, pgliteDir }`.
+ * What the run decides, for the children that start the app or prepare its database. `run` is `{ databaseUrl, baseUrl, authSecret, pgliteDir, apiKey }`.
+ *
+ * API_KEY is SET to a random key of the run (not blanked): the REST API's key authentication (`Authorization: Bearer <key>`, src/app/api/v1/middleware.ts)
+ * is the only way to a role above VIEWER there (a session is always a VIEWER), and the webhook endpoints are for admins. The browser run
+ * is told the same key as E2E_API_KEY (`phasesEnvironment`) so tests/e2e/api-v1.spec.ts can call the API as a key holder. The key never leaves
+ * the run: it is random per run, it lives in two children's environments, and a developer's own API_KEY is dropped like any other.
  *
  * AUTH_URL and AUTH_SECRET are SET, not blanked: Auth.js prefers them over the NEXTAUTH_* pair (`AUTH_URL ?? NEXTAUTH_URL`: an empty
  * string is not nullish, so a blank AUTH_URL would also switch off NEXTAUTH_URL and the secret).
  *
- * @param {{ databaseUrl: string, baseUrl: string, authSecret: string, pgliteDir: string }} run
+ * @param {{ databaseUrl: string, baseUrl: string, authSecret: string, pgliteDir: string, apiKey: string }} run
  * @returns {Record<string, string>}
  */
 export function setValues(run) {
   return {
+    API_KEY: run.apiKey,
     DB_PROVIDER: "postgresql",
     DATABASE_URL: run.databaseUrl,
     E2E_DATABASE_URL: run.databaseUrl,
@@ -55,7 +61,7 @@ export function setValues(run) {
   };
 }
 
-const PLACEHOLDER = { databaseUrl: "", baseUrl: "", authSecret: "", pgliteDir: "" };
+const PLACEHOLDER = { databaseUrl: "", baseUrl: "", authSecret: "", pgliteDir: "", apiKey: "" };
 export const HERMETIC_SET_NAMES = Object.freeze(Object.keys(setValues(PLACEHOLDER)));
 
 /** Defined as "" for the app, migrate, seed and build: every optional feature toggle, secret or connection setting a `.env` could supply. */
@@ -72,8 +78,6 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   "AI_PROVIDER",
   "AI_BASE_URL",
   "AI_MODEL",
-  // src/app/api/v1/middleware.ts: the REST API key (empty = key authentication is off)
-  "API_KEY",
   // prisma: other connection strings
   "DIRECT_URL",
   "SHADOW_DATABASE_URL",
@@ -183,7 +187,7 @@ export function hermeticEnv(env) {
  * the run's own values.
  *
  * @param {Record<string, string>} base `hermeticEnv(shell)`
- * @param {{ databaseUrl: string, baseUrl: string, authSecret: string, pgliteDir: string }} run
+ * @param {{ databaseUrl: string, baseUrl: string, authSecret: string, pgliteDir: string, apiKey: string }} run
  * @returns {Record<string, string>}
  */
 export function appEnvironment(base, run) {
@@ -198,7 +202,9 @@ export function appEnvironment(base, run) {
  * when the runner decided nothing (the shell's own value was dropped from `base`). `run.knobs` is `runnerKnobs(shell)`.
  *
  * @param {Record<string, string>} base
- * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string, browserChannel?: string, knobs?: Record<string, string> }} run
+ * `run.apiKey` is the key the app was started with (`API_KEY`); the browser run gets it as E2E_API_KEY (nothing when the run has none).
+ *
+ * @param {{ databaseUrl: string, baseUrl: string, outputRoot: string, authState: string, apiKey?: string, browserChannel?: string, knobs?: Record<string, string> }} run
  * @returns {Record<string, string>}
  */
 export function phasesEnvironment(base, run) {
@@ -206,6 +212,7 @@ export function phasesEnvironment(base, run) {
     ...base,
     ...(run.knobs ?? {}),
     ...(run.browserChannel ? { E2E_BROWSER_CHANNEL: run.browserChannel } : {}),
+    ...(run.apiKey ? { E2E_API_KEY: run.apiKey } : {}),
     DB_PROVIDER: "postgresql",
     DATABASE_URL: run.databaseUrl,
     E2E_DATABASE_URL: run.databaseUrl,

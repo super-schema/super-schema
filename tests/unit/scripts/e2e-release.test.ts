@@ -226,9 +226,19 @@ describe("planRun: the environment of every child", () => {
     }
   });
 
+  it("gives the app a random API key of the run's own (never the developer's) and the browser run the same key as E2E_API_KEY, under no other name", () => {
+    expect(p.apiKey).toMatch(/^[0-9a-f]{48}$/);
+    expect(p.apiKey).not.toBe("dev-api-key");
+    for (const env of [p.env.app, p.env.db]) expect(env.API_KEY).toBe(p.apiKey);
+    expect(p.env.phases.E2E_API_KEY).toBe(p.apiKey);
+    expect(p.env.phases.API_KEY).toBeUndefined();
+    expect(p.env.app.E2E_API_KEY).toBeUndefined();
+    expect(plan(["--tier", "smoke"]).apiKey).not.toBe(plan(["--tier", "smoke"]).apiKey);
+  });
+
   it("defines the developer's feature toggles and secrets as empty strings for the children that load a .env, and leaves them out of the browser run", () => {
     for (const env of [p.env.app, p.env.db]) {
-      for (const name of ["GOOGLE_CLIENT_ID", "AI_PROVIDER", "API_KEY", "DIRECT_URL", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES", "PGHOST", "PGPASSWORD"]) {
+      for (const name of ["GOOGLE_CLIENT_ID", "AI_PROVIDER", "DIRECT_URL", "SCHEMA_IMPORT_GIT_MODE", "SCHEMA_IMPORT_GIT_SCOPES", "PGHOST", "PGPASSWORD"]) {
         expect(env[name], name).toBe("");
       }
     }
