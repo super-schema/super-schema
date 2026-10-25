@@ -240,6 +240,32 @@ function resolveBins(root) {
   return { prisma: bin("prisma", "prisma"), next: bin("next", "next") };
 }
 
+/**
+ * Make the run's directories: the output root (it may exist: it is where reports go) and the temp directory, which must NOT exist and which
+ * is recorded in `created` once it does. `mkdir` without `recursive` fails on an existing directory, so a path that is somebody else's is never
+ * adopted: the run stops with a message, and the teardown (which removes only what is in `created`) leaves it alone.
+ *
+ * @param {{ tmpDir: string, outputRoot: string }} plan
+ * @param {Set<string>} created
+ */
+export function makeRunDirs(plan, created) {
+  mkdirSync(plan.outputRoot, { recursive: true });
+  try {
+    mkdirSync(plan.tmpDir, { mode: 0o700 });
+  } catch (error) {
+    if (/** @type {any} */ (error)?.code === "EEXIST") throw new SetupError(`the run's temp directory ${plan.tmpDir} already exists and is not this run's: not touching it`);
+    throw error;
+  }
+  created.add(plan.tmpDir);
+}
+
+/** Remove the temp directory if, and only if, `makeRunDirs` made it. @param {{ tmpDir: string }} plan @param {Set<string>} created */
+export function removeRunTmp(plan, created) {
+  if (!created.has(plan.tmpDir)) return;
+  rmSync(plan.tmpDir, { recursive: true, force: true });
+  created.delete(plan.tmpDir);
+}
+
 /** The real path of the checkout's node_modules (a git worktree's is a symlink into another checkout), or undefined when there is none. */
 function realNodeModules(root) {
   try {
@@ -329,7 +355,7 @@ export function planRun(argv, env = process.env, options = {}) {
   const runId = randomHex(4);
   const outputRoot = path.resolve(args.outputRoot ?? env.E2E_OUTPUT_ROOT ?? path.join(root, "test-results", `run-${runId}`));
   // The browser run of the visual tier is in a container that sees the checkout and nothing else of the host: the login file lives under the output root.
-  const tmpDir = args.dockerImage ? path.join(outputRoot, "tmp") : path.join(options.tmpdir ?? os.tmpdir(), `${CONTAINER_PREFIX}${runId}`);
+  const tmpDir = args.dockerImage ? path.join(outputRoot, `tmp-${runId}`) : path.join(options.tmpdir ?? os.tmpdir(), `${CONTAINER_PREFIX}${runId}`);
   const baseEnv = hermeticEnv(env);
   if (args.tier === "visual" && !args.dockerImage && env.E2E_VISUAL_IN_DOCKER !== "1") {
     throw new UsageError(
@@ -816,6 +842,8 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
   });
   /** What a crash must still clean up synchronously (process 'exit'): the app's group and a container that is not kept. */
   const live = { container: undefined, server: undefined, visual: undefined };
+  /** The directories this run made itself: the only ones its teardown may remove. */
+  const createdDirs = new Set();
   process.on("exit", () => {
     if (live.server?.pid) signalGroup(live.server, "SIGKILL");
     if (live.container) spawnSync("docker", ["rm", "-f", live.container], { stdio: "ignore", timeout: 30_000 });
@@ -885,13 +913,8 @@ export function createRealDeps({ log = console.log, error = console.error } = {}
       return { ok: false, message: `Docker is not running (\`docker info\` failed: ${reason}). Start Docker Desktop (or the Docker daemon, colima ...) and run this again: the release run needs it for its throwaway database.` };
     },
 
-    makeDirs(plan) {
-      mkdirSync(plan.tmpDir, { recursive: true, mode: 0o700 });
-      mkdirSync(plan.outputRoot, { recursive: true });
-    },
-    removeTmp(plan) {
-      rmSync(plan.tmpDir, { recursive: true, force: true });
-    },
+    makeDirs: (plan) => makeRunDirs(plan, createdDirs),
+    removeTmp: (plan) => removeRunTmp(plan, createdDirs),
 
     async freePorts(ports) {
       const take = async (preferred, other) => {

@@ -4,6 +4,9 @@
  * environment that never carries a developer's database, and a teardown that happens, in reverse order, on a failing step, on a failing
  * run and on SIGINT / SIGTERM / SIGHUP. The runner's steps are driven with fake dependencies.
  */
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { planPhases, parseCli } from "../../../scripts/e2e-phases.mjs";
 import {
@@ -16,6 +19,8 @@ import {
   dockerRunEnv,
   hermeticEnv,
   judgeProviders,
+  makeRunDirs,
+  removeRunTmp,
   parseArgs,
   pickPorts,
   planRun,
@@ -906,5 +911,65 @@ describe("the visual tier: the browser run inside the Playwright image", () => {
     const p = plan(["--tier", "smoke"]);
     expect(p.visual).toBeUndefined();
     expect(p.commands.phases.command).not.toBe("docker");
+  });
+});
+
+describe("the run's temp directory: only what the runner made is removed", () => {
+  const scratch = () => mkdtempSync(path.join(tmpdir(), "e2e-release-test-"));
+  const IMAGE = "mcr.microsoft.com/playwright:v1.59.1-jammy";
+
+  it("is named after the run, inside the output root, for the visual tier (never a bare `tmp`: an output root can hold one that is somebody's)", () => {
+    const a = plan(["--tier", "visual", "--docker-image", IMAGE, "--output-root", "/out/root"]);
+    const b = plan(["--tier", "visual", "--docker-image", IMAGE, "--output-root", "/out/root"]);
+    expect(a.tmpDir).toBe(`/out/root/tmp-${a.runId}`);
+    expect(a.tmpDir).not.toBe(b.tmpDir);
+    expect(path.basename(a.tmpDir)).not.toBe("tmp");
+    expect(a.authState).toBe(path.join(a.tmpDir, "admin.json"));
+  });
+
+  it("makes the directory, and removes it afterwards", () => {
+    const root = scratch();
+    try {
+      const created = new Set<string>();
+      const p = { tmpDir: path.join(root, "tmp-abc"), outputRoot: path.join(root, "out") };
+      makeRunDirs(p, created);
+      expect(existsSync(p.tmpDir)).toBe(true);
+      writeFileSync(path.join(p.tmpDir, "admin.json"), "{}");
+      removeRunTmp(p, created);
+      expect(existsSync(p.tmpDir)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a directory that already exists and never removes it, whatever the teardown does afterwards (an --output-root that holds a tmp of its own)", () => {
+    const root = scratch();
+    try {
+      const outputRoot = path.join(root, "out");
+      const somebodys = path.join(outputRoot, "tmp");
+      mkdirSync(somebodys, { recursive: true });
+      writeFileSync(path.join(somebodys, "keep-me.txt"), "precious");
+      const created = new Set<string>();
+      // The runner's own name for it would collide only by chance; make it collide to prove the rule, not the luck.
+      const p = { tmpDir: somebodys, outputRoot };
+      expect(() => makeRunDirs(p, created)).toThrow(/already exists/);
+      removeRunTmp(p, created);
+      expect(readFileSync(path.join(somebodys, "keep-me.txt"), "utf8")).toBe("precious");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes nothing it did not create, even a path it is handed", () => {
+    const root = scratch();
+    try {
+      const other = path.join(root, "other");
+      mkdirSync(other);
+      writeFileSync(path.join(other, "x"), "1");
+      removeRunTmp({ tmpDir: other }, new Set<string>());
+      expect(existsSync(path.join(other, "x"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
