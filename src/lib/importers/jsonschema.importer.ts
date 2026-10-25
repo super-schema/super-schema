@@ -1450,10 +1450,18 @@ function readClassification(
 /** Keys of a referenced definition that name the DEFINITION, not the field that points at it. */
 const DEFINITION_ONLY_KEYS = new Set(["title", "$schema", "$id", "$defs", "definitions", "$ref"]);
 
+/** Keys that define what a shared enum / union IS (its symbols, its members, its text): they are the asset's, not annotations for the fields that use it. */
+const KIND_DEFINING_KEYS: Record<"enum" | "union", ReadonlySet<string>> = {
+  enum: new Set(["enum", "type", "description"]),
+  union: new Set(["oneOf", "anyOf", "description"]),
+};
+
 /**
- * The inline (non-entity, non-enum) `$defs` entries the given sources `$ref`, followed through chains, as extra annotation sources:
- * a `$ref: "#/$defs/ShortText"` field keeps the definition's constraints, description, deprecated flag and extensions. They come AFTER
- * the field's own sources, so the property's own siblings win on conflict. A cycle or a chain past MAX_REF_DEPTH stops quietly.
+ * The `$defs` entries the given sources `$ref`, followed through chains, as extra annotation sources: a `$ref: "#/$defs/ShortText"` field
+ * keeps the (inline) definition's constraints, description, deprecated flag and extensions. A shared enum / union definition has no place of
+ * its own for what it carries besides its symbols / members (`x-enum-varnames`, `deprecated`, vendor keys), so those reach the fields that
+ * use it the same way (what makes it the asset is left out). They come AFTER the field's own sources, so the property's own siblings win on
+ * conflict. A cycle or a chain past MAX_REF_DEPTH stops quietly.
  */
 function inlineDefinitionSources(own: JsonSchemaNode[], ctx: ResolveContext): JsonSchemaNode[] {
   const out: JsonSchemaNode[] = [];
@@ -1461,12 +1469,15 @@ function inlineDefinitionSources(own: JsonSchemaNode[], ctx: ResolveContext): Js
   const visit = (source: JsonSchemaNode, depth: number): void => {
     if (typeof source.$ref !== "string" || depth >= MAX_REF_DEPTH) return;
     const def = definitionFor(ctx.definitions, source.$ref);
-    if (def?.kind !== "inline" || seen.has(def.node)) return;
+    if ((def?.kind !== "inline" && def?.kind !== "enum" && def?.kind !== "union") || seen.has(def.node)) return;
     seen.add(def.node);
+    const kindKeys = def.kind === "inline" ? undefined : KIND_DEFINING_KEYS[def.kind];
     for (const member of schemaSources(def.node)) {
       charge(ctx.run);
       const view: JsonSchemaNode = {};
-      for (const [key, value] of Object.entries(member)) if (!DEFINITION_ONLY_KEYS.has(key)) setOwn(view, key, value);
+      for (const [key, value] of Object.entries(member)) {
+        if (!DEFINITION_ONLY_KEYS.has(key) && !(kindKeys?.has(key) ?? false)) setOwn(view, key, value);
+      }
       out.push(view);
       visit(member, depth + 1);
     }
@@ -1827,6 +1838,17 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
         values: [...new Set((def.node.enum ?? []).filter((v) => v !== null) as string[])],
       };
       if (typeof def.node.description === "string") parsedEnum.description = def.node.description;
+      // What the definition carries besides its symbols has no place on a shared enum row: kept here, and on every field that uses it.
+      const enumExtensions = captureExtensions(def.node, true);
+      const enumIgnored = ignoredKeywordsOf([def.node], true);
+      if (def.node.deprecated === true) parsedEnum.deprecated = true;
+      if (enumExtensions) parsedEnum.extensions = enumExtensions;
+      if (enumIgnored) parsedEnum.ignoredKeywords = enumIgnored;
+      const carried = [...(parsedEnum.deprecated ? ["deprecated"] : []), ...Object.keys(enumExtensions ?? {})];
+      if (carried.length > 0) {
+        const shown = carried.length > 10 ? `${carried.slice(0, 10).join(", ")} and ${carried.length - 10} more` : carried.join(", ");
+        warnings.push(`Enum \`${def.assetName}\`: ${shown} ${carried.length === 1 ? "is" : "are"} kept on every field that uses it (a shared enum has no place of its own for ${carried.length === 1 ? "it" : "them"})`);
+      }
       enums.push(parsedEnum);
     } else if (def.kind === "union") {
       const memberTypes = ctx.sharedUnionMembers.get(def.assetName);

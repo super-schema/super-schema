@@ -180,6 +180,15 @@ export interface ParsedEnum {
   name: string;
   values: string[];
   description?: string;
+  /**
+   * Keys of the source definition besides its symbols (JSON Schema: `x-enum-varnames`, `x-enum-descriptions`, `default`, `title`, ...), kept
+   * verbatim. A shared enum row has no place for them, so the importer also puts them on every field that uses the enum, where they persist.
+   */
+  extensions?: Record<string, unknown>;
+  /** The source definition is deprecated (also set on the fields that use it). */
+  deprecated?: boolean;
+  /** Standard schema keywords on the definition that were recognized but not mapped (see `ParsedField.ignoredKeywords`). */
+  ignoredKeywords?: string[];
 }
 
 /** A named scalar defined by the imported document (persisted as a CustomScalar), e.g. Avro `fixed`. */
