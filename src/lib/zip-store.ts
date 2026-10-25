@@ -21,6 +21,8 @@ const DOS_DATE = (0 << 9) | (1 << 5) | 1;
 const DOS_TIME = 0;
 const VERSION = 20;
 const MAX_ENTRIES = 0xffff;
+/** The length of a name is stored in 16 bits. */
+const MAX_NAME_BYTES = 0xffff;
 const MAX_SIZE = 0xffffffff;
 
 const CRC_TABLE: Uint32Array = (() => {
@@ -40,19 +42,31 @@ export function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+/** A path made safe: `/` separators, no leading `/`, no `.` / `..` / empty segment, control characters `_`; an empty result is `file`. */
+function flatName(path: string): string {
+  const cleaned = String(path).replace(/[\u0000-\u001f\u007f]/g, "_");
+  const segments = cleaned.split(/[\\/]+/).filter((segment) => segment !== "" && segment !== "." && segment !== "..");
+  return segments.join("/") || "file";
+}
+
 /**
  * One safe, unique entry name per path, in order. Directories are kept (`/` separators); a backslash is a separator, a leading `/` and any
  * `.` / `..` / empty segment go (a name can never climb out of the folder an unzip tool extracts into), a control character becomes `_`,
- * and a name an earlier entry already took gets `-2`, `-3`, ... before its extension.
+ * and a name an earlier entry already took, OR that is a folder another entry lives in (`a` beside `a/b`: a file and a folder of one name
+ * cannot both be extracted), gets `-2`, `-3`, ... before its extension. Names are compared case-insensitively (macOS and Windows treat
+ * `Record.proto` and `record.proto` as one file); {@link zipRenames} says which entries were renamed.
  */
 export function zipEntryNames(paths: readonly string[]): string[] {
+  const flats = paths.map(flatName);
+  // every folder some entry lives in (lowercase)
+  const folders = new Set<string>();
+  for (const flat of flats) {
+    for (let at = flat.indexOf("/"); at !== -1; at = flat.indexOf("/", at + 1)) folders.add(flat.slice(0, at).toLowerCase());
+  }
   const used = new Set<string>();
-  return paths.map((path) => {
-    const cleaned = String(path).replace(/[\u0000-\u001f\u007f]/g, "_");
-    const segments = cleaned.split(/[\\/]+/).filter((segment) => segment !== "" && segment !== "." && segment !== "..");
-    const flat = segments.join("/") || "file";
+  return flats.map((flat) => {
     let name = flat;
-    for (let n = 2; used.has(name.toLowerCase()); n += 1) {
+    for (let n = 2; used.has(name.toLowerCase()) || folders.has(name.toLowerCase()); n += 1) {
       const slash = flat.lastIndexOf("/");
       const dot = flat.lastIndexOf(".");
       name = dot > slash + 1 ? `${flat.slice(0, dot)}-${n}${flat.slice(dot)}` : `${flat}-${n}`;
@@ -62,12 +76,24 @@ export function zipEntryNames(paths: readonly string[]): string[] {
   });
 }
 
+/**
+ * The entries whose zip name is not their path (made safe) because another entry, or a folder, had the name: what a person who unzips
+ * should be told, since a renamed file can break what its content says about another file (a Protobuf `import`, a Java package directory).
+ */
+export function zipRenames(paths: readonly string[]): Array<{ path: string; name: string }> {
+  const names = zipEntryNames(paths);
+  return paths.flatMap((path, i) => (names[i] === flatName(path) ? [] : [{ path, name: names[i] }]));
+}
+
 const encoder = new TextEncoder();
 
 /** Builds a STORE zip of `entries` (see {@link zipEntryNames} for how names are made safe). */
 export function createZip(entries: readonly ZipEntryInput[]): Uint8Array {
   if (entries.length > MAX_ENTRIES) throw new RangeError(`A zip holds at most ${MAX_ENTRIES} files (got ${entries.length}).`);
   const names = zipEntryNames(entries.map((entry) => entry.path)).map((name) => encoder.encode(name));
+  // The length of a name is a 16-bit field: a longer one would be written wrapped, and no unzip tool could read the archive.
+  const tooLong = names.find((name) => name.length > MAX_NAME_BYTES);
+  if (tooLong) throw new RangeError(`A zip file name holds at most ${MAX_NAME_BYTES.toLocaleString("en-US")} bytes (got ${tooLong.length.toLocaleString("en-US")}).`);
   const data = entries.map((entry) => (typeof entry.content === "string" ? encoder.encode(entry.content) : entry.content));
 
   let size = 22; // the end record

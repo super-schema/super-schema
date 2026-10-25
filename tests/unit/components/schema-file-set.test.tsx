@@ -230,6 +230,35 @@ describe("SchemaFileSet download all", () => {
     expect(new Set(readZipEntries(await bytesOf(blobs[0])).map((e) => e.path)).size).toBe(2);
   });
 
+  // M1: a zip can change a name (a name that differs only by case is one file on macOS and Windows), and a name no zip can hold.
+  it("says which files the zip renames, and why (names that differ only by case), before the download", () => {
+    const files: EmittedFile[] = [
+      { path: "D/P/Record.proto", content: "message A {}", target: "protobuf", entityId: "x" },
+      { path: "d/p/record.proto", content: "message B {}", target: "protobuf", entityId: "y" },
+    ];
+    render(<SchemaFileSet files={files} entityName="Record" />);
+    const note = screen.getByTestId("schema-file-set-zip-note").textContent ?? "";
+    expect(note).toContain("d/p/record.proto");
+    expect(note).toContain("d/p/record-2.proto");
+    expect(note).toMatch(/differ only by case/i);
+  });
+
+  it("says nothing when the zip keeps every name", () => {
+    render(<SchemaFileSet files={FILES} entityName="Customer" />);
+    expect(screen.queryByTestId("schema-file-set-zip-note")).toBeNull();
+  });
+
+  it("a name no zip can hold is an alert on the page, not an unhandled error, and nothing is downloaded", async () => {
+    const files: EmittedFile[] = [
+      { path: "n".repeat(70_000), content: "1", target: "json-schema", entityId: "x" },
+      { path: "b.json", content: "2", target: "json-schema", entityId: "y" },
+    ];
+    render(<SchemaFileSet files={files} entityName="Long" />);
+    fireEvent.click(screen.getByTestId("schema-file-set-download-all"));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/65,535 bytes/);
+    expect(clicked).toHaveLength(0);
+  });
+
   it("names the number of files on the button", () => {
     render(<SchemaFileSet files={FILES} entityName="Customer" />);
     expect(screen.getByTestId("schema-file-set-download-all").textContent).toContain("2 files");

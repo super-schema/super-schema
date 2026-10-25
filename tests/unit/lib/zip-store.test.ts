@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createZip, crc32, readZipEntries, zipEntryNames } from "@/lib/zip-store";
+import { createZip, crc32, readZipEntries, zipEntryNames, zipRenames } from "@/lib/zip-store";
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
@@ -79,6 +79,35 @@ describe("zipEntryNames", () => {
   it("keeps two paths that end up with one name apart (-2, -3 before the extension), case-insensitively", () => {
     expect(zipEntryNames(["a/x.json", "a//x.json", "A/X.json", "a/y"])).toEqual(["a/x.json", "a/x-2.json", "A/X-3.json", "a/y"]);
     expect(zipEntryNames(["y", "y"])).toEqual(["y", "y-2"]);
+  });
+});
+
+// M1: a file where a folder is, a name no zip can hold, and the report of the names the zip changed.
+describe("zip edge cases", () => {
+  it("a file and a folder of one name cannot both be extracted: the file is kept apart (a, a/b -> a-2, a/b), in either order and whatever the case", () => {
+    expect(zipEntryNames(["a", "a/b"])).toEqual(["a-2", "a/b"]);
+    expect(zipEntryNames(["a/b", "a"])).toEqual(["a/b", "a-2"]);
+    expect(zipEntryNames(["A", "a/b"])).toEqual(["A-2", "a/b"]);
+    expect(zipEntryNames(["x/y.txt", "x/y.txt/z"])).toEqual(["x/y-2.txt", "x/y.txt/z"]);
+    // the new name is not a folder either
+    expect(zipEntryNames(["a", "a/b", "a-2/c"])).toEqual(["a-3", "a/b", "a-2/c"]);
+  });
+
+  it("a name of more than 65,535 bytes is refused, never written with a wrapped length", () => {
+    const long = "n".repeat(70_000);
+    expect(() => createZip([{ path: long, content: "x" }])).toThrow(RangeError);
+    expect(() => createZip([{ path: long, content: "x" }])).toThrow(/65,?535/);
+    // a long name that fits is still a valid zip
+    const ok = "m".repeat(60_000);
+    expect(readZipEntries(createZip([{ path: ok, content: "x" }]))[0].path).toBe(ok);
+  });
+
+  it("zipRenames lists exactly the entries whose name was changed because another entry (or a folder) had it", () => {
+    expect(zipRenames(["D/P/Record.proto", "d/p/record.proto", "a", "a/b", "../x.txt", "plain.txt"])).toEqual([
+      { path: "d/p/record.proto", name: "d/p/record-2.proto" },
+      { path: "a", name: "a-2" },
+    ]);
+    expect(zipRenames(["a.txt", "b/c.txt"])).toEqual([]);
   });
 });
 

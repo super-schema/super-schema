@@ -5,6 +5,7 @@ import { Download, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SchemaCodePreview } from "@/app/(dashboard)/schemas/[domainSlug]/[productSlug]/[entityId]/components/SchemaCodePreview";
 import { downloadFilesAsZip, zipFileName } from "./download-files";
+import { zipRenames } from "@/lib/zip-store";
 import type { EmittedFile } from "@/lib/typespec-official/closure-emit";
 import type { SchemaVersionResolution } from "@/types/schema-version";
 
@@ -74,6 +75,7 @@ export function SchemaFileSet({ files, entityName, entities, language = "text", 
   const displayOrder = useMemo(() => groups.flatMap((group) => group.files), [groups]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProblem, setDownloadProblem] = useState<string | null>(null);
 
   if (files.length === 0) {
     return (
@@ -107,13 +109,37 @@ export function SchemaFileSet({ files, entityName, entities, language = "text", 
 
   async function handleDownloadAll() {
     setIsDownloading(true);
+    setDownloadProblem(null);
     try {
       // One zip, every file under its path: the files point at each other by path (a Protobuf import, a Java package directory).
       await downloadFilesAsZip(files, zipFileName(entityName, files[0].target));
+    } catch (e) {
+      // A file name no zip can hold (RangeError: more than 65,535 bytes): said on the page, not an unhandled rejection of the click.
+      setDownloadProblem(e instanceof RangeError ? e.message : "The zip could not be made.");
     } finally {
       setIsDownloading(false);
     }
   }
+
+  // Names the zip changes (a name that differs only by case is one file on macOS and Windows; a file where a folder is): said before the download.
+  const renamed = zipRenames(files.map((file) => file.path));
+  const zipNote =
+    renamed.length > 0 || downloadProblem !== null ? (
+      <div className="space-y-1">
+        {renamed.length > 0 && (
+          <p data-testid="schema-file-set-zip-note" className="text-caption text-muted-foreground">
+            In the zip, {renamed.slice(0, 5).map((r) => `${r.path} is saved as ${r.name}`).join("; ")}
+            {renamed.length > 5 ? ` (and ${renamed.length - 5} more)` : ""}: file names that differ only by case are one file on macOS and Windows. Any
+            path inside the files that names them still says the original.
+          </p>
+        )}
+        {downloadProblem !== null && (
+          <p role="alert" className="text-caption text-destructive">
+            {downloadProblem}
+          </p>
+        )}
+      </div>
+    ) : null;
 
   const showTitles = groups.some((group) => group.label !== undefined);
 
@@ -146,6 +172,7 @@ export function SchemaFileSet({ files, entityName, entities, language = "text", 
           Download all ({files.length} files)
         </Button>
       </div>
+      {zipNote}
 
       <div className="grid grid-cols-1 gap-space-3 md:grid-cols-[minmax(180px,260px)_minmax(0,1fr)]">
         <ul data-testid="schema-file-set-list" className="max-h-80 space-y-space-2 overflow-y-auto">
