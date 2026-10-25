@@ -660,3 +660,60 @@ describe("loadReferenceClosure: several edges to one entity, one of them pinned"
     ]);
   });
 });
+
+// FINAL WAVE 2b, G2: an ambiguous bare name that sits in a FROZEN snapshot (published or pinned member) cannot be settled by a pick on
+// the closure's behalf: the snapshot is immutable. The error says whose content it is so the refusal can say what actually helps.
+describe("loadReferenceClosure: an ambiguous bare name inside a frozen snapshot", () => {
+  const bare = (id: string) => [toField({ id: `${id}-s0`, name: "addr", decorators: ref("Address") }, 0)];
+  const x1Fields = [toField({ id: "x-s0", name: "y", decorators: qref("y", "_tenant/_tenant/Y") }, 0)];
+  const addresses = () => [
+    ent("ad1", { name: "Address", versions: [version("ad1", 1, 0, [])], latest: "ad1-v1.0" }),
+    ent("ad2", { name: "Address", domain: "d2", product: "p2", versions: [version("ad2", 1, 0, [])], latest: "ad2-v1.0" }),
+  ];
+  const world = (yVersions: VersionRow[], yLatest: string, yLive: TypedField[] = []) =>
+    fakeDb([
+      ent("x", { versions: [{ ...version("x", 1, 0, []), fieldSnapshot: x1Fields }], latest: "x-v1.0" }),
+      ent("y", { versions: yVersions, latest: yLatest }, yLive),
+      ...addresses(),
+    ]);
+  const y10 = { ...version("y", 1, 0, []), fieldSnapshot: bare("y") };
+
+  it("published mode names the owner as frozen: the snapshot holds the bare name, whatever the live row says", async () => {
+    const r = await loadReferenceClosure(world([y10], "y-v1.0", [["addr", qref("ad2", "d2/p2/Address")]]), "t1", "x", "published");
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatchObject({ code: "AMBIGUOUS_REFERENCE", entityId: "y", frozen: true, owner: { entity: "Y" } });
+  });
+
+  it("a pinned member is frozen too", async () => {
+    const db = fakeDb([
+      ent("x", {}, [["y", qref("y", "_tenant/_tenant/Y", "1.0")]]),
+      ent("y", { versions: [y10], latest: "y-v1.0" }),
+      ...addresses(),
+    ]);
+    const r = await loadReferenceClosure(db, "t1", "x", "draft");
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatchObject({ code: "AMBIGUOUS_REFERENCE", entityId: "y", frozen: true });
+  });
+
+  it("draft content is not frozen: the pick writes the very field that is read", async () => {
+    const db = fakeDb([ent("x", {}, [["y", qref("y", "_tenant/_tenant/Y")]]), ent("y", {}, [["addr", ref("Address")]]), ...addresses()]);
+    const r = await loadReferenceClosure(db, "t1", "x", "draft");
+    expect(r.success).toBe(false);
+    if (r.success) return;
+    expect(r.error).toMatchObject({ code: "AMBIGUOUS_REFERENCE", entityId: "y", frozen: false });
+  });
+
+  it("after the pick (the live row now holds the qualified reference) and a re-publish of Y, the closure resolves", async () => {
+    const y11 = { ...version("y", 1, 1, []), fieldSnapshot: [toField({ id: "y-s0", name: "addr", decorators: qref("ad2", "d2/p2/Address") }, 0)] };
+    const r = await loadReferenceClosure(world([y10, y11], "y-v1.1", [["addr", qref("ad2", "d2/p2/Address")]]), "t1", "x", "published");
+    expect(r.success).toBe(true);
+    if (!r.success) return;
+    expect(r.data.entities.map((e) => [e.entityId, e.source, e.version])).toEqual([
+      ["x", "published", "1.0"],
+      ["y", "published", "1.1"],
+      ["ad2", "published", "1.0"],
+    ]);
+  });
+});

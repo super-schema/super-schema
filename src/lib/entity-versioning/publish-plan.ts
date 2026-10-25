@@ -58,7 +58,9 @@ export interface PublishNeedsReference {
 export function needsReferenceOf(blockers: ReadonlyArray<PublishBlocker>): PublishNeedsReference | undefined {
   for (const blocker of blockers) {
     if (blocker.kind !== "CLOSURE_BLOCKED" || blocker.code !== "AMBIGUOUS_REFERENCE") continue;
-    const d = blocker.details as Partial<Record<keyof PublishNeedsReference, unknown>> | undefined;
+    const d = blocker.details as (Partial<Record<keyof PublishNeedsReference, unknown>> & { frozen?: unknown }) | undefined;
+    // A name frozen in a published or pinned snapshot cannot be settled by a pick (the owner has to be published again): no dialog.
+    if (d && d.frozen === true) continue;
     if (
       d &&
       typeof d.field === "string" &&

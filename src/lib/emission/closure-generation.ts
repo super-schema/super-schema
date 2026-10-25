@@ -26,6 +26,17 @@ const describeRef = (ref: EntityRef): string => qualifiedName(ref).split("/").jo
 export function closureFailure(error: ClosureError): ServiceError {
   switch (error.code) {
     case "AMBIGUOUS_REFERENCE":
+      if (error.frozen) {
+        // The field sits in a published (or pinned) version: it cannot be edited, so a pick on the closure's behalf would not help. The
+        // pick the user makes on the owner's field is written to its live row and used by the owner's NEXT version.
+        const owner = error.owner.entity;
+        return {
+          code: error.code,
+          message: `This published version of ${owner} refers to "${error.name}" by name and ${error.candidates.length} entities have that name: ${error.candidates.map(describeRef).join("; ")}. Publish ${owner} again (open ${owner} and choose which one its field "${error.field}" means: the pick you make now is used by its next version), or pin a version of ${owner} that refers to it by its full name.`,
+          details: { field: error.field, name: error.name, candidates: error.candidates, entityId: error.entityId, fieldId: error.fieldId, frozen: true },
+          suggestedFix: `Choose the entity on ${owner}'s field and publish ${owner} again, or pin a version of ${owner} that uses the full name.`,
+        };
+      }
       return {
         code: error.code,
         message: `Field "${error.field}" refers to "${error.name}", which matches ${error.candidates.length} entities: ${error.candidates.map(describeRef).join("; ")}. Choose which one it means.`,

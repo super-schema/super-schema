@@ -1516,7 +1516,8 @@ export async function generateSchemaAction(entityId: string, target: string, opt
         const { closureFailure, describeResolution, emitClosureTarget } = await import("@/lib/emission/closure-generation");
         const loaded = await loadReferenceClosure(prisma, await getActiveTenantId(), entityId, mode);
         if (!loaded.success) {
-          if (loaded.error.code === "AMBIGUOUS_REFERENCE") {
+          // A name frozen in a published or pinned member is not a question (a pick cannot change a published version): it is the refusal.
+          if (loaded.error.code === "AMBIGUOUS_REFERENCE" && !loaded.error.frozen) {
             const { field, name, candidates, entityId: ownerEntityId, fieldId } = loaded.error;
             return { needsReference: { field, name, candidates, entityId: ownerEntityId, fieldId } };
           }
@@ -1756,6 +1757,8 @@ export async function publishSchemaAction(
         if ("needsInput" in result && result.needsInput) {
           return { error: result.needsInput[0]?.message ?? "Regenerating from the published versions needs more input", code: "VALIDATION_ERROR" };
         }
+        // A published-mode closure reads every entity from a frozen snapshot, so its ambiguity is a refusal (`error`, handled above), never a
+        // pick; this stays as the total answer for a generation that does ask for one.
         if ("needsReference" in result && result.needsReference) {
           const { field, name, candidates } = result.needsReference;
           return {

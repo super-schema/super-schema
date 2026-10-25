@@ -228,8 +228,30 @@ describe("loadPublishClosure", () => {
       expect(res.error.message).toContain("d2 / p2 / Address");
     });
 
-    it("an ambiguous reference also carries the structure a pick dialog needs: the field, the name, the candidates and the entity + field row that hold it", async () => {
-      // The ambiguous reference is held by a MEMBER (B), not by the root: the pick must be written on B's field.
+    it("an ambiguous reference held by the ROOT's saved rows carries the structure a pick dialog needs: the field, the name, the candidates and the entity + field row that hold it", async () => {
+      const db = fakeDb([
+        ent("a", {}, [["addr", { referencedEntityName: "Address" }]]),
+        ent("x1", { name: "Address", domain: "d1", product: "p1" }),
+        ent("x2", { name: "Address", domain: "d2", product: "p2" }),
+      ]);
+      const res = await loadPublishClosure(db, root);
+      expect(res.success).toBe(false);
+      if (res.success) return;
+      expect(res.error.code).toBe("AMBIGUOUS_REFERENCE");
+      expect(res.error.details).toEqual({
+        field: "addr",
+        name: "Address",
+        candidates: [
+          { entityId: "x1", domain: "d1", product: "p1", entity: "Address" },
+          { entityId: "x2", domain: "d2", product: "p2", entity: "Address" },
+        ],
+        entityId: "a",
+        fieldId: "a-addr",
+      });
+    });
+
+    it("an ambiguous name frozen in a published MEMBER is marked frozen (no pick: the member must be published again) and says so", async () => {
+      // The ambiguous reference is held by a MEMBER (B)'s published snapshot: a pick would write B's live row, which the publish does not read.
       const db = fakeDb([
         ent("a", {}, [["b", qref("b", Q("B"))]]),
         ent("b", { versions: [{ ...version("b", 1, 0), fieldSnapshot: [toField({ id: "b-addr", name: "addr", decorators: { referencedEntityName: "Address" } }, 0)] }], latest: "b-v1.0" }),
@@ -249,7 +271,9 @@ describe("loadPublishClosure", () => {
         ],
         entityId: "b",
         fieldId: "b-addr",
+        frozen: true,
       });
+      expect(res.error.message).toContain('This published version of B refers to "Address" by name');
     });
 
     it("the other blockers carry their own details (the entity, the pin)", async () => {

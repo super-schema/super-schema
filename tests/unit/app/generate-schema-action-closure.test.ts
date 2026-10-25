@@ -207,6 +207,23 @@ describe("generateSchemaAction: ambiguous references", () => {
     expect(closureGiven().entities.map((e) => e.entityId)).toEqual(["a", "x2"]);
   });
 
+  it("a bare name frozen in a PUBLISHED member's snapshot is not a pick: it says to publish the owner again and offers no dialog", async () => {
+    const snapshot = [["addr", legacy("Address")]] as Array<[string, Decorators]>;
+    h.store.versions = [publish("a", 1, 0, [["cust", qualified("c", "_tenant/_tenant/Customer")]]), publish("c", 1, 0, snapshot), publish("x1", 1, 0, []), publish("x2", 1, 0, [])];
+    h.store.entities = [
+      entity("a", "Order", [], { latestVersionId: "a-v1.0" }),
+      entity("c", "Customer", [["addr", qualified("x2", "d2/p2/Address")]], { latestVersionId: "c-v1.0" }),
+      entity("x1", "Address", [], { domain: "d1", product: "p1", latestVersionId: "x1-v1.0" }),
+      entity("x2", "Address", [], { domain: "d2", product: "p2", latestVersionId: "x2-v1.0" }),
+    ];
+    const result = await actions.generateSchemaAction("a", "json-schema", { mode: "published" });
+    expect(result).not.toHaveProperty("needsReference");
+    expect(result).toMatchObject({ code: "AMBIGUOUS_REFERENCE", error: expect.stringContaining("This published version of Customer refers to \"Address\" by name") });
+    expect((result as { error: string }).error).toMatch(/Publish Customer again/);
+    expect(h.emitClosure).not.toHaveBeenCalled();
+    expect(p.entity.update).not.toHaveBeenCalled();
+  });
+
   it("points at the member that holds the ambiguous field, not at the root", async () => {
     h.store.entities = [
       entity("a", "Order", [["cust", qualified("c", "_tenant/_tenant/Customer")]]),

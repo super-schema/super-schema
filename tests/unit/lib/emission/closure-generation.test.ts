@@ -23,6 +23,8 @@ describe("closureFailure", () => {
       candidates: [ref("Address", "d1", "p1"), ref("Address", "d2", "p2")],
       entityId: "e1",
       fieldId: "f1",
+      owner: ref("Order"),
+      frozen: false,
     };
     const failure = closureFailure(error);
     expect(failure.code).toBe("AMBIGUOUS_REFERENCE");
@@ -43,6 +45,38 @@ describe("closureFailure", () => {
     expect(pin.message).toContain("Sales / Crm / Address");
     expect(pin.message).toContain('"addr"');
     expect(closureFailure({ code: "CLOSURE_TOO_LARGE", limit: 200 })).toMatchObject({ code: "CLOSURE_TOO_LARGE", message: expect.stringContaining("200") });
+  });
+
+  describe("an ambiguous name inside a frozen (published or pinned) version", () => {
+    const candidates = [ref("Address", "d1", "p1"), ref("Address", "d2", "p2")];
+    const ambiguity = (frozen: boolean): ClosureError => ({
+      code: "AMBIGUOUS_REFERENCE",
+      field: "addr",
+      name: "Address",
+      candidates,
+      entityId: "id-Y",
+      fieldId: "f1",
+      owner: ref("Y"),
+      frozen,
+    });
+
+    it("says whose version it is and what helps: publish the owner again, or pin; it offers no pick", () => {
+      const failure = closureFailure(ambiguity(true));
+      expect(failure.code).toBe("AMBIGUOUS_REFERENCE");
+      expect(failure.message).toContain('This published version of Y refers to "Address" by name and 2 entities have that name');
+      expect(failure.message).toContain("d1 / p1 / Address");
+      expect(failure.message).toMatch(/Publish Y again/);
+      expect(failure.message).toMatch(/the pick you make (now )?is used by its next version/);
+      expect(failure.message).toMatch(/pin/i);
+      // `frozen` is what tells the callers (generate action, publish preview) not to open the pick dialog
+      expect(failure.details).toMatchObject({ field: "addr", name: "Address", entityId: "id-Y", fieldId: "f1", frozen: true });
+    });
+
+    it("keeps the pick wording and the exact details for a draft owner", () => {
+      const failure = closureFailure(ambiguity(false));
+      expect(failure.message).toContain("Choose which one it means.");
+      expect(failure.details).toEqual({ field: "addr", name: "Address", candidates, entityId: "id-Y", fieldId: "f1" });
+    });
   });
 
   it("a PIN_CONFLICT names the entity, both pinning fields with their owners and versions, and how to fix it", () => {

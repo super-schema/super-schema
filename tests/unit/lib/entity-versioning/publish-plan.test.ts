@@ -165,6 +165,15 @@ describe("the reference closure (Task 8)", () => {
       expect(needsReferenceOf([{ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: "m", details: { field: "f", name: 3, candidates: "x", entityId: "e", fieldId: "i" } }])).toBeUndefined();
     });
 
+    it("needsReferenceOf asks for no pick when the ambiguous name sits in a frozen snapshot (a pick cannot change a published version)", () => {
+      const frozen = { code: "AMBIGUOUS_REFERENCE", message: 'This published version of Y refers to "Address" by name', details: { ...details, frozen: true } };
+      const blockers = analyzePublish(state({ closureBlocker: frozen })).blockers;
+      expect(blockers).toEqual([expect.objectContaining({ kind: "CLOSURE_BLOCKED", code: "AMBIGUOUS_REFERENCE", message: frozen.message })]);
+      expect(needsReferenceOf(blockers)).toBeUndefined();
+      // a later, askable ambiguity is still found
+      expect(needsReferenceOf([...blockers, ...analyzePublish(state({ closureBlocker: ambiguous })).blockers])).toEqual(details);
+    });
+
     it("needsReferenceOf reads it from a plan error's details too", () => {
       const res = planPublish(state({ closureBlocker: ambiguous }));
       expect(!res.success && needsReferenceOf((res.error.details as { blockers: never[] }).blockers)).toEqual(details);

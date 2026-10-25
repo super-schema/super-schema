@@ -28,8 +28,12 @@ export type ClosureEntity = {
 };
 
 export type ClosureError =
-  /** `entityId` / `fieldId` name the entity and the field row that hold the ambiguous reference (a member of the closure, not always the root): where an explicit pick is written. */
-  | { code: "AMBIGUOUS_REFERENCE"; field: string; name: string; candidates: EntityRef[]; entityId: string; fieldId: string }
+  /**
+   * `entityId` / `fieldId` name the entity and the field row that hold the ambiguous reference (a member of the closure, not always the root): where an
+   * explicit pick is written. `owner` is that entity as a reference. `frozen`: the field was read from a published or pinned SNAPSHOT, which a pick
+   * cannot change (it writes the live row; only a new version of the owner carries it), so no pick is asked for: the owner must be published again.
+   */
+  | { code: "AMBIGUOUS_REFERENCE"; field: string; name: string; candidates: EntityRef[]; entityId: string; fieldId: string; owner: EntityRef; frozen: boolean }
   | { code: "PIN_NOT_FOUND"; field: string; ref: EntityRef; version: string }
   /**
    * Fields of the closure pin DIFFERENT versions of one entity. A closure resolves an entity once (its files are per entity), so the
@@ -421,6 +425,8 @@ export async function loadReferenceClosure(
               candidates: resolved.ambiguous.map((c) => c.ref),
               entityId: current.entityId,
               fieldId: field.id,
+              owner: current.ref,
+              frozen: current.source !== "draft",
             },
           };
         }

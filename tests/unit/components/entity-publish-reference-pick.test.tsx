@@ -163,6 +163,23 @@ describe("the publish preview names an ambiguous reference", () => {
     expect(screen.getByTestId("confirm-publish")).toBeDefined();
   });
 
+  it("a bare name frozen in a PUBLISHED member shows its own message and offers no dialog and no pick button (a pick cannot help)", async () => {
+    const FROZEN_MESSAGE =
+      'This published version of Customer refers to "Address" by name and 2 entities have that name. Publish Customer again (the pick you make now is used by its next version), or pin a version of Customer that uses the full name.';
+    mocks.getPreview.mockResolvedValue({
+      success: true,
+      preview: { ...CLEAR_PREVIEW, blockers: [{ ...AMBIGUOUS_BLOCKER, message: FROZEN_MESSAGE, details: { ...DETAILS, frozen: true } }] },
+    });
+    render(<EntityWorkspace {...props()} />);
+
+    fireEvent.click(screen.getByTestId("publish-entity-button"));
+
+    expect(await screen.findByText(FROZEN_MESSAGE)).toBeDefined();
+    expect(screen.queryByTestId("reference-pick-dialog")).toBeNull();
+    expect(screen.queryByTestId("publish-pick-reference")).toBeNull();
+    expect((screen.getByTestId("confirm-publish") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("offers no pick button for a blocker that is not an ambiguous reference", async () => {
     mocks.getPreview.mockResolvedValue({
       success: true,
@@ -200,6 +217,20 @@ describe("a publish the server refuses for an ambiguous reference", () => {
     expect(mocks.setReference).toHaveBeenCalledWith("member-1", "fld-9", { entityId: "x1" });
     expect(mocks.publish.mock.calls[1]).toEqual(mocks.publish.mock.calls[0]);
     await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith("Published Customer v1.0"));
+  });
+
+  it("a refusal for a bare name frozen in a published member (no needsReference) shows its message without a dialog", async () => {
+    const FROZEN_MESSAGE = 'This published version of Customer refers to "Address" by name and 2 entities have that name. Publish Customer again.';
+    mocks.getPreview.mockResolvedValue({ success: true, preview: CLEAR_PREVIEW });
+    mocks.publish.mockResolvedValue({ error: FROZEN_MESSAGE, code: "PUBLISH_BLOCKED" });
+    render(<EntityWorkspace {...props()} />);
+
+    fireEvent.click(screen.getByTestId("publish-entity-button"));
+    fireEvent.click(await screen.findByTestId("confirm-publish"));
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain(FROZEN_MESSAGE));
+    expect(screen.queryByTestId("reference-pick-dialog")).toBeNull();
+    expect(mocks.publish).toHaveBeenCalledTimes(1);
   });
 
   it("Cancel publishes nothing more and shows no error", async () => {
