@@ -147,6 +147,8 @@ export interface ParsedEntity {
   extensions?: Record<string, unknown>;
   /** Parent entity name (inheritance), mirrors TypeSpecImportModel.extends */
   extends?: string;
+  /** The source marks the entity deprecated (JSON Schema `deprecated: true` on its node); persisted as the entity's deprecation metadata. */
+  deprecated?: boolean;
   /** Standard schema keywords on the entity's source node that were recognized but not mapped (see `ParsedField.ignoredKeywords`) */
   ignoredKeywords?: string[];
   /** Source format identifier */

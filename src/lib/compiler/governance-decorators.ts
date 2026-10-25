@@ -380,6 +380,13 @@ export function parseExtensionArguments(inner: string): { key: string; value: un
   }
 }
 
+/**
+ * Entity-level extension keys that are kept (a JSON Schema import's `$id` / `$schema`: the identity and dialect of the SOURCE document) but never
+ * written into the generated TypeSpec: a generated schema has its own, and an `$id` would re-base the relative `$ref`s between the files of a
+ * closure. They stay in the entity's stored extensions across a Save (see `entityExtensionsChange`).
+ */
+export const ENTITY_STORED_ONLY_EXTENSION_KEYS: readonly string[] = ["$id", "$schema"];
+
 /** Keys with their own dedicated decorator path; never emitted as generic extensions. */
 const RESERVED_EXTENSION_KEYS: readonly string[] = [TAGS_EXTENSION_KEY, CLASSIFICATION_EXTENSION_KEY];
 

@@ -1113,6 +1113,8 @@ export interface BulkImportPayload {
     tags?: string[];
     /** Vendor extensions of the model, stored flat as the entity's metadata.custom.extensions (validated at create). */
     extensions?: Record<string, unknown>;
+    /** The source marks the entity deprecated: stored as the entity's metadata.deprecation. */
+    deprecated?: boolean;
     fields: CreateFieldInput[];
   }>;
   sharedEnums: Array<{ name: string; values: string[]; description?: string }>;

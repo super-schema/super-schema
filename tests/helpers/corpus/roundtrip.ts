@@ -96,7 +96,17 @@ function diff(path: string, a: unknown, b: unknown, out: Difference[], ctx: { ig
   const ext = rc.prop === "extensions";
   const rule = EXPECTED_RULES.find((r) => r.test(ext ? { ...(rc.before?.extensions as object) } : a, ext ? { ...(rc.after?.extensions as object) } : b, rc));
   const nameRule = path === "entity.name" && typeof a === "string" && sanitizeIdentifier(a) === b;
-  out.push({ path, before: a, after: b, classification: nameRule || (rule && !rule.open) ? "EXPECTED" : rule ? "OPEN" : "DEFECT", why: nameRule ? "an entity name is written as a TypeSpec identifier (spaces and symbols become `_`, a reserved word gets a prefix)" : rule?.why });
+  // The identity and dialect of the SOURCE document are kept on the entity (as extensions) and never written back: a generated schema has its own.
+  const identityRule = /^entity\.extensions\.\$(id|schema)$/.test(path) && a !== undefined;
+  out.push({
+    path, before: a, after: b,
+    classification: nameRule || identityRule || (rule && !rule.open) ? "EXPECTED" : rule ? "OPEN" : "DEFECT",
+    why: nameRule
+      ? "an entity name is written as a TypeSpec identifier (spaces and symbols become `_`, a reserved word gets a prefix)"
+      : identityRule
+        ? "the document's own `$id` / `$schema` identify the SOURCE file: they are kept on the entity and not written back (the generated schema has its own; an `$id` would re-base its relative `$ref`s)"
+        : rule?.why,
+  });
 }
 
 /**

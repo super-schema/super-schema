@@ -23,6 +23,7 @@ import { boundFor, constraintAppliesTo, type BoundKind, type ConstraintKind } fr
 import { activeDanglingRef } from "@/lib/field-dangling";
 import {
   ENTERPRISE_NAMESPACE,
+  ENTITY_STORED_ONLY_EXTENSION_KEYS,
   LIBRARY_IMPORTS,
   classificationDecorator,
   tagsDecorator,
@@ -411,7 +412,7 @@ function modelExtensions(model: SuperSchemaModel): Record<string, unknown> | und
 
 function hasGenericExtensions(model: SuperSchemaModel): boolean {
   return (
-    genericExtensionEntries(modelExtensions(model)).length > 0 ||
+    genericExtensionEntries(modelExtensions(model)).some(([key]) => !ENTITY_STORED_ONLY_EXTENSION_KEYS.includes(key)) ||
     model.fields.some((f) => genericExtensionEntries(f.decorators.typespec?.extensions?.openapi).length > 0) ||
     model.fields.some((f) => isDanglingField(f))
   );
@@ -438,7 +439,7 @@ function generateModelDecorators(model: SuperSchemaModel, governance: Governance
   }
 
   // Generic vendor extensions (flat record in metadata.custom.extensions).
-  lines.push(...genericExtensionDecorators(modelExtensions(model)));
+  lines.push(...genericExtensionDecorators(modelExtensions(model), ENTITY_STORED_ONLY_EXTENSION_KEYS));
 
   return lines;
 }

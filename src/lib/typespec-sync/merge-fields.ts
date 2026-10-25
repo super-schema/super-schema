@@ -24,7 +24,7 @@
  * (the field was resolved), exactly the `activeDanglingRef` / `decoratorsAfterFieldEdit` semantics of the field editors.
  */
 
-import { PIN_EXTENSION_KEY, classificationFromDecorators, setOwn } from "@/lib/compiler/governance-decorators";
+import { ENTITY_STORED_ONLY_EXTENSION_KEYS, PIN_EXTENSION_KEY, classificationFromDecorators, setOwn } from "@/lib/compiler/governance-decorators";
 import type { FieldGovernanceInfo } from "@/lib/compiler/typespec-compiler";
 import { activeDanglingRef } from "@/lib/field-dangling";
 import { isConstraintWithheld, type ConstraintKind } from "@/lib/compiler/constraint-targets";
@@ -469,7 +469,11 @@ export type EntityExtensionsChange = { kind: "none" } | { kind: "set"; value: Re
 export function entityExtensionsChange(metadata: unknown, source: Rec | null | undefined): EntityExtensionsChange {
   const custom = isRec(metadata) && isRec(metadata.custom) ? metadata.custom : undefined;
   const stored = isRec(custom?.extensions) && Object.keys(custom.extensions as Rec).length > 0 ? (custom?.extensions as Rec) : undefined;
-  const wanted: Rec | undefined = isRec(source) && Object.keys(source).length > 0 ? cloneJson(source) : undefined;
+  const fromSource: Rec | undefined = isRec(source) && Object.keys(source).length > 0 ? cloneJson(source) : undefined;
+  // The keys the generated source never carries (the imported document's `$id` / `$schema`) are not the source's to remove: they stay.
+  const kept = stored ? Object.keys(stored).filter((k) => ENTITY_STORED_ONLY_EXTENSION_KEYS.includes(k) && !(fromSource && has(fromSource, k))) : [];
+  const wanted: Rec | undefined =
+    kept.length === 0 ? fromSource : Object.fromEntries([...Object.entries(fromSource ?? {}), ...kept.map((k) => [k, cloneJson(stored![k])] as const)]);
   if (wanted === undefined) return stored === undefined ? { kind: "none" } : { kind: "clear" };
   return stored !== undefined && jsonEqual(stored, wanted) ? { kind: "none" } : { kind: "set", value: wanted };
 }

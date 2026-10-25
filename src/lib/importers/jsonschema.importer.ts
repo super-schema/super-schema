@@ -1347,10 +1347,37 @@ function indexDefinitions(
   return { definitions, taken };
 }
 
-function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, unknown>; ignoredKeywords?: string[] } {
+/**
+ * What an entity's own schema node (the root, or a `$defs` entry; with its `allOf` members) carries beyond its properties, besides what the
+ * importer reads: every vendor / unknown key (verbatim, first definition wins) and the unsupported standard keywords; the document's
+ * `$id` / `$schema` (root) or `$schema` and a `title` that says more than the name (a definition), listed as not interpreted and kept as
+ * extensions (a definition's `$id` is the resource id its `$ref`s are resolved by: read, not carried); and the deprecated flag.
+ */
+function entityExtensions(
+  node: JsonSchemaNode,
+  name: string,
+  isRoot: boolean
+): { extensions?: Record<string, unknown>; ignoredKeywords?: string[]; deprecated?: true } {
   const sources = schemaSources(node);
-  const extensions = captureExtensions(node);
+  let extensions: Record<string, unknown> | undefined;
+  for (const source of sources) {
+    for (const [key, value] of Object.entries(captureExtensions(source) ?? {})) {
+      if (extensions && Object.prototype.hasOwnProperty.call(extensions, key)) continue;
+      setOwn((extensions ??= {}), key, value);
+    }
+  }
   const found = ignoredKeywordsOf(sources, false) ?? [];
+  for (const key of isRoot ? (["$schema", "$id"] as const) : (["$schema"] as const)) {
+    const value = node[key];
+    if (typeof value !== "string") continue;
+    setOwn((extensions ??= {}), key, value);
+    if (!found.includes(key)) found.push(key);
+  }
+  // A definition's title that is only its name adds nothing; one that says more is the schema's own and is kept (the root's title IS its name).
+  if (!isRoot && typeof node.title === "string" && node.title.trim() !== "" && node.title.trim() !== name && !(extensions && Object.prototype.hasOwnProperty.call(extensions, "title"))) {
+    setOwn((extensions ??= {}), "title", node.title);
+  }
+  const deprecated = sources.some((s) => s.deprecated === true);
   // An entity-level oneOf / anyOf (alternative `required` sets, a choice between shapes) maps to nothing in the IR: on a FIELD it becomes a
   // union, on an entity it is a constraint over the whole object. Report it like the other unsupported keywords and keep it verbatim.
   let preserved = extensions;
@@ -1360,7 +1387,11 @@ function entityExtensions(node: JsonSchemaNode): { extensions?: Record<string, u
     if (!found.includes(keyword)) found.push(keyword);
     if (!preserved || !Object.prototype.hasOwnProperty.call(preserved, keyword)) setOwn((preserved ??= {}), keyword, holder[keyword]);
   }
-  return { ...(preserved ? { extensions: preserved } : {}), ...(found.length > 0 ? { ignoredKeywords: found } : {}) };
+  return {
+    ...(preserved ? { extensions: preserved } : {}),
+    ...(found.length > 0 ? { ignoredKeywords: found } : {}),
+    ...(deprecated ? { deprecated: true as const } : {}),
+  };
 }
 
 const MAX_IGNORED_WARNINGS = 200;
@@ -1810,7 +1841,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
       description: typeof schema.description === "string" ? schema.description : undefined,
       fields: buildFields(rootMembers, ctx, rootEntityName),
       ...(rootExtends ? { extends: rootExtends } : {}),
-      ...entityExtensions(schema),
+      ...entityExtensions(schema, rootEntityName, true),
       sourceFormat: "json-schema",
       originalContent: content,
     });
@@ -1827,7 +1858,7 @@ function importJsonSchemaDocument(content: string, outIndex?: Map<string, Defini
         description: typeof def.node.description === "string" ? def.node.description : undefined,
         fields: buildFields(members, ctx, def.assetName),
         ...(defExtends ? { extends: defExtends } : {}),
-        ...entityExtensions(def.node),
+        ...entityExtensions(def.node, def.assetName, false),
         sourceFormat: "json-schema",
         originalContent: content,
       });

@@ -19,6 +19,8 @@ export interface ImportedEntityInput {
   tags?: string[];
   /** Vendor extensions of the model (unknown JSON Schema keys etc.), stored flat at metadata.custom.extensions. */
   extensions?: Record<string, unknown>;
+  /** The source marks the entity deprecated (JSON Schema `deprecated: true`): stored as the entity's metadata.deprecation. */
+  deprecated?: boolean;
   fields: CreateFieldInput[];
 }
 
@@ -132,6 +134,7 @@ export async function createImportedEntities(tx: Prisma.TransactionClient, args:
     const extensions = sanitizeExtensions(entity.extensions);
     const entityMetadata = {
       ...(entity.tags && entity.tags.length > 0 ? { tags: entity.tags } : {}),
+      ...(entity.deprecated === true ? { deprecation: { deprecated: true, reason: "Marked deprecated in the imported schema" } } : {}),
       ...(sourceFormat ? { sourceFormat } : {}),
       ...(extensions ? { custom: { extensions } } : {}),
     };

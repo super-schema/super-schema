@@ -68,6 +68,7 @@ function toEntityInput(model: ParsedEntity & { extends?: string; tags?: string[]
   return {
     ...toModelInput(model),
     ...(model.tags && model.tags.length > 0 ? { tags: model.tags } : {}),
+    ...(model.deprecated ? { deprecated: true } : {}),
   };
 }
 

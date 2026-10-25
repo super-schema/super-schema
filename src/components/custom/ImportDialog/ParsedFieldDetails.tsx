@@ -365,7 +365,7 @@ export const ParsedFieldDetails = memo(function ParsedFieldDetails({ field, enti
 // ---------------------------------------------------------------------------
 
 interface ParsedEntityDetailsProps {
-  entity: Pick<ParsedEntity, "name" | "description" | "extends" | "extensions" | "ignoredKeywords"> &
+  entity: Pick<ParsedEntity, "name" | "description" | "extends" | "extensions" | "ignoredKeywords" | "deprecated"> &
     Partial<Pick<ParsedEntity, "sourceFormat">>;
   /** Every warning of the import — all of them, none truncated. */
   warnings?: string[];
@@ -389,6 +389,7 @@ export function ParsedEntityDetails({ entity, warnings = [], showUsed = true }: 
             <Row label="Entity name">{entity.name}</Row>
             {entity.description && <Row label="Description">{entity.description}</Row>}
             {entity.extends && <Row label="Extends">{entity.extends}</Row>}
+            {entity.deprecated && <Row label="Deprecated">Yes (marked deprecated in the source)</Row>}
           </dl>
         </Group>
       )}
