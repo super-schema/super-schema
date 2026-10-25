@@ -6,22 +6,25 @@
  *                            and the impact report in the panel beside the list; Approve and Reject ask for an optional comment first
  *                            (Cancel backs out), then move the request from Pending to History with the new status, the decision and
  *                            the comment recorded; the decision is kept after a reload; a request that is not pending offers neither;
- *                            a user without the Steward or Admin role cannot decide (KD-015: and is told nothing).
+ *                            a user without the Steward or Admin role cannot approve or reject, and the request stays pending (KD-015:
+ *                            and the user is told nothing: pinned); the list holds the requests of the tenant being viewed, those about
+ *                            an entity of another tenant are in no tab.
  *                            No page or action of the product CREATES a request yet (governance.service.createRequest is called by
  *                            nothing), so the specs write the row, as the service does.
  *   - Retention policies     an entity's policy is edited (strategy, period, unit, reference field, condition, action, description),
  *                            summarised in the list and kept; one of a unit reads singular and plural (1 day, 1 month, 1 year, 2 years);
  *                            a period that cannot be saved is said, not swallowed; the entity address `?entity=<id>` opens its editor.
- *   - Compliance Query       the fields of the database with their classification, retention, anonymization and domain: filters
- *                            (text, classification, retention range, anonymization, domain), sorting, a row opens the entity page.
- *   - Compliance Gaps        what is missing on the fields (unclassified, PII without anonymization, sensitive without encryption or
- *                            retention), and a row opens the entity at the field.
+ *   - Compliance Query       the fields of the tenant being viewed (not another tenant's) with their classification, retention,
+ *                            anonymization and domain: filters (text, classification, retention range, anonymization, domain), sorting,
+ *                            a row opens the entity page.
+ *   - Compliance Gaps        what is missing on the fields of the tenant being viewed (unclassified, PII without anonymization, sensitive
+ *                            without encryption or retention), and a row opens the entity at the field.
  *   - Compliance Audit Trail an action performed in the app (deleting a field) is listed with its user, action, type and id, filtered by
- *                            id and by action, expanded to its before / after state.
+ *                            id and by action, expanded to its before / after state (it lists the audit rows of ALL tenants: KD-016).
  *   - Exports                CSV and JSON of the query and of the gaps, the audit trail's CSV: asserted through the browser's download
  *                            (file name, header row, a row for the data the test made).
  *   - Access                 a visitor with no role is refused by the compliance API (401 without a session, 403 without a role), and the
- *                            page says so (KD-016: the Query tab lists the fields of every tenant).
+ *                            page says so.
  *
  * Page content is queried inside the center panel (`centerPanel`): a hard load streams the page behind its loading.tsx and Next leaves
  * a hidden copy of the streamed segment in <body>. Toasts are portals, queried on `page`.
@@ -267,6 +270,26 @@ test.describe("governance dashboard", () => {
     }
   });
 
+  test("a user with no Steward or Admin role cannot reject either: the request stays pending, with no decision recorded", { tag: ["@regression"] }, async ({
+    browser,
+    baseURL,
+    workspace,
+  }) => {
+    const { id, entityName } = await pendingRequest(workspace.entities[0].id);
+    await withSecondUser(browser, baseURL, async (visitor) => {
+      const page = visitor.page;
+      await openGovernance(page);
+      const card = requestCard(page, entityName);
+      await card.getByTestId("governance-reject").click();
+      await afterServerAction(page, () => card.getByTestId("governance-reject").click(), { body: id });
+
+      expect((await governanceOutcome(id)).status).toBe("PENDING");
+      expect((await governanceOutcome(id)).decisions).toEqual([]);
+      await openGovernance(page);
+      await expect(requestCard(page, entityName)).toHaveAttribute("data-status", "PENDING");
+    });
+  });
+
   // KD-015: the dashboard drops the action's error (`if ("success" in result)`): a refusal looks like nothing happened.
   test.fail("[KD-015 a refused decision is not explained] a user who may not decide is told so", { tag: ["@regression"] }, async ({ browser, baseURL, workspace }) => {
     const { id, entityName } = await pendingRequest(workspace.entities[0].id);
@@ -276,7 +299,12 @@ test.describe("governance dashboard", () => {
       const card = requestCard(page, entityName);
       await card.getByTestId("governance-reject").click();
       await afterServerAction(page, () => card.getByTestId("governance-reject").click(), { body: id });
-      await expect(centerPanel(page).getByText(/Only Steward or Admin roles can reject/)).toBeVisible({ timeout: 3000 });
+
+      // The refusal itself is not what is pinned (the passing test above says the request stays pending): the SILENCE is. Proved first, so
+      // that this pin cannot "fail as expected" for any other reason than the missing explanation: the click was refused, not accepted.
+      expect((await governanceOutcome(id)).status).toBe("PENDING");
+      // Looked for on the whole page: a toast is a portal, which `centerPanel` leaves out (and so is the text under the card).
+      await expect(page.getByText(/steward|admin/i).first()).toBeVisible({ timeout: 3000 });
     });
   });
 });

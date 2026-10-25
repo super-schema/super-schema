@@ -616,6 +616,9 @@ test.describe("classifications", () => {
     await expect(classificationRow(page, name)).toBeVisible();
 
     await openClassifications(page);
+    // The page has rendered after the reload (a level that is always there is listed) before the added one is expected: the pin can only
+    // fail because the added level is gone.
+    await expect(classificationRow(page, "PII")).toBeVisible();
     await expect(classificationRow(page, name)).toBeVisible();
   });
 });
