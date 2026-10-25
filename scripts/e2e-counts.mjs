@@ -93,9 +93,6 @@ export function summarizeTier(tests) {
   };
 }
 
-/** Whether a list of tags has this tag. */
-const has = (tags, tag) => tags.includes(tag);
-
 /**
  * Per spec file: how many distinct tests it has and which tags they carry, and for each tier how many of those tests the tier runs. `tiers` maps a
  * tier name to its tests (`ListedTest[]`).
