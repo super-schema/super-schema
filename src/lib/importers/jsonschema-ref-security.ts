@@ -78,6 +78,10 @@ function isBlockedIPv4Octets(o: number[]): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   if (a === 192 && b === 0 && c === 0) return true;
+  // documentation ranges (RFC 5737): nothing real lives there, and a name that resolves to one is not a public host
+  if (a === 192 && b === 0 && c === 2) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
   if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
   if (a >= 224) return true; // multicast + reserved + broadcast
   return false;
@@ -126,11 +130,18 @@ export function isBlockedIp(ip: string): boolean {
     if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0)) {
       return isBlockedIPv4Octets(v4From(g[6]!, g[7]!));
     }
+    // ::ffff:0:a.b.c.d (IPv4-translated, ::ffff:0:0:0/96): the mapped form has the 0 group AFTER ffff, this one before it. Blocked whole: it
+    // is a translation prefix, whatever it embeds.
+    if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return true;
     // 64:ff9b::/96 NAT64
     if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) {
       return isBlockedIPv4Octets(v4From(g[6]!, g[7]!));
     }
+    // 64:ff9b:1::/48 (RFC 8215): local-use NAT64, a translation of any address
+    if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1) return true;
     if (g[0] === 0x2001 && g[1] === 0) return true; // Teredo 2001::/32 (embeds a tunnel server and client address)
+    if (g[0] === 0x2001 && g[1] === 0xdb8) return true; // documentation 2001:db8::/32 (RFC 3849)
+    if (g[0] === 0x3fff && (g[1]! & 0xf000) === 0) return true; // documentation 3fff::/20 (RFC 9637)
     if (g[0] === 0x2002) return isBlockedIPv4Octets(v4From(g[1]!, g[2]!)); // 6to4
     if ((g[0]! & 0xfe00) === 0xfc00) return true; // fc00::/7
     if ((g[0]! & 0xffc0) === 0xfe80) return true; // fe80::/10
@@ -172,6 +183,12 @@ export function checkHttpsUrl(raw: string): HttpsCheck {
   return { ok: true, url };
 }
 
+/**
+ * What the user is told when a name does not resolve and when it resolves to an address that is not allowed: ONE text. Two would tell a caller
+ * which names exist on an internal DNS (the importer fetches on our server, from inside our network). The specific reason is logged.
+ */
+export const HOST_REFUSED_MESSAGE = "host could not be resolved or is blocked by policy";
+
 /** Reject hostnames that resolve to a blocked address. Fails closed. */
 export async function assertPublicHost(url: URL, lookup: DnsLookup): Promise<void> {
   const host = url.hostname.replace(/^\[|\]$/g, "");
@@ -180,10 +197,13 @@ export async function assertPublicHost(url: URL, lookup: DnsLookup): Promise<voi
   try {
     addrs = await lookup(host);
   } catch {
-    throw new RefFetchError("host could not be resolved");
+    console.warn(`[jsonschema-ref-security] ${host} refused: the DNS lookup failed`);
+    throw new RefFetchError(HOST_REFUSED_MESSAGE);
   }
-  if (addrs.length === 0 || addrs.some((a) => isBlockedIp(a))) {
-    throw new RefFetchError("host is blocked by policy (resolves to a private or reserved address)");
+  const blocked = addrs.find((a) => isBlockedIp(a));
+  if (addrs.length === 0 || blocked !== undefined) {
+    console.warn(`[jsonschema-ref-security] ${host} refused: ${addrs.length === 0 ? "the lookup returned no address" : `it resolves to a blocked address (${blocked})`}`);
+    throw new RefFetchError(HOST_REFUSED_MESSAGE);
   }
 }
 

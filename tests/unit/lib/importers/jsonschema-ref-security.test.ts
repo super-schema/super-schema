@@ -61,7 +61,9 @@ describe("checkHttpsUrl", () => {
   });
   it("blocks a Teredo address", () => {
     expect(isBlockedIp("2001:0:4136:e378:8000:63bf:3fff:fdd2")).toBe(true);
-    expect(isBlockedIp("2001:db8::1")).toBe(false);
+    // 2001:db8::/32 is the documentation range: blocked too (jsonschema-ref-security-ranges.test.ts); another 2001: address is public
+    expect(isBlockedIp("2001:db8::1")).toBe(true);
+    expect(isBlockedIp("2001:4860:4860::8888")).toBe(false);
   });
   it("refuses embedded credentials", () => {
     expect(checkHttpsUrl("https://user:pass@example.com/a").ok).toBe(false);
