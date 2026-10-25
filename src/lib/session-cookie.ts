@@ -6,17 +6,19 @@
  * Auth.js v5 uses: `authjs.session-token`, and `__Secure-authjs.session-token` when the site is served over https (each name is its
  * own salt). The legacy `next-auth.session-token` names are not Auth.js v5's: a cookie of that name is never a session of this app.
  *
- * Fails closed: no secret configured, an undecryptable value, an expired or a foreign token are all "no session". Only the Cookie
+ * Fails closed: no secret configured (the secret is `AUTH_SECRET`, else `NEXTAUTH_SECRET`; `AUTH_SECRET_1..3` rotation is not supported here), an undecryptable value, an expired or a foreign token are all "no session". Only the Cookie
  * header is read (never `Authorization: Bearer`, which `getToken` would also accept as a token).
  */
 import { getToken } from "next-auth/jwt";
+import { resolveAuthSecret } from "@/lib/auth-secret";
 
 const SESSION_COOKIE_NAMES = ["__Secure-authjs.session-token", "authjs.session-token"] as const;
 
 export async function hasValidSession(cookieHeader: string | null): Promise<boolean> {
   if (!cookieHeader) return false;
-  // Auth.js reads AUTH_SECRET, and NEXTAUTH_SECRET as the name this app documents (src/env.ts, .env.example).
-  const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  // The same secret Auth.js signs with (src/lib/auth.ts): one rule for both, an EMPTY name is not set (src/lib/auth-secret.ts). Auth.js's
+  // AUTH_SECRET_1..3 rotation names are not read here: without one of the two names there is no secret, and the answer is "no session".
+  const secret = resolveAuthSecret();
   if (!secret) return false;
 
   const req = { headers: new Headers({ cookie: cookieHeader }) };

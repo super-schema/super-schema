@@ -1,17 +1,16 @@
 import { prisma } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { getActiveTenantId } from "@/lib/active-tenant";
-import { authenticateRequest } from "../v1/middleware";
+import { requireSession } from "@/lib/require-session";
 
-export async function GET(request: Request) {
-  const authResult = await authenticateRequest(request);
-  if (!authResult.authenticated) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
+export async function GET() {
+  // A session only. The root middleware (src/middleware.ts) reads the Cookie header and nothing else, so a caller with only an
+  // `Authorization: Bearer <API key>` never reaches this handler (it gets 401 there): an API-key branch here could never run.
+  const denied = await requireSession();
+  if (denied) return denied;
 
   try {
-    // The fields of the tenant being viewed (the `active_tenant` cookie; a caller with an API key has none, so it gets the default tenant,
-    // like every other route that asks).
+    // The fields of the tenant being viewed (the `active_tenant` cookie).
     const tenantId = await getActiveTenantId();
     const fields = await prisma.field.findMany({
       where: { entity: { tenantId } },

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/require-session";
 import { prisma } from "@/lib/db";
+import { getActiveTenantId } from "@/lib/active-tenant";
 import { generateEntityFromDescription, isAiConfigured } from "@/services/ai.service";
 import { GenerateEntityInputSchema } from "@/types/schemas/ai";
 
@@ -27,8 +28,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const domain = await prisma.domain.findUnique({
-    where: { id: parsed.data.domainId },
+  // The domain must be one of the tenant being viewed: its entity names go to the AI provider, and a domain of another tenant answers
+  // exactly like one that does not exist (the same 404), so an id cannot be used to probe or to read another tenant.
+  const tenantId = await getActiveTenantId();
+  const domain = await prisma.domain.findFirst({
+    where: { id: parsed.data.domainId, tenantId },
     include: { entities: { select: { name: true } } },
   });
   if (!domain) {

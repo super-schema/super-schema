@@ -4,6 +4,7 @@ import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
+import { resolveAuthSecret } from "@/lib/auth-secret";
 
 const providers = [
   Credentials({
@@ -44,6 +45,9 @@ const providers = [
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
+  // The secret the middleware verifies the cookie with (src/lib/session-cookie.ts): one rule for both, an empty name is not set. Left
+  // undefined when neither name is set, so Auth.js falls back to its own AUTH_SECRET_1..3 (which the middleware does not read: docs/auth-ops.md).
+  secret: resolveAuthSecret(),
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
   providers,

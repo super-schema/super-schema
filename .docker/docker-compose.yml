@@ -7,8 +7,16 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgresql://superschema:password@db:5432/superschema
-      NEXTAUTH_SECRET: dev-secret-change-in-production
+      # The secret that signs every login (the session cookie): the whole authentication boundary. There is NO default: a server in production
+      # refuses to start with a secret shorter than 32 characters or a known development value (src/lib/auth-secret.ts). Make one and export it:
+      #   export NEXTAUTH_SECRET="$(openssl rand -base64 32)"
+      # docs/auth-ops.md.
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET (openssl rand -base64 32)}
       NEXTAUTH_URL: http://localhost:3000
+      # Auth.js in production refuses a request whose Host it does not trust (UntrustedHost) unless AUTH_URL is set or the host is trusted.
+      # "true" is right BEHIND A PROXY YOU CONTROL that sets the Host header (or when NEXTAUTH_URL is the only address the app is reached by).
+      # Directly on the internet, set AUTH_URL to the public origin and remove this line.
+      AUTH_TRUST_HOST: "true"
     depends_on:
       db:
         condition: service_healthy

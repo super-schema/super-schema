@@ -486,6 +486,9 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
 
 ## Access control
 
+The operational side of authentication (the session secret, trusting the host, open registration and the first administrator, the health endpoint) is in
+[`docs/auth-ops.md`](../auth-ops.md); read its registration warnings before a deployment is reachable by anyone else.
+
 The seeded user `admin@admin.com` is an `ADMIN`; the suite logs in as that user and sees everything. Role rules (viewer, author, per tenant,
 domain and product) are a later change; when they land, the suite needs a second login with a lower role and specs that check what that
 role cannot do.

@@ -1,13 +1,15 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
-  authenticateRequest: vi.fn(),
+  requireSession: vi.fn(),
   getActiveTenantId: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: { field: { findMany: mocks.findMany } } }));
-vi.mock("@/app/api/v1/middleware", () => ({ authenticateRequest: mocks.authenticateRequest }));
+vi.mock("@/lib/require-session", () => ({ requireSession: mocks.requireSession }));
 // The tenant being viewed is a cookie of the request: a unit test names it.
 vi.mock("@/lib/active-tenant", () => ({ getActiveTenantId: mocks.getActiveTenantId }));
 
@@ -19,7 +21,7 @@ function fieldRow(entity: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.authenticateRequest.mockResolvedValue({ authenticated: true });
+  mocks.requireSession.mockResolvedValue(null); // a session
   mocks.getActiveTenantId.mockResolvedValue("tenant-a");
 });
 
@@ -35,7 +37,7 @@ describe("GET /api/command-palette-fields", () => {
       }),
     ]);
 
-    const body = await (await GET(new Request("http://localhost/api/command-palette-fields"))).json();
+    const body = await (await GET()).json();
 
     expect(body).toEqual([
       expect.objectContaining({ entitySlug: "order", domainSlug: "payments", productSlug: "checkout" }),
@@ -47,7 +49,7 @@ describe("GET /api/command-palette-fields", () => {
       fieldRow({ id: "e0", name: "Customer", slug: "customer", product: null, domain: null }),
     ]);
 
-    const body = await (await GET(new Request("http://localhost/api/command-palette-fields"))).json();
+    const body = await (await GET()).json();
 
     expect(body[0].domainSlug).toBeNull();
     expect(body[0].productSlug).toBeNull();
@@ -56,7 +58,7 @@ describe("GET /api/command-palette-fields", () => {
   it("asks only for the fields of entities of the tenant being viewed (it used to take the first 100 of every tenant)", async () => {
     mocks.findMany.mockResolvedValue([]);
 
-    await GET(new Request("http://localhost/api/command-palette-fields"));
+    await GET();
 
     expect(mocks.getActiveTenantId).toHaveBeenCalledTimes(1);
     expect(mocks.findMany.mock.calls[0][0].where).toEqual({ entity: { tenantId: "tenant-a" } });
@@ -67,16 +69,32 @@ describe("GET /api/command-palette-fields", () => {
     mocks.findMany.mockResolvedValue([]);
     mocks.getActiveTenantId.mockResolvedValue("tenant-b");
 
-    await GET(new Request("http://localhost/api/command-palette-fields"));
+    await GET();
 
     expect(mocks.findMany.mock.calls[0][0].where).toEqual({ entity: { tenantId: "tenant-b" } });
   });
 
-  it("rejects unauthenticated requests", async () => {
-    mocks.authenticateRequest.mockResolvedValue({ authenticated: false });
+  it("rejects unauthenticated requests, and queries nothing", async () => {
+    mocks.requireSession.mockResolvedValue(Response.json({ error: "Not authenticated" }, { status: 401 }));
 
-    const res = await GET(new Request("http://localhost/api/command-palette-fields"));
+    const res = await GET();
 
     expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "Not authenticated" });
+    expect(mocks.findMany).not.toHaveBeenCalled();
+    expect(mocks.getActiveTenantId).not.toHaveBeenCalled();
+  });
+
+  it("answers to a session only: the API-key branch was dead (the middleware reads the Cookie header alone, so a Bearer-only caller never gets here) and is gone", async () => {
+    mocks.findMany.mockResolvedValue([]);
+
+    // A request with a Bearer key and no session is still decided by the session check, and nothing else.
+    mocks.requireSession.mockResolvedValue(Response.json({ error: "Not authenticated" }, { status: 401 }));
+    expect((await GET()).status).toBe(401);
+
+    const source = readFileSync(path.resolve(__dirname, "../../../src/app/api/command-palette-fields/route.ts"), "utf8");
+    expect(source).not.toContain("authenticateRequest");
+    expect(source).not.toMatch(/request\.headers|req\.headers|headers\.get/); // the route reads no header: no Authorization handling
+    expect(source).not.toContain("v1/middleware");
   });
 });
