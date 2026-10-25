@@ -40,12 +40,18 @@
 // The idle time is measured on a monotonic clock from the last CHANGE of the heartbeat's modification time (never wall clock minus mtime), and a gap
 // of more than four poll periods between two polls (a laptop that slept) starts the limit again instead of ending a healthy run as a stall.
 //
+// The skipped-test gate: a skipped test is green in every report, so a precondition that is never met would hide a test for ever. Each phase's
+// tests/e2e/reporters/skipped-reporter.ts writes <results>/<phase>/skipped-tests.json (every test that did not run, with its reason, runtime
+// `test.skip(condition, reason)` included); the summary prints a SKIPPED block, and a phase that passed but skipped a test that is not tagged
+// `@external` (a network or second-server precondition, allowed to skip, with the reason listed) fails with exit 1, unless E2E_ALLOW_SKIPS=1.
+// A phase whose list is missing fails too (the gate could not be checked). A `--list` runs no test and has no gate.
+//
 // Dependency-free on purpose: the release runner calls it, and the planner and the pieces around it (`planPhases`, `parseCli`,
-// `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `phaseEnvironment`, `stallMessage`, `isEntryPoint`) are unit tested
+// `authStateProblem`, `runPhases`, `exitCodeOf`, `phaseSummaryLine`, `phaseEnvironment`, `stallMessage`, `isEntryPoint`, `skipGate`) are unit tested
 // (tests/unit/e2e-phases.test.ts) without running anything.
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { browserEnv, decideForThisProcess, describeBrowser, realProbes } from "./e2e-browser.cjs";
@@ -222,6 +228,7 @@ export function planPhases({ tier, noSerial = false, extraArgs = [], authState, 
         PLAYWRIGHT_JUNIT_OUTPUT_FILE: path.join(results(step.name), "junit.xml"),
         E2E_FLAKY_FILE: path.join(results(step.name), "flaky-tests.json"),
         E2E_HEARTBEAT_FILE: path.join(results(step.name), "heartbeat"),
+        E2E_SKIPPED_FILE: path.join(results(step.name), "skipped-tests.json"),
       },
     });
   });
@@ -271,14 +278,123 @@ export function exitCodeOf(results, signal) {
   return results.find((r) => r.code !== 0)?.code ?? 0;
 }
 
+// ------------------------------------------------------------------------------------------------------------------------------------
+// The skipped-test gate
+// ------------------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * The shell value that lets a run skip tests without failing: exactly "1". A skipped test is green in every report, so a precondition that
+ * is never met (an environment variable nobody sets, a server nobody starts) would make a test pass forever without running. Without this,
+ * a phase that skipped any test that is not tagged `@external` fails (exit 1).
+ */
+export const ALLOW_SKIPS = "E2E_ALLOW_SKIPS";
+
+/** The tag of a test whose precondition is outside the checkout (the network, a second server): it may skip, with its reason listed loudly. */
+export const EXTERNAL_TAG = "@external";
+
+/**
+ * @typedef {{ project: string, title: string, file: string, line: number, tags: string[], reasons: string[], startedThenSkipped: boolean }} SkippedRow
+ * @typedef {{ allowed: SkippedRow[], blocked: SkippedRow[], error?: string }} SkipReport
+ */
+
+/**
+ * The list a phase's skipped reporter (tests/e2e/reporters/skipped-reporter.ts) wrote: its rows, or why there is none. Never throws.
+ *
+ * @param {string} file
+ * @param {{ read?: (file: string) => string }} [deps]
+ * @returns {{ rows: SkippedRow[] } | { error: string }}
+ */
+export function readSkippedList(file, { read = (f) => readFileSync(f, "utf8") } = {}) {
+  let text;
+  try {
+    text = read(file);
+  } catch {
+    return { error: `${file} was not written: the skipped-test reporter did not run to its end, so a skipped test could be hiding` };
+  }
+  try {
+    const rows = JSON.parse(text);
+    if (!Array.isArray(rows)) throw new Error("not a list");
+    return { rows };
+  } catch (error) {
+    return { error: `${file} is not a list of skipped tests (${error instanceof Error ? error.message : String(error)})` };
+  }
+}
+
+/**
+ * Which skipped tests may be skipped: the ones tagged `@external` (a network or second-server precondition), and all of them when
+ * `allowAll` (E2E_ALLOW_SKIPS=1). Pure.
+ *
+ * @param {{ rows: SkippedRow[], allowAll?: boolean }} input
+ * @returns {{ allowed: SkippedRow[], blocked: SkippedRow[] }}
+ */
+export function skipGate({ rows, allowAll = false }) {
+  /** @type {SkippedRow[]} */
+  const allowed = [];
+  /** @type {SkippedRow[]} */
+  const blocked = [];
+  for (const row of rows) (allowAll || (row.tags ?? []).includes(EXTERNAL_TAG) ? allowed : blocked).push(row);
+  return { allowed, blocked };
+}
+
+/**
+ * The code of a phase after the gate: a phase that PASSED (code 0) but skipped a test that may not be skipped, or whose list is missing, fails
+ * with 1; a phase that already failed keeps its code (the list is still reported). Pure.
+ *
+ * @param {{ code: number, listed: ReturnType<typeof readSkippedList> | undefined, allowAll?: boolean }} input
+ * @returns {{ code: number, skipped?: SkipReport, skipGate?: boolean }} `skipGate` is true when the gate, not Playwright, made the code 1
+ */
+export function applySkipGate({ code, listed, allowAll = false }) {
+  if (!listed) return { code };
+  if ("error" in listed) return { code: code === 0 ? 1 : code, skipped: { allowed: [], blocked: [], error: listed.error }, ...(code === 0 ? { skipGate: true } : {}) };
+  const { allowed, blocked } = skipGate({ rows: listed.rows, allowAll });
+  const gated = code === 0 && blocked.length > 0;
+  return { code: gated ? 1 : code, skipped: { allowed, blocked }, ...(gated ? { skipGate: true } : {}) };
+}
+
+/** `[project] title (file:line)` of a skipped test. */
+const describeSkipped = (row) => `[${row.project}] ${row.title} (${row.file}:${row.line})`;
+
+/**
+ * The SKIPPED block of the summary: every skipped test of every phase with its reason, and whether it was allowed (loudly: a skip is
+ * never silent). Empty when nothing was skipped anywhere.
+ *
+ * @param {Array<{ name: string, skipped?: SkipReport }>} results
+ * @param {{ allowAll?: boolean }} [options]
+ * @returns {string[]}
+ */
+export function skippedLines(results, { allowAll = false } = {}) {
+  const lines = [];
+  let allowed = 0;
+  let blocked = 0;
+  for (const result of results) {
+    const skipped = result.skipped;
+    if (!skipped) continue;
+    if (skipped.error) lines.push(`  ${result.name}: the list of skipped tests could not be read: ${skipped.error}`);
+    for (const row of skipped.blocked) {
+      blocked += 1;
+      lines.push(`  ${result.name}: ${describeSkipped(row)} NOT ALLOWED: ${row.reasons.join("; ")}`);
+    }
+    for (const row of skipped.allowed) {
+      allowed += 1;
+      const why = (row.tags ?? []).includes(EXTERNAL_TAG) ? `allowed, ${EXTERNAL_TAG}` : `allowed, ${ALLOW_SKIPS}=1`;
+      lines.push(`  ${result.name}: ${describeSkipped(row)} (${why}): ${row.reasons.join("; ")}`);
+    }
+  }
+  if (lines.length === 0) return [];
+  const head = `SKIPPED: ${allowed + blocked} test(s) did not run (${allowed} allowed, ${blocked} not allowed). A skip is green in every report; a precondition nobody meets would hide a test for ever.`;
+  const note = allowAll ? [`  ${ALLOW_SKIPS}=1: every skip above is allowed. Unset it for the release check.`] : [];
+  return [head, ...lines, ...note];
+}
+
 /**
  * One line of the summary. The report and results paths are printed only when they exist: a run with the `list` reporter alone (any
  * local run) writes neither, and pointing at a missing file is worse than saying nothing.
  *
- * @param {{ phase: Phase, result?: { name: string, code: number, refused?: boolean }, exists?: (file: string) => boolean }} input
+ * @param {{ phase: Phase, result?: { name: string, code: number, refused?: boolean, skipGate?: boolean, skipped?: SkipReport }, exists?: (file: string) => boolean }} input
  */
 export function phaseSummaryLine({ phase, result, exists = existsSync }) {
-  const text = !result ? "not run" : result.refused ? "refused" : result.code === 0 ? "passed" : `failed (exit ${result.code})`;
+  const gated = result?.skipGate ? `: ${result.skipped?.error ? "the skipped-test list is missing" : `${result.skipped?.blocked.length} skipped test(s) not allowed`}` : "";
+  const text = !result ? "not run" : result.refused ? "refused" : result.code === 0 ? "passed" : `failed (exit ${result.code}${gated})`;
   const where = [];
   if (result && !result.refused) {
     const report = path.join(phase.env.PLAYWRIGHT_HTML_OUTPUT_DIR, "index.html");
@@ -315,8 +431,9 @@ export function phaseEnvironment(env, phase, browser) {
  * @param {{ phases: Phase[], auth: { file: string, ownedByThisRun: boolean }, deps: {
  *   interrupted: () => boolean, runPhase: (phase: Phase) => Promise<number>,
  *   existsSync: (file: string) => boolean, statSync: (file: string) => { mtimeMs: number }, rmSync: (file: string, options?: object) => void,
- *   mkdirSync: (dir: string, options?: object) => void, now: () => number, log: (message: string) => void, error: (message: string) => void } }} input
- * @returns {Promise<Array<{ name: string, code: number, refused?: boolean }>>}
+ *   mkdirSync: (dir: string, options?: object) => void, now: () => number, log: (message: string) => void, error: (message: string) => void,
+ *   readSkipped?: (phase: Phase) => ReturnType<typeof readSkippedList>, allowSkips?: boolean } }} input
+ * @returns {Promise<Array<{ name: string, code: number, refused?: boolean, skipGate?: boolean, skipped?: SkipReport }>>}
  */
 export async function runPhases({ phases, auth, deps }) {
   const results = [];
@@ -345,7 +462,9 @@ export async function runPhases({ phases, auth, deps }) {
         }
       }
       deps.log(`[e2e-phases] ${phase.name}: playwright ${phase.args.join(" ")}`);
-      results.push({ name: phase.name, code: await deps.runPhase(phase) });
+      const code = await deps.runPhase(phase);
+      // The skipped-test gate: a phase that passed but skipped a test that may not be skipped (or has no list) fails.
+      results.push({ name: phase.name, ...applySkipGate({ code, listed: deps.readSkipped?.(phase), allowAll: deps.allowSkips }) });
     }
   } finally {
     if (auth.ownedByThisRun) deps.rmSync(auth.file, { force: true });
@@ -380,6 +499,7 @@ function runPhase(phase, onChild, browser, stallMs) {
       mkdirSync(path.dirname(heartbeat), { recursive: true });
       rmSync(heartbeat, { force: true });
     }
+    if (!phase.listOnly && phase.env.E2E_SKIPPED_FILE) rmSync(phase.env.E2E_SKIPPED_FILE, { force: true }); // a list of an earlier run is not this run's
     const child = spawnGroup(command, [...args, ...phase.args], { stdio: "inherit", env: phaseEnvironment(process.env, phase, browser) });
     onChild(child);
     const watcher = heartbeat
@@ -450,6 +570,7 @@ async function main() {
     }
     browserText = describeBrowser(browser, realProbes());
   }
+  const allowSkips = process.env[ALLOW_SKIPS] === "1";
   const auth = chooseAuthState({ env: process.env, firstPhaseRunsSetup: first.runsSetup, runId: `${process.pid}-${randomBytes(4).toString("hex")}` });
   const { phases, skipped } = planPhases({ ...cli, authState: auth.file, outputRoot });
   if (!first.listOnly) {
@@ -491,6 +612,8 @@ async function main() {
       statSync,
       rmSync,
       mkdirSync,
+      readSkipped: (phase) => readSkippedList(phase.env.E2E_SKIPPED_FILE),
+      allowSkips,
       now: Date.now,
       log: (message) => console.log(message),
       error: (message) => console.error(message),
@@ -501,6 +624,7 @@ async function main() {
   console.log("[e2e-phases] summary:");
   if (browserText) console.log(browserSummaryLine(browserText));
   for (const phase of phases) console.log(phaseSummaryLine({ phase, result: results.find((r) => r.name === phase.name) }));
+  for (const line of skippedLines(results, { allowAll: allowSkips })) console.log(line);
   process.exit(exitCodeOf(results, interrupt.signal));
 }
 

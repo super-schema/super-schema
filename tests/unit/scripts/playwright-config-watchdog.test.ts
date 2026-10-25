@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const NAMES = ["E2E_HEARTBEAT_FILE", "E2E_GLOBAL_TIMEOUT_MS", "CI", "E2E_BASE_URL", "E2E_BROWSER_CHANNEL"] as const;
+const NAMES = ["E2E_HEARTBEAT_FILE", "E2E_SKIPPED_FILE", "E2E_GLOBAL_TIMEOUT_MS", "CI", "E2E_BASE_URL", "E2E_BROWSER_CHANNEL"] as const;
 
 describe("playwright.config.ts: the heartbeat reporter and the global timeout", () => {
   const saved = Object.fromEntries(NAMES.map((name) => [name, process.env[name]]));
@@ -38,6 +38,14 @@ describe("playwright.config.ts: the heartbeat reporter and the global timeout", 
     process.env.CI = "1";
     process.env.E2E_HEARTBEAT_FILE = "/tmp/run/heartbeat";
     expect(names(await load())).toEqual(["list", "html", "junit", "./tests/e2e/reporters/flaky-reporter.ts", "./tests/e2e/reporters/heartbeat-reporter.ts"]);
+  });
+
+  it("adds the skipped-test reporter, before the heartbeat, when the phases script asked for a list (E2E_SKIPPED_FILE)", async () => {
+    process.env.E2E_SKIPPED_FILE = "/tmp/run/skipped-tests.json";
+    expect(names(await load())).toEqual(["list", "./tests/e2e/reporters/skipped-reporter.ts"]);
+    vi.resetModules();
+    process.env.E2E_HEARTBEAT_FILE = "/tmp/run/heartbeat";
+    expect(names(await load())).toEqual(["list", "./tests/e2e/reporters/skipped-reporter.ts", "./tests/e2e/reporters/heartbeat-reporter.ts"]);
   });
 
   it("has no global timeout unless E2E_GLOBAL_TIMEOUT_MS says one (Playwright's 0 is none)", async () => {

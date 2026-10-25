@@ -4,6 +4,8 @@
 //   E2E_OUTPUT_ROOT=<root> SUMMARY_TITLE="regression 2/4" node scripts/ci-flaky-summary.mjs >> "$GITHUB_STEP_SUMMARY"
 //   node scripts/ci-flaky-summary.mjs <root>              (the directory as an argument instead of E2E_OUTPUT_ROOT)
 //
+// The same step lists the tests that did not run (`skipped-tests.json`, tests/e2e/reporters/skipped-reporter.ts): a skip is green in every report.
+//
 // A flaky test (failed, then passed on the retry) keeps the run green; tests/e2e/reporters/flaky-reporter.ts writes each phase's list to
 // `<root>/test-results/<phase>/flaky-tests.json` (nothing when there was none). This puts those lists where a person looking at the run
 // sees them, without opening an artifact. It reads every `flaky-tests.json` under the root (not inside `artifacts/`, where traces
@@ -23,6 +25,8 @@ import path from "node:path";
 import { isEntryPoint } from "./e2e-entry.mjs";
 
 const FLAKY_FILE = "flaky-tests.json";
+/** The list of tests that did not run, written by tests/e2e/reporters/skipped-reporter.ts into the same directory of each phase. */
+const SKIPPED_FILE = "skipped-tests.json";
 /** The other file every phase writes on CI (the junit reporter): its presence says that the phase ran, flaky or not. */
 const JUNIT_FILE = "junit.xml";
 const MAX_DEPTH = 4;
@@ -105,6 +109,72 @@ export function renderSummary({ title, rows, unreadable = [], root = "", reports
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * The skipped tests of a run: every `skipped-tests.json` under the root (one per phase, not inside `artifacts/`).
+ *
+ * @param {string} root the run's output root
+ * @returns {{ rows: Array<{ phase: string, project?: string, title?: string, file?: string, line?: number, tags?: string[], reasons?: string[] }>, unreadable: string[] }}
+ */
+export function collectSkipped(root) {
+  /** @type {string[]} */
+  const files = [];
+  const walk = (dir, depth) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (depth < MAX_DEPTH && entry.name !== "artifacts") walk(file, depth + 1);
+      } else if (entry.name === SKIPPED_FILE) {
+        files.push(file);
+      }
+    }
+  };
+  walk(root, 0);
+  const rows = [];
+  const unreadable = [];
+  for (const file of files.sort()) {
+    const phase = path.basename(path.dirname(file));
+    try {
+      const parsed = JSON.parse(readFileSync(file, "utf8"));
+      if (!Array.isArray(parsed)) throw new Error("not a list");
+      for (const row of parsed) rows.push({ phase, ...row });
+    } catch {
+      unreadable.push(path.relative(root, file));
+    }
+  }
+  return { rows, unreadable };
+}
+
+/**
+ * The job summary's section for the skipped tests: a skip is green in every report, so it is listed with its reason and whether it was
+ * allowed (`@external`). Empty (no section) when nothing was skipped.
+ *
+ * @param {{ title: string, rows: ReturnType<typeof collectSkipped>["rows"], unreadable?: string[] }} input
+ * @returns {string} markdown ("" when there is nothing to say)
+ */
+export function renderSkipped({ title, rows, unreadable = [] }) {
+  if (rows.length === 0 && unreadable.length === 0) return "";
+  const lines = ["", `### ${title}: skipped tests`, ""];
+  if (rows.length > 0) {
+    const shown = rows.slice(0, MAX_ROWS);
+    lines.push(
+      `${rows.length} test(s) did not run. A test tagged @external may skip (a network or second-server precondition); any other skip fails the run.`,
+      "",
+      "| Phase | Project | Test | Location | Allowed | Reason |",
+      "| --- | --- | --- | --- | --- | --- |",
+      ...shown.map((r) => `| ${cell(r.phase)} | ${cell(r.project)} | ${cell(r.title)} | ${cell(`${r.file}:${r.line}`)} | ${(r.tags ?? []).includes("@external") ? "yes (@external)" : "**no**"} | ${cell((r.reasons ?? []).join("; "))} |`),
+    );
+    if (rows.length > shown.length) lines.push("", `and ${rows.length - shown.length} more (all of them are in the skipped-tests.json files of the test-results artifact).`);
+  }
+  for (const file of unreadable) lines.push("", `Could not read ${cell(file)}.`);
+  return `${lines.join("\n")}\n`;
+}
+
 if (isEntryPoint(import.meta.url, process.argv[1])) {
   const root = process.argv[2] || process.env.E2E_OUTPUT_ROOT;
   const title = process.env.SUMMARY_TITLE || "e2e";
@@ -112,5 +182,6 @@ if (isEntryPoint(import.meta.url, process.argv[1])) {
     process.stdout.write(`### ${title}: flaky tests\n\nNo output root given (set E2E_OUTPUT_ROOT or pass the directory as an argument): nothing was summarized.\n`);
   } else {
     process.stdout.write(renderSummary({ title, ...collectFlaky(path.resolve(root)) }));
+    process.stdout.write(renderSkipped({ title, ...collectSkipped(path.resolve(root)) }));
   }
 }

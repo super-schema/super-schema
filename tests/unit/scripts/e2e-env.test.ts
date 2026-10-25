@@ -79,8 +79,8 @@ describe("the groups", () => {
     for (const reason of Object.values(HERMETIC_BROWSER_RUN_NAMES)) expect(reason.length).toBeGreaterThan(10);
   });
 
-  it("pin the runner's own knobs: the Node hatch, the stall limit and the global timeout, each with a reason", () => {
-    expect(Object.keys(HERMETIC_RUNNER_KNOB_NAMES).sort()).toEqual(["E2E_ALLOW_UNSUPPORTED_NODE", "E2E_GLOBAL_TIMEOUT_MS", "E2E_STALL_MS"]);
+  it("pin the runner's own knobs: the Node hatch, the skipped-test hatch, the stall limit and the global timeout, each with a reason", () => {
+    expect(Object.keys(HERMETIC_RUNNER_KNOB_NAMES).sort()).toEqual(["E2E_ALLOW_SKIPS", "E2E_ALLOW_UNSUPPORTED_NODE", "E2E_GLOBAL_TIMEOUT_MS", "E2E_STALL_MS"]);
     for (const reason of Object.values(HERMETIC_RUNNER_KNOB_NAMES)) expect(reason.length).toBeGreaterThan(10);
   });
 

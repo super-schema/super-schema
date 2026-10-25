@@ -51,6 +51,9 @@ import { REUSE_ENV, WEB_SERVER_PORT, directRunVerdict } from "./scripts/e2e-dire
  * A RUN THAT HANGS: scripts/e2e-phases.mjs sets `E2E_HEARTBEAT_FILE` for each phase, which adds tests/e2e/reporters/heartbeat-reporter.ts
  * (a file rewritten at every test start / end); the script ends a Playwright whose heartbeat is older than `E2E_STALL_MS` (exit 124).
  * `E2E_GLOBAL_TIMEOUT_MS` is Playwright's own `globalTimeout`, a hard ceiling for the whole run that a CI job sets; unset means none.
+ *
+ * A SKIPPED TEST is green in every report, so the phases script also sets `E2E_SKIPPED_FILE`, which adds tests/e2e/reporters/skipped-reporter.ts (a JSON list
+ * of every test that did not run, with the reason); the script prints a SKIPPED block and fails a phase that skipped a test that is not `@external`.
  */
 
 /**
@@ -115,6 +118,8 @@ const REPORTERS: ReporterDescription[] = [
         ["./tests/e2e/reporters/flaky-reporter.ts"],
       ] satisfies ReporterDescription[])
     : ([["list"]] satisfies ReporterDescription[])),
+  // The list of skipped tests the phases script gates on (scripts/e2e-phases.mjs: a skip that is not @external fails the run).
+  ...(process.env.E2E_SKIPPED_FILE ? ([["./tests/e2e/reporters/skipped-reporter.ts"]] satisfies ReporterDescription[]) : []),
   ...(process.env.E2E_HEARTBEAT_FILE ? ([["./tests/e2e/reporters/heartbeat-reporter.ts"]] satisfies ReporterDescription[]) : []),
 ];
 

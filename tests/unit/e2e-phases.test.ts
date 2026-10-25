@@ -10,7 +10,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  ALLOW_SKIPS,
   MAX_AUTH_AGE_MS,
+  applySkipGate,
   authStateProblem,
   chooseAuthState,
   exitCodeOf,
@@ -21,8 +23,11 @@ import {
   phaseSummaryLine,
   planPhases,
   playwrightCommand,
+  readSkippedList,
   runPhases,
   shardOf,
+  skipGate,
+  skippedLines,
   stallMessage,
 } from "../../scripts/e2e-phases.mjs";
 import { isSupportedNode } from "../../scripts/e2e-node.mjs";
@@ -93,6 +98,7 @@ describe("planPhases", () => {
       PLAYWRIGHT_JUNIT_OUTPUT_FILE: path.join("test-results", "main", "junit.xml"),
       E2E_FLAKY_FILE: path.join("test-results", "main", "flaky-tests.json"),
       E2E_HEARTBEAT_FILE: path.join("test-results", "main", "heartbeat"),
+      E2E_SKIPPED_FILE: path.join("test-results", "main", "skipped-tests.json"),
     });
     expect(serial.env.PLAYWRIGHT_HTML_OUTPUT_DIR).toBe(path.join("playwright-report", "serial"));
     expect(serial.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE).toBe(path.join("test-results", "serial", "junit.xml"));
@@ -112,6 +118,8 @@ describe("planPhases", () => {
       expect(phase.env.E2E_FLAKY_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "flaky-tests.json"));
       // The stall watchdog's heartbeat: a file of the phase's own, next to its junit file, outside the --output directory Playwright empties.
       expect(phase.env.E2E_HEARTBEAT_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "heartbeat"));
+      // The skipped-test list the gate reads: a file of the phase's own, next to its junit file.
+      expect(phase.env.E2E_SKIPPED_FILE).toBe(path.join("/runs/42", "test-results", phase.name, "skipped-tests.json"));
       expect(phase.args).toContain(`--output=${path.join("/runs/42", "test-results", phase.name, "artifacts")}`);
     }
   });
@@ -518,5 +526,169 @@ describe("runPhases: the order of the login file's removal and the phases, with 
     const results = await runPhases({ phases: only, auth: { file: login.file, ownedByThisRun: false }, deps });
     expect(results).toEqual([{ name: "main", code: 1, refused: true }]);
     expect(events.some((e) => e.startsWith("run "))).toBe(false);
+  });
+});
+
+describe("the skipped-test gate", () => {
+  const row = (over: Partial<Record<string, unknown>> = {}) => ({
+    project: "chromium",
+    title: "A1: git mode any (second server)",
+    file: "tests/e2e/jsonschema-browser-verification.spec.ts",
+    line: 96,
+    tags: ["@regression"],
+    reasons: ["set E2E_GIT_ANY_BASE_URL"],
+    startedThenSkipped: true,
+    ...over,
+  });
+  const external = row({ tags: ["@regression", "@external"] });
+  const plain = row({ title: "a plain test", tags: ["@regression"], reasons: ["fixme (no reason given)"] });
+
+  describe("readSkippedList", () => {
+    it("reads the rows the reporter wrote, an empty list included (nothing skipped is not 'no list')", () => {
+      expect(readSkippedList("/x/skipped-tests.json", { read: () => "[]" })).toEqual({ rows: [] });
+      expect(readSkippedList("/x/skipped-tests.json", { read: () => JSON.stringify([plain]) })).toEqual({ rows: [plain] });
+    });
+
+    it("says why there is no list: a file that is missing, or that is not a list", () => {
+      const missing = readSkippedList("/x/skipped-tests.json", {
+        read: () => {
+          throw new Error("ENOENT");
+        },
+      });
+      expect(missing).toMatchObject({ error: expect.stringContaining("/x/skipped-tests.json was not written") });
+      expect(readSkippedList("/x/s.json", { read: () => "{" })).toMatchObject({ error: expect.stringContaining("is not a list of skipped tests") });
+      expect(readSkippedList("/x/s.json", { read: () => "{}" })).toMatchObject({ error: expect.stringContaining("not a list") });
+    });
+  });
+
+  describe("skipGate: which skips are allowed", () => {
+    it("allows a test tagged @external and blocks every other skip", () => {
+      expect(skipGate({ rows: [external, plain] })).toEqual({ allowed: [external], blocked: [plain] });
+    });
+
+    it("allows every skip when E2E_ALLOW_SKIPS=1 was said (allowAll)", () => {
+      expect(skipGate({ rows: [external, plain], allowAll: true })).toEqual({ allowed: [external, plain], blocked: [] });
+    });
+
+    it("does not read a tag in a title as the tag", () => {
+      expect(skipGate({ rows: [row({ title: "needs @external stuff", tags: [] })] }).blocked).toHaveLength(1);
+    });
+  });
+
+  describe("applySkipGate: the code of a phase", () => {
+    it("keeps 0 when nothing was skipped, or only @external tests were", () => {
+      expect(applySkipGate({ code: 0, listed: { rows: [] } })).toEqual({ code: 0, skipped: { allowed: [], blocked: [] } });
+      expect(applySkipGate({ code: 0, listed: { rows: [external] } }).code).toBe(0);
+    });
+
+    it("turns a pass into exit 1 when a test that is not @external was skipped, and says the gate did it", () => {
+      const verdict = applySkipGate({ code: 0, listed: { rows: [external, plain] } });
+      expect(verdict.code).toBe(1);
+      expect(verdict.skipGate).toBe(true);
+      expect(verdict.skipped?.blocked).toEqual([plain]);
+    });
+
+    it("lets E2E_ALLOW_SKIPS=1 through", () => {
+      expect(applySkipGate({ code: 0, listed: { rows: [plain] }, allowAll: true }).code).toBe(0);
+    });
+
+    it("never changes a code that is already not 0, but still reports the list", () => {
+      const verdict = applySkipGate({ code: 124, listed: { rows: [plain] } });
+      expect(verdict.code).toBe(124);
+      expect(verdict.skipGate).toBeUndefined();
+      expect(verdict.skipped?.blocked).toEqual([plain]);
+    });
+
+    it("fails a phase that passed but left no list: the gate could not be checked, and a skipped test could be hiding", () => {
+      const verdict = applySkipGate({ code: 0, listed: { error: "/x/skipped-tests.json was not written" } });
+      expect(verdict).toMatchObject({ code: 1, skipGate: true, skipped: { error: "/x/skipped-tests.json was not written" } });
+    });
+
+    it("has no opinion when no list was asked for", () => {
+      expect(applySkipGate({ code: 0, listed: undefined })).toEqual({ code: 0 });
+    });
+  });
+
+  describe("skippedLines: the SKIPPED block of the summary", () => {
+    it("is empty when nothing was skipped", () => {
+      expect(skippedLines([{ name: "main", skipped: { allowed: [], blocked: [] } }, { name: "serial" }])).toEqual([]);
+    });
+
+    it("lists every skipped test with its place, tags' verdict and reason, loudly", () => {
+      const lines = skippedLines([{ name: "main", skipped: { allowed: [external], blocked: [plain] } }]);
+      expect(lines[0]).toBe("SKIPPED: 2 test(s) did not run (1 allowed, 1 not allowed). A skip is green in every report; a precondition nobody meets would hide a test for ever.");
+      expect(lines).toContain("  main: [chromium] a plain test (tests/e2e/jsonschema-browser-verification.spec.ts:96) NOT ALLOWED: fixme (no reason given)");
+      expect(lines).toContain("  main: [chromium] A1: git mode any (second server) (tests/e2e/jsonschema-browser-verification.spec.ts:96) (allowed, @external): set E2E_GIT_ANY_BASE_URL");
+    });
+
+    it("says when E2E_ALLOW_SKIPS=1 allowed everything, and when a list could not be read", () => {
+      const lines = skippedLines([{ name: "main", skipped: { allowed: [plain], blocked: [] } }, { name: "serial", skipped: { allowed: [], blocked: [], error: "nope" } }], { allowAll: true });
+      expect(lines.join("\n")).toContain(`(allowed, ${ALLOW_SKIPS}=1)`);
+      expect(lines.join("\n")).toContain(`${ALLOW_SKIPS}=1: every skip above is allowed. Unset it for the release check.`);
+      expect(lines.join("\n")).toContain("serial: the list of skipped tests could not be read: nope");
+    });
+  });
+
+  describe("phaseSummaryLine", () => {
+    const phase = planPhases({ tier: "smoke", authState: AUTH }).phases[0];
+    it("says the skipped tests are why a phase that passed failed", () => {
+      const verdict = applySkipGate({ code: 0, listed: { rows: [plain, plain] } });
+      expect(phaseSummaryLine({ phase, result: { name: "main", ...verdict }, exists: () => false })).toBe("  main: failed (exit 1: 2 skipped test(s) not allowed)");
+      const noList = applySkipGate({ code: 0, listed: { error: "x" } });
+      expect(phaseSummaryLine({ phase, result: { name: "main", ...noList }, exists: () => false })).toBe("  main: failed (exit 1: the skipped-test list is missing)");
+    });
+  });
+
+  describe("runPhases", () => {
+    const login = { file: "/runs/9/admin.json", ownedByThisRun: false };
+    function run(lists: Record<string, ReturnType<typeof readSkippedList>>, options: { codes?: Record<string, number>; allowSkips?: boolean; tier?: string } = {}) {
+      const deps = {
+        interrupted: () => false,
+        runPhase: async (phase: { name: string }) => options.codes?.[phase.name] ?? 0,
+        rmSync: () => {},
+        mkdirSync: () => {},
+        existsSync: () => true,
+        statSync: () => ({ mtimeMs: Date.parse("2026-10-24T11:59:00Z") }),
+        now: () => Date.parse("2026-10-24T12:00:00Z"),
+        log: () => {},
+        error: () => {},
+        readSkipped: (phase: { name: string }) => lists[phase.name],
+        allowSkips: options.allowSkips,
+      };
+      return runPhases({ phases: planPhases({ tier: options.tier ?? "regression", authState: login.file }).phases, auth: login, deps });
+    }
+
+    it("fails exit 1 a phase that skipped a test that may not be skipped, whatever Playwright's own code said, and keeps the other phase's result", async () => {
+      const results = await run({ main: { rows: [plain] }, serial: { rows: [] } });
+      expect(results.map((r: { name: string; code: number }) => [r.name, r.code])).toEqual([["main", 1], ["serial", 0]]);
+      expect(exitCodeOf(results)).toBe(1);
+    });
+
+    it("lets @external skips and an empty list through, exit 0", async () => {
+      const results = await run({ main: { rows: [external] }, serial: { rows: [] } });
+      expect(exitCodeOf(results)).toBe(0);
+    });
+
+    it.each(["smoke", "regression", "nightly"])("the %s tier is gated: a plain skip is exit 1", async (tier) => {
+      const lists = { main: { rows: [plain] }, serial: { rows: [] } };
+      expect(exitCodeOf(await run(lists, { tier }))).toBe(1);
+      expect(exitCodeOf(await run(lists, { tier, allowSkips: true }))).toBe(0);
+    });
+
+    it("keeps working with no reader at all (the older callers)", async () => {
+      const deps = {
+        interrupted: () => false,
+        runPhase: async () => 0,
+        rmSync: () => {},
+        mkdirSync: () => {},
+        existsSync: () => true,
+        statSync: () => ({ mtimeMs: Date.parse("2026-10-24T11:59:00Z") }),
+        now: () => Date.parse("2026-10-24T12:00:00Z"),
+        log: () => {},
+        error: () => {},
+      };
+      const results = await runPhases({ phases: planPhases({ tier: "smoke", authState: login.file }).phases, auth: login, deps });
+      expect(results).toEqual([{ name: "main", code: 0 }]);
+    });
   });
 });

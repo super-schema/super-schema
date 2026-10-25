@@ -19,7 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
 import { afterAll, describe, expect, it } from "vitest";
-import { MAX_ROWS, collectFlaky, renderSummary } from "../../scripts/ci-flaky-summary.mjs";
+import { MAX_ROWS, collectFlaky, collectSkipped, renderSkipped, renderSummary } from "../../scripts/ci-flaky-summary.mjs";
 import { parseArgs, planRun } from "../../scripts/e2e-release.mjs";
 
 const REPO = path.resolve(__dirname, "../..");
@@ -209,6 +209,10 @@ describe("e2e.yml: what a job may do", () => {
     expect(used.length).toBeGreaterThan(0);
     for (const action of used) expect(ACTION_ALLOW_LIST, `${action} is not an allowed action`).toContain(action);
     expect(WORKFLOW_TEXT).not.toMatch(/uses:\s*(\.|docker:)/);
+  });
+
+  it("never sets E2E_ALLOW_SKIPS: CI fails a test that is skipped unless it is @external (the skipped-test gate of scripts/e2e-phases.mjs)", () => {
+    expect(WORKFLOW_TEXT).not.toMatch(/E2E_ALLOW_SKIPS/);
   });
 
   it("names no secret, and never echoes a token", () => {
@@ -584,6 +588,45 @@ describe("scripts/ci-flaky-summary.mjs", () => {
     const found = collectFlaky(root);
     expect(found.rows).toEqual([]);
     expect(renderSummary({ title: "x", ...found })).toContain("Could not read test-results/main/flaky-tests.json.");
+  });
+
+  describe("the skipped tests of the job summary", () => {
+    const SKIPPED = [
+      { project: "chromium", title: "A1 | git mode any (second server)", file: "tests/e2e/jsonschema-browser-verification.spec.ts", line: 96, tags: ["@regression", "@external"], reasons: ["set E2E_GIT_ANY_BASE_URL"] },
+      { project: "chromium", title: "a plain test", file: "tests/e2e/a.spec.ts", line: 3, tags: ["@regression"], reasons: ["fixme (no reason given)"] },
+    ];
+
+    it("lists every phase's skipped tests with the reason and whether the gate allowed them (@external only), escaping what breaks a table", () => {
+      const root = path.join(scratch, "skipped");
+      write(root, "test-results/main/skipped-tests.json", JSON.stringify(SKIPPED));
+      write(root, "test-results/serial/skipped-tests.json", "[]");
+      write(root, "test-results/main/artifacts/x/skipped-tests.json", JSON.stringify(SKIPPED)); // not read: inside artifacts/
+      const text = renderSkipped({ title: "nightly", ...collectSkipped(root) });
+      expect(text).toContain("### nightly: skipped tests");
+      expect(text).toContain("2 test(s) did not run");
+      expect(text).toContain("| main | chromium | A1 \\| git mode any (second server) | tests/e2e/jsonschema-browser-verification.spec.ts:96 | yes (@external) | set E2E_GIT_ANY_BASE_URL |");
+      expect(text).toContain("| main | chromium | a plain test | tests/e2e/a.spec.ts:3 | **no** | fixme (no reason given) |");
+    });
+
+    it("says nothing when nothing was skipped (an empty list, or no list), and names a list it cannot read", () => {
+      const root = path.join(scratch, "skipped-none");
+      write(root, "test-results/main/skipped-tests.json", "[]");
+      expect(renderSkipped({ title: "x", ...collectSkipped(root) })).toBe("");
+      expect(renderSkipped({ title: "x", ...collectSkipped(path.join(scratch, "no-such")) })).toBe("");
+      const broken = path.join(scratch, "skipped-broken");
+      write(broken, "test-results/main/skipped-tests.json", "{ nope");
+      expect(renderSkipped({ title: "x", ...collectSkipped(broken) })).toContain("Could not read test-results/main/skipped-tests.json.");
+    });
+
+    it("the script prints the section after the flaky one", () => {
+      const root = path.join(scratch, "skipped-script");
+      write(root, "test-results/main/junit.xml", "<testsuites/>");
+      write(root, "test-results/main/skipped-tests.json", JSON.stringify(SKIPPED));
+      const result = spawnSync(process.execPath, [path.join(REPO, "scripts", "ci-flaky-summary.mjs")], { env: { ...process.env, E2E_OUTPUT_ROOT: root, SUMMARY_TITLE: "nightly" }, encoding: "utf8" });
+      expect(result.status).toBe(0);
+      expect(result.stdout.indexOf("### nightly: flaky tests")).toBeGreaterThanOrEqual(0);
+      expect(result.stdout.indexOf("### nightly: skipped tests")).toBeGreaterThan(result.stdout.indexOf("### nightly: flaky tests"));
+    });
   });
 
   it("run as a script it prints to stdout from E2E_OUTPUT_ROOT and SUMMARY_TITLE, and exits 0", () => {

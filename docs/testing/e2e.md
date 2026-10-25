@@ -290,6 +290,7 @@ Everything of a run is under its output root (printed at the start and at the en
 | html report of a phase | `<root>/playwright-report/<phase>/index.html`: `npx playwright show-report <root>/playwright-report/main` |
 | junit | `<root>/test-results/<phase>/junit.xml` (retries included: a test that passed on a retry has a `<flakyFailure>`) |
 | flaky tests | `<root>/test-results/<phase>/flaky-tests.json`, a FLAKY block in the console, a warning annotation and a table in the job summary on GitHub |
+| skipped tests | `<root>/test-results/<phase>/skipped-tests.json` (written on every run, with or without `CI`; an empty list when nothing was skipped), a SKIPPED block in the console and in the phases summary, and a table in the job summary on GitHub |
 | traces, screenshots, video of failures | `<root>/test-results/<phase>/artifacts/<test>/`: `npx playwright show-trace <trace.zip>` |
 | the app's log | `<root>/server.log` (kept whatever the result) |
 
@@ -297,6 +298,19 @@ The phases are `main` (and `serial` for the regression tier, which runs `serial-
 the run lists each phase's result and the report paths that exist. A test that passes only on a retry does not fail the run and is never
 hidden: it is listed as flaky in all of the above. Old runs stay in `test-results/run-<id>`; delete them when you do not need them
 (`test-results` is ignored by version control).
+
+### Skipped tests are never invisible
+
+A skipped test is green in every report ("1 skipped"), so a precondition that is never met (a variable nobody sets, a server nobody starts) used to
+make a test pass for ever without running. Each phase's `tests/e2e/reporters/skipped-reporter.ts` therefore writes `skipped-tests.json`: every
+test that did not run, with its project, place, tags and **why**: the reason of a static `test.skip(true, "...")` or `test.fixme`, of a runtime
+`test.skip(condition, "reason")`, or "did not run" for a test that was selected and never started. The phases script prints a SKIPPED block in its
+summary and **fails a phase that passed but skipped a test that is not tagged `@external`** (exit 1, in every tier, the smoke, regression, nightly,
+serial and visual ones). A test tagged `@external` has a precondition outside the checkout (the network: schemastore.org; a second server: the
+git-host import in `any` mode) and may skip; it is listed loudly with its reason, and the release runner starts the second server itself (below), so
+only the network case is expected to skip. `E2E_ALLOW_SKIPS=1` allows every skip (still listed); CI never sets it (a contract test checks). A phase
+whose list is missing fails as well: the gate could not be checked.
+
 
 ## REST API
 
