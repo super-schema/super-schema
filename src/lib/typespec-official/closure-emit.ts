@@ -361,10 +361,12 @@ function combinedPlan(closure: Closure, models: SuperSchemaModel[], key: string)
       const described = describeAvroProjection(projection);
       warnings.push(...described.warnings);
       errors.push(...described.errors);
-      return { ...base, source: projection.source, attribute: namespaceAttribution(places, avroNamespaceOf) };
+      errors.push(...emittedNameCollisions(places, "Avro", avroEmitted));
+      return { ...base, source: projection.source, attribute: emittedAttribution(places, avroEmitted, avroNamespaceOf) };
     }
     default:
-      return { ...base, source: generated.source, attribute: namespaceAttribution(places, javaDirectoryOf) };
+      errors.push(...emittedNameCollisions(places, "Java POJO", javaEmitted));
+      return { ...base, source: generated.source, attribute: emittedAttribution(places, javaEmitted, javaDirectoryOf) };
   }
 }
 
@@ -577,8 +579,51 @@ function protobufPlan(
 
 // Avro and Java ----------------------------------------------------------------
 
-const normalizeSegment = (segment: string): string => segment.toLowerCase().replace(/[^a-z0-9]/g, "");
-const normalizePath = (dotted: string): string => dotted.split(".").map(normalizeSegment).join(".");
+/** What the Avro / Java emitters write for one entity: the namespace / package, the record / class and the file. */
+type EmittedName = {
+  /** The Avro namespace / the Java package, dotted. */
+  directory: string;
+  /** The record / class name. */
+  record: string;
+  /** `<directory>.<record>` */
+  fullName: string;
+  /** The file's path as the emitter writes it. */
+  file: string;
+};
+
+/** The emitters' own rule for a record / class name (`@typespec/avro`, `@typespec/java-pojo` `toPascalCase`): `Order_Item` and `OrderItem` are both `OrderItem`. */
+function pascalCase(input: string): string {
+  return (
+    input
+      .replace(/[^a-zA-Z0-9]+/g, " ")
+      .split(" ")
+      .filter((word) => word.length > 0)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join("") || "Unnamed"
+  );
+}
+
+/** The entity's namespace segments as the emitters write them: root stripped, every segment lowercased (the segments are already identifiers). */
+const emittedSegments = (place: Place): string[] =>
+  stripRoot(place.namespace)
+    .split(".")
+    .filter((segment) => segment !== "")
+    .map((segment) => segment.toLowerCase());
+
+const avroEmitted = (place: Place): EmittedName => {
+  const parts = emittedSegments(place);
+  const directory = parts.length > 0 ? `com.superschema.${parts.join(".")}` : "com.superschema.generated";
+  const record = pascalCase(place.modelName);
+  // (closure emission asks for `qualified-file-names`: every file is `<namespace>.<Name>.avsc.json`)
+  return { directory, record, fullName: `${directory}.${record}`, file: `${directory}.${record}.avsc.json` };
+};
+
+const javaEmitted = (place: Place): EmittedName => {
+  const parts = emittedSegments(place);
+  const directory = parts.length > 0 ? parts.join(".") : "com.superschema.generated";
+  const record = pascalCase(place.modelName);
+  return { directory, record, fullName: `${directory}.${record}`, file: `${directory.split(".").join("/")}/${record}.java` };
+};
 
 /** `a.b.c.Name.avsc.json` -> the namespace `a.b.c` (a flat file name qualified by its namespace). */
 function avroNamespaceOf(path: string): string | null {
@@ -594,18 +639,42 @@ function javaDirectoryOf(path: string): string | null {
 }
 
 /**
- * Maps a file to the entity whose qualified path (`domain.product.entity`) its namespace / package directory ends with, comparing
- * lowercase alphanumerics only (the emitters lowercase and sanitize the segments themselves). A file that matches no entity is
- * dropped like on every other target; an entity left without a file by a miss here is an error (see `emitClosure`), never a
- * silently smaller set.
+ * Two entities the emitter would write as ONE record / class (the same namespace / package and the same PascalCased name: `order_item`
+ * and `Order_Item`, whose namespace is lowercased alike and whose names are both `OrderItem`) are refused before anything is emitted:
+ * the second file would overwrite the first, and which entity "has no file" would be a misleading way to say so.
  */
-function namespaceAttribution(places: Place[], namespaceOfFile: (path: string) => string | null): Plan["attribute"] {
-  const keyed = [...placesByNamespace(places).values()].map((group) => ({ group, key: normalizePath(stripRoot(group[0].namespace)) }));
+function emittedNameCollisions(places: Place[], targetName: string, emittedOf: (place: Place) => EmittedName): string[] {
+  const owners = new Map<string, Place[]>();
+  for (const place of places) {
+    const { file } = emittedOf(place);
+    owners.set(file, [...(owners.get(file) ?? []), place]);
+  }
+  return [...owners]
+    .filter(([, group]) => group.length > 1)
+    .map(
+      ([, group]) =>
+        `${group.map((p) => p.entityName).join(" and ")} would both be written by the ${targetName} emitter as "${emittedOf(group[0]).fullName}": it lowercases the namespace and PascalCases the name, so one file would overwrite the other. Rename one of them.`
+    );
+}
+
+/**
+ * Maps a file to the entity it was written for by what the emitter writes: the file of an entity is `emittedOf(place).file`, EXACTLY
+ * (the segments are lowercased and the name PascalCased by the same rule the emitters use, so there is nothing to guess). Any other
+ * file in an entity's namespace / package (a Java enum) belongs to the entities of that namespace. A file that matches none is dropped
+ * like on every other target; an entity left without a file is an error (see `emitClosure`), never a silently smaller set.
+ */
+function emittedAttribution(places: Place[], emittedOf: (place: Place) => EmittedName, directoryOfFile: (path: string) => string | null): Plan["attribute"] {
+  const byFile = new Map(places.map((place) => [emittedOf(place).file, place]));
+  const byDirectory = new Map<string, Place[]>();
+  for (const place of places) {
+    const { directory } = emittedOf(place);
+    byDirectory.set(directory, [...(byDirectory.get(directory) ?? []), place]);
+  }
   return (file) => {
-    const namespace = namespaceOfFile(file.path);
-    if (namespace === null) return null;
-    const normalized = normalizePath(namespace);
-    const match = keyed.find(({ key }) => normalized === key || normalized.endsWith(`.${key}`));
-    return match ? attributeToGroup(match.group) : null;
+    const own = byFile.get(file.path);
+    if (own) return { entityId: own.entityId };
+    const directory = directoryOfFile(file.path);
+    const group = directory === null ? undefined : byDirectory.get(directory);
+    return group ? attributeToGroup(group) : null;
   };
 }
