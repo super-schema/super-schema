@@ -1,30 +1,38 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { createDbAdapter } from "../src/lib/db-adapter";
-import { hashSync } from "bcryptjs";
-import { ensureFirstAdminAssignment } from "../src/lib/admin-bootstrap";
+import { ensureBootstrapAdmin, planSeedAdmin } from "../src/lib/admin-bootstrap";
 
 async function main() {
   const prisma = new PrismaClient({ adapter: createDbAdapter() });
 
-  // Seed test admin user (idempotent)
-  const testUser = await prisma.user.findUnique({
-    where: { email: "admin@admin.com" },
-  });
-  if (!testUser) {
-    await prisma.user.create({
-      data: {
-        email: "admin@admin.com",
-        name: "Admin",
-        password: hashSync("admin", 12),
-      },
-    });
-    console.log("Created test user: admin@admin.com / admin");
+  // The administrator (access-control design, decision 7): BOOTSTRAP_ADMIN_EMAIL + BOOTSTRAP_ADMIN_PASSWORD when set; otherwise the
+  // development default admin@admin.com / admin, but NEVER when NODE_ENV is "production" (there, `npm run admin:create` or the two
+  // variables make the first administrator). Idempotent. Nothing makes a user an administrator because they registered first.
+  const plan = planSeedAdmin(process.env);
+  if (plan.kind === "invalid") throw new Error(plan.message);
+  if (plan.kind === "none") {
+    console.log(
+      "No administrator created: NODE_ENV is production and BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD are not set. " +
+        "Set both and run the seed again, or run `npm run admin:create`."
+    );
   } else {
-    console.log("Test user already exists: admin@admin.com");
+    const result = await ensureBootstrapAdmin({ email: plan.email, password: plan.password }, prisma);
+    if (result.status === "refused") {
+      // A configured administrator that cannot be made is the operator's mistake and stops the seed; the development default only warns.
+      if (plan.kind === "configured") throw new Error(result.message);
+      console.warn(`Development administrator ${plan.email} left as it is: ${result.message}`);
+    } else if (result.status === "unchanged") {
+      console.log(`Administrator already exists: ${plan.email}`);
+    } else {
+      const what = result.status === "created" ? "Created" : "Granted the administrator role to";
+      console.log(
+        plan.kind === "development-default"
+          ? `${what} test user: ${plan.email} / ${plan.password}`
+          : `${what} administrator: ${plan.email}`
+      );
+    }
   }
-
-  await ensureFirstAdminAssignment(prisma);
 
   // Seed system domains (idempotent)
   const systemDomains = [

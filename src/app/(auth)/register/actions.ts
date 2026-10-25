@@ -2,10 +2,8 @@
 
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { signIn } from "@/lib/auth";
-import { ensureFirstAdminAssignment } from "@/lib/admin-bootstrap";
 
 const registerSchema = z
   .object({
@@ -58,16 +56,10 @@ export async function registerAction(
 
   const hashedPassword = await bcrypt.hash(password, 12);
 
+  // A registered account holds no role: nobody becomes the administrator by registering first (the first administrator comes from the
+  // seed or `npm run admin:create`, src/lib/admin-bootstrap.ts). Who may register, and with which roles, is decided by the registration mode (`AUTH_REGISTRATION`, access-control design decision 6).
   try {
-    await prisma.$transaction(
-      async (tx) => {
-        await tx.user.create({
-          data: { email, password: hashedPassword },
-        });
-        await ensureFirstAdminAssignment(tx);
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-    );
+    await prisma.user.create({ data: { email, password: hashedPassword } });
   } catch (e: unknown) {
     if (e instanceof Error && e.message.includes("Unique constraint")) {
       return { fieldErrors: { email: "An account with this email already exists" } };

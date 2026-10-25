@@ -27,9 +27,16 @@ model User {
   webhooks      WebhookEndpoint[] @relation("WebhookCreator")
   publishedEntityVersions EntityVersion[] @relation("EntityVersionPublisher")
   publishedEventSpecVersions EventSpecVersion[] @relation("EventSpecVersionPublisher")
+  // Access control: a disabled user cannot sign in and is refused on every request (the principal loader checks it).
+  disabledAt    DateTime?
+  lastLoginAt   DateTime?
+  grantedRoles  UserRole[]  @relation("UserRoleGrantedBy")
+  invitationsCreated Invitation[] @relation("InvitationCreator")
+  authTokens    AuthToken[]
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
+  // Case-insensitive uniqueness is the raw index users_email_lower_key on lower(email) (migration access_control; Prisma cannot express it).
   @@map("users")
 }
 
@@ -541,9 +548,13 @@ model AuditLog {
   timestamp   DateTime @default(now())
   beforeState Json?
   afterState  Json?
+  // The tenant the entry belongs to; null for platform-level entries and for old rows whose target is gone (migration access_control).
+  // Deliberately NOT a foreign key: audit rows are immutable (trigger audit_log_immutable), so a tenant cannot cascade or null them.
+  tenantId    String?
 
   user User @relation(fields: [userId], references: [id])
 
+  @@index([tenantId, timestamp])
   @@map("audit_log")
 }
 
@@ -615,22 +626,101 @@ model GitPullRequest {
 // RBAC & User Roles
 // ============================================================
 
+/// A role held in one scope. `scopeKey` is the scope as one string (`G`, `T:<tenantId>`, `D:<domainId>`, `P:<productId>`: src/lib/access/scope.ts)
+/// and is what makes the assignment unique (the old unique key over the nullable tenantId/domainId/productId let two global rows coexist).
+/// tenantId/domainId/productId stay as foreign keys so deleting a tenant/domain/product removes its assignments; a CHECK keeps them in step
+/// with `scopeKey` (G: none; T: tenantId; D: tenantId + domainId; P: tenantId + domainId + productId).
 model UserRole {
   id        String   @id @default(cuid())
   userId    String
   role      String
+  scopeKey  String
   tenantId  String?
   domainId  String?
   productId String?
+  grantedById String?
   createdAt DateTime @default(now())
 
-  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  domain  Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  product Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain    Domain?  @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  grantedBy User?    @relation("UserRoleGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
 
-  @@unique([userId, role, tenantId, domainId, productId])
+  @@unique([userId, role, scopeKey])
+  @@index([scopeKey])
   @@map("user_roles")
+}
+
+/// An invitation to join with pre-granted roles. The token itself is never stored: `tokenHash` is its SHA-256. `emailLower` is the invited
+/// address, trimmed and lower-cased. An invitation is spent when `usedAt` is set.
+model Invitation {
+  id          String   @id @default(cuid())
+  emailLower  String
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  createdBy User             @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  roles     InvitationRole[]
+
+  @@index([emailLower])
+  @@index([createdById])
+  @@map("invitations")
+}
+
+/// A role an invitation grants when it is accepted: the same `scopeKey` shape as `user_roles` (the accepting code completes the parent ids
+/// of a domain/product key from the database; a key whose domain or product has since been deleted is skipped).
+model InvitationRole {
+  invitationId String
+  role         String
+  scopeKey     String
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@id([invitationId, role, scopeKey])
+  @@map("invitation_roles")
+}
+
+enum AuthTokenKind {
+  INVITE
+  RESET
+}
+
+/// A single-use token: `tokenHash` is the SHA-256 of the random token (never the token). `userId` is null for a token issued before the
+/// account exists (an invitation). Spent when `usedAt` is set.
+model AuthToken {
+  id        String        @id @default(cuid())
+  userId    String?
+  kind      AuthTokenKind
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@index([expiresAt])
+  @@map("auth_tokens")
+}
+
+/// One authentication event (sign-in, registration, reset...) for throttling and lockout. Only hashes of the e-mail and the client IP are
+/// stored. `kind` and `outcome` are free strings owned by src/lib/auth/throttle.ts.
+model AuthEvent {
+  id        String   @id @default(cuid())
+  kind      String
+  emailHash String?
+  ipHash    String?
+  outcome   String
+  createdAt DateTime @default(now())
+
+  @@index([emailHash, kind, createdAt])
+  @@index([ipHash, kind, createdAt])
+  @@index([createdAt])
+  @@map("auth_events")
 }
 
 // ============================================================

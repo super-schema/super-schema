@@ -1,30 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { hashMock, signInMock, tx, mockPrisma } = vi.hoisted(() => {
-  const transactionClient = {
-    user: {
-      create: vi.fn(),
-      findFirst: vi.fn(),
-    },
-    userRole: {
-      findFirst: vi.fn(),
-      create: vi.fn(),
-    },
-  };
-
-  return {
-    hashMock: vi.fn(),
-    signInMock: vi.fn(),
-    tx: transactionClient,
-    mockPrisma: {
-      user: { findUnique: vi.fn() },
-      $transaction: vi.fn(
-        async (callback: (client: typeof transactionClient) => Promise<void>) =>
-          callback(transactionClient)
-      ),
-    },
-  };
-});
+const { hashMock, signInMock, mockPrisma } = vi.hoisted(() => ({
+  hashMock: vi.fn(),
+  signInMock: vi.fn(),
+  mockPrisma: {
+    user: { findUnique: vi.fn(), create: vi.fn() },
+    userRole: { create: vi.fn(), findFirst: vi.fn() },
+    $transaction: vi.fn(),
+  },
+}));
 
 vi.mock("bcryptjs", () => ({
   default: { hash: hashMock },
@@ -52,35 +36,45 @@ describe("registerAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.user.findUnique.mockResolvedValue(null);
+    mockPrisma.user.create.mockResolvedValue({ id: "new-user" });
     hashMock.mockResolvedValue("hashed-password");
-    tx.user.create.mockResolvedValue({ id: "first-user" });
-    tx.userRole.findFirst.mockResolvedValue(null);
-    tx.user.findFirst.mockResolvedValue({ id: "first-user" });
-    tx.userRole.create.mockResolvedValue({ id: "admin-role" });
     signInMock.mockResolvedValue(undefined);
   });
 
-  it("creates the user and initial Admin assignment in one transaction", async () => {
+  it("creates a user with no role at all, even when it is the first user of an empty database", async () => {
     await registerAction(undefined, registrationData());
 
-    expect(tx.user.create).toHaveBeenCalledWith({
-      data: {
-        email: "first@example.com",
-        password: "hashed-password",
-      },
+    expect(mockPrisma.user.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.user.create).toHaveBeenCalledWith({
+      data: { email: "first@example.com", password: "hashed-password" },
     });
-    expect(tx.userRole.create).toHaveBeenCalledWith({
-      data: {
-        id: "system-bootstrap-global-admin",
-        userId: "first-user",
-        role: "ADMIN",
-        domainId: null,
-      },
-    });
+    // No bootstrap, no role of any kind is written by registering (the first administrator comes from the seed or `admin:create`).
+    expect(mockPrisma.userRole.create).not.toHaveBeenCalled();
+    expect(mockPrisma.userRole.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     expect(signInMock).toHaveBeenCalledWith("credentials", {
       email: "first@example.com",
       password: "password123",
       redirectTo: "/schemas",
     });
+  });
+
+  it("answers that the e-mail is taken when it exists, without creating anything", async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ id: "someone" });
+
+    const state = await registerAction(undefined, registrationData());
+
+    expect(state).toEqual({ fieldErrors: { email: "An account with this email already exists" } });
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  it("answers the same when the database refuses a duplicate that won the race (or differs only by letter case)", async () => {
+    mockPrisma.user.create.mockRejectedValue(new Error("Unique constraint failed on the fields: (`email`)"));
+
+    const state = await registerAction(undefined, registrationData());
+
+    expect(state).toEqual({ fieldErrors: { email: "An account with this email already exists" } });
+    expect(signInMock).not.toHaveBeenCalled();
   });
 });

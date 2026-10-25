@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { ensureFirstAdminAssignment } from "@/lib/admin-bootstrap";
+import { scopeKey } from "@/lib/access/scope";
 
 interface SessionUserIdentity {
   id?: string | null;
@@ -11,28 +11,18 @@ export interface GlobalAdminAccess {
   isAdmin: boolean;
 }
 
-interface UserWithAdminRole {
-  id: string;
-  roles: Array<{ id: string }>;
-}
-
+/** The global (platform) ADMIN assignment: the `G` scope key, not "no domain" (a tenant-scoped assignment has no domain either). */
 const globalAdminRoleSelect = {
-  where: { role: "ADMIN", domainId: null },
+  where: { role: "ADMIN", scopeKey: scopeKey({ kind: "GLOBAL" }) },
   select: { id: true },
   take: 1,
 } as const;
 
-async function toGlobalAdminAccess(
-  user: UserWithAdminRole
-): Promise<GlobalAdminAccess> {
-  if (user.roles.length > 0) {
-    return { userId: user.id, isAdmin: true };
-  }
-
-  const adminUserId = await ensureFirstAdminAssignment(prisma);
-  return { userId: user.id, isAdmin: adminUserId === user.id };
-}
-
+/**
+ * Is the signed-in user a global administrator? A pure read: nothing is created here. The old rule that made the earliest registered user
+ * the administrator when none existed (a write from a read path) is gone; the first administrator comes from the seed or
+ * `npm run admin:create` (src/lib/admin-bootstrap.ts).
+ */
 export async function resolveGlobalAdminAccess(
   user: SessionUserIdentity | null | undefined
 ): Promise<GlobalAdminAccess | null> {
@@ -44,7 +34,7 @@ export async function resolveGlobalAdminAccess(
   });
 
   if (userById) {
-    return toGlobalAdminAccess(userById);
+    return { userId: userById.id, isAdmin: userById.roles.length > 0 };
   }
 
   if (!user.email) return null;
@@ -54,5 +44,5 @@ export async function resolveGlobalAdminAccess(
     select: { id: true, roles: globalAdminRoleSelect },
   });
 
-  return userByEmail ? toGlobalAdminAccess(userByEmail) : null;
+  return userByEmail ? { userId: userByEmail.id, isAdmin: userByEmail.roles.length > 0 } : null;
 }

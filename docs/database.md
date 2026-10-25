@@ -139,6 +139,34 @@ Because both backends share one PostgreSQL dialect, **keep migrations portable**
 SQLite-only or extension-only SQL. The one platform feature in use (the `plpgsql`
 audit trigger) runs on PGlite too.
 
+### Access control migration (`20261025230000_access_control`)
+
+Adds scoped roles (`user_roles.scopeKey`, unique `(userId, role, scopeKey)`), `users.disabledAt` / `lastLoginAt`, a unique index on
+`lower(users.email)`, `invitations` + `invitation_roles`, `auth_tokens`, `auth_events` and `audit_log.tenantId`. It lower-cases and trims existing
+e-mails, backfills before it constrains, adds no extension and deletes nothing. The backfill rules are in the header of its `migration.sql`; in short:
+the finest scope a role row names decides its key (`P:` product, `D:` domain, `T:` tenant, else `G`), the tenant of a domain/product row is read from
+the domain/product, and an old global row of a role other than `ADMIN` (the old rules made `COMPLIANCE_OFFICER` system-level) becomes one tenant-scoped
+row per existing tenant. `audit_log.tenantId` is filled from the entity, field, domain, product, event spec or trait the entry is about (or the tenant
+recorded in its own state when that row is gone), and left null for platform-level entries.
+
+**It refuses to run, changing nothing, and prints the rows,** when two users have the same e-mail once trimmed and lower-cased, or when a user holds the
+same role in the same scope twice (the old unique key let `NULL` columns repeat, so two identical global `ADMIN` rows were legal). Fix the rows by hand,
+then deploy again; on PostgreSQL Prisma remembers the failed attempt, so run `npx prisma migrate resolve --rolled-back 20261025230000_access_control`
+first (PGlite records nothing for a refused migration).
+
+Authoring note: `prisma migrate dev` stops with "non-interactive" when it has to warn about a new unique constraint on existing rows, so this
+migration's DDL skeleton was produced with `prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script` (it needs
+a shadow database: a temporary `prisma.config.ts` with `datasource.shadowDatabaseUrl`) and then completed by hand; `npm run db:migrate` against a fresh
+PostgreSQL applies it and reports the database in sync with `schema.prisma`.
+
+**Rollback** is `prisma/migrations/20261025230000_access_control/rollback.sql`, documented and never run automatically (neither runner reads it): run it
+with the application stopped, with `psql -v ON_ERROR_STOP=1 -f ...` (one transaction), then `DELETE FROM "_prisma_migrations" WHERE migration_name =
+'20261025230000_access_control'` (PostgreSQL: `prisma migrate resolve --rolled-back` refuses a migration that succeeded, P3012) or
+`DELETE FROM "_pglite_migrations" WHERE name = '20261025230000_access_control'` (PGlite), so a later deploy applies it again. It drops the new
+tables and columns, restores the old unique key, keeps the role rows the old model can express (global and domain), copies the tenant- and
+product-scoped ones to `user_roles_access_control_backup` instead of leaving rows the old code would read as wider, and clears the password hash of any
+disabled user so the rollback does not silently re-enable them. Invitations, tokens and auth events are lost (export them first if you need them).
+
 ---
 
 ## Production notes

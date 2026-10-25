@@ -7,7 +7,10 @@ let roleStore: Array<{
   id: string;
   userId: string;
   role: string;
+  scopeKey: string;
+  tenantId: string | null;
   domainId: string | null;
+  grantedById: string | null;
   createdAt: Date;
 }> = [];
 let idCounter = 0;
@@ -22,13 +25,13 @@ vi.mock("@/lib/db", () => ({
         return [...roleStore];
       }),
       findFirst: vi.fn(
-        async (args: { where: { userId: string; role: string; domainId: string | null } }) => {
+        async (args: { where: { userId: string; role: string; scopeKey: string } }) => {
           return (
             roleStore.find(
               (r) =>
                 r.userId === args.where.userId &&
                 r.role === args.where.role &&
-                r.domainId === args.where.domainId
+                r.scopeKey === args.where.scopeKey
             ) ?? null
           );
         }
@@ -38,13 +41,16 @@ vi.mock("@/lib/db", () => ({
       }),
       create: vi.fn(
         async (args: {
-          data: { userId: string; role: string; domainId: string | null };
+          data: { userId: string; role: string; scopeKey: string; tenantId: string | null; domainId: string | null; grantedById: string | null };
         }) => {
           const row = {
             id: `role-${++idCounter}`,
             userId: args.data.userId,
             role: args.data.role,
+            scopeKey: args.data.scopeKey,
+            tenantId: args.data.tenantId,
             domainId: args.data.domainId,
+            grantedById: args.data.grantedById,
             createdAt: new Date(),
           };
           roleStore.push(row);
@@ -60,19 +66,19 @@ vi.mock("@/lib/db", () => ({
         idCounter = 0;
       }),
       count: vi.fn(async (args?: { where?: Record<string, unknown> }) => {
-        if (args?.where?.role) {
-          return roleStore.filter((r) => r.role === args.where!.role).length;
-        }
-        return roleStore.length;
+        const where = args?.where ?? {};
+        return roleStore.filter(
+          (r) => (where.role === undefined || r.role === where.role) && (where.scopeKey === undefined || r.scopeKey === where.scopeKey)
+        ).length;
       }),
     },
     // The users that exist: every id but "ghost-user" (a role row has a foreign key to its user: an id that is nobody's used to throw P2003).
     user: {
       findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id === "ghost-user" ? null : { id: args.where.id })),
     },
-    // The domains that exist: the ones whose id starts with "dom-" (a role row has a foreign key to its domain).
+    // The domains that exist: the ones whose id starts with "dom-" (a role row has a foreign key to its domain), all in tenant "tenant-a".
     domain: {
-      findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id.startsWith("dom-") ? { id: args.where.id } : null)),
+      findUnique: vi.fn(async (args: { where: { id: string } }) => (args.where.id.startsWith("dom-") ? { id: args.where.id, tenantId: "tenant-a" } : null)),
     },
   },
 }));
@@ -83,10 +89,10 @@ import {
   removeRole,
   getEffectiveRole,
   hasPermission,
-  bootstrapFirstAdmin,
   _resetRoleStore,
   _getRoleStore,
 } from "@/services/rbac.service";
+import { prisma } from "@/lib/db";
 import type { ServiceContext } from "@/types/service-context";
 
 const adminCtx: ServiceContext = {
@@ -482,27 +488,43 @@ describe("RBAC Service", () => {
     });
   });
 
-  describe("bootstrapFirstAdmin", () => {
-    it("assigns ADMIN to first user when no admins exist", async () => {
-      const result = await bootstrapFirstAdmin("first-user", adminCtx);
-      expect(result.success).toBe(true);
+  describe("scope keys (the user_roles unique key since the access_control migration)", () => {
+    it("writes the global key for a system-level role and the domain key, its tenant and the granter for a domain-scoped one", async () => {
+      await assignRole({ userId: "user-1", role: "ADMIN" }, adminCtx);
+      await assignRole({ userId: "user-1", role: "AUTHOR", domainId: "dom-1" }, adminCtx);
 
-      const roles = await _getRoleStore();
-      expect(roles).toHaveLength(1);
-      expect(roles[0].role).toBe("ADMIN");
-      expect(roles[0].userId).toBe("first-user");
-      expect(roles[0].domainId).toBeNull();
+      const rows = (await prisma.userRole.findMany()) as unknown as Array<Record<string, unknown>>;
+      const pick = (row: Record<string, unknown>) =>
+        Object.fromEntries(["userId", "role", "scopeKey", "tenantId", "domainId", "grantedById"].map((key) => [key, row[key]]));
+      expect(rows.map(pick)).toEqual([
+        { userId: "user-1", role: "ADMIN", scopeKey: "G", tenantId: null, domainId: null, grantedById: "admin-1" },
+        { userId: "user-1", role: "AUTHOR", scopeKey: "D:dom-1", tenantId: "tenant-a", domainId: "dom-1", grantedById: "admin-1" },
+      ]);
     });
 
-    it("does not assign ADMIN when one already exists", async () => {
-      await assignRole({ userId: "existing-admin", role: "ADMIN" }, adminCtx);
-      const result = await bootstrapFirstAdmin("second-user", adminCtx);
-      expect(result.success).toBe(true);
+    it("no longer has a way to make a user the administrator because none exists (the first administrator is the seed's or admin:create's)", async () => {
+      expect(await import("@/services/rbac.service")).not.toHaveProperty("bootstrapFirstAdmin");
+      expect(await _getRoleStore()).toEqual([]);
+    });
 
-      const roles = await _getRoleStore();
-      const adminRoles = roles.filter((r) => r.role === "ADMIN");
-      expect(adminRoles).toHaveLength(1);
-      expect(adminRoles[0].userId).toBe("existing-admin");
+    it("a tenant-scoped or product-scoped row is not read by the legacy effective-role lookup (it knows the global and domain scopes only)", async () => {
+      roleStore.push(
+        { id: "t", userId: "user-1", role: "ADMIN", scopeKey: "T:tenant-a", tenantId: "tenant-a", domainId: null, grantedById: null, createdAt: new Date() },
+        { id: "p", userId: "user-1", role: "STEWARD", scopeKey: "P:prod-1", tenantId: "tenant-a", domainId: "dom-1", grantedById: null, createdAt: new Date() }
+      );
+      const result = await getEffectiveRole("user-1", "dom-1", adminCtx);
+      expect(result).toEqual({ success: true, data: null });
+    });
+
+    it("removing a tenant-scoped ADMIN row is not stopped by the last-global-admin rule, removing the last global one is", async () => {
+      roleStore.push(
+        { id: "t", userId: "someone", role: "ADMIN", scopeKey: "T:tenant-a", tenantId: "tenant-a", domainId: null, grantedById: null, createdAt: new Date() },
+        { id: "g", userId: "the-only-global", role: "ADMIN", scopeKey: "G", tenantId: null, domainId: null, grantedById: null, createdAt: new Date() }
+      );
+      expect((await removeRole("t", adminCtx)).success).toBe(true);
+      const last = await removeRole("g", adminCtx);
+      expect(last.success).toBe(false);
+      if (!last.success) expect(last.error.message).toContain("at least one admin");
     });
   });
 

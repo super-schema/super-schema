@@ -1,13 +1,15 @@
 /**
  * RBAC Service — Role-Based Access Control business logic.
  *
- * Manages user roles, permission checks, and the bootstrap mechanism
- * for the first admin user. All service functions return Result<T>.
+ * Manages user roles and permission checks. All service functions return Result<T>. The first
+ * administrator is NOT made here (or by any request): see `src/lib/admin-bootstrap.ts`.
  *
- * Persistence: Prisma `userRole` table.
+ * Persistence: Prisma `userRole` table. A row's scope is its `scopeKey` (`G`, `T:<tenantId>`, `D:<domainId>`, `P:<productId>`,
+ * src/lib/access/scope.ts); this legacy service still deals in the global and domain scopes only (the scoped role screens, Task 7).
  */
 
 import { prisma } from "@/lib/db";
+import { scopeKey } from "@/lib/access/scope";
 import { ok, err } from "@/types/result";
 import type { Result } from "@/types/result";
 import type { ServiceContext } from "@/types/service-context";
@@ -116,8 +118,11 @@ export async function assignRole(
   }
 
   // The role row has a foreign key to its domain: a domain that does not exist is said, not left to the database to refuse.
+  // Its tenant is read here too: a domain-scoped row carries its tenant (the key and the columns must say the same scope).
+  let key = scopeKey({ kind: "GLOBAL" });
+  let tenantId: string | null = null;
   if (domainId) {
-    const domain = await prisma.domain.findUnique({ where: { id: domainId }, select: { id: true } });
+    const domain = await prisma.domain.findUnique({ where: { id: domainId }, select: { id: true, tenantId: true } });
     if (!domain) {
       return err({
         code: "NOT_FOUND",
@@ -125,6 +130,8 @@ export async function assignRole(
         suggestedFix: "Use the id of an existing domain.",
       });
     }
+    tenantId = domain.tenantId;
+    key = scopeKey({ kind: "DOMAIN", tenantId: domain.tenantId, domainId: domain.id });
   }
 
   // The role row has a foreign key to its user too: an id that is nobody's is said, and not thrown out of the action as the database's P2003.
@@ -142,7 +149,7 @@ export async function assignRole(
     where: {
       userId,
       role,
-      domainId: domainId ?? null,
+      scopeKey: key,
     },
   });
   if (existing) {
@@ -157,7 +164,10 @@ export async function assignRole(
     data: {
       userId,
       role,
+      scopeKey: key,
+      tenantId,
       domainId: domainId ?? null,
+      grantedById: ctx.userId,
     },
   });
 
@@ -199,10 +209,10 @@ export async function removeRole(
     });
   }
 
-  // Safety: ensure at least one Admin remains
-  if (roleRow.role === "ADMIN") {
+  // Safety: ensure at least one global (platform) Admin remains
+  if (roleRow.role === "ADMIN" && roleRow.scopeKey === scopeKey({ kind: "GLOBAL" })) {
     const adminCount = await prisma.userRole.count({
-      where: { role: "ADMIN" },
+      where: { role: "ADMIN", scopeKey: roleRow.scopeKey },
     });
     if (adminCount <= 1) {
       return err({
@@ -234,11 +244,14 @@ export async function getEffectiveRole(
     return ok(null);
   }
 
-  // Filter to applicable roles:
-  // - system-level roles (domainId === null) apply everywhere
+  // Filter to applicable roles, by scope key:
+  // - system-level roles (the global scope) apply everywhere
   // - domain-specific roles apply only within their domain
+  // Tenant- and product-scoped rows are not read here: this legacy function knows two scopes (the scoped decision is `@/lib/access`).
+  const globalKey = scopeKey({ kind: "GLOBAL" });
+  const domainKey = domainId ? `D:${domainId}` : null;
   const applicable = userRoles.filter(
-    (r) => r.domainId === null || r.domainId === domainId
+    (r) => r.scopeKey === globalKey || (domainKey !== null && r.scopeKey === domainKey)
   );
 
   if (applicable.length === 0) {
@@ -280,30 +293,4 @@ export async function hasPermission(
   const requiredIndex = ROLE_HIERARCHY.indexOf(requiredRole);
 
   return ok(effectiveIndex >= requiredIndex);
-}
-
-// ---------------------------------------------------------------------------
-// bootstrapFirstAdmin — assign ADMIN to first user if none exist
-// ---------------------------------------------------------------------------
-
-export async function bootstrapFirstAdmin(
-  userId: string,
-  _ctx: ServiceContext
-): Promise<Result<void>> {
-  const adminCount = await prisma.userRole.count({
-    where: { role: "ADMIN" },
-  });
-  if (adminCount > 0) {
-    return ok(undefined);
-  }
-
-  await prisma.userRole.create({
-    data: {
-      userId,
-      role: "ADMIN",
-      domainId: null,
-    },
-  });
-
-  return ok(undefined);
 }

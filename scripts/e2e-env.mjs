@@ -73,6 +73,10 @@ export const HERMETIC_BLANKED_NAMES = Object.freeze([
   // src/env.ts and src/lib/auth.ts: the Google sign-in (its presence adds the provider and the login button)
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
+  // prisma/seed.ts (src/lib/admin-bootstrap.ts): the administrator the seed makes. Blank = not configured, so the seed makes the development
+  // default admin@admin.com / admin, the contract of the browser suite; a developer's own bootstrap administrator must not replace it
+  "BOOTSTRAP_ADMIN_EMAIL",
+  "BOOTSTRAP_ADMIN_PASSWORD",
   // Auth.js: a proxy for OAuth callbacks, rotated secrets
   "AUTH_REDIRECT_PROXY_URL",
   "AUTH_SECRET_1",
