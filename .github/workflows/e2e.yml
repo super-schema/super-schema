@@ -6,9 +6,9 @@
 #
 #   pull request         `smoke` (Chromium, Firefox, WebKit). The only job that gates a merge: a maintainer requires its status
 #                        check, `e2e-smoke`, in the branch protection of the repository (it is a repository setting, not a file).
-#   schedule, tag v*     `regression` (four shards) and `nightly-extra` (what the nightly tier has and the regression tier does not).
-#                        They report; nothing requires them.
-#   workflow_dispatch    the same by hand: the `tier` input picks smoke, regression, or nightly (regression + nightly-extra).
+#   schedule, tag v*     `regression` (four shards), `nightly-extra` (what the nightly tier has and the regression tier does not) and
+#                        `visual` (the screenshots, in the Playwright Docker image). They report; nothing requires them.
+#   workflow_dispatch    the same by hand: the `tier` input picks smoke, regression, nightly (regression + nightly-extra + visual), or visual.
 #
 # Every job runs the release runner (scripts/e2e-release.mjs, `npm run test:e2e:release`). There is no `services:` block on purpose:
 # the runner starts its own throwaway postgres:16 with `docker run` (a free port, a random password, data on tmpfs), migrates and seeds
@@ -18,8 +18,14 @@
 # would run the regression tests a second time. The rest is (a) the @slow and @external tests of Chromium, (b) the same tags in the
 # `serial-after` project, and (c) the smoke tests on Firefox and WebKit. Playwright runs a project's dependencies in full whatever
 # --grep says, so (a) and (b) cannot be one command with `--project serial-after` (it would run all of `chromium` first): (b) is the
-# `serial` tier, which logs in and runs `serial-after` alone. A `visual` leg (`--tier nightly --project visual`, in the Playwright
-# Docker image) comes with the visual specs.
+# `serial` tier, which logs in and runs `serial-after` alone.
+#
+# The `visual` job is the visual tier (docs/testing/e2e.md, "Visual snapshots"): the release runner starts the database and the app on the
+# runner as in every job, and the BROWSER RUN, the login and the `visual` project, happens inside the official Playwright image
+# (`mcr.microsoft.com/playwright:v<the installed @playwright/test>-jammy`: scripts/e2e-update-snapshots.mjs does the `docker run`), because a
+# screenshot is only compared where it was taken. It is not a job-level `container:` because the runner needs Docker for its
+# database, which a job container does not have. It reports like the other nightly jobs and is not a required check: it compares
+# to the snapshots in the repository, and when there are none it makes them, says so, and uploads them for a maintainer to commit.
 name: e2e
 
 on:
@@ -31,9 +37,9 @@ on:
   workflow_dispatch:
     inputs:
       tier:
-        description: "smoke: the pull-request tier. regression: the four shards. nightly: the shards and the slow, external and cross-browser rest."
+        description: "smoke: the pull-request tier. regression: the four shards. nightly: the shards and the slow, external, cross-browser and visual rest. visual: the screenshots alone."
         type: choice
-        options: [smoke, regression, nightly]
+        options: [smoke, regression, nightly, visual]
         default: smoke
 
 permissions:
@@ -242,6 +248,78 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-nightly-extra-${{ matrix.part }}-test-results
+          path: |
+            ${{ env.E2E_OUTPUT_ROOT }}/test-results
+            ${{ env.E2E_OUTPUT_ROOT }}/server.log
+          retention-days: 14
+          overwrite: true
+
+  visual:
+    name: e2e-visual
+    if: github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.tier == 'nightly' || inputs.tier == 'visual'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_OUTPUT_ROOT: ${{ github.workspace }}/test-results/ci-visual
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Playwright version (the tag of its Docker image)
+        id: playwright
+        run: |
+          echo "version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")" >> "$GITHUB_OUTPUT"
+      - name: Pull the Playwright image of that version
+        env:
+          PLAYWRIGHT_VERSION: ${{ steps.playwright.outputs.version }}
+        run: docker pull "mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-jammy"
+      - name: Which snapshots there are
+        id: snapshots
+        run: |
+          if ls tests/e2e/visual.spec.ts-snapshots/*-visual-linux.png > /dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=No visual snapshots in the repository::The first run makes them in the Playwright image and uploads them as the artifact e2e-visual-snapshots. Review them, commit them under tests/e2e/visual.spec.ts-snapshots/, and this job compares from then on (docs/testing/e2e.md)."
+          fi
+      - name: Visual tier, compared to the committed snapshots (the browser run is in the Playwright image)
+        if: steps.snapshots.outputs.present == 'true'
+        run: npm run test:e2e:visual
+      - name: Visual tier, first run, makes the baseline (the browser run is in the Playwright image)
+        if: steps.snapshots.outputs.present != 'true'
+        run: npm run test:e2e:update-snapshots
+      - name: Flaky tests in the job summary
+        if: always()
+        env:
+          SUMMARY_TITLE: visual
+        run: node scripts/ci-flaky-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+      - name: "Upload the new snapshots (a first run: review them and commit them)"
+        if: always() && steps.snapshots.outputs.present != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-visual-snapshots
+          path: tests/e2e/visual.spec.ts-snapshots
+          retention-days: 14
+          overwrite: true
+      - name: Upload the Playwright report (the expected, actual and diff images of a failure are in it)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-visual-playwright-report
+          path: ${{ env.E2E_OUTPUT_ROOT }}/playwright-report
+          retention-days: 14
+          overwrite: true
+      - name: Upload the test results (traces, diffs, junit.xml, flaky list) and the app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-visual-test-results
           path: |
             ${{ env.E2E_OUTPUT_ROOT }}/test-results
             ${{ env.E2E_OUTPUT_ROOT }}/server.log

@@ -5,6 +5,8 @@
  *     required in the repository settings: docs/testing/e2e.md lists the exact name, and a test below keeps the two in step);
  *   - `schedule` (nightly) and a tag `v*`: the regression tier in four shards, plus `nightly-extra`, which runs what the nightly tier
  *     has and the regression tier has not, and nothing the regression shards already ran;
+ *   - `visual` (same events as the two above): the screenshots, whose browser run happens inside the Playwright Docker image
+ *     (scripts/e2e-update-snapshots.mjs); it reports like them and is not a required check;
  *   - `workflow_dispatch`: the same by hand, with a `tier` input.
  *
  * What a reviewer would otherwise check by eye on every edit of the workflow: the permissions stay read-only, only first-party actions
@@ -70,6 +72,9 @@ const releaseRuns = (j: Job) => j.steps.filter((s) => s.run?.includes("test:e2e:
 /** Where a job decides that it runs, as the text of its `if` (a job without one runs on every event). */
 const condition = (j: Job) => j.if ?? "";
 const runsOn = (j: Job, event: string) => condition(j) === "" || condition(j).includes(`github.event_name == '${event}'`);
+
+/** The jobs that run the release runner on browsers installed on the machine; `visual` runs its browser in the Playwright image instead. */
+const browserJobs = jobs.filter(([id]) => id !== "visual");
 
 /** `uses: owner/name@ref` of every step of every job. */
 const used = jobs.flatMap(([, j]) => j.steps.flatMap((s) => (s.uses ? [s.uses] : [])));
@@ -145,10 +150,10 @@ describe("e2e.yml: when it runs", () => {
     expect(workflow.on.push).not.toHaveProperty("branches-ignore");
   });
 
-  it("workflow_dispatch has a tier input: smoke, regression or nightly", () => {
+  it("workflow_dispatch has a tier input: smoke, regression, nightly or visual", () => {
     const tier = workflow.on.workflow_dispatch.inputs.tier;
     expect(tier.type).toBe("choice");
-    expect(tier.options).toEqual(["smoke", "regression", "nightly"]);
+    expect(tier.options).toEqual(["smoke", "regression", "nightly", "visual"]);
     expect(tier.options).toContain(tier.default);
   });
 
@@ -162,18 +167,21 @@ describe("e2e.yml: when it runs", () => {
     expect(String(workflow.concurrency?.["cancel-in-progress"])).not.toMatch(/schedule|push|dispatch/);
   });
 
-  it("has the three jobs, and the smoke job is the pull request's", () => {
-    expect(Object.keys(workflow.jobs).sort()).toEqual(["nightly-extra", "regression", "smoke"]);
+  it("has the four jobs, and the smoke job is the pull request's", () => {
+    expect(Object.keys(workflow.jobs).sort()).toEqual(["nightly-extra", "regression", "smoke", "visual"]);
     expect(runsOn(job("smoke"), "pull_request")).toBe(true);
     for (const event of ["schedule", "push"]) expect(runsOn(job("smoke"), event)).toBe(false);
     // The tier input, by hand: smoke runs the smoke job only; regression adds the shards; nightly adds the rest.
     expect(condition(job("smoke"))).toContain("inputs.tier == 'smoke'");
     expect(condition(job("regression"))).toContain("inputs.tier != 'smoke'");
     expect(condition(job("nightly-extra"))).toContain("inputs.tier == 'nightly'");
+    // The screenshots: with the nightly tier, or alone.
+    expect(condition(job("visual"))).toContain("inputs.tier == 'nightly'");
+    expect(condition(job("visual"))).toContain("inputs.tier == 'visual'");
   });
 
-  it("the regression and nightly-extra jobs run on schedule, on a tag, and by hand, never on a pull request", () => {
-    for (const id of ["regression", "nightly-extra"]) {
+  it("the regression, nightly-extra and visual jobs run on schedule, on a tag, and by hand, never on a pull request", () => {
+    for (const id of ["regression", "nightly-extra", "visual"]) {
       expect(runsOn(job(id), "schedule")).toBe(true);
       expect(runsOn(job(id), "push")).toBe(true);
       expect(runsOn(job(id), "workflow_dispatch")).toBe(true);
@@ -222,11 +230,12 @@ describe("e2e.yml: what a job may do", () => {
     expect(WORKFLOW_TEXT).toMatch(/docker/i);
   });
 
-  it("every job has a timeout: smoke 25, a regression shard 60, nightly-extra 90 minutes", () => {
+  it("every job has a timeout: smoke 25, a regression shard 60, nightly-extra 90, visual 30 minutes", () => {
     for (const [id, j] of jobs) expect(typeof j["timeout-minutes"], `${id} has no timeout-minutes`).toBe("number");
     expect(job("smoke")["timeout-minutes"]).toBe(25);
     expect(job("regression")["timeout-minutes"]).toBe(60);
     expect(job("nightly-extra")["timeout-minutes"]).toBe(90);
+    expect(job("visual")["timeout-minutes"]).toBe(30);
   });
 });
 
@@ -245,7 +254,7 @@ describe("e2e.yml: the steps every job shares", () => {
     };
   };
 
-  it.each(jobs.map(([id]) => [id]))("%s: checkout, Node 22 with the npm cache, npm ci, prisma generate, browsers, then the run, in that order", (id) => {
+  it.each(browserJobs.map(([id]) => [id]))("%s: checkout, Node 22 with the npm cache, npm ci, prisma generate, browsers, then the run, in that order", (id) => {
     const j = job(id);
     const at = setUp(j);
     const order = [at.checkout, at.node, at.ci, at.prisma, at.browserCache, at.install, at.run];
@@ -256,7 +265,7 @@ describe("e2e.yml: the steps every job shares", () => {
     expect(node.with?.cache).toBe("npm");
   });
 
-  it.each(jobs.map(([id]) => [id]))("%s: the browsers are cached by the Playwright version of package-lock.json and the browsers installed", (id) => {
+  it.each(browserJobs.map(([id]) => [id]))("%s: the browsers are cached by the Playwright version of package-lock.json and the browsers installed", (id) => {
     const j = job(id);
     const cache = stepsOf(j).find((s) => s.uses === "actions/cache@v4")!;
     expect(cache.with?.path).toBe("~/.cache/ms-playwright");
@@ -272,7 +281,7 @@ describe("e2e.yml: the steps every job shares", () => {
   });
 
   it("every browser cache key, with the matrix filled in, is a valid key: no space, no comma (legs that install the same browsers share an entry on purpose)", () => {
-    for (const [id, j] of jobs) {
+    for (const [id, j] of browserJobs) {
       const legs: Array<Record<string, string>> = j.strategy?.matrix?.include ?? (j.strategy?.matrix?.shard ? j.strategy.matrix.shard.map((shard) => ({ shard: String(shard) })) : [{}]);
       const cache = stepsOf(j).find((s) => s.uses === "actions/cache@v4")!;
       for (const leg of legs) {
@@ -322,6 +331,60 @@ describe("e2e.yml: the steps every job shares", () => {
       if (/firefox-smoke/.test(leg.args)) expect(leg.browsers.split(" ")).toContain("firefox");
       if (/webkit-smoke/.test(leg.args)) expect(leg.browsers.split(" ")).toContain("webkit");
     }
+  });
+});
+
+describe("e2e.yml: the visual job", () => {
+  const visual = () => job("visual");
+  const run = (name: RegExp) => stepsOf(visual()).find((s) => name.test(s.name ?? ""))!;
+
+  it("installs no browser and caches none: the browser is the Playwright image's (the run is a docker run of it, scripts/e2e-update-snapshots.mjs)", () => {
+    expect(allRuns(visual())).not.toMatch(/playwright install/);
+    expect(stepsOf(visual()).some((s) => s.uses === "actions/cache@v4")).toBe(false);
+  });
+
+  it("pulls the Playwright image of the installed version (the tag of package-lock.json's @playwright/test, on jammy) before the run, through an env var, not a pasted expression", () => {
+    const version = stepsOf(visual()).find((s) => s.id === "playwright")!;
+    expect(version.run).toContain("package-lock.json");
+    expect(version.run).toContain("@playwright/test");
+    const pull = run(/Pull the Playwright image/);
+    expect(pull.env?.PLAYWRIGHT_VERSION).toBe("${{ steps.playwright.outputs.version }}");
+    expect(pull.run).toContain("mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-jammy");
+    expect(stepsOf(visual()).indexOf(pull)).toBeLessThan(stepsOf(visual()).findIndex((s) => s.run?.includes("test:e2e:visual")));
+  });
+
+  it("compares to the committed snapshots when there are some, and makes the first baseline (and says so) when there are none", () => {
+    const check = stepsOf(visual()).find((s) => s.run?.trim() === "npm run test:e2e:visual")!;
+    const make = stepsOf(visual()).find((s) => s.run?.trim() === "npm run test:e2e:update-snapshots")!;
+    expect(check.if).toBe("steps.snapshots.outputs.present == 'true'");
+    expect(make.if).toBe("steps.snapshots.outputs.present != 'true'");
+    const probe = run(/Which snapshots there are/);
+    expect(probe.run).toContain("tests/e2e/visual.spec.ts-snapshots/*-visual-linux.png");
+    expect(probe.run).toContain("::notice");
+    expect(probe.run).toContain("e2e-visual-snapshots");
+  });
+
+  it("uploads the baseline it made (a first run) for a maintainer to commit, and only then", () => {
+    const upload = stepsOf(visual()).find((s) => s.with?.name === "e2e-visual-snapshots")!;
+    expect(upload.if).toBe("always() && steps.snapshots.outputs.present != 'true'");
+    expect(upload.with?.path).toBe("tests/e2e/visual.spec.ts-snapshots");
+    expect(upload.with?.["retention-days"]).toBe(14);
+    expect(upload.with?.overwrite).toBe(true);
+  });
+
+  it("is reported, not required: nothing hides its failure (no continue-on-error) and the docs say not to require it", () => {
+    expect(visual().name).toBe("e2e-visual");
+    const docs = readFileSync(path.join(REPO, "docs", "testing", "e2e.md"), "utf8");
+    expect(docs).toMatch(/do not require[^.]*`e2e-visual`/i);
+  });
+
+  it("the commands it runs are the npm scripts of the visual tier, and they run the release runner with the Playwright image", () => {
+    const scripts = JSON.parse(readFileSync(path.join(REPO, "package.json"), "utf8")).scripts as Record<string, string>;
+    expect(scripts["test:e2e:visual"]).toBe("node scripts/e2e-update-snapshots.mjs --check");
+    expect(scripts["test:e2e:update-snapshots"]).toBe("node scripts/e2e-update-snapshots.mjs");
+    const source = readFileSync(path.join(REPO, "scripts", "e2e-update-snapshots.mjs"), "utf8");
+    expect(source).toContain('"--tier", "visual"');
+    expect(source).toContain('"--docker-image"');
   });
 });
 
@@ -404,23 +467,25 @@ describe("e2e.yml: reports", () => {
   it.each(jobs.map(([id]) => [id]))("%s: uploads the playwright report and the test results (traces, junit, flaky list, server.log), `if: always()`, kept 14 days", (id) => {
     const j = job(id);
     const uploads = stepsOf(j).filter((s) => s.uses === "actions/upload-artifact@v4");
-    expect(uploads.length).toBeGreaterThanOrEqual(2);
+    expect(uploads.filter((u) => u.with?.name !== "e2e-visual-snapshots").length).toBeGreaterThanOrEqual(2);
     for (const upload of uploads) {
-      expect(upload.if, `${id}: ${upload.name}`).toBe("always()");
+      // The snapshots a first run of `visual` made are uploaded only when there are no committed ones: `always()` and that.
+      if (upload.with?.name === "e2e-visual-snapshots") expect(upload.if).toBe("always() && steps.snapshots.outputs.present != 'true'");
+      else expect(upload.if, `${id}: ${upload.name}`).toBe("always()");
       expect(upload.with?.["retention-days"]).toBe(14);
       // v4 fails on a name that already exists in the run ("Re-run failed jobs" uploads the same names again).
       expect(upload.with?.overwrite, `${id}: ${upload.name} needs overwrite: true`).toBe(true);
-      expect(String(upload.with?.path)).toContain("${{ env.E2E_OUTPUT_ROOT }}");
+      if (upload.with?.name !== "e2e-visual-snapshots") expect(String(upload.with?.path)).toContain("${{ env.E2E_OUTPUT_ROOT }}");
       // Two jobs (or legs) with one artifact name would fail the second upload (actions/upload-artifact@v4).
       expect(String(upload.with?.name)).toContain(id);
       if (j.strategy?.matrix) expect(String(upload.with?.name)).toMatch(/matrix\./);
     }
-    const paths = uploads.map((u) => String(u.with?.path)).join("\n");
+    const paths = uploads.filter((u) => u.with?.name !== "e2e-visual-snapshots").map((u) => String(u.with?.path)).join("\n");
     expect(paths).toContain("playwright-report");
     expect(paths).toContain("test-results");
     expect(paths).toContain("server.log");
     // They come after the run, so a failure of the run is what they exist for.
-    const runAt = stepsOf(j).findIndex((s) => s.run?.includes("test:e2e:release"));
+    const runAt = stepsOf(j).findIndex((s) => s.run?.includes("test:e2e:release") || s.run?.includes("test:e2e:visual") || s.run?.includes("test:e2e:update-snapshots"));
     for (const upload of uploads) expect(stepsOf(j).indexOf(upload)).toBeGreaterThan(runAt);
     expect(new Set(uploads.map((u) => u.with?.name)).size).toBe(uploads.length);
   });
@@ -432,11 +497,11 @@ describe("e2e.yml: reports", () => {
     expect(step!.if).toBe("always()");
     expect(step!.run).toContain("scripts/ci-flaky-summary.mjs");
     expect(step!.run).toMatch(/>>\s*"\$GITHUB_STEP_SUMMARY"/);
-    expect(String(step!.env?.SUMMARY_TITLE), "the summary names the job or leg it is for").toMatch(id === "smoke" ? /smoke/ : /matrix\./);
+    expect(String(step!.env?.SUMMARY_TITLE), "the summary names the job or leg it is for").toMatch(id === "smoke" || id === "visual" ? new RegExp(id) : /matrix\./);
   });
 
   it("the run itself is not hidden by `continue-on-error`: a failed tier fails its job", () => {
-    for (const [, j] of jobs) for (const step of releaseRuns(j)) expect(step).not.toHaveProperty("continue-on-error");
+    for (const [, j] of jobs) for (const step of j.steps) expect(step).not.toHaveProperty("continue-on-error");
     expect(WORKFLOW_TEXT).not.toMatch(/continue-on-error:\s*true/);
   });
 });

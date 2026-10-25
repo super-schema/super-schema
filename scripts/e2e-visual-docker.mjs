@@ -72,10 +72,13 @@ export function extraMounts({ root, outputRoot, nodeModulesTarget }) {
   return mounts;
 }
 
-/** The names of the environment variables the browser run is given (their values come from the environment of the `docker` process, never from its arguments). */
+/**
+ * The names of the environment variables the browser run is given (their values come from the environment of the `docker` process, never from
+ * its arguments): the run's own `E2E_*`, the database, and `CI` (Playwright's CI reporters, retries and `forbidOnly` in the container too).
+ */
 export function passedEnvironmentNames(env) {
   return Object.keys(env)
-    .filter((name) => /^E2E_[A-Z0-9_]+$/.test(name) || name === "DATABASE_URL" || name === "DB_PROVIDER")
+    .filter((name) => /^E2E_[A-Z0-9_]+$/.test(name) || name === "DATABASE_URL" || name === "DB_PROVIDER" || name === "CI")
     .sort();
 }
 

@@ -124,7 +124,7 @@ describe("docker run for the browser run", () => {
   });
 
   it("lists only what the browser run reads", () => {
-    expect(passedEnvironmentNames({ PATH: "/x", E2E_A: "1", E2E_b: "2", DATABASE_URL: "x", DB_PROVIDER: "y", PGPASSWORD: "z", AUTH_SECRET: "s" })).toEqual(["DATABASE_URL", "DB_PROVIDER", "E2E_A"]);
+    expect(passedEnvironmentNames({ PATH: "/x", E2E_A: "1", E2E_b: "2", DATABASE_URL: "x", DB_PROVIDER: "y", CI: "true", PGPASSWORD: "z", AUTH_SECRET: "s" })).toEqual(["CI", "DATABASE_URL", "DB_PROVIDER", "E2E_A"]);
   });
 });
 
