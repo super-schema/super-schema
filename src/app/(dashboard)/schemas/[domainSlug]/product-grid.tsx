@@ -413,7 +413,7 @@ export function ProductGrid({
                         System
                       </Badge>
                     )}
-                    <Badge variant="secondary" className="text-caption">
+                    <Badge variant="secondary">
                       {product.entityCount}{" "}
                       {product.entityCount === 1 ? "entity" : "entities"}
                     </Badge>

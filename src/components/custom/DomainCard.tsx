@@ -64,7 +64,7 @@ export function DomainCard({
               System
             </Badge>
           )}
-          <Badge variant="secondary" className="text-caption">
+          <Badge variant="secondary">
             {entityCount} {entityCount === 1 ? "entity" : "entities"}
           </Badge>
         </div>

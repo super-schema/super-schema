@@ -289,7 +289,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               )}
 
               {sharedEnums.length === 0 && !showCreateEnum && (
-                <p className="text-caption text-muted-foreground/60 italic py-4">No shared enums — click "New Enum" to create one</p>
+                <p className="text-caption text-muted-foreground italic py-4">No shared enums — click "New Enum" to create one</p>
               )}
 
               {sharedEnums.map((e) => (
@@ -331,7 +331,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               )}
 
               {customScalars.length === 0 && !showCreateScalar && (
-                <p className="text-caption text-muted-foreground/60 italic py-4">No custom scalars — click "New Scalar" to create one</p>
+                <p className="text-caption text-muted-foreground italic py-4">No custom scalars — click "New Scalar" to create one</p>
               )}
 
               {customScalars.map((s) => (
@@ -379,7 +379,7 @@ export function DomainTypesTab({ domainId, target, sharedEnums, customScalars, u
               )}
 
               {unionTypes.length === 0 && !showCreateUnion && (
-                <p className="text-caption text-muted-foreground/60 italic py-4">No union types — click "New Union" to create one</p>
+                <p className="text-caption text-muted-foreground italic py-4">No union types — click "New Union" to create one</p>
               )}
 
               {unionTypes.map((u) => (
@@ -586,7 +586,7 @@ function UnionCard({ u, onDelete }: { u: UnionTypeData; onDelete: (name: string)
       <div className="flex flex-wrap gap-1">
         {members.map((m, i) => (
           <span key={m} className="flex items-center gap-0.5">
-            {i > 0 && <span className="text-[10px] text-muted-foreground/50 mx-0.5">|</span>}
+            {i > 0 && <span className="text-[10px] text-muted-foreground mx-0.5">|</span>}
             <Badge variant="outline" data-testid="data-type-member" data-member={m} className="text-[10px] h-5 px-1.5 font-mono gap-0.5">
               {m}
               <button onClick={() => removeMember(m)} aria-label={`Remove ${m}`} className="hover:text-destructive ml-0.5"><X className="w-2.5 h-2.5" /></button>

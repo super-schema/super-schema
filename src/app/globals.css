@@ -143,12 +143,14 @@
   --card-foreground: #e3e1e4;
   --popover: #22222e;
   --popover-foreground: #e3e1e4;
-  --primary: #A477B2;
+  /* #A97FB7, not the brand's #A477B2 (4.4:1 on the tinted surfaces the 11 px labels sit on): 4.65:1 and up on every surface that carries primary text */
+  --primary: #A97FB7;
   --primary-foreground: #14141C;
   --secondary: #F5C0C0;
   --secondary-foreground: #14141C;
   --muted: #2a2a36;
-  --muted-foreground: #8a8694;
+  /* #9A96A4, not #8A8694 (3.99:1 on --muted, the surface of the top bar's search, every chip and badge): 4.90:1 on --muted, 5.52:1 on muted/60, 6.34:1 on --background */
+  --muted-foreground: #9A96A4;
   --accent: #3a3a48;
   --accent-foreground: #e3e1e4;
   --border: #333340;
@@ -194,6 +196,11 @@
 .badge-pii {
   background: rgba(229, 91, 91, 0.15);
   color: #e55b5b;
+}
+
+/* On the dark theme's surface #e55b5b is 4.08:1 for 11 px text; #ee7070 is 4.91:1 */
+.dark .badge-pii {
+  color: #ee7070;
 }
 
 .badge-sensitive {

@@ -116,6 +116,7 @@ export const FieldCard = memo(function FieldCard({
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -147,7 +148,6 @@ export const FieldCard = memo(function FieldCard({
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
       data-testid="field-card"
       data-field={field.name}
       className={`surface-glass rounded-lg border transition-colors group cursor-pointer ${
@@ -179,8 +179,12 @@ export const FieldCard = memo(function FieldCard({
         {/* Validation */}
         <ValidationIndicator status={fc.status} tooltipContent={tooltipContent} />
 
-        {/* Drag handle */}
+        {/* Drag handle: the sortable's attributes (role=button, tabindex, aria-roledescription) belong HERE, with its listeners. On the card they made the
+            whole card a button that holds the buttons, selects and inputs of the row: axe `nested-interactive`, and a screen reader that cannot reach them. */}
         <div
+          ref={setActivatorNodeRef}
+          {...attributes}
+          aria-label={`Reorder ${field.name}`}
           className="text-muted-foreground/30 group-hover:text-muted-foreground cursor-grab touch-none"
           {...listeners}
         >

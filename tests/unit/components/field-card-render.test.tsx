@@ -126,6 +126,21 @@ describe("FieldCard", () => {
     expect(screen.getByText("customerKey")).toBeDefined();
   });
 
+  it("keeps the card free of the sortable's button role: the drag handle is the button (with a name), so the buttons, selects and inputs inside the card are not nested in another one", () => {
+    render(tree());
+    const card = screen.getByTestId("field-card");
+    expect(card.getAttribute("role")).toBeNull();
+    expect(card.getAttribute("tabindex")).toBeNull();
+    expect(card.getAttribute("aria-roledescription")).toBeNull();
+    const handle = screen.getByRole("button", { name: "Reorder customerId" });
+    expect(card.contains(handle)).toBe(true);
+    expect(handle.getAttribute("aria-roledescription")).toBe("sortable");
+    expect(handle.getAttribute("tabindex")).toBe("0");
+    // The only element of the card with role=button is the handle: nothing interactive sits inside it.
+    expect(card.querySelectorAll("[role=button]")).toHaveLength(1);
+    expect(handle.querySelector("button, input, select, a")).toBeNull();
+  });
+
   it("still routes field edits through the callbacks", () => {
     render(tree());
     fireEvent.click(screen.getByTitle("Open Field Studio"));

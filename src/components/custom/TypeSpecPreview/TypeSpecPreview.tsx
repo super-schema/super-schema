@@ -29,7 +29,7 @@ function highlightTypeSpec(source: string): React.ReactNode[] {
   const lines = source.split("\n");
   return lines.map((line, i) => (
     <div key={i} className="flex">
-      <span className="inline-block w-8 text-right pr-3 select-none text-muted-foreground/40 text-[12px]">
+      <span className="inline-block w-8 text-right pr-3 select-none text-muted-foreground text-[12px]">
         {i + 1}
       </span>
       <span className="flex-1">

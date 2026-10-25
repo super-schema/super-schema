@@ -203,7 +203,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
             setDescInput("");
             setIsEditingDesc(true);
           }}
-          className="text-caption text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          className="text-caption text-muted-foreground hover:text-foreground transition-colors"
           data-testid="entity-add-description"
         >
           + Add description
@@ -331,7 +331,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
               className={`text-caption ${
                 owner
                   ? "text-muted-foreground"
-                  : "text-muted-foreground/40 italic"
+                  : "text-muted-foreground italic"
               } ${!isReadOnly ? "hover:text-foreground cursor-pointer" : "cursor-default"}`}
             >
               {owner || "Add owner"}
@@ -370,7 +370,7 @@ export function InlineEntityMeta({ entity, isReadOnly, onGovernanceClick, onMeta
             className={`text-caption ${
               retentionPolicy
                 ? "text-muted-foreground group-hover/retention:text-foreground"
-                : "text-muted-foreground/40 italic group-hover/retention:text-muted-foreground"
+                : "text-muted-foreground italic group-hover/retention:text-foreground"
             } transition-colors`}
           >
             {retentionPolicy

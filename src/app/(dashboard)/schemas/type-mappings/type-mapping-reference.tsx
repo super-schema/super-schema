@@ -132,7 +132,7 @@ export function TypeMappingReference() {
           <div className="mt-space-4 max-h-[calc(100vh-280px)] space-y-space-4 overflow-y-auto pr-1">
             {filteredCategories.map(({ category, types }) => (
               <section key={category} aria-label={`${category} types`}>
-                <h2 className="mb-space-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                <h2 className="mb-space-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   {category}
                 </h2>
                 <div className="space-y-1">

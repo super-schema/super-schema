@@ -138,7 +138,7 @@ export function RetentionPolicyEditor({
     <div className="space-y-space-4" data-testid="retention-policy-editor">
       <div className="flex items-center justify-between">
         <h3 className="text-heading-3 text-foreground">{entityName}</h3>
-        <Badge variant="secondary" className="text-caption" data-testid="retention-badge">
+        <Badge variant="secondary" data-testid="retention-badge">
           {preview}
         </Badge>
       </div>
