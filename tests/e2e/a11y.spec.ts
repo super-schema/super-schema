@@ -23,7 +23,7 @@ import type { Page } from "@playwright/test";
 import { test as base, expect, unique } from "./helpers/fixtures";
 import { AXE_VERSION, WCAG_TAGS, scanPage, trackInflightRequests } from "./helpers/axe";
 import {
-  BASELINE_PATH, compareToBaseline, describeComparison, entriesOfState, readBaseline, toEntries, writeBaselineState,
+  BASELINE_PATH, assertUpdateAllowed, compareToBaseline, describeComparison, entriesOfState, readBaseline, toEntries, writeBaselineState,
 } from "./helpers/a11y-baseline";
 import { createFieldRow, createIsolatedWorkspaceRows, deleteIsolatedWorkspaceRows } from "./helpers/db";
 import { createEventFromMenu, centerPanel } from "./helpers/event-builder";
@@ -73,6 +73,8 @@ const test = base.extend<{ home: Home }>({
   ],
 });
 
+// Refused on CI before anything runs: a pipeline must never accept its own violations.
+assertUpdateAllowed(process.env);
 const UPDATE = process.env.UPDATE_A11Y_BASELINE === "1";
 const OBSERVED_DIR = path.resolve(__dirname, "../../test-results/a11y-observed");
 

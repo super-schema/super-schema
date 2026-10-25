@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  BASELINE_PATH, compareToBaseline, describeComparison, describeElement, elementSignature, entriesOfState, readBaseline, serializeBaseline, signatureOf, targetOf, toEntries,
+  BASELINE_PATH, MAX_CONDITIONAL_ENTRIES, MAX_COUNT_VARIES_ENTRIES, assertUpdateAllowed, compareToBaseline, describeComparison, describeElement, elementSignature, entriesOfState, readBaseline, serializeBaseline, signatureOf, targetOf, toEntries,
   writeBaselineState, type AxeFinding, type BaselineEntry, type ElementInfo,
 } from "../../e2e/helpers/a11y-baseline";
 
 const finding = (rule: string, target: string, html = "<button>", impact = "serious"): AxeFinding => ({ rule, target, html, impact, help: "help", helpUrl: "https://dequeuniversity.com/rules/axe/4.11/x" });
-const entry = (state: string, rule: string, target: string): BaselineEntry => ({ state, rule, target, impact: "serious" });
+const entry = (state: string, rule: string, target: string, count = 1): BaselineEntry => ({ state, rule, target, impact: "serious", count });
 
 describe("signatureOf: the kind of element, not where axe found it in one page", () => {
   it("keeps the element's own compound selector and drops the ancestors axe added to make it unique", () => {
@@ -104,7 +104,7 @@ describe("describeElement", () => {
 });
 
 describe("toEntries", () => {
-  it("is one entry per (rule, signature) in a fixed order, with the first element's opening tag as a hint", () => {
+  it("is one entry per (rule, signature) in a fixed order, with the number of elements of that kind and the first one's opening tag as a hint", () => {
     const entries = toEntries("route:/x", [
       finding("link-name", "#base-ui-_R_1_", '<a data-testid="nav-a" id="base-ui-_R_1_">'),
       finding("link-name", "#base-ui-_R_2_", '<a data-testid="nav-b" id="base-ui-_R_2_">'),
@@ -112,10 +112,10 @@ describe("toEntries", () => {
       finding("button-name", "li:nth-child(5) > .p-1", '<button class="p-1">y</button>'),
       finding("button-name", ".p-1", '<button class="p-1">z</button>'),
     ]);
-    expect(entries.map((e) => [e.rule, e.target])).toEqual([
-      ["button-name", ".p-1"],
-      ["link-name", 'a[data-testid="nav-a"]'],
-      ["link-name", 'a[data-testid="nav-b"]'],
+    expect(entries.map((e) => [e.rule, e.target, e.count])).toEqual([
+      ["button-name", ".p-1", 3],
+      ["link-name", 'a[data-testid="nav-a"]', 1],
+      ["link-name", 'a[data-testid="nav-b"]', 1],
     ]);
     expect(entries[0].element).toBe('<button class="p-1">');
   });
@@ -123,48 +123,71 @@ describe("toEntries", () => {
   it("gives the same entries for the same page found with different selectors (another page's data around it)", () => {
     const first = toEntries("s", [finding("color-contrast", 'a[href$="playground"] > .justify-end > .text-xs.bg-secondary', '<span class="text-xs bg-secondary">')]);
     const second = toEntries("s", [finding("color-contrast", 'div[data-domain-slug="x"] > .block > .bg-secondary.text-xs', '<span class="bg-secondary text-xs">')]);
-    expect(first.map((e) => e.target)).toEqual(second.map((e) => e.target));
+    expect(first.map((e) => [e.target, e.count])).toEqual(second.map((e) => [e.target, e.count]));
   });
 });
 
-describe("compareToBaseline", () => {
-  const recorded = [entry("s", "color-contrast", ".a"), entry("s", "button-name", ".b")];
+describe("compareToBaseline: per kind of element, with how many", () => {
+  const recorded = [entry("s", "color-contrast", ".a", 3), entry("s", "button-name", ".b", 1)];
 
-  it("is empty when the page has what the baseline says", () => {
-    expect(compareToBaseline(recorded, [entry("s", "color-contrast", ".a"), entry("s", "button-name", ".b")])).toEqual({ added: [], removed: [] });
+  it("is empty when the page has what the baseline says: the same kinds, the same number of each", () => {
+    expect(compareToBaseline(recorded, [entry("s", "color-contrast", ".a", 3), entry("s", "button-name", ".b", 1)])).toEqual({ added: [], removed: [] });
   });
 
-  it("a violation that is not in the baseline is added", () => {
-    const result = compareToBaseline(recorded, [entry("s", "color-contrast", ".a"), entry("s", "button-name", ".b"), entry("s", "link-name", "#x")]);
+  it("MORE elements of a recorded kind than recorded fail as new: a fourth unlabeled button next to three known ones is a regression", () => {
+    const result = compareToBaseline(recorded, [entry("s", "color-contrast", ".a", 4), entry("s", "button-name", ".b", 1)]);
     expect(result.removed).toEqual([]);
-    expect(result.added.map((e) => [e.rule, e.target])).toEqual([["link-name", "#x"]]);
+    expect(result.added.map(({ entry: e, extra }) => [e.rule, e.target, extra])).toEqual([["color-contrast", ".a", 1]]);
+  });
+
+  it("FEWER elements of a recorded kind fail as a shrink to record: fix one of three and the baseline says two", () => {
+    const result = compareToBaseline(recorded, [entry("s", "color-contrast", ".a", 2), entry("s", "button-name", ".b", 1)]);
+    expect(result.added).toEqual([]);
+    expect(result.removed.map(({ entry: e, fewer }) => [e.rule, e.target, fewer])).toEqual([["color-contrast", ".a", 1]]);
+  });
+
+  it("a kind that is not in the baseline is added, with its whole count; one that is gone is removed, with its whole count", () => {
+    const result = compareToBaseline(recorded, [entry("s", "color-contrast", ".a", 3), entry("s", "link-name", "#x", 2)]);
+    expect(result.added.map(({ entry: e, extra }) => [e.rule, e.target, extra])).toEqual([["link-name", "#x", 2]]);
+    expect(result.removed.map(({ entry: e, fewer }) => [e.rule, e.target, fewer])).toEqual([["button-name", ".b", 1]]);
+  });
+
+  it("an entry without a count is one element (a file written before the counts)", () => {
+    const old = { state: "s", rule: "r", impact: "serious", target: ".o" } as BaselineEntry;
+    expect(compareToBaseline([old], [entry("s", "r", ".o", 1)])).toEqual({ added: [], removed: [] });
+    expect(compareToBaseline([old], [entry("s", "r", ".o", 2)]).added).toHaveLength(1);
   });
 
   it("the same selector under another rule is another violation, and so is the same rule under another state", () => {
-    expect(compareToBaseline(recorded, [entry("s", "link-name", ".a")]).added).toHaveLength(1);
+    expect(compareToBaseline(recorded, [entry("s", "link-name", ".a", 3)]).added).toHaveLength(1);
     expect(compareToBaseline([entry("s", "color-contrast", ".a")], [entry("t", "color-contrast", ".a")]).added).toHaveLength(1);
   });
 
-  it("an entry that no longer occurs is removed: the baseline only shrinks", () => {
-    const result = compareToBaseline(recorded, [entry("s", "button-name", ".b")]);
-    expect(result.added).toEqual([]);
-    expect(result.removed.map((e) => [e.rule, e.target])).toEqual([["color-contrast", ".a"]]);
-  });
-
-  it("the message of a difference says what to do about each side", () => {
-    const comparison = compareToBaseline(recorded, [entry("s", "button-name", ".b"), entry("s", "link-name", "#x")]);
+  it("the message of a difference says how many, and what to do about each side", () => {
+    const comparison = compareToBaseline(recorded, [entry("s", "color-contrast", ".a", 5), entry("s", "link-name", "#x")]);
     const text = describeComparison("s", comparison, [finding("link-name", "#x", "<a href='/'>")]);
     expect(text).toContain('NEW accessibility violation(s) in "s"');
-    expect(text).toContain("+ link-name (serious)  #x");
+    expect(text).toContain("+ link-name (serious) x1  #x");
+    expect(text).toContain("+ color-contrast (serious) x2  .a");
     expect(text).toContain("<a href='/'>");
     expect(text).toContain("the baseline only shrinks");
-    expect(text).toContain("- color-contrast (serious)  .a");
+    expect(text).toContain("- button-name (serious) x1  .b");
     expect(text).toContain("UPDATE_A11Y_BASELINE=1");
   });
 });
 
+describe("a count that depends on the shared data (countVaries): only its presence is compared", () => {
+  const rows = { ...entry("s", "color-contrast", ".row-badge", 7), countVaries: "one per row of a list the shared database fills" };
+
+  it("a different number of a kind that is a row of a global list is neither new nor a shrink, while its absence still is", () => {
+    expect(compareToBaseline([rows], [entry("s", "color-contrast", ".row-badge", 25)])).toEqual({ added: [], removed: [] });
+    expect(compareToBaseline([rows], [entry("s", "color-contrast", ".row-badge", 1)])).toEqual({ added: [], removed: [] });
+    expect(compareToBaseline([rows], []).removed).toHaveLength(1);
+  });
+});
+
 describe("conditional entries (an element that exists only with data the shared database may not hold)", () => {
-  const conditional = { ...entry("s", "color-contrast", ".needs-data"), conditional: true };
+  const conditional = { ...entry("s", "color-contrast", ".needs-data"), conditional: "exists only when another spec has made a deployment" };
 
   it("is not reported as removed when it is absent, and is not new when it is found", () => {
     expect(compareToBaseline([conditional], [])).toEqual({ added: [], removed: [] });
@@ -172,14 +195,32 @@ describe("conditional entries (an element that exists only with data the shared 
     expect(compareToBaseline([conditional], [entry("s", "color-contrast", ".other")]).added).toHaveLength(1);
   });
 
-  it("a rewrite keeps a conditional entry the scan did not meet, and the flag on one it found again", () => {
+  it("a rewrite keeps a conditional entry the scan did not meet, and the reasons on the entries it found again", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "a11y-baseline-"));
     const file = path.join(dir, "baseline.json");
     const meta = { axe: "4.11.2", tags: ["wcag2a"] };
-    writeFileSync(file, serializeBaseline({ readme: "", axe: meta.axe, tags: meta.tags, violations: [conditional, { ...entry("s", "link-name", ".both"), conditional: true }, entry("s", "button-name", ".gone")] }));
-    writeBaselineState("s", [entry("s", "link-name", ".both"), entry("s", "button-name", ".new")], meta, file);
-    const after = readBaseline(file).violations.map((e) => [e.rule, e.target, e.conditional ?? false]);
-    expect(after.sort()).toEqual([["button-name", ".new", false], ["color-contrast", ".needs-data", true], ["link-name", ".both", true]]);
+    const both = { ...entry("s", "link-name", ".both"), conditional: "needs data", countVaries: "rows" };
+    writeFileSync(file, serializeBaseline({ readme: "", axe: meta.axe, tags: meta.tags, violations: [conditional, both, entry("s", "button-name", ".gone")] }));
+    writeBaselineState("s", [entry("s", "link-name", ".both", 4), entry("s", "button-name", ".new")], meta, file);
+    const after = readBaseline(file).violations.map((e) => [e.rule, e.target, e.count, e.conditional ?? null, e.countVaries ?? null]);
+    expect(after.sort()).toEqual([
+      ["button-name", ".new", 1, null, null],
+      ["color-contrast", ".needs-data", 1, "exists only when another spec has made a deployment", null],
+      ["link-name", ".both", 4, "needs data", "rows"],
+    ]);
+  });
+});
+
+describe("a baseline is never rewritten on CI", () => {
+  it("assertUpdateAllowed refuses UPDATE_A11Y_BASELINE=1 whenever CI is set to anything", () => {
+    for (const ci of ["true", "1", "yes", "false"]) {
+      expect(() => assertUpdateAllowed({ UPDATE_A11Y_BASELINE: "1", CI: ci }), ci).toThrow(/CI/);
+    }
+    expect(() => assertUpdateAllowed({ UPDATE_A11Y_BASELINE: "1" })).not.toThrow();
+    expect(() => assertUpdateAllowed({ UPDATE_A11Y_BASELINE: "1", CI: "" })).not.toThrow();
+    expect(() => assertUpdateAllowed({ CI: "true" })).not.toThrow();
+    expect(() => assertUpdateAllowed({ UPDATE_A11Y_BASELINE: "0", CI: "true" })).not.toThrow();
+    expect(() => assertUpdateAllowed({})).not.toThrow();
   });
 });
 
@@ -190,16 +231,23 @@ describe("the file", () => {
     const meta = { axe: "4.11.2", tags: ["wcag2a"] };
     writeBaselineState("b", [entry("b", "z-rule", ".z"), entry("b", "a-rule", ".a")], meta, file);
     writeBaselineState("a", [entry("a", "rule", ".r")], meta, file);
-    writeBaselineState("b", [entry("b", "a-rule", ".a")], meta, file);
+    writeBaselineState("b", [entry("b", "a-rule", ".a", 2)], meta, file);
     const read = readBaseline(file);
-    expect(read.violations.map((e) => `${e.state}:${e.rule}`).sort()).toEqual(["a:rule", "b:a-rule"]);
+    expect(read.violations.map((e) => `${e.state}:${e.rule}:${e.count}`).sort()).toEqual(["a:rule:1", "b:a-rule:2"]);
     expect(entriesOfState(read, "b")).toHaveLength(1);
     expect(readFileSync(file, "utf8")).toBe(serializeBaseline(read));
     writeFileSync(file, serializeBaseline({ ...read, violations: [] }));
     expect(readBaseline(file).violations).toEqual([]);
   });
 
-  it("the committed baseline is in canonical order, has no entry twice, and every entry names a state, a rule and a target that is its own signature", () => {
+  it("writes the count of every entry, even 1, and the reasons when there are some", () => {
+    const text = serializeBaseline({ readme: "r", axe: "4.11.2", tags: [], violations: [{ ...entry("s", "r", ".x"), conditional: "why", countVaries: "because" }] });
+    expect(text).toContain('"count":1');
+    expect(text).toContain('"conditional":"why"');
+    expect(text).toContain('"countVaries":"because"');
+  });
+
+  it("the committed baseline is in canonical order, has no entry twice, and every entry names a state, a rule, a target that is its own signature, and a count", () => {
     const baseline = readBaseline(BASELINE_PATH);
     expect(baseline.axe).toMatch(/^\d+\.\d+\.\d+$/);
     expect(baseline.tags).toEqual(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]);
@@ -209,9 +257,22 @@ describe("the file", () => {
       expect(e.state.length).toBeGreaterThan(0);
       expect(e.rule).toMatch(/^[a-z0-9-]+$/);
       expect(e.target.length).toBeGreaterThan(0);
+      expect(Number.isInteger(e.count) && (e.count as number) >= 1, `${e.state} ${e.rule} ${e.target}: count`).toBe(true);
       expect(signatureOf(e.target), `"${e.target}" is not a signature: it still holds what axe added to make it unique in a page`).toBe(e.target);
       expect(e.target, "a generated id is not a stable target").not.toMatch(/base-ui-|radix-|:r\d|_R_/i);
     }
     expect(readFileSync(BASELINE_PATH, "utf8"), "the file is not in the canonical order: rewrite it with UPDATE_A11Y_BASELINE=1").toBe(serializeBaseline(baseline));
+  });
+
+  it("every conditional entry and every entry whose count varies says WHY, in a sentence, and there are not many of them: an exception needs a reason, and a baseline full of exceptions is not a baseline", () => {
+    const baseline = readBaseline(BASELINE_PATH);
+    const conditional = baseline.violations.filter((e) => e.conditional !== undefined);
+    const varies = baseline.violations.filter((e) => e.countVaries !== undefined);
+    for (const e of [...conditional.map((c) => ({ ...c, reason: c.conditional })), ...varies.map((c) => ({ ...c, reason: c.countVaries }))]) {
+      expect(typeof e.reason, `${e.state} ${e.rule} ${e.target}`).toBe("string");
+      expect((e.reason as string).trim().length, `${e.state} ${e.rule} ${e.target}: the reason is too short to be one`).toBeGreaterThanOrEqual(20);
+    }
+    expect(conditional.length, "conditional entries (absence allowed)").toBeLessThanOrEqual(MAX_CONDITIONAL_ENTRIES);
+    expect(varies.length, "entries whose count is not compared").toBeLessThanOrEqual(MAX_COUNT_VARIES_ENTRIES);
   });
 });

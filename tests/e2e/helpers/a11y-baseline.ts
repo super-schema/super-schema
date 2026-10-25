@@ -9,7 +9,8 @@
  * signature is the element's own selector, made independent of the page around it (`signatureOf`): axe's selector is the shortest one that is
  * unique in THIS page, so it names ancestors, list positions, a domain's slug or a different class order whenever the data of the shared test
  * database differs, and a baseline keyed by it would fail on a run that changed nothing. Two elements of one kind in one state (every
- * domain card's badge) are one entry: the entry says "this kind of element fails here"; fixing one of them does not remove it, fixing all does.
+ * domain card's badge) are one entry with a `count`: MORE than recorded fails as new, FEWER fails as "record the shrink" (fix one of three
+ * unlabeled buttons and the baseline must say two), so the baseline only shrinks per element and not per kind.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -22,6 +23,8 @@ export interface AxeFinding {
   /** One selector path, the shadow DOM pieces joined by ` >> `; as axe gave it. */
   target: string;
   html: string;
+  /** What axe measured (a contrast: the colours and the ratio against the one required), for the reader of the observed dump. */
+  detail?: string;
   /** The element itself, read in the page (its own tag, id, classes and attributes), when it could be: what the signature is made of. */
   element?: ElementInfo;
 }
@@ -41,14 +44,36 @@ export interface BaselineEntry {
   impact: string;
   /** The element's signature (`signatureOf`). */
   target: string;
+  /** How many elements of this kind fail here (1 when a file has none: a file written before the counts). */
+  count?: number;
   /** The opening tag of the first element of this kind that failed, as a hint of which one it is. */
   element?: string;
   /**
-   * The element exists only when the SHARED database holds some data that no test of this spec makes (the Deployments list, which has rows only when
-   * another spec has made a deployment): a scan that does not find it is not a shrink. Set by hand, kept by every rewrite. A conditional entry still
-   * counts for the other direction: the same violation, found, is not new.
+   * WHY the element may be missing: it exists only when the SHARED database holds some data that no test of this spec makes. A scan that does not
+   * find it is not a shrink; found, it is not new. A sentence of at least 20 characters, set by hand, kept by every rewrite, at most
+   * `MAX_CONDITIONAL_ENTRIES` of them (tests/unit/e2e/a11y-baseline.test.ts).
    */
-  conditional?: boolean;
+  conditional?: string;
+  /**
+   * WHY the number of such elements is not compared (only that there is at least one): each is a row of a list that the shared database fills
+   * (the users, the domains of every tenant, the notifications of the admin), so its number is not this test's to know. Same rules as `conditional`,
+   * at most `MAX_COUNT_VARIES_ENTRIES`.
+   */
+  countVaries?: string;
+}
+
+/** How many exceptions a baseline may hold: an exception needs a reason, and a baseline of exceptions is not one. */
+export const MAX_CONDITIONAL_ENTRIES = 3;
+export const MAX_COUNT_VARIES_ENTRIES = 12;
+
+/**
+ * A rewrite of the baseline (`UPDATE_A11Y_BASELINE=1`) is for a person at a keyboard, with a diff to read: it is refused wherever `CI` is set,
+ * to any value, so a pipeline can never accept its own violations.
+ */
+export function assertUpdateAllowed(env: Record<string, string | undefined>): void {
+  if (env.UPDATE_A11Y_BASELINE === "1" && env.CI) {
+    throw new Error("UPDATE_A11Y_BASELINE=1 is refused when CI is set: a baseline is rewritten by a person, who reads the diff (docs/testing/a11y.md)");
+  }
 }
 
 export interface BaselineFile {
@@ -63,7 +88,7 @@ export interface BaselineFile {
 export const BASELINE_PATH = path.resolve(__dirname, "../a11y-baseline.json");
 
 export const BASELINE_README =
-  "Known accessibility violations, by state of the app. a11y.spec.ts fails on a violation that is not listed and on an entry that no longer occurs: remove it. Rewrite with UPDATE_A11Y_BASELINE=1; see docs/testing/a11y.md. An entry marked conditional exists only with data other specs make: its absence is not a shrink.";
+  "Known accessibility violations, by state of the app and kind of element, with how many (count). a11y.spec.ts fails on a kind that is not listed or that there are more of than listed, and on an entry that no longer occurs or that there are fewer of: lower or remove it. Rewrite with UPDATE_A11Y_BASELINE=1 (never on CI); see docs/testing/a11y.md. conditional (may be absent) and countVaries (the number is not compared) each carry the reason.";
 
 // ---------------------------------------------------------------------------
 // The signature of an element
@@ -238,12 +263,16 @@ export function describeElement(html: string, names: Readonly<Record<string, str
 
 export const baselineKey = (entry: Pick<BaselineEntry, "state" | "rule" | "target">): string => `${entry.state}\u0001${entry.rule}\u0001${entry.target}`;
 
-/** The findings of one state as baseline entries: one per (rule, signature), in a fixed order. `names` only shapes the hint. */
+const countOf = (entry: BaselineEntry): number => entry.count ?? 1;
+
+/** The findings of one state as baseline entries: one per (rule, signature) with the number of elements of that kind, in a fixed order. `names` only shapes the hint. */
 export function toEntries(state: string, findings: readonly AxeFinding[], names: Readonly<Record<string, string>> = {}): BaselineEntry[] {
   const byKey = new Map<string, BaselineEntry>();
   for (const finding of findings) {
-    const entry: BaselineEntry = { state, rule: finding.rule, impact: finding.impact, target: targetOf(finding), element: describeElement(finding.html, names) };
-    if (!byKey.has(baselineKey(entry))) byKey.set(baselineKey(entry), entry);
+    const entry: BaselineEntry = { state, rule: finding.rule, impact: finding.impact, target: targetOf(finding), count: 1, element: describeElement(finding.html, names) };
+    const existing = byKey.get(baselineKey(entry));
+    if (existing) existing.count = countOf(existing) + 1;
+    else byKey.set(baselineKey(entry), entry);
   }
   return [...byKey.values()].sort((a, b) => a.rule.localeCompare(b.rule) || a.target.localeCompare(b.target));
 }
@@ -253,20 +282,34 @@ export function toEntries(state: string, findings: readonly AxeFinding[], names:
 // ---------------------------------------------------------------------------
 
 export interface BaselineComparison {
-  /** In the page now and not in the baseline: a regression, or a violation nobody has accepted yet. */
-  added: BaselineEntry[];
-  /** In the baseline and not in the page any more: the baseline only shrinks, so it says so. */
-  removed: BaselineEntry[];
+  /** In the page now and not in the baseline, or MORE of them than recorded (`extra`): a regression, or a violation nobody has accepted yet. */
+  added: Array<{ entry: BaselineEntry; extra: number }>;
+  /** In the baseline and not in the page any more, or FEWER of them than recorded (`fewer`): the baseline only shrinks, so it says so. */
+  removed: Array<{ entry: BaselineEntry; fewer: number }>;
 }
 
-/** What changed for one state: `recorded` are the baseline entries of that state, `found` what the scan found now. */
+/**
+ * What changed for one state: `recorded` are the baseline entries of that state, `found` what the scan found now. Per kind of element and
+ * how many: more fails as new, fewer fails as a shrink to record. An entry with `countVaries` is compared by presence only; one with
+ * `conditional` may be absent.
+ */
 export function compareToBaseline(recorded: readonly BaselineEntry[], found: readonly BaselineEntry[]): BaselineComparison {
-  const recordedKeys = new Set(recorded.map(baselineKey));
-  const foundKeys = new Set(found.map(baselineKey));
-  return {
-    added: found.filter((entry) => !recordedKeys.has(baselineKey(entry))),
-    removed: recorded.filter((entry) => !entry.conditional && !foundKeys.has(baselineKey(entry))),
-  };
+  const recordedByKey = new Map(recorded.map((entry) => [baselineKey(entry), entry]));
+  const foundByKey = new Map(found.map((entry) => [baselineKey(entry), entry]));
+  const added: BaselineComparison["added"] = [];
+  const removed: BaselineComparison["removed"] = [];
+  for (const entry of found) {
+    const was = recordedByKey.get(baselineKey(entry));
+    if (!was) added.push({ entry, extra: countOf(entry) });
+    else if (was.countVaries === undefined && countOf(entry) > countOf(was)) added.push({ entry, extra: countOf(entry) - countOf(was) });
+  }
+  for (const entry of recorded) {
+    const now = foundByKey.get(baselineKey(entry));
+    if (!now) {
+      if (entry.conditional === undefined) removed.push({ entry, fewer: countOf(entry) });
+    } else if (entry.countVaries === undefined && countOf(now) < countOf(entry)) removed.push({ entry, fewer: countOf(entry) - countOf(now) });
+  }
+  return { added, removed };
 }
 
 /** The failure message of a comparison that is not empty: every difference on a line of its own, and what to do about it. */
@@ -274,15 +317,15 @@ export function describeComparison(state: string, comparison: BaselineComparison
   const lines: string[] = [];
   if (comparison.added.length > 0) {
     lines.push(`${comparison.added.length} NEW accessibility violation(s) in "${state}" (fix the page; do not add them to the baseline):`);
-    for (const entry of comparison.added) {
+    for (const { entry, extra } of comparison.added) {
       const finding = findings.find((f) => f.rule === entry.rule && targetOf(f) === entry.target);
-      lines.push(`  + ${entry.rule} (${entry.impact})  ${entry.target}`);
+      lines.push(`  + ${entry.rule} (${entry.impact}) x${extra}  ${entry.target}`);
       if (finding) lines.push(`      ${finding.help}: ${finding.helpUrl}`, `      ${finding.html.slice(0, 200)}`);
     }
   }
   if (comparison.removed.length > 0) {
-    lines.push(`${comparison.removed.length} entr${comparison.removed.length === 1 ? "y" : "ies"} of tests/e2e/a11y-baseline.json no longer occur in "${state}": remove them (the baseline only shrinks):`);
-    for (const entry of comparison.removed) lines.push(`  - ${entry.rule} (${entry.impact})  ${entry.target}`);
+    lines.push(`${comparison.removed.length} entr${comparison.removed.length === 1 ? "y" : "ies"} of tests/e2e/a11y-baseline.json occur less than recorded in "${state}": lower or remove them (the baseline only shrinks):`);
+    for (const { entry, fewer } of comparison.removed) lines.push(`  - ${entry.rule} (${entry.impact}) x${fewer}  ${entry.target}`);
     lines.push("  Edit the file by hand, or run this test with UPDATE_A11Y_BASELINE=1 (docs/testing/a11y.md).");
   }
   return lines.join("\n");
@@ -298,7 +341,7 @@ export const entriesOfState = (baseline: BaselineFile, state: string): BaselineE
 /** The file's text: a stable order (state, rule, target), one entry per line, so a change is a readable diff. */
 export function serializeBaseline(baseline: BaselineFile): string {
   const entries = [...baseline.violations].sort((a, b) => a.state.localeCompare(b.state) || a.rule.localeCompare(b.rule) || a.target.localeCompare(b.target));
-  const lines = entries.map((entry) => `    ${JSON.stringify({ state: entry.state, rule: entry.rule, impact: entry.impact, target: entry.target, ...(entry.element ? { element: entry.element } : {}), ...(entry.conditional ? { conditional: true } : {}) })}`);
+  const lines = entries.map((entry) => `    ${JSON.stringify({ state: entry.state, rule: entry.rule, impact: entry.impact, target: entry.target, count: countOf(entry), ...(entry.element ? { element: entry.element } : {}), ...(entry.conditional !== undefined ? { conditional: entry.conditional } : {}), ...(entry.countVaries !== undefined ? { countVaries: entry.countVaries } : {}) })}`);
   return [
     "{",
     `  "readme": ${JSON.stringify(baseline.readme)},`,
@@ -318,12 +361,15 @@ export function writeBaselineState(state: string, entries: readonly BaselineEntr
   } catch {
     current = { readme: BASELINE_README, axe: meta.axe, tags: [...meta.tags], violations: [] };
   }
-  // What a rewrite keeps of the state's old entries: the conditional ones (the scan may not have met their data), and the flag on the ones it found again.
-  const before = current.violations.filter((entry) => entry.state === state);
+  // What a rewrite keeps of the state's old entries: the reasons of the ones it found again, and the conditional ones the scan did not meet (it may not have had their data).
+  const before = new Map(current.violations.filter((entry) => entry.state === state).map((entry) => [baselineKey(entry), entry]));
   const found = new Set(entries.map(baselineKey));
-  const merged = [
-    ...entries.map((entry) => (before.some((old) => old.conditional && baselineKey(old) === baselineKey(entry)) ? { ...entry, conditional: true } : entry)),
-    ...before.filter((old) => old.conditional && !found.has(baselineKey(old))),
+  const merged: BaselineEntry[] = [
+    ...entries.map((entry) => {
+      const old = before.get(baselineKey(entry));
+      return { ...entry, ...(old?.conditional !== undefined ? { conditional: old.conditional } : {}), ...(old?.countVaries !== undefined ? { countVaries: old.countVaries } : {}) };
+    }),
+    ...[...before.values()].filter((old) => old.conditional !== undefined && !found.has(baselineKey(old))),
   ];
   const next: BaselineFile = {
     readme: BASELINE_README,
