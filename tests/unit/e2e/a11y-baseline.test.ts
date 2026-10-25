@@ -163,6 +163,26 @@ describe("compareToBaseline", () => {
   });
 });
 
+describe("conditional entries (an element that exists only with data the shared database may not hold)", () => {
+  const conditional = { ...entry("s", "color-contrast", ".needs-data"), conditional: true };
+
+  it("is not reported as removed when it is absent, and is not new when it is found", () => {
+    expect(compareToBaseline([conditional], [])).toEqual({ added: [], removed: [] });
+    expect(compareToBaseline([conditional], [entry("s", "color-contrast", ".needs-data")])).toEqual({ added: [], removed: [] });
+    expect(compareToBaseline([conditional], [entry("s", "color-contrast", ".other")]).added).toHaveLength(1);
+  });
+
+  it("a rewrite keeps a conditional entry the scan did not meet, and the flag on one it found again", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "a11y-baseline-"));
+    const file = path.join(dir, "baseline.json");
+    const meta = { axe: "4.11.2", tags: ["wcag2a"] };
+    writeFileSync(file, serializeBaseline({ readme: "", axe: meta.axe, tags: meta.tags, violations: [conditional, { ...entry("s", "link-name", ".both"), conditional: true }, entry("s", "button-name", ".gone")] }));
+    writeBaselineState("s", [entry("s", "link-name", ".both"), entry("s", "button-name", ".new")], meta, file);
+    const after = readBaseline(file).violations.map((e) => [e.rule, e.target, e.conditional ?? false]);
+    expect(after.sort()).toEqual([["button-name", ".new", false], ["color-contrast", ".needs-data", true], ["link-name", ".both", true]]);
+  });
+});
+
 describe("the file", () => {
   it("is written in a stable order and read back as it was, replacing only the state that was scanned", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "a11y-baseline-"));

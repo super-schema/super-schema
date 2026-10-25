@@ -43,6 +43,12 @@ export interface BaselineEntry {
   target: string;
   /** The opening tag of the first element of this kind that failed, as a hint of which one it is. */
   element?: string;
+  /**
+   * The element exists only when the SHARED database holds some data that no test of this spec makes (the Deployments list, which has rows only when
+   * another spec has made a deployment): a scan that does not find it is not a shrink. Set by hand, kept by every rewrite. A conditional entry still
+   * counts for the other direction: the same violation, found, is not new.
+   */
+  conditional?: boolean;
 }
 
 export interface BaselineFile {
@@ -57,7 +63,7 @@ export interface BaselineFile {
 export const BASELINE_PATH = path.resolve(__dirname, "../a11y-baseline.json");
 
 export const BASELINE_README =
-  "Known accessibility violations, by state of the app. a11y.spec.ts fails on a violation that is not listed and on an entry that no longer occurs: remove it. Rewrite with UPDATE_A11Y_BASELINE=1; see docs/testing/a11y.md.";
+  "Known accessibility violations, by state of the app. a11y.spec.ts fails on a violation that is not listed and on an entry that no longer occurs: remove it. Rewrite with UPDATE_A11Y_BASELINE=1; see docs/testing/a11y.md. An entry marked conditional exists only with data other specs make: its absence is not a shrink.";
 
 // ---------------------------------------------------------------------------
 // The signature of an element
@@ -259,7 +265,7 @@ export function compareToBaseline(recorded: readonly BaselineEntry[], found: rea
   const foundKeys = new Set(found.map(baselineKey));
   return {
     added: found.filter((entry) => !recordedKeys.has(baselineKey(entry))),
-    removed: recorded.filter((entry) => !foundKeys.has(baselineKey(entry))),
+    removed: recorded.filter((entry) => !entry.conditional && !foundKeys.has(baselineKey(entry))),
   };
 }
 
@@ -292,7 +298,7 @@ export const entriesOfState = (baseline: BaselineFile, state: string): BaselineE
 /** The file's text: a stable order (state, rule, target), one entry per line, so a change is a readable diff. */
 export function serializeBaseline(baseline: BaselineFile): string {
   const entries = [...baseline.violations].sort((a, b) => a.state.localeCompare(b.state) || a.rule.localeCompare(b.rule) || a.target.localeCompare(b.target));
-  const lines = entries.map((entry) => `    ${JSON.stringify({ state: entry.state, rule: entry.rule, impact: entry.impact, target: entry.target, ...(entry.element ? { element: entry.element } : {}) })}`);
+  const lines = entries.map((entry) => `    ${JSON.stringify({ state: entry.state, rule: entry.rule, impact: entry.impact, target: entry.target, ...(entry.element ? { element: entry.element } : {}), ...(entry.conditional ? { conditional: true } : {}) })}`);
   return [
     "{",
     `  "readme": ${JSON.stringify(baseline.readme)},`,
@@ -312,11 +318,18 @@ export function writeBaselineState(state: string, entries: readonly BaselineEntr
   } catch {
     current = { readme: BASELINE_README, axe: meta.axe, tags: [...meta.tags], violations: [] };
   }
+  // What a rewrite keeps of the state's old entries: the conditional ones (the scan may not have met their data), and the flag on the ones it found again.
+  const before = current.violations.filter((entry) => entry.state === state);
+  const found = new Set(entries.map(baselineKey));
+  const merged = [
+    ...entries.map((entry) => (before.some((old) => old.conditional && baselineKey(old) === baselineKey(entry)) ? { ...entry, conditional: true } : entry)),
+    ...before.filter((old) => old.conditional && !found.has(baselineKey(old))),
+  ];
   const next: BaselineFile = {
     readme: BASELINE_README,
     axe: meta.axe,
     tags: [...meta.tags],
-    violations: [...current.violations.filter((entry) => entry.state !== state), ...entries],
+    violations: [...current.violations.filter((entry) => entry.state !== state), ...merged],
   };
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, serializeBaseline(next));

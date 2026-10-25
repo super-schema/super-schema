@@ -599,6 +599,53 @@ export async function setFieldGovernance(
 }
 
 // ---------------------------------------------------------------------------
+// A tenant of the test's own (a11y.spec.ts): what a scan of a page sees is then this test's data and not whatever the other specs of a run
+// have made in the default tenant at that moment (the explorer, the domain grid, the compliance results and the governance dashboard are
+// scoped to the viewed tenant, which the `active_tenant` cookie names).
+// ---------------------------------------------------------------------------
+
+export interface IsolatedWorkspaceRows {
+  tenantId: string;
+  domain: { id: string; name: string; slug: string };
+  product: { id: string; name: string; slug: string };
+  entity: { id: string; name: string; slug: string };
+}
+
+/** A tenant with a domain, a product and one entity, "Customer", with a key field `id`; uniquely named. Remove with `deleteIsolatedWorkspaceRows`. */
+export async function createIsolatedWorkspaceRows(): Promise<IsolatedWorkspaceRows> {
+  const db = pg();
+  const ownerId = await seededOwnerId();
+  const s = suffix();
+  const rows: IsolatedWorkspaceRows = {
+    tenantId: newId(),
+    domain: { id: newId(), name: `e2e-iso-dom-${s}`, slug: `e2e-iso-dom-${s}` },
+    product: { id: newId(), name: `e2e-iso-prod-${s}`, slug: `e2e-iso-prod-${s}` },
+    entity: { id: newId(), name: "Customer", slug: "customer" },
+  };
+  try {
+    await db.query(`INSERT INTO tenants (id, name, slug, "isActive", "updatedAt") VALUES ($1, $2, $2, true, now())`, [rows.tenantId, `e2e-iso-tenant-${s}`]);
+    await db.query(`INSERT INTO domains (id, name, slug, "tenantId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [rows.domain.id, rows.domain.name, rows.domain.slug, rows.tenantId]);
+    await db.query(`INSERT INTO products (id, name, slug, "domainId", "updatedAt") VALUES ($1, $2, $3, $4, now())`, [rows.product.id, rows.product.name, rows.product.slug, rows.domain.id]);
+    await db.query(
+      `INSERT INTO entities (id, name, slug, "tenantId", "domainId", "productId", "ownerId", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+      [rows.entity.id, rows.entity.name, rows.entity.slug, rows.tenantId, rows.domain.id, rows.product.id, ownerId],
+    );
+    await db.query(`INSERT INTO fields (id, "entityId", name, slug, type, nullable, "isKey", "sortOrder", "updatedAt") VALUES ($1, $2, 'id', 'id', 'string', false, true, 0, now())`, [newId(), rows.entity.id]);
+  } catch (error) {
+    await deleteIsolatedWorkspaceRows(rows);
+    throw error;
+  }
+  return rows;
+}
+
+/** The tenant goes with its domains, products, entities and events (cascade); the edge rows that have no foreign key go first. Safe to call twice. */
+export async function deleteIsolatedWorkspaceRows(rows: IsolatedWorkspaceRows | undefined): Promise<void> {
+  if (!rows) return;
+  await deleteSchemaReferencesForDomain(rows.domain.id);
+  await pg().query(`DELETE FROM tenants WHERE id = $1`, [rows.tenantId]);
+}
+
+// ---------------------------------------------------------------------------
 // Rows for the screenshot spec (visual.spec.ts): a tenant of its own with fixed names, so a page lists the same things in every run.
 // ---------------------------------------------------------------------------
 

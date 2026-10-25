@@ -14,23 +14,64 @@
  * scan reads the document the user sees; the AsyncAPI preview's iframe is out of it.
  *
  * States: every route of tests/e2e/fixtures/routes.ts (the page sweep's table), login and register (signed out), the shell's 404, and, in
- * a workspace made for the test, the domain and product pages, an entity page with fields, its Schemas tab, the publish dialog, the new
+ * a tenant made for the test (`home`), the domain and product pages, an entity page with fields, its Schemas tab, the publish dialog, the new
  * domain dialog, the command palette, and the page of an event.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Page } from "@playwright/test";
-import { test, expect, unique } from "./helpers/fixtures";
+import { test as base, expect, unique } from "./helpers/fixtures";
 import { AXE_VERSION, WCAG_TAGS, scanPage, trackInflightRequests } from "./helpers/axe";
 import {
   BASELINE_PATH, compareToBaseline, describeComparison, entriesOfState, readBaseline, toEntries, writeBaselineState,
 } from "./helpers/a11y-baseline";
-import { createFieldRow } from "./helpers/db";
+import { createFieldRow, createIsolatedWorkspaceRows, deleteIsolatedWorkspaceRows } from "./helpers/db";
 import { createEventFromMenu, centerPanel } from "./helpers/event-builder";
 import { openEntityPage } from "./helpers/entity-page";
 import { waitForHydration } from "./helpers/hydration";
 import { openSchemasTab } from "./helpers/lifecycle";
 import { DASHBOARD_ROUTES } from "./fixtures/routes";
+
+/**
+ * A tenant of the test's own, viewed through the `active_tenant` cookie, with a domain, a product and an entity, Customer. Every logged-in
+ * state is scanned as a user of THIS tenant: the explorer, the domain grid, the compliance results and the governance dashboard list this and
+ * nothing else, instead of whatever the other specs of the run have put in the default tenant at that moment (a scan of a page that lists
+ * a hundred domains is not the scan of a page that lists two, and the baseline would flap with the data).
+ */
+interface Home {
+  tenantId: string;
+  domainName: string;
+  domainSlug: string;
+  productName: string;
+  productSlug: string;
+  productUrl: string;
+  entities: ReadonlyArray<{ id: string; name: string; slug: string; url: string }>;
+}
+
+const test = base.extend<{ home: Home }>({
+  home: [
+    async ({ context, baseURL }, provide) => {
+      if (!baseURL) throw new Error("the a11y spec needs a baseURL");
+      const rows = await createIsolatedWorkspaceRows();
+      try {
+        await context.addCookies([{ name: "active_tenant", value: rows.tenantId, url: baseURL }]);
+        const productUrl = `/schemas/${rows.domain.slug}/${rows.product.slug}`;
+        await provide({
+          tenantId: rows.tenantId,
+          domainName: rows.domain.name,
+          domainSlug: rows.domain.slug,
+          productName: rows.product.name,
+          productSlug: rows.product.slug,
+          productUrl,
+          entities: [{ ...rows.entity, url: `${productUrl}/${rows.entity.slug}` }],
+        });
+      } finally {
+        await deleteIsolatedWorkspaceRows(rows);
+      }
+    },
+    { auto: true },
+  ],
+});
 
 const UPDATE = process.env.UPDATE_A11Y_BASELINE === "1";
 const OBSERVED_DIR = path.resolve(__dirname, "../../test-results/a11y-observed");
@@ -105,51 +146,49 @@ test.describe("signed out", () => {
 });
 
 test.describe("a workspace", () => {
-  test.use({ workspaceEntities: ["Customer"] });
-
   /** The names the workspace makes up, as placeholders, so a selector that carries one is the same in every run. */
-  const namesOf = (workspace: { domainSlug: string; productSlug: string; entities: ReadonlyArray<{ id: string }> }, more: Record<string, string> = {}) => ({
-    [workspace.domainSlug]: "<domain>",
-    [workspace.productSlug]: "<product>",
-    [workspace.entities[0].id]: "<entity>",
+  const namesOf = (home: Home, more: Record<string, string> = {}) => ({
+    [home.domainSlug]: "<domain>",
+    [home.productSlug]: "<product>",
+    [home.entities[0].id]: "<entity>",
     ...more,
   });
 
-  test("the domain page", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    await page.goto(`/schemas/${workspace.domainSlug}`);
-    await expect(centerPanel(page).getByRole("heading", { level: 1, name: workspace.domainName })).toBeVisible();
-    await checkState(page, "page:domain", namesOf(workspace));
+  test("the domain page", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await page.goto(`/schemas/${home.domainSlug}`);
+    await expect(centerPanel(page).getByRole("heading", { level: 1, name: home.domainName })).toBeVisible();
+    await checkState(page, "page:domain", namesOf(home));
   });
 
-  test("the product page", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    await page.goto(workspace.productUrl);
-    await expect(centerPanel(page).getByRole("navigation", { name: "Breadcrumb" }).getByText(workspace.productName)).toBeVisible();
-    await checkState(page, "page:product", namesOf(workspace));
+  test("the product page", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await page.goto(home.productUrl);
+    await expect(centerPanel(page).getByRole("navigation", { name: "Breadcrumb" }).getByText(home.productName)).toBeVisible();
+    await checkState(page, "page:product", namesOf(home));
   });
 
-  test("an entity page with fields", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    const customer = workspace.entities[0];
+  test("an entity page with fields", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    const customer = home.entities[0];
     await createFieldRow(customer.id, { name: "email", type: "string", classification: "PII", sortOrder: 1 });
     await createFieldRow(customer.id, { name: "age", type: "integer", sortOrder: 2 });
     await createFieldRow(customer.id, { name: "active", type: "boolean", sortOrder: 3 });
     await openEntityPage(page, customer.url, "Customer");
     await expect(centerPanel(page).getByRole("heading", { name: "Fields (4)" })).toBeVisible();
-    await checkState(page, "page:entity", namesOf(workspace));
+    await checkState(page, "page:entity", namesOf(home));
   });
 
-  test("the Schemas tab of an entity", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    await openEntityPage(page, workspace.entities[0].url, "Customer");
+  test("the Schemas tab of an entity", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await openEntityPage(page, home.entities[0].url, "Customer");
     await openSchemasTab(page);
-    await checkState(page, "tab:entity-schemas", namesOf(workspace));
+    await checkState(page, "tab:entity-schemas", namesOf(home));
   });
 
-  test("the publish dialog of an entity", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    await openEntityPage(page, workspace.entities[0].url, "Customer");
+  test("the publish dialog of an entity", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await openEntityPage(page, home.entities[0].url, "Customer");
     await centerPanel(page).getByTestId("publish-entity-button").click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId("confirm-publish")).toBeVisible();
-    await checkState(page, "dialog:entity-publish", namesOf(workspace));
+    await checkState(page, "dialog:entity-publish", namesOf(home));
   });
 
   test("the new domain dialog", { tag: ["@regression"] }, async ({ authedPage: page }) => {
@@ -170,16 +209,16 @@ test.describe("a workspace", () => {
     await checkState(page, "overlay:command-palette");
   });
 
-  test("the page of an event (the builder)", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
+  test("the page of an event (the builder)", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
     const name = unique("A11yEvent");
-    const id = await createEventFromMenu(page, workspace.productUrl, name);
-    await checkState(page, "page:event", namesOf(workspace, { [id]: "<event>", [name]: "<event-name>" }));
+    const id = await createEventFromMenu(page, home.productUrl, name);
+    await checkState(page, "page:event", namesOf(home, { [id]: "<event>", [name]: "<event-name>" }));
   });
 
-  test("the shell's 404: a page that is not there", { tag: ["@regression"] }, async ({ authedPage: page, workspace }) => {
-    await page.goto(`/schemas/${workspace.domainSlug}/${unique("no-such-product-")}`);
+  test("the shell's 404: a page that is not there", { tag: ["@regression"] }, async ({ authedPage: page, home }) => {
+    await page.goto(`/schemas/${home.domainSlug}/${unique("no-such-product-")}`);
     await expect(page.getByTestId("topbar")).toBeVisible();
-    await checkState(page, "page:not-found-in-shell", namesOf(workspace));
+    await checkState(page, "page:not-found-in-shell", namesOf(home));
   });
 });
 

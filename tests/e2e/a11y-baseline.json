@@ -1,5 +1,5 @@
 {
-  "readme": "Known accessibility violations, by state of the app. a11y.spec.ts fails on a violation that is not listed and on an entry that no longer occurs: remove it. Rewrite with UPDATE_A11Y_BASELINE=1; see docs/testing/a11y.md.",
+  "readme": "Known accessibility violations, by state of the app. a11y.spec.ts fails on a violation that is not listed and on an entry that no longer occurs: remove it. Rewrite with UPDATE_A11Y_BASELINE=1; see docs/testing/a11y.md. An entry marked conditional exists only with data other specs make: its absence is not a shrink.",
   "axe": "4.11.2",
   "tags": ["wcag2a","wcag2aa","wcag21a","wcag21aa"],
   "violations": [
@@ -42,6 +42,7 @@
     {"state":"route:/admin/settings","rule":"color-contrast","impact":"serious","target":"span.flex-1.text-body-small.text-muted-foreground","element":"<span class=\"text-body-small text-muted-foreground flex-1\">"},
     {"state":"route:/compliance","rule":"color-contrast","impact":"serious","target":"button.hover\\:text-foreground.px-space-3.py-1.rounded-md.text-body-small.text-muted-foreground.transition-colors","element":"<button class=\"px-space-3 py-1 text-body-small rounded-md transition-colors text-muted-foreground hover:text-foreground\">"},
     {"state":"route:/compliance","rule":"color-contrast","impact":"serious","target":"span.flex-1.text-body-small.text-muted-foreground","element":"<span class=\"text-body-small text-muted-foreground flex-1\">"},
+    {"state":"route:/deployments","rule":"color-contrast","impact":"serious","target":"span.bg-muted.inline-flex.items-center.px-1\\.5.py-0\\.5.rounded.text-caption.text-muted-foreground[data-testid=\"version-badge-unknown\"]","element":"<span data-testid=\"version-badge-unknown\" class=\"inline-flex items-center px-1.5 py-0.5 rounded text-caption bg-muted text-muted-foreground\">","conditional":true},
     {"state":"route:/deployments","rule":"color-contrast","impact":"serious","target":"span.flex-1.text-body-small.text-muted-foreground","element":"<span class=\"text-body-small text-muted-foreground flex-1\">"},
     {"state":"route:/glossary","rule":"color-contrast","impact":"serious","target":"span.bg-muted.inline-flex.items-center.px-1\\.5.py-0\\.5.rounded.text-mono-small.text-muted-foreground","element":"<span class=\"inline-flex items-center px-1.5 py-0.5 rounded text-mono-small bg-muted text-muted-foreground\">"},
     {"state":"route:/glossary","rule":"color-contrast","impact":"serious","target":"span.bg-primary\\/10.inline-flex.items-center.px-1\\.5.py-0\\.5.rounded.text-mono-small.text-primary","element":"<span class=\"inline-flex items-center px-1.5 py-0.5 rounded text-mono-small bg-primary/10 text-primary\">"},
