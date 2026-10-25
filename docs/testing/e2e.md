@@ -187,7 +187,7 @@ own; `.github/workflows/ci.yml` (the unit tests, on PGlite and PostgreSQL) is un
 | --- | --- | --- | --- | --- |
 | pull request | `smoke`: the smoke tier on Chromium, Firefox and WebKit | `e2e-smoke` | 25 min | **yes**, once a maintainer requires it (below) |
 | nightly (`schedule`, 02:23 UTC), a tag `v*` | `regression`: the regression tier, four shards | `e2e-regression (1/4)`, `e2e-regression (2/4)`, `e2e-regression (3/4)`, `e2e-regression (4/4)` | 60 min each | no, it reports |
-| nightly, a tag `v*` | `nightly-extra`: what the nightly tier has and the regression tier has not, three legs | `e2e-nightly-extra (slow-chromium)`, `e2e-nightly-extra (slow-serial)`, `e2e-nightly-extra (cross-browser)` | 90 min each | no, it reports |
+| nightly, a tag `v*` | `nightly-extra`: what the nightly tier has and the regression tier has not, three legs | `e2e-nightly-extra (slow-chromium)`, `e2e-nightly-extra (slow-serial)`, `e2e-nightly-extra (cross-browser)` | 150 min each (the @slow matrix alone is up to 17 tests x 420 s) | no, it reports |
 | nightly, a tag `v*` | `visual`: the screenshots, the browser run in the Playwright image ([Visual snapshots](#visual-snapshots)) | `e2e-visual` | 30 min | no, it reports (and is not to be required: below) |
 | `workflow_dispatch` | the input `tier`: `smoke` runs `smoke`; `regression` runs `regression`; `nightly` runs `regression`, `nightly-extra` and `visual`; `visual` runs `visual` alone | as above | as above | no |
 
@@ -438,7 +438,7 @@ that. Until a week of nightly runs says that it never fails by itself, `e2e-visu
   `E2E_STALL_MS=180000` (3 minutes) on a run of short tests.
   `E2E_GLOBAL_TIMEOUT_MS` is Playwright's own `globalTimeout`, a hard ceiling on the whole run in milliseconds (unset: none).
   **CI sets neither of them**: `.github/workflows/e2e.yml` passes no `E2E_STALL_MS` and no `E2E_GLOBAL_TIMEOUT_MS`, so a CI run has the
-  20-minute stall limit and no global ceiling; the jobs' own `timeout-minutes` (25 for smoke, 60 and 90 for the others) are what ends a hung job
+  20-minute stall limit and no global ceiling; the jobs' own `timeout-minutes` (25 for smoke, 60 for a regression shard, 150 for `nightly-extra`, 30 for visual) are what ends a hung job
   first on the short tiers. Both are checked when the release runner starts: a value that is not a positive whole number of milliseconds is
   exit 2 there, while a bare `node scripts/e2e-phases.mjs` with a bad `E2E_GLOBAL_TIMEOUT_MS` only meets it when Playwright loads
   `playwright.config.ts`: Playwright throws and the phase exits **1** (a bad `E2E_STALL_MS` is exit 2 in both).

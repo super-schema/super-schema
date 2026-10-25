@@ -173,7 +173,12 @@ describe("e2e.yml: when it runs", () => {
     for (const event of ["schedule", "push"]) expect(runsOn(job("smoke"), event)).toBe(false);
     // The tier input, by hand: smoke runs the smoke job only; regression adds the shards; nightly adds the rest.
     expect(condition(job("smoke"))).toContain("inputs.tier == 'smoke'");
-    expect(condition(job("regression"))).toContain("inputs.tier != 'smoke'");
+    // `!= 'smoke'` also matched `visual`, and a dispatch of the visual tier alone ran the four regression shards too.
+    expect(condition(job("regression"))).toContain("inputs.tier == 'regression'");
+    expect(condition(job("regression"))).toContain("inputs.tier == 'nightly'");
+    expect(condition(job("regression"))).not.toContain("inputs.tier != ");
+    expect(condition(job("regression"))).not.toContain("inputs.tier == 'visual'");
+    expect(condition(job("nightly-extra"))).not.toContain("inputs.tier == 'visual'");
     expect(condition(job("nightly-extra"))).toContain("inputs.tier == 'nightly'");
     // The screenshots: with the nightly tier, or alone.
     expect(condition(job("visual"))).toContain("inputs.tier == 'nightly'");
@@ -230,11 +235,12 @@ describe("e2e.yml: what a job may do", () => {
     expect(WORKFLOW_TEXT).toMatch(/docker/i);
   });
 
-  it("every job has a timeout: smoke 25, a regression shard 60, nightly-extra 90, visual 30 minutes", () => {
+  it("every job has a timeout: smoke 25, a regression shard 60, nightly-extra 150, visual 30 minutes", () => {
     for (const [id, j] of jobs) expect(typeof j["timeout-minutes"], `${id} has no timeout-minutes`).toBe("number");
     expect(job("smoke")["timeout-minutes"]).toBe(25);
     expect(job("regression")["timeout-minutes"]).toBe(60);
-    expect(job("nightly-extra")["timeout-minutes"]).toBe(90);
+    // 150: the @slow matrix alone can take 17 tests x 420 s worst case, plus the crawl (900 s) and the second-app tests.
+    expect(job("nightly-extra")["timeout-minutes"]).toBe(150);
     expect(job("visual")["timeout-minutes"]).toBe(30);
   });
 });
